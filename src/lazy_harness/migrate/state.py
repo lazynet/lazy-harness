@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from lazy_harness.migrate.steps.base import Step
 
 
 @dataclass
@@ -53,3 +58,39 @@ class DetectedState:
                 bool(self.knowledge_paths),
             ]
         )
+
+
+class StepStatus(StrEnum):
+    PENDING = "pending"
+    RUNNING = "running"
+    DONE = "done"
+    FAILED = "failed"
+    ROLLED_BACK = "rolled_back"
+
+
+@dataclass
+class RollbackOp:
+    kind: str
+    payload: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class StepResult:
+    name: str
+    status: StepStatus = StepStatus.PENDING
+    message: str = ""
+    rollback_ops: list[RollbackOp] = field(default_factory=list)
+
+
+@dataclass
+class MigrationPlan:
+    backup_dir: Path
+    steps: list[Step] = field(default_factory=list)
+
+    def describe(self) -> str:
+        if not self.steps:
+            return "No steps planned."
+        lines = [f"Plan ({len(self.steps)} steps):"]
+        for i, step in enumerate(self.steps, 1):
+            lines.append(f"  {i}. {step.describe()}")
+        return "\n".join(lines)
