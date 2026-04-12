@@ -2,7 +2,12 @@ from pathlib import Path
 
 import pytest
 
-from lazy_harness.init.wizard import ExistingSetupError, check_existing_setup
+from lazy_harness.init.wizard import (
+    ExistingSetupError,
+    WizardAnswers,
+    check_existing_setup,
+    run_wizard,
+)
 
 
 def test_check_existing_no_setup(tmp_path: Path):
@@ -33,3 +38,22 @@ def test_check_existing_lazy_profile(tmp_path: Path):
     (tmp_path / ".claude-lazy" / "settings.json").write_text("{}")
     with pytest.raises(ExistingSetupError, match="migrate"):
         check_existing_setup(home=tmp_path, lh_config=tmp_path / "nonexistent.toml")
+
+
+def test_run_wizard_generates_config(tmp_path: Path):
+    answers = WizardAnswers(
+        profile_name="personal",
+        agent="claude-code",
+        knowledge_path=tmp_path / "knowledge",
+        enable_qmd=False,
+    )
+    cfg_path = tmp_path / ".config" / "lazy-harness" / "config.toml"
+    run_wizard(answers, config_path=cfg_path)
+
+    assert cfg_path.is_file()
+    content = cfg_path.read_text()
+    assert "[profiles.items.personal]" in content
+    assert "claude-code" in content
+    assert (tmp_path / "knowledge").is_dir()
+    assert (tmp_path / "knowledge" / "sessions").is_dir()
+    assert (tmp_path / "knowledge" / "learnings").is_dir()
