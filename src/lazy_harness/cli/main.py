@@ -29,5 +29,13 @@ def register_commands() -> None:
     cli.add_command(status, "status")
     cli.add_command(hooks, "hooks")
 
+    from lazy_harness.cli.knowledge_cmd import knowledge
+
+    cli.add_command(knowledge, "knowledge")
+
+    from lazy_harness.cli.scheduler_cmd import scheduler
+
+    cli.add_command(scheduler, "scheduler")
+
 
 register_commands()

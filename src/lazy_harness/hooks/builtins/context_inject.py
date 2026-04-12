@@ -48,8 +48,8 @@ def git_context() -> str:
     status_output = _run_git("status", "--short")
     if status_output:
         lines = status_output.strip().splitlines()
-        modified = sum(1 for l in lines if not l.startswith("?"))
-        untracked = sum(1 for l in lines if l.startswith("?"))
+        modified = sum(1 for line in lines if not line.startswith("?"))
+        untracked = sum(1 for line in lines if line.startswith("?"))
         summary_parts: list[str] = []
         if modified:
             summary_parts.append(f"{modified} modified")
@@ -77,7 +77,7 @@ def handoff_context() -> str:
     pre_compact = memory_dir / "pre-compact-summary.md"
     if pre_compact.is_file():
         content = pre_compact.read_text(encoding="utf-8").strip()
-        lines = [l for l in content.splitlines() if not l.strip().startswith("<!--")]
+        lines = [ln for ln in content.splitlines() if not ln.strip().startswith("<!--")]
         if lines:
             parts.append("Pre-compact context:\n" + "\n".join(lines))
 
