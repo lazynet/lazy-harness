@@ -37,5 +37,9 @@ def register_commands() -> None:
 
     cli.add_command(scheduler, "scheduler")
 
+    from lazy_harness.cli.migrate_cmd import migrate
+
+    cli.add_command(migrate, "migrate")
+
 
 register_commands()
