@@ -50,5 +50,6 @@ class DetectedState:
                 self.lazy_harness_config is not None,
                 bool(self.deployed_scripts),
                 bool(self.launch_agents),
+                bool(self.knowledge_paths),
             ]
         )

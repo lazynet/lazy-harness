@@ -18,3 +18,8 @@ def test_detected_state_defaults_empty():
 def test_has_existing_setup_true_when_any_field_present(tmp_path: Path):
     state = DetectedState(claude_code=ClaudeCodeSetup(path=tmp_path))
     assert state.has_existing_setup() is True
+
+
+def test_has_existing_setup_true_when_knowledge_paths_present(tmp_path: Path):
+    state = DetectedState(knowledge_paths=[tmp_path])
+    assert state.has_existing_setup() is True
