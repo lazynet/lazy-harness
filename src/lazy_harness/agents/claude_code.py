@@ -1,0 +1,52 @@
+"""Claude Code agent adapter."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from lazy_harness.core.paths import expand_path
+
+
+class ClaudeCodeAdapter:
+    """Adapter for Claude Code (Anthropic's CLI agent)."""
+
+    @property
+    def name(self) -> str:
+        return "claude-code"
+
+    def config_dir(self, profile_config_dir: str) -> Path:
+        return expand_path(profile_config_dir)
+
+    def supported_hooks(self) -> list[str]:
+        return [
+            "session_start",
+            "session_stop",
+            "pre_compact",
+            "pre_tool_use",
+            "post_tool_use",
+            "notification",
+        ]
+
+    def generate_hook_config(self, hooks: dict[str, list[str]]) -> dict:
+        """Generate Claude Code settings.json hooks section."""
+        hook_event_map = {
+            "session_start": "SessionStart",
+            "session_stop": "Stop",
+            "pre_compact": "PreCompact",
+            "pre_tool_use": "PreToolUse",
+            "post_tool_use": "PostToolUse",
+            "notification": "Notification",
+        }
+        settings_hooks: dict[str, list[dict]] = {}
+        for event, scripts in hooks.items():
+            cc_event = hook_event_map.get(event)
+            if not cc_event:
+                continue
+            matchers = []
+            for script in scripts:
+                matchers.append({
+                    "matcher": "",
+                    "hooks": [{"type": "command", "command": script}],
+                })
+            settings_hooks[cc_event] = matchers
+        return settings_hooks
