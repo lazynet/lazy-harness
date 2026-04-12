@@ -3,9 +3,11 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+from lazy_harness.core.paths import config_file as default_config_file
 from lazy_harness.migrate.state import (
     ClaudeCodeSetup,
     DeployedScript,
+    DetectedState,
     LaunchAgentInfo,
     LazyClaudecodeSetup,
 )
@@ -119,3 +121,38 @@ def detect_launch_agents(launch_agents_dir: Path) -> list[LaunchAgentInfo]:
 def detect_qmd() -> bool:
     """Return True if the qmd CLI is available on PATH."""
     return shutil.which("qmd") is not None
+
+
+def detect_state(
+    *,
+    home: Path,
+    config_file_override: Path | None = None,
+    bin_dir: Path | None = None,
+    launch_agents_dir: Path | None = None,
+) -> DetectedState:
+    """Top-level orchestrator: scan system and return a DetectedState.
+
+    All arguments are keyword-only. If bin_dir or launch_agents_dir are not
+    provided, sensible defaults are derived from `home`. The config file
+    defaults to the lazy-harness standard location via `default_config_file()`.
+    """
+    state = DetectedState()
+
+    state.claude_code = detect_claude_code(home / ".claude")
+    state.lazy_claudecode = detect_lazy_claudecode(home)
+
+    cfg_path = config_file_override if config_file_override is not None else default_config_file()
+    if cfg_path.is_file():
+        state.lazy_harness_config = cfg_path
+
+    bdir = bin_dir if bin_dir is not None else (home / ".local" / "bin")
+    state.deployed_scripts = detect_deployed_scripts(bdir)
+
+    la_dir = launch_agents_dir if launch_agents_dir is not None else (
+        home / "Library" / "LaunchAgents"
+    )
+    state.launch_agents = detect_launch_agents(la_dir)
+
+    state.qmd_available = detect_qmd()
+
+    return state

@@ -6,6 +6,7 @@ from lazy_harness.migrate.detector import (
     detect_launch_agents,
     detect_lazy_claudecode,
     detect_qmd,
+    detect_state,
 )
 
 
@@ -102,3 +103,53 @@ def test_detect_qmd_present(monkeypatch):
         lambda name: "/usr/local/bin/qmd" if name == "qmd" else None,
     )
     assert detect_qmd() is True
+
+
+def test_detect_state_empty_home(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    state = detect_state(
+        home=tmp_path,
+        config_file_override=tmp_path / "nonexistent.toml",
+        bin_dir=tmp_path / ".local" / "bin",
+        launch_agents_dir=tmp_path / "LaunchAgents",
+    )
+    assert state.has_existing_setup() is False
+
+
+def test_detect_state_full(tmp_path: Path, monkeypatch):
+    # lazy-claudecode profile
+    lazy = tmp_path / ".claude-lazy"
+    lazy.mkdir()
+    (lazy / "settings.json").write_text("{}")
+
+    # lazy-harness previous config
+    cfg_dir = tmp_path / ".config" / "lazy-harness"
+    cfg_dir.mkdir(parents=True)
+    cfg_file = cfg_dir / "config.toml"
+    cfg_file.write_text("")
+
+    # deployed script
+    bin_dir = tmp_path / ".local" / "bin"
+    bin_dir.mkdir(parents=True)
+    target = tmp_path / "repo" / "lcc-status"
+    target.parent.mkdir(parents=True)
+    target.write_text("#!/bin/sh\n")
+    (bin_dir / "lcc-status").symlink_to(target)
+
+    monkeypatch.setattr(
+        "shutil.which",
+        lambda name: "/usr/bin/qmd" if name == "qmd" else None,
+    )
+
+    state = detect_state(
+        home=tmp_path,
+        config_file_override=cfg_file,
+        bin_dir=bin_dir,
+        launch_agents_dir=tmp_path / "LaunchAgents",
+    )
+    assert state.lazy_claudecode is not None
+    assert state.lazy_harness_config == cfg_file
+    assert len(state.deployed_scripts) == 1
+    assert state.qmd_available is True
+    assert state.has_existing_setup() is True
