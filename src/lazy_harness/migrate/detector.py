@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from lazy_harness.migrate.state import ClaudeCodeSetup
+from lazy_harness.migrate.state import ClaudeCodeSetup, LazyClaudecodeSetup
 
 
 def detect_claude_code(claude_dir: Path) -> ClaudeCodeSetup | None:
@@ -24,4 +24,50 @@ def detect_claude_code(claude_dir: Path) -> ClaudeCodeSetup | None:
         path=claude_dir,
         has_settings=has_settings,
         has_claude_md=has_claude_md,
+    )
+
+
+def detect_lazy_claudecode(home: Path) -> LazyClaudecodeSetup | None:
+    """Scan home for ~/.claude-<profile>/ directories.
+
+    Returns None if no lazy-claudecode-style profile dirs are found.
+    A profile dir must contain a settings.json file to be counted.
+    """
+    profiles: list[str] = []
+    claude_dirs: dict[str, Path] = {}
+    skills_dirs: dict[str, Path] = {}
+    settings_paths: dict[str, Path] = {}
+
+    if not home.exists():
+        return None
+
+    for entry in sorted(home.iterdir()):
+        if not entry.is_dir():
+            continue
+        name = entry.name
+        if not name.startswith(".claude-"):
+            continue
+        profile = name[len(".claude-"):]
+        if not profile:
+            continue
+
+        settings = entry / "settings.json"
+        if not settings.is_file():
+            continue
+
+        profiles.append(profile)
+        claude_dirs[profile] = entry
+        settings_paths[profile] = settings
+        skills = entry / "skills"
+        if skills.is_dir():
+            skills_dirs[profile] = skills
+
+    if not profiles:
+        return None
+
+    return LazyClaudecodeSetup(
+        profiles=profiles,
+        claude_dirs=claude_dirs,
+        skills_dirs=skills_dirs,
+        settings_paths=settings_paths,
     )
