@@ -18,7 +18,7 @@ def register_commands() -> None:
     from lazy_harness.cli.deploy_cmd import deploy
     from lazy_harness.cli.doctor_cmd import doctor
     from lazy_harness.cli.hooks_cmd import hooks
-    from lazy_harness.cli.init_cmd import init_cmd
+    from lazy_harness.cli.init_cmd import init as init_cmd
     from lazy_harness.cli.profile_cmd import profile
     from lazy_harness.cli.status_cmd import status
 

@@ -2,70 +2,65 @@
 
 from __future__ import annotations
 
-import click
+import os
+from pathlib import Path
 
-from lazy_harness.core.config import (
-    AgentConfig,
-    Config,
-    HarnessConfig,
-    ProfileEntry,
-    ProfilesConfig,
-    save_config,
+import click
+from rich.console import Console
+
+from lazy_harness.core.paths import config_file
+from lazy_harness.init.wizard import (
+    ExistingSetupError,
+    WizardAnswers,
+    check_existing_setup,
+    run_wizard,
 )
-from lazy_harness.core.paths import config_dir, config_file
+from lazy_harness.migrate.detector import detect_qmd
+
+
+def _home() -> Path:
+    return Path(os.path.expanduser("~"))
 
 
 @click.command("init")
-@click.option("--profile-name", default=None, help="Default profile name")
-@click.option("--profile-config-dir", default=None, help="Config directory for default profile")
-@click.option("--agent", default="claude-code", help="Agent type")
-@click.option("--non-interactive", is_flag=True, help="Skip interactive prompts")
-def init_cmd(
-    profile_name: str | None,
-    profile_config_dir: str | None,
-    agent: str,
-    non_interactive: bool,
-) -> None:
-    """Initialize lazy-harness configuration."""
-    cf = config_file()
+@click.option("--force", is_flag=True, help="Reinitialize, backing up existing config.")
+def init(force: bool) -> None:
+    """Initialize lazy-harness for a new user."""
+    console = Console()
+    home = _home()
+    cfg = config_file()
 
-    if cf.is_file():
-        if non_interactive:
-            click.echo(f"Config already exists at {cf}. Use --force to overwrite.")
-            return
-        if not click.confirm(f"Config already exists at {cf}. Overwrite?", default=False):
-            return
+    if not force:
+        try:
+            check_existing_setup(home=home, lh_config=cfg)
+        except ExistingSetupError as e:
+            console.print(f"[red]Error:[/red] {e}")
+            raise SystemExit(1) from e
 
-    if non_interactive:
-        name = profile_name or "personal"
-        pdir = profile_config_dir or f"~/.claude-{name}"
-    else:
-        name = click.prompt("Default profile name", default=profile_name or "personal")
-        default_dir = profile_config_dir or f"~/.claude-{name}"
-        pdir = click.prompt(f"Config dir for '{name}'", default=default_dir)
-        agent = click.prompt("Agent type", default=agent)
-        click.echo()
+    profile_name = click.prompt("Profile name", default="personal")
+    agent = click.prompt("Agent", default="claude-code")
+    knowledge_default = str(home / "Documents" / "lazy-harness-knowledge")
+    knowledge_path = click.prompt("Knowledge directory", default=knowledge_default)
 
-    cfg = Config(
-        harness=HarnessConfig(version="1"),
-        agent=AgentConfig(type=agent),
-        profiles=ProfilesConfig(
-            default=name,
-            items={
-                name: ProfileEntry(config_dir=pdir, roots=["~"]),
-            },
-        ),
+    enable_qmd = False
+    if detect_qmd():
+        enable_qmd = click.confirm("QMD detected. Enable knowledge indexing?", default=True)
+
+    answers = WizardAnswers(
+        profile_name=profile_name,
+        agent=agent,
+        knowledge_path=Path(knowledge_path).expanduser(),
+        enable_qmd=enable_qmd,
     )
+    run_wizard(answers, config_path=cfg)
 
-    save_config(cfg, cf)
-    click.echo(f"Config written to {cf}")
-
-    profiles_dir = config_dir() / "profiles" / name
-    profiles_dir.mkdir(parents=True, exist_ok=True)
-    click.echo(f"Profile directory created at {profiles_dir}")
-
-    click.echo()
-    click.echo("Next steps:")
-    click.echo(f"  1. Edit {cf}")
-    click.echo("  2. lh profile list")
-    click.echo("  3. lh doctor")
+    console.print(f"[green]✓[/green] Config created at {cfg}")
+    console.print(f"[green]✓[/green] Profile '{profile_name}' created")
+    console.print(f"[green]✓[/green] Knowledge directory ready at {answers.knowledge_path}")
+    if enable_qmd:
+        console.print(
+            "[green]✓[/green] QMD integration flagged "
+            "(run `lh knowledge sync` to initialize)"
+        )
+    console.print()
+    console.print("Run `lh doctor` to verify your setup.")
