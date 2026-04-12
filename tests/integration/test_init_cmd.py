@@ -9,9 +9,10 @@ from click.testing import CliRunner
 from lazy_harness.cli.main import cli
 
 
-def test_init_on_empty_home(home_dir: Path) -> None:
+def test_init_on_empty_home(home_dir: Path, monkeypatch) -> None:
+    monkeypatch.setattr("lazy_harness.cli.init_cmd.detect_qmd", lambda: False)
     runner = CliRunner()
-    result = runner.invoke(cli, ["init"], input="\n\n\n\n")
+    result = runner.invoke(cli, ["init"], input="\n\n\n")
     assert result.exit_code == 0, result.output
     assert (home_dir / ".config" / "lazy-harness" / "config.toml").is_file()
 
