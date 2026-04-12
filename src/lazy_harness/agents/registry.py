@@ -19,9 +19,7 @@ def get_agent(agent_type: str) -> AgentAdapter:
     """Get an agent adapter instance by type name."""
     cls = _AGENTS.get(agent_type)
     if cls is None:
-        raise AgentNotFoundError(
-            f"Agent '{agent_type}' not found. Available: {', '.join(_AGENTS)}"
-        )
+        raise AgentNotFoundError(f"Agent '{agent_type}' not found. Available: {', '.join(_AGENTS)}")
     return cls()
 
 

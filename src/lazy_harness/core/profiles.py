@@ -27,13 +27,15 @@ def list_profiles(cfg: Config) -> list[ProfileInfo]:
     result: list[ProfileInfo] = []
     for name, entry in cfg.profiles.items.items():
         config_path = expand_path(entry.config_dir)
-        result.append(ProfileInfo(
-            name=name,
-            config_dir=config_path,
-            roots=entry.roots,
-            is_default=(name == cfg.profiles.default),
-            exists=config_path.is_dir(),
-        ))
+        result.append(
+            ProfileInfo(
+                name=name,
+                config_dir=config_path,
+                roots=entry.roots,
+                is_default=(name == cfg.profiles.default),
+                exists=config_path.is_dir(),
+            )
+        )
     return result
 
 

@@ -15,10 +15,10 @@ def cli() -> None:
 
 def register_commands() -> None:
     """Register all subcommands. Called after imports to avoid circular deps."""
+    from lazy_harness.cli.deploy_cmd import deploy
+    from lazy_harness.cli.doctor_cmd import doctor
     from lazy_harness.cli.init_cmd import init_cmd
     from lazy_harness.cli.profile_cmd import profile
-    from lazy_harness.cli.doctor_cmd import doctor
-    from lazy_harness.cli.deploy_cmd import deploy
 
     cli.add_command(init_cmd, "init")
     cli.add_command(profile, "profile")

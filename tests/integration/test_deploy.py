@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
-import pytest
 from click.testing import CliRunner
 
 from lazy_harness.cli.main import cli

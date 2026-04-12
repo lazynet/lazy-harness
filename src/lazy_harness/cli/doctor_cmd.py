@@ -50,7 +50,8 @@ def doctor() -> None:
         if p.exists:
             console.print(f"  [green]✓[/green] {label} — {contract_path(p.config_dir)}")
         else:
-            console.print(f"  [red]✗[/red] {label} — {contract_path(p.config_dir)} [red](missing)[/red]")
+            cdir = contract_path(p.config_dir)
+            console.print(f"  [red]✗[/red] {label} — {cdir} [red](missing)[/red]")
             ok = False
 
     if cfg.knowledge.path:

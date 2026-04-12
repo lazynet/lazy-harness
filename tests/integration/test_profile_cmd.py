@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 from click.testing import CliRunner
 
 from lazy_harness.cli.main import cli
@@ -47,11 +46,18 @@ def test_profile_list(home_dir: Path) -> None:
 def test_profile_add(home_dir: Path) -> None:
     _setup_config(home_dir)
     runner = CliRunner()
-    result = runner.invoke(cli, [
-        "profile", "add", "work",
-        "--config-dir", str(home_dir / ".claude-work"),
-        "--roots", "~/work",
-    ])
+    result = runner.invoke(
+        cli,
+        [
+            "profile",
+            "add",
+            "work",
+            "--config-dir",
+            str(home_dir / ".claude-work"),
+            "--roots",
+            "~/work",
+        ],
+    )
     assert result.exit_code == 0
     assert "work" in result.output or "added" in result.output.lower()
 
@@ -62,16 +68,23 @@ def test_profile_add(home_dir: Path) -> None:
 def test_profile_add_duplicate(home_dir: Path) -> None:
     _setup_config(home_dir)
     runner = CliRunner()
-    result = runner.invoke(cli, [
-        "profile", "add", "personal",
-        "--config-dir", str(home_dir / ".claude-personal"),
-    ])
+    result = runner.invoke(
+        cli,
+        [
+            "profile",
+            "add",
+            "personal",
+            "--config-dir",
+            str(home_dir / ".claude-personal"),
+        ],
+    )
     assert result.exit_code != 0 or "already exists" in result.output.lower()
 
 
 def test_profile_remove(home_dir: Path) -> None:
     config_path = _setup_config(home_dir)
     from lazy_harness.core.config import load_config
+
     cfg = load_config(config_path)
     cfg.profiles.items["work"] = ProfileEntry(
         config_dir=str(home_dir / ".claude-work"), roots=["~/work"]

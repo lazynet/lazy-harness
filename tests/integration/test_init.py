@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 from click.testing import CliRunner
 
 from lazy_harness.cli.main import cli
@@ -31,13 +30,19 @@ def test_init_creates_profile_dir(home_dir: Path) -> None:
 
 def test_init_noninteractive(home_dir: Path) -> None:
     runner = CliRunner()
-    result = runner.invoke(cli, [
-        "init",
-        "--profile-name", "work",
-        "--profile-config-dir", str(home_dir / ".claude-work"),
-        "--agent", "claude-code",
-        "--non-interactive",
-    ])
+    result = runner.invoke(
+        cli,
+        [
+            "init",
+            "--profile-name",
+            "work",
+            "--profile-config-dir",
+            str(home_dir / ".claude-work"),
+            "--agent",
+            "claude-code",
+            "--non-interactive",
+        ],
+    )
     assert result.exit_code == 0
     config_file = home_dir / ".config" / "lazy-harness" / "config.toml"
     assert config_file.is_file()

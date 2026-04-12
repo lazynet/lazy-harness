@@ -44,9 +44,11 @@ class ClaudeCodeAdapter:
                 continue
             matchers = []
             for script in scripts:
-                matchers.append({
-                    "matcher": "",
-                    "hooks": [{"type": "command", "command": script}],
-                })
+                matchers.append(
+                    {
+                        "matcher": "",
+                        "hooks": [{"type": "command", "command": script}],
+                    }
+                )
             settings_hooks[cc_event] = matchers
         return settings_hooks

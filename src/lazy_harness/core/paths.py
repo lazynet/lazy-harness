@@ -87,5 +87,5 @@ def contract_path(path: Path | str) -> str:
     s = str(path)
     home = str(_home())
     if s.startswith(home):
-        return "~" + s[len(home):]
+        return "~" + s[len(home) :]
     return s

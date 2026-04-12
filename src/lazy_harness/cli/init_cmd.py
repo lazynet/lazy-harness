@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import click
 
 from lazy_harness.core.config import (
@@ -69,5 +67,5 @@ def init_cmd(
     click.echo()
     click.echo("Next steps:")
     click.echo(f"  1. Edit {cf}")
-    click.echo(f"  2. lh profile list")
-    click.echo(f"  3. lh doctor")
+    click.echo("  2. lh profile list")
+    click.echo("  3. lh doctor")

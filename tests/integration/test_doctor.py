@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 from click.testing import CliRunner
 
 from lazy_harness.cli.main import cli
@@ -49,7 +48,8 @@ def test_doctor_healthy(home_dir: Path) -> None:
 def test_doctor_missing_config(home_dir: Path) -> None:
     runner = CliRunner()
     result = runner.invoke(cli, ["doctor"])
-    assert result.exit_code != 0 or "not found" in result.output.lower() or "missing" in result.output.lower()
+    out = result.output.lower()
+    assert result.exit_code != 0 or "not found" in out or "missing" in out
 
 
 def test_doctor_missing_profile_dir(home_dir: Path) -> None:
