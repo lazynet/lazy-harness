@@ -1,0 +1,35 @@
+# lazy-harness configuration
+# Docs: https://github.com/lazynet/lazy-harness
+
+[harness]
+version = "1"
+
+[agent]
+type = "claude-code"
+
+[profiles]
+default = "personal"
+
+[profiles.personal]
+config_dir = "~/.claude-personal"
+roots = ["~"]
+
+[knowledge]
+path = ""
+
+[knowledge.sessions]
+enabled = false
+subdir = "sessions"
+
+[knowledge.learnings]
+enabled = false
+subdir = "learnings"
+
+[knowledge.search]
+engine = "qmd"
+
+[monitoring]
+enabled = false
+
+[scheduler]
+backend = "auto"
