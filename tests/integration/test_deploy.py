@@ -1,0 +1,76 @@
+"""Integration tests for lh deploy."""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+import pytest
+from click.testing import CliRunner
+
+from lazy_harness.cli.main import cli
+from lazy_harness.core.config import (
+    Config,
+    HarnessConfig,
+    ProfileEntry,
+    ProfilesConfig,
+    save_config,
+)
+
+
+def _setup_with_profile_content(home_dir: Path) -> Path:
+    """Create config + profile content to deploy."""
+    config_path = home_dir / ".config" / "lazy-harness" / "config.toml"
+    profile_content_dir = home_dir / ".config" / "lazy-harness" / "profiles" / "personal"
+    profile_content_dir.mkdir(parents=True)
+    (profile_content_dir / "CLAUDE.md").write_text("# My profile\n")
+    (profile_content_dir / "settings.json").write_text("{}\n")
+
+    target_dir = home_dir / ".claude-personal"
+
+    cfg = Config(
+        harness=HarnessConfig(version="1"),
+        profiles=ProfilesConfig(
+            default="personal",
+            items={
+                "personal": ProfileEntry(
+                    config_dir=str(target_dir),
+                    roots=["~"],
+                ),
+            },
+        ),
+    )
+    save_config(cfg, config_path)
+    return config_path
+
+
+def test_deploy_creates_profile_symlinks(home_dir: Path) -> None:
+    _setup_with_profile_content(home_dir)
+    runner = CliRunner()
+    result = runner.invoke(cli, ["deploy"])
+    assert result.exit_code == 0
+
+    target = home_dir / ".claude-personal"
+    assert target.is_dir()
+    claude_md = target / "CLAUDE.md"
+    assert claude_md.exists()
+    assert claude_md.is_symlink()
+
+
+def test_deploy_idempotent(home_dir: Path) -> None:
+    _setup_with_profile_content(home_dir)
+    runner = CliRunner()
+    runner.invoke(cli, ["deploy"])
+    result = runner.invoke(cli, ["deploy"])
+    assert result.exit_code == 0
+
+
+def test_deploy_creates_claude_symlink(home_dir: Path) -> None:
+    _setup_with_profile_content(home_dir)
+    runner = CliRunner()
+    result = runner.invoke(cli, ["deploy"])
+    assert result.exit_code == 0
+
+    claude_link = home_dir / ".claude"
+    assert claude_link.is_symlink()
+    assert str(home_dir / ".claude-personal") in str(claude_link.resolve())
