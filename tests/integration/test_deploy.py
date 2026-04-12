@@ -63,6 +63,46 @@ def test_deploy_idempotent(home_dir: Path) -> None:
     assert result.exit_code == 0
 
 
+def test_deploy_generates_hooks_in_settings(home_dir: Path) -> None:
+    import json
+
+    config_path = home_dir / ".config" / "lazy-harness" / "config.toml"
+    profile_content_dir = home_dir / ".config" / "lazy-harness" / "profiles" / "personal"
+    profile_content_dir.mkdir(parents=True)
+    (profile_content_dir / "CLAUDE.md").write_text("# Profile\n")
+
+    target_dir = home_dir / ".claude-personal"
+
+    from lazy_harness.core.config import (
+        Config,
+        HarnessConfig,
+        HookEventConfig,
+        ProfileEntry,
+        ProfilesConfig,
+        save_config,
+    )
+
+    cfg = Config(
+        harness=HarnessConfig(version="1"),
+        profiles=ProfilesConfig(
+            default="personal",
+            items={"personal": ProfileEntry(config_dir=str(target_dir), roots=["~"])},
+        ),
+        hooks={"session_start": HookEventConfig(scripts=["context-inject"])},
+    )
+    save_config(cfg, config_path)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["deploy"])
+    assert result.exit_code == 0
+
+    settings_file = target_dir / "settings.json"
+    assert settings_file.is_file()
+    settings = json.loads(settings_file.read_text())
+    assert "hooks" in settings
+    assert "SessionStart" in settings["hooks"]
+
+
 def test_deploy_creates_claude_symlink(home_dir: Path) -> None:
     _setup_with_profile_content(home_dir)
     runner = CliRunner()

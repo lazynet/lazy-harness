@@ -17,13 +17,17 @@ def register_commands() -> None:
     """Register all subcommands. Called after imports to avoid circular deps."""
     from lazy_harness.cli.deploy_cmd import deploy
     from lazy_harness.cli.doctor_cmd import doctor
+    from lazy_harness.cli.hooks_cmd import hooks
     from lazy_harness.cli.init_cmd import init_cmd
     from lazy_harness.cli.profile_cmd import profile
+    from lazy_harness.cli.status_cmd import status
 
     cli.add_command(init_cmd, "init")
     cli.add_command(profile, "profile")
     cli.add_command(doctor, "doctor")
     cli.add_command(deploy, "deploy")
+    cli.add_command(status, "status")
+    cli.add_command(hooks, "hooks")
 
 
 register_commands()

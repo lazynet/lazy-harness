@@ -6,7 +6,7 @@ import click
 
 from lazy_harness.core.config import ConfigError, load_config
 from lazy_harness.core.paths import config_file
-from lazy_harness.deploy.engine import deploy_claude_symlink, deploy_profiles
+from lazy_harness.deploy.engine import deploy_claude_symlink, deploy_hooks, deploy_profiles
 
 
 @click.command("deploy")
@@ -23,6 +23,10 @@ def deploy() -> None:
 
     click.echo("Deploying profiles:")
     deploy_profiles(cfg)
+    click.echo()
+
+    click.echo("Deploying hooks:")
+    deploy_hooks(cfg)
     click.echo()
 
     click.echo("Setting up ~/.claude symlink:")

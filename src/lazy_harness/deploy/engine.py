@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import sys
+
 import click
 
 from lazy_harness.core.config import Config
@@ -32,6 +35,45 @@ def deploy_profiles(cfg: Config) -> None:
                 click.echo(f"  · {name}/{item.name} (already linked)")
             else:
                 click.echo(f"  ✓ {name}/{item.name}")
+
+
+def deploy_hooks(cfg: Config) -> None:
+    """Generate agent-native hook config for each profile."""
+    from lazy_harness.agents.registry import get_agent
+    from lazy_harness.hooks.loader import resolve_hooks_for_event
+
+    agent = get_agent(cfg.agent.type)
+
+    hook_commands: dict[str, list[str]] = {}
+    for event_name in cfg.hooks:
+        hooks = resolve_hooks_for_event(cfg, event_name)
+        if hooks:
+            commands: list[str] = []
+            for hook in hooks:
+                commands.append(f"{sys.executable} {hook.path}")
+            hook_commands[event_name] = commands
+
+    if not hook_commands:
+        click.echo("  No hooks to deploy.")
+        return
+
+    agent_hooks = agent.generate_hook_config(hook_commands)
+
+    for name, entry in cfg.profiles.items.items():
+        target_dir = expand_path(entry.config_dir)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        settings_file = target_dir / "settings.json"
+
+        settings: dict = {}
+        if settings_file.is_file():
+            try:
+                settings = json.loads(settings_file.read_text())
+            except json.JSONDecodeError:
+                pass
+
+        settings["hooks"] = agent_hooks
+        settings_file.write_text(json.dumps(settings, indent=2) + "\n")
+        click.echo(f"  ✓ {name}/settings.json (hooks updated)")
 
 
 def deploy_claude_symlink(cfg: Config) -> None:
