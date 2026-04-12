@@ -41,5 +41,9 @@ def register_commands() -> None:
 
     cli.add_command(migrate, "migrate")
 
+    from lazy_harness.cli.selftest_cmd import selftest
+
+    cli.add_command(selftest, "selftest")
+
 
 register_commands()
