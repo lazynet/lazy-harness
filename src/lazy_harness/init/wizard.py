@@ -55,10 +55,8 @@ def run_wizard(answers: WizardAnswers, *, config_path: Path) -> None:
         "agent": {"type": answers.agent},
         "profiles": {
             "default": answers.profile_name,
-            "items": {
-                answers.profile_name: {
-                    "config_dir": f"~/.claude-{answers.profile_name}",
-                }
+            answers.profile_name: {
+                "config_dir": f"~/.claude-{answers.profile_name}",
             },
         },
         "knowledge": {"path": contract_path(answers.knowledge_path)},

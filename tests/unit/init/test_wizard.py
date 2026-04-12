@@ -52,7 +52,7 @@ def test_run_wizard_generates_config(tmp_path: Path):
 
     assert cfg_path.is_file()
     content = cfg_path.read_text()
-    assert "[profiles.items.personal]" in content
+    assert "[profiles.personal]" in content
     assert "claude-code" in content
     assert (tmp_path / "knowledge").is_dir()
     assert (tmp_path / "knowledge" / "sessions").is_dir()

@@ -15,7 +15,7 @@ def test_check_config_valid(tmp_path: Path):
         '[harness]\nversion = "1"\n'
         '[agent]\ntype = "claude-code"\n'
         '[profiles]\ndefault = "personal"\n'
-        '[profiles.items.personal]\nconfig_dir = "~/.claude-personal"\n'
+        '[profiles.personal]\nconfig_dir = "~/.claude-personal"\n'
         '[knowledge]\npath = ""\n'
     )
     results = check_config(config_path=cfg)
@@ -28,7 +28,7 @@ def test_check_config_unknown_agent(tmp_path: Path):
         '[harness]\nversion = "1"\n'
         '[agent]\ntype = "unknown-agent"\n'
         '[profiles]\ndefault = "personal"\n'
-        '[profiles.items.personal]\nconfig_dir = "~/.claude-personal"\n'
+        '[profiles.personal]\nconfig_dir = "~/.claude-personal"\n'
         '[knowledge]\npath = ""\n'
     )
     results = check_config(config_path=cfg)

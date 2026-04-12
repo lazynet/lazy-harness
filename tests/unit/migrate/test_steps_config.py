@@ -27,8 +27,8 @@ def test_generate_config_writes_toml_with_profiles(tmp_path: Path):
 
     assert result.status == StepStatus.DONE
     content = out.read_text()
-    assert "[profiles.items.lazy]" in content
-    assert "[profiles.items.flex]" in content
+    assert "[profiles.lazy]" in content
+    assert "[profiles.flex]" in content
     assert "claude-code" in content
 
 
@@ -41,7 +41,7 @@ def test_generate_config_no_profiles_fallback_to_personal(tmp_path: Path):
     )
     result = step.execute(backup_dir=tmp_path / "backup", dry_run=False)
     assert result.status == StepStatus.DONE
-    assert "[profiles.items.personal]" in out.read_text()
+    assert "[profiles.personal]" in out.read_text()
 
 
 def test_generate_config_dry_run_no_write(tmp_path: Path):

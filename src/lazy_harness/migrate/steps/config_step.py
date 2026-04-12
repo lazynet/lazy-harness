@@ -33,7 +33,7 @@ class GenerateConfigStep:
         data: dict = {
             "harness": {"version": "1"},
             "agent": {"type": "claude-code"},
-            "profiles": {"default": "personal", "items": {}},
+            "profiles": {"default": "personal"},
             "knowledge": {"path": contract_path(self.knowledge_path)},
             "monitoring": {"enabled": True},
             "scheduler": {"backend": "auto"},
@@ -42,11 +42,11 @@ class GenerateConfigStep:
         if self.lazy_claudecode and self.lazy_claudecode.profiles:
             data["profiles"]["default"] = self.lazy_claudecode.profiles[0]
             for name in self.lazy_claudecode.profiles:
-                data["profiles"]["items"][name] = {
+                data["profiles"][name] = {
                     "config_dir": contract_path(self.lazy_claudecode.claude_dirs[name]),
                 }
         else:
-            data["profiles"]["items"]["personal"] = {"config_dir": "~/.claude-personal"}
+            data["profiles"]["personal"] = {"config_dir": "~/.claude-personal"}
 
         if dry_run:
             result.status = StepStatus.DONE
