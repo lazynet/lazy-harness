@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
-from lazy_harness.migrate.state import ClaudeCodeSetup, LazyClaudecodeSetup
+from lazy_harness.migrate.state import (
+    ClaudeCodeSetup,
+    DeployedScript,
+    LaunchAgentInfo,
+    LazyClaudecodeSetup,
+)
 
 
 def detect_claude_code(claude_dir: Path) -> ClaudeCodeSetup | None:
@@ -71,3 +77,45 @@ def detect_lazy_claudecode(home: Path) -> LazyClaudecodeSetup | None:
         skills_dirs=skills_dirs,
         settings_paths=settings_paths,
     )
+
+
+def detect_deployed_scripts(bin_dir: Path) -> list[DeployedScript]:
+    """Find symlinks named lcc-* under bin_dir.
+
+    Non-symlinks and unrelated names are ignored. A dangling symlink is
+    reported with target=None.
+    """
+    results: list[DeployedScript] = []
+    if not bin_dir.is_dir():
+        return results
+
+    for entry in sorted(bin_dir.iterdir()):
+        if not entry.name.startswith("lcc-"):
+            continue
+        if not entry.is_symlink():
+            continue
+        try:
+            target: Path | None = entry.resolve(strict=True)
+        except (FileNotFoundError, OSError):
+            target = None
+        results.append(DeployedScript(name=entry.name, symlink=entry, target=target))
+
+    return results
+
+
+def detect_launch_agents(launch_agents_dir: Path) -> list[LaunchAgentInfo]:
+    """Find plist files with labels starting com.lazy."""
+    results: list[LaunchAgentInfo] = []
+    if not launch_agents_dir.is_dir():
+        return results
+
+    for plist in sorted(launch_agents_dir.glob("com.lazy.*.plist")):
+        label = plist.stem
+        results.append(LaunchAgentInfo(label=label, plist_path=plist))
+
+    return results
+
+
+def detect_qmd() -> bool:
+    """Return True if the qmd CLI is available on PATH."""
+    return shutil.which("qmd") is not None

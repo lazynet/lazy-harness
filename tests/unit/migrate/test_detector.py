@@ -1,6 +1,12 @@
 from pathlib import Path
 
-from lazy_harness.migrate.detector import detect_claude_code, detect_lazy_claudecode
+from lazy_harness.migrate.detector import (
+    detect_claude_code,
+    detect_deployed_scripts,
+    detect_launch_agents,
+    detect_lazy_claudecode,
+    detect_qmd,
+)
 
 
 def test_detect_claude_code_empty_dir_returns_none(tmp_path: Path):
@@ -52,3 +58,47 @@ def test_detect_lazy_claudecode_multi_profile(tmp_path: Path):
     result = detect_lazy_claudecode(tmp_path)
     assert result is not None
     assert sorted(result.profiles) == ["flex", "lazy"]
+
+
+def test_detect_deployed_scripts_finds_lcc_symlinks(tmp_path: Path):
+    bin_dir = tmp_path / ".local" / "bin"
+    bin_dir.mkdir(parents=True)
+    target = tmp_path / "repo" / "scripts" / "lcc-status"
+    target.parent.mkdir(parents=True)
+    target.write_text("#!/bin/sh\n")
+    target.chmod(0o755)
+    (bin_dir / "lcc-status").symlink_to(target)
+    (bin_dir / "lcc-dangling").symlink_to(tmp_path / "missing")
+    (bin_dir / "unrelated").write_text("#!/bin/sh\n")
+
+    scripts = detect_deployed_scripts(bin_dir)
+    names = sorted(s.name for s in scripts)
+    assert names == ["lcc-dangling", "lcc-status"]
+    by_name = {s.name: s for s in scripts}
+    assert by_name["lcc-status"].target == target
+    assert by_name["lcc-dangling"].target is None
+
+
+def test_detect_launch_agents_filters_com_lazy(tmp_path: Path):
+    la_dir = tmp_path / "LaunchAgents"
+    la_dir.mkdir()
+    (la_dir / "com.lazy.status.plist").write_text("<plist/>")
+    (la_dir / "com.lazy.sessions.plist").write_text("<plist/>")
+    (la_dir / "com.apple.other.plist").write_text("<plist/>")
+
+    agents = detect_launch_agents(la_dir)
+    labels = sorted(a.label for a in agents)
+    assert labels == ["com.lazy.sessions", "com.lazy.status"]
+
+
+def test_detect_qmd_missing(monkeypatch):
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    assert detect_qmd() is False
+
+
+def test_detect_qmd_present(monkeypatch):
+    monkeypatch.setattr(
+        "shutil.which",
+        lambda name: "/usr/local/bin/qmd" if name == "qmd" else None,
+    )
+    assert detect_qmd() is True
