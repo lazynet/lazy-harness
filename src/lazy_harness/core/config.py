@@ -77,6 +77,11 @@ class SchedulerConfig:
 
 
 @dataclass
+class HookEventConfig:
+    scripts: list[str] = field(default_factory=list)
+
+
+@dataclass
 class Config:
     harness: HarnessConfig = field(default_factory=HarnessConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
@@ -84,6 +89,7 @@ class Config:
     knowledge: KnowledgeConfig = field(default_factory=KnowledgeConfig)
     monitoring: MonitoringConfig = field(default_factory=MonitoringConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
+    hooks: dict[str, HookEventConfig] = field(default_factory=dict)
 
 
 def _parse_profiles(raw: dict[str, Any]) -> ProfilesConfig:
@@ -142,6 +148,13 @@ def load_config(path: Path) -> Config:
     scheduler_raw = raw.get("scheduler", {})
     cfg.scheduler = SchedulerConfig(backend=scheduler_raw.get("backend", "auto"))
 
+    hooks_raw = raw.get("hooks", {})
+    for event_name, event_cfg in hooks_raw.items():
+        if isinstance(event_cfg, dict):
+            cfg.hooks[event_name] = HookEventConfig(
+                scripts=event_cfg.get("scripts", []),
+            )
+
     return cfg
 
 
@@ -180,6 +193,12 @@ def _config_to_dict(cfg: Config) -> dict[str, Any]:
         result["monitoring"]["db"] = cfg.monitoring.db
     if cfg.monitoring.pricing:
         result["monitoring"]["pricing"] = cfg.monitoring.pricing
+
+    if cfg.hooks:
+        hooks_dict: dict[str, Any] = {}
+        for event_name, event_cfg in cfg.hooks.items():
+            hooks_dict[event_name] = {"scripts": event_cfg.scripts}
+        result["hooks"] = hooks_dict
 
     return result
 

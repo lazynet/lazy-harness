@@ -114,3 +114,35 @@ version = "1"
 
     cfg2 = load_config(config_file)
     assert cfg2.agent.type == "ollama"
+
+
+def test_load_config_with_hooks(config_dir: Path) -> None:
+    config_file = config_dir / "config.toml"
+    config_file.write_text("""
+[harness]
+version = "1"
+
+[hooks.session_start]
+scripts = ["context-inject", "git-status"]
+
+[hooks.session_stop]
+scripts = ["session-export"]
+""")
+    from lazy_harness.core.config import load_config
+
+    cfg = load_config(config_file)
+    assert "session_start" in cfg.hooks
+    assert cfg.hooks["session_start"].scripts == ["context-inject", "git-status"]
+    assert cfg.hooks["session_stop"].scripts == ["session-export"]
+
+
+def test_load_config_no_hooks_defaults_empty(config_dir: Path) -> None:
+    config_file = config_dir / "config.toml"
+    config_file.write_text("""
+[harness]
+version = "1"
+""")
+    from lazy_harness.core.config import load_config
+
+    cfg = load_config(config_file)
+    assert cfg.hooks == {}
