@@ -85,11 +85,12 @@ def test_detect_launch_agents_filters_com_lazy(tmp_path: Path):
     la_dir.mkdir()
     (la_dir / "com.lazy.status.plist").write_text("<plist/>")
     (la_dir / "com.lazy.sessions.plist").write_text("<plist/>")
+    (la_dir / "com.lazynet.example.plist").write_text("<plist/>")
     (la_dir / "com.apple.other.plist").write_text("<plist/>")
 
     agents = detect_launch_agents(la_dir)
     labels = sorted(a.label for a in agents)
-    assert labels == ["com.lazy.sessions", "com.lazy.status"]
+    assert labels == ["com.lazy.sessions", "com.lazy.status", "com.lazynet.example"]
 
 
 def test_detect_qmd_missing(monkeypatch):

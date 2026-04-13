@@ -111,7 +111,7 @@ def detect_launch_agents(launch_agents_dir: Path) -> list[LaunchAgentInfo]:
     if not launch_agents_dir.is_dir():
         return results
 
-    for plist in sorted(launch_agents_dir.glob("com.lazy.*.plist")):
+    for plist in sorted(launch_agents_dir.glob("com.lazy*.plist")):
         label = plist.stem
         results.append(LaunchAgentInfo(label=label, plist_path=plist))
 
