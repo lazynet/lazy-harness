@@ -69,6 +69,11 @@ nav:
     - The problem: why/problem.md
     - Memory model: why/memory-model.md
     - Philosophy: why/philosophy.md
+  - How:
+    - Hooks: how/hooks.md
+    - Memory compound loop: how/memory-compound.md
+    - Knowledge pipeline: how/knowledge-pipeline.md
+    - Profiles and deploy: how/profiles-and-deploy.md
   - Getting started:
     - Install: getting-started/install.md
     - First run: getting-started/first-run.md
@@ -79,19 +84,22 @@ nav:
   - Architecture:
     - Overview: architecture/overview.md
     - Decisions:
+      - Index: architecture/decisions/index.md
       - ADR-001 Hybrid architecture: architecture/adrs/001-hybrid-architecture.md
       - ADR-002 Python + uv distribution: architecture/adrs/002-python-uv-distribution.md
       - ADR-003 TOML config format: architecture/adrs/003-toml-config-format.md
       - ADR-004 Agent adapter pattern: architecture/adrs/004-agent-adapter-pattern.md
+      - ADR-005 XDG-first path resolution: architecture/adrs/005-xdg-first-paths.md
+      - ADR-006 Hooks as subprocess + JSON: architecture/adrs/006-hooks-subprocess-json.md
       - ADR-007 Parallel bootstrap migration: architecture/adrs/007-parallel-bootstrap-migration.md
-      - Legacy ADRs: architecture/decisions/legacy/README.md
-  - History:
-    - Genesis: history/genesis.md
-    - Lessons learned: history/lessons-learned.md
-    - Legacy specs: history/specs/index.md
-    - Legacy plans: history/plans/index.md
-    - Legacy workflows:
-      - README: history/workflows/README.md
-      - Memory structure: history/workflows/memory-structure.md
-      - QMD collections: history/workflows/qmd-collections.md
+      - ADR-008 Compound loop async worker: architecture/adrs/008-compound-loop-async-worker.md
+      - ADR-009 Profile symlink deploy: architecture/adrs/009-profile-symlink-deploy.md
+      - ADR-010 Pre-compact preservation: architecture/adrs/010-pre-compact-preservation.md
+      - ADR-011 Session export + classification: architecture/adrs/011-session-export-and-classification.md
+      - ADR-012 SQLite monitoring: architecture/adrs/012-sqlite-monitoring.md
+      - ADR-013 Unified scheduler backends: architecture/adrs/013-scheduler-unified-backends.md
+      - ADR-014 Migration engine + rollback: architecture/adrs/014-migration-engine-rollback.md
+      - ADR-015 Strict TDD workflow: architecture/adrs/015-strict-tdd-workflow.md
+      - ADR-016 Knowledge directory + QMD optional: architecture/adrs/016-knowledge-dir-qmd-optional.md
+      - ADR-017 Selftest as health check: architecture/adrs/017-selftest-as-health-check.md
   - Backlog: backlog.md
