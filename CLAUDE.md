@@ -39,26 +39,48 @@ This is a **public repository**. Public surface (README, `docs/` user-facing pag
 - Do not use `--no-verify` or skip hooks unless explicitly asked.
 - Create new commits instead of amending published ones.
 
-### Tests before claiming done
+### Strict TDD — no production code without a failing test first
 
-Run the relevant tests before reporting a task complete. For framework changes:
+**This repository follows strict Test-Driven Development. It is non-negotiable for any code change — new features, bug fixes, and refactors alike.**
+
+The iron law: **no production code is written without a failing test that exercises it first.** If you write implementation code before the test, delete it and start over. "Keep it as reference" counts as starting with implementation — delete means delete.
+
+The Red → Green → Refactor cycle, applied every time:
+
+1. **RED — write one failing test.** One behavior, one test. Clear name that describes the behavior, not the implementation. Real code over mocks unless a dependency genuinely can't be exercised.
+2. **Verify RED — run the test and watch it fail.** Mandatory. Confirm the failure message is the one you expected and that it fails because the feature is missing, not because of a typo or import error. A test that passes immediately proves nothing.
+3. **GREEN — write the minimal code to make the test pass.** No extra features, no speculative parameters, no "while I'm here" refactors. Just enough to flip red to green.
+4. **Verify GREEN — run the test and the rest of the suite.** Confirm the new test passes, nothing else broke, and the output is pristine (no warnings, no deprecation noise).
+5. **REFACTOR — clean up while staying green.** Remove duplication, improve names, extract helpers. Do not add behavior in this step. Re-run tests after each change.
+6. **Repeat** for the next behavior.
+
+Bug fixes follow the same cycle: reproduce the bug as a failing test first, then fix. This guarantees the fix is real and the regression is guarded.
+
+Commands for this repo:
 
 ```bash
-uv run pytest
+uv run pytest tests/path/to/test_file.py::test_name   # Watch one test fail / pass
+uv run pytest                                          # Full suite before committing
 uv run ruff check src tests
+uv run mkdocs build --strict                           # For docs changes
 ```
 
-For docs changes:
+Before marking any code task complete, confirm:
 
-```bash
-uv run mkdocs build --strict
-```
+- [ ] Every new function or branch has at least one test that failed before its implementation existed.
+- [ ] You ran each test and watched it fail for the expected reason.
+- [ ] The minimal code to pass each test is the only production code added.
+- [ ] The full suite (`uv run pytest`) is green with pristine output.
+- [ ] Edge cases and error paths are covered, not just the happy path.
 
-Type checking and tests verify code correctness, not feature correctness. If a change is user-visible (CLI output, hook behavior, config parsing), exercise the feature end-to-end before calling it done.
+If you can't check every box, you skipped TDD — start over.
+
+User-visible changes (CLI output, hook behavior, config parsing) additionally need end-to-end exercise of the feature, because tests verify code correctness, not feature correctness.
 
 ## What NOT to do
 
-- Do not generate tests, READMEs, or documentation unless explicitly asked. Do not add obvious code comments.
+- Do not write production code without a failing test first. See the TDD section above — this rule has no exceptions in this repo.
+- Do not generate READMEs or standalone documentation pages unless explicitly asked. (Tests are always in scope under TDD; this exclusion does not apply to them.) Do not add obvious code comments.
 - Do not refactor code that wasn't part of the task. If you spot something worth improving, mention it — don't touch it.
 - Do not introduce abstractions for hypothetical future needs. Three similar lines beats a premature abstraction.
 - Do not reintroduce references to the project's pre-rename name or any individual user's name into public-facing docs (`README.md`, `docs/index.md`, `docs/why/*`, `docs/getting-started/*`, `docs/reference/*`, `docs/architecture/overview.md`, `mkdocs.yml`). `docs/history/**` and `docs/architecture/decisions/legacy/**` are the only places where historical references belong, and they are explicitly archived.
