@@ -61,7 +61,7 @@ def render(ctx: StatusContext, db: MetricsDB | None, console: Console) -> None:
                 sessions_today.add(r["session"])
             if r["date"].startswith(month_str):
                 sessions_month.add(r["session"])
-                total_in += r["input"] + r["cache_read"] + r["cache_create"]
+                total_in += r["input"]
                 total_out += r["output"]
                 total_cost += r["cost"]
 

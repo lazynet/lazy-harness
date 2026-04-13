@@ -40,6 +40,45 @@ class MetricsDB:
         """)
         self._conn.commit()
 
+    def replace_profile_stats(
+        self, profile: str, entries: list[dict[str, Any]]
+    ) -> int:
+        """Atomically wipe all rows for a profile and insert a fresh set.
+
+        Used by the ingest pipeline which rebuilds totals from scratch on
+        every run (after cross-file message-id dedup). Wrapped in a single
+        transaction so partial failures leave the profile's rows unchanged.
+        """
+        try:
+            self._conn.execute("BEGIN")
+            self._conn.execute(
+                "DELETE FROM session_stats WHERE profile = ?", (profile,)
+            )
+            for entry in entries:
+                self._conn.execute(
+                    """INSERT INTO session_stats
+                    (session, date, model, profile, project, input_tokens, output_tokens,
+                     cache_read, cache_create, cost)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        entry["session"],
+                        entry["date"],
+                        entry["model"],
+                        entry.get("profile", profile),
+                        entry.get("project", ""),
+                        entry.get("input", 0),
+                        entry.get("output", 0),
+                        entry.get("cache_read", 0),
+                        entry.get("cache_create", 0),
+                        entry.get("cost", 0.0),
+                    ),
+                )
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
+        return len(entries)
+
     def upsert_stats(self, entries: list[dict[str, Any]]) -> int:
         affected = 0
         for entry in entries:
