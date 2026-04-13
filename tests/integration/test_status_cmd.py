@@ -50,6 +50,7 @@ def test_status_costs(home_dir: Path) -> None:
 
 
 def test_status_no_monitoring(home_dir: Path) -> None:
+    """When monitoring is disabled, overview still renders but token stats are empty."""
     config_path = home_dir / ".config" / "lazy-harness" / "config.toml"
     cfg = Config(
         harness=HarnessConfig(version="1"),
@@ -59,5 +60,7 @@ def test_status_no_monitoring(home_dir: Path) -> None:
     runner = CliRunner()
     result = runner.invoke(cli, ["status"])
     assert result.exit_code == 0
-    out = result.output.lower()
-    assert "monitoring" in out or "disabled" in out or "enable" in out
+    # Overview always renders the panel header
+    assert "lh status" in result.output
+    # Token line shows zeros because monitoring is off
+    assert "0 in" in result.output
