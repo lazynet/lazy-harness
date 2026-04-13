@@ -1,0 +1,82 @@
+site_name: lazy-harness
+site_description: A cross-platform harnessing framework for AI coding agents
+site_url: https://lazynet.github.io/lazy-harness/
+repo_url: https://github.com/lazynet/lazy-harness
+repo_name: lazynet/lazy-harness
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+    - content.action.edit
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  icon:
+    repo: fontawesome/brands/github
+
+plugins:
+  - search
+  - mermaid2
+  - glightbox
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:mermaid2.fence_mermaid_custom
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - toc:
+      permalink: true
+  - attr_list
+  - md_in_html
+
+nav:
+  - Home: index.md
+  - Why:
+    - The problem: why/problem.md
+    - Memory model: why/memory-model.md
+    - Philosophy: why/philosophy.md
+  - Getting started:
+    - Install: getting-started/install.md
+    - First run: getting-started/first-run.md
+    - Migrating: getting-started/migrating.md
+  - Reference:
+    - CLI: reference/cli.md
+    - Config: reference/config.md
+  - Architecture:
+    - Overview: architecture/overview.md
+    - Decisions:
+      - ADR-001 Hybrid architecture: architecture/adrs/001-hybrid-architecture.md
+      - ADR-002 Python + uv distribution: architecture/adrs/002-python-uv-distribution.md
+      - ADR-003 TOML config format: architecture/adrs/003-toml-config-format.md
+      - ADR-004 Agent adapter pattern: architecture/adrs/004-agent-adapter-pattern.md
+      - ADR-007 Parallel bootstrap migration: architecture/adrs/007-parallel-bootstrap-migration.md
+      - Legacy ADRs: architecture/decisions/legacy/README.md
+  - Backlog: backlog.md

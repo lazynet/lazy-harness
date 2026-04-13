@@ -37,3 +37,8 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.4",
 ]
+docs = [
+    "mkdocs-material>=9.5",
+    "mkdocs-mermaid2-plugin>=1.1",
+    "mkdocs-glightbox>=0.3",
+]
