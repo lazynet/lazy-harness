@@ -55,14 +55,16 @@ class IngestReport:
 def _find_session_files(
     projects_dir: Path,
     errors: list[str],
-) -> list[tuple[int, Path, str]]:
-    """Return (mtime_ns, path, project_name) for every session JSONL.
+) -> list[tuple[int, Path, str, str]]:
+    """Return (mtime_ns, path, project_name, session_id) for every session JSONL.
 
     Walks recursively but skips any file that sits under a `memory/`
     ancestor directory — those are user-owned episodic logs, not agent
-    sessions.
+    sessions. Files nested under a `<parent_uuid>/subagents/` directory are
+    attributed to the parent session_id so subagent turns fold into the
+    parent session's totals instead of creating fake session rows.
     """
-    files: list[tuple[int, Path, str]] = []
+    files: list[tuple[int, Path, str, str]] = []
     for project_dir in sorted(projects_dir.iterdir()):
         if not project_dir.is_dir():
             continue
@@ -71,12 +73,16 @@ def _find_session_files(
             rel_parts = f.relative_to(project_dir).parts
             if "memory" in rel_parts[:-1]:
                 continue
+            if "subagents" in rel_parts[:-1]:
+                session_id = rel_parts[0]
+            else:
+                session_id = f.stem
             try:
                 mtime_ns = f.stat().st_mtime_ns
             except OSError as e:
                 errors.append(f"{f}: {e}")
                 continue
-            files.append((mtime_ns, f, project_name))
+            files.append((mtime_ns, f, project_name, session_id))
     files.sort(key=lambda t: t[0])
     return files
 
@@ -97,9 +103,8 @@ def ingest_profile(
     # (session_id, model) -> aggregate
     aggregated: dict[tuple[str, str], dict] = {}
 
-    for _mtime_ns, session_file, project_name in files:
+    for _mtime_ns, session_file, project_name, session_id in files:
         report.sessions_scanned += 1
-        session_id = session_file.stem
 
         try:
             messages = list(iter_assistant_messages(session_file))
