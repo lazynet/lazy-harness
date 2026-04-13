@@ -68,14 +68,14 @@ Manages the knowledge directory and its QMD index.
 
 ```bash
 lh knowledge status
-lh knowledge sync --collection lazy-claudecode
+lh knowledge sync --collection my-project
 lh knowledge embed
 lh knowledge context-gen --dry-run
 ```
 
 ## `lh migrate`
 
-Takes an existing Claude Code (or lazy-claudecode) install and converts it into a lazy-harness setup: backs up state, detects profiles and LaunchAgents, rewrites paths, writes a new `config.toml`.
+Takes an existing Claude Code install and converts it into a lazy-harness setup: backs up state, detects profiles and LaunchAgents, rewrites paths, writes a new `config.toml`.
 
 `--dry-run` analyzes and prints the plan without touching anything; the real migration requires a recent dry-run before it will execute. `--rollback` undoes the last migration using its rollback log.
 

@@ -17,10 +17,10 @@ Every one of these is solvable with enough shell scripts, cron entries, and disc
 
 ## Why a framework and not a set of dotfiles
 
-The early versions of this codebase lived as a personal dotfiles-style repo (`lazy-claudecode`). That worked for one user and one machine. It broke down at the seams:
+The early versions of this codebase lived as a personal dotfiles-style repo. That worked for one user and one machine. It broke down at the seams:
 
 - Every improvement was tangled with personal config. Sharing required untangling.
-- There was no abstraction boundary between "the harness" and "Martin's setup".
+- There was no abstraction boundary between "the harness" and "the user's setup".
 - Multi-agent portability was impossible. Every path assumed Claude Code.
 
 Extracting `lazy-harness` as a generic framework made the boundary explicit: the framework knows about **profiles**, **hooks**, **knowledge**, **monitoring**, **scheduling** — agent-agnostic concepts. Personal config (the actual `CLAUDE.md`, the specific hook scripts you want) lives in `~/.config/lazy-harness/profiles/` and is versioned with your dotfiles, completely separate from the framework code.

@@ -86,4 +86,4 @@ All three are user-owned and survive `uv tool uninstall`.
 
 ## Design decisions
 
-For the "why" behind specific choices, see the [framework ADRs](adrs/001-hybrid-architecture.md) and the [legacy ADRs](decisions/legacy/README.md) migrated from `lazy-claudecode`.
+For the "why" behind specific choices, see the [framework ADRs](adrs/001-hybrid-architecture.md) and the [legacy ADRs](decisions/legacy/README.md) preserved from the project's earlier dotfiles-era incarnation.
