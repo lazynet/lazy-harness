@@ -1,0 +1,75 @@
+# Changelog
+
+## [0.5.0](https://github.com/lazynet/lazy-harness/compare/v0.4.0...v0.5.0) (2026-04-13)
+
+
+### Features
+
+* add hooks config to Config dataclass ([fa28b66](https://github.com/lazynet/lazy-harness/commit/fa28b66c00fe73f074c7d7031ac8994ef06e4cbb))
+* agent adapter protocol + Claude Code adapter ([5547cb9](https://github.com/lazynet/lazy-harness/commit/5547cb92ffb7794e1185ca738750efaa05633281))
+* CLI skeleton with click (lh command) ([c21513d](https://github.com/lazynet/lazy-harness/commit/c21513da6ccb68f5063595a15c95a7c4198ea801))
+* **cli:** lh migrate command with dry-run gate and rollback ([8cfb2e8](https://github.com/lazynet/lazy-harness/commit/8cfb2e8c2633419b68e1cf2469b20b1afbef88ab))
+* **cli:** lh selftest command ([d8777d5](https://github.com/lazynet/lazy-harness/commit/d8777d5e23e993f657bfa22bb1a395d628c91431))
+* cross-platform path resolution module ([1abc77a](https://github.com/lazynet/lazy-harness/commit/1abc77a860acbc86608c47dc7bc048f9422f6713))
+* **hooks:** phase 3.5 — port hooks to builtins + lh hook CLI ([ff69d00](https://github.com/lazynet/lazy-harness/commit/ff69d0058977e67a21aa588f0e50ee6f93fc60d5))
+* **init:** existing-setup detection guard ([7947f33](https://github.com/lazynet/lazy-harness/commit/7947f333dacf7ff502f3de620c3afc269e898eec))
+* initial repo scaffold with pyproject.toml ([3043ef8](https://github.com/lazynet/lazy-harness/commit/3043ef8dec8215174f85b927ac900434fecd25d4))
+* **init:** lh init wizard with existing-setup guard ([8256ac9](https://github.com/lazynet/lazy-harness/commit/8256ac9b3ca3d5e33dd19cbc59075d526159a0f4))
+* **init:** wizard answers and config generation ([f77a4eb](https://github.com/lazynet/lazy-harness/commit/f77a4eb2d515afdea50f860cfedb2ed12f152209))
+* **knowledge:** port qmd-context-gen + scheduler jobs + logfile rotation ([4bffbf9](https://github.com/lazynet/lazy-harness/commit/4bffbf92b17de2214ec5712250d0ffad14c88872))
+* lh deploy with profile symlinks ([933cb6c](https://github.com/lazynet/lazy-harness/commit/933cb6c2b88ef8af65e2f83915757715f21608b5))
+* lh doctor health check ([51b1ea5](https://github.com/lazynet/lazy-harness/commit/51b1ea56960c1f9c5301eabe5a4ec55ff85eedb5))
+* lh init wizard (interactive + non-interactive) ([140b8ea](https://github.com/lazynet/lazy-harness/commit/140b8eaad903680f88153f3fd3b6277d60ee86b0))
+* lh metrics ingest with mtime-skip upsert pipeline ([#1](https://github.com/lazynet/lazy-harness/issues/1)) ([18e4f13](https://github.com/lazynet/lazy-harness/commit/18e4f139224db43d634dedf3d2ad4cd968d47c1d))
+* lh profile list/add/remove ([959528e](https://github.com/lazynet/lazy-harness/commit/959528ea2c66817249f26294ce506741f19e06a1))
+* **migrate:** add DetectedState dataclasses ([389429c](https://github.com/lazynet/lazy-harness/commit/389429c3407719a2c23bd2eab479cb65cf06a74b))
+* **migrate:** backup step ([fde3cbb](https://github.com/lazynet/lazy-harness/commit/fde3cbb539668f18e2cc3887a5dc9218196c8773))
+* **migrate:** config generation step ([6b27324](https://github.com/lazynet/lazy-harness/commit/6b2732472a744b332819658123b82e4401e96e7e))
+* **migrate:** detect deployed scripts, launch agents, and qmd ([ffdbff8](https://github.com/lazynet/lazy-harness/commit/ffdbff845f3ec2fae6ef08e05d214840d0b9fba4))
+* **migrate:** detect lazy-claudecode multi-profile setup ([8255a0e](https://github.com/lazynet/lazy-harness/commit/8255a0eb3ff34a0bde2f94cc2fca59d54c21f867))
+* **migrate:** detect vanilla Claude Code setup ([b88cb89](https://github.com/lazynet/lazy-harness/commit/b88cb893de7da545c0bd64d548af90def226cb0d))
+* **migrate:** dry-run gate with TTL marker ([1bd1c9e](https://github.com/lazynet/lazy-harness/commit/1bd1c9e45b922e17e821260f5820b1b74819605c))
+* **migrate:** executor with rollback log ([72aecc5](https://github.com/lazynet/lazy-harness/commit/72aecc589f81d937620d80a1bcc6110c2eb71ef8))
+* **migrate:** flatten lazy-claudecode symlinks in profile dirs ([2fd6dc8](https://github.com/lazynet/lazy-harness/commit/2fd6dc805bc9e2f62ebadf2eb33ebac15aa55051))
+* **migrate:** MigrationPlan and Step protocol ([a439e80](https://github.com/lazynet/lazy-harness/commit/a439e8003913c579c0e248c8aeee6acaee8445c7))
+* **migrate:** planner builds MigrationPlan from DetectedState ([2780cea](https://github.com/lazynet/lazy-harness/commit/2780ceaab5d87842804fb95414fc00d220077d66))
+* **migrate:** remove deployed scripts step ([8cf4cc8](https://github.com/lazynet/lazy-harness/commit/8cf4cc808a6d5c6970fe737cfbc27908a272c28a))
+* **migrate:** top-level detect_state orchestrator ([086fa4d](https://github.com/lazynet/lazy-harness/commit/086fa4dd3c593c23e08392a05d3e99cf14862169))
+* profile management (list, add, remove, resolve) ([4f97ebe](https://github.com/lazynet/lazy-harness/commit/4f97ebec16b5f06227509e5bcce018f2ae73c945))
+* **profile:** lh profile move — relocate project history between profiles ([0d33b29](https://github.com/lazynet/lazy-harness/commit/0d33b292d131dc07371e3db65310a81562491c6a))
+* **run:** lh run launcher + lh profile envrc + agent binary resolution ([bf1cb1d](https://github.com/lazynet/lazy-harness/commit/bf1cb1dab6786ad17ec68bce30bc9f1b99a29bd7))
+* **selftest:** cli integrity check ([c95919c](https://github.com/lazynet/lazy-harness/commit/c95919c06970e5a173ccda7acf2a1a5bd87708a4))
+* **selftest:** config integrity check ([4bae343](https://github.com/lazynet/lazy-harness/commit/4bae3436238f90885652931d17219afcf7ba232e))
+* **selftest:** hooks check ([b4056aa](https://github.com/lazynet/lazy-harness/commit/b4056aaf0c8c73872ee9062eb81240fd3f3158f3))
+* **selftest:** knowledge check ([1545c59](https://github.com/lazynet/lazy-harness/commit/1545c590747a177c207f1d993aa9175c6e6d6b39))
+* **selftest:** monitoring check ([39827b5](https://github.com/lazynet/lazy-harness/commit/39827b5b3fd80e00c5161f7994d182e04d689467))
+* **selftest:** profile health check ([a12f6dc](https://github.com/lazynet/lazy-harness/commit/a12f6dc3fe2db007d98c657e1d9c1cc5185cdc09))
+* **selftest:** result types and runner skeleton ([b692c52](https://github.com/lazynet/lazy-harness/commit/b692c522089a60491283ed2f2978e48e10ee7dd6))
+* **selftest:** scheduler check ([aaa6d15](https://github.com/lazynet/lazy-harness/commit/aaa6d15e17dae89b3646aa6e7c12fd26ee88e2be))
+* **statusline:** port claude-statusline.sh to lh statusline ([5702dad](https://github.com/lazynet/lazy-harness/commit/5702dadbea9994ea2f040644a676ee87117c7f15))
+* **status:** port 9 lcc-status views to lh status ([3d1ee31](https://github.com/lazynet/lazy-harness/commit/3d1ee31b034ff68d562f7f788c96746008f09822))
+* TOML config loading, validation, and persistence ([c739a30](https://github.com/lazynet/lazy-harness/commit/c739a30dbdd36190d3aa13a86b2505c097728f76))
+
+
+### Bug Fixes
+
+* dedup ingest by message id, align pricing with ccusage ([#2](https://github.com/lazynet/lazy-harness/issues/2)) ([c35b293](https://github.com/lazynet/lazy-harness/commit/c35b2930bf6c7e09a7a315102d73a4dc60bbf16b))
+* lint and format cleanup ([d605cb7](https://github.com/lazynet/lazy-harness/commit/d605cb7c932dbdbe353d9a30bf6c7274ef886a88))
+* lint and format cleanup for phase 2 ([b81f0a6](https://github.com/lazynet/lazy-harness/commit/b81f0a642bddc867e7516e5dbe1b0fe61785217b))
+* lint and format cleanup for phase 3 ([99dc91e](https://github.com/lazynet/lazy-harness/commit/99dc91e420f24c798a357ff1297bafa63871c8fa))
+* **migrate,init:** emit correct [profiles.&lt;name&gt;] TOML format ([bff3566](https://github.com/lazynet/lazy-harness/commit/bff35662caa29fdea19efd849f1b0232b8a8811a))
+* **migrate:** detect both com.lazy.* and com.lazynet.* launch agents ([ae5c7dd](https://github.com/lazynet/lazy-harness/commit/ae5c7dd5a33290f11a98b44ab32e0a78b38de1d4))
+* **migrate:** include knowledge_paths in has_existing_setup ([7592669](https://github.com/lazynet/lazy-harness/commit/7592669d7ba22e4102e820e809e2ab8005d5e304))
+
+
+### Documentation
+
+* add backlog tracking file ([7853db5](https://github.com/lazynet/lazy-harness/commit/7853db5ae7cb9f68ff66092d0ca00b211880b7fa))
+* add How section, expand architecture ADRs, drop history from nav ([57d411c](https://github.com/lazynet/lazy-harness/commit/57d411c12c95aff783fae5b507ef23f25672abf3))
+* adopt strict TDD in CLAUDE.md ([f97ac57](https://github.com/lazynet/lazy-harness/commit/f97ac57b69789f1d6bd3d5c82eeb4572d9b704eb))
+* init CLAUDE.md, rewrite README, scrub personal refs from public pages ([efd6806](https://github.com/lazynet/lazy-harness/commit/efd68068889847a644d514ac1c698ab938fc9a0c))
+* initial ADRs (001-004, 007) ([12fba73](https://github.com/lazynet/lazy-harness/commit/12fba73193573296220745f16be00903df0a819d))
+* migrate 13 legacy ADRs from lazy-claudecode ([85c904b](https://github.com/lazynet/lazy-harness/commit/85c904b1a6837da82815f444467c9fbb11be3b84))
+* migrate history (genesis, lessons-learned, specs, plans, workflows) ([15b0991](https://github.com/lazynet/lazy-harness/commit/15b09916635f7e6fd0a32b776a62d750c2835061))
+* mkdocs material scaffolding ([51dc0ae](https://github.com/lazynet/lazy-harness/commit/51dc0ae33672b5036632dec4459816b066dfd8f7))
+* phase 4 content pages (why, getting-started, reference, architecture) ([4b6fb65](https://github.com/lazynet/lazy-harness/commit/4b6fb65bf0c8b85475ec81dec38d2eb890e52939))
