@@ -85,6 +85,21 @@ lh migrate
 lh migrate --rollback
 ```
 
+## `lh metrics`
+
+Ingests agent session JSONLs into the monitoring SQLite DB so `lh status` can show real sessions/tokens/cost numbers.
+
+`lh metrics ingest` walks every profile's `<config_dir>/projects/**/*.jsonl`, aggregates token usage per `(session, model)`, prices it with `[monitoring.pricing]` overrides (falling back to `DEFAULT_PRICING`), and UPSERTs into `session_stats`. The pipeline is safe to run repeatedly — it tracks each session's file mtime in a separate `ingest_meta` table and skips files that haven't changed since the previous run. Re-ingesting the same file is idempotent: totals are re-computed from the full (append-only) JSONL and overwrite prior rows, so token counts never accumulate double.
+
+`--dry-run` parses everything but writes to an in-memory DB so you can preview the scan without touching the real one. `-v/--verbose` surfaces any per-file errors the walk hit.
+
+Pair with `lh scheduler` to keep the DB fresh — add a job under `[scheduler.jobs.metrics-ingest]` with a cron expression (e.g. `*/15 * * * *`) calling `lh metrics ingest`.
+
+```bash
+lh metrics ingest --dry-run
+lh metrics ingest
+```
+
 ## `lh profile`
 
 Manages agent profiles.

@@ -73,6 +73,7 @@ nav:
     - Hooks: how/hooks.md
     - Memory compound loop: how/memory-compound.md
     - Knowledge pipeline: how/knowledge-pipeline.md
+    - Metrics ingest: how/metrics-ingest.md
     - Profiles and deploy: how/profiles-and-deploy.md
   - Getting started:
     - Install: getting-started/install.md

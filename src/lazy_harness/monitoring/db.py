@@ -9,7 +9,8 @@ from typing import Any
 
 class MetricsDB:
     def __init__(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
+        if str(path) != ":memory:":
+            path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(path))
         self._conn.row_factory = sqlite3.Row
         self._create_tables()
@@ -31,6 +32,60 @@ class MetricsDB:
             )
         """)
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_stats_date ON session_stats(date)")
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS ingest_meta (
+                session TEXT PRIMARY KEY,
+                mtime_ns INTEGER NOT NULL
+            )
+        """)
+        self._conn.commit()
+
+    def upsert_stats(self, entries: list[dict[str, Any]]) -> int:
+        affected = 0
+        for entry in entries:
+            self._conn.execute(
+                """INSERT INTO session_stats
+                (session, date, model, profile, project, input_tokens, output_tokens,
+                 cache_read, cache_create, cost)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(session, model) DO UPDATE SET
+                    date=excluded.date,
+                    profile=excluded.profile,
+                    project=excluded.project,
+                    input_tokens=excluded.input_tokens,
+                    output_tokens=excluded.output_tokens,
+                    cache_read=excluded.cache_read,
+                    cache_create=excluded.cache_create,
+                    cost=excluded.cost""",
+                (
+                    entry["session"],
+                    entry["date"],
+                    entry["model"],
+                    entry.get("profile", ""),
+                    entry.get("project", ""),
+                    entry.get("input", 0),
+                    entry.get("output", 0),
+                    entry.get("cache_read", 0),
+                    entry.get("cache_create", 0),
+                    entry.get("cost", 0.0),
+                ),
+            )
+            affected += 1
+        self._conn.commit()
+        return affected
+
+    def get_ingest_mtime(self, session: str) -> int | None:
+        row = self._conn.execute(
+            "SELECT mtime_ns FROM ingest_meta WHERE session = ?", (session,)
+        ).fetchone()
+        return int(row["mtime_ns"]) if row is not None else None
+
+    def set_ingest_mtime(self, session: str, mtime_ns: int) -> None:
+        self._conn.execute(
+            """INSERT INTO ingest_meta (session, mtime_ns) VALUES (?, ?)
+               ON CONFLICT(session) DO UPDATE SET mtime_ns=excluded.mtime_ns""",
+            (session, mtime_ns),
+        )
         self._conn.commit()
 
     def insert_stats(self, entries: list[dict[str, Any]]) -> int:

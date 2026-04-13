@@ -140,3 +140,72 @@ def test_no_duplicate_insert(tmp_path: Path) -> None:
     rows = db.query_stats(period="all")
     assert len(rows) == 1
     db.close()
+
+
+def _entry(
+    session: str = "sess-1",
+    model: str = "claude-opus-4-6",
+    inp: int = 100,
+    out: int = 50,
+) -> dict:
+    return {
+        "session": session,
+        "date": "2026-04-13",
+        "model": model,
+        "profile": "lazy",
+        "project": "my-project",
+        "input": inp,
+        "output": out,
+        "cache_read": 0,
+        "cache_create": 0,
+        "cost": 0.01,
+    }
+
+
+def test_upsert_stats_overwrites_existing_totals(tmp_path: Path) -> None:
+    from lazy_harness.monitoring.db import MetricsDB
+
+    db = MetricsDB(tmp_path / "metrics.db")
+    db.upsert_stats([_entry(inp=100, out=50)])
+    db.upsert_stats([_entry(inp=300, out=120)])
+
+    rows = db.query_stats(period="all")
+    assert len(rows) == 1
+    assert rows[0]["input"] == 300
+    assert rows[0]["output"] == 120
+    db.close()
+
+
+def test_upsert_stats_keeps_distinct_models_separate(tmp_path: Path) -> None:
+    from lazy_harness.monitoring.db import MetricsDB
+
+    db = MetricsDB(tmp_path / "metrics.db")
+    db.upsert_stats(
+        [
+            _entry(model="claude-opus-4-6", inp=100),
+            _entry(model="claude-sonnet-4-6", inp=200),
+        ]
+    )
+    db.upsert_stats(
+        [
+            _entry(model="claude-opus-4-6", inp=150),
+            _entry(model="claude-sonnet-4-6", inp=250),
+        ]
+    )
+
+    rows = db.query_stats(period="all")
+    by_model = {r["model"]: r["input"] for r in rows}
+    assert by_model == {"claude-opus-4-6": 150, "claude-sonnet-4-6": 250}
+    db.close()
+
+
+def test_ingest_meta_roundtrip(tmp_path: Path) -> None:
+    from lazy_harness.monitoring.db import MetricsDB
+
+    db = MetricsDB(tmp_path / "metrics.db")
+    assert db.get_ingest_mtime("sess-1") is None
+    db.set_ingest_mtime("sess-1", 1_700_000_000_000_000_000)
+    assert db.get_ingest_mtime("sess-1") == 1_700_000_000_000_000_000
+    db.set_ingest_mtime("sess-1", 1_800_000_000_000_000_000)
+    assert db.get_ingest_mtime("sess-1") == 1_800_000_000_000_000_000
+    db.close()
