@@ -47,33 +47,81 @@ def render(ctx: StatusContext, db: MetricsDB | None, console: Console) -> None:
     profile_val = " · ".join(profile_parts)
     project_val = " · ".join(project_parts)
 
-    sessions_today: set[str] = set()
-    sessions_month: set[str] = set()
-    sessions_total: set[str] = set()
-    total_in = 0
-    total_out = 0
-    total_cost = 0.0
+    profile_order = [p.name for p in ctx.profiles]
+    per_profile: dict[str, dict[str, object]] = {
+        name: {
+            "today": set(),
+            "month": set(),
+            "total": set(),
+            "in": 0,
+            "out": 0,
+            "cost": 0.0,
+        }
+        for name in profile_order
+    }
 
     if db is not None:
         for r in db.query_stats(period="all"):
-            sessions_total.add(r["session"])
+            bucket = per_profile.get(r["profile"])
+            if bucket is None:
+                continue
+            bucket["total"].add(r["session"])  # type: ignore[union-attr]
             if r["date"] == today_str:
-                sessions_today.add(r["session"])
+                bucket["today"].add(r["session"])  # type: ignore[union-attr]
             if r["date"].startswith(month_str):
-                sessions_month.add(r["session"])
-                total_in += r["input"]
-                total_out += r["output"]
-                total_cost += r["cost"]
+                bucket["month"].add(r["session"])  # type: ignore[union-attr]
+                bucket["in"] = int(bucket["in"]) + r["input"]
+                bucket["out"] = int(bucket["out"]) + r["output"]
+                bucket["cost"] = float(bucket["cost"]) + r["cost"]
 
-    session_val = (
-        f"{len(sessions_today)} today · "
-        f"{len(sessions_month)} this month · "
-        f"{len(sessions_total)} total"
-    )
-    token_val = (
-        f"{_fmt(total_in)} in · {_fmt(total_out)} out · "
-        f"${round(total_cost, 2)} ({datetime.now().strftime('%b')})"
-    )
+    month_label = datetime.now().strftime("%b")
+
+    def _sess_line(label: str, today: int, month: int, total: int) -> str:
+        return f"{label:<5} {today} today · {month} this month · {total} total"
+
+    def _tok_line(label: str, tin: int, tout: int, cost: float) -> str:
+        return (
+            f"{label:<5} {_fmt(tin)} in · {_fmt(tout)} out · "
+            f"${round(cost, 2)} ({month_label})"
+        )
+
+    session_rows: list[str] = []
+    token_rows: list[str] = []
+    all_today: set[str] = set()
+    all_month: set[str] = set()
+    all_total: set[str] = set()
+    all_in = 0
+    all_out = 0
+    all_cost = 0.0
+    for name in profile_order:
+        b = per_profile[name]
+        today_set = b["today"]  # type: ignore[assignment]
+        month_set = b["month"]  # type: ignore[assignment]
+        total_set = b["total"]  # type: ignore[assignment]
+        session_rows.append(
+            _sess_line(f"{name}:", len(today_set), len(month_set), len(total_set))  # type: ignore[arg-type]
+        )
+        token_rows.append(
+            _tok_line(f"{name}:", int(b["in"]), int(b["out"]), float(b["cost"]))
+        )
+        all_today |= today_set  # type: ignore[arg-type]
+        all_month |= month_set  # type: ignore[arg-type]
+        all_total |= total_set  # type: ignore[arg-type]
+        all_in += int(b["in"])
+        all_out += int(b["out"])
+        all_cost += float(b["cost"])
+
+    if len(profile_order) > 1:
+        session_rows.append(
+            _sess_line("all:", len(all_today), len(all_month), len(all_total))
+        )
+        token_rows.append(_tok_line("all:", all_in, all_out, all_cost))
+    elif not profile_order:
+        session_rows.append(_sess_line("", 0, 0, 0))
+        token_rows.append(_tok_line("", 0, 0, 0.0))
+
+    session_val = session_rows
+    token_val = token_rows
 
     hooks_text = Text()
     for profile in ctx.profiles:
@@ -154,13 +202,16 @@ def _build_panel(items: list[tuple[str, object]]) -> Panel:
     max_label = max(len(label) for label, _ in items) if items else 10
     lines: list[Text] = []
     for label, value in items:
-        line = Text()
-        line.append(f"{label:<{max_label}}  ", style="bold")
-        if isinstance(value, Text):
-            line.append_text(value)
-        else:
-            line.append(str(value))
-        lines.append(line)
+        values = value if isinstance(value, list) else [value]
+        for idx, v in enumerate(values):
+            line = Text()
+            shown_label = label if idx == 0 else ""
+            line.append(f"{shown_label:<{max_label}}  ", style="bold")
+            if isinstance(v, Text):
+                line.append_text(v)
+            else:
+                line.append(str(v))
+            lines.append(line)
     content = Text("\n").join(lines)
     return Panel(
         content,
