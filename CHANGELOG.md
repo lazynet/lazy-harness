@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/lazynet/lazy-harness/compare/v0.5.0...v0.5.1) (2026-04-13)
+
+
+### Bug Fixes
+
+* metrics session counter + per-profile breakdown ([#5](https://github.com/lazynet/lazy-harness/issues/5)) ([3242351](https://github.com/lazynet/lazy-harness/commit/32423510aa14a59940cca5569f296ee5acaaca27))
+
 ## [0.5.0](https://github.com/lazynet/lazy-harness/compare/v0.4.0...v0.5.0) (2026-04-13)
 
 
