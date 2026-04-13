@@ -46,5 +46,9 @@ def register_commands() -> None:
 
     cli.add_command(selftest, "selftest")
 
+    from lazy_harness.cli.run_cmd import run
+
+    cli.add_command(run, "run")
+
 
 register_commands()

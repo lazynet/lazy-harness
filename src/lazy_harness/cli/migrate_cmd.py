@@ -92,3 +92,33 @@ def migrate(dry_run: bool, rollback: bool) -> None:
         console.print("[red]Migration failed, rollback applied.[/red]")
         raise SystemExit(1)
     console.print("[green]Migration complete.[/green]")
+
+    _maybe_deploy_envrc(console)
+
+
+def _maybe_deploy_envrc(console: Console) -> None:
+    """Deploy .envrc into all profile roots after a successful migration."""
+    from lazy_harness.cli.profile_cmd import deploy_envrc_for_all_profiles
+    from lazy_harness.core.config import ConfigError, load_config
+
+    cf = config_file()
+    try:
+        cfg = load_config(cf)
+    except ConfigError:
+        return
+    has_any_root = any(entry.roots for entry in cfg.profiles.items.values())
+    if not has_any_root:
+        return
+    try:
+        results = deploy_envrc_for_all_profiles(cfg)
+    except Exception as e:  # noqa: BLE001 — never crash post-migrate
+        console.print(f"[yellow]·[/yellow] envrc deploy skipped: {e}")
+        return
+    for r in results:
+        console.print(f"  [green]✓[/green] .envrc {r.action}: {r.path}")
+    needs_allow = [r for r in results if r.action in ("created", "updated")]
+    if needs_allow:
+        console.print(
+            "  [yellow]Run `direnv allow` in each updated root "
+            "to activate auto profile switching.[/yellow]"
+        )

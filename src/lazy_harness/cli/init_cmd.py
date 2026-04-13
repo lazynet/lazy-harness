@@ -8,6 +8,7 @@ from pathlib import Path
 import click
 from rich.console import Console
 
+from lazy_harness.core.config import ConfigError, load_config
 from lazy_harness.core.paths import config_file
 from lazy_harness.init.wizard import (
     ExistingSetupError,
@@ -62,5 +63,34 @@ def init(force: bool) -> None:
             "[green]✓[/green] QMD integration flagged "
             "(run `lh knowledge sync` to initialize)"
         )
+
+    _maybe_deploy_envrc(console, cfg)
+
     console.print()
     console.print("Run `lh doctor` to verify your setup.")
+
+
+def _maybe_deploy_envrc(console: Console, cfg_path: Path) -> None:
+    """Best-effort .envrc deploy. Silent if no roots configured yet."""
+    from lazy_harness.cli.profile_cmd import deploy_envrc_for_all_profiles
+
+    try:
+        cfg = load_config(cfg_path)
+    except ConfigError:
+        return
+    has_any_root = any(entry.roots for entry in cfg.profiles.items.values())
+    if not has_any_root:
+        return
+    try:
+        results = deploy_envrc_for_all_profiles(cfg)
+    except Exception as e:  # noqa: BLE001 — never crash init
+        console.print(f"[yellow]·[/yellow] envrc deploy skipped: {e}")
+        return
+    for r in results:
+        console.print(f"[green]✓[/green] .envrc {r.action}: {r.path}")
+    needs_allow = [r for r in results if r.action in ("created", "updated")]
+    if needs_allow:
+        console.print(
+            "[yellow]Run [bold]direnv allow[/bold] in each updated root "
+            "to activate auto profile switching.[/yellow]"
+        )

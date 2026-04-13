@@ -51,3 +51,64 @@ def test_registry_list_agents() -> None:
 
     agents = list_agents()
     assert "claude-code" in agents
+
+
+def test_claude_adapter_env_var() -> None:
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    assert ClaudeCodeAdapter().env_var() == "CLAUDE_CONFIG_DIR"
+
+
+def test_claude_resolve_binary_picks_newest_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    fake_home = tmp_path / "home"
+    versions = fake_home / ".local" / "share" / "claude" / "versions"
+    versions.mkdir(parents=True)
+    older = versions / "2.0.0"
+    older.write_text("#!/bin/sh\n")
+    older.chmod(0o755)
+    newer = versions / "2.1.0"
+    newer.write_text("#!/bin/sh\n")
+    newer.chmod(0o755)
+    # Force newer's mtime to be strictly greater than older's
+    os.utime(older, (1_000_000_000, 1_000_000_000))
+    os.utime(newer, (2_000_000_000, 2_000_000_000))
+
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+
+    result = ClaudeCodeAdapter().resolve_binary()
+    assert result == newer
+
+
+def test_claude_resolve_binary_falls_back_to_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.agents import claude_code as cc_mod
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+    monkeypatch.setattr(cc_mod.shutil, "which", lambda name: "/usr/local/bin/claude")
+
+    result = ClaudeCodeAdapter().resolve_binary()
+    assert result == Path("/usr/local/bin/claude")
+
+
+def test_claude_resolve_binary_returns_none_when_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.agents import claude_code as cc_mod
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+    monkeypatch.setattr(cc_mod.shutil, "which", lambda name: None)
+
+    assert ClaudeCodeAdapter().resolve_binary() is None

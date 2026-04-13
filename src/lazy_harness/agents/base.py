@@ -26,3 +26,17 @@ class AgentAdapter(Protocol):
     def generate_hook_config(self, hooks: dict[str, list[str]]) -> dict:
         """Generate agent-native hook config (e.g., settings.json for Claude Code)."""
         ...
+
+    def resolve_binary(self) -> Path | None:
+        """Locate the agent's executable on disk.
+
+        Returns the absolute path, or None if not found. Implementations
+        should prefer well-known install locations (e.g. version-managed
+        directories) over a generic PATH lookup, and must avoid resolving
+        to wrappers that would shell back into `lh run` (recursion).
+        """
+        ...
+
+    def env_var(self) -> str:
+        """Name of the environment variable that selects the profile config dir."""
+        ...
