@@ -23,6 +23,19 @@ def _cron_to_interval(cron_expr: str) -> int:
     return 3600
 
 
+def _cron_to_calendar(cron_expr: str) -> dict[str, int] | None:
+    """Convert `M H * * *` → StartCalendarInterval dict. Returns None if not daily."""
+    parts = cron_expr.strip().split()
+    if len(parts) < 5:
+        return None
+    minute, hour, dom, mon, dow = parts[:5]
+    if not minute.isdigit() or not hour.isdigit():
+        return None
+    if dom != "*" or mon != "*" or dow != "*":
+        return None
+    return {"Hour": int(hour), "Minute": int(minute)}
+
+
 class LaunchdBackend:
     def __init__(self, label_prefix: str = "com.lazy-harness") -> None:
         self._prefix = label_prefix
@@ -32,23 +45,23 @@ class LaunchdBackend:
 
     def generate_plist(self, job: SchedulerJob, output_dir: Path) -> Path:
         label = self._label(job)
-        interval = _cron_to_interval(job.schedule)
         cmd_parts = job.command.split()
+        log_dir = Path.home() / ".local" / "share" / "lazy-harness" / "logs"
         plist: dict = {
             "Label": label,
             "ProgramArguments": cmd_parts,
-            "StartInterval": interval,
             "RunAtLoad": True,
-            "StandardErrorPath": str(
-                Path.home()
-                / ".local"
-                / "share"
-                / "lazy-harness"
-                / "logs"
-                / f"{job.name}-stderr.log"
-            ),
-            "EnvironmentVariables": {"PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"},
+            "StandardOutPath": str(log_dir / f"{job.name}-stdout.log"),
+            "StandardErrorPath": str(log_dir / f"{job.name}-stderr.log"),
+            "EnvironmentVariables": {
+                "PATH": f"{Path.home()}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+            },
         }
+        calendar = _cron_to_calendar(job.schedule)
+        if calendar is not None:
+            plist["StartCalendarInterval"] = calendar
+        else:
+            plist["StartInterval"] = _cron_to_interval(job.schedule)
         plist_path = output_dir / f"{label}.plist"
         with open(plist_path, "wb") as f:
             plistlib.dump(plist, f)

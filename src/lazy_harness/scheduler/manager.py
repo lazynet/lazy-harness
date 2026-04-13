@@ -33,4 +33,7 @@ def detect_backend(override: str | None = None) -> LaunchdBackend | SystemdBacke
 
 
 def parse_jobs_from_config(cfg: Config) -> list[SchedulerJob]:
-    return []
+    return [
+        SchedulerJob(name=j.name, schedule=j.schedule, command=j.command)
+        for j in cfg.scheduler.jobs
+    ]

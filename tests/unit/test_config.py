@@ -136,6 +136,65 @@ scripts = ["session-export"]
     assert cfg.hooks["session_stop"].scripts == ["session-export"]
 
 
+def test_load_config_scheduler_jobs(config_dir: Path) -> None:
+    config_file = config_dir / "config.toml"
+    config_file.write_text("""
+[harness]
+version = "1"
+
+[scheduler]
+backend = "launchd"
+
+[scheduler.jobs.qmd-sync]
+schedule = "*/30 * * * *"
+command = "/usr/local/bin/lh knowledge sync"
+
+[scheduler.jobs.qmd-embed]
+schedule = "0 6 * * *"
+command = "/usr/local/bin/lh knowledge embed"
+""")
+    from lazy_harness.core.config import load_config
+
+    cfg = load_config(config_file)
+    assert cfg.scheduler.backend == "launchd"
+    assert len(cfg.scheduler.jobs) == 2
+    names = {j.name for j in cfg.scheduler.jobs}
+    assert names == {"qmd-sync", "qmd-embed"}
+    sync_job = next(j for j in cfg.scheduler.jobs if j.name == "qmd-sync")
+    assert sync_job.schedule == "*/30 * * * *"
+    assert sync_job.command.endswith("lh knowledge sync")
+
+
+def test_load_config_scheduler_jobs_missing_schedule_raises(config_dir: Path) -> None:
+    config_file = config_dir / "config.toml"
+    config_file.write_text("""
+[harness]
+version = "1"
+
+[scheduler.jobs.broken]
+command = "/bin/true"
+""")
+    from lazy_harness.core.config import ConfigError, load_config
+
+    with pytest.raises(ConfigError, match="broken"):
+        load_config(config_file)
+
+
+def test_load_config_scheduler_no_jobs_section(config_dir: Path) -> None:
+    config_file = config_dir / "config.toml"
+    config_file.write_text("""
+[harness]
+version = "1"
+
+[scheduler]
+backend = "auto"
+""")
+    from lazy_harness.core.config import load_config
+
+    cfg = load_config(config_file)
+    assert cfg.scheduler.jobs == []
+
+
 def test_load_config_no_hooks_defaults_empty(config_dir: Path) -> None:
     config_file = config_dir / "config.toml"
     config_file.write_text("""

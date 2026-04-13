@@ -2,14 +2,42 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import click
 from rich.console import Console
 
 from lazy_harness.core.config import ConfigError, load_config
+from lazy_harness.core.logfile import append as log_append
+from lazy_harness.core.logfile import default_log_dir
 from lazy_harness.core.paths import config_file, contract_path, expand_path
+from lazy_harness.knowledge.context_gen import DEFAULT_CONFIG as CONTEXT_GEN_DEFAULT_CONFIG
+from lazy_harness.knowledge.context_gen import regenerate as regenerate_contexts
 from lazy_harness.knowledge.directory import list_sessions
-from lazy_harness.knowledge.qmd import embed, is_qmd_available, sync
+from lazy_harness.knowledge.qmd import QmdResult, embed, is_qmd_available, sync
 from lazy_harness.knowledge.qmd import status as qmd_status
+
+_SUMMARY_KEYWORDS = ("embedded", "indexed", "updated", "vector", "hash")
+
+
+def _log_qmd_result(name: str, result: QmdResult) -> None:
+    log_path = default_log_dir() / f"qmd-{name}.log"
+    if result.exit_code == 0:
+        summary_lines = [
+            line
+            for line in result.stdout.strip().splitlines()
+            if any(kw in line.lower() for kw in _SUMMARY_KEYWORDS)
+        ][:5]
+        if summary_lines:
+            log_append(log_path, f"{name} OK:")
+            for line in summary_lines:
+                log_append(log_path, f"  {line}")
+        else:
+            log_append(log_path, f"{name} OK")
+    else:
+        log_append(log_path, f"ERROR: qmd {name} failed (exit {result.exit_code})")
+        for line in (result.stderr or result.stdout).strip().splitlines()[-5:]:
+            log_append(log_path, f"  {line}")
 
 
 @click.group()
@@ -60,6 +88,7 @@ def knowledge_sync(collection: str | None) -> None:
         raise SystemExit(1)
     console.print("Syncing QMD index...")
     result = sync(collection=collection)
+    _log_qmd_result("sync", result)
     if result.exit_code == 0:
         console.print("[green]✓[/green] Sync complete")
         if result.stdout.strip():
@@ -67,6 +96,39 @@ def knowledge_sync(collection: str | None) -> None:
                 console.print(f"  {line}")
     else:
         console.print(f"[red]✗[/red] Sync failed (exit {result.exit_code})")
+        raise SystemExit(1)
+
+
+@knowledge.command("context-gen")
+@click.option("--dry-run", is_flag=True, help="Show changes without writing")
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Override path to QMD index.yml",
+)
+def knowledge_context_gen(dry_run: bool, config_path: Path | None) -> None:
+    """Regenerate the auto-updated stats inside QMD collection contexts."""
+    console = Console()
+    path = config_path or CONTEXT_GEN_DEFAULT_CONFIG
+    if not path.is_file():
+        console.print(f"[yellow]·[/yellow] No QMD config at {path} — skipping")
+        return
+    result = regenerate_contexts(path, dry_run=dry_run)
+    header = "[cyan]DRY RUN[/cyan] " if dry_run else ""
+    if result.updated:
+        console.print(f"{header}Updated {len(result.updated)} collections:")
+        for item in result.updated:
+            console.print(f"  [green]•[/green] {item}")
+    else:
+        console.print(f"{header}No collections updated.")
+    if result.skipped:
+        console.print(f"[yellow]Skipped {len(result.skipped)}:[/yellow]")
+        for item in result.skipped:
+            console.print(f"  [yellow]·[/yellow] {item}")
+    if not dry_run and result.updated:
+        log_append(default_log_dir() / "qmd-context-gen.log", f"updated {len(result.updated)}")
 
 
 @knowledge.command("embed")
@@ -79,7 +141,9 @@ def knowledge_embed(collection: str | None) -> None:
         raise SystemExit(1)
     console.print("Running QMD embedding...")
     result = embed(collection=collection)
+    _log_qmd_result("embed", result)
     if result.exit_code == 0:
         console.print("[green]✓[/green] Embedding complete")
     else:
         console.print(f"[red]✗[/red] Embedding failed (exit {result.exit_code})")
+        raise SystemExit(1)

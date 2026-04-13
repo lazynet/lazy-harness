@@ -73,8 +73,16 @@ class MonitoringConfig:
 
 
 @dataclass
+class SchedulerJobConfig:
+    name: str
+    schedule: str
+    command: str
+
+
+@dataclass
 class SchedulerConfig:
     backend: str = "auto"
+    jobs: list[SchedulerJobConfig] = field(default_factory=list)
 
 
 @dataclass
@@ -176,7 +184,25 @@ def load_config(path: Path) -> Config:
     )
 
     scheduler_raw = raw.get("scheduler", {})
-    cfg.scheduler = SchedulerConfig(backend=scheduler_raw.get("backend", "auto"))
+    jobs_raw = scheduler_raw.get("jobs", {})
+    jobs: list[SchedulerJobConfig] = []
+    if isinstance(jobs_raw, dict):
+        for job_name, job_cfg in jobs_raw.items():
+            if not isinstance(job_cfg, dict):
+                continue
+            schedule = job_cfg.get("schedule", "")
+            command = job_cfg.get("command", "")
+            if not schedule or not command:
+                raise ConfigError(
+                    f"[scheduler.jobs.{job_name}] missing schedule or command"
+                )
+            jobs.append(
+                SchedulerJobConfig(name=job_name, schedule=schedule, command=command)
+            )
+    cfg.scheduler = SchedulerConfig(
+        backend=scheduler_raw.get("backend", "auto"),
+        jobs=jobs,
+    )
 
     hooks_raw = raw.get("hooks", {})
     for event_name, event_cfg in hooks_raw.items():
