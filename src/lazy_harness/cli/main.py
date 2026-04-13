@@ -50,5 +50,9 @@ def register_commands() -> None:
 
     cli.add_command(run, "run")
 
+    from lazy_harness.cli.statusline_cmd import statusline
+
+    cli.add_command(statusline, "statusline")
+
 
 register_commands()
