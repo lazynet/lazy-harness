@@ -286,6 +286,48 @@ def test_ingest_discovers_subagent_files(tmp_path: Path) -> None:
     db.close()
 
 
+def test_ingest_attributes_subagent_tokens_to_parent_session(tmp_path: Path) -> None:
+    """Subagent JSONLs must count toward the parent session, not as new sessions."""
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.ingest import ingest_profile
+    from lazy_harness.monitoring.pricing import load_pricing
+
+    prof = _profile(tmp_path, "lazy")
+    project_dir = prof.config_dir / "projects" / "-tmp-proj"
+    session_uuid = "eeeeeeee-5555-5555-5555-555555555555"
+    project_dir.mkdir(parents=True)
+
+    parent_file = project_dir / f"{session_uuid}.jsonl"
+    with open(parent_file, "w") as fh:
+        fh.write(
+            json.dumps(_assistant_msg(inp=100, out=50, msg_id="parent-msg")) + "\n"
+        )
+
+    sub_dir = project_dir / session_uuid / "subagents"
+    sub_dir.mkdir(parents=True)
+    for suffix in ("abc", "def"):
+        with open(sub_dir / f"agent-{suffix}.jsonl", "w") as fh:
+            fh.write(
+                json.dumps(
+                    _assistant_msg(inp=40, out=20, msg_id=f"sub-{suffix}")
+                )
+                + "\n"
+            )
+
+    db = MetricsDB(tmp_path / "metrics.db")
+    report = ingest_profile(prof, db, load_pricing())
+
+    rows = db.query_stats(period="all")
+    # Only one session row — subagents fold into the parent.
+    assert {r["session"] for r in rows} == {session_uuid}
+    assert report.sessions_updated == 1
+    total_input = sum(r["input"] for r in rows)
+    total_output = sum(r["output"] for r in rows)
+    assert total_input == 100 + 40 + 40
+    assert total_output == 50 + 20 + 20
+    db.close()
+
+
 def test_ingest_skips_memory_jsonls(tmp_path: Path) -> None:
     """memory/*.jsonl in a project dir are user episodic files, not sessions."""
     from lazy_harness.monitoring.db import MetricsDB
