@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 from lazy_harness.migrate.state import StepResult
@@ -46,6 +47,20 @@ def apply_rollback_log(backup_dir: Path) -> list[str]:
                 if not link.exists() and target:
                     link.symlink_to(target)
                     messages.append(f"restored symlink {link} -> {target}")
+            elif kind == "unflatten":
+                p = Path(payload["path"])
+                target = payload.get("target", "")
+                if not target:
+                    messages.append(f"unflatten skipped: no target for {p}")
+                    continue
+                if p.exists() and not p.is_symlink():
+                    if p.is_dir():
+                        shutil.rmtree(p)
+                    else:
+                        p.unlink()
+                if not p.exists():
+                    p.symlink_to(target)
+                    messages.append(f"unflattened {p} -> {target}")
             else:
                 messages.append(f"unknown op kind: {kind}")
         except Exception as e:  # noqa: BLE001

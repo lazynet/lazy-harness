@@ -58,6 +58,35 @@ def test_execute_plan_dry_run_touches_nothing(tmp_path: Path):
     assert not (backup_dir / "rollback.json").exists()
 
 
+def test_rollback_unflatten_restores_symlink(tmp_path: Path):
+    from lazy_harness.migrate.rollback import apply_rollback_log, write_rollback_log
+    from lazy_harness.migrate.steps.flatten_step import FlattenSymlinksStep
+
+    src = tmp_path / "repos" / "lazy-claudecode" / "profiles" / "lazy"
+    src.mkdir(parents=True)
+    (src / "CLAUDE.md").write_text("hello from lazy")
+
+    profile = tmp_path / "home" / ".claude-lazy"
+    profile.mkdir(parents=True)
+    (profile / "CLAUDE.md").symlink_to(src / "CLAUDE.md")
+
+    backup_dir = tmp_path / "backup"
+    backup_dir.mkdir()
+
+    step = FlattenSymlinksStep(dirs=[profile])
+    result = step.execute(backup_dir=backup_dir, dry_run=False)
+    assert result.status.value == "done"
+
+    assert not (profile / "CLAUDE.md").is_symlink()
+    assert (profile / "CLAUDE.md").read_text() == "hello from lazy"
+
+    write_rollback_log(backup_dir, [result])
+    apply_rollback_log(backup_dir)
+
+    assert (profile / "CLAUDE.md").is_symlink()
+    assert (profile / "CLAUDE.md").read_text() == "hello from lazy"
+
+
 def test_rollback_restores_symlink(tmp_path: Path):
     from lazy_harness.migrate.rollback import apply_rollback_log
 

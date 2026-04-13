@@ -45,4 +45,5 @@ def test_build_plan_full_state(tmp_path: Path):
     names = [s.name for s in plan.steps]
     assert names[0] == "backup"
     assert "generate-config" in names
+    assert "flatten-symlinks" in names
     assert "remove-scripts" in names

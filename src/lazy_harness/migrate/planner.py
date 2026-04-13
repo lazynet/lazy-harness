@@ -5,6 +5,7 @@ from pathlib import Path
 from lazy_harness.migrate.state import DetectedState, MigrationPlan
 from lazy_harness.migrate.steps.backup import BackupStep
 from lazy_harness.migrate.steps.config_step import GenerateConfigStep
+from lazy_harness.migrate.steps.flatten_step import FlattenSymlinksStep
 from lazy_harness.migrate.steps.scripts_step import RemoveScriptsStep
 
 
@@ -41,7 +42,13 @@ def build_plan(
         )
     )
 
-    # 3. Remove deployed scripts
+    # 3. Flatten lazy-claudecode symlinks in profile dirs
+    if state.lazy_claudecode:
+        plan.steps.append(
+            FlattenSymlinksStep(dirs=list(state.lazy_claudecode.claude_dirs.values()))
+        )
+
+    # 4. Remove deployed scripts
     if state.deployed_scripts:
         plan.steps.append(RemoveScriptsStep(scripts=state.deployed_scripts))
 
