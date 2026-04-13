@@ -110,12 +110,15 @@ docs/                # MkDocs site source (public)
 
 ## Release flow
 
-Version is tracked in `pyproject.toml`. Release = bump version, commit, tag, push:
+Versions are managed by **release-please** (`.github/workflows/release-please.yml`). Do not bump `pyproject.toml` or `src/lazy_harness/__init__.py` by hand, and do not create `vX.Y.Z` tags manually.
 
-```bash
-git commit -am "chore: bump version to X.Y.Z"
-git tag -a vX.Y.Z -m "vX.Y.Z — short note"
-git push origin main && git push origin vX.Y.Z
-```
+On every push to `main`, release-please scans commits since the last release, decides the next version from conventional-commit types (`feat:` → minor, `fix:` → patch, `BREAKING CHANGE:` in the footer → major), and opens a PR titled `chore(main): release X.Y.Z` that contains the version bump in both files, a `CHANGELOG.md` entry grouped by section, and nothing else. **Merging that PR is the release** — release-please then creates the `vX.Y.Z` tag and a GitHub Release automatically.
 
-CI rebuilds and redeploys the docs site on every push to `main`.
+What this means in practice:
+
+- Use conventional-commit prefixes rigorously. A `fix:` in a merged PR triggers a patch bump; a `feat:` triggers a minor bump. `chore:`, `ci:`, `test:` are hidden from the changelog but still allowed.
+- `BREAKING CHANGE:` in the commit body (or a `!` after the type, e.g. `feat!: …`) triggers a major bump. Use sparingly.
+- If you need to edit the release PR (fix a changelog typo, add missing context), edit it in place — release-please re-opens rather than duplicates.
+- The docs site still redeploys on every push to `main` via `.github/workflows/docs.yml`. A release merge is just another push for that workflow.
+
+Both `pyproject.toml` (`[project].version`) and `src/lazy_harness/__init__.py` (`__version__` line with the `x-release-please-version` marker) are kept in sync by the tool. `tests/unit/test_version.py` guards the invariant that the two files never drift.
