@@ -92,3 +92,26 @@ def test_extract_project_name() -> None:
     from lazy_harness.monitoring.collector import extract_project_name
 
     assert extract_project_name("-Users-foo-repos-my-project") == "my-project"
+
+
+def test_parse_session_uses_full_uuid_as_session_id(tmp_path: Path) -> None:
+    from lazy_harness.monitoring.collector import parse_session
+
+    uuid = "66056f9a-9981-4554-9ada-06237c999d23"
+    session_file = tmp_path / f"{uuid}.jsonl"
+    _write_session_jsonl(
+        session_file,
+        [
+            {
+                "type": "assistant",
+                "message": {
+                    "model": "claude-opus-4-6",
+                    "usage": {"input_tokens": 10, "output_tokens": 5},
+                },
+                "timestamp": "2026-04-13T10:00:00",
+            },
+        ],
+    )
+
+    results = parse_session(session_file)
+    assert results[0]["session"] == uuid

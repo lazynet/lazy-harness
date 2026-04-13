@@ -98,7 +98,7 @@ def parse_session(filepath: Path) -> list[dict[str, Any]]:
     except OSError:
         return []
 
-    session_id = filepath.stem[:8]
+    session_id = filepath.stem
     session_date = extract_session_date(filepath)
 
     results: list[dict[str, Any]] = []
