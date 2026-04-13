@@ -35,6 +35,12 @@ theme:
   icon:
     repo: fontawesome/brands/github
 
+validation:
+  links:
+    not_found: info
+  nav:
+    omitted_files: info
+
 plugins:
   - search
   - mermaid2
@@ -79,4 +85,13 @@ nav:
       - ADR-004 Agent adapter pattern: architecture/adrs/004-agent-adapter-pattern.md
       - ADR-007 Parallel bootstrap migration: architecture/adrs/007-parallel-bootstrap-migration.md
       - Legacy ADRs: architecture/decisions/legacy/README.md
+  - History:
+    - Genesis: history/genesis.md
+    - Lessons learned: history/lessons-learned.md
+    - Legacy specs: history/specs/index.md
+    - Legacy plans: history/plans/index.md
+    - Legacy workflows:
+      - README: history/workflows/README.md
+      - Memory structure: history/workflows/memory-structure.md
+      - QMD collections: history/workflows/qmd-collections.md
   - Backlog: backlog.md
