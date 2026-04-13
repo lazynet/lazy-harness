@@ -1,71 +1,93 @@
 # How the metrics ingest pipeline works
 
-`lh status` shows sessions, tokens, and cost by reading a SQLite database at `~/.config/lazy-harness/metrics.db` (or wherever `[monitoring].db` points). That database does not populate itself — something has to parse the agent's session JSONLs and feed it. That something is the **metrics ingest pipeline**: a standalone module (`lazy_harness.monitoring.ingest`) exposed as `lh metrics ingest`, designed to be safe to run on a cron without ever double-counting tokens.
+`lh status` shows sessions, tokens, and cost by reading a SQLite database at `~/.config/lazy-harness/metrics.db` (or wherever `[monitoring].db` points). That database does not populate itself — something has to parse the agent's session JSONLs and feed it. That something is the **metrics ingest pipeline**: a standalone module (`lazy_harness.monitoring.ingest`) exposed as `lh metrics ingest`, designed to produce numbers that reconcile with `npx ccusage` without ever double-counting tokens.
 
 This page explains what the pipeline does, how it guarantees precision, and how to wire it into the scheduler so `lh status` stays live.
 
-## Producer and sink already existed
+## Producer and sink
 
-Before the ingest pipeline, two halves of the path were already in place:
+Two pieces are needed on either side of the pipeline:
 
-- **Producer** — `lazy_harness.monitoring.collector.parse_session()` walks a single JSONL file, keeps only `type=="assistant"` entries, and aggregates `usage.input_tokens`, `usage.output_tokens`, `usage.cache_read_input_tokens`, and `usage.cache_creation_input_tokens` per model. The session's date is taken from the first `timestamp` field found. The session id is the file's stem (a UUID).
-- **Sink** — `lazy_harness.monitoring.db.MetricsDB` owns the SQLite file. It has a `session_stats` table keyed by `UNIQUE(session, model)` plus an `ingest_meta` table keyed by `session` that stores the last-seen file mtime (in nanoseconds).
-
-What was missing was the thing that walked the producer over every profile and wrote into the sink. That is what `ingest.py` adds.
+- **Producer** — `lazy_harness.monitoring.collector.iter_assistant_messages()` yields one dict per `type=="assistant"` entry in a JSONL file. Each dict carries the upstream `message.id`, the model string, and the four token buckets (`input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`). Messages without a `usage` block are skipped. When a legacy record has no `message.id`, the producer falls back to a synthetic id derived from the file stem and line number so dedup still works.
+- **Sink** — `lazy_harness.monitoring.db.MetricsDB` owns the SQLite file. `session_stats` is keyed by `UNIQUE(session, model)` and stores per-bucket token counts plus a pre-computed cost. `replace_profile_stats(profile, entries)` wraps a `DELETE … WHERE profile=?` and a batch of `INSERT`s inside a single transaction, so a partially-failed ingest never leaves the profile in a half-written state.
 
 ## The walk
 
 `ingest_all(cfg, db, pricing)` iterates every configured profile via `list_profiles(cfg)`. For each profile it calls `ingest_profile(profile, db, pricing)` which:
 
 1. Resolves `<config_dir>/projects/` and skips profiles whose dir doesn't exist.
-2. Iterates each `<project_slug>/` under `projects/`. The slug is decoded back into a human project name via `extract_project_name()` (reverses the agent's `-Users-foo-repos-demo` style encoding).
-3. For every `*.jsonl` under the project dir, it `stat()`s the file to get `st_mtime_ns`.
-4. **mtime fast path**: if `db.get_ingest_mtime(session)` equals the current `st_mtime_ns`, the session is skipped without re-parsing. Because the agent only ever appends to these files, an unchanged mtime means unchanged content.
-5. Otherwise it calls `parse_session()`, prices each `(model, totals)` row using `calculate_cost()`, and `upsert_stats()`s the results. Then it stores the new mtime in `ingest_meta`.
+2. Collects every `*.jsonl` under `projects/` **recursively** (`rglob`), including nested subagent files at `<session-uuid>/subagents/agent-*.jsonl`. Paths that sit under a `memory/` ancestor are excluded — those are user-owned episodic logs (`decisions.jsonl`, `failures.jsonl`), not agent transcripts.
+3. Sorts the collected files by `st_mtime_ns` ascending. Older files attribute their messages first, so the canonical ownership is stable across runs.
+4. Iterates the files in order, maintaining a `seen_msg_ids: set[str]` across the whole profile. Each assistant message's id is checked against the set; novel messages bump an in-memory aggregator keyed by `(session_id, model)`; already-seen messages are counted as deduped and dropped.
+5. After the walk, the in-memory aggregator is priced via `calculate_cost()` (per model × per token bucket, rates from `DEFAULT_PRICING` plus any `[monitoring.pricing]` override) and handed to `replace_profile_stats(profile.name, entries)`. The old rows for that profile are atomically replaced.
 
-The whole pass is reported back as an `IngestReport` with four counters: `sessions_scanned`, `sessions_updated`, `sessions_skipped`, `errors`. `lh metrics ingest` prints them as the last line of output.
+The whole pass is summarized as an `IngestReport` with the following counters: `sessions_scanned`, `sessions_updated`, `sessions_skipped`, `messages_total`, `messages_deduped`, and any per-file `errors`. `lh metrics ingest` prints the headline counters as the last line of output.
 
 ```mermaid
 flowchart LR
   A[lh metrics ingest] --> B[load config.toml]
   B --> C[open MetricsDB]
   C --> D{for each profile}
-  D --> E[walk projects/*/*.jsonl]
-  E --> F{mtime == last?}
-  F -- yes --> G[skip]
-  F -- no --> H[parse_session]
-  H --> I[calculate_cost]
-  I --> J[upsert_stats + set_ingest_mtime]
-  J --> D
-  G --> D
+  D --> E[rglob projects/**/*.jsonl]
+  E --> F[skip memory/*]
+  F --> G[sort by mtime asc]
+  G --> H[iter_assistant_messages]
+  H --> I{msg.id in seen?}
+  I -- yes --> J[drop - deduped]
+  I -- no --> K[aggregate by session, model]
+  K --> L[calculate_cost]
+  L --> M[replace_profile_stats atomic]
+  J --> H
+  M --> D
 ```
 
 ## Why it can't double-count
 
 Three independent guarantees stack up:
 
-### 1. Append-only source of truth
+### 1. Message-id dedup across files
 
-Claude Code writes each session as a single JSONL file it only ever appends to. So `parse_session()` over the full file always returns the exact cumulative totals for that session as of now — not a delta, not a snapshot, but the absolute truth of what that session consumed end-to-end.
+When Claude Code `/resume`s a conversation, it writes a **new** JSONL whose first section re-includes every prior message. Without dedup, the shared prefix gets counted once per resume chain — for a conversation resumed four times, that's 5× overcounting.
 
-### 2. UPSERT by `(session, model)`
+The pipeline defends against that with `seen_msg_ids`: each upstream `message.id` is attributed to exactly one `(session_id, model)` bucket — the first one the walk sees it in, which is the oldest file by mtime. Every subsequent occurrence in a resumed JSONL is skipped and counted under `messages_deduped`.
 
-`MetricsDB.upsert_stats()` issues an `INSERT … ON CONFLICT(session, model) DO UPDATE SET …` that **overwrites** `input_tokens`, `output_tokens`, `cache_read`, `cache_create`, and `cost` with the freshly parsed totals. It does not `SUM`, it does not accumulate. Ingesting the same session five times produces the same numbers as ingesting it once.
+In production this matters a lot: on the author's install, ~50% of assistant messages in `~/.claude-*` projects are duplicates introduced by resumes. Dedup is the difference between matching `ccusage` and being off by ~3×.
 
-### 3. mtime deduplication
+### 2. Append-only source of truth
 
-Even without guarantee #2, the mtime fast-path would prevent re-parse on cron ticks where nothing changed. This is a throughput optimization, not the correctness mechanism — the correctness comes from UPSERT — but it matters in practice because a cron that fires every 15 minutes would otherwise re-parse hundreds of sessions on every tick.
+Claude Code only ever appends to an existing session JSONL, never rewrites past messages. So re-parsing the full file always returns the exact cumulative totals as of now — not a delta, not a snapshot — and re-attributing them via dedup is idempotent by construction.
 
-The combination means you can safely run `lh metrics ingest` from any number of places — a cron, a session-stop hook, an interactive shell — without worrying about drift.
+### 3. Atomic profile replace
+
+`replace_profile_stats()` wraps its `DELETE` + `INSERT`s in a single `BEGIN … COMMIT`. A crash mid-transaction rolls back; the user's previous totals remain visible to `lh status`. A crash before the commit just means the next tick reconciles.
+
+## Pricing
+
+`DEFAULT_PRICING` in `monitoring/pricing.py` holds per-million-token rates for the three Claude models currently observed in the wild (`claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`). The rates mirror what LiteLLM publishes in `model_prices_and_context_window.json`, which is also what `ccusage` consumes — keeping the two aligned is the only way the cost numbers on `lh status` reconcile with `npx ccusage`.
+
+You can override any model's rates per-install under `[monitoring.pricing]` in `config.toml`:
+
+```toml
+[monitoring.pricing."claude-opus-4-6"]
+input = 5.0
+output = 25.0
+cache_read = 0.5
+cache_create = 6.25
+```
+
+Overrides are merged over `DEFAULT_PRICING` at ingest time via `load_pricing()`.
 
 ## Precision tests
 
-The pipeline is covered by `tests/unit/test_ingest.py`. The four invariants worth calling out:
+The pipeline is covered by `tests/unit/test_ingest.py`. The invariants worth calling out:
 
 - `test_ingest_profile_upserts_totals` — happy path: one session, one ingest, one row with the right totals.
-- `test_ingest_skips_unchanged_files` — second run over unchanged files reports 0 updated, N skipped, and the stored totals match the first run (no doubling).
-- `test_ingest_reflects_session_growth` — append a new assistant turn to the JSONL, bump mtime, re-ingest. The stored row now reflects the **new total**, not old+new.
-- `test_ingest_isolates_profiles` — two profiles with different sessions don't contaminate each other. Profile tagging is correct in `session_stats.profile`.
+- `test_ingest_is_idempotent` — running ingest twice yields identical stored totals, no doubling.
+- `test_ingest_reflects_session_growth` — append a new assistant turn to the JSONL, re-ingest. The stored row reflects the **new total**, not old+new.
+- `test_ingest_dedups_messages_shared_across_resumed_sessions` — two files share a `message.id`; it is counted exactly once.
+- `test_ingest_discovers_subagent_files` — nested `<uuid>/subagents/agent-*.jsonl` files are found and counted.
+- `test_ingest_skips_memory_jsonls` — `memory/decisions.jsonl` and `memory/failures.jsonl` are ignored even if they happen to contain assistant-shaped lines.
+- `test_ingest_isolates_profiles` — two profiles with different sessions don't contaminate each other.
 
 If any of these break, the numbers in `lh status` stop being trustworthy. They run on every `uv run pytest`.
 
@@ -79,7 +101,7 @@ schedule = "*/15 * * * *"
 command = "/Users/you/.local/bin/lh metrics ingest"
 ```
 
-Then `lh scheduler install` to register the job with the platform backend and `lh scheduler status` to confirm it is loaded. The 15-minute default is arbitrary — because of the mtime skip, picking a shorter cadence costs almost nothing; picking a longer one just means `lh status` lags further behind real-time.
+Then `lh scheduler install` to register the job with the platform backend and `lh scheduler status` to confirm it is loaded. Because the pipeline rebuilds each profile's stats from scratch and the file reads are cheap, a shorter cadence is only bounded by how fresh you want `lh status` to be.
 
 Pair this with whatever manual ingest you want: running `lh metrics ingest` at the end of a noisy day gives the same final state as letting the cron tick through the day on its own. The pipeline is deterministic.
 
@@ -94,5 +116,6 @@ If you want live updates anyway, nothing stops you from calling `lh metrics inge
 - Pipeline: `src/lazy_harness/monitoring/ingest.py`
 - Producer: `src/lazy_harness/monitoring/collector.py`
 - Sink + schema: `src/lazy_harness/monitoring/db.py`
+- Pricing table: `src/lazy_harness/monitoring/pricing.py`
 - CLI: `src/lazy_harness/cli/metrics_cmd.py`
-- Tests: `tests/unit/test_ingest.py`, `tests/integration/test_metrics_cmd.py`
+- Tests: `tests/unit/test_ingest.py`, `tests/unit/test_pricing.py`, `tests/integration/test_metrics_cmd.py`

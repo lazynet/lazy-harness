@@ -27,10 +27,12 @@ def _assistant_msg(
     inp: int = 100,
     out: int = 50,
     ts: str = "2026-04-13T10:00:00",
+    msg_id: str | None = None,
 ) -> dict:
     return {
         "type": "assistant",
         "message": {
+            "id": msg_id or f"msg_{inp}_{out}_{ts}",
             "model": model,
             "usage": {
                 "input_tokens": inp,
@@ -80,7 +82,7 @@ def test_ingest_profile_upserts_totals(tmp_path: Path) -> None:
     db.close()
 
 
-def test_ingest_skips_unchanged_files(tmp_path: Path) -> None:
+def test_ingest_is_idempotent(tmp_path: Path) -> None:
     from lazy_harness.monitoring.db import MetricsDB
     from lazy_harness.monitoring.ingest import ingest_profile
     from lazy_harness.monitoring.pricing import load_pricing
@@ -90,21 +92,18 @@ def test_ingest_skips_unchanged_files(tmp_path: Path) -> None:
         prof.config_dir / "projects",
         "-Users-foo-repos-demo",
         "22222222-2222-2222-2222-222222222222",
-        [_assistant_msg(inp=100, out=50)],
+        [_assistant_msg(inp=100, out=50, msg_id="m1")],
     )
 
     db = MetricsDB(tmp_path / "metrics.db")
     pricing = load_pricing()
-    r1 = ingest_profile(prof, db, pricing)
-    r2 = ingest_profile(prof, db, pricing)
-
-    assert r1.sessions_updated == 1
-    assert r2.sessions_updated == 0
-    assert r2.sessions_skipped == 1
+    ingest_profile(prof, db, pricing)
+    ingest_profile(prof, db, pricing)
 
     rows = db.query_stats(period="all")
     assert len(rows) == 1
     assert rows[0]["input"] == 100  # not doubled
+    assert rows[0]["output"] == 50
     db.close()
 
 
@@ -210,4 +209,113 @@ def test_ingest_all_walks_every_profile(tmp_path: Path) -> None:
     assert report.sessions_updated == 2
     rows = db.query_stats(period="all")
     assert {r["profile"] for r in rows} == {"lazy", "flex"}
+    db.close()
+
+
+def test_ingest_dedups_messages_shared_across_resumed_sessions(tmp_path: Path) -> None:
+    """Resumed session JSONLs re-include prior messages. Each message.id must count once."""
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.ingest import ingest_profile
+    from lazy_harness.monitoring.pricing import load_pricing
+
+    prof = _profile(tmp_path, "lazy")
+
+    shared_msg = _assistant_msg(inp=100, out=50, msg_id="msg-shared-1")
+    only_in_a = _assistant_msg(inp=200, out=80, msg_id="msg-a-only")
+    only_in_b = _assistant_msg(inp=300, out=120, msg_id="msg-b-only")
+
+    _write_session(
+        prof.config_dir / "projects",
+        "-tmp-proj",
+        "aaaaaaaa-1111-1111-1111-111111111111",
+        [shared_msg, only_in_a],
+    )
+    _write_session(
+        prof.config_dir / "projects",
+        "-tmp-proj",
+        "bbbbbbbb-2222-2222-2222-222222222222",
+        [shared_msg, only_in_b],  # resume: includes shared_msg again
+    )
+
+    db = MetricsDB(tmp_path / "metrics.db")
+    ingest_profile(prof, db, load_pricing())
+
+    rows = db.query_stats(period="all")
+    total_input = sum(r["input"] for r in rows)
+    total_output = sum(r["output"] for r in rows)
+    assert total_input == 100 + 200 + 300  # shared counted once
+    assert total_output == 50 + 80 + 120
+    db.close()
+
+
+def test_ingest_discovers_subagent_files(tmp_path: Path) -> None:
+    """Subagent JSONLs live under <session-uuid>/subagents/ and must be ingested too."""
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.ingest import ingest_profile
+    from lazy_harness.monitoring.pricing import load_pricing
+
+    prof = _profile(tmp_path, "lazy")
+    project_dir = prof.config_dir / "projects" / "-tmp-proj"
+    session_uuid = "cccccccc-3333-3333-3333-333333333333"
+    project_dir.mkdir(parents=True)
+
+    # Parent session file
+    parent_file = project_dir / f"{session_uuid}.jsonl"
+    with open(parent_file, "w") as fh:
+        fh.write(
+            json.dumps(_assistant_msg(inp=100, out=50, msg_id="parent-msg")) + "\n"
+        )
+
+    # Subagent file nested under <session_uuid>/subagents/
+    sub_dir = project_dir / session_uuid / "subagents"
+    sub_dir.mkdir(parents=True)
+    sub_file = sub_dir / "agent-abc123.jsonl"
+    with open(sub_file, "w") as fh:
+        fh.write(
+            json.dumps(_assistant_msg(inp=40, out=20, msg_id="subagent-msg")) + "\n"
+        )
+
+    db = MetricsDB(tmp_path / "metrics.db")
+    ingest_profile(prof, db, load_pricing())
+
+    rows = db.query_stats(period="all")
+    total_input = sum(r["input"] for r in rows)
+    total_output = sum(r["output"] for r in rows)
+    assert total_input == 140
+    assert total_output == 70
+    db.close()
+
+
+def test_ingest_skips_memory_jsonls(tmp_path: Path) -> None:
+    """memory/*.jsonl in a project dir are user episodic files, not sessions."""
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.ingest import ingest_profile
+    from lazy_harness.monitoring.pricing import load_pricing
+
+    prof = _profile(tmp_path, "lazy")
+    project_dir = prof.config_dir / "projects" / "-tmp-proj"
+    project_dir.mkdir(parents=True)
+
+    # Valid session
+    with open(project_dir / "dddddddd-4444-4444-4444-444444444444.jsonl", "w") as fh:
+        fh.write(json.dumps(_assistant_msg(inp=100, out=50, msg_id="real")) + "\n")
+
+    # Memory JSONL — must NOT be parsed (may not even have assistant records)
+    mem_dir = project_dir / "memory"
+    mem_dir.mkdir()
+    with open(mem_dir / "decisions.jsonl", "w") as fh:
+        fh.write(json.dumps({"type": "decision", "text": "whatever"}) + "\n")
+    with open(mem_dir / "failures.jsonl", "w") as fh:
+        # Even if it looked like an assistant message, it must be skipped
+        fh.write(
+            json.dumps(_assistant_msg(inp=9999, out=9999, msg_id="SHOULD_NOT_COUNT"))
+            + "\n"
+        )
+
+    db = MetricsDB(tmp_path / "metrics.db")
+    ingest_profile(prof, db, load_pricing())
+
+    rows = db.query_stats(period="all")
+    total_input = sum(r["input"] for r in rows)
+    assert total_input == 100
     db.close()

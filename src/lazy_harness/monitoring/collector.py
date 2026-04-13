@@ -64,6 +64,43 @@ def extract_project_name(encoded_dir: str) -> str:
     return parts[-1] if parts else encoded_dir
 
 
+def iter_assistant_messages(filepath: Path):
+    """Yield one dict per assistant message in a JSONL session file.
+
+    Each dict has: msg_id, model, input, output, cache_read, cache_create.
+    Messages without a usage block are skipped. msg_id falls back to a
+    synthetic key when the upstream JSON has no `message.id` (legacy rows).
+    """
+    try:
+        raw = filepath.read_text()
+    except OSError:
+        return
+    for lineno, line in enumerate(raw.splitlines()):
+        if not line.strip():
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if obj.get("type") != "assistant":
+            continue
+        msg = obj.get("message", {})
+        if not isinstance(msg, dict):
+            continue
+        usage = msg.get("usage")
+        if not usage:
+            continue
+        msg_id = msg.get("id") or f"{filepath.stem}:{lineno}"
+        yield {
+            "msg_id": msg_id,
+            "model": msg.get("model", "unknown"),
+            "input": usage.get("input_tokens", 0),
+            "output": usage.get("output_tokens", 0),
+            "cache_read": usage.get("cache_read_input_tokens", 0),
+            "cache_create": usage.get("cache_creation_input_tokens", 0),
+        }
+
+
 def parse_session(filepath: Path) -> list[dict[str, Any]]:
     aggregated: dict[str, dict[str, int]] = defaultdict(
         lambda: {"input": 0, "output": 0, "cache_read": 0, "cache_create": 0}
