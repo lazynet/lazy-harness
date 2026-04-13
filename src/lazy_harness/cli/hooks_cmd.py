@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+import importlib
+import sys
+
 import click
 from rich.console import Console
 from rich.table import Table
 
 from lazy_harness.core.config import ConfigError, load_config
 from lazy_harness.core.paths import config_file
-from lazy_harness.hooks.loader import list_builtin_hooks, resolve_hooks_for_event
+from lazy_harness.hooks.loader import (
+    _BUILTIN_HOOKS,
+    list_builtin_hooks,
+    resolve_hooks_for_event,
+)
 
 
 @click.group()
@@ -62,6 +69,36 @@ def hooks_list() -> None:
         )
 
     console.print(table)
+
+
+@click.command("hook")
+@click.argument("name")
+def hook_invoke(name: str) -> None:
+    """Invoke a built-in hook by name. Called from settings.json by Claude Code.
+
+    The command imports the builtin module and calls its `main()` directly,
+    so settings.json entries look like: `lh hook compound-loop`.
+    """
+    module_path = _BUILTIN_HOOKS.get(name)
+    if module_path is None:
+        click.echo(f"Unknown hook: {name}", err=True)
+        sys.exit(0)
+    try:
+        module = importlib.import_module(module_path)
+    except ImportError as e:
+        click.echo(f"Failed to import {module_path}: {e}", err=True)
+        sys.exit(0)
+    main_fn = getattr(module, "main", None)
+    if main_fn is None:
+        click.echo(f"Hook {name} has no main()", err=True)
+        sys.exit(0)
+    try:
+        main_fn()
+    except SystemExit:
+        pass
+    except Exception as e:  # noqa: BLE001 — hooks must never bubble up to Claude Code
+        click.echo(f"Hook {name} raised: {e}", err=True)
+    sys.exit(0)
 
 
 @hooks.command("run")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -66,12 +67,93 @@ def _extract_project(cwd: str) -> str:
     return os.path.basename(cwd) or ""
 
 
+def _classify(cwd: str) -> tuple[str, str]:
+    """Return (profile, session_type) based on cwd heuristics.
+
+    Matches the bash implementation: LazyMind/obsidian paths classify as
+    vault; `/repos/lazy/` as personal; `/repos/flex/` as work; else other.
+    Profile is the same minus the vault special case.
+    """
+    if not cwd:
+        return ("other", "other")
+    lower = cwd.lower()
+    if "lazymind" in lower or "obsidian" in lower:
+        return ("personal", "vault")
+    if "/repos/lazy/" in cwd:
+        return ("personal", "personal")
+    if "/repos/flex/" in cwd:
+        return ("work", "work")
+    return ("other", "other")
+
+
+def _decode_project_dir(dir_name: str) -> str:
+    """Decode Claude Code's project dir name back to a real path.
+
+    Claude replaces '/' with '-', which is ambiguous for repos containing
+    hyphens (e.g. `lazy-claudecode`). We try candidate splits against the
+    filesystem and pick the one that exists. Falls back to naive replacement.
+    """
+    if not dir_name.startswith("-"):
+        return dir_name.replace("-", "/")
+    raw = dir_name[1:]
+    parts = raw.split("-")
+
+    def try_build(index: int, current_path: str) -> str | None:
+        if index == len(parts):
+            return current_path if os.path.exists(current_path) else None
+        combined = parts[index]
+        for j in range(index, len(parts)):
+            if j > index:
+                combined += "-" + parts[j]
+            candidate = os.path.join(current_path, combined)
+            r = try_build(j + 1, candidate)
+            if r:
+                return r
+        return None
+
+    result = try_build(0, "/")
+    return result if result else "/" + raw.replace("-", "/")
+
+
+def _existing_message_count(path: Path) -> int:
+    if not path.exists():
+        return 0
+    try:
+        text = path.read_text()
+    except OSError:
+        return 0
+    in_fm = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped == "---":
+            if not in_fm:
+                in_fm = True
+                continue
+            break
+        if in_fm:
+            m = re.match(r"^messages:\s*(\d+)", line)
+            if m:
+                return int(m.group(1))
+    return 0
+
+
+def _atomic_write(path: Path, content: str) -> None:
+    # Tempfile in same dir → os.replace: iCloud/Dropbox see a single rename
+    # event instead of an open-write-close window that can race with sync.
+    tmp = path.with_name(f".{path.name}.tmp")
+    with open(tmp, "w") as f:
+        f.write(content)
+    os.replace(tmp, path)
+
+
 def export_session(session_file: Path, output_dir: Path, min_messages: int = 4) -> Path | None:
     meta, messages = _parse_session_jsonl(session_file)
     if len(messages) < min_messages:
         return None
     session_id = session_file.stem
     cwd = meta.get("cwd", "")
+    if not cwd:
+        cwd = _decode_project_dir(session_file.parent.name)
     project = _extract_project(cwd)
     ts = meta.get("timestamp", "")
     try:
@@ -85,13 +167,21 @@ def export_session(session_file: Path, output_dir: Path, min_messages: int = 4) 
     export_dir = output_dir / year_month
     export_dir.mkdir(parents=True, exist_ok=True)
     output_file = export_dir / f"{date_prefix}-{session_id[:8]}.md"
-    with open(output_file, "w") as out:
-        out.write(f"---\ntype: claude-session\nsession_id: {session_id}\n")
-        out.write(f"date: {date_str}\ncwd: {cwd}\nproject: {project}\n")
-        out.write(f"branch: {meta.get('branch', '')}\nclaude_version: {meta.get('version', '')}\n")
-        out.write(f"messages: {len(messages)}\n---\n\n")
-        out.write(f"# Session {date_str} — {project or 'unknown'}\n\n")
-        out.write(f"**CWD**: `{cwd}` | **Project**: {project}\n\n---\n\n")
-        for msg in messages:
-            out.write(f"## {msg['role']}\n\n{msg['text']}\n\n")
+
+    if _existing_message_count(output_file) >= len(messages):
+        return None
+
+    profile, session_type = _classify(cwd)
+    parts: list[str] = [
+        f"---\ntype: claude-session\nsession_id: {session_id}\n",
+        f"date: {date_str}\ncwd: {cwd}\n",
+        f"project: {project}\nprofile: {profile}\nsession_type: {session_type}\n",
+        f"branch: {meta.get('branch', '')}\nclaude_version: {meta.get('version', '')}\n",
+        f"messages: {len(messages)}\n---\n\n",
+        f"# Session {date_str} — {project or session_type}\n\n",
+        f"**CWD**: `{cwd}` | **Project**: {project} | **Profile**: {profile}\n\n---\n\n",
+    ]
+    for msg in messages:
+        parts.append(f"## {msg['role']}\n\n{msg['text']}\n\n")
+    _atomic_write(output_file, "".join(parts))
     return output_file

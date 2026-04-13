@@ -21,6 +21,7 @@ class ConfigError(Exception):
 class ProfileEntry:
     config_dir: str = ""
     roots: list[str] = field(default_factory=list)
+    lazynorth_doc: str = ""
 
 
 @dataclass
@@ -82,6 +83,31 @@ class HookEventConfig:
 
 
 @dataclass
+class LazyNorthConfig:
+    enabled: bool = False
+    path: str = ""
+    universal_doc: str = "LazyNorth.md"
+
+
+@dataclass
+class ContextInjectConfig:
+    enabled: bool = True
+    max_body_chars: int = 3000
+    last_session_enabled: bool = True
+
+
+@dataclass
+class CompoundLoopConfig:
+    enabled: bool = False
+    model: str = "claude-haiku-4-5-20251001"
+    min_messages: int = 4
+    min_user_chars: int = 200
+    debounce_seconds: int = 60
+    timeout_seconds: int = 120
+    learnings_subdir: str = "learnings"
+
+
+@dataclass
 class Config:
     harness: HarnessConfig = field(default_factory=HarnessConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
@@ -90,6 +116,9 @@ class Config:
     monitoring: MonitoringConfig = field(default_factory=MonitoringConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     hooks: dict[str, HookEventConfig] = field(default_factory=dict)
+    compound_loop: CompoundLoopConfig = field(default_factory=CompoundLoopConfig)
+    lazynorth: LazyNorthConfig = field(default_factory=LazyNorthConfig)
+    context_inject: ContextInjectConfig = field(default_factory=ContextInjectConfig)
 
 
 def _parse_profiles(raw: dict[str, Any]) -> ProfilesConfig:
@@ -103,6 +132,7 @@ def _parse_profiles(raw: dict[str, Any]) -> ProfilesConfig:
             items[key] = ProfileEntry(
                 config_dir=value.get("config_dir", ""),
                 roots=value.get("roots", []),
+                lazynorth_doc=value.get("lazynorth_doc", ""),
             )
     return ProfilesConfig(default=default, items=items)
 
@@ -154,6 +184,36 @@ def load_config(path: Path) -> Config:
             cfg.hooks[event_name] = HookEventConfig(
                 scripts=event_cfg.get("scripts", []),
             )
+
+    cl_raw = raw.get("compound_loop", {})
+    if isinstance(cl_raw, dict):
+        cfg.compound_loop = CompoundLoopConfig(
+            enabled=cl_raw.get("enabled", False),
+            model=cl_raw.get("model", CompoundLoopConfig.model),
+            min_messages=cl_raw.get("min_messages", CompoundLoopConfig.min_messages),
+            min_user_chars=cl_raw.get("min_user_chars", CompoundLoopConfig.min_user_chars),
+            debounce_seconds=cl_raw.get("debounce_seconds", CompoundLoopConfig.debounce_seconds),
+            timeout_seconds=cl_raw.get("timeout_seconds", CompoundLoopConfig.timeout_seconds),
+            learnings_subdir=cl_raw.get("learnings_subdir", CompoundLoopConfig.learnings_subdir),
+        )
+
+    ln_raw = raw.get("lazynorth", {})
+    if isinstance(ln_raw, dict):
+        cfg.lazynorth = LazyNorthConfig(
+            enabled=ln_raw.get("enabled", False),
+            path=ln_raw.get("path", ""),
+            universal_doc=ln_raw.get("universal_doc", LazyNorthConfig.universal_doc),
+        )
+
+    ci_raw = raw.get("context_inject", {})
+    if isinstance(ci_raw, dict):
+        cfg.context_inject = ContextInjectConfig(
+            enabled=ci_raw.get("enabled", True),
+            max_body_chars=ci_raw.get("max_body_chars", ContextInjectConfig.max_body_chars),
+            last_session_enabled=ci_raw.get(
+                "last_session_enabled", ContextInjectConfig.last_session_enabled
+            ),
+        )
 
     return cfg
 

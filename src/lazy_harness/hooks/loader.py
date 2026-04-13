@@ -17,6 +17,7 @@ class HookInfo:
 
 
 _BUILTIN_HOOKS: dict[str, str] = {
+    "compound-loop": "lazy_harness.hooks.builtins.compound_loop",
     "context-inject": "lazy_harness.hooks.builtins.context_inject",
     "pre-compact": "lazy_harness.hooks.builtins.pre_compact",
     "session-export": "lazy_harness.hooks.builtins.session_export",
