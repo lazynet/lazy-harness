@@ -103,3 +103,28 @@ def metrics_drain() -> None:
         db.close()
 
     Console().print(f"[green]drain complete:[/green] {total_sent} sent, {total_failed} failed")
+
+
+@metrics.command("status")
+def metrics_status() -> None:
+    """Show pending/sent counts per remote sink."""
+    console = Console()
+    try:
+        cfg = load_config(config_file())
+    except ConfigError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(1)
+
+    db_path = expand_path(cfg.monitoring.db) if cfg.monitoring.db else data_dir() / "metrics.db"
+    db = MetricsDB(Path(db_path))
+    try:
+        for name in cfg.metrics.sinks:
+            if name == "sqlite_local":
+                continue
+            stats = db.outbox_stats(name)
+            console.print(
+                f"[bold]{name}[/bold]  pending: {stats['pending']}  "
+                f"sending: {stats['sending']}  sent: {stats['sent']}"
+            )
+    finally:
+        db.close()
