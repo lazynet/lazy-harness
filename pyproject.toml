@@ -1,6 +1,6 @@
 [project]
 name = "lazy-harness"
-version = "0.5.0"
+version = "0.5.1"
 description = "A cross-platform harnessing framework for AI coding agents"
 readme = "README.md"
 requires-python = ">=3.11"
