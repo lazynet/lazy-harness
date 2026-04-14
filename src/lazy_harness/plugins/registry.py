@@ -8,6 +8,7 @@ is not activation.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from importlib import metadata as importlib_metadata
 from typing import Any
 
 from lazy_harness.plugins.errors import PluginConflict, PluginNotFound
@@ -37,6 +38,25 @@ class PluginRegistry:
                 origins=["builtin", "builtin"],
             )
         bucket[name] = impl
+
+    def discover_entry_points(self, kind: type, *, group: str) -> None:
+        eps = importlib_metadata.entry_points()
+        selected = eps.select(group=group) if hasattr(eps, "select") else []
+        bucket = self._external.setdefault(kind, {})
+        for ep in selected:
+            impl = ep.load()
+            base_name = getattr(impl, "name", ep.name)
+            prefixed = f"ext:{base_name}"
+            dist_name = getattr(ep.dist, "name", "unknown") if ep.dist else "unknown"
+            if prefixed in bucket:
+                raise PluginConflict(
+                    kind=kind.__name__,
+                    name=prefixed,
+                    origins=[bucket[prefixed].origin, f"ext:{dist_name}"],
+                )
+            bucket[prefixed] = PluginInfo(
+                name=prefixed, origin=f"ext:{dist_name}", impl=impl
+            )
 
     def resolve(self, kind: type, name: str) -> type[Any]:
         bucket = self._builtins.get(kind, {})
