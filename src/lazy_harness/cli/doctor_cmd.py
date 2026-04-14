@@ -68,6 +68,23 @@ def doctor() -> None:
         else:
             console.print("[yellow]·[/yellow] QMD: not found in PATH (optional)")
 
+    console.print("\n[bold]Network egress[/bold]")
+    remote_urls: list[tuple[str, str]] = []
+    for name in cfg.metrics.sinks:
+        if name == "sqlite_local":
+            continue
+        definition = cfg.metrics.sink_configs.get(name)
+        if not definition:
+            continue
+        url = definition.options.get("url", "")
+        if url:
+            remote_urls.append((name, url))
+    if not remote_urls:
+        console.print("  [green]local-only[/green] — no remote sinks configured")
+    else:
+        for name, url in remote_urls:
+            console.print(f"  {name} → {url}")
+
     console.print()
     if ok:
         console.print("[green]All checks passed.[/green]")
