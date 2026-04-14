@@ -28,6 +28,7 @@ def metrics() -> None:
 def metrics_ingest(dry_run: bool, verbose: bool) -> None:
     """Scan every profile's projects/*.jsonl and upsert token stats."""
     console = Console()
+    stderr = Console(stderr=True)
     try:
         cfg = load_config(config_file())
     except ConfigError as e:
@@ -38,18 +39,28 @@ def metrics_ingest(dry_run: bool, verbose: bool) -> None:
         console.print("[yellow]monitoring disabled in config; nothing to do.[/yellow]")
         return
 
-    db_path = expand_path(cfg.monitoring.db) if cfg.monitoring.db else data_dir() / "metrics.db"
+    identity = resolve_identity(explicit=cfg.metrics.user_id or None)
+    _print_active_sinks(stderr, cfg, identity)
 
-    from pathlib import Path
+    db_path = expand_path(cfg.monitoring.db) if cfg.monitoring.db else data_dir() / "metrics.db"
 
     if dry_run:
         console.print(f"[dim]dry-run — target DB would be: {db_path}[/dim]")
         db = MetricsDB(Path(":memory:"))
     else:
-        db = MetricsDB(db_path)
+        db = MetricsDB(Path(db_path))
+
     try:
         pricing = load_pricing(cfg.monitoring.pricing or None)
-        report = ingest_all(cfg, db, pricing)
+        sinks = build_sinks(cfg.metrics, db=db)
+        report = ingest_all(cfg, db, pricing, sinks=sinks)
+
+        for sink in sinks:
+            if isinstance(sink, HttpRemoteSink):
+                try:
+                    sink.drain(batch_size=0)
+                except Exception:
+                    pass
     finally:
         db.close()
 
