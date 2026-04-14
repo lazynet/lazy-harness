@@ -28,6 +28,9 @@ class MetricsDB:
                 cache_read INTEGER NOT NULL DEFAULT 0,
                 cache_create INTEGER NOT NULL DEFAULT 0,
                 cost REAL NOT NULL DEFAULT 0.0,
+                user_id TEXT NOT NULL DEFAULT 'local',
+                tenant_id TEXT NOT NULL DEFAULT 'local',
+                event_id TEXT NOT NULL DEFAULT '',
                 UNIQUE(session, model)
             )
         """)
@@ -38,7 +41,44 @@ class MetricsDB:
                 mtime_ns INTEGER NOT NULL
             )
         """)
+        self._migrate_identity_columns()
         self._conn.commit()
+
+    def _migrate_identity_columns(self) -> None:
+        """Add user_id/tenant_id/event_id to session_stats if missing.
+
+        Older databases created before the plugin system rename have a
+        narrower schema. Use PRAGMA table_info to detect missing columns
+        and ALTER TABLE them in. event_id is backfilled deterministically
+        from (profile, session, model) for legacy rows so the remote sink
+        has a stable idempotency key.
+        """
+        cols = {row[1] for row in self._conn.execute("PRAGMA table_info(session_stats)")}
+        if "user_id" not in cols:
+            self._conn.execute(
+                "ALTER TABLE session_stats ADD COLUMN user_id TEXT NOT NULL DEFAULT 'local'"
+            )
+        if "tenant_id" not in cols:
+            self._conn.execute(
+                "ALTER TABLE session_stats ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'local'"
+            )
+        if "event_id" not in cols:
+            self._conn.execute(
+                "ALTER TABLE session_stats ADD COLUMN event_id TEXT NOT NULL DEFAULT ''"
+            )
+            from lazy_harness.monitoring.event_id import derive_event_id
+
+            rows = self._conn.execute(
+                "SELECT rowid, profile, session, model FROM session_stats WHERE event_id = ''"
+            ).fetchall()
+            for row in rows:
+                eid = derive_event_id(
+                    profile=row["profile"], session=row["session"], model=row["model"]
+                )
+                self._conn.execute(
+                    "UPDATE session_stats SET event_id = ? WHERE rowid = ?",
+                    (eid, row["rowid"]),
+                )
 
     def replace_profile_stats(
         self, profile: str, entries: list[dict[str, Any]]
