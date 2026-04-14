@@ -499,6 +499,17 @@ class MetricsDB:
             "next_attempt_ts": row["next_attempt_ts"],
         }
 
+    def outbox_reset_backoff(self, sink_name: str) -> None:
+        self._conn.execute(
+            """
+            UPDATE sink_outbox
+            SET next_attempt_ts = NULL
+            WHERE sink_name = ? AND status = 'pending'
+            """,
+            (sink_name,),
+        )
+        self._conn.commit()
+
     def close(self) -> None:
         self._conn.close()
 

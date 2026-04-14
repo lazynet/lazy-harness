@@ -41,6 +41,8 @@ def drain_http_remote(
     Never raises to the caller. Network errors and non-2xx responses are
     recorded as failures on the outbox row.
     """
+    db.outbox_reset_backoff("http_remote")
+
     rows = db.outbox_claim(
         sink_name="http_remote", batch_size=batch_size, lease_seconds=_LEASE_SECONDS
     )
