@@ -1,4 +1,6 @@
+import json
 import sqlite3
+import time
 from pathlib import Path
 
 from lazy_harness.monitoring.db import MetricsDB
@@ -65,3 +67,82 @@ def test_migration_is_idempotent(tmp_path: Path) -> None:
     # Open a second time — should not raise on duplicate column.
     db = MetricsDB(path)
     db.close()
+
+
+def test_outbox_enqueue_starts_pending(tmp_path: Path) -> None:
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.outbox_enqueue(
+            sink_name="http_remote",
+            event_id="eid1",
+            payload_json='{"event_id":"eid1"}',
+        )
+        rows = db.outbox_list_pending(sink_name="http_remote")
+        assert len(rows) == 1
+        assert rows[0].status == "pending"
+        assert rows[0].attempts == 0
+    finally:
+        db.close()
+
+
+def test_outbox_claim_and_mark_sent(tmp_path: Path) -> None:
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.outbox_enqueue(sink_name="http_remote", event_id="e1", payload_json="{}")
+        db.outbox_enqueue(sink_name="http_remote", event_id="e2", payload_json="{}")
+
+        claimed = db.outbox_claim(sink_name="http_remote", batch_size=10, lease_seconds=60)
+        assert [r.event_id for r in claimed] == ["e1", "e2"]
+        for r in claimed:
+            assert r.status == "sending"
+            assert r.lease_until is not None
+
+        db.outbox_mark_sent("http_remote", "e1")
+        remaining = db.outbox_list_pending(sink_name="http_remote")
+        assert [r.event_id for r in remaining] == []
+        still_sending = db.outbox_list_sending(sink_name="http_remote")
+        assert [r.event_id for r in still_sending] == ["e2"]
+    finally:
+        db.close()
+
+
+def test_outbox_expired_lease_is_reclaimable(tmp_path: Path) -> None:
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.outbox_enqueue(sink_name="http_remote", event_id="e1", payload_json="{}")
+        db.outbox_claim(sink_name="http_remote", batch_size=10, lease_seconds=0)
+        time.sleep(0.01)
+        reclaimed = db.outbox_claim(sink_name="http_remote", batch_size=10, lease_seconds=60)
+        assert [r.event_id for r in reclaimed] == ["e1"]
+    finally:
+        db.close()
+
+
+def test_outbox_mark_failed_increments_attempts_and_sets_next(tmp_path: Path) -> None:
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.outbox_enqueue(sink_name="http_remote", event_id="e1", payload_json="{}")
+        db.outbox_claim(sink_name="http_remote", batch_size=1, lease_seconds=60)
+        db.outbox_mark_failed("http_remote", "e1", error="timeout", retry_after_seconds=30)
+
+        rows = db.outbox_list_pending(sink_name="http_remote", due_now=False)
+        assert len(rows) == 1
+        assert rows[0].attempts == 1
+        assert rows[0].last_error == "timeout"
+        assert rows[0].status == "pending"
+        assert rows[0].next_attempt_ts is not None
+    finally:
+        db.close()
+
+
+def test_outbox_dedupe_by_event_id_on_enqueue(tmp_path: Path) -> None:
+    """Enqueueing the same (sink, event_id) twice updates the row, not duplicates it."""
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.outbox_enqueue(sink_name="http_remote", event_id="e1", payload_json='{"v":1}')
+        db.outbox_enqueue(sink_name="http_remote", event_id="e1", payload_json='{"v":2}')
+        rows = db.outbox_list_pending(sink_name="http_remote")
+        assert len(rows) == 1
+        assert json.loads(rows[0].payload_json)["v"] == 2
+    finally:
+        db.close()
