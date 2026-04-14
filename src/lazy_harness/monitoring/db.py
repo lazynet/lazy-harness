@@ -6,7 +6,10 @@ import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from lazy_harness.plugins.contracts import MetricEvent
 
 
 class MetricsDB:
@@ -172,6 +175,45 @@ class MetricsDB:
             affected += 1
         self._conn.commit()
         return affected
+
+    def upsert_event(self, event: MetricEvent) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO session_stats
+                (session, date, model, profile, project,
+                 input_tokens, output_tokens, cache_read, cache_create, cost,
+                 user_id, tenant_id, event_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(session, model) DO UPDATE SET
+                date=excluded.date,
+                profile=excluded.profile,
+                project=excluded.project,
+                input_tokens=excluded.input_tokens,
+                output_tokens=excluded.output_tokens,
+                cache_read=excluded.cache_read,
+                cache_create=excluded.cache_create,
+                cost=excluded.cost,
+                user_id=excluded.user_id,
+                tenant_id=excluded.tenant_id,
+                event_id=excluded.event_id
+            """,
+            (
+                event.session,
+                event.date,
+                event.model,
+                event.profile,
+                event.project,
+                event.input_tokens,
+                event.output_tokens,
+                event.cache_read,
+                event.cache_create,
+                event.cost,
+                event.user_id,
+                event.tenant_id,
+                event.event_id,
+            ),
+        )
+        self._conn.commit()
 
     def get_ingest_mtime(self, session: str) -> int | None:
         row = self._conn.execute(
