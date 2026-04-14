@@ -21,8 +21,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from lazy_harness.core.config import Config
+from lazy_harness.core.identity import resolve_identity
 from lazy_harness.core.paths import expand_path
 from lazy_harness.core.profiles import ProfileInfo, list_profiles
 from lazy_harness.monitoring.collector import (
@@ -31,7 +33,12 @@ from lazy_harness.monitoring.collector import (
     iter_assistant_messages,
 )
 from lazy_harness.monitoring.db import MetricsDB
+from lazy_harness.monitoring.event_id import derive_event_id
 from lazy_harness.monitoring.pricing import calculate_cost
+from lazy_harness.plugins.contracts import (
+    METRIC_EVENT_SCHEMA_VERSION,
+    MetricEvent,
+)
 
 
 @dataclass
@@ -91,6 +98,10 @@ def ingest_profile(
     profile: ProfileInfo,
     db: MetricsDB,
     pricing: dict[str, dict[str, float]],
+    *,
+    sinks: list[Any] | None = None,
+    user_id: str = "local",
+    tenant_id: str = "local",
 ) -> IngestReport:
     report = IngestReport()
     projects_dir = profile.config_dir / "projects"
@@ -100,21 +111,17 @@ def ingest_profile(
     files = _find_session_files(projects_dir, report.errors)
 
     seen_msg_ids: set[str] = set()
-    # (session_id, model) -> aggregate
     aggregated: dict[tuple[str, str], dict] = {}
 
     for _mtime_ns, session_file, project_name, session_id in files:
         report.sessions_scanned += 1
-
         try:
             messages = list(iter_assistant_messages(session_file))
         except OSError as e:
             report.errors.append(f"{session_file}: {e}")
             continue
-
         if not messages:
             continue
-
         session_date = extract_session_date(session_file)
         novel_for_this_file = 0
         for m in messages:
@@ -140,11 +147,11 @@ def ingest_profile(
             agg["output"] += m["output"]
             agg["cache_read"] += m["cache_read"]
             agg["cache_create"] += m["cache_create"]
-
         if novel_for_this_file == 0:
             report.sessions_skipped += 1
 
     entries: list[dict] = []
+    events: list[MetricEvent] = []
     for (session_id, model), agg in aggregated.items():
         cost = calculate_cost(
             model,
@@ -170,9 +177,38 @@ def ingest_profile(
                 "cost": cost,
             }
         )
+        events.append(
+            MetricEvent(
+                event_id=derive_event_id(
+                    profile=profile.name, session=session_id, model=model
+                ),
+                schema_version=METRIC_EVENT_SCHEMA_VERSION,
+                user_id=user_id,
+                tenant_id=tenant_id,
+                profile=profile.name,
+                session=session_id,
+                model=model,
+                project=agg["project"],
+                date=agg["date"],
+                input_tokens=agg["input"],
+                output_tokens=agg["output"],
+                cache_read=agg["cache_read"],
+                cache_create=agg["cache_create"],
+                cost=cost,
+            )
+        )
 
     db.replace_profile_stats(profile.name, entries)
     report.sessions_updated = len({e["session"] for e in entries})
+
+    if sinks:
+        for sink in sinks:
+            for event in events:
+                result = sink.write(event)
+                if not result.success:
+                    report.errors.append(
+                        f"{type(sink).__name__} write failed for {event.event_id}: {result.error}"
+                    )
     return report
 
 
@@ -180,8 +216,11 @@ def ingest_all(
     cfg: Config,
     db: MetricsDB,
     pricing: dict[str, dict[str, float]],
+    *,
+    sinks: list[Any] | None = None,
 ) -> IngestReport:
     total = IngestReport()
+    identity = resolve_identity(explicit=cfg.metrics.user_id or None)
     for prof in list_profiles(cfg):
         config_path = expand_path(str(prof.config_dir))
         resolved = ProfileInfo(
@@ -193,5 +232,14 @@ def ingest_all(
         )
         if not resolved.exists:
             continue
-        total.merge(ingest_profile(resolved, db, pricing))
+        total.merge(
+            ingest_profile(
+                resolved,
+                db,
+                pricing,
+                sinks=sinks,
+                user_id=identity.user_id,
+                tenant_id=cfg.metrics.tenant_id,
+            )
+        )
     return total
