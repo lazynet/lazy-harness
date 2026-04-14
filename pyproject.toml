@@ -7,6 +7,7 @@ requires-python = ">=3.11"
 license = "MIT"
 dependencies = [
     "click>=8.1",
+    "httpx>=0.28.1",
     "rich>=13.0",
     "tomli-w>=1.0",
 ]
@@ -35,6 +36,7 @@ select = ["E", "F", "I", "UP"]
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+    "pytest-httpserver>=1.1.5",
     "ruff>=0.4",
 ]
 docs = [
