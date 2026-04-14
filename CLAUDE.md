@@ -4,9 +4,19 @@ Instructions for Claude Code (and other compatible agents) when working in this 
 
 ## What this repo is
 
-`lazy-harness` is a cross-platform harnessing framework for AI coding agents, distributed as a Python package (`lh` CLI). The code lives in `src/lazy_harness/`, tests mirror it one-to-one in `tests/`, and the public docs site is built from `docs/` with MkDocs Material and deployed to GitHub Pages on every push to `main`.
+`lazy-harness` is a cross-platform harnessing framework for AI coding agents, distributed as a Python package (`lh` CLI). The code lives in `src/lazy_harness/`, tests mirror it one-to-one in `tests/`, internal design artifacts (ADRs, specs) live in `specs/`, and the public docs site is built from `docs/` with MkDocs Material and deployed to GitHub Pages on every push to `main`.
 
-This is a **public repository**. Public surface (README, `docs/` user-facing pages, commit messages, issue/PR text) should stay generic and professional — no personal names, no references to private predecessor repos. The `docs/history/` and `docs/architecture/decisions/legacy/` trees are explicitly archived material and are allowed to reference the project's pre-rename history; everything else should not.
+This is a **public repository**. Public surface (README, `docs/` user-facing pages, commit messages, issue/PR text) should stay generic and professional — no personal names, no references to private predecessor repos. The `specs/archive/` tree is explicitly archived material and is allowed to reference the project's pre-rename history; everything else should not.
+
+### `specs/` vs `docs/`
+
+- **`docs/`** — public, user-facing documentation. Published to GitHub Pages via MkDocs. Covers install, use, how things work, and narrative architecture overview.
+- **`specs/`** — internal design artifacts. Tracked in git but **not** published. Contains three subtrees:
+  - `specs/adrs/` — active ADRs (short decision records).
+  - `specs/designs/` — long-form design specs produced during brainstorming.
+  - `specs/archive/` — frozen historical material (legacy ADRs, early plans/specs, genesis notes). Preserved as-is for provenance.
+
+If a document explains *what* a user of the framework should do or see, it belongs in `docs/`. If it explains *how* we decided to build something, or captures an in-progress design, it belongs in `specs/`.
 
 ## Stack
 
@@ -83,8 +93,8 @@ User-visible changes (CLI output, hook behavior, config parsing) additionally ne
 - Do not generate READMEs or standalone documentation pages unless explicitly asked. (Tests are always in scope under TDD; this exclusion does not apply to them.) Do not add obvious code comments.
 - Do not refactor code that wasn't part of the task. If you spot something worth improving, mention it — don't touch it.
 - Do not introduce abstractions for hypothetical future needs. Three similar lines beats a premature abstraction.
-- Do not reintroduce references to the project's pre-rename name or any individual user's name into public-facing docs (`README.md`, `docs/index.md`, `docs/why/*`, `docs/getting-started/*`, `docs/reference/*`, `docs/architecture/overview.md`, `mkdocs.yml`). `docs/history/**` and `docs/architecture/decisions/legacy/**` are the only places where historical references belong, and they are explicitly archived.
-- Do not edit files in `docs/history/**` or `docs/architecture/decisions/legacy/**` to "fix" their historical references — those trees are preserved as-is on purpose.
+- Do not reintroduce references to the project's pre-rename name or any individual user's name into public-facing docs (`README.md`, `docs/index.md`, `docs/why/*`, `docs/getting-started/*`, `docs/reference/*`, `docs/architecture/overview.md`, `mkdocs.yml`). `specs/archive/**` is the only place where historical references belong, and it is explicitly archived.
+- Do not edit files in `specs/archive/**` to "fix" their historical references, stale paths, or outdated nomenclature — that tree is preserved as-is on purpose. Moving files as part of a wider restructure is fine; editing their content is not.
 - Do not commit secrets, credentials, or personal identifying information of any user.
 
 ## Layout cheatsheet
@@ -104,8 +114,13 @@ docs/                # MkDocs site source (public)
 ├── why/             # Problem, philosophy, memory model
 ├── getting-started/ # Install, first run, migrating
 ├── reference/       # CLI, config
-├── architecture/    # Overview, ADRs
-└── history/         # ARCHIVED — do not edit for cleanup
+└── architecture/    # Overview only — ADRs live in specs/adrs/
+specs/               # Internal design artifacts (NOT published)
+├── adrs/            # Active Architecture Decision Records
+├── designs/         # Long-form design specs from brainstorming
+└── archive/         # ARCHIVED — do not edit for cleanup
+    ├── adrs-legacy/ # Predecessor project's ADRs
+    └── history/     # Early plans, specs, workflows, genesis notes
 ```
 
 ## Release flow

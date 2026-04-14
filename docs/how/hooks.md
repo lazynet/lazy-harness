@@ -2,7 +2,7 @@
 
 This page explains the hook lifecycle end to end: what events exist, what gets triggered when, how built-in hooks behave, where they write, and how you extend the system with your own.
 
-If you want the **why** behind the design choices, see [ADR-006 — Hooks as subprocess with JSON stdin/stdout](../architecture/adrs/006-hooks-subprocess-json.md) and [ADR-008 — Compound-loop async worker](../architecture/adrs/008-compound-loop-async-worker.md). This page is the how.
+If you want the **why** behind the design choices, see [ADR-006 — Hooks as subprocess with JSON stdin/stdout](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/006-hooks-subprocess-json.md) and [ADR-008 — Compound-loop async worker](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/008-compound-loop-async-worker.md). This page is the how.
 
 ## The model
 
@@ -95,7 +95,7 @@ Flow:
 1. Locate the latest `*.jsonl` under `<CLAUDE_CONFIG_DIR>/projects/<encoded-cwd>/`.
 2. Parse it into metadata + messages. Sessions without a `permission-mode` first record are treated as non-interactive and skipped.
 3. Filter sessions under `min_messages` (default 4) — scratch prompts never make it into the knowledge tree.
-4. Classify the session by cwd heuristics (see [ADR-011](../architecture/adrs/011-session-export-and-classification.md)) to compute `profile` and `session_type`.
+4. Classify the session by cwd heuristics (see [ADR-011](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/011-session-export-and-classification.md)) to compute `profile` and `session_type`.
 5. Write to `<knowledge.path>/sessions/YYYY-MM/YYYY-MM-DD-<short-id>.md` with frontmatter (`session_id`, `cwd`, `project`, `profile`, `session_type`, `branch`, `claude_version`, `messages`) and a body of `## User` / `## Claude` sections.
 6. Atomic write via tempfile + `os.replace` (iCloud / Dropbox safe).
 7. If `qmd` is on PATH, run `qmd update` to re-index.
@@ -108,7 +108,7 @@ Source: `src/lazy_harness/hooks/builtins/compound_loop.py` (the producer) + `src
 
 Responsibility: distill the session into structured decisions, failures, learnings, and handoff items — **asynchronously**, so session close stays instant.
 
-This is the hook that does the heaviest lifting. It is split into two pieces deliberately ([ADR-008](../architecture/adrs/008-compound-loop-async-worker.md)):
+This is the hook that does the heaviest lifting. It is split into two pieces deliberately ([ADR-008](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/008-compound-loop-async-worker.md)):
 
 **Producer (in-hook, fast):**
 1. Check `compound_loop.enabled` in config, bail if disabled.

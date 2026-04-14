@@ -2,7 +2,7 @@
 
 The memory model describes the [what](../why/memory-model.md) — three scales (short-term, medium-term, long-term), structured stores, self-maintained project memory. This page is the **how**: how the compound loop physically turns a just-finished session into persisted, queryable memory, file by file, step by step.
 
-If you want the design rationale, read [ADR-008 — Compound loop async worker](../architecture/adrs/008-compound-loop-async-worker.md). This page is the mechanics.
+If you want the design rationale, read [ADR-008 — Compound loop async worker](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/008-compound-loop-async-worker.md). This page is the mechanics.
 
 ## The loop, one step at a time
 

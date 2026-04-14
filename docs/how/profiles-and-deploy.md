@@ -2,7 +2,7 @@
 
 A profile is the complete agent configuration for one isolated context — typically "personal", "work", a specific client, or an experimental sandbox. The framework ships profile management and a deploy engine that gets that configuration into the exact directory the agent reads from.
 
-This page explains how the pieces fit. For the reasoning, see [ADR-001](../architecture/adrs/001-hybrid-architecture.md) and [ADR-009](../architecture/adrs/009-profile-symlink-deploy.md).
+This page explains how the pieces fit. For the reasoning, see [ADR-001](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/001-hybrid-architecture.md) and [ADR-009](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/009-profile-symlink-deploy.md).
 
 ## Three directories, two roles
 
