@@ -2,7 +2,7 @@
 
 A map of the codebase: the modules, what they own, how they talk to each other, and where the persistent state lives.
 
-For the design rationale behind each major choice, see the [ADRs](adrs/001-hybrid-architecture.md). This page is the bird's-eye view.
+For the design rationale behind each major choice, see the [ADRs](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/001-hybrid-architecture.md). This page is the bird's-eye view.
 
 ## Two-tier architecture
 
@@ -11,7 +11,7 @@ For the design rationale behind each major choice, see the [ADRs](adrs/001-hybri
 - **Framework code** — shipped as a package, upgraded with `uv tool upgrade`. Contains zero personal content.
 - **User-owned harness content** — lives under `~/.config/lazy-harness/`, versioned with the user's dotfile tool. Contains `config.toml`, `profiles/<name>/*`, optional user hooks.
 
-The framework **reads from** the user-owned content and **deploys** it into the agent's config directory via symlinks + generated settings. The user never edits anything inside the framework package. See [ADR-001](adrs/001-hybrid-architecture.md).
+The framework **reads from** the user-owned content and **deploys** it into the agent's config directory via symlinks + generated settings. The user never edits anything inside the framework package. See [ADR-001](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/001-hybrid-architecture.md).
 
 ```
 ┌──────────────────────────────┐          ┌─────────────────────────────────┐
@@ -58,7 +58,7 @@ templates/           # file templates (profile scaffolds, etc.)
 docs/                # this site
 ```
 
-Every module under `src/lazy_harness/` has a test file under `tests/` in the same shape. This is enforced by [ADR-015 (strict TDD)](adrs/015-strict-tdd-workflow.md).
+Every module under `src/lazy_harness/` has a test file under `tests/` in the same shape. This is enforced by [ADR-015 (strict TDD)](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/015-strict-tdd-workflow.md).
 
 ## Foundational layer — `core/`
 
@@ -68,7 +68,7 @@ Everything downstream consumes the types defined here.
 
 Defines the `Config` dataclass and its subsection dataclasses (`ProfilesConfig`, `KnowledgeConfig`, `CompoundLoopConfig`, `ContextInjectConfig`, `LazyNorthConfig`, `MonitoringConfig`, `SchedulerConfig`, `HooksConfig` — the last one is a dict keyed by event name). `load_config(path)` reads TOML via stdlib `tomllib`, validates required keys, and raises `ConfigError` with a descriptive path + reason on failure. `save_config(cfg, path)` writes back through `tomli-w` and is only called by `lh init`, `lh migrate`, and `lh profile add/remove` — ordinary `lh` commands never rewrite the user's file.
 
-Format decisions: [ADR-003 — TOML](adrs/003-toml-config-format.md).
+Format decisions: [ADR-003 — TOML](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/003-toml-config-format.md).
 
 ### `core/paths.py` — platform-correct directories
 
@@ -80,7 +80,7 @@ Single source of truth for filesystem locations. Three functions (`config_dir`, 
 
 No other module computes these paths. `expand_path()` and `contract_path()` handle `~` expansion and home-dir abbreviation wherever a user-supplied path enters the system.
 
-Design rationale: [ADR-005 — XDG-first paths](adrs/005-xdg-first-paths.md).
+Design rationale: [ADR-005 — XDG-first paths](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/005-xdg-first-paths.md).
 
 ### `core/profiles.py` — profile list / add / resolve
 
@@ -101,7 +101,7 @@ Generates per-profile `.envrc` fragments for users who wire profile selection th
 
 `agents/claude_code.py` is the only implementation today. `agents/registry.py` maps `config.toml`'s `[agent].type` value to an adapter class. Adding a new agent = one file + one registry entry, with no other code in the framework touching agent-specific concerns.
 
-Design: [ADR-004 — Agent adapter pattern](adrs/004-agent-adapter-pattern.md).
+Design: [ADR-004 — Agent adapter pattern](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/004-agent-adapter-pattern.md).
 
 ## Hook engine — `hooks/`
 
@@ -116,7 +116,7 @@ Built-in hooks:
 - `session_export.py` — Stop, exports session to knowledge directory.
 - `pre_compact.py` — PreCompact, preserves working state before compaction.
 
-Design: [ADR-006](adrs/006-hooks-subprocess-json.md). End-to-end mechanics: [how hooks work](../how/hooks.md).
+Design: [ADR-006](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/006-hooks-subprocess-json.md). End-to-end mechanics: [how hooks work](../how/hooks.md).
 
 ## Knowledge layer — `knowledge/`
 
@@ -129,7 +129,7 @@ Design: [ADR-006](adrs/006-hooks-subprocess-json.md). End-to-end mechanics: [how
 
 Detailed flow: [how the memory compound loop works](../how/memory-compound.md) and [how the knowledge pipeline works](../how/knowledge-pipeline.md).
 
-Design decisions: [ADR-008](adrs/008-compound-loop-async-worker.md), [ADR-010](adrs/010-pre-compact-preservation.md), [ADR-011](adrs/011-session-export-and-classification.md), [ADR-016](adrs/016-knowledge-dir-qmd-optional.md).
+Design decisions: [ADR-008](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/008-compound-loop-async-worker.md), [ADR-010](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/010-pre-compact-preservation.md), [ADR-011](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/011-session-export-and-classification.md), [ADR-016](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/016-knowledge-dir-qmd-optional.md).
 
 ## Deploy engine — `deploy/`
 
@@ -141,7 +141,7 @@ Design decisions: [ADR-008](adrs/008-compound-loop-async-worker.md), [ADR-010](a
 
 `deploy/symlinks.py` implements `ensure_symlink` with the three states: `"created"`, `"exists"` (already points at the correct source), and `"refused"` (target is a real file or a link to somewhere else and cannot be clobbered).
 
-Design: [ADR-009 — Profile symlink deploy](adrs/009-profile-symlink-deploy.md). Mechanics: [how profiles and deploy work](../how/profiles-and-deploy.md).
+Design: [ADR-009 — Profile symlink deploy](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/009-profile-symlink-deploy.md). Mechanics: [how profiles and deploy work](../how/profiles-and-deploy.md).
 
 ## Monitoring — `monitoring/`
 
@@ -154,7 +154,7 @@ Local SQLite store populated by parsing session JSONLs:
 - `dashboard.py` — composition and formatting for `lh status`.
 - `statusline.py` — support for the terminal statusline integration.
 
-Schema + design: [ADR-012 — SQLite monitoring](adrs/012-sqlite-monitoring.md).
+Schema + design: [ADR-012 — SQLite monitoring](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/012-sqlite-monitoring.md).
 
 ## Scheduler — `scheduler/`
 
@@ -166,7 +166,7 @@ Unified interface over three platform backends:
 - `cron.py` — ubiquitous fallback, edits the user's crontab with lazy-harness markers.
 - `manager.py` — `detect_backend` auto-picks based on `platform.system()` + `shutil.which("systemctl")`, overridable via config.
 
-Design: [ADR-013 — Unified scheduler](adrs/013-scheduler-unified-backends.md).
+Design: [ADR-013 — Unified scheduler](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/013-scheduler-unified-backends.md).
 
 ## Migration engine — `migrate/`
 
@@ -190,7 +190,7 @@ migrate/
 
 Every step implements `execute(backup_dir, dry_run)` and declares how it undoes itself. The executor writes the rollback log after **every** step (success or failure) and auto-applies it on failure. `--dry-run` is threaded through every step so "what would you do" and "do it" share the same code path.
 
-Design: [ADR-007 — Parallel bootstrap](adrs/007-parallel-bootstrap-migration.md), [ADR-014 — Migration engine](adrs/014-migration-engine-rollback.md).
+Design: [ADR-007 — Parallel bootstrap](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/007-parallel-bootstrap-migration.md), [ADR-014 — Migration engine](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/014-migration-engine-rollback.md).
 
 ## Selftest — `selftest/`
 
@@ -212,7 +212,7 @@ selftest/
 
 Each check returns `list[CheckResult]`. The runner catches exceptions per check so a crash in one does not take down the whole report.
 
-Design: [ADR-017 — Selftest as user-facing health check](adrs/017-selftest-as-health-check.md).
+Design: [ADR-017 — Selftest as user-facing health check](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/017-selftest-as-health-check.md).
 
 ## CLI — `cli/`
 
@@ -259,15 +259,15 @@ lh migrate  # from a predecessor setup
 
 The binary is `lh`. No compilation, no daemons, no containers. The framework is strictly CLI-driven; everything that looks like "background work" (compound loop worker, scheduler jobs) runs as discrete subprocess invocations.
 
-Language and distribution: [ADR-002 — Python + uv](adrs/002-python-uv-distribution.md).
+Language and distribution: [ADR-002 — Python + uv](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/002-python-uv-distribution.md).
 
 ## Testing discipline
 
-Tests mirror `src/lazy_harness/` one-to-one. Every module has a test file. Test suite runs in seconds with `uv run pytest`. New code is written red-first per [ADR-015](adrs/015-strict-tdd-workflow.md); the project rule is "no production code without a failing test that exercised it first".
+Tests mirror `src/lazy_harness/` one-to-one. Every module has a test file. Test suite runs in seconds with `uv run pytest`. New code is written red-first per [ADR-015](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/015-strict-tdd-workflow.md); the project rule is "no production code without a failing test that exercised it first".
 
 Two independent verification surfaces exist and are kept strictly separate:
 
 - **`tests/` + pytest** — code correctness, hermetic, developer-facing.
 - **`lh selftest` + `selftest/checks/`** — framework health on the user's actual machine, exposed as a user-facing command.
 
-See [ADR-017](adrs/017-selftest-as-health-check.md) for why these are two separate surfaces.
+See [ADR-017](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/017-selftest-as-health-check.md) for why these are two separate surfaces.

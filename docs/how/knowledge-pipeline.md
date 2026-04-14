@@ -9,7 +9,7 @@ Four moving parts feed it:
 - **QMD** (optional external tool) — indexes the knowledge tree semantically and exposes a `qmd query` interface.
 - **The knowledge directory itself** — a plain filesystem tree the user can backup, grep, and open in any editor.
 
-See [ADR-011](../architecture/adrs/011-session-export-and-classification.md), [ADR-016](../architecture/adrs/016-knowledge-dir-qmd-optional.md) for the design decisions. This page explains the mechanics.
+See [ADR-011](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/011-session-export-and-classification.md), [ADR-016](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/016-knowledge-dir-qmd-optional.md) for the design decisions. This page explains the mechanics.
 
 ## Directory shape
 

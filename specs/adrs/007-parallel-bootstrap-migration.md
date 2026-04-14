@@ -34,5 +34,5 @@ Each phase has an exit criterion that the author can validate on their own machi
 - Two repos live at once for a bounded window (weeks, not months). Each has a clear role.
 - Each phase is independently testable and independently releasable. Rollbacks happen at phase granularity, not at the end.
 - `lh migrate` exists as a real user-facing command, not as a one-off script the author ran once. Other users with the predecessor installed get the same upgrade path.
-- The `docs/history/` and `docs/architecture/decisions/legacy/` trees preserve the predecessor's ADRs and session notes verbatim as archival material. They are intentionally not edited for consistency with the new nomenclature, and they are excluded from the public nav — accessible on the repo but not surfaced in the rendered site.
+- The `specs/archive/history/` and `specs/archive/adrs-legacy/` trees preserve the predecessor's ADRs and session notes verbatim as archival material. They are intentionally not edited for consistency with the new nomenclature, and they live outside `docs/` entirely so they never surface in the rendered public site.
 - After cutover, the predecessor repo is archived and readonly. All new development flows through `lazy-harness`.
