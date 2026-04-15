@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.4](https://github.com/lazynet/lazy-harness/compare/v0.6.3...v0.6.4) (2026-04-15)
+
+
+### Bug Fixes
+
+* restore green pre-commit gate on main ([#20](https://github.com/lazynet/lazy-harness/issues/20)) ([4a5b1f2](https://github.com/lazynet/lazy-harness/commit/4a5b1f25fe28f7e91c1696bdecba4e66c6bc5d4f))
+
 ## [0.6.3](https://github.com/lazynet/lazy-harness/compare/v0.6.2...v0.6.3) (2026-04-15)
 
 
