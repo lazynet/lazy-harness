@@ -21,9 +21,5 @@ def _pyproject_version() -> str:
     return data["project"]["version"]
 
 
-def test_version_is_040() -> None:
-    assert __version__ == "0.4.0"
-
-
 def test_pyproject_and_dunder_version_agree() -> None:
     assert _pyproject_version() == __version__

@@ -33,6 +33,15 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
 
+[tool.ruff.lint.per-file-ignores]
+# LLM prompt content — multiline f-string ported verbatim; wrapping would
+# change the calibrated instructions sent to the evaluator.
+"src/lazy_harness/knowledge/compound_loop.py" = ["E501"]
+# Test fixtures reproduce real LLM responses and session transcripts
+# verbatim; wrapping them obscures the data shape under test.
+"tests/unit/test_compound_loop.py" = ["E501"]
+"tests/unit/test_session_export.py" = ["E501"]
+
 [dependency-groups]
 dev = [
     "pytest>=8.0",

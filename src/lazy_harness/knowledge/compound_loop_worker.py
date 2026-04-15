@@ -13,7 +13,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from lazy_harness.core.config import Config, ConfigError, CompoundLoopConfig, load_config
+from lazy_harness.core.config import CompoundLoopConfig, Config, ConfigError, load_config
 from lazy_harness.core.paths import config_file
 from lazy_harness.knowledge.compound_loop import (
     move_to_done,
