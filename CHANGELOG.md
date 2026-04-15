@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.6.1](https://github.com/lazynet/lazy-harness/compare/v0.6.0...v0.6.1) (2026-04-15)
+
+
+### Bug Fixes
+
+* accept last-prompt as interactive marker in session export ([#15](https://github.com/lazynet/lazy-harness/issues/15)) ([0b9f2c6](https://github.com/lazynet/lazy-harness/commit/0b9f2c6df71b042dd070663cace7926dcf16b608))
+
+
+### Documentation
+
+* **adrs:** add structured Status field and audit index ([#11](https://github.com/lazynet/lazy-harness/issues/11)) ([92d8bb3](https://github.com/lazynet/lazy-harness/commit/92d8bb37fc76e9e8875002c5c043ff9d0b8eeabb))
+* **governance:** segment CLAUDE.md into rules + workflow docs + slash commands ([#12](https://github.com/lazynet/lazy-harness/issues/12)) ([d6e9747](https://github.com/lazynet/lazy-harness/commit/d6e97473aef031ef8e557ee9471f76b7d6f7f942))
+* **roadmap:** introduce public roadmap, move backlog internal, fix orphan spec ([#13](https://github.com/lazynet/lazy-harness/issues/13)) ([1d94243](https://github.com/lazynet/lazy-harness/commit/1d94243909b91ba8624fd470513161c2cd54f180))
+
 ## [0.6.0](https://github.com/lazynet/lazy-harness/compare/v0.5.1...v0.6.0) (2026-04-15)
 
 
