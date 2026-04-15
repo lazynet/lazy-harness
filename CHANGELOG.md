@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.0](https://github.com/lazynet/lazy-harness/compare/v0.5.1...v0.6.0) (2026-04-15)
+
+
+### Features
+
+* **metrics:** plugin system + metrics_sink vertical slice ([#8](https://github.com/lazynet/lazy-harness/issues/8)) ([474c826](https://github.com/lazynet/lazy-harness/commit/474c826196146c55021a3df67212cb304f25887b))
+
+
+### Documentation
+
+* **adrs:** add ADR-018 — feature discoverability via doctor + config ([#9](https://github.com/lazynet/lazy-harness/issues/9)) ([8278c6c](https://github.com/lazynet/lazy-harness/commit/8278c6c5aa43b0b9e5dc0f62c59d691bf1250f8b))
+
 ## [0.5.1](https://github.com/lazynet/lazy-harness/compare/v0.5.0...v0.5.1) (2026-04-13)
 
 
