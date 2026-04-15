@@ -116,6 +116,30 @@ class CompoundLoopConfig:
 
 
 @dataclass
+class SinkDefinition:
+    """Options for a named sink as declared under [metrics.sink_options.<name>]."""
+
+    options: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class MetricsConfig:
+    """Top-level [metrics] block.
+
+    Default (no block): only `sqlite_local` runs, zero network I/O.
+    Any other sink requires being named in `sinks` AND having a
+    `[metrics.sink_options.<name>]` options block. Missing options block for a
+    named sink is a hard error.
+    """
+
+    sinks: list[str] = field(default_factory=lambda: ["sqlite_local"])
+    sink_configs: dict[str, SinkDefinition] = field(default_factory=dict)
+    user_id: str = ""
+    tenant_id: str = "local"
+    pending_ttl_days: int | None = None
+
+
+@dataclass
 class Config:
     harness: HarnessConfig = field(default_factory=HarnessConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
@@ -125,6 +149,7 @@ class Config:
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     hooks: dict[str, HookEventConfig] = field(default_factory=dict)
     compound_loop: CompoundLoopConfig = field(default_factory=CompoundLoopConfig)
+    metrics: MetricsConfig = field(default_factory=MetricsConfig)
     lazynorth: LazyNorthConfig = field(default_factory=LazyNorthConfig)
     context_inject: ContextInjectConfig = field(default_factory=ContextInjectConfig)
 
@@ -143,6 +168,71 @@ def _parse_profiles(raw: dict[str, Any]) -> ProfilesConfig:
                 lazynorth_doc=value.get("lazynorth_doc", ""),
             )
     return ProfilesConfig(default=default, items=items)
+
+
+def _parse_metrics(raw: dict[str, Any]) -> MetricsConfig:
+    """Parse [metrics] with the default-local + opt-in-doble invariants.
+
+    Shape:
+        [metrics]
+        sinks = ["sqlite_local", "http_remote"]
+        user_id = "..."
+        tenant_id = "..."
+        pending_ttl_days = 30
+
+        [metrics.sink_options.http_remote]
+        url = "..."
+
+    Rules:
+    - Empty/missing [metrics] => sinks=["sqlite_local"], nothing else.
+    - A sink named in `sinks` other than `sqlite_local` REQUIRES a
+      corresponding `[metrics.sink_options.<name>]` table, else ConfigError.
+    - A `[metrics.sink_options.<name>]` block whose name is not in `sinks`
+      is silently ignored (dead config).
+    """
+    if not raw:
+        return MetricsConfig()
+
+    sinks = raw.get("sinks", ["sqlite_local"])
+    if not isinstance(sinks, list) or not all(isinstance(s, str) and s for s in sinks):
+        raise ConfigError("[metrics].sinks must be a list of non-empty strings")
+
+    options_raw = raw.get("sink_options", {})
+    if not isinstance(options_raw, dict):
+        raise ConfigError("[metrics.sink_options] must be a table")
+
+    sink_configs: dict[str, SinkDefinition] = {}
+    for name in sinks:
+        if name == "sqlite_local":
+            sink_configs[name] = SinkDefinition(options={})
+            continue
+        if name not in options_raw:
+            raise ConfigError(
+                f"[metrics] sink {name!r} is named in `sinks` but has no "
+                f"[metrics.sink_options.{name}] block"
+            )
+        block = options_raw[name]
+        if not isinstance(block, dict):
+            raise ConfigError(f"[metrics.sink_options.{name}] must be a table")
+        sink_configs[name] = SinkDefinition(options=dict(block))
+
+    user_id = raw.get("user_id", "")
+    if not isinstance(user_id, str):
+        raise ConfigError("[metrics].user_id must be a string")
+    tenant_id = raw.get("tenant_id", "local")
+    if not isinstance(tenant_id, str):
+        raise ConfigError("[metrics].tenant_id must be a string")
+    ttl = raw.get("pending_ttl_days", None)
+    if ttl is not None and not isinstance(ttl, int):
+        raise ConfigError("[metrics].pending_ttl_days must be an integer or absent")
+
+    return MetricsConfig(
+        sinks=list(sinks),
+        sink_configs=sink_configs,
+        user_id=user_id,
+        tenant_id=tenant_id,
+        pending_ttl_days=ttl,
+    )
 
 
 def load_config(path: Path) -> Config:
@@ -223,6 +313,9 @@ def load_config(path: Path) -> Config:
             learnings_subdir=cl_raw.get("learnings_subdir", CompoundLoopConfig.learnings_subdir),
         )
 
+    metrics_raw = raw.get("metrics", {})
+    cfg.metrics = _parse_metrics(metrics_raw)
+
     ln_raw = raw.get("lazynorth", {})
     if isinstance(ln_raw, dict):
         cfg.lazynorth = LazyNorthConfig(
@@ -285,6 +378,28 @@ def _config_to_dict(cfg: Config) -> dict[str, Any]:
         for event_name, event_cfg in cfg.hooks.items():
             hooks_dict[event_name] = {"scripts": event_cfg.scripts}
         result["hooks"] = hooks_dict
+
+    if (
+        cfg.metrics.sinks != ["sqlite_local"]
+        or cfg.metrics.user_id
+        or cfg.metrics.tenant_id != "local"
+        or cfg.metrics.pending_ttl_days is not None
+    ):
+        metrics_out: dict[str, Any] = {"sinks": cfg.metrics.sinks}
+        if cfg.metrics.user_id:
+            metrics_out["user_id"] = cfg.metrics.user_id
+        if cfg.metrics.tenant_id != "local":
+            metrics_out["tenant_id"] = cfg.metrics.tenant_id
+        if cfg.metrics.pending_ttl_days is not None:
+            metrics_out["pending_ttl_days"] = cfg.metrics.pending_ttl_days
+        options: dict[str, Any] = {}
+        for name, definition in cfg.metrics.sink_configs.items():
+            if name == "sqlite_local":
+                continue
+            options[name] = definition.options
+        if options:
+            metrics_out["sink_options"] = options
+        result["metrics"] = metrics_out
 
     return result
 
