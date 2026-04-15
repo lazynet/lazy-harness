@@ -27,6 +27,7 @@ Decisions that define the `lazy-harness` project itself.
 | [015](./015-strict-tdd-workflow.md) | Strict TDD as a workflow rule | No production code without a failing test first. Non-negotiable. |
 | [016](./016-knowledge-dir-qmd-optional.md) | Knowledge directory + optional QMD | Plain markdown tree; QMD is semantic search opt-in via `shutil.which`. |
 | [017](./017-selftest-as-health-check.md) | Selftest as user-facing health check | `lh selftest` is not pytest — it is the on-machine configuration check. |
+| [018](./018-config-discoverability.md) | Feature discoverability via `lh doctor` + `lh config <feature>` | No wizards on upgrade. `lh doctor` lists features; `lh config <feature> --init` is the opt-in wizard. |
 
 ## Legacy ADRs
 
