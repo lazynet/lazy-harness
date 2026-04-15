@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.2](https://github.com/lazynet/lazy-harness/compare/v0.6.1...v0.6.2) (2026-04-15)
+
+
+### Documentation
+
+* **community:** add LICENSE, CONTRIBUTING, and GitHub issue/PR templates ([#16](https://github.com/lazynet/lazy-harness/issues/16)) ([0ffa995](https://github.com/lazynet/lazy-harness/commit/0ffa99581d402714a8f26a0e628f947bf47aacca))
+
 ## [0.6.1](https://github.com/lazynet/lazy-harness/compare/v0.6.0...v0.6.1) (2026-04-15)
 
 
