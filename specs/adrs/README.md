@@ -8,26 +8,39 @@ For the "what" and "how" of the architecture, see the architecture overview and 
 
 Decisions that define the `lazy-harness` project itself.
 
-| # | Title | Summary |
-|---|---|---|
-| [001](./001-hybrid-architecture.md) | Hybrid architecture — framework + dotfile config | Split framework code (package) from personal harness content (user dotfiles). |
-| [002](./002-python-uv-distribution.md) | Python 3.11+ with `uv tool install` | One language, one install command, no compilation step, Windows-feasible. |
-| [003](./003-toml-config-format.md) | TOML config format | Single TOML file parsed by stdlib `tomllib`. No schema file, no DSL. |
-| [004](./004-agent-adapter-pattern.md) | Agent adapter pattern | Thin protocol abstracts the ~6 things the framework actually needs from an agent. |
-| [005](./005-xdg-first-paths.md) | XDG-first path resolution | Single path module with env > XDG > platform-default order. |
-| [006](./006-hooks-subprocess-json.md) | Hooks as subprocess + JSON stdin/stdout | Built-in and user hooks are indistinguishable; agent spawns them, not `lh`. |
-| [007](./007-parallel-bootstrap-migration.md) | Parallel-bootstrap migration | Build the replacement alongside the old system; cut over when proven. |
-| [008](./008-compound-loop-async-worker.md) | Compound loop as async file-queue worker | Stop hook enqueues, detached worker processes. Session close stays instant. |
-| [009](./009-profile-symlink-deploy.md) | Profile symlink deploy | Per-file symlinks from source dotfiles into the agent target dir. |
-| [010](./010-pre-compact-preservation.md) | Pre-compact context preservation | Back up the transcript and distill a working-state summary before compaction. |
-| [011](./011-session-export-and-classification.md) | Session export with classification | JSONL → dated markdown with project/profile frontmatter, atomic writes. |
-| [012](./012-sqlite-monitoring.md) | SQLite monitoring | Single-table idempotent store, view modules per angle. |
-| [013](./013-scheduler-unified-backends.md) | Unified scheduler backends | launchd / systemd / cron behind one protocol, declared once in config. |
-| [014](./014-migration-engine-rollback.md) | Migration engine with automatic rollback | Detect → plan → execute → auto-rollback on failure. Dry-run is a first-class mode. |
-| [015](./015-strict-tdd-workflow.md) | Strict TDD as a workflow rule | No production code without a failing test first. Non-negotiable. |
-| [016](./016-knowledge-dir-qmd-optional.md) | Knowledge directory + optional QMD | Plain markdown tree; QMD is semantic search opt-in via `shutil.which`. |
-| [017](./017-selftest-as-health-check.md) | Selftest as user-facing health check | `lh selftest` is not pytest — it is the on-machine configuration check. |
-| [018](./018-config-discoverability.md) | Feature discoverability via `lh doctor` + `lh config <feature>` | No wizards on upgrade. `lh doctor` lists features; `lh config <feature> --init` is the opt-in wizard. |
+| # | Status | Title | Summary |
+|---|---|---|---|
+| [001](./001-hybrid-architecture.md) | accepted | Hybrid architecture — framework + dotfile config | Split framework code (package) from personal harness content (user dotfiles). |
+| [002](./002-python-uv-distribution.md) | accepted | Python 3.11+ with `uv tool install` | One language, one install command, no compilation step, Windows-feasible. |
+| [003](./003-toml-config-format.md) | accepted | TOML config format | Single TOML file parsed by stdlib `tomllib`. No schema file, no DSL. |
+| [004](./004-agent-adapter-pattern.md) | accepted | Agent adapter pattern | Thin protocol abstracts the ~6 things the framework actually needs from an agent. |
+| [005](./005-xdg-first-paths.md) | accepted | XDG-first path resolution | Single path module with env > XDG > platform-default order. |
+| [006](./006-hooks-subprocess-json.md) | accepted | Hooks as subprocess + JSON stdin/stdout | Built-in and user hooks are indistinguishable; agent spawns them, not `lh`. |
+| [007](./007-parallel-bootstrap-migration.md) | accepted | Parallel-bootstrap migration | Build the replacement alongside the old system; cut over when proven. |
+| [008](./008-compound-loop-async-worker.md) | accepted | Compound loop as async file-queue worker | Stop hook enqueues, detached worker processes. Session close stays instant. |
+| [009](./009-profile-symlink-deploy.md) | accepted | Profile symlink deploy | Per-file symlinks from source dotfiles into the agent target dir. |
+| [010](./010-pre-compact-preservation.md) | accepted | Pre-compact context preservation | Back up the transcript and distill a working-state summary before compaction. |
+| [011](./011-session-export-and-classification.md) | accepted | Session export with classification | JSONL → dated markdown with project/profile frontmatter, atomic writes. |
+| [012](./012-sqlite-monitoring.md) | accepted | SQLite monitoring | Single-table idempotent store, view modules per angle. |
+| [013](./013-scheduler-unified-backends.md) | accepted | Unified scheduler backends | launchd / systemd / cron behind one protocol, declared once in config. |
+| [014](./014-migration-engine-rollback.md) | accepted | Migration engine with automatic rollback | Detect → plan → execute → auto-rollback on failure. Dry-run is a first-class mode. |
+| [015](./015-strict-tdd-workflow.md) | accepted | Strict TDD as a workflow rule | No production code without a failing test first. Non-negotiable. |
+| [016](./016-knowledge-dir-qmd-optional.md) | accepted | Knowledge directory + optional QMD | Plain markdown tree; QMD is semantic search opt-in via `shutil.which`. |
+| [017](./017-selftest-as-health-check.md) | accepted | Selftest as user-facing health check | `lh selftest` is not pytest — it is the on-machine configuration check. |
+| [018](./018-config-discoverability.md) | accepted-deferred | Feature discoverability via `lh doctor` + `lh config <feature>` | No wizards on upgrade. `lh doctor` lists features; `lh config <feature> --init` is the opt-in wizard. |
+
+### Status values
+
+Each active ADR carries one of the following statuses in its header. The column above is the index view; the ADR file is the source of truth.
+
+| Status | Meaning |
+|---|---|
+| `accepted` | Decision taken **and** embodied in code, config, or tests. Default state for a shipping decision. |
+| `accepted-deferred` | Decision taken and locked, but implementation is intentionally not yet scheduled. The ADR is not incomplete — its realisation is waiting for a specific trigger documented in the ADR itself. |
+| `proposed` | Written and reasoned, but not yet committed to. Open for revision. No active ADR currently holds this status. |
+| `superseded-by: NNN` | Replaced by a later ADR. The record is kept for history; the pointer names its replacement. No active ADR currently holds this status. |
+
+New decisions default to `accepted` once they ship. A decision that turns out wrong is **superseded** by a new ADR rather than edited in place.
 
 ## Legacy ADRs
 
