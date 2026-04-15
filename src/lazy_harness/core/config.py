@@ -113,6 +113,7 @@ class CompoundLoopConfig:
     debounce_seconds: int = 60
     timeout_seconds: int = 120
     learnings_subdir: str = "learnings"
+    reprocess_min_growth_seconds: int = 300
 
 
 @dataclass
@@ -311,6 +312,10 @@ def load_config(path: Path) -> Config:
             debounce_seconds=cl_raw.get("debounce_seconds", CompoundLoopConfig.debounce_seconds),
             timeout_seconds=cl_raw.get("timeout_seconds", CompoundLoopConfig.timeout_seconds),
             learnings_subdir=cl_raw.get("learnings_subdir", CompoundLoopConfig.learnings_subdir),
+            reprocess_min_growth_seconds=cl_raw.get(
+                "reprocess_min_growth_seconds",
+                CompoundLoopConfig.reprocess_min_growth_seconds,
+            ),
         )
 
     metrics_raw = raw.get("metrics", {})
