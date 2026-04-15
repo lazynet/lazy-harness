@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.3](https://github.com/lazynet/lazy-harness/compare/v0.6.2...v0.6.3) (2026-04-15)
+
+
+### Bug Fixes
+
+* harden cross-session handoff loop against stale data ([#18](https://github.com/lazynet/lazy-harness/issues/18)) ([22d7896](https://github.com/lazynet/lazy-harness/commit/22d7896b584c662a45b4a7eac32b1065e90bfef2))
+
 ## [0.6.2](https://github.com/lazynet/lazy-harness/compare/v0.6.1...v0.6.2) (2026-04-15)
 
 
