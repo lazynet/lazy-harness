@@ -9,7 +9,9 @@ from datetime import datetime
 from pathlib import Path
 
 
-def _parse_session_jsonl(filepath: Path) -> tuple[dict[str, str], list[dict[str, str]]]:
+def _parse_session_jsonl(
+    filepath: Path,
+) -> tuple[dict[str, str], list[dict[str, str]], bool]:
     meta: dict[str, str] = {}
     messages: list[dict[str, str]] = []
     first_timestamp = ""
@@ -25,7 +27,7 @@ def _parse_session_jsonl(filepath: Path) -> tuple[dict[str, str], list[dict[str,
         ts = d.get("timestamp", "")
         if not first_timestamp and ts:
             first_timestamp = ts
-        if msg_type == "permission-mode":
+        if msg_type in ("permission-mode", "last-prompt"):
             is_interactive = True
             continue
         if msg_type == "system" and not meta:
@@ -53,7 +55,7 @@ def _parse_session_jsonl(filepath: Path) -> tuple[dict[str, str], list[dict[str,
                 messages.append({"role": role, "text": "\n\n".join(texts), "timestamp": ts})
     if not meta.get("timestamp"):
         meta["timestamp"] = first_timestamp
-    return meta, messages if is_interactive else []
+    return meta, messages, is_interactive
 
 
 def _extract_project(cwd: str) -> str:
@@ -146,10 +148,21 @@ def _atomic_write(path: Path, content: str) -> None:
     os.replace(tmp, path)
 
 
-def export_session(session_file: Path, output_dir: Path, min_messages: int = 4) -> Path | None:
-    meta, messages = _parse_session_jsonl(session_file)
-    if len(messages) < min_messages:
-        return None
+SkipReason = str  # "short" | "unchanged" | "non-interactive"
+
+
+def export_session(
+    session_file: Path,
+    output_dir: Path,
+    min_messages: int = 4,
+    force: bool = False,
+) -> tuple[Path | None, SkipReason | None]:
+    effective_min = 1 if force else min_messages
+    meta, messages, is_interactive = _parse_session_jsonl(session_file)
+    if len(messages) < effective_min:
+        return None, "short"
+    if not is_interactive and not force:
+        return None, "non-interactive"
     session_id = session_file.stem
     cwd = meta.get("cwd", "")
     if not cwd:
@@ -168,8 +181,8 @@ def export_session(session_file: Path, output_dir: Path, min_messages: int = 4) 
     export_dir.mkdir(parents=True, exist_ok=True)
     output_file = export_dir / f"{date_prefix}-{session_id[:8]}.md"
 
-    if _existing_message_count(output_file) >= len(messages):
-        return None
+    if not force and _existing_message_count(output_file) >= len(messages):
+        return None, "unchanged"
 
     profile, session_type = _classify(cwd)
     parts: list[str] = [
@@ -184,4 +197,4 @@ def export_session(session_file: Path, output_dir: Path, min_messages: int = 4) 
     for msg in messages:
         parts.append(f"## {msg['role']}\n\n{msg['text']}\n\n")
     _atomic_write(output_file, "".join(parts))
-    return output_file
+    return output_file, None

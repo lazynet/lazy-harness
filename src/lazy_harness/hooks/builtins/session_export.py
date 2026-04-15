@@ -81,11 +81,11 @@ def main() -> None:
         from lazy_harness.knowledge.session_export import export_session
 
         sessions_root.mkdir(parents=True, exist_ok=True)
-        result = export_session(session_file, sessions_root)
+        result, skip_reason = export_session(session_file, sessions_root)
         if result:
             _log(log_file, f"exported to {result.name}")
         else:
-            _log(log_file, f"skipped {session_file.name} (short/unchanged/non-interactive)")
+            _log(log_file, f"skipped {session_file.name} ({skip_reason})")
             return
     except Exception as e:  # noqa: BLE001 — must never bubble up
         _log(log_file, f"export error: {e}")
