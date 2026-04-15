@@ -55,8 +55,9 @@ def main() -> None:
         from lazy_harness.core.paths import config_file
         from lazy_harness.knowledge.compound_loop import (
             create_task,
-            is_already_processed,
             is_debounced,
+            last_processed_mtime,
+            should_reprocess,
         )
     except ImportError:
         return
@@ -97,8 +98,11 @@ def main() -> None:
         _log(log_file, f"debounce, task already queued for {short_id}")
         return
 
-    if is_already_processed(queue_dir, session_id):
-        _log(log_file, f"already processed {short_id}, skipping")
+    last_processed = last_processed_mtime(queue_dir, session_id)
+    if not should_reprocess(
+        session_jsonl, last_processed, cfg.compound_loop.reprocess_min_growth_seconds
+    ):
+        _log(log_file, f"no new activity since last process for {short_id}")
         return
 
     memory_dir = sessions_dir / "memory"

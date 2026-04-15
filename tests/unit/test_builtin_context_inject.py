@@ -261,6 +261,88 @@ def test_handoff_context_from_files(tmp_path: Path) -> None:
     assert "<!-- auto -->" not in result
 
 
+def _write_handoff_with_frontmatter(
+    memory: Path, session_id: str, source_mtime: float, body_item: str
+) -> None:
+    memory.mkdir(parents=True, exist_ok=True)
+    (memory / "handoff.md").write_text(
+        "---\n"
+        f"session_id: {session_id}\n"
+        f"written_at: 2026-04-12T10:00:00-03:00\n"
+        f"source_mtime: {source_mtime:.0f}\n"
+        "---\n"
+        f"Pendiente para próxima sesión:\n- {body_item}\n"
+    )
+
+
+def test_handoff_context_fresh_session(tmp_path: Path) -> None:
+    import os
+
+    encoded = tmp_path / "projects" / "-my-proj"
+    memory = encoded / "memory"
+    session = encoded / "abcd1234-aaaa-bbbb.jsonl"
+    encoded.mkdir(parents=True)
+    session.write_text("{}\n")
+    os.utime(session, (10_000.0, 10_000.0))
+    _write_handoff_with_frontmatter(memory, "abcd1234-aaaa-bbbb", 10_000.0, "do the thing")
+
+    result = handoff_context(memory)
+    assert "do the thing" in result
+    assert "stale" not in result.lower()
+
+
+def test_handoff_context_stale_session_id_mismatch(tmp_path: Path) -> None:
+    import os
+
+    encoded = tmp_path / "projects" / "-my-proj"
+    memory = encoded / "memory"
+    newer_session = encoded / "9999abcd-cccc-dddd.jsonl"
+    encoded.mkdir(parents=True)
+    newer_session.write_text("{}\n")
+    os.utime(newer_session, (20_000.0, 20_000.0))
+    _write_handoff_with_frontmatter(memory, "abcd1234-aaaa-bbbb", 10_000.0, "old stale item")
+
+    result = handoff_context(memory)
+    assert "stale" in result.lower()
+    assert "old stale item" in result  # still shown under warning
+    assert "9999abcd" in result
+    assert "abcd1234" in result
+
+
+def test_handoff_context_stale_session_grew_past_window(tmp_path: Path) -> None:
+    import os
+
+    encoded = tmp_path / "projects" / "-my-proj"
+    memory = encoded / "memory"
+    session = encoded / "abcd1234-aaaa-bbbb.jsonl"
+    encoded.mkdir(parents=True)
+    session.write_text("{}\n")
+    os.utime(session, (20_000.0, 20_000.0))
+    # handoff was written when session mtime was 10_000 — 10k seconds of growth
+    _write_handoff_with_frontmatter(memory, "abcd1234-aaaa-bbbb", 10_000.0, "half-done item")
+
+    result = handoff_context(memory)
+    assert "stale" in result.lower()
+    assert "half-done item" in result
+
+
+def test_handoff_context_legacy_no_frontmatter(tmp_path: Path) -> None:
+    encoded = tmp_path / "projects" / "-my-proj"
+    memory = encoded / "memory"
+    memory.mkdir(parents=True)
+    (memory / "handoff.md").write_text("Pendiente:\n- legacy thing\n")
+
+    result = handoff_context(memory)
+    assert "legacy thing" in result
+    assert "legacy" in result.lower()
+
+
+def test_handoff_context_no_file_returns_empty(tmp_path: Path) -> None:
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    assert handoff_context(memory) == ""
+
+
 def test_episodic_context_tail(tmp_path: Path) -> None:
     memory = tmp_path / "memory"
     memory.mkdir()

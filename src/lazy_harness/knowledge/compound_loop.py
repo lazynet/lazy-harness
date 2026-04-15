@@ -147,15 +147,44 @@ def is_debounced(queue_dir: Path, session_id: str, window_seconds: int) -> bool:
     return False
 
 
-def is_already_processed(queue_dir: Path, session_id: str) -> bool:
-    """True if a task for this session exists in the done/ directory."""
+def last_processed_mtime(queue_dir: Path, session_id: str) -> float | None:
+    """Return the mtime of the most recent processed task for `session_id`.
+
+    None if the session has never been processed. Used to decide whether a
+    new Stop event should re-run the evaluator: if the session JSONL has
+    grown past a threshold since this timestamp, it's worth re-processing.
+    """
     done_dir = queue_dir / "done"
     if not done_dir.is_dir():
-        return False
+        return None
     short_id = session_id[:8]
-    for _ in done_dir.glob(f"*-{short_id}.task"):
+    best: float | None = None
+    for f in done_dir.glob(f"*-{short_id}.task"):
+        try:
+            m = f.stat().st_mtime
+        except OSError:
+            continue
+        if best is None or m > best:
+            best = m
+    return best
+
+
+def should_reprocess(
+    session_jsonl: Path, last_processed: float | None, min_growth_seconds: int
+) -> bool:
+    """True if the session is eligible for re-evaluation.
+
+    Policy: process once if never seen; re-process only after the session's
+    JSONL has grown by at least `min_growth_seconds` of wall time since the
+    previous successful processing. Bounds LLM cost on long sessions.
+    """
+    if last_processed is None:
         return True
-    return False
+    try:
+        session_mtime = session_jsonl.stat().st_mtime
+    except OSError:
+        return False
+    return session_mtime - last_processed >= min_growth_seconds
 
 
 def collect_existing_learnings(learnings_dir: Path, limit: int = 50) -> str:
@@ -358,6 +387,9 @@ def persist_results(
     learnings_dir: Path,
     project_name: str,
     timestamp: str,
+    *,
+    session_id: str = "",
+    session_jsonl: Path | None = None,
 ) -> list[str]:
     """Persist decisions/failures/learnings/handoff. Returns a list of summaries
     of what was written, suitable for logging. Atomic writes everywhere."""
@@ -432,7 +464,21 @@ deprecated_reason: null
     handoff_items = data.get("handoff", [])
     if handoff_items:
         lines = "\n".join(f"- {item}" for item in handoff_items)
-        _atomic_write(handoff_file, f"Pendiente para próxima sesión:\n{lines}\n")
+        body = f"Pendiente para próxima sesión:\n{lines}\n"
+        if session_id and session_jsonl is not None:
+            try:
+                source_mtime = session_jsonl.stat().st_mtime
+            except OSError:
+                source_mtime = 0.0
+            frontmatter = (
+                "---\n"
+                f"session_id: {session_id}\n"
+                f"written_at: {timestamp}\n"
+                f"source_mtime: {source_mtime:.0f}\n"
+                "---\n"
+            )
+            body = frontmatter + body
+        _atomic_write(handoff_file, body)
         wrote.append(f"handoff: {len(handoff_items)} items")
     elif handoff_file.exists():
         handoff_file.unlink()
@@ -507,7 +553,15 @@ def process_task(
             skipped=f"JSON parse failed for {session_id[:8]} — raw: {snippet}"
         )
 
-    wrote = persist_results(data, memory_dir, learnings_dir, project_name, timestamp)
+    wrote = persist_results(
+        data,
+        memory_dir,
+        learnings_dir,
+        project_name,
+        timestamp,
+        session_id=session_id,
+        session_jsonl=session_jsonl,
+    )
     return TaskOutcome(wrote=wrote)
 
 

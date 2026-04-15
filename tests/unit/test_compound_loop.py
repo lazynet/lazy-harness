@@ -17,14 +17,15 @@ from lazy_harness.knowledge.compound_loop import (
     count_user_chars,
     create_task,
     extract_messages,
-    is_already_processed,
     is_debounced,
     is_interactive_session,
+    last_processed_mtime,
     move_to_done,
     parse_response,
     parse_task,
     persist_results,
     process_task,
+    should_reprocess,
     strip_markdown_fences,
 )
 
@@ -147,12 +148,72 @@ def test_is_debounced(tmp_path: Path) -> None:
     assert is_debounced(queue, "ffffffff", window_seconds=60) is False
 
 
-def test_is_already_processed(tmp_path: Path) -> None:
+def test_last_processed_mtime_returns_none_when_no_done_task(tmp_path: Path) -> None:
+    queue = tmp_path / "queue"
+    queue.mkdir()
+    assert last_processed_mtime(queue, "abcd1234") is None
+
+
+def test_last_processed_mtime_ignores_pending_tasks(tmp_path: Path) -> None:
+    queue = tmp_path / "queue"
+    create_task(queue, Path("/tmp"), Path("/tmp/s.jsonl"), "abcd1234", Path("/tmp/m"))
+    # Task is in queue but not yet in done/
+    assert last_processed_mtime(queue, "abcd1234") is None
+
+
+def test_last_processed_mtime_returns_done_task_mtime(tmp_path: Path) -> None:
+    import os
+
     queue = tmp_path / "queue"
     task = create_task(queue, Path("/tmp"), Path("/tmp/s.jsonl"), "abcd1234", Path("/tmp/m"))
     move_to_done(queue, task)
-    assert is_already_processed(queue, "abcd1234") is True
-    assert is_already_processed(queue, "ffffffff") is False
+    done_task = queue / "done" / task.name
+    os.utime(done_task, (1_000_000.0, 1_000_000.0))
+    assert last_processed_mtime(queue, "abcd1234") == pytest.approx(1_000_000.0)
+
+
+def test_last_processed_mtime_returns_latest_when_multiple_done(tmp_path: Path) -> None:
+    import os
+
+    queue = tmp_path / "queue"
+    t1 = create_task(queue, Path("/tmp"), Path("/tmp/s.jsonl"), "abcd1234", Path("/tmp/m"))
+    move_to_done(queue, t1)
+    os.utime(queue / "done" / t1.name, (1_000.0, 1_000.0))
+    t2 = create_task(queue, Path("/tmp"), Path("/tmp/s.jsonl"), "abcd1234", Path("/tmp/m"))
+    move_to_done(queue, t2)
+    os.utime(queue / "done" / t2.name, (2_000.0, 2_000.0))
+    assert last_processed_mtime(queue, "abcd1234") == pytest.approx(2_000.0)
+
+
+def test_should_reprocess_true_when_never_processed(tmp_path: Path) -> None:
+    session = _interactive_session(tmp_path)
+    assert should_reprocess(session, last_processed=None, min_growth_seconds=300) is True
+
+
+def test_should_reprocess_false_when_session_unchanged(tmp_path: Path) -> None:
+    import os
+
+    session = _interactive_session(tmp_path)
+    os.utime(session, (5_000.0, 5_000.0))
+    # Processed at 5_100 → only 100s of silence, under the 300s threshold
+    assert should_reprocess(session, last_processed=5_100.0, min_growth_seconds=300) is False
+
+
+def test_should_reprocess_true_when_session_grew_past_threshold(tmp_path: Path) -> None:
+    import os
+
+    session = _interactive_session(tmp_path)
+    os.utime(session, (10_000.0, 10_000.0))
+    # Processed 400s before current session mtime → past 300s threshold
+    assert should_reprocess(session, last_processed=9_600.0, min_growth_seconds=300) is True
+
+
+def test_should_reprocess_false_when_session_missing(tmp_path: Path) -> None:
+    # Defensive: if the JSONL vanished, don't try to reprocess it.
+    assert (
+        should_reprocess(tmp_path / "nope.jsonl", last_processed=0.0, min_growth_seconds=300)
+        is False
+    )
 
 
 def test_collect_existing_decisions_and_failures(tmp_path: Path) -> None:
@@ -292,6 +353,31 @@ def test_persist_results_writes_everything(tmp_path: Path) -> None:
 
     handoff = (memory / "handoff.md").read_text()
     assert "port compound-loop" in handoff
+
+
+def test_persist_results_writes_handoff_frontmatter(tmp_path: Path) -> None:
+    import os
+
+    memory = tmp_path / "memory"
+    learnings = tmp_path / "Learnings"
+    session = _interactive_session(tmp_path)
+    os.utime(session, (12_345.0, 12_345.0))
+    data = {"decisions": [], "failures": [], "learnings": [], "handoff": ["do X"]}
+    persist_results(
+        data,
+        memory,
+        learnings,
+        "proj",
+        "2026-04-12T10:00:00-03:00",
+        session_id="abcd1234-deadbeef",
+        session_jsonl=session,
+    )
+    text = (memory / "handoff.md").read_text()
+    assert text.startswith("---\n")
+    assert "session_id: abcd1234-deadbeef" in text
+    assert "written_at: 2026-04-12T10:00:00-03:00" in text
+    assert "source_mtime: 12345" in text
+    assert "do X" in text
 
 
 def test_persist_results_removes_stale_handoff(tmp_path: Path) -> None:

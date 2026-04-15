@@ -226,15 +226,105 @@ def lazynorth_context(
     return "\n\n".join(sections)
 
 
+_STALENESS_WINDOW_SECONDS = 300
+
+
+def _parse_handoff_frontmatter(text: str) -> tuple[dict[str, str], str]:
+    """Split a handoff.md into (metadata, body_without_frontmatter).
+
+    Returns an empty metadata dict if the file has no leading `---` block.
+    """
+    if not text.startswith("---\n"):
+        return {}, text
+    end = text.find("\n---\n", 4)
+    if end == -1:
+        return {}, text
+    meta_block = text[4:end]
+    body = text[end + 5 :]
+    meta: dict[str, str] = {}
+    for line in meta_block.splitlines():
+        if ":" in line:
+            key, _, value = line.partition(":")
+            meta[key.strip()] = value.strip()
+    return meta, body
+
+
+def _classify_handoff_staleness(
+    meta: dict[str, str], latest_session: Path | None
+) -> str | None:
+    """Return a reason string if the handoff is stale, None if fresh.
+
+    Fresh means: the handoff's session_id matches the latest session JSONL on
+    disk AND that JSONL has not grown past `_STALENESS_WINDOW_SECONDS` beyond
+    the recorded source_mtime.
+    """
+    handoff_sid = meta.get("session_id", "")
+    if latest_session is None:
+        return f"No session JSONL found on disk for handoff {handoff_sid[:8]}."
+    latest_sid = latest_session.stem
+    if handoff_sid != latest_sid:
+        return (
+            f"Last written for session {handoff_sid[:8]}. "
+            f"Most recent session on disk: {latest_sid[:8]}."
+        )
+    try:
+        source_mtime = float(meta.get("source_mtime", "0") or 0)
+    except ValueError:
+        source_mtime = 0.0
+    try:
+        current_mtime = latest_session.stat().st_mtime
+    except OSError:
+        return None  # can't tell — trust it
+    delta = current_mtime - source_mtime
+    if delta > _STALENESS_WINDOW_SECONDS:
+        return (
+            f"Session {handoff_sid[:8]} grew {delta:.0f}s "
+            f"past the handoff snapshot (window={_STALENESS_WINDOW_SECONDS}s)."
+        )
+    return None
+
+
+def _latest_session_jsonl(sessions_dir: Path) -> Path | None:
+    if not sessions_dir.is_dir():
+        return None
+    jsonl_files = [p for p in sessions_dir.glob("*.jsonl") if p.is_file()]
+    if not jsonl_files:
+        return None
+    return max(jsonl_files, key=lambda f: f.stat().st_mtime)
+
+
 def handoff_context(memory_dir: Path) -> str:
     parts: list[str] = []
 
     handoff = memory_dir / "handoff.md"
     if handoff.is_file():
         try:
-            parts.append(handoff.read_text().strip())
+            raw = handoff.read_text()
         except OSError:
-            pass
+            raw = ""
+        if raw:
+            meta, body = _parse_handoff_frontmatter(raw)
+            body = body.strip()
+            if not meta:
+                parts.append(
+                    "(legacy handoff — no provenance metadata, treat with caution)\n"
+                    + body
+                )
+            else:
+                sessions_dir = memory_dir.parent
+                latest = _latest_session_jsonl(sessions_dir)
+                stale_reason = _classify_handoff_staleness(meta, latest)
+                if stale_reason is None:
+                    parts.append(body)
+                else:
+                    parts.append(
+                        "⚠️ Handoff may be stale.\n"
+                        f"{stale_reason}\n"
+                        "Do NOT trust the items below as current. "
+                        "Ask the user what's actually pending.\n\n"
+                        "--- stale content below ---\n"
+                        + body
+                    )
 
     pre_compact = memory_dir / "pre-compact-summary.md"
     if pre_compact.is_file():
