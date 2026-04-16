@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/lazynet/lazy-harness/compare/v0.6.4...v0.7.0) (2026-04-16)
+
+
+### Features
+
+* force final compound-loop at session end ([#22](https://github.com/lazynet/lazy-harness/issues/22)) ([6f344fc](https://github.com/lazynet/lazy-harness/commit/6f344fcdfb76c72f2c5db60a760debb278db8c39))
+
 ## [0.6.4](https://github.com/lazynet/lazy-harness/compare/v0.6.3...v0.6.4) (2026-04-15)
 
 
