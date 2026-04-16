@@ -113,7 +113,7 @@ class CompoundLoopConfig:
     debounce_seconds: int = 60
     timeout_seconds: int = 120
     learnings_subdir: str = "learnings"
-    reprocess_min_growth_seconds: int = 300
+    reprocess_min_growth_seconds: int = 120
 
 
 @dataclass

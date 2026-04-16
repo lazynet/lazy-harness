@@ -187,6 +187,30 @@ def should_reprocess(
     return session_mtime - last_processed >= min_growth_seconds
 
 
+def should_queue_task(
+    *,
+    queue_dir: Path,
+    session_jsonl: Path,
+    session_id: str,
+    debounce_seconds: int,
+    min_growth_seconds: int,
+    force: bool,
+) -> bool:
+    """Combine debounce + growth gates, with an override for session-end paths.
+
+    When `force=True` (e.g. the SessionEnd hook fired, or a user invoked
+    `lh knowledge handoff-now`), bypass both gates: the caller is asserting
+    that the session is closing and the handoff must reflect its final state.
+    """
+    if force:
+        return True
+    if is_debounced(queue_dir, session_id, debounce_seconds):
+        return False
+    return should_reprocess(
+        session_jsonl, last_processed_mtime(queue_dir, session_id), min_growth_seconds
+    )
+
+
 def collect_existing_learnings(learnings_dir: Path, limit: int = 50) -> str:
     """Collect titles of recent learnings for semantic deduplication."""
     if not learnings_dir.is_dir():

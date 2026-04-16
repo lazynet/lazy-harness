@@ -24,6 +24,9 @@ scripts = ["context-inject"]
 [hooks.session_stop]
 scripts = ["session-export", "compound-loop"]
 
+[hooks.session_end]
+scripts = ["session-end"]
+
 [hooks.pre_compact]
 scripts = ["pre-compact"]
 ```
@@ -35,7 +38,8 @@ scripts = ["pre-compact"]
 | `config.toml` event | Claude Code event | When it fires | Typical use |
 |---|---|---|---|
 | `session_start` | `SessionStart` | Right after Claude Code starts a session | Inject additional context |
-| `session_stop` | `Stop` | When the session ends (window closed, exit, timeout) | Export session, queue async work |
+| `session_stop` | `Stop` | After every LLM turn (not once at shutdown) | Export session, queue gated async work |
+| `session_end` | `SessionEnd` | Exactly once at real session termination (`/exit`, `/clear`, logout) | Force final end-of-session work |
 | `pre_compact` | `PreCompact` | Immediately before Claude Code compacts conversation history | Preserve working state |
 | `pre_tool_use` | `PreToolUse` | Before each tool call | Guardrails, policy enforcement |
 | `post_tool_use` | `PostToolUse` | After each tool call | Logging, side-effect observers |
@@ -114,9 +118,10 @@ This is the hook that does the heaviest lifting. It is split into two pieces del
 1. Check `compound_loop.enabled` in config, bail if disabled.
 2. Find the latest session JSONL for the current cwd.
 3. Apply debounce (`debounce_seconds`, default 60) — if a task for this session was queued within the window, skip.
-4. Check `queue/done/` for the same short session id — if already processed, skip.
-5. Drop a task file (`<unix-ts>-<short-id>.task`) into `~/.claude/queue/` with key=value metadata (`cwd`, `session_jsonl`, `session_id`, `memory_dir`, `timestamp`).
-6. `subprocess.Popen` the worker as a detached process. Return immediately.
+4. Apply the growth gate (`reprocess_min_growth_seconds`, default 120) — re-queue only if the JSONL grew past the threshold since the last `done/` task.
+5. Check `queue/done/` for the same short session id — if already processed, skip.
+6. Drop a task file (`<unix-ts>-<short-id>.task`) into `~/.claude/queue/` with key=value metadata (`cwd`, `session_jsonl`, `session_id`, `memory_dir`, `timestamp`).
+7. `subprocess.Popen` the worker as a detached process. Return immediately.
 
 **Consumer (worker, slow, async):**
 1. Acquire `fcntl.flock` on `~/.claude/queue/.worker.lock`. If another worker is running, exit 0.
@@ -132,7 +137,38 @@ This is the hook that does the heaviest lifting. It is split into two pieces del
 
 `<memory_dir>` is `<CLAUDE_CONFIG_DIR>/projects/<encoded-cwd>/memory/`. `<learnings_dir>` is resolved from `LCT_LEARNINGS_DIR` if set (back-compat), otherwise `<knowledge.path>/<compound_loop.learnings_subdir>`.
 
-## How the four hooks complement each other
+### `session-end` — runs on `SessionEnd`
+
+Source: `src/lazy_harness/hooks/builtins/session_end.py`.
+
+Responsibility: force one final compound-loop evaluation when the session actually closes (`/exit`, `/clear`, logout, `prompt_input_exit`). `SessionEnd` fires exactly once at real shutdown — unlike `Stop`, which fires after every LLM turn.
+
+`compound-loop` on `Stop` is gated by `debounce_seconds` and `reprocess_min_growth_seconds` to bound worker cost. Those gates are correct during a session and wrong at its end: the last minutes of work can fall into a window where neither the gate nor the classifier in `context-inject` flags the handoff as stale, and the next session reads an out-of-date snapshot. The `session-end` hook is the fix.
+
+**What it does:**
+
+1. Check `compound_loop.enabled`; bail if disabled.
+2. Find the latest session JSONL for the current cwd.
+3. Call `should_queue_task(..., force=True)` — bypasses debounce and the growth gate; the helper still respects the `force` flag as the one intersection point between the two producers.
+4. Drop the task file and spawn the worker exactly like the Stop-hook producer.
+
+The worker is the same, the prompt is the same, the persistence layer is the same. Only the gating differs. See [ADR-019](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/019-handoff-session-end-freshness.md) for the trade-off analysis.
+
+**Opting in** — users wire the hook into their `settings.json` the same way as the others. Example:
+
+```json
+{
+  "hooks": {
+    "SessionEnd": [
+      {"matcher": "", "hooks": [{"type": "command", "command": "$HOME/.local/bin/lh hook session-end"}]}
+    ]
+  }
+}
+```
+
+A harness-agnostic fallback is also available as a CLI command: `lh knowledge handoff-now` runs the same force path on demand. Useful before `/compact`, before closing a terminal without `/exit`, or on Claude Code builds that predate the `SessionEnd` event.
+
+## How the five hooks complement each other
 
 The magic is the composition, not any single hook. A full session lifecycle:
 
@@ -172,6 +208,17 @@ The magic is the composition, not any single hook. A full session lifecycle:
 │                       │      │   failures.jsonl,    │
 │                       │      │   handoff.md,        │
 │                       │      │   learnings/*.md     │
+└──────────────────────┘      └──────────────────────┘
+              │
+              │  user types /exit or /clear
+              ▼
+┌──────────────────────┐      ┌──────────────────────┐
+│  SessionEnd           │──►   │ session-end          │
+│                       │      │ forces compound-loop │
+│                       │      │ without gates        │
+│                       │      │ so handoff.md        │
+│                       │      │ reflects the         │
+│                       │      │ session's final state│
 └──────────────────────┘      └──────────────────────┘
 ```
 

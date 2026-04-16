@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import click
@@ -11,6 +14,7 @@ from lazy_harness.core.config import ConfigError, load_config
 from lazy_harness.core.logfile import append as log_append
 from lazy_harness.core.logfile import default_log_dir
 from lazy_harness.core.paths import config_file, contract_path, expand_path
+from lazy_harness.knowledge.compound_loop import create_task, should_queue_task
 from lazy_harness.knowledge.context_gen import DEFAULT_CONFIG as CONTEXT_GEN_DEFAULT_CONFIG
 from lazy_harness.knowledge.context_gen import regenerate as regenerate_contexts
 from lazy_harness.knowledge.directory import list_sessions
@@ -169,6 +173,80 @@ def knowledge_export_session(session_file: Path, force: bool) -> None:
     console.print(f"[yellow]·[/yellow] Skipped {session_file.name} ({skip_reason})")
     if not force:
         console.print("  Re-run with [cyan]--force[/cyan] to bypass the filter.")
+
+
+@knowledge.command("handoff-now")
+def knowledge_handoff_now() -> None:
+    """Force a compound-loop evaluation for the current session now.
+
+    Same semantics as the SessionEnd hook: ignores the debounce and growth
+    gates that normally keep the Stop hook cheap. Use before closing a
+    session if you want the handoff to reflect the very latest state —
+    for example when you finished resolving pending items in the final
+    minutes of a session, after the last gated Stop hook fired.
+    """
+    console = Console()
+    cf = config_file()
+    try:
+        cfg = load_config(cf)
+    except ConfigError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise SystemExit(1)
+
+    if not cfg.compound_loop.enabled:
+        console.print("[red]compound_loop is disabled in config.toml[/red]")
+        raise SystemExit(1)
+
+    claude_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
+    cwd = Path.cwd()
+    encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
+    sessions_dir = claude_dir / "projects" / encoded
+    queue_dir = claude_dir / "queue"
+    log_dir = claude_dir / "logs"
+
+    jsonl_files = [p for p in sessions_dir.glob("*.jsonl") if p.is_file()] \
+        if sessions_dir.is_dir() else []
+    if not jsonl_files:
+        console.print(f"[red]No session JSONL under {contract_path(sessions_dir)}[/red]")
+        raise SystemExit(1)
+    session_jsonl = max(jsonl_files, key=lambda f: f.stat().st_mtime)
+    session_id = session_jsonl.stem
+
+    if not should_queue_task(
+        queue_dir=queue_dir,
+        session_jsonl=session_jsonl,
+        session_id=session_id,
+        debounce_seconds=cfg.compound_loop.debounce_seconds,
+        min_growth_seconds=cfg.compound_loop.reprocess_min_growth_seconds,
+        force=True,
+    ):
+        console.print("[yellow]·[/yellow] Nothing to do (unexpected under force).")
+        return
+
+    memory_dir = sessions_dir / "memory"
+    task_file = create_task(
+        queue_dir=queue_dir,
+        cwd=cwd,
+        session_jsonl=session_jsonl,
+        session_id=session_id,
+        memory_dir=memory_dir,
+    )
+    console.print(f"[green]✓[/green] queued {task_file.name}")
+
+    worker_log = log_dir / "compound-loop.log"
+    try:
+        worker_log.parent.mkdir(parents=True, exist_ok=True)
+        with open(worker_log, "a") as stdout_f:
+            subprocess.Popen(
+                [sys.executable, "-m", "lazy_harness.knowledge.compound_loop_worker"],
+                stdin=subprocess.DEVNULL,
+                stdout=stdout_f,
+                stderr=stdout_f,
+                start_new_session=True,
+                close_fds=True,
+            )
+    except OSError as e:
+        console.print(f"[yellow]·[/yellow] worker spawn failed: {e}")
 
 
 @knowledge.command("embed")

@@ -47,6 +47,7 @@ class ClaudeCodeAdapter:
         return [
             "session_start",
             "session_stop",
+            "session_end",
             "pre_compact",
             "pre_tool_use",
             "post_tool_use",
@@ -58,6 +59,7 @@ class ClaudeCodeAdapter:
         hook_event_map = {
             "session_start": "SessionStart",
             "session_stop": "Stop",
+            "session_end": "SessionEnd",
             "pre_compact": "PreCompact",
             "pre_tool_use": "PreToolUse",
             "post_tool_use": "PostToolUse",

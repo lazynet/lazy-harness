@@ -25,6 +25,7 @@ from lazy_harness.knowledge.compound_loop import (
     parse_task,
     persist_results,
     process_task,
+    should_queue_task,
     should_reprocess,
     strip_markdown_fences,
 )
@@ -50,6 +51,10 @@ def _interactive_session(tmp_path: Path, name: str = "sess.jsonl") -> Path:
         ],
     )
     return session
+
+
+def test_compound_loop_config_default_reprocess_min_growth_seconds_is_120() -> None:
+    assert CompoundLoopConfig().reprocess_min_growth_seconds == 120
 
 
 def test_is_interactive_session_true(tmp_path: Path) -> None:
@@ -206,6 +211,85 @@ def test_should_reprocess_true_when_session_grew_past_threshold(tmp_path: Path) 
     os.utime(session, (10_000.0, 10_000.0))
     # Processed 400s before current session mtime → past 300s threshold
     assert should_reprocess(session, last_processed=9_600.0, min_growth_seconds=300) is True
+
+
+def test_should_queue_task_force_bypasses_debounce_and_growth(tmp_path: Path) -> None:
+    queue = tmp_path / "queue"
+    session = _interactive_session(tmp_path)
+    # Debounce active: a task was just queued.
+    create_task(queue, Path("/tmp"), session, "abcd1234", Path("/tmp/m"))
+    assert (
+        should_queue_task(
+            queue_dir=queue,
+            session_jsonl=session,
+            session_id="abcd1234",
+            debounce_seconds=60,
+            min_growth_seconds=120,
+            force=True,
+        )
+        is True
+    )
+
+
+def test_should_queue_task_default_respects_debounce(tmp_path: Path) -> None:
+    queue = tmp_path / "queue"
+    session = _interactive_session(tmp_path)
+    create_task(queue, Path("/tmp"), session, "abcd1234", Path("/tmp/m"))
+    assert (
+        should_queue_task(
+            queue_dir=queue,
+            session_jsonl=session,
+            session_id="abcd1234",
+            debounce_seconds=60,
+            min_growth_seconds=120,
+            force=False,
+        )
+        is False
+    )
+
+
+def test_should_queue_task_default_respects_growth_gate(tmp_path: Path) -> None:
+    import os
+
+    queue = tmp_path / "queue"
+    session = _interactive_session(tmp_path)
+    os.utime(session, (5_000.0, 5_000.0))
+    task = create_task(queue, Path("/tmp"), session, "abcd1234", Path("/tmp/m"))
+    move_to_done(queue, task)
+    os.utime(queue / "done" / task.name, (4_990.0, 4_990.0))
+    assert (
+        should_queue_task(
+            queue_dir=queue,
+            session_jsonl=session,
+            session_id="abcd1234",
+            debounce_seconds=1,
+            min_growth_seconds=120,
+            force=False,
+        )
+        is False
+    )
+
+
+def test_should_queue_task_default_allows_when_all_clear(tmp_path: Path) -> None:
+    import os
+
+    queue = tmp_path / "queue"
+    session = _interactive_session(tmp_path)
+    os.utime(session, (10_000.0, 10_000.0))
+    task = create_task(queue, Path("/tmp"), session, "abcd1234", Path("/tmp/m"))
+    move_to_done(queue, task)
+    os.utime(queue / "done" / task.name, (9_000.0, 9_000.0))
+    assert (
+        should_queue_task(
+            queue_dir=queue,
+            session_jsonl=session,
+            session_id="abcd1234",
+            debounce_seconds=1,
+            min_growth_seconds=120,
+            force=False,
+        )
+        is True
+    )
 
 
 def test_should_reprocess_false_when_session_missing(tmp_path: Path) -> None:

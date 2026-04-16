@@ -64,3 +64,13 @@ def test_list_builtin_hooks() -> None:
     builtins = list_builtin_hooks()
     assert "context-inject" in builtins
     assert "pre-compact" in builtins
+    assert "session-end" in builtins
+
+
+def test_resolve_session_end_builtin_hook() -> None:
+    from lazy_harness.hooks.loader import resolve_hook
+
+    result = resolve_hook("session-end")
+    assert result is not None
+    assert result.name == "session-end"
+    assert result.is_builtin is True
