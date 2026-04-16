@@ -29,7 +29,17 @@ def test_claude_adapter_supported_hooks() -> None:
     hooks = adapter.supported_hooks()
     assert "session_start" in hooks
     assert "session_stop" in hooks
+    assert "session_end" in hooks
     assert "pre_compact" in hooks
+
+
+def test_claude_adapter_maps_session_end_to_SessionEnd() -> None:
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    adapter = ClaudeCodeAdapter()
+    result = adapter.generate_hook_config({"session_end": ["lh hook session-end"]})
+    assert "SessionEnd" in result
+    assert result["SessionEnd"][0]["hooks"][0]["command"] == "lh hook session-end"
 
 
 def test_registry_get_claude() -> None:

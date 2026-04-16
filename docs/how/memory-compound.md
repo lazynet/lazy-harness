@@ -56,8 +56,9 @@ Steps, in order:
 2. **Load config.** `load_config(config_file())` — if it fails or `compound_loop.enabled == False`, log and exit. The loop is opt-in.
 3. **Find the session JSONL.** Encode the cwd into Claude Code's project-dir convention (`/Users/x/repo` → `-Users-x-repo`), look under `<CLAUDE_CONFIG_DIR>/projects/<encoded>/`, pick the most recent `*.jsonl` by mtime.
 4. **Debounce.** `is_debounced(queue_dir, session_id, debounce_seconds)` — if a task for the same session was queued within the window (default 60s), skip. This is what prevents a flapping session close from queuing the same work repeatedly.
-5. **De-dup against `done/`.** `is_already_processed(queue_dir, session_id)` — if a task for this session already lives in `queue/done/`, skip. Protects against re-running the hook on the same session after a backup/restore or clock skew.
-6. **Drop the task file.** `create_task(queue_dir, cwd, session_jsonl, session_id, memory_dir)` writes a file named `<unix_ts>-<short_id>.task` with lines:
+5. **Growth gate.** `should_reprocess` — re-queue only if the session JSONL has grown past `reprocess_min_growth_seconds` (default 120) since the last `done/` task for this session. Bounds the worker cost on long active sessions where `Stop` fires after every LLM turn.
+6. **De-dup against `done/`.** `is_already_processed(queue_dir, session_id)` — if a task for this session already lives in `queue/done/`, skip. Protects against re-running the hook on the same session after a backup/restore or clock skew.
+7. **Drop the task file.** `create_task(queue_dir, cwd, session_jsonl, session_id, memory_dir)` writes a file named `<unix_ts>-<short_id>.task` with lines:
    ```
    cwd=/Users/x/repo
    session_jsonl=/Users/x/.claude/projects/.../<id>.jsonl
@@ -65,8 +66,16 @@ Steps, in order:
    memory_dir=/Users/x/.claude/projects/.../memory
    timestamp=2026-04-13T18:32:45-03:00
    ```
-7. **Spawn the worker.** `subprocess.Popen` with `start_new_session=True`, stdin `/dev/null`, stdout/stderr redirected to `~/.claude/logs/compound-loop.log`. The producer does not wait for it.
-8. **Exit 0.** The whole producer phase is tens of milliseconds. Claude Code sees a clean session close.
+8. **Spawn the worker.** `subprocess.Popen` with `start_new_session=True`, stdin `/dev/null`, stdout/stderr redirected to `~/.claude/logs/compound-loop.log`. The producer does not wait for it.
+9. **Exit 0.** The whole producer phase is tens of milliseconds. Claude Code sees a clean session close.
+
+### Why there is a second producer on `SessionEnd`
+
+`Stop` fires after every LLM turn, so the debounce and growth gates in steps 4 and 5 exist to keep the worker cheap. They are correct for mid-session activity and wrong for the *last* few minutes of a session: if the user resolves the last pending item shortly before typing `/exit`, the final `Stop` is within the growth window and skipped, and `handoff.md` stays frozen on the earlier snapshot.
+
+The `session-end` hook (see [`docs/how/hooks.md`](hooks.md#session-end-runs-on-sessionend)) is a second producer wired to Claude Code's `SessionEnd` event. It does everything the `compound-loop` producer does **except** apply the debounce and growth gates — it calls `should_queue_task(..., force=True)`. `SessionEnd` fires exactly once, at real session termination, so it does not need gates to be cheap.
+
+`lh knowledge handoff-now` (below) is the same flow, invoked by hand. See [ADR-019](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/019-handoff-session-end-freshness.md) for the full decision record.
 
 ## Phase 2 — The background worker (consumer)
 
@@ -197,6 +206,7 @@ All in `config.toml` under `[compound_loop]`:
 | `min_messages` | `4` | Sessions with fewer interactive messages are skipped. |
 | `min_user_chars` | `200` | Sessions where the user typed fewer than this many characters total are skipped — covers fast "what's the weather" prompts. |
 | `debounce_seconds` | `60` | Debounce window for repeat Stop events on the same session. |
+| `reprocess_min_growth_seconds` | `120` | Minimum seconds of JSONL growth since the last `done/` task before a Stop event re-queues. Bounds worker cost on long sessions; the `session-end` hook and `lh knowledge handoff-now` both bypass this. |
 | `timeout_seconds` | `120` | Hard timeout on the `claude -p` subprocess. |
 | `learnings_subdir` | `learnings` | Subdirectory of `<knowledge.path>` where learning markdown files are written. |
 
@@ -219,6 +229,9 @@ ls -la ~/.claude/queue/done/
 
 # Force-run the worker now
 python -m lazy_harness.knowledge.compound_loop_worker
+
+# Queue a forced evaluation for the current session (bypass Stop-hook gates)
+lh knowledge handoff-now
 
 # Inspect recent decisions for a project
 jq -c '.summary' ~/.claude/projects/-Users-me-repo/memory/decisions.jsonl | tail -10
