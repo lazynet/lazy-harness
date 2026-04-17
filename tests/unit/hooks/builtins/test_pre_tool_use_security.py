@@ -119,3 +119,62 @@ def test_should_block_invalid_allow_pattern_is_ignored() -> None:
     decision = should_block("rm -rf /tmp/x", allow_patterns=["(["])
     assert decision is not None
     assert decision.rule.category == "filesystem"
+
+
+def test_read_stdin_json_returns_dict_when_valid(monkeypatch: pytest.MonkeyPatch) -> None:
+    import io
+
+    from lazy_harness.hooks.builtins.pre_tool_use_security import _read_stdin_json
+
+    monkeypatch.setattr("sys.stdin", io.StringIO('{"tool_name": "Bash"}'))
+    assert _read_stdin_json() == {"tool_name": "Bash"}
+
+
+def test_read_stdin_json_returns_empty_dict_on_invalid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import io
+
+    from lazy_harness.hooks.builtins.pre_tool_use_security import _read_stdin_json
+
+    monkeypatch.setattr("sys.stdin", io.StringIO("not json at all"))
+    assert _read_stdin_json() == {}
+
+
+def test_format_block_message_contains_reason_category_and_hint() -> None:
+    import re as _re
+
+    from lazy_harness.hooks.builtins.pre_tool_use_security import (
+        BlockDecision,
+        BlockRule,
+        _format_block_message,
+    )
+
+    rule = BlockRule(
+        category="filesystem",
+        pattern=_re.compile(r"rm -rf"),
+        reason="Recursive delete",
+    )
+    msg = _format_block_message(BlockDecision(rule=rule, matched_text="rm -rf /tmp"))
+    assert "Blocked by lazy-harness PreToolUse" in msg
+    assert "Recursive delete" in msg
+    assert "filesystem" in msg
+    assert "rm -rf /tmp" in msg
+    assert "allow_patterns" in msg
+
+
+def test_format_block_message_truncates_long_match() -> None:
+    import re as _re
+
+    from lazy_harness.hooks.builtins.pre_tool_use_security import (
+        BlockDecision,
+        BlockRule,
+        _format_block_message,
+    )
+
+    rule = BlockRule(category="filesystem", pattern=_re.compile(r"x"), reason="r")
+    huge = "x" * 500
+    msg = _format_block_message(BlockDecision(rule=rule, matched_text=huge))
+    # Truncated to MAX_MATCH_LEN (120) + ellipsis
+    assert huge not in msg
+    assert "…" in msg or "..." in msg

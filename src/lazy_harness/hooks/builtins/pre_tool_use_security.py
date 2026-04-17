@@ -7,9 +7,11 @@ block per Claude Code PreToolUse semantics. See spec
 
 from __future__ import annotations
 
+import json
 import re
+import sys
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 Category = Literal["filesystem", "sql", "terraform", "credentials", "git"]
 
@@ -107,6 +109,40 @@ BLOCK_RULES: tuple[BlockRule, ...] = (
         reason="Read of cert/key file",
     ),
 )
+
+
+MAX_MATCH_LEN = 120
+
+
+def _read_stdin_json() -> dict[str, Any]:
+    """Read and parse stdin as JSON; return {} on any parse error or empty input."""
+    try:
+        data = sys.stdin.read()
+    except (OSError, ValueError):
+        return {}
+    if not data.strip():
+        return {}
+    try:
+        parsed = json.loads(data)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _format_block_message(decision: BlockDecision) -> str:
+    """Format the stderr message surfaced back to the agent by Claude Code."""
+    matched = decision.matched_text
+    if len(matched) > MAX_MATCH_LEN:
+        matched = matched[:MAX_MATCH_LEN] + "…"
+    return (
+        f"Blocked by lazy-harness PreToolUse: {decision.rule.reason} "
+        f"({decision.rule.category}).\n"
+        f"Matched: {matched}\n"
+        f"If this is intentional, add a regex pattern to "
+        f"[hooks.pre_tool_use] allow_patterns in your profile config.toml.\n"
+        f"See specs/designs/2026-04-17-security-hooks-cluster-design.md "
+        f"for the full rule list.\n"
+    )
 
 
 def _safe_search(pattern: str, text: str) -> bool:
