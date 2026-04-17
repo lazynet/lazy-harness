@@ -74,3 +74,23 @@ def test_resolve_session_end_builtin_hook() -> None:
     assert result is not None
     assert result.name == "session-end"
     assert result.is_builtin is True
+
+
+def test_pre_tool_use_security_is_registered_as_builtin() -> None:
+    from lazy_harness.hooks.loader import _BUILTIN_HOOKS
+
+    assert "pre-tool-use-security" in _BUILTIN_HOOKS
+    assert (
+        _BUILTIN_HOOKS["pre-tool-use-security"]
+        == "lazy_harness.hooks.builtins.pre_tool_use_security"
+    )
+
+
+def test_pre_tool_use_security_resolves_to_concrete_file() -> None:
+    from lazy_harness.hooks.loader import resolve_hook
+
+    info = resolve_hook("pre-tool-use-security")
+    assert info is not None
+    assert info.is_builtin is True
+    assert info.path.name == "pre_tool_use_security.py"
+    assert info.path.is_file()
