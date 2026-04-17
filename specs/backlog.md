@@ -1,55 +1,137 @@
 # lazy-harness backlog
 
-Issues y mejoras pendientes. Append-only — mover a done/ o tachar cuando se resuelve. Este archivo es **interno** (no se publica al sitio MkDocs); el roadmap público vive en `docs/roadmap.md` y solo contiene los temas comprometidos a alto nivel.
+Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio MkDocs); el roadmap público vive en `docs/roadmap.md` y solo contiene los temas comprometidos a alto nivel.
 
-## Open
+Última revisión: 2026-04-16 — cruce de 18 artículos de LazyMind + weekly reviews W14/W15 contra el estado del harness. Análisis completo en [`specs/analyses/2026-04-16-harnessing-literature-review.md`](analyses/2026-04-16-harnessing-literature-review.md).
 
-### compound-loop: insight capture integration
-
-**Síntoma:** los bloques `★ Insight ─` que el output style `explanatory` genera en mensajes del assistant se pierden sistemáticamente — gate-out en sesiones cortas, tail-of-20 en sesiones largas, y reclasificación lossy del extractor LLM.
-
-**Spec:** [`specs/designs/2026-04-13-compound-loop-insight-capture.md`](designs/2026-04-13-compound-loop-insight-capture.md) — diseño completo, test plan TDD (11 casos), secuencia de implementación.
-
-**Comparte mecanismo** con el item de abajo (`delta-by-index`). Implementar juntos.
-
-### compound-loop: learnings lost on long sessions
-
-**Síntoma:** sesión 4bc38694 (2026-04-13, 118 mensajes, ~3h) solo disparó extracción de learnings una vez, a los 3min del inicio. Todos los Stop posteriores fueron skipped con `already processed <session_id>`. Los learnings del 97% restante de la sesión nunca fueron evaluados.
-
-**Root cause:** el worker marca `session_id` como processed con un flag booleano. Fast-path suficiente para idempotencia, pero no para captura incremental — en sesiones largas perdés todo el contenido posterior a la primera extracción.
-
-**Opciones:**
-1. Trackear último `message_index` procesado por session_id. Próximo Stop evalúa solo el delta. Más complejidad, más escrituras, pero cero learnings perdidos.
-2. Re-procesar si el transcript creció N mensajes desde la última extracción (ventana fija).
-3. Procesar solo al Stop final de la sesión (requiere señal de "sesión cerrada" confiable — no la tenemos hoy).
-
-**Recomendación:** (1) delta-by-index. Guardar en queue state o en memoria del proyecto el índice procesado.
-
-**Impacto:** alto — es el mecanismo principal de captura de learnings y hoy solo funciona bien en sesiones cortas.
-
-### quality gate: preexisting failures on main
-
-**Síntoma:** hoy `main` viola la no-negociable #4 de `CLAUDE.md` (pre-commit gate green):
-
-1. `tests/unit/test_version.py::test_version_is_040` — hardcoded a `"0.4.0"` pero el paquete está en `0.5.1`. El test existe para detectar drift entre `pyproject.toml` y `__init__.py`, pero drifteó él mismo porque hardcodea el valor que debería validar dinámicamente.
-2. `uv run ruff check src tests` — 23 errors preexistentes. Origen desconocido hasta revisarlos uno por uno.
-
-**Fix propuesto:**
-
-- **test_version:** reescribir para leer ambos archivos (`pyproject.toml` y `src/lazy_harness/__init__.py`) y comparar entre sí, sin hardcodear valor esperado. release-please garantiza sync; el test valida el invariante.
-- **ruff:** correr `uv run ruff check --fix src tests` para los 3 auto-fixable, luego revisar los ~20 restantes uno por uno. Si alguno es falso positivo o regla nueva que no nos aplica, editar `pyproject.toml` para excluirla con justificación en commit.
-
-**Impacto:** **bloqueante** — cualquier PR que toque código o tests empieza con el gate rojo, lo que viola la disciplina del repo desde el primer commit. Fixear esto antes de cualquier feature work.
+---
 
 ## Done
 
+- [x] **Profile isolation via CLAUDE_CONFIG_DIR** — wrapper `lcc`, aislamiento completo por perfil (ADR-009)
+- [x] **CLAUDE.md como router IF-ELSE** — carga condicional de docs/ on-demand (ADR-004)
+- [x] **Compound loop async** — `claude -p` headless, 100% de evaluaciones (ADR-005 v2)
+- [x] **Episodic memory** — decisions.jsonl + failures.jsonl append-only (ADR-006)
+- [x] **Cross-project learnings** — auto-generados en Meta/Learnings/ (ADR-007)
+- [x] **SessionStart context injection** — git state, LazyNorth, última sesión, decisiones recientes (ADR-008)
+- [x] **QMD knowledge search** — 7 colecciones, BM25 + vectores, sync cada 30min, embed diario
+- [x] **Session export** — Stop hook exporta a markdown + QMD indexa (incluyendo repos con guiones)
+- [x] **Worktrees para todo cambio** — non-negotiable #1, `/new-worktree` + `/cleanup-worktree`
+- [x] **Strict TDD con /tdd-check** — pytest + ruff + mkdocs build como gate pre-commit
+- [x] **Rename completo a lazy-claudecode** — repo, scripts, docs, vault, QMD
+- [x] **Learnings review semanal** — domingos 10:00, output en `Meta/Weekly-Reviews/LR-YYYY-WNN.md`
+- [x] **Dedup semántico de learnings** — inyección de títulos existentes al prompt de evaluación
+- [x] **lcc-status monitoring dashboard**
+- [x] **Zsh completions** — deployment via `deploy.sh completions`
+- [x] **Skill /audit-harness** — auditoría integral del harness en paralelo
+- [x] **recall-cowork skill** — búsqueda QMD desde Cowork via Desktop Commander
+- [x] **Quality gate verde en main** — test_version dinámico + ruff clean (PR #20, release 0.6.4)
+- [x] **PreCompact context injection** — el builtin `pre_compact.py` ya re-inyecta tasks (últimos user_msgs) + archivos (`file_path` de tool_use blocks) vía `hookSpecificOutput.additionalContext`. Los hard constraints del CLAUDE.md los re-inyecta Claude Code nativamente post-compact como system-reminder. No queda gap accionable.
 - [x] **PreToolUse security hook** — blocks destructive filesystem/git/sql/terraform commands + credentials reads + forced secret commits, with per-profile `allow_patterns` escape hatch (feat/security-hooks-cluster)
 - [x] **PostToolUse auto-format hook** — runs `ruff format` on `.py` edits/writes fail-soft (feat/security-hooks-cluster)
 
-### ADR decisions pending
+---
 
-Capturadas durante el audit de task #3 (ver `specs/adrs/README.md`). Son decisiones de arquitectura, no cleanup:
+## Open — Prioridad ALTA
 
-- **Legacy ADR-010 Ollama backend** — `specs/archive/adrs-legacy/010-ollama-local-llm-integration.md`. Propone backend alternativo para compound-loop-worker usando Ollama local. Decisión: ¿promover a ADR activo como alternativa configurable, o descartar formalmente? Criterio: si pensás usar Ollama en los próximos 3 meses, promoverlo; si no, descartar con nota de "revaluar cuando haya presión de costo/rate limit".
-- **Legacy ADR-013 Proactivity levels per profile** — `specs/archive/adrs-legacy/013-proactivity-levels-per-profile.md`. Propone niveles (Observer/Advisor/Assistant/Partner) de autonomía configurable por perfil. Decisión: ¿vale la indirección para dos perfiles, o alcanza con las instrucciones en el `CLAUDE.md` de cada perfil? Criterio: si agregás un tercer perfil, promoverlo; si no, descartar.
-- **ADR-018 implementation epic** — `specs/adrs/018-config-discoverability.md` está `accepted-deferred`. Su implementación (`lh config <feature>` + sección Features en `lh doctor`) arranca cuando aterrice el **segundo** extension point (hoy solo hay `metrics_sink`). Trigger explícito, no fecha.
+### compound-loop: insight capture + learnings lost on long sessions
+
+**Síntoma (insight capture):** los bloques `★ Insight ─` del output style `explanatory` se pierden — gate-out en sesiones cortas, tail-of-20 en sesiones largas.
+
+**Spec:** [`specs/designs/2026-04-13-compound-loop-insight-capture.md`](designs/2026-04-13-compound-loop-insight-capture.md)
+
+**Síntoma (learnings lost):** sesión 4bc38694 (118 mensajes, ~3h) solo disparó extracción una vez. El worker marca `session_id` como processed con flag booleano — en sesiones largas perdés el 97% del contenido.
+
+**Recomendación:** delta-by-index. Trackear último `message_index` procesado por session_id. Implementar juntos con insight capture (comparten mecanismo).
+
+**Impacto:** alto — es el mecanismo principal de captura de learnings.
+
+---
+
+## Open — Prioridad MEDIA
+
+### Audit CLAUDE.md triple por context clash
+
+**Por qué:** el harness carga 3 capas de CLAUDE.md (global `~/.claude-lazy/CLAUDE.md` + workspace `~/repos/lazy/.claude/CLAUDE.md` + repo `CLAUDE.md`) más plugins + MCP instructions + deferred tools. Session del 2026-04-13 detectó "context injection bastante pesado (~varias miles de tokens)".
+
+**Fuente:** [Context Engineering Is The Only Engineering](lazy-lazymind-resources/tech/ia/context-engineering-is-the-only-engineering-that-matters.md) — 4 failure modes: pollution, distraction, confusion, **clash** (CLAUDE.md dice X pero otro layer dice Y). [Anatomy of a Perfect OpenClaw Setup](lazy-lazymind-resources/tech/ia/anatomy-of-a-perfect-openclaw-setup.md) — AGENTS.md <300 líneas, más que eso degrada adherencia.
+
+**Acción:** medir tokens totales de context injection al inicio de sesión. Identificar contradicciones y redundancias entre las 3 capas. Consolidar o eliminar duplicados.
+
+### Session hygiene guidance
+
+**Por qué:** no hay reglas explícitas sobre cuándo empezar sesión nueva, cuándo compactar, ni cuándo hacer /clear. Las sesiones largas degradan calidad sin que el usuario lo note.
+
+**Fuente:** [World-Class Agentic Engineer](lazy-lazymind-resources/tech/ia/how-to-be-a-world-class-agentic-engineer.md) — una sesión por contrato, sesiones de 24h generan context bloat. [50 Claude Code Tips #12, #24](lazy-lazymind-resources/tech/ia/50-claude-code-tips-and-best-practices-for-daily-use.md) — /clear entre tareas, después de 2 correcciones sobre lo mismo empezar de cero. [Advanced Context Engineering](lazy-lazymind-resources/tech/ia/advanced-context-engineering-for-coding-agents.md) — mantener utilización en 40-60%.
+
+**Acción:** agregar guidance al CLAUDE.md del profile o crear skill Research→Plan→Implement con compaction entre fases.
+
+### MCP server count audit
+
+**Por qué:** cada MCP server agrega tool schemas al context window. Sweet spot: 3-5 servers activos.
+
+**Fuente:** [W15 weekly review](lazy-lazymind-meta/weekly-reviews/wr-2026-w15.md) — "limitar MCP servers activos a 3-5 (actualmente sin auditar cuántos hay cargados)".
+
+**Acción:** auditar cuántos MCPs están activos por perfil. Desactivar los que no se usen frecuentemente.
+
+### Ollama como backend para compound-loop
+
+**Por qué:** el compound-loop-worker usa Haiku via `claude -p`. Ollama eliminaría ese costo ($0). W15 identifica cost optimization como cluster temático emergente.
+
+**Fuente:** [W15 review](lazy-lazymind-meta/weekly-reviews/wr-2026-w15.md) — advisor strategy y cost optimization. Legacy [ADR-010](specs/archive/adrs-legacy/010-ollama-local-llm-integration.md) propone este backend.
+
+**Decisión pendiente:** promover ADR-010 legacy a ADR activo o descartar. Criterio: evaluar cuando homelab esté estable.
+
+---
+
+## Open — Prioridad BAJA
+
+### QMD MCP server en homelab (remoto, shared)
+
+Dar acceso a QMD desde cualquier máquina de la red. Útil pero no urgente — hoy QMD funciona local.
+
+### Knowledge system health checks
+
+**Fuente:** [Context Engineering](lazy-lazymind-resources/tech/ia/context-engineering-is-the-only-engineering-that-matters.md) y artículos de Karpathy (W15) — linting semanal de la wiki, detección de notas huérfanas, links rotos, frontmatter incompleto, contradictions.
+
+Script semanal tipo "vault health check". El agente como mantenedor de contexto.
+
+### Advisor strategy POC (Sonnet+Opus)
+
+**Fuente:** [W15 review](lazy-lazymind-meta/weekly-reviews/wr-2026-w15.md) — Sonnet ejecuta + Opus advisa = calidad near-Opus a 11-85% menos costo.
+
+POC: usar Sonnet para ejecución y Opus solo para planning/review.
+
+### "What I do NOT do" en skills
+
+**Fuente:** [4 archivos Markdown para multi-agente](lazy-lazymind-resources/tech/ia/4-archivos-markdown-para-sistemas-multi-agente.md) — la sección de exclusiones es la más importante para prevenir scope creep en agentes.
+
+Agregar secciones de exclusión explícitas a skills con scope ambiguo.
+
+### Sesiones de Cowork no capturadas
+
+Limitación arquitectural de Cowork (no tiene Stop hook). El recall-cowork skill mitiga parcialmente. Nice-to-have.
+
+### Migrar configs Capa 1 a chezmoi
+
+Infraestructura operativa, no mejora de harnessing. Ningún artículo valida que esto mueva la aguja. Diferir.
+
+### Colección QMD dedicada lazy-learnings (ADR-007)
+
+Optimización incremental del sistema existente. Diferir.
+
+### Framework evaluación multi-modelo (ADR-010)
+
+R&D puro. Diferir hasta tener caso de uso concreto.
+
+### Embeddings locales con nomic-embed-text (ADR-010)
+
+Dedup semántico ya funciona con inyección de títulos. Diferir.
+
+---
+
+## ADR decisions pending
+
+- **Legacy ADR-010 Ollama backend** — promover a ADR activo o descartar. Criterio: si pensás usar Ollama en los próximos 3 meses, promoverlo; si no, descartar con nota de "revaluar cuando haya presión de costo/rate limit".
+- **Legacy ADR-013 Proactivity levels per profile** — promover o descartar. Criterio: si agregás un tercer perfil, promoverlo; si no, descartar.
+- **ADR-018 implementation epic** — `accepted-deferred`. Trigger: cuando aterrice el segundo extension point (hoy solo hay `metrics_sink`).
