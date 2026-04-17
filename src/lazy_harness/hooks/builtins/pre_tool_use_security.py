@@ -10,8 +10,12 @@ from __future__ import annotations
 import json
 import re
 import sys
+import tomllib
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
+
+from lazy_harness.core.paths import config_file
 
 Category = Literal["filesystem", "sql", "terraform", "credentials", "git"]
 
@@ -143,6 +147,29 @@ def _format_block_message(decision: BlockDecision) -> str:
         f"See specs/designs/2026-04-17-security-hooks-cluster-design.md "
         f"for the full rule list.\n"
     )
+
+
+def _load_allowlist() -> list[str]:
+    """Load pre_tool_use.allow_patterns from the harness config.toml.
+
+    Returns empty list on any failure (missing file, malformed TOML, missing
+    section). Empty list means stricter blocking — fail-safe by design.
+    """
+    try:
+        cfg_path: Path = config_file()
+    except Exception:
+        return []
+    if not cfg_path.is_file():
+        return []
+    try:
+        data = tomllib.loads(cfg_path.read_text())
+    except (OSError, tomllib.TOMLDecodeError):
+        return []
+    section = data.get("hooks", {}).get("pre_tool_use", {})
+    patterns = section.get("allow_patterns", [])
+    if not isinstance(patterns, list):
+        return []
+    return [p for p in patterns if isinstance(p, str)]
 
 
 def _safe_search(pattern: str, text: str) -> bool:

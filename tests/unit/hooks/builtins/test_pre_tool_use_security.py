@@ -178,3 +178,49 @@ def test_format_block_message_truncates_long_match() -> None:
     # Truncated to MAX_MATCH_LEN (120) + ellipsis
     assert huge not in msg
     assert "…" in msg or "..." in msg
+
+
+def test_load_allowlist_returns_empty_when_config_missing(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.hooks.builtins.pre_tool_use_security import _load_allowlist
+
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    assert _load_allowlist() == []
+
+
+def test_load_allowlist_reads_patterns_from_config_toml(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.hooks.builtins.pre_tool_use_security import _load_allowlist
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        '[hooks.pre_tool_use]\n'
+        'scripts = ["pre-tool-use-security"]\n'
+        'allow_patterns = ["\\\\.worktrees/", "/tmp/"]\n'
+    )
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    assert _load_allowlist() == ["\\.worktrees/", "/tmp/"]
+
+
+def test_load_allowlist_returns_empty_when_section_missing(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.hooks.builtins.pre_tool_use_security import _load_allowlist
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('[monitoring]\nenabled = true\n')
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    assert _load_allowlist() == []
+
+
+def test_load_allowlist_returns_empty_on_malformed_toml(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.hooks.builtins.pre_tool_use_security import _load_allowlist
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("this is not [ valid toml")
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    assert _load_allowlist() == []
