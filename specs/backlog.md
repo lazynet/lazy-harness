@@ -26,12 +26,13 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 - [x] **Skill /audit-harness** — auditoría integral del harness en paralelo
 - [x] **recall-cowork skill** — búsqueda QMD desde Cowork via Desktop Commander
 - [x] **Quality gate verde en main** — test_version dinámico + ruff clean (PR #20, release 0.6.4)
+- [x] **PreCompact context injection** — el builtin `pre_compact.py` ya re-inyecta tasks (últimos user_msgs) + archivos (`file_path` de tool_use blocks) vía `hookSpecificOutput.additionalContext`. Los hard constraints del CLAUDE.md los re-inyecta Claude Code nativamente post-compact como system-reminder. No queda gap accionable.
 
 ---
 
 ## Open — Prioridad ALTA
 
-> **Cluster de hooks (ship juntos):** los items `PreToolUse security`, `PostToolUse auto-format` y `PreCompact context injection` comparten superficie (`settings.json` del profile + tests de hooks) y se diseñan + mergean como un bloque único. Un PR, tres hooks.
+> **Cluster de hooks (ship juntos):** los items `PreToolUse security` y `PostToolUse auto-format` comparten superficie (`config.toml` + builtins en `src/lazy_harness/hooks/builtins/` + tests espejo) y se diseñan + mergean como un bloque único. Un PR, dos hooks.
 
 ### PreToolUse security: destructive command blocking
 
@@ -78,14 +79,6 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 **Fuente:** [50 Claude Code Tips #39](lazy-lazymind-resources/tech/ia/50-claude-code-tips-and-best-practices-for-daily-use.md) — PostToolUse hook en Edit|Write que corra el formatter automáticamente. El artículo usa Prettier; nosotros usamos ruff format.
 
 **Acción:** PostToolUse hook con matcher `Edit|Write`, command `ruff format "$CLAUDE_FILE_PATH" 2>/dev/null || true`. El `|| true` evita que falle en archivos no-Python.
-
-### PreCompact context injection hook
-
-**Por qué:** en sesiones largas, compaction descarta contexto crítico (tarea actual, archivos modificados, constraints). El agente pierde el hilo. Esto es "context rot" — documentado como el degradador principal de performance a ~60% de utilización del context window.
-
-**Fuente:** [50 Claude Code Tips #41](lazy-lazymind-resources/tech/ia/50-claude-code-tips-and-best-practices-for-daily-use.md) (Notification hook con matcher compact), [The Coding Agent Harness at Scale](lazy-lazymind-resources/tech/ia/the-coding-agent-harness-how-to-actually-make-ai-coding-agents-work-at-scale.md) (context rot a ~60%), [GSD](lazy-lazymind-resources/tech/ia/gsd-how-we-built-the-most-powerful-coding-agent.md) (context pruning with anchors — cada task arranca con context limpio).
-
-**Acción:** Notification hook con matcher `compact` que re-inyecte: task description activa, lista de archivos modificados en la sesión, constraints hard del CLAUDE.md.
 
 ### compound-loop: insight capture + learnings lost on long sessions
 
