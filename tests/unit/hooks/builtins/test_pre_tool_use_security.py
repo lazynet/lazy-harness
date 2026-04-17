@@ -224,3 +224,71 @@ def test_load_allowlist_returns_empty_on_malformed_toml(
     cfg.write_text("this is not [ valid toml")
     monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
     assert _load_allowlist() == []
+
+
+def test_main_exits_zero_when_tool_is_not_bash(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import io
+
+    from lazy_harness.hooks.builtins import pre_tool_use_security as mod
+
+    monkeypatch.setattr(
+        "sys.stdin", io.StringIO('{"tool_name": "Read", "tool_input": {}}')
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        mod.main()
+    assert exc_info.value.code == 0
+
+
+def test_main_exits_zero_for_allowed_bash_command(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    import io
+
+    from lazy_harness.hooks.builtins import pre_tool_use_security as mod
+
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "sys.stdin",
+        io.StringIO('{"tool_name": "Bash", "tool_input": {"command": "ls -la"}}'),
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        mod.main()
+    assert exc_info.value.code == 0
+
+
+def test_main_exits_two_and_writes_stderr_on_block(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import io
+
+    from lazy_harness.hooks.builtins import pre_tool_use_security as mod
+
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "sys.stdin",
+        io.StringIO(
+            '{"tool_name": "Bash", "tool_input": {"command": "rm -rf /tmp/foo"}}'
+        ),
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        mod.main()
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert "Blocked by lazy-harness PreToolUse" in captured.err
+    assert "filesystem" in captured.err
+
+
+def test_main_exits_zero_on_empty_stdin(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    import io
+
+    from lazy_harness.hooks.builtins import pre_tool_use_security as mod
+
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr("sys.stdin", io.StringIO(""))
+    with pytest.raises(SystemExit) as exc_info:
+        mod.main()
+    assert exc_info.value.code == 0

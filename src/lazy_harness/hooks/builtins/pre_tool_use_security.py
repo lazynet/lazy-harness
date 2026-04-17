@@ -193,3 +193,21 @@ def should_block(command: str, allow_patterns: list[str]) -> BlockDecision | Non
             return None
         return BlockDecision(rule=rule, matched_text=match.group(0))
     return None
+
+
+def main() -> None:
+    """Entry point invoked by Claude Code as a PreToolUse hook command."""
+    payload = _read_stdin_json()
+    if payload.get("tool_name") != "Bash":
+        sys.exit(0)
+    command = str(payload.get("tool_input", {}).get("command", ""))
+    allow = _load_allowlist()
+    decision = should_block(command, allow)
+    if decision is None:
+        sys.exit(0)
+    sys.stderr.write(_format_block_message(decision))
+    sys.exit(2)
+
+
+if __name__ == "__main__":
+    main()
