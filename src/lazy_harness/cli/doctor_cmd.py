@@ -68,6 +68,13 @@ def doctor() -> None:
         else:
             console.print("[yellow]·[/yellow] QMD: not found in PATH (optional)")
 
+    if shutil.which("ruff") is None:
+        console.print(
+            "[yellow]![/yellow] ruff not found on PATH. "
+            "PostToolUse auto-format hook will no-op until you "
+            "run `uv tool install ruff`."
+        )
+
     console.print("\n[bold]Network egress[/bold]")
     remote_urls: list[tuple[str, str]] = []
     for name in cfg.metrics.sinks:

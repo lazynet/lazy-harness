@@ -122,3 +122,34 @@ def test_claude_resolve_binary_returns_none_when_missing(
     monkeypatch.setattr(cc_mod.shutil, "which", lambda name: None)
 
     assert ClaudeCodeAdapter().resolve_binary() is None
+
+
+def test_generate_hook_config_uses_bash_matcher_for_pre_tool_use() -> None:
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    adapter = ClaudeCodeAdapter()
+    result = adapter.generate_hook_config({"pre_tool_use": ["pre-tool-use-security"]})
+    assert "PreToolUse" in result
+    entries = result["PreToolUse"]
+    assert len(entries) == 1
+    assert entries[0]["matcher"] == "Bash"
+
+
+def test_generate_hook_config_uses_edit_write_matcher_for_post_tool_use() -> None:
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    adapter = ClaudeCodeAdapter()
+    result = adapter.generate_hook_config({"post_tool_use": ["post-tool-use-format"]})
+    assert "PostToolUse" in result
+    entries = result["PostToolUse"]
+    assert len(entries) == 1
+    assert entries[0]["matcher"] == "Edit|Write"
+
+
+def test_generate_hook_config_keeps_empty_matcher_for_other_events() -> None:
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    adapter = ClaudeCodeAdapter()
+    result = adapter.generate_hook_config({"session_start": ["context-inject"]})
+    entries = result["SessionStart"]
+    assert entries[0]["matcher"] == ""

@@ -27,58 +27,12 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 - [x] **recall-cowork skill** — búsqueda QMD desde Cowork via Desktop Commander
 - [x] **Quality gate verde en main** — test_version dinámico + ruff clean (PR #20, release 0.6.4)
 - [x] **PreCompact context injection** — el builtin `pre_compact.py` ya re-inyecta tasks (últimos user_msgs) + archivos (`file_path` de tool_use blocks) vía `hookSpecificOutput.additionalContext`. Los hard constraints del CLAUDE.md los re-inyecta Claude Code nativamente post-compact como system-reminder. No queda gap accionable.
+- [x] **PreToolUse security hook** — blocks destructive filesystem/git/sql/terraform commands + credentials reads + forced secret commits, with per-profile `allow_patterns` escape hatch (feat/security-hooks-cluster)
+- [x] **PostToolUse auto-format hook** — runs `ruff format` on `.py` edits/writes fail-soft (feat/security-hooks-cluster)
 
 ---
 
 ## Open — Prioridad ALTA
-
-> **Cluster de hooks (ship juntos):** los items `PreToolUse security` y `PostToolUse auto-format` comparten superficie (`config.toml` + builtins en `src/lazy_harness/hooks/builtins/` + tests espejo) y se diseñan + mergean como un bloque único. Un PR, dos hooks.
-
-### PreToolUse security: destructive command blocking
-
-**Por qué:** el harness tiene aislamiento cross-profile (flex no toca lazy) pero no bloquea comandos destructivos _dentro_ del perfil ni exfiltración de secrets. Todo pasa sin control hoy.
-
-**Fuente:** [50 Claude Code Tips #40](lazy-lazymind-resources/tech/ia/50-claude-code-tips-and-best-practices-for-daily-use.md), [CC Security Settings 3 capas](lazy-lazymind-resources/tech/ia/claude-code-security-settings-permissions-sandbox.md), [Claude Architect full course](lazy-lazymind-resources/tech/ia/i-want-to-become-a-claude-architect-full-course.md) — todos recomiendan PreToolUse hooks con exit 2 para bloqueo duro.
-
-**Scope de bloqueo (exit 2, no sugerencia):**
-
-1. **Filesystem / shell destructivo:**
-    - `rm -rf` (con path), `truncate`
-    - `git push --force` (incluye `-f`, excepto `--force-with-lease`)
-    - `git reset --hard`
-
-2. **SQL destructivo:**
-    - `drop table`, `drop database`, `truncate table`
-
-3. **Terraform destructivo** (el flag histórico `--force` no existe en versiones modernas; los reales son):
-    - `terraform destroy` (cualquier invocación)
-    - `terraform apply -auto-approve` (saltea review humano)
-    - `terraform apply -replace=...` (fuerza recreación)
-    - `terraform state rm` y `terraform state push` (modifican state sin tocar infra visible)
-
-4. **Lectura de archivos con credenciales** (exfiltración vía stdout / logs / transcript):
-    - Matcher sobre `Bash` + comandos de lectura (`cat`, `bat`, `less`, `more`, `head`, `tail`, `grep`, `rg`, `awk`, `sed`) apuntando a:
-      - `.env`, `.env.*` (allowlist `.env.example`, `.env.sample`, `.env.template`)
-      - `~/.ssh/id_*`, `~/.ssh/*.pem`
-      - `~/.aws/credentials`, `~/.aws/config`
-      - `~/.gnupg/**`
-      - `*.pem`, `*.key`, `*.p12`
-      - `.netrc`, `.git-credentials`, `credentials.json`
-
-5. **Commits de secrets (bypass deliberado de `.gitignore`):**
-    - `git add -f` (o `--force`) cuyo path matchea los patterns del punto 4. `git add` normal es OK — `.gitignore` ya lo cubre.
-
-**Fuera de scope (MVP):** bloqueo de `echo $SECRET` / `printf $TOKEN`. False positive rate alto (`echo $USER`, `echo $PATH`) y requiere allowlist por variable. Diferir a v2 si aparece evidencia de exfiltración real.
-
-**Hook surface:** PreToolUse con matcher `Bash`, exit 2 + mensaje claro (patrón matcheado + por qué está bloqueado + cómo hacerlo explícito si es intencional, e.g. `.env.example`).
-
-### PostToolUse auto-format (ruff)
-
-**Por qué:** cada edit del agente debería pasar por formatter automáticamente. Hoy el formato depende de que el agente recuerde correr ruff, lo que viola el principio "hooks = garantías 100%".
-
-**Fuente:** [50 Claude Code Tips #39](lazy-lazymind-resources/tech/ia/50-claude-code-tips-and-best-practices-for-daily-use.md) — PostToolUse hook en Edit|Write que corra el formatter automáticamente. El artículo usa Prettier; nosotros usamos ruff format.
-
-**Acción:** PostToolUse hook con matcher `Edit|Write`, command `ruff format "$CLAUDE_FILE_PATH" 2>/dev/null || true`. El `|| true` evita que falle en archivos no-Python.
 
 ### compound-loop: insight capture + learnings lost on long sessions
 
