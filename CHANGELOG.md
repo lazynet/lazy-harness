@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.1](https://github.com/lazynet/lazy-harness/compare/v0.8.0...v0.8.1) (2026-04-17)
+
+
+### Documentation
+
+* **backlog:** add deploy hook-defaults merge item (Opción A) ([#27](https://github.com/lazynet/lazy-harness/issues/27)) ([c70dc19](https://github.com/lazynet/lazy-harness/commit/c70dc193f57634a0e1897588f6765736c77e98e3))
+
 ## [0.8.0](https://github.com/lazynet/lazy-harness/compare/v0.7.0...v0.8.0) (2026-04-17)
 
 
