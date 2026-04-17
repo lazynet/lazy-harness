@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.0](https://github.com/lazynet/lazy-harness/compare/v0.7.0...v0.8.0) (2026-04-17)
+
+
+### Features
+
+* security hooks cluster (PreToolUse blocker + PostToolUse ruff format) ([#25](https://github.com/lazynet/lazy-harness/issues/25)) ([c4d35b7](https://github.com/lazynet/lazy-harness/commit/c4d35b7315ca23bec49b999420ff25d67dba0f8c))
+
+
+### Documentation
+
+* **backlog:** refresh priorities + expand PreToolUse scope ([#24](https://github.com/lazynet/lazy-harness/issues/24)) ([b5b3835](https://github.com/lazynet/lazy-harness/commit/b5b38351c2a90addb15ac226f3db48aa4cd32392))
+
 ## [0.7.0](https://github.com/lazynet/lazy-harness/compare/v0.6.4...v0.7.0) (2026-04-16)
 
 
