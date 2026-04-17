@@ -62,6 +62,15 @@ def run_wizard(answers: WizardAnswers, *, config_path: Path) -> None:
         "knowledge": {"path": contract_path(answers.knowledge_path)},
         "monitoring": {"enabled": True},
         "scheduler": {"backend": "auto"},
+        "hooks": {
+            "pre_tool_use": {
+                "scripts": ["pre-tool-use-security"],
+                "allow_patterns": [],
+            },
+            "post_tool_use": {
+                "scripts": ["post-tool-use-format"],
+            },
+        },
     }
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_bytes(tomli_w.dumps(data).encode())

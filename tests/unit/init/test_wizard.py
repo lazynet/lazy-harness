@@ -57,3 +57,36 @@ def test_run_wizard_generates_config(tmp_path: Path):
     assert (tmp_path / "knowledge").is_dir()
     assert (tmp_path / "knowledge" / "sessions").is_dir()
     assert (tmp_path / "knowledge" / "learnings").is_dir()
+
+
+def test_run_wizard_writes_pre_tool_use_hook_block(tmp_path: Path) -> None:
+    import tomllib
+
+    cfg = tmp_path / "config.toml"
+    answers = WizardAnswers(
+        profile_name="demo",
+        agent="claude-code",
+        knowledge_path=tmp_path / "kb",
+        enable_qmd=False,
+    )
+    run_wizard(answers, config_path=cfg)
+    parsed = tomllib.loads(cfg.read_text())
+    block = parsed.get("hooks", {}).get("pre_tool_use", {})
+    assert block.get("scripts") == ["pre-tool-use-security"]
+    assert block.get("allow_patterns") == []
+
+
+def test_run_wizard_writes_post_tool_use_hook_block(tmp_path: Path) -> None:
+    import tomllib
+
+    cfg = tmp_path / "config.toml"
+    answers = WizardAnswers(
+        profile_name="demo",
+        agent="claude-code",
+        knowledge_path=tmp_path / "kb",
+        enable_qmd=False,
+    )
+    run_wizard(answers, config_path=cfg)
+    parsed = tomllib.loads(cfg.read_text())
+    block = parsed.get("hooks", {}).get("post_tool_use", {})
+    assert block.get("scripts") == ["post-tool-use-format"]
