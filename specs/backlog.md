@@ -41,6 +41,11 @@ Issues y mejoras pendientes. Append-only — mover a done/ o tachar cuando se re
 
 **Impacto:** **bloqueante** — cualquier PR que toque código o tests empieza con el gate rojo, lo que viola la disciplina del repo desde el primer commit. Fixear esto antes de cualquier feature work.
 
+## Done
+
+- [x] **PreToolUse security hook** — blocks destructive filesystem/git/sql/terraform commands + credentials reads + forced secret commits, with per-profile `allow_patterns` escape hatch (feat/security-hooks-cluster)
+- [x] **PostToolUse auto-format hook** — runs `ruff format` on `.py` edits/writes fail-soft (feat/security-hooks-cluster)
+
 ### ADR decisions pending
 
 Capturadas durante el audit de task #3 (ver `specs/adrs/README.md`). Son decisiones de arquitectura, no cleanup:
