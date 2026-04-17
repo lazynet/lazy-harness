@@ -65,16 +65,21 @@ class ClaudeCodeAdapter:
             "post_tool_use": "PostToolUse",
             "notification": "Notification",
         }
+        matcher_map = {
+            "pre_tool_use": "Bash",
+            "post_tool_use": "Edit|Write",
+        }
         settings_hooks: dict[str, list[dict]] = {}
         for event, scripts in hooks.items():
             cc_event = hook_event_map.get(event)
             if not cc_event:
                 continue
+            matcher = matcher_map.get(event, "")
             matchers = []
             for script in scripts:
                 matchers.append(
                     {
-                        "matcher": "",
+                        "matcher": matcher,
                         "hooks": [{"type": "command", "command": script}],
                     }
                 )
