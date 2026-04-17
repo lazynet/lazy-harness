@@ -1737,3 +1737,18 @@ Before declaring the plan complete, walk through:
    - First-match-wins semantic stated explicitly in spec and Task 3 docstring.
    - Allowlist fail-safe (empty list on error) stated in Task 5 docstring and tests.
    - PostToolUse fail-soft (always exit 0) covered by Tasks 8.1 tests (7 cases).
+
+---
+
+## Errata — regex fixes applied during implementation
+
+During Phase A execution (commits `914330e..3d00345`), the TDD red step surfaced four regex bugs in Task 2's `BLOCK_RULES` that contradicted Task 3's `BLOCK_CASES` table. The test cases were correct; the regexes were fixed in-place while implementing. **Future re-runs of this plan should follow the code in the commits above, not the regex strings in Task 2.**
+
+| # | Test case the regex failed | Old regex (from Task 2) | Fixed regex (in commit `b0b8bc9`) |
+|---|---|---|---|
+| 1 | `rm -r dir` → expected allow, was blocking | `\brm\s+-[rRf]*[rRf][rRf]*\b.+` | `\brm\s+-\S*f\S*\b.+` (requires `f` flag) |
+| 2 | `git push --force-with-lease …` → expected allow, was blocking | `\bgit\s+push\s+(--force\b\|-f\b)(?!.*--force-with-lease)` | `\bgit\s+push\s+(--force(?!-with-lease)\b\|-f\b)` (lookahead repositioned) |
+| 3 | `cat ~/.ssh/id_rsa.pub` → expected allow, was blocking | `\.ssh/id_\S+` | `\.ssh/id_(?!.*\.pub)\S+` (exclude `.pub`) |
+| 4 | `grep AWS_KEY ~/.aws/credentials` → expected block (`credentials`), was allowing | Reader list: `cat\|bat\|less\|more\|head\|tail` | Reader list expanded to `cat\|bat\|less\|more\|head\|tail\|grep\|rg\|awk\|sed` (matches the `.env` rule) |
+
+Lesson: the spec and plan generated both the test cases and the regex patterns in parallel, and the two drifted. If a future spec has parallel data-and-assertion pairs, sanity-check one against the other before committing the plan.
