@@ -29,3 +29,19 @@ def test_block_decision_holds_rule_and_matched_text() -> None:
     decision = BlockDecision(rule=rule, matched_text="rm")
     assert decision.rule is rule
     assert decision.matched_text == "rm"
+
+
+def test_block_rules_is_nonempty_tuple_of_block_rule() -> None:
+    from lazy_harness.hooks.builtins.pre_tool_use_security import BLOCK_RULES, BlockRule
+
+    assert isinstance(BLOCK_RULES, tuple)
+    assert len(BLOCK_RULES) >= 10
+    for rule in BLOCK_RULES:
+        assert isinstance(rule, BlockRule)
+
+
+def test_block_rules_cover_all_categories() -> None:
+    from lazy_harness.hooks.builtins.pre_tool_use_security import BLOCK_RULES
+
+    categories = {rule.category for rule in BLOCK_RULES}
+    assert categories == {"filesystem", "sql", "terraform", "credentials", "git"}
