@@ -30,7 +30,7 @@ class BlockDecision:
 BLOCK_RULES: tuple[BlockRule, ...] = (
     BlockRule(
         category="filesystem",
-        pattern=re.compile(r"\brm\s+-[rRf]*[rRf][rRf]*\b.+"),
+        pattern=re.compile(r"\brm\s+-\S*f\S*\b.+"),
         reason="Recursive delete",
     ),
     BlockRule(
@@ -40,7 +40,7 @@ BLOCK_RULES: tuple[BlockRule, ...] = (
     ),
     BlockRule(
         category="git",
-        pattern=re.compile(r"\bgit\s+push\s+(--force\b|-f\b)(?!.*--force-with-lease)"),
+        pattern=re.compile(r"\bgit\s+push\s+(--force(?!-with-lease)\b|-f\b)"),
         reason="Force-push without lease",
     ),
     BlockRule(
@@ -91,13 +91,13 @@ BLOCK_RULES: tuple[BlockRule, ...] = (
     ),
     BlockRule(
         category="credentials",
-        pattern=re.compile(r"\b(cat|bat|less|more|head|tail)\b[^|;&]*\.ssh/id_\S+"),
+        pattern=re.compile(r"\b(cat|bat|less|more|head|tail)\b[^|;&]*\.ssh/id_(?!.*\.pub)\S+"),
         reason="Read of SSH private key",
     ),
     BlockRule(
         category="credentials",
         pattern=re.compile(
-            r"\b(cat|bat|less|more|head|tail)\b[^|;&]*\.aws/(credentials|config)\b"
+            r"\b(cat|bat|less|more|head|tail|grep|rg|awk|sed)\b[^|;&]*\.aws/(credentials|config)\b"
         ),
         reason="Read of AWS credentials",
     ),
@@ -107,3 +107,26 @@ BLOCK_RULES: tuple[BlockRule, ...] = (
         reason="Read of cert/key file",
     ),
 )
+
+
+def _safe_search(pattern: str, text: str) -> bool:
+    """Compile-and-search; broken user regexes are skipped, never raised."""
+    try:
+        return re.search(pattern, text) is not None
+    except re.error:
+        return False
+
+
+def should_block(command: str, allow_patterns: list[str]) -> BlockDecision | None:
+    """Return BlockDecision if command matches a rule and no allow_pattern rescues it.
+
+    First match wins; later rules are not evaluated even if more specific.
+    """
+    for rule in BLOCK_RULES:
+        match = rule.pattern.search(command)
+        if match is None:
+            continue
+        if any(_safe_search(ap, command) for ap in allow_patterns):
+            return None
+        return BlockDecision(rule=rule, matched_text=match.group(0))
+    return None
