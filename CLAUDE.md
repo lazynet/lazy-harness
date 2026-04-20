@@ -22,7 +22,7 @@ This is a **public repository**. Public surface (README, `docs/` pages, commit m
 
 ## Non-negotiables
 
-1. **Worktrees for every change.** Any code or docs edit is made in a `.worktrees/<short-name>` worktree on a `<type>/<short-name>` branch, never directly on `main`. Full rules and the `/new-worktree` + `/cleanup-worktree` slash commands: [`specs/workflow/worktrees.md`](specs/workflow/worktrees.md).
+1. **Worktrees for every code change.** Any edit that touches code, tests, packaging, CI, or the governance surface (`CLAUDE.md`, `specs/workflow/**`, `specs/adrs/**`, `mkdocs.yml`, `.claude/**`) is made in a `.worktrees/<short-name>` worktree on a `<type>/<short-name>` branch, never directly on `main`. Full rules and the `/new-worktree` + `/cleanup-worktree` slash commands: [`specs/workflow/worktrees.md`](specs/workflow/worktrees.md). Documentation-only edits may use the short-path in [`specs/workflow/doc-short-path.md`](specs/workflow/doc-short-path.md).
 2. **Strict TDD.** No production code is written without a failing test that exercises it first. Follow the `superpowers:test-driven-development` skill exactly — invoke it via the `Skill` tool when you start any code change. This rule has no exceptions in this repo, including bug fixes and refactors.
 3. **Conventional commits, no AI trailers.** Format: `type: short description` (e.g. `fix: handle missing profile dir`). Do **not** add `Co-Authored-By` or any AI-attribution trailers. Do **not** skip hooks with `--no-verify`. Create new commits instead of amending published ones.
 4. **Pre-commit verification is all three checks.** Run `/tdd-check` before every commit: `uv run pytest`, `uv run ruff check src tests`, and `uv run --group docs mkdocs build --strict` must all pass with pristine output.

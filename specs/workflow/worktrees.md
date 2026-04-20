@@ -1,6 +1,6 @@
 # Worktrees
 
-**Rule:** Any code or docs change in this repo is made in a git worktree, not directly on `main`. This is non-negotiable.
+**Rule:** Any code change in this repo is made in a git worktree, not directly on `main`. This is non-negotiable. Documentation-only changes that meet the criteria in [`doc-short-path.md`](doc-short-path.md) may commit directly to `main`; everything else uses a worktree.
 
 ## Why
 
@@ -53,5 +53,6 @@ Preferred: use the `/cleanup-worktree` slash command. It verifies the branch has
 ## Common mistakes to avoid
 
 - **Do not** create a worktree inside a directory that is not git-ignored. `.worktrees/` is the only sanctioned path.
-- **Do not** work on `main` and then try to "fix it with a worktree later". The rule is *any* change in a worktree — that includes one-line documentation edits.
+- **Do not** work on `main` and then try to "fix it with a worktree later". For any change that requires a worktree, create the worktree *before* editing — never retrofit.
+- **Do not** use the doc short-path for a change that touches code, tests, packaging, CI, or the governance surface. The short-path is a narrow escape hatch; when in doubt, take the worktree. See [`doc-short-path.md`](doc-short-path.md) for the exact qualification criteria.
 - **Do not** let worktrees accumulate after their PRs merge. Stale worktrees confuse `git worktree list` and waste disk.
