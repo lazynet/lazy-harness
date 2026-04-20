@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.3](https://github.com/lazynet/lazy-harness/compare/v0.8.2...v0.8.3) (2026-04-20)
+
+
+### Bug Fixes
+
+* **release-please:** gate sync-lock on open release PR, not on action output ([#32](https://github.com/lazynet/lazy-harness/issues/32)) ([19f51c7](https://github.com/lazynet/lazy-harness/commit/19f51c7058d3639c152537d668c19aea7c2844d6))
+
 ## [0.8.2](https://github.com/lazynet/lazy-harness/compare/v0.8.1...v0.8.2) (2026-04-20)
 
 
