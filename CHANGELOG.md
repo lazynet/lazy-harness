@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.2](https://github.com/lazynet/lazy-harness/compare/v0.8.1...v0.8.2) (2026-04-20)
+
+
+### Documentation
+
+* **workflow:** add documentation short-path policy ([#29](https://github.com/lazynet/lazy-harness/issues/29)) ([d4c8ad4](https://github.com/lazynet/lazy-harness/commit/d4c8ad4e9747a3fd03acc1e862d2ce8a0aa69222))
+
 ## [0.8.1](https://github.com/lazynet/lazy-harness/compare/v0.8.0...v0.8.1) (2026-04-17)
 
 
