@@ -16,28 +16,42 @@ concurrency:
 jobs:
   release-please:
     runs-on: ubuntu-latest
-    outputs:
-      pr: ${{ steps.release.outputs.pr }}
     steps:
-      - id: release
-        uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@v4
         with:
           config-file: .github/release-please-config.json
           manifest-file: .github/.release-please-manifest.json
 
-  # When release-please opens or updates its PR, regenerate uv.lock so
-  # the release PR lands a consistent pyproject.toml + uv.lock pair.
-  # release-please's `pr` output is a JSON-encoded string, hence fromJson.
-  sync-lock:
+  # Detect any open release-please PR and keep its uv.lock coherent.
+  # We look up the PR via `gh` instead of using release-please's `pr`
+  # output because that output is only populated when this run modifies
+  # the PR — not when the PR exists and "remained the same". We need the
+  # sync to happen on every run as long as a release PR is open.
+  find-release-pr:
     needs: release-please
-    if: needs.release-please.outputs.pr
+    runs-on: ubuntu-latest
+    outputs:
+      branch: ${{ steps.find.outputs.branch }}
+    steps:
+      - id: find
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          BRANCH=$(gh pr list --state open --json headRefName \
+            --jq '.[].headRefName' | grep '^release-please--' | head -1 || true)
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+
+  sync-lock:
+    needs: find-release-pr
+    if: needs.find-release-pr.outputs.branch
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ fromJson(needs.release-please.outputs.pr).headBranchName }}
+          ref: ${{ needs.find-release-pr.outputs.branch }}
       - uses: astral-sh/setup-uv@v3
       - run: uv python install 3.11
       - run: uv lock
