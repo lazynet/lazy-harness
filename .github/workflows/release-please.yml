@@ -16,8 +16,37 @@ concurrency:
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    outputs:
+      pr: ${{ steps.release.outputs.pr }}
     steps:
-      - uses: googleapis/release-please-action@v4
+      - id: release
+        uses: googleapis/release-please-action@v4
         with:
           config-file: .github/release-please-config.json
           manifest-file: .github/.release-please-manifest.json
+
+  # When release-please opens or updates its PR, regenerate uv.lock so
+  # the release PR lands a consistent pyproject.toml + uv.lock pair.
+  # release-please's `pr` output is a JSON-encoded string, hence fromJson.
+  sync-lock:
+    needs: release-please
+    if: needs.release-please.outputs.pr
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ fromJson(needs.release-please.outputs.pr).headBranchName }}
+      - uses: astral-sh/setup-uv@v3
+      - run: uv python install 3.11
+      - run: uv lock
+      - name: Commit uv.lock if changed
+        run: |
+          if [[ -n "$(git status --porcelain uv.lock)" ]]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add uv.lock
+            git commit -m "chore: sync uv.lock"
+            git push
+          fi
