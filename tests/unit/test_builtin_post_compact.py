@@ -67,3 +67,13 @@ def test_post_compact_injects_fresh_summary(tmp_path: Path) -> None:
     assert "refactor auth module" in body
     assert "/repos/foo/auth.py" in body
     assert "<!--" not in body, "HTML comment should be stripped"
+
+
+def test_post_compact_skips_when_summary_missing(tmp_path: Path) -> None:
+    # Memory dir does not even exist; hook must not crash.
+    (tmp_path / ".claude").mkdir()
+
+    result = _run_hook(tmp_path)
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == "", "no output expected when summary is missing"
