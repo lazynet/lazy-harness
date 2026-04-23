@@ -91,3 +91,18 @@ def test_post_compact_skips_when_summary_stale(tmp_path: Path) -> None:
 
     assert result.returncode == 0
     assert result.stdout.strip() == "", "no output expected when summary is stale"
+
+
+def test_post_compact_exit_zero_on_empty_stdin(tmp_path: Path) -> None:
+    (tmp_path / ".claude").mkdir()
+
+    result = subprocess.run(
+        [sys.executable, str(HOOK_PATH)],
+        input="",
+        capture_output=True,
+        text=True,
+        cwd=str(tmp_path),
+        timeout=10,
+    )
+
+    assert result.returncode == 0
