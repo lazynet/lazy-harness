@@ -101,8 +101,7 @@ def test_post_tool_use_format_is_registered_as_builtin() -> None:
 
     assert "post-tool-use-format" in _BUILTIN_HOOKS
     assert (
-        _BUILTIN_HOOKS["post-tool-use-format"]
-        == "lazy_harness.hooks.builtins.post_tool_use_format"
+        _BUILTIN_HOOKS["post-tool-use-format"] == "lazy_harness.hooks.builtins.post_tool_use_format"
     )
 
 
@@ -113,4 +112,21 @@ def test_post_tool_use_format_resolves_to_concrete_file() -> None:
     assert info is not None
     assert info.is_builtin is True
     assert info.path.name == "post_tool_use_format.py"
+    assert info.path.is_file()
+
+
+def test_post_compact_is_registered_as_builtin() -> None:
+    from lazy_harness.hooks.loader import _BUILTIN_HOOKS
+
+    assert "post-compact" in _BUILTIN_HOOKS
+    assert _BUILTIN_HOOKS["post-compact"] == "lazy_harness.hooks.builtins.post_compact"
+
+
+def test_post_compact_resolves_to_concrete_file() -> None:
+    from lazy_harness.hooks.loader import resolve_hook
+
+    info = resolve_hook("post-compact")
+    assert info is not None
+    assert info.is_builtin is True
+    assert info.path.name == "post_compact.py"
     assert info.path.is_file()
