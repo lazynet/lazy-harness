@@ -7,7 +7,7 @@ A cross-platform harnessing framework for AI coding agents.
 ## What it gives you
 
 - **Profiles.** Isolate separate agent setups — personal, work, client, experimental — with their own `CLAUDE.md`, `settings.json`, skills, and knowledge. Switch by directory or env var.
-- **Hooks.** A cross-platform hook engine with built-in hooks for session-start context injection, pre-compact summaries, session export, and compound loop enforcement. Bring your own hooks via config.
+- **Hooks.** A cross-platform hook engine with built-in hooks for session-start context injection, pre-compact summaries, post-compact context re-injection, session export, and compound loop enforcement. Bring your own hooks via config.
 - **Monitoring.** SQLite-backed metrics on every session: duration, message count, tools used, cost. Nine built-in `lh status` views.
 - **Knowledge.** A filesystem knowledge directory for sessions and distilled learnings, optionally indexed by [QMD](https://github.com/lazynet/qmd) for semantic search.
 - **Scheduler.** A unified interface over launchd, systemd, and cron. Declare recurring jobs in `config.toml`; `lh scheduler install` does the rest.

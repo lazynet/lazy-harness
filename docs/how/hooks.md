@@ -29,6 +29,9 @@ scripts = ["session-end"]
 
 [hooks.pre_compact]
 scripts = ["pre-compact"]
+
+[hooks.post_compact]
+scripts = ["post-compact"]
 ```
 
 `lh deploy` reads this, resolves each name (builtin first, user dir second), and generates the agent's native hook config — `settings.json` for Claude Code. From then on, the agent itself spawns the hooks.
@@ -41,6 +44,7 @@ scripts = ["pre-compact"]
 | `session_stop` | `Stop` | After every LLM turn (not once at shutdown) | Export session, queue gated async work |
 | `session_end` | `SessionEnd` | Exactly once at real session termination (`/exit`, `/clear`, logout) | Force final end-of-session work |
 | `pre_compact` | `PreCompact` | Immediately before Claude Code compacts conversation history | Preserve working state |
+| `post_compact` | `PostCompact` | Immediately after Claude Code compacts conversation history | Re-inject preserved working state |
 | `pre_tool_use` | `PreToolUse` | Before each tool call | Guardrails, policy enforcement |
 | `post_tool_use` | `PostToolUse` | After each tool call | Logging, side-effect observers |
 | `notification` | `Notification` | Ad-hoc agent notifications | Desktop notifications, integrations |
@@ -87,6 +91,25 @@ Steps when the event fires:
 **Where it writes:**
 - `~/.claude/compact-backups/<ts>-<project>.jsonl` — raw transcript backup.
 - `<CLAUDE_CONFIG_DIR>/projects/<encoded-cwd>/memory/pre-compact-summary.md` — distilled summary for the next session start.
+
+### `post-compact` — runs on `PostCompact`
+
+Source: `src/lazy_harness/hooks/builtins/post_compact.py`.
+
+Responsibility: re-inject the summary `pre-compact` already wrote into the live post-compaction context window of the same session, so working-state continuity does not depend on Claude Code honouring `additionalContext` from the `PreCompact` event.
+
+Steps when the event fires:
+
+1. Resolve the per-project memory dir at `<CLAUDE_CONFIG_DIR>/projects/<encoded-cwd>/memory/` and stat `pre-compact-summary.md`.
+2. If the file does not exist, log `action=skipped reason=missing` and exit 0.
+3. If the file's `mtime` is older than 5 minutes (the freshness window), log `action=skipped reason=stale` and exit 0. This prevents re-injecting context from a previous compact when `pre-compact` failed silently in the current cycle.
+4. Strip HTML comments from the body and emit it as `hookSpecificOutput.additionalContext` with `hookEventName: "PostCompact"`.
+
+The hook is a thin re-emitter: it does not parse the transcript, generate new text, or call any external service. `pre-compact-summary.md` remains the single source of truth — `pre-compact` writes it, `post-compact` re-emits it for the live session, `context-inject` reads it for the next session.
+
+**Where it writes:** nowhere on disk. It only prints to stdout. Logs go to `<CLAUDE_CONFIG_DIR>/logs/hooks.log` like every other built-in.
+
+See ADR-020 for the full rationale.
 
 ### `session-export` — runs on `Stop`
 
