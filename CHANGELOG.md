@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.9.0](https://github.com/lazynet/lazy-harness/compare/v0.8.3...v0.9.0) (2026-04-23)
+
+
+### Features
+
+* **hooks:** add post-compact built-in re-injecting pre-compact summary ([#34](https://github.com/lazynet/lazy-harness/issues/34)) ([64fff7e](https://github.com/lazynet/lazy-harness/commit/64fff7ede03054ce7dbc840390c9c3c4c0401849))
+
+
+### Documentation
+
+* **hooks:** document post-compact built-in ([a88dbe9](https://github.com/lazynet/lazy-harness/commit/a88dbe99f5417ea9df46a8099ab6412ac11333ff))
+
 ## [0.8.3](https://github.com/lazynet/lazy-harness/compare/v0.8.2...v0.8.3) (2026-04-20)
 
 
