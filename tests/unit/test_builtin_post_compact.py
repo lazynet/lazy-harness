@@ -77,3 +77,17 @@ def test_post_compact_skips_when_summary_missing(tmp_path: Path) -> None:
 
     assert result.returncode == 0
     assert result.stdout.strip() == "", "no output expected when summary is missing"
+
+
+def test_post_compact_skips_when_summary_stale(tmp_path: Path) -> None:
+    mem = _memory_dir(tmp_path)
+    summary_file = mem / "pre-compact-summary.md"
+    summary_file.write_text("<!-- old -->\n## Tasks in progress\n- something old\n")
+    # Force mtime to 10 minutes ago — well past the 300s freshness window.
+    ten_minutes_ago = time.time() - 600
+    os.utime(summary_file, (ten_minutes_ago, ten_minutes_ago))
+
+    result = _run_hook(tmp_path)
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == "", "no output expected when summary is stale"
