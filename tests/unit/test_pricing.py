@@ -55,6 +55,24 @@ def test_calculate_cost_unknown_model() -> None:
     assert cost == 0.0
 
 
+def test_default_pricing_includes_opus_4_7() -> None:
+    """claude-opus-4-7 must carry the same per-token rates as claude-opus-4-6.
+
+    Both models sit in the same Claude 4 Opus tier with identical LiteLLM
+    rate cards as of 2026-04. Without this entry calculate_cost silently
+    returns 0.0 for all opus-4-7 sessions.
+    """
+    from lazy_harness.monitoring.pricing import default_pricing
+
+    pricing = default_pricing()
+    assert pricing["claude-opus-4-7"] == {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.5,
+        "cache_create": 6.25,
+    }
+
+
 def test_load_pricing_with_config_overrides(config_dir: Path) -> None:
     from lazy_harness.monitoring.pricing import load_pricing
 
