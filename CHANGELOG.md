@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/lazynet/lazy-harness/compare/v0.9.0...v0.9.1) (2026-04-26)
+
+
+### Bug Fixes
+
+* **monitoring:** add claude-opus-4-7 pricing and surface unknown models ([#36](https://github.com/lazynet/lazy-harness/issues/36)) ([606f4e1](https://github.com/lazynet/lazy-harness/commit/606f4e19b650d4257c6582a67b9bbe91260a1d4c))
+
 ## [0.9.0](https://github.com/lazynet/lazy-harness/compare/v0.8.3...v0.9.0) (2026-04-23)
 
 
