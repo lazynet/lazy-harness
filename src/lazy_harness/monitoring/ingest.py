@@ -49,6 +49,7 @@ class IngestReport:
     messages_total: int = 0
     messages_deduped: int = 0
     errors: list[str] = field(default_factory=list)
+    unknown_models: set[str] = field(default_factory=set)
 
     def merge(self, other: IngestReport) -> None:
         self.sessions_scanned += other.sessions_scanned
@@ -57,6 +58,7 @@ class IngestReport:
         self.messages_total += other.messages_total
         self.messages_deduped += other.messages_deduped
         self.errors.extend(other.errors)
+        self.unknown_models |= other.unknown_models
 
 
 def _find_session_files(
@@ -153,6 +155,8 @@ def ingest_profile(
     entries: list[dict] = []
     events: list[MetricEvent] = []
     for (session_id, model), agg in aggregated.items():
+        if model not in pricing:
+            report.unknown_models.add(model)
         cost = calculate_cost(
             model,
             {
@@ -179,9 +183,7 @@ def ingest_profile(
         )
         events.append(
             MetricEvent(
-                event_id=derive_event_id(
-                    profile=profile.name, session=session_id, model=model
-                ),
+                event_id=derive_event_id(profile=profile.name, session=session_id, model=model),
                 schema_version=METRIC_EVENT_SCHEMA_VERSION,
                 user_id=user_id,
                 tenant_id=tenant_id,

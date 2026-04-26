@@ -50,9 +50,7 @@ def _profile(tmp_path: Path, name: str):
 
     config_dir = tmp_path / name
     (config_dir / "projects").mkdir(parents=True)
-    return ProfileInfo(
-        name=name, config_dir=config_dir, roots=[], is_default=True, exists=True
-    )
+    return ProfileInfo(name=name, config_dir=config_dir, roots=[], is_default=True, exists=True)
 
 
 def test_ingest_profile_upserts_totals(tmp_path: Path) -> None:
@@ -262,18 +260,14 @@ def test_ingest_discovers_subagent_files(tmp_path: Path) -> None:
     # Parent session file
     parent_file = project_dir / f"{session_uuid}.jsonl"
     with open(parent_file, "w") as fh:
-        fh.write(
-            json.dumps(_assistant_msg(inp=100, out=50, msg_id="parent-msg")) + "\n"
-        )
+        fh.write(json.dumps(_assistant_msg(inp=100, out=50, msg_id="parent-msg")) + "\n")
 
     # Subagent file nested under <session_uuid>/subagents/
     sub_dir = project_dir / session_uuid / "subagents"
     sub_dir.mkdir(parents=True)
     sub_file = sub_dir / "agent-abc123.jsonl"
     with open(sub_file, "w") as fh:
-        fh.write(
-            json.dumps(_assistant_msg(inp=40, out=20, msg_id="subagent-msg")) + "\n"
-        )
+        fh.write(json.dumps(_assistant_msg(inp=40, out=20, msg_id="subagent-msg")) + "\n")
 
     db = MetricsDB(tmp_path / "metrics.db")
     ingest_profile(prof, db, load_pricing())
@@ -299,20 +293,13 @@ def test_ingest_attributes_subagent_tokens_to_parent_session(tmp_path: Path) -> 
 
     parent_file = project_dir / f"{session_uuid}.jsonl"
     with open(parent_file, "w") as fh:
-        fh.write(
-            json.dumps(_assistant_msg(inp=100, out=50, msg_id="parent-msg")) + "\n"
-        )
+        fh.write(json.dumps(_assistant_msg(inp=100, out=50, msg_id="parent-msg")) + "\n")
 
     sub_dir = project_dir / session_uuid / "subagents"
     sub_dir.mkdir(parents=True)
     for suffix in ("abc", "def"):
         with open(sub_dir / f"agent-{suffix}.jsonl", "w") as fh:
-            fh.write(
-                json.dumps(
-                    _assistant_msg(inp=40, out=20, msg_id=f"sub-{suffix}")
-                )
-                + "\n"
-            )
+            fh.write(json.dumps(_assistant_msg(inp=40, out=20, msg_id=f"sub-{suffix}")) + "\n")
 
     db = MetricsDB(tmp_path / "metrics.db")
     report = ingest_profile(prof, db, load_pricing())
@@ -325,6 +312,46 @@ def test_ingest_attributes_subagent_tokens_to_parent_session(tmp_path: Path) -> 
     total_output = sum(r["output"] for r in rows)
     assert total_input == 100 + 40 + 40
     assert total_output == 50 + 20 + 20
+    db.close()
+
+
+def test_ingest_tracks_unknown_model_in_report(tmp_path: Path) -> None:
+    """Sessions using unrecognized models are surfaced in IngestReport.unknown_models."""
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.ingest import ingest_profile
+    from lazy_harness.monitoring.pricing import load_pricing
+
+    prof = _profile(tmp_path, "lazy")
+    _write_session(
+        prof.config_dir / "projects",
+        "-Users-foo-repos-demo",
+        "ffffffff-ffff-ffff-ffff-ffffffffffff",
+        [_assistant_msg(model="claude-future-model-99", inp=100, out=50)],
+    )
+
+    db = MetricsDB(tmp_path / "metrics.db")
+    report = ingest_profile(prof, db, load_pricing())
+    assert "claude-future-model-99" in report.unknown_models
+    db.close()
+
+
+def test_ingest_known_models_not_in_unknown_models(tmp_path: Path) -> None:
+    """Known models must not appear in IngestReport.unknown_models."""
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.ingest import ingest_profile
+    from lazy_harness.monitoring.pricing import load_pricing
+
+    prof = _profile(tmp_path, "lazy")
+    _write_session(
+        prof.config_dir / "projects",
+        "-Users-foo-repos-demo",
+        "11111111-2222-3333-4444-555555555555",
+        [_assistant_msg(model="claude-opus-4-6", inp=100, out=50)],
+    )
+
+    db = MetricsDB(tmp_path / "metrics.db")
+    report = ingest_profile(prof, db, load_pricing())
+    assert not report.unknown_models
     db.close()
 
 
@@ -349,10 +376,7 @@ def test_ingest_skips_memory_jsonls(tmp_path: Path) -> None:
         fh.write(json.dumps({"type": "decision", "text": "whatever"}) + "\n")
     with open(mem_dir / "failures.jsonl", "w") as fh:
         # Even if it looked like an assistant message, it must be skipped
-        fh.write(
-            json.dumps(_assistant_msg(inp=9999, out=9999, msg_id="SHOULD_NOT_COUNT"))
-            + "\n"
-        )
+        fh.write(json.dumps(_assistant_msg(inp=9999, out=9999, msg_id="SHOULD_NOT_COUNT")) + "\n")
 
     db = MetricsDB(tmp_path / "metrics.db")
     ingest_profile(prof, db, load_pricing())
