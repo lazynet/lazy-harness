@@ -30,6 +30,7 @@ Decisions that define the `lazy-harness` project itself.
 | [018](./018-config-discoverability.md) | accepted-deferred | Feature discoverability via `lh doctor` + `lh config <feature>` | No wizards on upgrade. `lh doctor` lists features; `lh config <feature> --init` is the opt-in wizard. |
 | [019](./019-handoff-session-end-freshness.md) | accepted | Force a final compound-loop evaluation at session end | `SessionEnd` hook + `lh knowledge handoff-now` bypass the Stop-hook gates so the handoff reflects the session's final state. |
 | [020](./020-post-compact-context-reinjection.md) | accepted | Post-compact hook re-injects the pre-compact summary | Mirror the PreCompact summary into the live post-compaction context with a 5-minute freshness check. |
+| [021](./021-async-response-grading.md) | accepted | Async response grading via the compound-loop worker | One LLM call returns decisions/failures/learnings/handoff *and* a quality grade. Poor grades escalate to PRJ.md. |
 
 ### Status values
 
