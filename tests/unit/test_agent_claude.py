@@ -153,3 +153,39 @@ def test_generate_hook_config_keeps_empty_matcher_for_other_events() -> None:
     result = adapter.generate_hook_config({"session_start": ["context-inject"]})
     entries = result["SessionStart"]
     assert entries[0]["matcher"] == ""
+
+
+def test_claude_adapter_generate_mcp_config_returns_dict() -> None:
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    adapter = ClaudeCodeAdapter()
+    servers = {
+        "qmd": {"command": "qmd", "args": ["mcp"]},
+    }
+    result = adapter.generate_mcp_config(servers)
+    assert isinstance(result, dict)
+    assert "mcpServers" in result
+    assert "qmd" in result["mcpServers"]
+    assert result["mcpServers"]["qmd"]["command"] == "qmd"
+    assert result["mcpServers"]["qmd"]["args"] == ["mcp"]
+
+
+def test_claude_adapter_generate_mcp_config_empty() -> None:
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    result = ClaudeCodeAdapter().generate_mcp_config({})
+    assert result == {"mcpServers": {}}
+
+
+def test_claude_adapter_generate_mcp_config_passes_env() -> None:
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    servers = {
+        "engram": {
+            "command": "engram",
+            "args": ["mcp"],
+            "env": {"ENGRAM_PORT": "7437"},
+        },
+    }
+    result = ClaudeCodeAdapter().generate_mcp_config(servers)
+    assert result["mcpServers"]["engram"]["env"] == {"ENGRAM_PORT": "7437"}

@@ -46,3 +46,8 @@ def embed(collection: str | None = None, timeout: int = 600) -> QmdResult:
 
 def status() -> QmdResult:
     return run_qmd("status", timeout=30)
+
+
+def mcp_server_config() -> dict:
+    """Declarative MCP entry for QMD (consumed by deploy_mcp_servers)."""
+    return {"command": "qmd", "args": ["mcp"]}

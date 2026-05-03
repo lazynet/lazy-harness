@@ -76,6 +76,45 @@ def deploy_hooks(cfg: Config) -> None:
         click.echo(f"  ✓ {name}/settings.json (hooks updated)")
 
 
+def _collect_mcp_servers(cfg: Config) -> dict[str, dict]:
+    """Probe each known tool and return the MCP entries that should ship."""
+    from lazy_harness.knowledge import qmd
+
+    servers: dict[str, dict] = {}
+    if qmd.is_qmd_available():
+        servers["qmd"] = qmd.mcp_server_config()
+    return servers
+
+
+def deploy_mcp_servers(cfg: Config) -> None:
+    """Write detected MCP server entries into each profile's settings.json."""
+    from lazy_harness.agents.registry import get_agent
+
+    servers = _collect_mcp_servers(cfg)
+    if not servers:
+        click.echo("  No MCP servers detected — nothing to deploy.")
+        return
+
+    agent = get_agent(cfg.agent.type)
+    mcp_block = agent.generate_mcp_config(servers)
+
+    for name, entry in cfg.profiles.items.items():
+        target_dir = expand_path(entry.config_dir)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        settings_file = target_dir / "settings.json"
+
+        settings: dict = {}
+        if settings_file.is_file():
+            try:
+                settings = json.loads(settings_file.read_text())
+            except json.JSONDecodeError:
+                pass
+
+        settings.update(mcp_block)
+        settings_file.write_text(json.dumps(settings, indent=2) + "\n")
+        click.echo(f"  ✓ {name}/settings.json (MCP servers: {', '.join(servers)})")
+
+
 def deploy_claude_symlink(cfg: Config) -> None:
     """Create ~/.claude symlink to default profile's config dir."""
     default_name = cfg.profiles.default
