@@ -143,11 +143,25 @@ class MetricsConfig:
 
 
 @dataclass
+class EngramConfig:
+    enabled: bool = False
+    git_sync: bool = True
+    cloud: bool = False
+    version: str = "1.15.4"
+
+
+@dataclass
+class MemoryConfig:
+    engram: EngramConfig = field(default_factory=EngramConfig)
+
+
+@dataclass
 class Config:
     harness: HarnessConfig = field(default_factory=HarnessConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
     profiles: ProfilesConfig = field(default_factory=ProfilesConfig)
     knowledge: KnowledgeConfig = field(default_factory=KnowledgeConfig)
+    memory: MemoryConfig = field(default_factory=MemoryConfig)
     monitoring: MonitoringConfig = field(default_factory=MonitoringConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     hooks: dict[str, HookEventConfig] = field(default_factory=dict)
@@ -238,6 +252,21 @@ def _parse_metrics(raw: dict[str, Any]) -> MetricsConfig:
     )
 
 
+def _parse_memory(raw: dict[str, Any]) -> MemoryConfig:
+    if not raw:
+        return MemoryConfig()
+    engram_raw = raw.get("engram", {})
+    if not isinstance(engram_raw, dict):
+        raise ConfigError("[memory.engram] must be a table")
+    engram = EngramConfig(
+        enabled=bool(engram_raw.get("enabled", False)),
+        git_sync=bool(engram_raw.get("git_sync", True)),
+        cloud=bool(engram_raw.get("cloud", False)),
+        version=str(engram_raw.get("version", "1.15.4")),
+    )
+    return MemoryConfig(engram=engram)
+
+
 def load_config(path: Path) -> Config:
     """Load and validate config from a TOML file."""
     if not path.is_file():
@@ -268,6 +297,8 @@ def load_config(path: Path) -> Config:
         learnings=KnowledgeLearningsConfig(**knowledge_raw.get("learnings", {})),
         search=KnowledgeSearchConfig(**knowledge_raw.get("search", {})),
     )
+
+    cfg.memory = _parse_memory(raw.get("memory", {}))
 
     monitoring_raw = raw.get("monitoring", {})
     cfg.monitoring = MonitoringConfig(
