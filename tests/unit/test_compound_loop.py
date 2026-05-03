@@ -75,6 +75,38 @@ def test_is_interactive_session_empty_file(tmp_path: Path) -> None:
     assert is_interactive_session(session) is False
 
 
+def test_is_interactive_session_last_prompt_first(tmp_path: Path) -> None:
+    session = tmp_path / "s.jsonl"
+    _write_jsonl(session, [{"type": "last-prompt", "lastPrompt": "hi"}])
+    assert is_interactive_session(session) is True
+
+
+def test_is_interactive_session_last_prompt_then_permission_mode(tmp_path: Path) -> None:
+    session = tmp_path / "s.jsonl"
+    _write_jsonl(
+        session,
+        [
+            {"type": "last-prompt", "lastPrompt": "hi"},
+            {"type": "permission-mode", "permissionMode": "auto"},
+            {"type": "user", "message": {"content": "go"}},
+        ],
+    )
+    assert is_interactive_session(session) is True
+
+
+def test_is_interactive_session_marker_within_scan_window(tmp_path: Path) -> None:
+    session = tmp_path / "s.jsonl"
+    _write_jsonl(
+        session,
+        [
+            {"type": "ai-title", "aiTitle": "x"},
+            {"type": "attachment"},
+            {"type": "permission-mode", "permissionMode": "auto"},
+        ],
+    )
+    assert is_interactive_session(session) is True
+
+
 def test_count_user_chars_string_content(tmp_path: Path) -> None:
     session = tmp_path / "s.jsonl"
     _write_jsonl(
