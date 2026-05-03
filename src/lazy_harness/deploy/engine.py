@@ -79,10 +79,13 @@ def deploy_hooks(cfg: Config) -> None:
 def _collect_mcp_servers(cfg: Config) -> dict[str, dict]:
     """Probe each known tool and return the MCP entries that should ship."""
     from lazy_harness.knowledge import qmd
+    from lazy_harness.memory import engram
 
     servers: dict[str, dict] = {}
     if qmd.is_qmd_available():
         servers["qmd"] = qmd.mcp_server_config()
+    if cfg.memory.engram.enabled and engram.is_engram_available():
+        servers["engram"] = engram.mcp_server_config()
     return servers
 
 

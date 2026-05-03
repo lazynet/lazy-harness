@@ -80,22 +80,77 @@ def test_deploy_mcp_servers_noop_when_no_tools(
 def test_collect_mcp_servers_includes_qmd_when_available(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from lazy_harness.core.config import Config
     from lazy_harness.deploy import engine
     from lazy_harness.knowledge import qmd as qmd_mod
 
     monkeypatch.setattr(qmd_mod, "is_qmd_available", lambda: True)
-    cfg = type("Cfg", (), {})()
-    result = engine._collect_mcp_servers(cfg)
+    result = engine._collect_mcp_servers(Config())
     assert "qmd" in result
 
 
 def test_collect_mcp_servers_skips_qmd_when_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from lazy_harness.core.config import Config
     from lazy_harness.deploy import engine
     from lazy_harness.knowledge import qmd as qmd_mod
 
     monkeypatch.setattr(qmd_mod, "is_qmd_available", lambda: False)
-    cfg = type("Cfg", (), {})()
-    result = engine._collect_mcp_servers(cfg)
+    result = engine._collect_mcp_servers(Config())
     assert "qmd" not in result
+
+
+def test_collect_mcp_servers_includes_engram_when_enabled_and_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from lazy_harness.core.config import Config
+    from lazy_harness.deploy import engine
+    from lazy_harness.knowledge import qmd as qmd_mod
+    from lazy_harness.memory import engram as engram_mod
+
+    monkeypatch.setattr(qmd_mod, "is_qmd_available", lambda: False)
+    monkeypatch.setattr(engram_mod, "is_engram_available", lambda: True)
+
+    cfg = Config()
+    cfg.memory.engram.enabled = True
+
+    result = engine._collect_mcp_servers(cfg)
+    assert "engram" in result
+    assert result["engram"]["command"] == "engram"
+
+
+def test_collect_mcp_servers_skips_engram_when_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from lazy_harness.core.config import Config
+    from lazy_harness.deploy import engine
+    from lazy_harness.knowledge import qmd as qmd_mod
+    from lazy_harness.memory import engram as engram_mod
+
+    monkeypatch.setattr(qmd_mod, "is_qmd_available", lambda: False)
+    monkeypatch.setattr(engram_mod, "is_engram_available", lambda: True)
+
+    cfg = Config()
+    cfg.memory.engram.enabled = False
+
+    result = engine._collect_mcp_servers(cfg)
+    assert "engram" not in result
+
+
+def test_collect_mcp_servers_skips_engram_when_binary_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from lazy_harness.core.config import Config
+    from lazy_harness.deploy import engine
+    from lazy_harness.knowledge import qmd as qmd_mod
+    from lazy_harness.memory import engram as engram_mod
+
+    monkeypatch.setattr(qmd_mod, "is_qmd_available", lambda: False)
+    monkeypatch.setattr(engram_mod, "is_engram_available", lambda: False)
+
+    cfg = Config()
+    cfg.memory.engram.enabled = True
+
+    result = engine._collect_mcp_servers(cfg)
+    assert "engram" not in result
