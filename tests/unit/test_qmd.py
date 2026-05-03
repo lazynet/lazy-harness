@@ -42,3 +42,11 @@ def test_qmd_run_returns_result() -> None:
         assert isinstance(result, QmdResult)
         assert result.exit_code == 0
         assert result.stdout == "OK"
+
+
+def test_qmd_mcp_server_config_shape() -> None:
+    from lazy_harness.knowledge.qmd import mcp_server_config
+
+    entry = mcp_server_config()
+    assert entry["command"] == "qmd"
+    assert entry["args"] == ["mcp"]
