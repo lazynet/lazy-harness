@@ -154,3 +154,58 @@ def test_collect_mcp_servers_skips_engram_when_binary_missing(
 
     result = engine._collect_mcp_servers(cfg)
     assert "engram" not in result
+
+
+def test_collect_mcp_servers_includes_graphify_when_enabled_and_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from lazy_harness.core.config import Config
+    from lazy_harness.deploy import engine
+    from lazy_harness.knowledge import graphify as graphify_mod
+    from lazy_harness.knowledge import qmd as qmd_mod
+
+    monkeypatch.setattr(qmd_mod, "is_qmd_available", lambda: False)
+    monkeypatch.setattr(graphify_mod, "is_graphify_available", lambda: True)
+
+    cfg = Config()
+    cfg.knowledge.structure.enabled = True
+
+    result = engine._collect_mcp_servers(cfg)
+    assert "graphify" in result
+    assert result["graphify"]["command"] == "graphify"
+
+
+def test_collect_mcp_servers_skips_graphify_when_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from lazy_harness.core.config import Config
+    from lazy_harness.deploy import engine
+    from lazy_harness.knowledge import graphify as graphify_mod
+    from lazy_harness.knowledge import qmd as qmd_mod
+
+    monkeypatch.setattr(qmd_mod, "is_qmd_available", lambda: False)
+    monkeypatch.setattr(graphify_mod, "is_graphify_available", lambda: True)
+
+    cfg = Config()
+    cfg.knowledge.structure.enabled = False
+
+    result = engine._collect_mcp_servers(cfg)
+    assert "graphify" not in result
+
+
+def test_collect_mcp_servers_skips_graphify_when_binary_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from lazy_harness.core.config import Config
+    from lazy_harness.deploy import engine
+    from lazy_harness.knowledge import graphify as graphify_mod
+    from lazy_harness.knowledge import qmd as qmd_mod
+
+    monkeypatch.setattr(qmd_mod, "is_qmd_available", lambda: False)
+    monkeypatch.setattr(graphify_mod, "is_graphify_available", lambda: False)
+
+    cfg = Config()
+    cfg.knowledge.structure.enabled = True
+
+    result = engine._collect_mcp_servers(cfg)
+    assert "graphify" not in result
