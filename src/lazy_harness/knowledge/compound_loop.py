@@ -22,21 +22,33 @@ from pathlib import Path
 
 from lazy_harness.core.config import CompoundLoopConfig
 
+_INTERACTIVE_MARKERS = ("permission-mode", "last-prompt")
+_INTERACTIVE_SCAN_LINES = 10
+
 
 def is_interactive_session(session_jsonl: Path) -> bool:
-    """Interactive sessions have a `permission-mode` record as the first line.
+    """Interactive sessions emit a `permission-mode` or `last-prompt` record early.
 
     Headless `claude -p` sessions and subagents start with other types; we
-    only want to evaluate actual user conversations.
+    only want to evaluate actual user conversations. We scan a bounded prefix
+    because Claude Code's session JSONL layout is not strictly ordered — the
+    marker may sit on line 1 or a few lines down depending on session origin
+    (fresh vs resumed).
     """
     try:
         with open(session_jsonl) as f:
-            first_line = f.readline()
-            if not first_line:
-                return False
-            d = json.loads(first_line)
-            return d.get("type") == "permission-mode"
-    except (json.JSONDecodeError, OSError):
+            for _ in range(_INTERACTIVE_SCAN_LINES):
+                line = f.readline()
+                if not line:
+                    return False
+                try:
+                    d = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                if d.get("type") in _INTERACTIVE_MARKERS:
+                    return True
+        return False
+    except OSError:
         return False
 
 
