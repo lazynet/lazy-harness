@@ -62,11 +62,29 @@ def doctor() -> None:
             console.print(f"\n[red]✗[/red] Knowledge dir missing: {contract_path(kp)}")
             ok = False
 
-    if cfg.knowledge.search.engine == "qmd":
-        if shutil.which("qmd"):
-            console.print("[green]✓[/green] QMD: found in PATH")
-        else:
-            console.print("[yellow]·[/yellow] QMD: not found in PATH (optional)")
+    from lazy_harness.features import collect_feature_statuses
+
+    console.print("\n[bold]Features[/bold]")
+    statuses = collect_feature_statuses(cfg)
+    icons = {
+        "active": "[green]✓[/green]",
+        "dormant": "[yellow]·[/yellow]",
+        "missing": "[grey50]·[/grey50]",
+        "broken": "[red]✗[/red]",
+    }
+    for s in statuses:
+        icon = icons.get(s.state, "?")
+        version_part = ""
+        if s.installed_version:
+            version_part = f" v{s.installed_version}"
+            if s.pinned_version and s.installed_version != s.pinned_version:
+                version_part += f" [yellow](pin {s.pinned_version})[/yellow]"
+        console.print(f"  {icon} {s.name:<10} ({s.section}){version_part}")
+        hint = s.install_hint or s.enable_hint
+        if hint:
+            console.print(f"      [grey50]{hint}[/grey50]")
+        if s.state == "broken":
+            ok = False
 
     if shutil.which("ruff") is None:
         console.print(
