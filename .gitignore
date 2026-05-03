@@ -8,3 +8,7 @@ build/
 .ruff_cache/
 site/
 .worktrees/
+
+# graphify regenerable cache (graph.json/html/report are committed)
+graphify-out/cache/
+graphify-out/.graphify_python
