@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/lazynet/lazy-harness/compare/v0.9.1...v0.10.0) (2026-05-03)
+
+
+### Features
+
+* async response grading via the compound-loop worker ([#38](https://github.com/lazynet/lazy-harness/issues/38)) ([5f16c40](https://github.com/lazynet/lazy-harness/commit/5f16c40c77bcc5898af93e870dfe94f2d2665486))
+
 ## [0.9.1](https://github.com/lazynet/lazy-harness/compare/v0.9.0...v0.9.1) (2026-04-26)
 
 
