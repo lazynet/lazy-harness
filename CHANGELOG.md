@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/lazynet/lazy-harness/compare/v0.10.1...v0.11.0) (2026-05-03)
+
+
+### Features
+
+* MCP server orchestration via lh deploy (ADR-024) ([#42](https://github.com/lazynet/lazy-harness/issues/42)) ([9140b99](https://github.com/lazynet/lazy-harness/commit/9140b99da8f09b40878aa7972eb9f64f7c393fca))
+
 ## [0.10.1](https://github.com/lazynet/lazy-harness/compare/v0.10.0...v0.10.1) (2026-05-03)
 
 
