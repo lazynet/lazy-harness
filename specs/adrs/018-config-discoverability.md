@@ -1,8 +1,8 @@
 # ADR-018: Feature discoverability and configuration — `lh doctor` + `lh config <feature>`
 
-**Status:** accepted-deferred
+**Status:** accepted
 **Date:** 2026-04-14
-**Implementation:** deferred — the decision is locked, but the `lh config <feature>` command group and the "Features" section of `lh doctor` are intentionally not yet scheduled. See the "Consequences" section below. This ADR is not incomplete; its implementation is waiting for a concrete second extension point to drive the wizard UX.
+**Implementation:** accepted in 2026-05 via ADR-025 (`lh doctor` Features section) and ADR-026 (`lh config <feature> --init` wizards). The triple stack (QMD/Engram/Graphify) drove the concrete UX.
 
 ## Context
 

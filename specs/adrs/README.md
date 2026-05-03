@@ -27,7 +27,7 @@ Decisions that define the `lazy-harness` project itself.
 | [015](./015-strict-tdd-workflow.md) | accepted | Strict TDD as a workflow rule | No production code without a failing test first. Non-negotiable. |
 | [016](./016-knowledge-dir-qmd-optional.md) | accepted | Knowledge directory + optional QMD | Plain markdown tree; QMD is semantic search opt-in via `shutil.which`. |
 | [017](./017-selftest-as-health-check.md) | accepted | Selftest as user-facing health check | `lh selftest` is not pytest — it is the on-machine configuration check. |
-| [018](./018-config-discoverability.md) | accepted-deferred | Feature discoverability via `lh doctor` + `lh config <feature>` | No wizards on upgrade. `lh doctor` lists features; `lh config <feature> --init` is the opt-in wizard. |
+| [018](./018-config-discoverability.md) | accepted | Feature discoverability via `lh doctor` + `lh config <feature>` | No wizards on upgrade. `lh doctor` lists features; `lh config <feature> --init` is the opt-in wizard. |
 | [019](./019-handoff-session-end-freshness.md) | accepted | Force a final compound-loop evaluation at session end | `SessionEnd` hook + `lh knowledge handoff-now` bypass the Stop-hook gates so the handoff reflects the session's final state. |
 | [020](./020-post-compact-context-reinjection.md) | accepted | Post-compact hook re-injects the pre-compact summary | Mirror the PreCompact summary into the live post-compaction context with a 5-minute freshness check. |
 | [021](./021-async-response-grading.md) | accepted | Async response grading via the compound-loop worker | One LLM call returns decisions/failures/learnings/handoff *and* a quality grade. Poor grades escalate to PRJ.md. |
@@ -35,6 +35,7 @@ Decisions that define the `lazy-harness` project itself.
 | [023](./023-graphify-code-structure.md) | accepted | Graphify as optional code-structure index | New `knowledge/graphify.py` wrapper + `[knowledge.structure]` config + MCP deploy gating. Mirrors ADR-016 / ADR-022. |
 | [024](./024-mcp-server-orchestration.md) | accepted | MCP server orchestration via `lh deploy` | Single seam in deploy writes `mcpServers` to each profile's `settings.json` from detected tools (QMD today, Engram/Graphify next). |
 | [025](./025-doctor-features-section.md) | accepted | `lh doctor` Features section for triple stack | New `lazy_harness.features` helper + Features section in `lh doctor` listing qmd/engram/graphify with state, version, and pin. First half of ADR-018 implementation. |
+| [026](./026-config-wizards.md) | accepted | `lh config <feature> --init` wizards (Fase 3b) | New `lh config` Click group + `wizards/` package with TOML deep-merge. Closes ADR-018 implementation. |
 
 ### Status values
 
