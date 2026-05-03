@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.1](https://github.com/lazynet/lazy-harness/compare/v0.15.0...v0.15.1) (2026-05-03)
+
+
+### Documentation
+
+* ADR-027 memory stack overview (five-layer model) ([#52](https://github.com/lazynet/lazy-harness/issues/52)) ([02b81fd](https://github.com/lazynet/lazy-harness/commit/02b81fd2c136bc8f87afe8b1cbf79d85fc9f1a7e))
+
 ## [0.15.0](https://github.com/lazynet/lazy-harness/compare/v0.14.0...v0.15.0) (2026-05-03)
 
 
