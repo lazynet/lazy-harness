@@ -205,3 +205,33 @@ version = "1"
 
     cfg = load_config(config_file)
     assert cfg.hooks == {}
+
+
+def test_config_memory_engram_defaults_when_missing() -> None:
+    from lazy_harness.core.config import Config
+
+    cfg = Config()
+    assert cfg.memory.engram.enabled is False
+    assert cfg.memory.engram.git_sync is True
+    assert cfg.memory.engram.cloud is False
+    assert cfg.memory.engram.version == "1.15.4"
+
+
+def test_config_memory_engram_parses_from_toml(config_dir: Path) -> None:
+    config_file = config_dir / "config.toml"
+    config_file.write_text("""
+[harness]
+version = "1"
+
+[memory.engram]
+enabled = true
+cloud = true
+version = "1.15.4"
+""")
+    from lazy_harness.core.config import load_config
+
+    cfg = load_config(config_file)
+    assert cfg.memory.engram.enabled is True
+    assert cfg.memory.engram.cloud is True
+    assert cfg.memory.engram.git_sync is True
+    assert cfg.memory.engram.version == "1.15.4"
