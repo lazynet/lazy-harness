@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.1](https://github.com/lazynet/lazy-harness/compare/v0.10.0...v0.10.1) (2026-05-03)
+
+
+### Bug Fixes
+
+* **compound-loop:** accept last-prompt as interactive session marker ([#40](https://github.com/lazynet/lazy-harness/issues/40)) ([dfd6b2e](https://github.com/lazynet/lazy-harness/commit/dfd6b2ee8d432b2aac288fdabf136b998c1a2530))
+
 ## [0.10.0](https://github.com/lazynet/lazy-harness/compare/v0.9.1...v0.10.0) (2026-05-03)
 
 
