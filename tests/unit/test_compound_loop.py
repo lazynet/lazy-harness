@@ -304,12 +304,12 @@ def test_collect_existing_decisions_and_failures(tmp_path: Path) -> None:
     memory = tmp_path / "memory"
     memory.mkdir()
     (memory / "decisions.jsonl").write_text(
-        json.dumps({"summary": "use uv for deps"}) + "\n"
-        + json.dumps({"summary": "trunk-based"}) + "\n"
+        json.dumps({"summary": "use uv for deps"})
+        + "\n"
+        + json.dumps({"summary": "trunk-based"})
+        + "\n"
     )
-    (memory / "failures.jsonl").write_text(
-        json.dumps({"summary": "broken symlink"}) + "\n"
-    )
+    (memory / "failures.jsonl").write_text(json.dumps({"summary": "broken symlink"}) + "\n")
     assert "use uv for deps" in collect_existing_decisions(memory)
     assert "trunk-based" in collect_existing_decisions(memory)
     assert "broken symlink" in collect_existing_failures(memory)
@@ -325,9 +325,7 @@ def test_collect_existing_learnings(tmp_path: Path) -> None:
         '---\ntitle: "Debounce session export"\n---\n'
     )
     # review files should be ignored
-    (learnings / "2026-04" / "_review-2026-04.md").write_text(
-        '---\ntitle: "Ignored review"\n---\n'
-    )
+    (learnings / "2026-04" / "_review-2026-04.md").write_text('---\ntitle: "Ignored review"\n---\n')
     out = collect_existing_learnings(learnings)
     assert "Use atomic writes in iCloud" in out
     assert "Debounce session export" in out
@@ -335,7 +333,7 @@ def test_collect_existing_learnings(tmp_path: Path) -> None:
 
 
 def test_strip_markdown_fences_with_fence() -> None:
-    raw = "```json\n{\"x\": 1}\n```"
+    raw = '```json\n{"x": 1}\n```'
     assert strip_markdown_fences(raw) == '{"x": 1}'
 
 
@@ -606,9 +604,7 @@ def test_process_task_skips_on_bad_json(tmp_path: Path) -> None:
     learnings = tmp_path / "Learnings"
     session = _interactive_session(tmp_path)
     task = create_task(queue, Path("/tmp/proj"), session, "abcd1234", memory)
-    outcome = process_task(
-        task, _cfg(), learnings, invoke=lambda *a, **kw: "not json at all"
-    )
+    outcome = process_task(task, _cfg(), learnings, invoke=lambda *a, **kw: "not json at all")
     assert "JSON parse failed" in outcome.skipped
 
 
@@ -620,11 +616,279 @@ def test_atomic_write_does_not_leave_tempfile(tmp_path: Path) -> None:
     data = {
         "decisions": [],
         "failures": [],
-        "learnings": [
-            {"title": "t", "learning": "l", "context": "", "scope": "universal"}
-        ],
+        "learnings": [{"title": "t", "learning": "l", "context": "", "scope": "universal"}],
         "handoff": ["do the thing"],
     }
     persist_results(data, memory, learnings, "proj", "2026-04-12T10:00:00-03:00")
     assert not list(memory.glob(".*.tmp"))
     assert not list(learnings.rglob(".*.tmp"))
+
+
+# --- ADR-021: async response grading ----------------------------------------
+
+
+def test_compound_loop_config_defaults_for_grading() -> None:
+    cfg = CompoundLoopConfig()
+    assert cfg.grading_enabled is True
+    assert cfg.lazymind_dir is None
+
+
+def test_build_prompt_includes_grade_schema_block() -> None:
+    prompt = build_prompt(
+        project_name="proj",
+        cwd="/tmp/proj",
+        session_id="sess1234",
+        timestamp="2026-05-02T10:00:00-03:00",
+        existing_decisions="",
+        existing_failures="",
+        existing_learnings="",
+        summary="## User\n\nhi",
+    )
+    assert '"grade"' in prompt
+    assert '"quality"' in prompt
+    for tag in ("excellent", "good", "acceptable", "poor"):
+        assert tag in prompt
+    for issue in (
+        "incomplete",
+        "hallucination",
+        "tool_misuse",
+        "missed_context",
+        "wrong_approach",
+        "inefficient",
+    ):
+        assert issue in prompt
+
+
+def test_persist_results_writes_grades_jsonl_when_grade_present(tmp_path: Path) -> None:
+    memory = tmp_path / "memory"
+    learnings = tmp_path / "Learnings"
+    data = {
+        "decisions": [],
+        "failures": [],
+        "learnings": [],
+        "handoff": [],
+        "grade": {
+            "quality": "acceptable",
+            "issues": ["inefficient"],
+            "reasoning": "Got there but ran ruff three times.",
+            "confidence": 0.8,
+        },
+    }
+    wrote = persist_results(
+        data,
+        memory,
+        learnings,
+        "proj",
+        "2026-05-02T10:00:00-03:00",
+        session_id="abcd1234",
+    )
+    assert any(s.startswith("grade:") for s in wrote)
+    grades_file = memory / "grades.jsonl"
+    assert grades_file.is_file()
+    line = json.loads(grades_file.read_text().strip().splitlines()[0])
+    assert line["type"] == "grade"
+    assert line["quality"] == "acceptable"
+    assert line["issues"] == ["inefficient"]
+    assert line["confidence"] == 0.8
+    assert line["session_id"] == "abcd1234"
+    assert line["project"] == "proj"
+
+
+def test_persist_results_without_grade_field_does_not_create_grades_jsonl(
+    tmp_path: Path,
+) -> None:
+    memory = tmp_path / "memory"
+    learnings = tmp_path / "Learnings"
+    data = {"decisions": [], "failures": [], "learnings": [], "handoff": []}
+    persist_results(data, memory, learnings, "proj", "2026-05-02T10:00:00-03:00")
+    assert not (memory / "grades.jsonl").exists()
+
+
+def _build_lazymind(tmp_path: Path, prj_names: list[str]) -> Path:
+    lazymind = tmp_path / "LazyMind"
+    projects = lazymind / "1-Projects"
+    projects.mkdir(parents=True)
+    for name in prj_names:
+        prj_dir = projects / f"PRJ-{name}"
+        prj_dir.mkdir()
+        (prj_dir / f"PRJ-{name}.md").write_text(
+            f"---\ntype: project\n---\n# PRJ-{name}\n\n"
+            "## Backlog\n\n### Pendiente — Alta prioridad\n\n"
+            "- [ ] existing item\n\n### Pendiente — Media prioridad\n\n"
+        )
+    return lazymind
+
+
+def test_resolve_prj_md_matches_basename_case_insensitive(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.compound_loop import resolve_prj_md
+
+    lazymind = _build_lazymind(tmp_path, ["LazyHarness"])
+    found = resolve_prj_md("lazy-harness", lazymind)
+    assert found is not None
+    assert found.name == "PRJ-LazyHarness.md"
+
+
+def test_resolve_prj_md_strips_known_prefixes(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.compound_loop import resolve_prj_md
+
+    lazymind = _build_lazymind(tmp_path, ["Ansible"])
+    found = resolve_prj_md("lazy-ansible", lazymind)
+    assert found is not None
+    assert found.name == "PRJ-Ansible.md"
+
+
+def test_resolve_prj_md_returns_none_without_match(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.compound_loop import resolve_prj_md
+
+    lazymind = _build_lazymind(tmp_path, ["LazyHarness"])
+    assert resolve_prj_md("totally-unrelated-repo", lazymind) is None
+
+
+def test_resolve_prj_md_returns_none_when_dir_missing(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.compound_loop import resolve_prj_md
+
+    assert resolve_prj_md("anything", tmp_path / "missing") is None
+
+
+def test_append_grade_to_prj_backlog_only_when_grade_warrants(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.compound_loop import append_grade_to_prj_backlog
+
+    lazymind = _build_lazymind(tmp_path, ["LazyHarness"])
+    prj_md = lazymind / "1-Projects" / "PRJ-LazyHarness" / "PRJ-LazyHarness.md"
+
+    appended = append_grade_to_prj_backlog(
+        prj_md,
+        {"quality": "good", "issues": [], "reasoning": "fine", "confidence": 0.9},
+        "2026-05-02",
+        "abcd1234",
+    )
+    assert appended is False
+    assert "Session quality regression" not in prj_md.read_text()
+
+
+def test_append_grade_to_prj_backlog_writes_for_poor_quality(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.compound_loop import append_grade_to_prj_backlog
+
+    lazymind = _build_lazymind(tmp_path, ["LazyHarness"])
+    prj_md = lazymind / "1-Projects" / "PRJ-LazyHarness" / "PRJ-LazyHarness.md"
+
+    appended = append_grade_to_prj_backlog(
+        prj_md,
+        {
+            "quality": "poor",
+            "issues": ["hallucination", "tool_misuse"],
+            "reasoning": "Hallucinated a flag.",
+            "confidence": 0.85,
+        },
+        "2026-05-02",
+        "abcd1234",
+    )
+    assert appended is True
+    text = prj_md.read_text()
+    assert "Session quality regression — Hallucinated a flag." in text
+    assert "graded 2026-05-02" in text
+    assert "session abcd1234" in text
+    assert "hallucination" in text
+    # New item must land under Alta prioridad, before Media.
+    alta = text.index("Alta prioridad")
+    new_item = text.index("Session quality regression")
+    media = text.index("Media prioridad")
+    assert alta < new_item < media
+
+
+def test_append_grade_to_prj_backlog_writes_for_acceptable_with_issues(
+    tmp_path: Path,
+) -> None:
+    from lazy_harness.knowledge.compound_loop import append_grade_to_prj_backlog
+
+    lazymind = _build_lazymind(tmp_path, ["LazyHarness"])
+    prj_md = lazymind / "1-Projects" / "PRJ-LazyHarness" / "PRJ-LazyHarness.md"
+
+    appended = append_grade_to_prj_backlog(
+        prj_md,
+        {
+            "quality": "acceptable",
+            "issues": ["inefficient"],
+            "reasoning": "Avoidable cost.",
+            "confidence": 0.7,
+        },
+        "2026-05-02",
+        "abcd1234",
+    )
+    assert appended is True
+
+
+def test_append_grade_to_prj_backlog_skips_acceptable_without_issues(
+    tmp_path: Path,
+) -> None:
+    from lazy_harness.knowledge.compound_loop import append_grade_to_prj_backlog
+
+    lazymind = _build_lazymind(tmp_path, ["LazyHarness"])
+    prj_md = lazymind / "1-Projects" / "PRJ-LazyHarness" / "PRJ-LazyHarness.md"
+
+    appended = append_grade_to_prj_backlog(
+        prj_md,
+        {"quality": "acceptable", "issues": [], "reasoning": "ok", "confidence": 0.6},
+        "2026-05-02",
+        "abcd1234",
+    )
+    assert appended is False
+
+
+def test_append_grade_to_prj_backlog_returns_false_when_section_missing(
+    tmp_path: Path,
+) -> None:
+    from lazy_harness.knowledge.compound_loop import append_grade_to_prj_backlog
+
+    prj_md = tmp_path / "PRJ-X.md"
+    prj_md.write_text("# PRJ-X\n\nNo backlog here.\n")
+    appended = append_grade_to_prj_backlog(
+        prj_md,
+        {
+            "quality": "poor",
+            "issues": ["incomplete"],
+            "reasoning": "stopped early",
+            "confidence": 0.9,
+        },
+        "2026-05-02",
+        "abcd1234",
+    )
+    assert appended is False
+
+
+def test_process_task_persists_grade_and_appends_backlog(tmp_path: Path) -> None:
+    queue = tmp_path / "queue"
+    memory = tmp_path / "memory"
+    learnings = tmp_path / "Learnings"
+    lazymind = _build_lazymind(tmp_path, ["LazyHarness"])
+    prj_md = lazymind / "1-Projects" / "PRJ-LazyHarness" / "PRJ-LazyHarness.md"
+
+    session = _interactive_session(tmp_path)
+    cwd = Path("/tmp/lazy-harness")
+    task = create_task(queue, cwd, session, "abcd1234-deadbeef", memory)
+
+    response = json.dumps(
+        {
+            "decisions": [],
+            "failures": [],
+            "learnings": [],
+            "handoff": [],
+            "grade": {
+                "quality": "poor",
+                "issues": ["hallucination"],
+                "reasoning": "Made up a flag.",
+                "confidence": 0.9,
+            },
+        }
+    )
+    cfg = CompoundLoopConfig(
+        enabled=True,
+        min_messages=2,
+        min_user_chars=100,
+        lazymind_dir=str(lazymind),
+    )
+    outcome = process_task(task, cfg, learnings, invoke=lambda *a, **kw: response)
+
+    assert outcome.was_processed
+    assert (memory / "grades.jsonl").is_file()
+    assert "Session quality regression" in prj_md.read_text()

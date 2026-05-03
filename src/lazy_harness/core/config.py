@@ -114,6 +114,8 @@ class CompoundLoopConfig:
     timeout_seconds: int = 120
     learnings_subdir: str = "learnings"
     reprocess_min_growth_seconds: int = 120
+    grading_enabled: bool = True
+    lazymind_dir: str | None = None
 
 
 @dataclass
@@ -284,12 +286,8 @@ def load_config(path: Path) -> Config:
             schedule = job_cfg.get("schedule", "")
             command = job_cfg.get("command", "")
             if not schedule or not command:
-                raise ConfigError(
-                    f"[scheduler.jobs.{job_name}] missing schedule or command"
-                )
-            jobs.append(
-                SchedulerJobConfig(name=job_name, schedule=schedule, command=command)
-            )
+                raise ConfigError(f"[scheduler.jobs.{job_name}] missing schedule or command")
+            jobs.append(SchedulerJobConfig(name=job_name, schedule=schedule, command=command))
     cfg.scheduler = SchedulerConfig(
         backend=scheduler_raw.get("backend", "auto"),
         jobs=jobs,
@@ -316,6 +314,8 @@ def load_config(path: Path) -> Config:
                 "reprocess_min_growth_seconds",
                 CompoundLoopConfig.reprocess_min_growth_seconds,
             ),
+            grading_enabled=cl_raw.get("grading_enabled", CompoundLoopConfig.grading_enabled),
+            lazymind_dir=cl_raw.get("lazymind_dir", CompoundLoopConfig.lazymind_dir),
         )
 
     metrics_raw = raw.get("metrics", {})

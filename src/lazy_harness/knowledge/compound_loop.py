@@ -303,7 +303,13 @@ Return ONLY this JSON structure (no markdown fences, no explanation):
   "learnings": [
     {{"title": "...", "learning": "1-2 sentences", "context": "...", "scope": "universal|backend|infra|consulting", "tags": ["..."]}}
   ],
-  "handoff": ["concrete pending item for next session"]
+  "handoff": ["concrete pending item for next session"],
+  "grade": {{
+    "quality": "excellent|good|acceptable|poor",
+    "issues": ["incomplete|hallucination|tool_misuse|missed_context|wrong_approach|inefficient|none"],
+    "reasoning": "1-2 sentences on why this grade",
+    "confidence": 0.0
+  }}
 }}
 
 Rules:
@@ -312,7 +318,8 @@ Rules:
 - learnings: ONLY transferable knowledge useful outside this project. Universal patterns, reusable insights. Project-specific stuff goes in decisions.
 - CRITICAL: Check ALL existing lists above. If a decision, failure, or learning already exists that covers the same concept (even with different wording), do NOT generate a new one. Only add genuinely new insights.
 - handoff: concrete, actionable items left pending for the next session. NOT summaries of what was done. Only what remains to be done. If everything was resolved or it was just a Q&A, return [].
-- Empty session or just status checks? Return {{"decisions": [], "failures": [], "learnings": [], "handoff": []}}
+- grade: rate the assistant's overall performance against the user's intent. quality is one of excellent|good|acceptable|poor. issues come from this fixed taxonomy: incomplete (stopped before resolving), hallucination (invented APIs/files/tools), tool_misuse (wrong tool/args/repeated failures), missed_context (ignored a stated constraint), wrong_approach (solved a different problem), inefficient (right answer, avoidable cost), none (no issues observed). Use ["none"] when quality is excellent or good. confidence is 0.0-1.0. reasoning must reference concrete evidence from the transcript.
+- Empty session or just status checks? Return {{"decisions": [], "failures": [], "learnings": [], "handoff": [], "grade": {{"quality": "good", "issues": ["none"], "reasoning": "trivial session", "confidence": 0.9}}}}
 - Output ONLY the JSON object."""
 
 
@@ -484,6 +491,22 @@ deprecated_reason: null
         _atomic_write(filepath, content)
         wrote.append(f"learning: {title[:60]}")
 
+    grade = data.get("grade")
+    if isinstance(grade, dict) and grade.get("quality"):
+        grade_entry = {
+            "ts": timestamp,
+            "type": "grade",
+            "session_id": session_id,
+            "project": project_name,
+            "quality": grade.get("quality", ""),
+            "issues": grade.get("issues", []),
+            "reasoning": grade.get("reasoning", ""),
+            "confidence": grade.get("confidence", 0.0),
+        }
+        with open(memory_dir / "grades.jsonl", "a") as f:
+            f.write(json.dumps(grade_entry, ensure_ascii=False) + "\n")
+        wrote.append(f"grade: {grade.get('quality', '')}")
+
     handoff_file = memory_dir / "handoff.md"
     handoff_items = data.get("handoff", [])
     if handoff_items:
@@ -508,6 +531,108 @@ deprecated_reason: null
         handoff_file.unlink()
 
     return wrote
+
+
+_PRJ_NAME_PREFIXES = ("lazy-", "flex-", "mngt-", "prj-")
+
+
+def _name_variants(name: str) -> set[str]:
+    """Return alphanumeric-only lowercased variants of `name`, with and without
+    common project prefixes. A match between two names is then a non-empty
+    intersection of their variant sets."""
+    n = name.lower().replace("_", "-").replace(" ", "-")
+    variants = {re.sub(r"[^a-z0-9]", "", n)}
+    for prefix in _PRJ_NAME_PREFIXES:
+        if n.startswith(prefix):
+            variants.add(re.sub(r"[^a-z0-9]", "", n[len(prefix) :]))
+    variants.discard("")
+    return variants
+
+
+def resolve_prj_md(project_name: str, lazymind_dir: Path) -> Path | None:
+    """Find LazyMind/1-Projects/PRJ-<X>/PRJ-<X>.md matching project_name.
+
+    Comparison normalises both sides to alphanumeric-only lowercase and
+    optionally strips common prefixes (lazy-, flex-, mngt-, prj-). Returns
+    None when the directory is missing or no candidate matches.
+    """
+    projects_dir = lazymind_dir / "1-Projects"
+    if not projects_dir.is_dir():
+        return None
+    target_variants = _name_variants(project_name)
+    if not target_variants:
+        return None
+    for candidate in projects_dir.glob("PRJ-*/PRJ-*.md"):
+        stem = candidate.stem
+        if not stem.startswith("PRJ-"):
+            continue
+        if target_variants & _name_variants(stem[4:]):
+            return candidate
+    return None
+
+
+def _grade_warrants_backlog_entry(grade: dict) -> bool:
+    quality = grade.get("quality", "")
+    issues = [i for i in grade.get("issues", []) if i and i != "none"]
+    if quality == "poor":
+        return True
+    if quality == "acceptable" and issues:
+        return True
+    return False
+
+
+_ALTA_HEADER = "### Pendiente — Alta prioridad"
+
+
+def append_grade_to_prj_backlog(
+    prj_md: Path,
+    grade: dict,
+    date_str: str,
+    session_id: str,
+) -> bool:
+    """Append a backlog item under '### Pendiente — Alta prioridad' if the grade
+    warrants escalation. Returns True if an entry was written, False otherwise.
+
+    Best-effort: returns False (without raising) when the section is missing or
+    the file cannot be parsed."""
+    if not _grade_warrants_backlog_entry(grade):
+        return False
+    try:
+        text = prj_md.read_text()
+    except OSError:
+        return False
+    if _ALTA_HEADER not in text:
+        return False
+    issues = [i for i in grade.get("issues", []) if i and i != "none"]
+    issues_str = ", ".join(issues) if issues else "none"
+    short_id = session_id[:8] if session_id else "unknown"
+    reasoning = grade.get("reasoning", "").strip() or "no reasoning given"
+    item = (
+        f"- [ ] **Session quality regression — {reasoning}** "
+        f"(graded {date_str}, session {short_id}, issues: {issues_str})\n"
+    )
+    lines = text.splitlines(keepends=True)
+    out: list[str] = []
+    inserted = False
+    for i, line in enumerate(lines):
+        out.append(line)
+        if inserted or line.rstrip() != _ALTA_HEADER:
+            continue
+        # Skip a single blank line after the header, then insert our item
+        # before any existing content (so the most recent regression sits on top).
+        j = i + 1
+        if j < len(lines) and lines[j].strip() == "":
+            out.append(lines[j])
+            j += 1
+        out.append(item)
+        # Append the rest verbatim and break the outer loop via slice.
+        out.extend(lines[j:])
+        inserted = True
+        break
+    if not inserted:
+        return False
+    _atomic_write(prj_md, "".join(out))
+    return True
 
 
 class TaskOutcome:
@@ -573,9 +698,7 @@ def process_task(
     data = parse_response(raw_output)
     if data is None:
         snippet = raw_output[:200].replace("\n", " ")
-        return TaskOutcome(
-            skipped=f"JSON parse failed for {session_id[:8]} — raw: {snippet}"
-        )
+        return TaskOutcome(skipped=f"JSON parse failed for {session_id[:8]} — raw: {snippet}")
 
     wrote = persist_results(
         data,
@@ -586,6 +709,15 @@ def process_task(
         session_id=session_id,
         session_jsonl=session_jsonl,
     )
+
+    grade = data.get("grade")
+    if cfg.grading_enabled and isinstance(grade, dict) and cfg.lazymind_dir:
+        prj_md = resolve_prj_md(project_name, Path(cfg.lazymind_dir))
+        if prj_md is not None:
+            date_str = timestamp[:10] if len(timestamp) >= 10 else "unknown"
+            if append_grade_to_prj_backlog(prj_md, grade, date_str, session_id):
+                wrote.append(f"backlog: {prj_md.name}")
+
     return TaskOutcome(wrote=wrote)
 
 
