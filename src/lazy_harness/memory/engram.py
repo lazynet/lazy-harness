@@ -9,7 +9,6 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 
-
 PINNED_VERSION = "1.15.4"
 
 
