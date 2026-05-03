@@ -34,6 +34,7 @@ Decisions that define the `lazy-harness` project itself.
 | [022](./022-engram-episodic-memory.md) | accepted | Engram as optional episodic memory backend | New `memory/engram.py` wrapper + `[memory.engram]` config + MCP deploy gating. Mirrors the ADR-016 QMD pattern. |
 | [023](./023-graphify-code-structure.md) | accepted | Graphify as optional code-structure index | New `knowledge/graphify.py` wrapper + `[knowledge.structure]` config + MCP deploy gating. Mirrors ADR-016 / ADR-022. |
 | [024](./024-mcp-server-orchestration.md) | accepted | MCP server orchestration via `lh deploy` | Single seam in deploy writes `mcpServers` to each profile's `settings.json` from detected tools (QMD today, Engram/Graphify next). |
+| [025](./025-doctor-features-section.md) | accepted | `lh doctor` Features section for triple stack | New `lazy_harness.features` helper + Features section in `lh doctor` listing qmd/engram/graphify with state, version, and pin. First half of ADR-018 implementation. |
 
 ### Status values
 
