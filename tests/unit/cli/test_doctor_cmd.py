@@ -21,9 +21,7 @@ def _write_config(tmp_path: Path) -> Path:
     return cfg
 
 
-def test_doctor_warns_when_ruff_missing(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_doctor_warns_when_ruff_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     from lazy_harness.cli.doctor_cmd import doctor
 
     cfg = _write_config(tmp_path)
@@ -48,3 +46,25 @@ def test_doctor_does_not_warn_when_ruff_present(
     runner = CliRunner()
     result = runner.invoke(doctor, [])
     assert "ruff not found" not in result.output.lower()
+
+
+def test_doctor_renders_features_section(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from lazy_harness.cli.doctor_cmd import doctor
+    from lazy_harness.knowledge import graphify as graphify_mod
+    from lazy_harness.knowledge import qmd as qmd_mod
+    from lazy_harness.memory import engram as engram_mod
+
+    cfg = _write_config(tmp_path)
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.shutil.which", lambda _name: None)
+    monkeypatch.setattr(qmd_mod, "is_qmd_available", lambda: False)
+    monkeypatch.setattr(engram_mod, "is_engram_available", lambda: False)
+    monkeypatch.setattr(graphify_mod, "is_graphify_available", lambda: False)
+
+    runner = CliRunner()
+    result = runner.invoke(doctor, [])
+
+    assert "Features" in result.output
+    assert "qmd" in result.output
+    assert "engram" in result.output
+    assert "graphify" in result.output
