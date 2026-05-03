@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/lazynet/lazy-harness/compare/v0.14.0...v0.15.0) (2026-05-03)
+
+
+### Features
+
+* lh config wizards for memory + knowledge (ADR-026, closes ADR-018) ([#50](https://github.com/lazynet/lazy-harness/issues/50)) ([ced21b0](https://github.com/lazynet/lazy-harness/commit/ced21b00d555c99fb8f67ed87a4554c733ae6106))
+
 ## [0.14.0](https://github.com/lazynet/lazy-harness/compare/v0.13.0...v0.14.0) (2026-05-03)
 
 
