@@ -27,6 +27,15 @@ class AgentAdapter(Protocol):
         """Generate agent-native hook config (e.g., settings.json for Claude Code)."""
         ...
 
+    def generate_mcp_config(self, servers: dict[str, dict]) -> dict:
+        """Generate agent-native MCP server config block.
+
+        `servers` is a mapping of server name -> declarative entry
+        (`{"command": str, "args": list[str], "env": dict[str, str] | None}`).
+        Returns a dict ready to merge into the agent's settings file.
+        """
+        ...
+
     def resolve_binary(self) -> Path | None:
         """Locate the agent's executable on disk.
 

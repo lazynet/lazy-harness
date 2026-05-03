@@ -85,3 +85,14 @@ class ClaudeCodeAdapter:
                 )
             settings_hooks[cc_event] = matchers
         return settings_hooks
+
+    def generate_mcp_config(self, servers: dict[str, dict]) -> dict:
+        normalized: dict[str, dict] = {}
+        for name, entry in servers.items():
+            normalized[name] = {
+                "command": entry["command"],
+                "args": list(entry.get("args", [])),
+            }
+            if entry.get("env"):
+                normalized[name]["env"] = dict(entry["env"])
+        return {"mcpServers": normalized}
