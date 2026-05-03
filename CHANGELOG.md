@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/lazynet/lazy-harness/compare/v0.13.0...v0.14.0) (2026-05-03)
+
+
+### Features
+
+* lh doctor Features section for triple stack (ADR-025) ([#48](https://github.com/lazynet/lazy-harness/issues/48)) ([c6f8e29](https://github.com/lazynet/lazy-harness/commit/c6f8e294737894fe247f1ea7d29e6c86ad16410b))
+
 ## [0.13.0](https://github.com/lazynet/lazy-harness/compare/v0.12.0...v0.13.0) (2026-05-03)
 
 
