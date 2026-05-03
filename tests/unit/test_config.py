@@ -235,3 +235,33 @@ version = "1.15.4"
     assert cfg.memory.engram.cloud is True
     assert cfg.memory.engram.git_sync is True
     assert cfg.memory.engram.version == "1.15.4"
+
+
+def test_config_knowledge_structure_defaults_when_missing() -> None:
+    from lazy_harness.core.config import Config
+
+    cfg = Config()
+    assert cfg.knowledge.structure.engine == "graphify"
+    assert cfg.knowledge.structure.enabled is False
+    assert cfg.knowledge.structure.auto_rebuild_on_commit is False
+    assert cfg.knowledge.structure.version == "0.6.9"
+
+
+def test_config_knowledge_structure_parses_from_toml(config_dir: Path) -> None:
+    config_file = config_dir / "config.toml"
+    config_file.write_text("""
+[harness]
+version = "1"
+
+[knowledge.structure]
+enabled = true
+auto_rebuild_on_commit = true
+version = "0.6.9"
+""")
+    from lazy_harness.core.config import load_config
+
+    cfg = load_config(config_file)
+    assert cfg.knowledge.structure.enabled is True
+    assert cfg.knowledge.structure.auto_rebuild_on_commit is True
+    assert cfg.knowledge.structure.engine == "graphify"
+    assert cfg.knowledge.structure.version == "0.6.9"

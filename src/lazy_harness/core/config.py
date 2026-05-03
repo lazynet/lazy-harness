@@ -58,11 +58,20 @@ class KnowledgeSearchConfig:
 
 
 @dataclass
+class KnowledgeStructureConfig:
+    engine: str = "graphify"
+    enabled: bool = False
+    auto_rebuild_on_commit: bool = False
+    version: str = "0.6.9"
+
+
+@dataclass
 class KnowledgeConfig:
     path: str = ""
     sessions: KnowledgeSessionsConfig = field(default_factory=KnowledgeSessionsConfig)
     learnings: KnowledgeLearningsConfig = field(default_factory=KnowledgeLearningsConfig)
     search: KnowledgeSearchConfig = field(default_factory=KnowledgeSearchConfig)
+    structure: KnowledgeStructureConfig = field(default_factory=KnowledgeStructureConfig)
 
 
 @dataclass
@@ -296,6 +305,7 @@ def load_config(path: Path) -> Config:
         sessions=KnowledgeSessionsConfig(**knowledge_raw.get("sessions", {})),
         learnings=KnowledgeLearningsConfig(**knowledge_raw.get("learnings", {})),
         search=KnowledgeSearchConfig(**knowledge_raw.get("search", {})),
+        structure=KnowledgeStructureConfig(**knowledge_raw.get("structure", {})),
     )
 
     cfg.memory = _parse_memory(raw.get("memory", {}))
