@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/lazynet/lazy-harness/compare/v0.11.0...v0.12.0) (2026-05-03)
+
+
+### Features
+
+* Engram as optional episodic memory backend (ADR-022) ([#44](https://github.com/lazynet/lazy-harness/issues/44)) ([3bce0fb](https://github.com/lazynet/lazy-harness/commit/3bce0fb946c79c19c240aa0691fbe7797466658b))
+
 ## [0.11.0](https://github.com/lazynet/lazy-harness/compare/v0.10.1...v0.11.0) (2026-05-03)
 
 
