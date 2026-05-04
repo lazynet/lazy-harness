@@ -17,22 +17,24 @@ from pathlib import Path
 def _resolve_project_key(cwd: Path) -> str:
     """Return canonical Engram project key.
 
-    Prefers `git rev-parse --show-toplevel` basename so that nested cwd
-    inside a repo always resolves to the same canonical key. Falls back
-    to cwd basename if not in a git repo.
+    Uses `git rev-parse --git-common-dir` so worktrees resolve to the
+    main repo basename (preventing fragmentation between e.g. `lazy-harness`
+    and `.worktrees/feat-foo`). Falls back to cwd basename if not in a
+    git repo or if git is not on PATH.
     """
     try:
         proc = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
+            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
             cwd=cwd,
             capture_output=True,
             text=True,
             check=False,
         )
         if proc.returncode == 0:
-            top = Path(proc.stdout.strip())
-            if top.name:
-                return top.name
+            common_git = Path(proc.stdout.strip())
+            repo_root = common_git.parent
+            if repo_root.name:
+                return repo_root.name
     except OSError:
         pass
     return cwd.name

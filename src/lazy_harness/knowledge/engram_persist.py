@@ -178,7 +178,7 @@ class EngramPersister:
 
             file_size = file_path.stat().st_size
             if offset > file_size:
-                offset = 0  # truncated; reset (proper test in Task 4)
+                offset = 0  # truncated; reset
 
             with file_path.open("rb") as f:
                 f.seek(offset)

@@ -380,7 +380,9 @@ def test_failures_and_decisions_have_independent_cursors(tmp_path: Path) -> None
     assert cursor["failures_offset"] == failures_size
 
 
-def test_resolve_project_key_uses_git_toplevel_basename(tmp_path: Path, monkeypatch) -> None:
+def test_resolve_project_key_uses_git_common_dir_parent_basename(
+    tmp_path: Path, monkeypatch
+) -> None:
     from lazy_harness.hooks.builtins.engram_persist import _resolve_project_key
 
     repo_root = tmp_path / "repos" / "lazy" / "lazy-harness"
@@ -388,8 +390,8 @@ def test_resolve_project_key_uses_git_toplevel_basename(tmp_path: Path, monkeypa
     (repo_root / ".git").mkdir()  # bare marker; we will mock subprocess
 
     def fake_run(cmd, **kwargs):
-        if cmd[:3] == ["git", "rev-parse", "--show-toplevel"]:
-            return MagicMock(returncode=0, stdout=str(repo_root) + "\n", stderr="")
+        if cmd[:2] == ["git", "rev-parse"] and "--git-common-dir" in cmd:
+            return MagicMock(returncode=0, stdout=str(repo_root / ".git") + "\n", stderr="")
         return MagicMock(returncode=128, stdout="", stderr="not a git repo")
 
     monkeypatch.setattr("lazy_harness.hooks.builtins.engram_persist.subprocess.run", fake_run)
@@ -397,6 +399,27 @@ def test_resolve_project_key_uses_git_toplevel_basename(tmp_path: Path, monkeypa
     nested_cwd = repo_root / "src" / "lazy_harness"
     nested_cwd.mkdir(parents=True)
     assert _resolve_project_key(nested_cwd) == "lazy-harness"
+
+
+def test_resolve_project_key_resolves_correctly_from_worktree(tmp_path: Path, monkeypatch) -> None:
+    from lazy_harness.hooks.builtins.engram_persist import _resolve_project_key
+
+    repo_root = tmp_path / "repos" / "myrepo"
+    repo_root.mkdir(parents=True)
+    common_git = repo_root / ".git"
+    common_git.mkdir()
+    worktree = repo_root / ".worktrees" / "feature-x"
+    worktree.mkdir(parents=True)
+
+    def fake_run(cmd, **kwargs):
+        if cmd[:2] == ["git", "rev-parse"] and "--git-common-dir" in cmd:
+            return MagicMock(returncode=0, stdout=str(common_git) + "\n", stderr="")
+        return MagicMock(returncode=128, stdout="", stderr="not a git repo")
+
+    monkeypatch.setattr("lazy_harness.hooks.builtins.engram_persist.subprocess.run", fake_run)
+
+    # From inside the worktree, the canonical key must be the main repo basename
+    assert _resolve_project_key(worktree) == "myrepo"
 
 
 def test_resolve_project_key_falls_back_to_cwd_basename(tmp_path: Path, monkeypatch) -> None:
