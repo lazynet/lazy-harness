@@ -215,6 +215,13 @@ class EngramPersister:
                             decisions_offset=cursor["decisions_offset"],
                             failures_offset=cursor["failures_offset"],
                         )
+                        if elapsed_ms >= self.slow_save_threshold_ms:
+                            _emit_slow_save(
+                                self.logs_dir,
+                                kind,
+                                elapsed_ms,
+                                _build_title(entry),
+                            )
                     else:
                         result.saved_failed += 1
                         # Do NOT advance cursor; break to avoid pile-up this run.
@@ -253,6 +260,22 @@ def _hook_version() -> str:
         return __version__
     except Exception:
         return "unknown"
+
+
+def _emit_slow_save(logs_dir: Path, kind: EntryKind, ms: int, title: str) -> None:
+    record = {
+        "ts": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "event": "slow_save",
+        "ms": ms,
+        "type": kind,
+        "title_prefix": title[:60],
+    }
+    try:
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        with (logs_dir / _METRICS_FILENAME).open("a") as f:
+            f.write(json.dumps(record) + "\n")
+    except OSError:
+        pass
 
 
 def _emit_run_metric(

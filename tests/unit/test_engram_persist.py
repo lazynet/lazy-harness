@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -453,3 +454,71 @@ def test_metrics_not_emitted_when_engram_binary_missing(tmp_path: Path) -> None:
     persister.persist_new_entries()
 
     assert not (logs_dir / "engram_persist_metrics.jsonl").exists()
+
+
+def test_slow_save_event_emitted_above_threshold(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    logs_dir = tmp_path / "logs"
+    memory_dir.mkdir()
+    logs_dir.mkdir()
+    entries = [{"ts": "T1", "type": "decision", "summary": "slow one"}]
+    _seed_jsonl(memory_dir, "decision", entries)
+
+    # Real placeholder file so the .exists() guard passes
+    engram_bin_path = tmp_path / "engram"
+    engram_bin_path.write_text("")
+
+    persister = EngramPersister(
+        memory_dir=memory_dir,
+        logs_dir=logs_dir,
+        project_key="lazy-harness",
+        engram_bin=str(engram_bin_path),
+        slow_save_threshold_ms=10,  # injected low threshold
+    )
+
+    def slow_run(*args, **kwargs):
+        time.sleep(0.05)  # 50ms > 10ms threshold
+        return MagicMock(returncode=0, stdout="", stderr="")
+
+    with patch(
+        "lazy_harness.knowledge.engram_persist.subprocess.run",
+        side_effect=slow_run,
+    ):
+        persister.persist_new_entries()
+
+    metrics = (logs_dir / "engram_persist_metrics.jsonl").read_text().strip().splitlines()
+    slow_lines = [
+        json.loads(line) for line in metrics if json.loads(line).get("event") == "slow_save"
+    ]
+    assert len(slow_lines) == 1
+    assert slow_lines[0]["type"] == "decision"
+    assert slow_lines[0]["ms"] >= 10
+    assert slow_lines[0]["title_prefix"].startswith("slow one")
+
+
+def test_slow_save_event_not_emitted_below_threshold(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    logs_dir = tmp_path / "logs"
+    memory_dir.mkdir()
+    logs_dir.mkdir()
+    entries = [{"ts": "T1", "type": "decision", "summary": "fast one"}]
+    _seed_jsonl(memory_dir, "decision", entries)
+
+    engram_bin_path = tmp_path / "engram"
+    engram_bin_path.write_text("")
+
+    persister = EngramPersister(
+        memory_dir=memory_dir,
+        logs_dir=logs_dir,
+        project_key="lazy-harness",
+        engram_bin=str(engram_bin_path),
+        slow_save_threshold_ms=10_000,  # very high threshold
+    )
+
+    with patch("lazy_harness.knowledge.engram_persist.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        persister.persist_new_entries()
+
+    metrics = (logs_dir / "engram_persist_metrics.jsonl").read_text().strip().splitlines()
+    slow_lines = [line for line in metrics if json.loads(line).get("event") == "slow_save"]
+    assert slow_lines == []
