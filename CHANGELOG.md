@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.1](https://github.com/lazynet/lazy-harness/compare/v0.17.0...v0.17.1) (2026-05-04)
+
+
+### Documentation
+
+* **public:** expand coverage of security hooks, engram-persist, graphify, metrics sinks, and missing config sections ([e3cc60c](https://github.com/lazynet/lazy-harness/commit/e3cc60cd5bf56974ac32e7347e0ef8f55828c097))
+
 ## [0.17.0](https://github.com/lazynet/lazy-harness/compare/v0.16.0...v0.17.0) (2026-05-04)
 
 
