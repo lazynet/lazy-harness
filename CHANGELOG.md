@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.2](https://github.com/lazynet/lazy-harness/compare/v0.15.1...v0.15.2) (2026-05-04)
+
+
+### Bug Fixes
+
+* write MCP servers to .claude.json and remove graphify from MCP flow ([#55](https://github.com/lazynet/lazy-harness/issues/55)) ([b9f5c36](https://github.com/lazynet/lazy-harness/commit/b9f5c361e6c51fed47734214152f18049143cd48))
+
 ## [0.15.1](https://github.com/lazynet/lazy-harness/compare/v0.15.0...v0.15.1) (2026-05-03)
 
 
