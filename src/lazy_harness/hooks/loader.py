@@ -19,6 +19,7 @@ class HookInfo:
 _BUILTIN_HOOKS: dict[str, str] = {
     "compound-loop": "lazy_harness.hooks.builtins.compound_loop",
     "context-inject": "lazy_harness.hooks.builtins.context_inject",
+    "engram-persist": "lazy_harness.hooks.builtins.engram_persist",
     "post-compact": "lazy_harness.hooks.builtins.post_compact",
     "post-tool-use-format": "lazy_harness.hooks.builtins.post_tool_use_format",
     "pre-compact": "lazy_harness.hooks.builtins.pre_compact",
