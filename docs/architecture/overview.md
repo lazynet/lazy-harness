@@ -133,15 +133,16 @@ Design decisions: [ADR-008](https://github.com/lazynet/lazy-harness/blob/main/sp
 
 ## Deploy engine — `deploy/`
 
-`deploy/engine.py` has three top-level functions called by `lh deploy`:
+`deploy/engine.py` has four top-level functions called by `lh deploy`:
 
 1. **`deploy_profiles(cfg)`** — for each profile, symlink every item from `~/.config/lazy-harness/profiles/<name>/*` into `<profile.config_dir>/`. Per-file symlinks (not whole-directory), idempotent, refuses to clobber real files.
 2. **`deploy_hooks(cfg)`** — resolve hooks per event, call `agent.generate_hook_config`, write the result into each profile's `settings.json`.
-3. **`deploy_claude_symlink(cfg)`** — create `~/.claude → <default profile config_dir>`.
+3. **`deploy_mcp_servers(cfg)`** — probe each detected memory-stack tool (QMD, Engram), call `agent.generate_mcp_config`, merge the resulting `mcpServers` block into each profile's `settings.json` next to `hooks`. Uninstalled tools get no entry; removed tools have their entry pruned on the next run.
+4. **`deploy_claude_symlink(cfg)`** — create `~/.claude → <default profile config_dir>`.
 
 `deploy/symlinks.py` implements `ensure_symlink` with the three states: `"created"`, `"exists"` (already points at the correct source), and `"refused"` (target is a real file or a link to somewhere else and cannot be clobbered).
 
-Design: [ADR-009 — Profile symlink deploy](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/009-profile-symlink-deploy.md). Mechanics: [how profiles and deploy work](../how/profiles-and-deploy.md).
+Design: [ADR-009 — Profile symlink deploy](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/009-profile-symlink-deploy.md), [ADR-024 — MCP server orchestration](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/024-mcp-server-orchestration.md). Mechanics: [how profiles and deploy work](../how/profiles-and-deploy.md).
 
 ## Monitoring — `monitoring/`
 

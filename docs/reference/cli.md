@@ -4,9 +4,11 @@ For canonical flag lists, run `lh <command> --help` — this page is context, no
 
 ## `lh deploy`
 
-Deploys profiles, hooks, and skills from your config to the agent's config directories. Run it after editing `config.toml`, after adding a new profile, or after pulling repo changes that touch profile contents.
+Deploys profiles, hooks, skills, and MCP server entries from your config to the agent's config directories. Run it after editing `config.toml`, after adding a new profile, after installing/uninstalling an MCP-backed memory tool (QMD, Engram), or after pulling repo changes that touch profile contents.
 
-It is idempotent: re-running it on a clean tree should be a no-op.
+The MCP wiring step ([ADR-024](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/024-mcp-server-orchestration.md)) probes each detected tool and writes/refreshes the `mcpServers` block inside every profile's `settings.json` next to the existing `hooks` block. Tools that are not installed get no entry; uninstalled tools have their entry removed on the next deploy.
+
+It is idempotent: re-running on a clean tree is a no-op.
 
 ```bash
 lh deploy
@@ -14,12 +16,31 @@ lh deploy
 
 ## `lh doctor`
 
-Checks environment health: Python version, agent binary present, config readable, profile dirs writable, optional dependencies (QMD, direnv) detected. Use it as the first thing after install and any time something feels off.
+Checks environment health and reports the status of optional features. Use it as the first thing after install and any time something feels off. `doctor` is read-only — it never mutates anything.
 
-`doctor` is read-only. It never mutates anything.
+The output has two parts:
+
+- **Environment checks** — Python version, agent binary present, config readable, profile dirs writable, `direnv` detected.
+- **Features section** ([ADR-025](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/025-doctor-features-section.md)) — one row per memory-stack tool (`qmd`, `engram`, `graphify`) with state (`active`, `dormant`, `missing`), installed version vs pinned version, and a one-line hint when something needs attention. Tools that need an explicit enable in `config.toml` (e.g. `[memory.engram].enabled = true`) show as `dormant` until the flag flips.
 
 ```bash
 lh doctor
+```
+
+## `lh config`
+
+Interactive wizards that write a typed config block back into `~/.config/lazy-harness/config.toml` ([ADR-026](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/026-config-wizards.md)). The wizards are opt-in — invoked explicitly per feature, never run on upgrade.
+
+`lh config <feature> --init` runs the wizard for one feature, prompts for the values it needs, deep-merges the result into your existing config (preserving comments and unrelated sections), and exits. Re-running over an already-configured section asks before overwriting.
+
+Currently shipped wizards:
+
+- `lh config memory --init` — configures `[memory.engram]` (enable, project scope, optional sync settings).
+- `lh config knowledge --init` — configures `[knowledge]` (path, sessions/learnings subdirs, search engine, structure backend).
+
+```bash
+lh config memory --init
+lh config knowledge --init
 ```
 
 ## `lh hook`
