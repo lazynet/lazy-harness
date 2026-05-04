@@ -219,3 +219,129 @@ def test_title_truncated_to_max_chars(tmp_path: Path) -> None:
 
     args = mock_run.call_args.args[0]
     assert len(args[2]) == 200  # TITLE_MAX_CHARS
+
+
+def test_advances_cursor_only_on_successful_save(tmp_path: Path) -> None:
+    persister = _persister(tmp_path)
+    entries = [{"ts": "T1", "type": "decision", "summary": "first"}]
+    _seed_jsonl(persister.memory_dir, "decision", entries)
+
+    with patch("lazy_harness.knowledge.engram_persist.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="boom")
+        result = persister.persist_new_entries()
+
+    assert result.saved_ok == 0
+    assert result.saved_failed == 1
+    cursor_file = persister.memory_dir / "engram_cursor.json"
+    if cursor_file.is_file():
+        cursor = json.loads(cursor_file.read_text())
+        assert cursor["decisions_offset"] == 0  # never advanced
+
+
+def test_skips_already_persisted_entries_on_second_run(tmp_path: Path) -> None:
+    persister = _persister(tmp_path)
+    entries = [
+        {"ts": "T1", "type": "decision", "summary": "first"},
+        {"ts": "T2", "type": "decision", "summary": "second"},
+    ]
+    _seed_jsonl(persister.memory_dir, "decision", entries)
+
+    with patch("lazy_harness.knowledge.engram_persist.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        persister.persist_new_entries()
+        first_call_count = mock_run.call_count
+        # Second run with no new entries
+        result = persister.persist_new_entries()
+
+    assert first_call_count == 2
+    assert result.saved_ok == 0
+    assert mock_run.call_count == 2  # no additional calls
+
+
+def test_handles_malformed_jsonl_line_between_valid_lines(tmp_path: Path) -> None:
+    persister = _persister(tmp_path)
+    valid_a = json.dumps({"ts": "T1", "type": "decision", "summary": "a"})
+    valid_b = json.dumps({"ts": "T2", "type": "decision", "summary": "b"})
+    bad = "{ this is not json"
+    (persister.memory_dir / "decisions.jsonl").write_text(
+        valid_a + "\n" + bad + "\n" + valid_b + "\n"
+    )
+
+    with patch("lazy_harness.knowledge.engram_persist.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        result = persister.persist_new_entries()
+
+    assert result.saved_ok == 2
+    assert result.skipped_malformed == 1
+    # Both valid entries saved, malformed line counted; cursor at EOF.
+    cursor = json.loads((persister.memory_dir / "engram_cursor.json").read_text())
+    assert cursor["decisions_offset"] == (persister.memory_dir / "decisions.jsonl").stat().st_size
+
+
+def test_breaks_inner_loop_on_save_failure(tmp_path: Path) -> None:
+    persister = _persister(tmp_path)
+    entries = [
+        {"ts": "T1", "type": "decision", "summary": "first"},
+        {"ts": "T2", "type": "decision", "summary": "second"},
+        {"ts": "T3", "type": "decision", "summary": "third"},
+    ]
+    _seed_jsonl(persister.memory_dir, "decision", entries)
+
+    side_effects = [
+        MagicMock(returncode=0, stdout="", stderr=""),
+        MagicMock(returncode=1, stdout="", stderr="boom"),
+        MagicMock(returncode=0, stdout="", stderr=""),
+    ]
+
+    with patch(
+        "lazy_harness.knowledge.engram_persist.subprocess.run",
+        side_effect=side_effects,
+    ) as mock_run:
+        result = persister.persist_new_entries()
+
+    assert result.saved_ok == 1
+    assert result.saved_failed == 1
+    # Third entry NOT attempted in this run
+    assert mock_run.call_count == 2
+
+
+def test_resets_cursor_when_offset_exceeds_file_size(tmp_path: Path) -> None:
+    persister = _persister(tmp_path)
+    entries = [{"ts": "T1", "type": "decision", "summary": "first"}]
+    _seed_jsonl(persister.memory_dir, "decision", entries)
+
+    # Pre-seed a cursor that points past EOF (truncation simulation)
+    (persister.memory_dir / "engram_cursor.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "decisions_offset": 9999,
+                "failures_offset": 0,
+                "updated_at": "2026-05-04T00:00:00Z",
+            }
+        )
+    )
+
+    with patch("lazy_harness.knowledge.engram_persist.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        result = persister.persist_new_entries()
+
+    assert result.saved_ok == 1
+
+
+def test_failures_and_decisions_have_independent_cursors(tmp_path: Path) -> None:
+    persister = _persister(tmp_path)
+    decisions = [{"ts": "D1", "type": "decision", "summary": "d"}]
+    failures = [{"ts": "F1", "type": "failure", "summary": "f"}]
+    _seed_jsonl(persister.memory_dir, "decision", decisions)
+    _seed_jsonl(persister.memory_dir, "failure", failures)
+
+    with patch("lazy_harness.knowledge.engram_persist.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        persister.persist_new_entries()
+
+    cursor = json.loads((persister.memory_dir / "engram_cursor.json").read_text())
+    decisions_size = (persister.memory_dir / "decisions.jsonl").stat().st_size
+    failures_size = (persister.memory_dir / "failures.jsonl").stat().st_size
+    assert cursor["decisions_offset"] == decisions_size
+    assert cursor["failures_offset"] == failures_size
