@@ -113,8 +113,8 @@ def _build_title(entry: dict) -> str:
 
 def _save_entry(
     engram_bin: str, entry: dict, kind: EntryKind, project_key: str
-) -> tuple[bool, int]:
-    """Invoke `engram save`. Returns (success, elapsed_ms)."""
+) -> tuple[bool, int, str, int]:
+    """Invoke `engram save`. Returns (success, elapsed_ms, stderr, returncode)."""
     title = _build_title(entry)
     content = json.dumps(entry, sort_keys=True)
     cmd = [
@@ -132,10 +132,10 @@ def _save_entry(
     start = time.monotonic()
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    except OSError:
-        return False, int((time.monotonic() - start) * 1000)
+    except OSError as e:
+        return False, int((time.monotonic() - start) * 1000), str(e), -1
     elapsed_ms = int((time.monotonic() - start) * 1000)
-    return proc.returncode == 0, elapsed_ms
+    return proc.returncode == 0, elapsed_ms, proc.stderr or "", proc.returncode
 
 
 class EngramPersister:
@@ -204,7 +204,9 @@ class EngramPersister:
                         )
                         continue
 
-                    ok, elapsed_ms = _save_entry(self.engram_bin, entry, kind, self.project_key)
+                    ok, elapsed_ms, stderr, rc = _save_entry(
+                        self.engram_bin, entry, kind, self.project_key
+                    )
                     result.subprocess_ms += elapsed_ms
                     if ok:
                         result.saved_ok += 1
@@ -224,6 +226,11 @@ class EngramPersister:
                             )
                     else:
                         result.saved_failed += 1
+                        _append_error_log(
+                            self.logs_dir,
+                            f"engram save returned {rc} for {kind} entry "
+                            f"at offset={offset}: {stderr.strip()}",
+                        )
                         # Do NOT advance cursor; break to avoid pile-up this run.
                         break
 

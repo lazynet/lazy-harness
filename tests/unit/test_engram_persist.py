@@ -522,3 +522,19 @@ def test_slow_save_event_not_emitted_below_threshold(tmp_path: Path) -> None:
     metrics = (logs_dir / "engram_persist_metrics.jsonl").read_text().strip().splitlines()
     slow_lines = [line for line in metrics if json.loads(line).get("event") == "slow_save"]
     assert slow_lines == []
+
+
+def test_error_log_written_on_save_failure(tmp_path: Path) -> None:
+    persister = _persister(tmp_path)
+    entries = [{"ts": "T1", "type": "decision", "summary": "doomed"}]
+    _seed_jsonl(persister.memory_dir, "decision", entries)
+
+    with patch("lazy_harness.knowledge.engram_persist.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="database is locked")
+        persister.persist_new_entries()
+
+    log_path = persister.logs_dir / "engram_persist.log"
+    content = log_path.read_text()
+    assert "engram save returned 1" in content
+    assert "database is locked" in content
+    assert "decision" in content
