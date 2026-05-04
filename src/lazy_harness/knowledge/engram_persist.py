@@ -13,7 +13,9 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import tempfile
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -90,6 +92,42 @@ class PersistResult:
     subprocess_ms: int = 0
 
 
+def _build_title(entry: dict) -> str:
+    raw = entry.get("summary") or ""
+    if not raw or not isinstance(raw, str):
+        kind = entry.get("type", "entry")
+        ts = entry.get("ts", "unknown")
+        return f"{kind}@{ts}"
+    return raw[:TITLE_MAX_CHARS]
+
+
+def _save_entry(
+    engram_bin: str, entry: dict, kind: EntryKind, project_key: str
+) -> tuple[bool, int]:
+    """Invoke `engram save`. Returns (success, elapsed_ms)."""
+    title = _build_title(entry)
+    content = json.dumps(entry, sort_keys=True)
+    cmd = [
+        engram_bin,
+        "save",
+        title,
+        content,
+        "--type",
+        kind,
+        "--project",
+        project_key,
+        "--scope",
+        "project",
+    ]
+    start = time.monotonic()
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    except OSError:
+        return False, int((time.monotonic() - start) * 1000)
+    elapsed_ms = int((time.monotonic() - start) * 1000)
+    return proc.returncode == 0, elapsed_ms
+
+
 class EngramPersister:
     def __init__(
         self,
@@ -106,4 +144,70 @@ class EngramPersister:
         self.slow_save_threshold_ms = slow_save_threshold_ms
 
     def persist_new_entries(self) -> PersistResult:
-        return PersistResult()
+        result = PersistResult()
+        run_start = time.monotonic()
+
+        if self.engram_bin is None:
+            result.duration_ms = int((time.monotonic() - run_start) * 1000)
+            return result
+
+        cursor_path = self.memory_dir / _CURSOR_FILENAME
+        cursor = _load_cursor(cursor_path)
+
+        for kind in ("decision", "failure"):
+            file_path = self.memory_dir / _FILES[kind]
+            offset_key = f"{kind}s_offset"
+            offset = cursor[offset_key]
+
+            if not file_path.is_file():
+                continue
+
+            file_size = file_path.stat().st_size
+            if offset > file_size:
+                offset = 0  # truncated; reset (proper test in Task 4)
+
+            with file_path.open("rb") as f:
+                f.seek(offset)
+                while True:
+                    line_bytes = f.readline()
+                    if not line_bytes:
+                        break
+                    if not line_bytes.endswith(b"\n"):
+                        # Partial line at EOF — not yet finalised by writer.
+                        break
+                    result.entries_seen[kind] += 1
+                    raw = line_bytes.decode("utf-8", errors="replace").rstrip("\n")
+                    try:
+                        entry = json.loads(raw)
+                    except json.JSONDecodeError:
+                        result.skipped_malformed += 1
+                        offset = f.tell()
+                        cursor[offset_key] = offset
+                        _save_cursor(
+                            cursor_path,
+                            decisions_offset=cursor["decisions_offset"],
+                            failures_offset=cursor["failures_offset"],
+                        )
+                        continue
+
+                    ok, elapsed_ms = _save_entry(self.engram_bin, entry, kind, self.project_key)
+                    result.subprocess_ms += elapsed_ms
+                    if ok:
+                        result.saved_ok += 1
+                        offset = f.tell()
+                        cursor[offset_key] = offset
+                        _save_cursor(
+                            cursor_path,
+                            decisions_offset=cursor["decisions_offset"],
+                            failures_offset=cursor["failures_offset"],
+                        )
+                    else:
+                        result.saved_failed += 1
+                        # Do NOT advance cursor; break to avoid pile-up this run.
+                        break
+
+            # Compute lag against final file size for metrics.
+            result.cursor_lag_bytes[kind] = max(0, file_path.stat().st_size - offset)
+
+        result.duration_ms = int((time.monotonic() - run_start) * 1000)
+        return result

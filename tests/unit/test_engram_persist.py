@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from lazy_harness.knowledge.engram_persist import EngramPersister, PersistResult
 
@@ -120,3 +121,101 @@ def test_save_cursor_writes_atomically(tmp_path: Path) -> None:
     # No leftover tempfiles in the parent dir
     leftover = [p for p in tmp_path.iterdir() if p.is_file() and p.suffix == ".tmp"]
     assert leftover == []
+
+
+def _seed_jsonl(memory_dir: Path, kind: str, entries: list[dict]) -> Path:
+    filename = "decisions.jsonl" if kind == "decision" else "failures.jsonl"
+    path = memory_dir / filename
+    path.write_text("\n".join(json.dumps(e) for e in entries) + "\n")
+    return path
+
+
+def _persister(tmp_path: Path, engram_bin: str = "/fake/engram") -> EngramPersister:
+    memory_dir = tmp_path / "memory"
+    logs_dir = tmp_path / "logs"
+    memory_dir.mkdir()
+    logs_dir.mkdir()
+    return EngramPersister(
+        memory_dir=memory_dir,
+        logs_dir=logs_dir,
+        project_key="lazy-harness",
+        engram_bin=engram_bin,
+    )
+
+
+def test_persists_new_decision_entries_via_engram_save(tmp_path: Path) -> None:
+    persister = _persister(tmp_path)
+    entries = [
+        {
+            "ts": "2026-05-04T11:00:00Z",
+            "type": "decision",
+            "summary": "Use CLI not MCP for hook",
+            "rationale": "Independence from server state",
+        }
+    ]
+    _seed_jsonl(persister.memory_dir, "decision", entries)
+
+    with patch("lazy_harness.knowledge.engram_persist.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        result = persister.persist_new_entries()
+
+    assert result.saved_ok == 1
+    assert result.saved_failed == 0
+    mock_run.assert_called_once()
+    args = mock_run.call_args.args[0]
+    assert args[0] == "/fake/engram"
+    assert args[1] == "save"
+    assert args[2] == "Use CLI not MCP for hook"
+    assert json.loads(args[3]) == entries[0]
+    assert "--type" in args and args[args.index("--type") + 1] == "decision"
+    assert "--project" in args and args[args.index("--project") + 1] == "lazy-harness"
+    assert "--scope" in args and args[args.index("--scope") + 1] == "project"
+
+
+def test_persists_failure_entries_with_failure_type(tmp_path: Path) -> None:
+    persister = _persister(tmp_path)
+    entries = [
+        {
+            "ts": "2026-05-04T11:00:00Z",
+            "type": "failure",
+            "summary": "Worker lock not refreshed",
+            "root_cause": "Missing touch() in heartbeat path",
+        }
+    ]
+    _seed_jsonl(persister.memory_dir, "failure", entries)
+
+    with patch("lazy_harness.knowledge.engram_persist.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        persister.persist_new_entries()
+
+    args = mock_run.call_args.args[0]
+    assert args[args.index("--type") + 1] == "failure"
+
+
+def test_title_falls_back_when_summary_missing(tmp_path: Path) -> None:
+    persister = _persister(tmp_path)
+    entries = [
+        {"ts": "2026-05-04T11:00:00Z", "type": "decision"}  # no summary
+    ]
+    _seed_jsonl(persister.memory_dir, "decision", entries)
+
+    with patch("lazy_harness.knowledge.engram_persist.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        persister.persist_new_entries()
+
+    args = mock_run.call_args.args[0]
+    assert args[2] == "decision@2026-05-04T11:00:00Z"
+
+
+def test_title_truncated_to_max_chars(tmp_path: Path) -> None:
+    persister = _persister(tmp_path)
+    long = "x" * 500
+    entries = [{"ts": "2026-05-04T11:00:00Z", "type": "decision", "summary": long}]
+    _seed_jsonl(persister.memory_dir, "decision", entries)
+
+    with patch("lazy_harness.knowledge.engram_persist.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        persister.persist_new_entries()
+
+    args = mock_run.call_args.args[0]
+    assert len(args[2]) == 200  # TITLE_MAX_CHARS
