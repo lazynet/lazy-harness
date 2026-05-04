@@ -10,8 +10,12 @@ Exit semantics belong to the wrapper. This module never calls sys.exit.
 
 from __future__ import annotations
 
+import json
+import os
 import shutil
+import tempfile
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -28,6 +32,52 @@ _FILES: dict[EntryKind, str] = {
 _CURSOR_FILENAME: str = "engram_cursor.json"
 _METRICS_FILENAME: str = "engram_persist_metrics.jsonl"
 _ERROR_LOG_FILENAME: str = "engram_persist.log"
+
+
+def _load_cursor(cursor_path: Path) -> dict[str, int]:
+    """Load cursor offsets, resetting to zero on missing/corrupt/incomplete files."""
+    default: dict[str, int] = {"decisions_offset": 0, "failures_offset": 0}
+    if not cursor_path.is_file():
+        return default
+    try:
+        data = json.loads(cursor_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return default
+    if not isinstance(data, dict):
+        return default
+    if "decisions_offset" not in data or "failures_offset" not in data:
+        return default
+    try:
+        return {
+            "decisions_offset": int(data["decisions_offset"]),
+            "failures_offset": int(data["failures_offset"]),
+        }
+    except (TypeError, ValueError):
+        return default
+
+
+def _save_cursor(cursor_path: Path, decisions_offset: int, failures_offset: int) -> None:
+    """Atomic write: tempfile in same dir + os.replace."""
+    cursor_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": 1,
+        "decisions_offset": decisions_offset,
+        "failures_offset": failures_offset,
+        "updated_at": datetime.now(UTC)
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z"),
+    }
+    fd, tmp_name = tempfile.mkstemp(prefix=".engram_cursor.", suffix=".tmp", dir=cursor_path.parent)
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(payload, f)
+        os.replace(tmp_name, cursor_path)
+    except OSError:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
 
 
 @dataclass
