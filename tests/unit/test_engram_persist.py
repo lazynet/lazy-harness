@@ -92,6 +92,19 @@ def test_load_cursor_resets_on_missing_keys(tmp_path: Path) -> None:
     assert cursor == {"decisions_offset": 0, "failures_offset": 0}
 
 
+def test_load_cursor_resets_on_non_int_values(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.engram_persist import _load_cursor
+
+    cursor_path = tmp_path / "engram_cursor.json"
+    cursor_path.write_text(
+        '{"version": 1, "decisions_offset": "not-a-number", "failures_offset": 0}'
+    )
+
+    cursor = _load_cursor(cursor_path)
+
+    assert cursor == {"decisions_offset": 0, "failures_offset": 0}
+
+
 def test_save_cursor_writes_atomically(tmp_path: Path) -> None:
     from lazy_harness.knowledge.engram_persist import _save_cursor
 
@@ -105,4 +118,5 @@ def test_save_cursor_writes_atomically(tmp_path: Path) -> None:
     assert data["version"] == 1
     assert "updated_at" in data
     # No leftover tempfiles in the parent dir
-    assert not any(p.name.startswith("tmp") for p in tmp_path.iterdir() if p.is_file())
+    leftover = [p for p in tmp_path.iterdir() if p.is_file() and p.suffix == ".tmp"]
+    assert leftover == []

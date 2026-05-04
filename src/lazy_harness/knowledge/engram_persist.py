@@ -63,9 +63,7 @@ def _save_cursor(cursor_path: Path, decisions_offset: int, failures_offset: int)
         "version": 1,
         "decisions_offset": decisions_offset,
         "failures_offset": failures_offset,
-        "updated_at": datetime.now(UTC)
-        .isoformat(timespec="seconds")
-        .replace("+00:00", "Z"),
+        "updated_at": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
     }
     fd, tmp_name = tempfile.mkstemp(prefix=".engram_cursor.", suffix=".tmp", dir=cursor_path.parent)
     try:
@@ -77,7 +75,8 @@ def _save_cursor(cursor_path: Path, decisions_offset: int, failures_offset: int)
             os.unlink(tmp_name)
         except OSError:
             pass
-        raise
+        # Fail soft: cursor write failure means at-least-once becomes
+        # at-least-twice on the next run, which is acceptable.
 
 
 @dataclass
