@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.0](https://github.com/lazynet/lazy-harness/compare/v0.15.4...v0.16.0) (2026-05-04)
+
+
+### Features
+
+* **hooks:** engram-persist deterministic Stop-time mirror ([#60](https://github.com/lazynet/lazy-harness/issues/60)) ([f907107](https://github.com/lazynet/lazy-harness/commit/f907107ac76d71dafb172c2e1a4ccd6fc84d9927))
+
 ## [0.15.4](https://github.com/lazynet/lazy-harness/compare/v0.15.3...v0.15.4) (2026-05-04)
 
 
