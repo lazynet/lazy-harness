@@ -14,6 +14,7 @@ from pathlib import Path
 
 
 def _resolve_project_key(cwd: Path) -> str:
+    # TODO(task-6): replace with git rev-parse --show-toplevel basename
     return cwd.name
 
 
