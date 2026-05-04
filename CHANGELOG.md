@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.0](https://github.com/lazynet/lazy-harness/compare/v0.16.0...v0.17.0) (2026-05-04)
+
+
+### Features
+
+* add engram-persist health block to lh doctor ([#62](https://github.com/lazynet/lazy-harness/issues/62)) ([adcb379](https://github.com/lazynet/lazy-harness/commit/adcb379d887f27506984a0527edc5b3b31a575e4))
+
 ## [0.16.0](https://github.com/lazynet/lazy-harness/compare/v0.15.4...v0.16.0) (2026-05-04)
 
 
