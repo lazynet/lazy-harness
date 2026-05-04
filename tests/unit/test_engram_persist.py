@@ -165,8 +165,9 @@ def test_persists_new_decision_entries_via_engram_save(tmp_path: Path) -> None:
 
     assert result.saved_ok == 1
     assert result.saved_failed == 0
-    mock_run.assert_called_once()
-    args = mock_run.call_args.args[0]
+    # 1 save call + 1 version probe in _emit_run_metric
+    assert mock_run.call_count == 2
+    args = mock_run.call_args_list[0].args[0]
     assert args[0] == persister.engram_bin
     assert args[1] == "save"
     assert args[2] == "Use CLI not MCP for hook"
@@ -192,7 +193,7 @@ def test_persists_failure_entries_with_failure_type(tmp_path: Path) -> None:
         mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
         persister.persist_new_entries()
 
-    args = mock_run.call_args.args[0]
+    args = mock_run.call_args_list[0].args[0]
     assert args[args.index("--type") + 1] == "failure"
 
 
@@ -207,7 +208,7 @@ def test_title_falls_back_when_summary_missing(tmp_path: Path) -> None:
         mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
         persister.persist_new_entries()
 
-    args = mock_run.call_args.args[0]
+    args = mock_run.call_args_list[0].args[0]
     assert args[2] == "decision@2026-05-04T11:00:00Z"
 
 
@@ -221,7 +222,7 @@ def test_title_truncated_to_max_chars(tmp_path: Path) -> None:
         mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
         persister.persist_new_entries()
 
-    args = mock_run.call_args.args[0]
+    args = mock_run.call_args_list[0].args[0]
     assert len(args[2]) == 200  # TITLE_MAX_CHARS
 
 
@@ -257,9 +258,11 @@ def test_skips_already_persisted_entries_on_second_run(tmp_path: Path) -> None:
         # Second run with no new entries
         result = persister.persist_new_entries()
 
-    assert first_call_count == 2
+    # 2 saves + 1 version probe on first run
+    assert first_call_count == 3
     assert result.saved_ok == 0
-    assert mock_run.call_count == 2  # no additional calls
+    # Second run: 0 saves + 1 version probe = 1 additional call
+    assert mock_run.call_count == 4
 
 
 def test_handles_malformed_jsonl_line_between_valid_lines(tmp_path: Path) -> None:
@@ -292,9 +295,9 @@ def test_breaks_inner_loop_on_save_failure(tmp_path: Path) -> None:
     _seed_jsonl(persister.memory_dir, "decision", entries)
 
     side_effects = [
-        MagicMock(returncode=0, stdout="", stderr=""),
-        MagicMock(returncode=1, stdout="", stderr="boom"),
-        MagicMock(returncode=0, stdout="", stderr=""),
+        MagicMock(returncode=0, stdout="", stderr=""),  # save entry 1 → ok
+        MagicMock(returncode=1, stdout="", stderr="boom"),  # save entry 2 → fail, break
+        MagicMock(returncode=0, stdout="", stderr=""),  # version probe in _emit_run_metric
     ]
 
     with patch(
@@ -305,8 +308,8 @@ def test_breaks_inner_loop_on_save_failure(tmp_path: Path) -> None:
 
     assert result.saved_ok == 1
     assert result.saved_failed == 1
-    # Third entry NOT attempted in this run
-    assert mock_run.call_count == 2
+    # 2 save calls (third entry not attempted) + 1 version probe = 3 total
+    assert mock_run.call_count == 3
 
 
 def test_resets_cursor_when_offset_exceeds_file_size(tmp_path: Path) -> None:

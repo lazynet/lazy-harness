@@ -35,10 +35,6 @@ _CURSOR_FILENAME: str = "engram_cursor.json"
 _METRICS_FILENAME: str = "engram_persist_metrics.jsonl"
 _ERROR_LOG_FILENAME: str = "engram_persist.log"
 
-# Stable reference captured at import time so that `_engram_version` is not
-# intercepted by tests that patch `subprocess.run` on the module namespace.
-_subprocess_run = subprocess.run
-
 
 def _load_cursor(cursor_path: Path) -> dict[str, int]:
     """Load cursor offsets, resetting to zero on missing/corrupt/incomplete files."""
@@ -234,7 +230,7 @@ class EngramPersister:
 
 def _engram_version(engram_bin: str) -> str:
     try:
-        proc = _subprocess_run(
+        proc = subprocess.run(
             [engram_bin, "version"],
             capture_output=True,
             text=True,
