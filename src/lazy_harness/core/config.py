@@ -65,6 +65,29 @@ class KnowledgeStructureConfig:
     version: str = "0.6.9"
 
 
+@dataclass(frozen=True)
+class ClassifyRule:
+    """One pattern → (profile, session_type) entry for session export classification.
+
+    See ADR-028. Defaults are kept explicit in `_default_classify_rules()` so the
+    historical mapping stays a no-op for existing users; override via TOML
+    `[[knowledge.classify_rules]]`.
+    """
+
+    pattern: str
+    profile: str
+    session_type: str
+
+
+def _default_classify_rules() -> list[ClassifyRule]:
+    return [
+        ClassifyRule(pattern="lazymind", profile="personal", session_type="vault"),
+        ClassifyRule(pattern="obsidian", profile="personal", session_type="vault"),
+        ClassifyRule(pattern="/repos/lazy/", profile="personal", session_type="personal"),
+        ClassifyRule(pattern="/repos/flex/", profile="work", session_type="work"),
+    ]
+
+
 @dataclass
 class KnowledgeConfig:
     path: str = ""
@@ -72,6 +95,7 @@ class KnowledgeConfig:
     learnings: KnowledgeLearningsConfig = field(default_factory=KnowledgeLearningsConfig)
     search: KnowledgeSearchConfig = field(default_factory=KnowledgeSearchConfig)
     structure: KnowledgeStructureConfig = field(default_factory=KnowledgeStructureConfig)
+    classify_rules: list[ClassifyRule] = field(default_factory=_default_classify_rules)
 
 
 @dataclass
@@ -300,12 +324,27 @@ def load_config(path: Path) -> Config:
     cfg.profiles = _parse_profiles(profiles_raw)
 
     knowledge_raw = raw.get("knowledge", {})
+    if "classify_rules" in knowledge_raw:
+        rules_raw = knowledge_raw.get("classify_rules") or []
+        if not isinstance(rules_raw, list):
+            raise ConfigError("[knowledge].classify_rules must be an array of tables")
+        classify_rules = [
+            ClassifyRule(
+                pattern=entry["pattern"],
+                profile=entry["profile"],
+                session_type=entry["session_type"],
+            )
+            for entry in rules_raw
+        ]
+    else:
+        classify_rules = _default_classify_rules()
     cfg.knowledge = KnowledgeConfig(
         path=knowledge_raw.get("path", ""),
         sessions=KnowledgeSessionsConfig(**knowledge_raw.get("sessions", {})),
         learnings=KnowledgeLearningsConfig(**knowledge_raw.get("learnings", {})),
         search=KnowledgeSearchConfig(**knowledge_raw.get("search", {})),
         structure=KnowledgeStructureConfig(**knowledge_raw.get("structure", {})),
+        classify_rules=classify_rules,
     )
 
     cfg.memory = _parse_memory(raw.get("memory", {}))

@@ -81,7 +81,11 @@ def main() -> None:
         from lazy_harness.knowledge.session_export import export_session
 
         sessions_root.mkdir(parents=True, exist_ok=True)
-        result, skip_reason = export_session(session_file, sessions_root)
+        result, skip_reason = export_session(
+            session_file,
+            sessions_root,
+            classify_rules=cfg.knowledge.classify_rules,
+        )
         if result:
             _log(log_file, f"exported to {result.name}")
         else:

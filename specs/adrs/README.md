@@ -37,6 +37,7 @@ Decisions that define the `lazy-harness` project itself.
 | [025](./025-doctor-features-section.md) | accepted | `lh doctor` Features section for triple stack | New `lazy_harness.features` helper + Features section in `lh doctor` listing qmd/engram/graphify with state, version, and pin. First half of ADR-018 implementation. |
 | [026](./026-config-wizards.md) | accepted | `lh config <feature> --init` wizards (Fase 3b) | New `lh config` Click group + `wizards/` package with TOML deep-merge. Closes ADR-018 implementation. |
 | [027](./027-memory-stack-overview.md) | accepted | Memory stack overview — five-layer model | Names the user-facing layer model that ADR-016/022/023/024 produced. No new mechanism, only canonical vocabulary. |
+| [028](./028-classify-rules-configurable.md) | accepted | Configurable session classification rules | Lift the four hardcoded `_classify` rules into typed `[[knowledge.classify_rules]]` config; defaults reproduce historical behaviour. |
 
 ### Status values
 

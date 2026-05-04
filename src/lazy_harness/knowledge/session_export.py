@@ -8,6 +8,8 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+from lazy_harness.core.config import ClassifyRule, _default_classify_rules
+
 
 def _parse_session_jsonl(
     filepath: Path,
@@ -69,22 +71,18 @@ def _extract_project(cwd: str) -> str:
     return os.path.basename(cwd) or ""
 
 
-def _classify(cwd: str) -> tuple[str, str]:
-    """Return (profile, session_type) based on cwd heuristics.
+def _classify(cwd: str, rules: list[ClassifyRule]) -> tuple[str, str]:
+    """Return (profile, session_type) for the first rule whose pattern matches cwd.
 
-    Matches the bash implementation: LazyMind/obsidian paths classify as
-    vault; `/repos/lazy/` as personal; `/repos/flex/` as work; else other.
-    Profile is the same minus the vault special case.
+    Case-insensitive substring match. Returns ("other", "other") when no rule
+    matches or cwd is empty. See ADR-028.
     """
     if not cwd:
         return ("other", "other")
     lower = cwd.lower()
-    if "lazymind" in lower or "obsidian" in lower:
-        return ("personal", "vault")
-    if "/repos/lazy/" in cwd:
-        return ("personal", "personal")
-    if "/repos/flex/" in cwd:
-        return ("work", "work")
+    for rule in rules:
+        if rule.pattern.lower() in lower:
+            return (rule.profile, rule.session_type)
     return ("other", "other")
 
 
@@ -156,6 +154,7 @@ def export_session(
     output_dir: Path,
     min_messages: int = 4,
     force: bool = False,
+    classify_rules: list[ClassifyRule] | None = None,
 ) -> tuple[Path | None, SkipReason | None]:
     effective_min = 1 if force else min_messages
     meta, messages, is_interactive = _parse_session_jsonl(session_file)
@@ -184,7 +183,8 @@ def export_session(
     if not force and _existing_message_count(output_file) >= len(messages):
         return None, "unchanged"
 
-    profile, session_type = _classify(cwd)
+    rules = classify_rules if classify_rules is not None else _default_classify_rules()
+    profile, session_type = _classify(cwd, rules)
     parts: list[str] = [
         f"---\ntype: claude-session\nsession_id: {session_id}\n",
         f"date: {date_str}\ncwd: {cwd}\n",

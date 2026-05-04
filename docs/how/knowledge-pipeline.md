@@ -57,18 +57,49 @@ Claude Code stores each session as a JSON-per-line file:
 
 A session is only exported if it has at least `min_messages` (default 4) messages after the interactive filter. Below that threshold, the export function returns `None` and the hook logs a skip.
 
-### Classification heuristics
+### Classification rules
 
-`_classify(cwd)` returns `(profile, session_type)`:
+`_classify(cwd, rules)` returns `(profile, session_type)` based on the first rule whose pattern is a case-insensitive substring of `cwd`. Rules come from `[[knowledge.classify_rules]]` in `config.toml`; if the section is omitted, a built-in default list applies. See [ADR-028](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/028-classify-rules-configurable.md).
 
+Default rules (used when nothing is declared):
+
+```toml
+[[knowledge.classify_rules]]
+pattern = "lazymind"
+profile = "personal"
+session_type = "vault"
+
+[[knowledge.classify_rules]]
+pattern = "obsidian"
+profile = "personal"
+session_type = "vault"
+
+[[knowledge.classify_rules]]
+pattern = "/repos/lazy/"
+profile = "personal"
+session_type = "personal"
+
+[[knowledge.classify_rules]]
+pattern = "/repos/flex/"
+profile = "work"
+session_type = "work"
 ```
-LazyMind, obsidian in path  →  ("personal", "vault")
-/repos/lazy/ in path         →  ("personal", "personal")
-/repos/flex/ in path         →  ("work", "work")
-anything else                →  ("other", "other")
+
+Override entirely by declaring your own block — for example, a consultant juggling client work:
+
+```toml
+[[knowledge.classify_rules]]
+pattern = "/srv/clients/acme/"
+profile = "client"
+session_type = "acme"
+
+[[knowledge.classify_rules]]
+pattern = "/opt/research/"
+profile = "research"
+session_type = "experiment"
 ```
 
-These are path heuristics, not config lookups. They are ported verbatim from the predecessor and preserve the calibration that proved useful across real-world projects. The assignment also drives `profile` frontmatter, so the context-inject hook can filter "last session for this project" without scanning bodies.
+Order matters: the first matching pattern wins. Anything that matches no rule is classified as `("other", "other")`. Setting `classify_rules = []` opts out completely. The `profile` value also drives the `profile:` frontmatter field, so `context-inject` and other downstream filters can discriminate without scanning bodies.
 
 ### Project name extraction
 
@@ -87,7 +118,7 @@ Frontmatter:
 type: claude-session
 session_id: 9a8b7c6d-1234-5678-90ab-cdef12345678
 date: 2026-04-13 18:32
-cwd: /Users/me/repos/lazy/lazy-harness
+cwd: /Users/me/code/lazy-harness
 project: lazy-harness
 profile: personal
 session_type: personal

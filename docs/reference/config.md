@@ -155,6 +155,28 @@ Each `[profiles.<name>]` sub-table:
 | -------- | ------ | ------- | -------- | ------------------------------------------------- |
 | `engine` | string | `"qmd"` | no       | Search backend. Only `qmd` is implemented today. |
 
+`[[knowledge.classify_rules]]` (array of tables — see [ADR-028](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/028-classify-rules-configurable.md)):
+
+| Field          | Type   | Default | Required | Description                                                                                  |
+| -------------- | ------ | ------- | -------- | -------------------------------------------------------------------------------------------- |
+| `pattern`      | string | —       | yes      | Case-insensitive substring matched against the session `cwd`.                                |
+| `profile`      | string | —       | yes      | Value written to the export's `profile:` frontmatter when this rule matches.                 |
+| `session_type` | string | —       | yes      | Value written to the export's `session_type:` frontmatter when this rule matches.            |
+
+Rules are evaluated in order; the first match wins. Omitting the section uses a built-in default list (matching `lazymind`/`obsidian` → `vault`, `/repos/lazy/` → `personal`, `/repos/flex/` → `work`). To opt out of all defaults, declare `classify_rules = []` directly under `[knowledge]`.
+
+```toml
+[[knowledge.classify_rules]]
+pattern = "/srv/clients/acme/"
+profile = "client"
+session_type = "acme"
+
+[[knowledge.classify_rules]]
+pattern = "/opt/research/"
+profile = "research"
+session_type = "experiment"
+```
+
 ## `[monitoring]`
 
 | Field     | Type          | Default | Required | Description                                                                                                                    |
