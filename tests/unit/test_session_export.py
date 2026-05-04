@@ -153,13 +153,29 @@ def test_export_adds_profile_and_session_type(tmp_path: Path) -> None:
             {"type": "permission-mode", "timestamp": "2026-04-12T10:00:00-03:00"},
             {
                 "type": "system",
-                "cwd": "/Users/lazynet/repos/lazy/lazy-claudecode",
+                "cwd": "/srv/repos/lazy/some-project",
                 "timestamp": "2026-04-12T10:00:00-03:00",
             },
-            {"type": "user", "message": {"content": "hi"}, "timestamp": "2026-04-12T10:00:01-03:00"},
-            {"type": "assistant", "message": {"content": "ok"}, "timestamp": "2026-04-12T10:00:02-03:00"},
-            {"type": "user", "message": {"content": "next"}, "timestamp": "2026-04-12T10:00:03-03:00"},
-            {"type": "assistant", "message": {"content": "done"}, "timestamp": "2026-04-12T10:00:04-03:00"},
+            {
+                "type": "user",
+                "message": {"content": "hi"},
+                "timestamp": "2026-04-12T10:00:01-03:00",
+            },
+            {
+                "type": "assistant",
+                "message": {"content": "ok"},
+                "timestamp": "2026-04-12T10:00:02-03:00",
+            },
+            {
+                "type": "user",
+                "message": {"content": "next"},
+                "timestamp": "2026-04-12T10:00:03-03:00",
+            },
+            {
+                "type": "assistant",
+                "message": {"content": "done"},
+                "timestamp": "2026-04-12T10:00:04-03:00",
+            },
         ],
     )
     output_dir = tmp_path / "export"
@@ -180,11 +196,31 @@ def test_export_classifies_flex_as_work(tmp_path: Path) -> None:
         session_file,
         [
             {"type": "permission-mode", "timestamp": "2026-04-12T10:00:00-03:00"},
-            {"type": "system", "cwd": "/Users/lazynet/repos/flex/ydi-mgmt", "timestamp": "2026-04-12T10:00:00-03:00"},
-            {"type": "user", "message": {"content": "hi"}, "timestamp": "2026-04-12T10:00:01-03:00"},
-            {"type": "assistant", "message": {"content": "ok"}, "timestamp": "2026-04-12T10:00:02-03:00"},
-            {"type": "user", "message": {"content": "next"}, "timestamp": "2026-04-12T10:00:03-03:00"},
-            {"type": "assistant", "message": {"content": "done"}, "timestamp": "2026-04-12T10:00:04-03:00"},
+            {
+                "type": "system",
+                "cwd": "/srv/repos/flex/some-mgmt",
+                "timestamp": "2026-04-12T10:00:00-03:00",
+            },
+            {
+                "type": "user",
+                "message": {"content": "hi"},
+                "timestamp": "2026-04-12T10:00:01-03:00",
+            },
+            {
+                "type": "assistant",
+                "message": {"content": "ok"},
+                "timestamp": "2026-04-12T10:00:02-03:00",
+            },
+            {
+                "type": "user",
+                "message": {"content": "next"},
+                "timestamp": "2026-04-12T10:00:03-03:00",
+            },
+            {
+                "type": "assistant",
+                "message": {"content": "done"},
+                "timestamp": "2026-04-12T10:00:04-03:00",
+            },
         ],
     )
     output_dir = tmp_path / "export"
@@ -361,3 +397,204 @@ def test_export_handles_content_blocks(tmp_path: Path) -> None:
     content = result.read_text()
     assert "answer one" in content
     assert "answer two" in content
+
+
+# --- ADR-028: configurable classify rules -----------------------------------
+
+
+def test_classify_returns_other_when_no_rule_matches() -> None:
+    from lazy_harness.core.config import ClassifyRule
+    from lazy_harness.knowledge.session_export import _classify
+
+    rules = [ClassifyRule(pattern="/foo/", profile="p", session_type="s")]
+    assert _classify("/some/unrelated/path", rules) == ("other", "other")
+
+
+def test_classify_returns_first_matching_rule() -> None:
+    from lazy_harness.core.config import ClassifyRule
+    from lazy_harness.knowledge.session_export import _classify
+
+    rules = [
+        ClassifyRule(pattern="/foo/", profile="first", session_type="alpha"),
+        ClassifyRule(pattern="/foo/bar/", profile="second", session_type="beta"),
+    ]
+    assert _classify("/foo/bar/quux", rules) == ("first", "alpha")
+
+
+def test_classify_is_case_insensitive() -> None:
+    from lazy_harness.core.config import ClassifyRule
+    from lazy_harness.knowledge.session_export import _classify
+
+    rules = [ClassifyRule(pattern="myvault", profile="p", session_type="vault")]
+    assert _classify("/Users/whoever/MyVault/notes", rules) == ("p", "vault")
+
+
+def test_classify_returns_other_for_empty_cwd() -> None:
+    from lazy_harness.core.config import ClassifyRule
+    from lazy_harness.knowledge.session_export import _classify
+
+    rules = [ClassifyRule(pattern="anything", profile="p", session_type="s")]
+    assert _classify("", rules) == ("other", "other")
+
+
+def test_export_uses_custom_classify_rules(tmp_path: Path) -> None:
+    from lazy_harness.core.config import ClassifyRule
+    from lazy_harness.knowledge.session_export import export_session
+
+    session_file = tmp_path / "custom.jsonl"
+    _write_session(
+        session_file,
+        [
+            {"type": "permission-mode", "timestamp": "2026-04-12T10:00:00-03:00"},
+            {
+                "type": "system",
+                "cwd": "/srv/clients/acme/site",
+                "timestamp": "2026-04-12T10:00:00-03:00",
+            },
+            {
+                "type": "user",
+                "message": {"content": "hi"},
+                "timestamp": "2026-04-12T10:00:01-03:00",
+            },
+            {
+                "type": "assistant",
+                "message": {"content": "ok"},
+                "timestamp": "2026-04-12T10:00:02-03:00",
+            },
+            {
+                "type": "user",
+                "message": {"content": "next"},
+                "timestamp": "2026-04-12T10:00:03-03:00",
+            },
+            {
+                "type": "assistant",
+                "message": {"content": "done"},
+                "timestamp": "2026-04-12T10:00:04-03:00",
+            },
+        ],
+    )
+    output_dir = tmp_path / "export"
+    output_dir.mkdir()
+    rules = [
+        ClassifyRule(pattern="/srv/clients/", profile="client", session_type="client"),
+    ]
+    result, reason = export_session(session_file, output_dir, classify_rules=rules)
+    assert reason is None
+    assert result is not None
+    content = result.read_text()
+    assert "profile: client" in content
+    assert "session_type: client" in content
+
+
+def test_export_default_rules_reproduce_legacy_behaviour(tmp_path: Path) -> None:
+    """Without an explicit rules list, the historical default mapping is
+    preserved bit-for-bit so existing exported archives keep working."""
+    from lazy_harness.knowledge.session_export import export_session
+
+    cases = [
+        ("/some/path/lazymind/notes", "personal", "vault"),
+        ("/elsewhere/obsidian/vault", "personal", "vault"),
+        ("/srv/repos/lazy/proj", "personal", "personal"),
+        ("/srv/repos/flex/proj", "work", "work"),
+        ("/srv/repos/other/proj", "other", "other"),
+    ]
+    for cwd, expected_profile, expected_type in cases:
+        session_file = tmp_path / f"{abs(hash(cwd))}.jsonl"
+        _write_session(
+            session_file,
+            [
+                {"type": "permission-mode", "timestamp": "2026-04-12T10:00:00-03:00"},
+                {"type": "system", "cwd": cwd, "timestamp": "2026-04-12T10:00:00-03:00"},
+                {
+                    "type": "user",
+                    "message": {"content": "hi"},
+                    "timestamp": "2026-04-12T10:00:01-03:00",
+                },
+                {
+                    "type": "assistant",
+                    "message": {"content": "ok"},
+                    "timestamp": "2026-04-12T10:00:02-03:00",
+                },
+                {
+                    "type": "user",
+                    "message": {"content": "x"},
+                    "timestamp": "2026-04-12T10:00:03-03:00",
+                },
+                {
+                    "type": "assistant",
+                    "message": {"content": "y"},
+                    "timestamp": "2026-04-12T10:00:04-03:00",
+                },
+            ],
+        )
+        output_dir = tmp_path / f"export-{abs(hash(cwd))}"
+        output_dir.mkdir()
+        result, reason = export_session(session_file, output_dir)
+        assert reason is None, f"unexpected reason for {cwd}: {reason}"
+        assert result is not None
+        content = result.read_text()
+        assert f"profile: {expected_profile}" in content, f"profile mismatch for {cwd}"
+        assert f"session_type: {expected_type}" in content, f"session_type mismatch for {cwd}"
+
+
+def test_knowledge_config_default_classify_rules() -> None:
+    """Defaults reproduce the four legacy rules in their original order."""
+    from lazy_harness.core.config import ClassifyRule, KnowledgeConfig
+
+    cfg = KnowledgeConfig()
+    assert cfg.classify_rules == [
+        ClassifyRule(pattern="lazymind", profile="personal", session_type="vault"),
+        ClassifyRule(pattern="obsidian", profile="personal", session_type="vault"),
+        ClassifyRule(pattern="/repos/lazy/", profile="personal", session_type="personal"),
+        ClassifyRule(pattern="/repos/flex/", profile="work", session_type="work"),
+    ]
+
+
+def test_knowledge_config_loads_classify_rules_from_toml(tmp_path: Path) -> None:
+    """`[[knowledge.classify_rules]]` arrays-of-tables override the defaults."""
+    from lazy_harness.core.config import ClassifyRule, load_config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        """
+[harness]
+version = "0"
+
+[knowledge]
+path = "/tmp/k"
+
+[[knowledge.classify_rules]]
+pattern = "/srv/clients/"
+profile = "client"
+session_type = "client"
+
+[[knowledge.classify_rules]]
+pattern = "/opt/research/"
+profile = "research"
+session_type = "experiment"
+"""
+    )
+    cfg = load_config(cfg_path)
+    assert cfg.knowledge.classify_rules == [
+        ClassifyRule(pattern="/srv/clients/", profile="client", session_type="client"),
+        ClassifyRule(pattern="/opt/research/", profile="research", session_type="experiment"),
+    ]
+
+
+def test_knowledge_config_explicit_empty_classify_rules(tmp_path: Path) -> None:
+    """Explicit `classify_rules = []` opts out of all defaults."""
+    from lazy_harness.core.config import load_config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        """
+[harness]
+version = "0"
+
+[knowledge]
+path = "/tmp/k"
+classify_rules = []
+"""
+    )
+    cfg = load_config(cfg_path)
+    assert cfg.knowledge.classify_rules == []
