@@ -9,12 +9,32 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
 
 def _resolve_project_key(cwd: Path) -> str:
-    # TODO(task-6): replace with git rev-parse --show-toplevel basename
+    """Return canonical Engram project key.
+
+    Prefers `git rev-parse --show-toplevel` basename so that nested cwd
+    inside a repo always resolves to the same canonical key. Falls back
+    to cwd basename if not in a git repo.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode == 0:
+            top = Path(proc.stdout.strip())
+            if top.name:
+                return top.name
+    except OSError:
+        pass
     return cwd.name
 
 

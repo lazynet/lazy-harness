@@ -374,3 +374,35 @@ def test_failures_and_decisions_have_independent_cursors(tmp_path: Path) -> None
     failures_size = (persister.memory_dir / "failures.jsonl").stat().st_size
     assert cursor["decisions_offset"] == decisions_size
     assert cursor["failures_offset"] == failures_size
+
+
+def test_resolve_project_key_uses_git_toplevel_basename(tmp_path: Path, monkeypatch) -> None:
+    from lazy_harness.hooks.builtins.engram_persist import _resolve_project_key
+
+    repo_root = tmp_path / "repos" / "lazy" / "lazy-harness"
+    repo_root.mkdir(parents=True)
+    (repo_root / ".git").mkdir()  # bare marker; we will mock subprocess
+
+    def fake_run(cmd, **kwargs):
+        if cmd[:3] == ["git", "rev-parse", "--show-toplevel"]:
+            return MagicMock(returncode=0, stdout=str(repo_root) + "\n", stderr="")
+        return MagicMock(returncode=128, stdout="", stderr="not a git repo")
+
+    monkeypatch.setattr("lazy_harness.hooks.builtins.engram_persist.subprocess.run", fake_run)
+
+    nested_cwd = repo_root / "src" / "lazy_harness"
+    nested_cwd.mkdir(parents=True)
+    assert _resolve_project_key(nested_cwd) == "lazy-harness"
+
+
+def test_resolve_project_key_falls_back_to_cwd_basename(tmp_path: Path, monkeypatch) -> None:
+    from lazy_harness.hooks.builtins.engram_persist import _resolve_project_key
+
+    def fake_run(cmd, **kwargs):
+        return MagicMock(returncode=128, stdout="", stderr="not a git repo")
+
+    monkeypatch.setattr("lazy_harness.hooks.builtins.engram_persist.subprocess.run", fake_run)
+
+    cwd = tmp_path / "lazy-harness"
+    cwd.mkdir()
+    assert _resolve_project_key(cwd) == "lazy-harness"
