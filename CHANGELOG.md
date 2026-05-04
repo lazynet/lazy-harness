@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.15.4](https://github.com/lazynet/lazy-harness/compare/v0.15.3...v0.15.4) (2026-05-04)
+
+
+### Documentation
+
+* cover lh config wizards, doctor features section, and mcp deploy seam (ADRs 024-026) ([f8435c6](https://github.com/lazynet/lazy-harness/commit/f8435c6701dee7ba26d73b072fa65d9bcf699b31))
+* fix qmd upstream url, broken backlog link, and personal paths in examples ([e19662f](https://github.com/lazynet/lazy-harness/commit/e19662f2c67ba2032904c4f9a7dee1bf28c34f99))
+* rewrite memory model to canonical five-layer view (ADR-027) ([379034b](https://github.com/lazynet/lazy-harness/commit/379034b9aa20213c109c6ecf28a95beebb4883e4))
+
 ## [0.15.3](https://github.com/lazynet/lazy-harness/compare/v0.15.2...v0.15.3) (2026-05-04)
 
 
