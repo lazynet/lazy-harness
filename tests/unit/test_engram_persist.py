@@ -130,11 +130,15 @@ def _seed_jsonl(memory_dir: Path, kind: str, entries: list[dict]) -> Path:
     return path
 
 
-def _persister(tmp_path: Path, engram_bin: str = "/fake/engram") -> EngramPersister:
+def _persister(tmp_path: Path, engram_bin: str | None = None) -> EngramPersister:
     memory_dir = tmp_path / "memory"
     logs_dir = tmp_path / "logs"
     memory_dir.mkdir()
     logs_dir.mkdir()
+    if engram_bin is None:
+        engram_bin_path = tmp_path / "engram"
+        engram_bin_path.write_text("")  # placeholder; mock intercepts subprocess
+        engram_bin = str(engram_bin_path)
     return EngramPersister(
         memory_dir=memory_dir,
         logs_dir=logs_dir,
@@ -163,7 +167,7 @@ def test_persists_new_decision_entries_via_engram_save(tmp_path: Path) -> None:
     assert result.saved_failed == 0
     mock_run.assert_called_once()
     args = mock_run.call_args.args[0]
-    assert args[0] == "/fake/engram"
+    assert args[0] == persister.engram_bin
     assert args[1] == "save"
     assert args[2] == "Use CLI not MCP for hook"
     assert json.loads(args[3]) == entries[0]
@@ -327,6 +331,32 @@ def test_resets_cursor_when_offset_exceeds_file_size(tmp_path: Path) -> None:
         result = persister.persist_new_entries()
 
     assert result.saved_ok == 1
+
+
+def test_handles_missing_engram_binary_gracefully(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    logs_dir = tmp_path / "logs"
+    memory_dir.mkdir()
+    logs_dir.mkdir()
+    entries = [{"ts": "T1", "type": "decision", "summary": "x"}]
+    _seed_jsonl(memory_dir, "decision", entries)
+
+    persister = EngramPersister(
+        memory_dir=memory_dir,
+        logs_dir=logs_dir,
+        project_key="lazy-harness",
+        engram_bin=None,  # binary not on PATH
+    )
+
+    with patch("lazy_harness.knowledge.engram_persist.subprocess.run") as mock_run:
+        result = persister.persist_new_entries()
+
+    mock_run.assert_not_called()
+    assert result.saved_ok == 0
+    # Warning written to error log
+    log_path = logs_dir / "engram_persist.log"
+    assert log_path.is_file()
+    assert "engram binary not on PATH" in log_path.read_text()
 
 
 def test_failures_and_decisions_have_independent_cursors(tmp_path: Path) -> None:

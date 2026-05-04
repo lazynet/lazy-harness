@@ -24,6 +24,8 @@ from typing import Literal
 SLOW_SAVE_THRESHOLD_MS: int = 500
 TITLE_MAX_CHARS: int = 200
 
+_AUTO_DISCOVER = object()  # sentinel: resolve engram_bin via shutil.which at construction time
+
 EntryKind = Literal["decision", "failure"]
 
 _FILES: dict[EntryKind, str] = {
@@ -92,6 +94,16 @@ class PersistResult:
     subprocess_ms: int = 0
 
 
+def _append_error_log(logs_dir: Path, message: str) -> None:
+    try:
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().astimezone().isoformat(timespec="seconds")
+        with (logs_dir / _ERROR_LOG_FILENAME).open("a") as f:
+            f.write(f"{ts} engram-persist: {message}\n")
+    except OSError:
+        pass
+
+
 def _build_title(entry: dict) -> str:
     raw = entry.get("summary") or ""
     if not raw or not isinstance(raw, str):
@@ -134,20 +146,29 @@ class EngramPersister:
         memory_dir: Path,
         logs_dir: Path,
         project_key: str,
-        engram_bin: str | None = None,
+        engram_bin: str | None = _AUTO_DISCOVER,  # type: ignore[assignment]
         slow_save_threshold_ms: int = SLOW_SAVE_THRESHOLD_MS,
     ) -> None:
         self.memory_dir = memory_dir
         self.logs_dir = logs_dir
         self.project_key = project_key
-        self.engram_bin = engram_bin if engram_bin is not None else shutil.which("engram")
+        # None means caller explicitly says "no binary" (missing from environment).
+        # _AUTO_DISCOVER (default) triggers shutil.which at construction time.
+        if engram_bin is _AUTO_DISCOVER:
+            self.engram_bin: str | None = shutil.which("engram")
+        else:
+            self.engram_bin = engram_bin
         self.slow_save_threshold_ms = slow_save_threshold_ms
 
     def persist_new_entries(self) -> PersistResult:
         result = PersistResult()
         run_start = time.monotonic()
 
-        if self.engram_bin is None:
+        if self.engram_bin is None or not Path(self.engram_bin).exists():
+            _append_error_log(
+                self.logs_dir,
+                "engram binary not on PATH; skipping run (no-op)",
+            )
             result.duration_ms = int((time.monotonic() - run_start) * 1000)
             return result
 
