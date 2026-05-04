@@ -406,3 +406,47 @@ def test_resolve_project_key_falls_back_to_cwd_basename(tmp_path: Path, monkeypa
     cwd = tmp_path / "lazy-harness"
     cwd.mkdir()
     assert _resolve_project_key(cwd) == "lazy-harness"
+
+
+def test_metrics_run_line_emitted_with_required_fields(tmp_path: Path) -> None:
+    persister = _persister(tmp_path)
+    entries = [{"ts": "T1", "type": "decision", "summary": "x"}]
+    _seed_jsonl(persister.memory_dir, "decision", entries)
+
+    with patch("lazy_harness.knowledge.engram_persist.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        persister.persist_new_entries()
+
+    metrics_path = persister.logs_dir / "engram_persist_metrics.jsonl"
+    assert metrics_path.is_file()
+    lines = metrics_path.read_text().strip().splitlines()
+    assert len(lines) == 1
+    record = json.loads(lines[0])
+    assert record["event"] == "run"
+    assert record["saved_ok"] == 1
+    assert record["saved_failed"] == 0
+    assert record["skipped_malformed"] == 0
+    assert record["entries_seen"] == {"decisions": 1, "failures": 0}
+    assert record["cursor_lag_bytes"] == {"decisions": 0, "failures": 0}
+    assert record["project_key"] == "lazy-harness"
+    assert "duration_ms" in record
+    assert "subprocess_ms" in record
+    assert "ts" in record
+    assert "engram_version" in record
+    assert "hook_version" in record
+
+
+def test_metrics_not_emitted_when_engram_binary_missing(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    logs_dir = tmp_path / "logs"
+    memory_dir.mkdir()
+    logs_dir.mkdir()
+    persister = EngramPersister(
+        memory_dir=memory_dir,
+        logs_dir=logs_dir,
+        project_key="lazy-harness",
+        engram_bin="/nonexistent/engram-binary-xyz",
+    )
+    persister.persist_new_entries()
+
+    assert not (logs_dir / "engram_persist_metrics.jsonl").exists()

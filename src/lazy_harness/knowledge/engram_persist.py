@@ -35,6 +35,10 @@ _CURSOR_FILENAME: str = "engram_cursor.json"
 _METRICS_FILENAME: str = "engram_persist_metrics.jsonl"
 _ERROR_LOG_FILENAME: str = "engram_persist.log"
 
+# Stable reference captured at import time so that `_engram_version` is not
+# intercepted by tests that patch `subprocess.run` on the module namespace.
+_subprocess_run = subprocess.run
+
 
 def _load_cursor(cursor_path: Path) -> dict[str, int]:
     """Load cursor offsets, resetting to zero on missing/corrupt/incomplete files."""
@@ -224,4 +228,66 @@ class EngramPersister:
             result.cursor_lag_bytes[kind] = max(0, file_path.stat().st_size - offset)
 
         result.duration_ms = int((time.monotonic() - run_start) * 1000)
+        _emit_run_metric(self.logs_dir, result, self.project_key, self.engram_bin)
         return result
+
+
+def _engram_version(engram_bin: str) -> str:
+    try:
+        proc = _subprocess_run(
+            [engram_bin, "version"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=2,
+        )
+        if proc.returncode == 0:
+            # Output like "engram v1.15.4"
+            tokens = proc.stdout.strip().split()
+            return tokens[-1] if tokens else "unknown"
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return "unknown"
+
+
+def _hook_version() -> str:
+    try:
+        from lazy_harness import __version__
+
+        return __version__
+    except Exception:
+        return "unknown"
+
+
+def _emit_run_metric(
+    logs_dir: Path,
+    result: PersistResult,
+    project_key: str,
+    engram_bin: str,
+) -> None:
+    record = {
+        "ts": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "event": "run",
+        "duration_ms": result.duration_ms,
+        "subprocess_ms": result.subprocess_ms,
+        "entries_seen": {
+            "decisions": result.entries_seen["decision"],
+            "failures": result.entries_seen["failure"],
+        },
+        "saved_ok": result.saved_ok,
+        "saved_failed": result.saved_failed,
+        "skipped_malformed": result.skipped_malformed,
+        "cursor_lag_bytes": {
+            "decisions": result.cursor_lag_bytes["decision"],
+            "failures": result.cursor_lag_bytes["failure"],
+        },
+        "project_key": project_key,
+        "engram_version": _engram_version(engram_bin),
+        "hook_version": _hook_version(),
+    }
+    try:
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        with (logs_dir / _METRICS_FILENAME).open("a") as f:
+            f.write(json.dumps(record) + "\n")
+    except OSError:
+        pass
