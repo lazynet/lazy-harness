@@ -58,11 +58,11 @@ A typical `~/.config/lazy-harness/config.toml` is small:
 ```toml
 [profiles.personal]
 config_dir = "~/.claude-personal"
-roots = ["~/repos/lazy"]
+roots = ["~/code/personal"]
 
 [profiles.work]
 config_dir = "~/.claude-work"
-roots = ["~/repos/work"]
+roots = ["~/code/work"]
 
 [hooks.SessionStart]
 context-inject = { enabled = true }
@@ -77,15 +77,19 @@ command = "lh metrics ingest"
 
 ## The memory problem (and how it's solved)
 
-The single feature most users notice on day one is that the agent stops forgetting. `lazy-harness` adds **five memory layers** on top of the agent's built-in `CLAUDE.md`, arranged across three time scales:
+The single feature most users notice on day one is that the agent stops forgetting. On top of the agent's built-in `CLAUDE.md`, `lazy-harness` ships a **five-layer memory stack** ([ADR-027](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/027-memory-stack-overview.md)). Two layers are file-based and shipped by the framework itself; three are best-of-breed external tools that `lh` detects, configures and (where applicable) wires into the agent automatically via [ADR-024](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/024-mcp-server-orchestration.md).
 
-| Scale | What it answers | Mechanism |
-|---|---|---|
-| **Short-term** — within a session | "What is this session about right now?" | Session-start context injection + pre-compact summaries |
-| **Medium-term** — across sessions in the same project | "What did I decide last time? What broke last month?" | `MEMORY.md` + append-only `decisions.jsonl` / `failures.jsonl` + session export |
-| **Long-term** — across all projects | "Where did I see this pattern before?" | Knowledge directory + optional QMD semantic index |
+| Layer | Backend | Provided by | What it answers |
+|---|---|---|---|
+| **Curated semantic** | `MEMORY.md` (file, ≤ 200 lines) | shipped — `<config_dir>/projects/<slug>/memory/` | "What rules and patterns govern this project?" |
+| **Distilled episodic** | `decisions.jsonl` / `failures.jsonl` (append-only) | shipped — written by the compound-loop worker | "What did we decide? What broke and why?" |
+| **Raw episodic** | [Engram](https://github.com/Gentleman-Programming/engram) — SQLite + FTS5, MCP server | external CLI, auto-wired when installed | "What did we do in this project last week, and when?" |
+| **Searchable semantic** | [QMD](https://github.com/lazynet/qmd) — BM25 + vectors, MCP server | external CLI, auto-wired when installed | "Where did I see this pattern across all my notes and repos?" |
+| **Structural** | [Graphify](https://github.com/safishamsi/graphify) — tree-sitter call graph (`graphify-out/graph.json`) | external CLI, detected and exposed via `lh doctor` and the `/graphify` skill | "What calls X? What does this module look like?" |
 
-Before `lazy-harness`, the first 5 minutes of every session were context reconstruction. After, they're work. Full breakdown: [Memory model](https://lazynet.github.io/lazy-harness/why/memory-model/).
+The layers map to three classic memory archetypes: **episodic** (distilled + raw), **semantic** (curated + searchable) and **structural** (the code-graph index). User-facing rule: pick the layer first, then the tool — `lh doctor` and the `lh config` wizards group their output the same way.
+
+Before `lazy-harness`, the first 5 minutes of every session were context reconstruction. After, they're work.
 
 ## Quick start
 
