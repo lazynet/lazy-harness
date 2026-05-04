@@ -345,7 +345,7 @@ def test_handles_missing_engram_binary_gracefully(tmp_path: Path) -> None:
         memory_dir=memory_dir,
         logs_dir=logs_dir,
         project_key="lazy-harness",
-        engram_bin=None,  # binary not on PATH
+        engram_bin="/nonexistent/engram-binary-xyz",
     )
 
     with patch("lazy_harness.knowledge.engram_persist.subprocess.run") as mock_run:
@@ -353,7 +353,6 @@ def test_handles_missing_engram_binary_gracefully(tmp_path: Path) -> None:
 
     mock_run.assert_not_called()
     assert result.saved_ok == 0
-    # Warning written to error log
     log_path = logs_dir / "engram_persist.log"
     assert log_path.is_file()
     assert "engram binary not on PATH" in log_path.read_text()

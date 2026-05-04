@@ -24,8 +24,6 @@ from typing import Literal
 SLOW_SAVE_THRESHOLD_MS: int = 500
 TITLE_MAX_CHARS: int = 200
 
-_AUTO_DISCOVER = object()  # sentinel: resolve engram_bin via shutil.which at construction time
-
 EntryKind = Literal["decision", "failure"]
 
 _FILES: dict[EntryKind, str] = {
@@ -146,18 +144,13 @@ class EngramPersister:
         memory_dir: Path,
         logs_dir: Path,
         project_key: str,
-        engram_bin: str | None = _AUTO_DISCOVER,  # type: ignore[assignment]
+        engram_bin: str | None = None,
         slow_save_threshold_ms: int = SLOW_SAVE_THRESHOLD_MS,
     ) -> None:
         self.memory_dir = memory_dir
         self.logs_dir = logs_dir
         self.project_key = project_key
-        # None means caller explicitly says "no binary" (missing from environment).
-        # _AUTO_DISCOVER (default) triggers shutil.which at construction time.
-        if engram_bin is _AUTO_DISCOVER:
-            self.engram_bin: str | None = shutil.which("engram")
-        else:
-            self.engram_bin = engram_bin
+        self.engram_bin = engram_bin if engram_bin is not None else shutil.which("engram")
         self.slow_save_threshold_ms = slow_save_threshold_ms
 
     def persist_new_entries(self) -> PersistResult:
