@@ -46,14 +46,6 @@ def test_graphify_run_handles_missing_binary() -> None:
         assert "graphify not found" in result.stderr
 
 
-def test_graphify_mcp_server_config_shape() -> None:
-    from lazy_harness.knowledge.graphify import mcp_server_config
-
-    entry = mcp_server_config()
-    assert entry["command"] == "graphify"
-    assert entry["args"] == ["mcp"]
-
-
 def test_graphify_pinned_version_constant() -> None:
     from lazy_harness.knowledge import graphify
 

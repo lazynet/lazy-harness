@@ -17,7 +17,7 @@ def _make_cfg(profile_dir: Path, agent_type: str = "claude-code"):
     return cfg
 
 
-def test_deploy_mcp_servers_writes_settings_when_qmd_available(
+def test_deploy_mcp_servers_writes_claude_json_when_qmd_available(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from lazy_harness.deploy import engine
@@ -34,20 +34,48 @@ def test_deploy_mcp_servers_writes_settings_when_qmd_available(
     cfg = _make_cfg(profile_dir)
     engine.deploy_mcp_servers(cfg)
 
-    settings = json.loads((profile_dir / "settings.json").read_text())
-    assert "mcpServers" in settings
-    assert settings["mcpServers"]["qmd"]["command"] == "qmd"
+    claude_json = json.loads((profile_dir / ".claude.json").read_text())
+    assert "mcpServers" in claude_json
+    assert claude_json["mcpServers"]["qmd"]["command"] == "qmd"
 
 
-def test_deploy_mcp_servers_preserves_existing_hooks(
+def test_deploy_mcp_servers_does_not_write_mcp_block_to_settings(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from lazy_harness.deploy import engine
 
     profile_dir = tmp_path / ".claude-test"
     profile_dir.mkdir()
-    (profile_dir / "settings.json").write_text(
-        json.dumps({"hooks": {"SessionStart": [{"matcher": "", "hooks": []}]}})
+
+    monkeypatch.setattr(
+        engine,
+        "_collect_mcp_servers",
+        lambda cfg: {"qmd": {"command": "qmd", "args": ["mcp"]}},
+    )
+
+    engine.deploy_mcp_servers(_make_cfg(profile_dir))
+
+    settings_file = profile_dir / "settings.json"
+    if settings_file.is_file():
+        settings = json.loads(settings_file.read_text())
+        assert "mcpServers" not in settings
+
+
+def test_deploy_mcp_servers_preserves_existing_claude_json_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.deploy import engine
+
+    profile_dir = tmp_path / ".claude-test"
+    profile_dir.mkdir()
+    (profile_dir / ".claude.json").write_text(
+        json.dumps(
+            {
+                "projects": {"/some/path": {"history": []}},
+                "userID": "abc123",
+                "mcpServers": {"backlog": {"command": "backlog", "args": ["mcp", "start"]}},
+            }
+        )
     )
 
     monkeypatch.setattr(
@@ -58,9 +86,11 @@ def test_deploy_mcp_servers_preserves_existing_hooks(
 
     engine.deploy_mcp_servers(_make_cfg(profile_dir))
 
-    settings = json.loads((profile_dir / "settings.json").read_text())
-    assert "hooks" in settings
-    assert "mcpServers" in settings
+    claude_json = json.loads((profile_dir / ".claude.json").read_text())
+    assert claude_json["projects"] == {"/some/path": {"history": []}}
+    assert claude_json["userID"] == "abc123"
+    assert "qmd" in claude_json["mcpServers"]
+    assert "backlog" in claude_json["mcpServers"]
 
 
 def test_deploy_mcp_servers_noop_when_no_tools(
@@ -74,6 +104,7 @@ def test_deploy_mcp_servers_noop_when_no_tools(
 
     engine.deploy_mcp_servers(_make_cfg(profile_dir))
 
+    assert not (profile_dir / ".claude.json").is_file()
     assert not (profile_dir / "settings.json").is_file()
 
 
@@ -156,53 +187,19 @@ def test_collect_mcp_servers_skips_engram_when_binary_missing(
     assert "engram" not in result
 
 
-def test_collect_mcp_servers_includes_graphify_when_enabled_and_available(
+def test_collect_mcp_servers_never_includes_graphify(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Graphify is a CLI/skill (see safishamsi/graphify upstream), not an MCP server.
+
+    The harness installs it via `graphify install`; it must never be wired
+    as an MCP entry, regardless of cfg.knowledge.structure.enabled.
+    """
     from lazy_harness.core.config import Config
     from lazy_harness.deploy import engine
-    from lazy_harness.knowledge import graphify as graphify_mod
     from lazy_harness.knowledge import qmd as qmd_mod
 
     monkeypatch.setattr(qmd_mod, "is_qmd_available", lambda: False)
-    monkeypatch.setattr(graphify_mod, "is_graphify_available", lambda: True)
-
-    cfg = Config()
-    cfg.knowledge.structure.enabled = True
-
-    result = engine._collect_mcp_servers(cfg)
-    assert "graphify" in result
-    assert result["graphify"]["command"] == "graphify"
-
-
-def test_collect_mcp_servers_skips_graphify_when_disabled(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from lazy_harness.core.config import Config
-    from lazy_harness.deploy import engine
-    from lazy_harness.knowledge import graphify as graphify_mod
-    from lazy_harness.knowledge import qmd as qmd_mod
-
-    monkeypatch.setattr(qmd_mod, "is_qmd_available", lambda: False)
-    monkeypatch.setattr(graphify_mod, "is_graphify_available", lambda: True)
-
-    cfg = Config()
-    cfg.knowledge.structure.enabled = False
-
-    result = engine._collect_mcp_servers(cfg)
-    assert "graphify" not in result
-
-
-def test_collect_mcp_servers_skips_graphify_when_binary_missing(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from lazy_harness.core.config import Config
-    from lazy_harness.deploy import engine
-    from lazy_harness.knowledge import graphify as graphify_mod
-    from lazy_harness.knowledge import qmd as qmd_mod
-
-    monkeypatch.setattr(qmd_mod, "is_qmd_available", lambda: False)
-    monkeypatch.setattr(graphify_mod, "is_graphify_available", lambda: False)
 
     cfg = Config()
     cfg.knowledge.structure.enabled = True

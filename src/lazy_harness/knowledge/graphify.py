@@ -45,11 +45,6 @@ def run_graphify(action: str, target: str | None = None, timeout: int = 600) -> 
         return GraphifyResult(exit_code=-1, stdout="", stderr="graphify not found in PATH")
 
 
-def mcp_server_config() -> dict:
-    """Declarative MCP entry for Graphify (consumed by deploy_mcp_servers)."""
-    return {"command": "graphify", "args": ["mcp"]}
-
-
 def check_version() -> tuple[bool, str]:
     """Probe `graphify --version` and compare against PINNED_VERSION.
 

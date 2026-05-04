@@ -77,8 +77,13 @@ def deploy_hooks(cfg: Config) -> None:
 
 
 def _collect_mcp_servers(cfg: Config) -> dict[str, dict]:
-    """Probe each known tool and return the MCP entries that should ship."""
-    from lazy_harness.knowledge import graphify, qmd
+    """Probe each known tool and return the MCP entries that should ship.
+
+    Graphify is intentionally excluded: per upstream (safishamsi/graphify) it's
+    a CLI/skill installed via `graphify install`, not an MCP server. The
+    `graphify mcp` subcommand does not exist.
+    """
+    from lazy_harness.knowledge import qmd
     from lazy_harness.memory import engram
 
     servers: dict[str, dict] = {}
@@ -86,13 +91,16 @@ def _collect_mcp_servers(cfg: Config) -> dict[str, dict]:
         servers["qmd"] = qmd.mcp_server_config()
     if cfg.memory.engram.enabled and engram.is_engram_available():
         servers["engram"] = engram.mcp_server_config()
-    if cfg.knowledge.structure.enabled and graphify.is_graphify_available():
-        servers["graphify"] = graphify.mcp_server_config()
     return servers
 
 
 def deploy_mcp_servers(cfg: Config) -> None:
-    """Write detected MCP server entries into each profile's settings.json."""
+    """Write detected MCP server entries into each profile's .claude.json.
+
+    Claude Code reads MCP servers from .claude.json (not settings.json), so
+    that's where the deploy must merge them. The rest of .claude.json
+    (history, projects, userID, ...) is preserved untouched.
+    """
     from lazy_harness.agents.registry import get_agent
 
     servers = _collect_mcp_servers(cfg)
@@ -106,18 +114,21 @@ def deploy_mcp_servers(cfg: Config) -> None:
     for name, entry in cfg.profiles.items.items():
         target_dir = expand_path(entry.config_dir)
         target_dir.mkdir(parents=True, exist_ok=True)
-        settings_file = target_dir / "settings.json"
+        claude_json_file = target_dir / ".claude.json"
 
-        settings: dict = {}
-        if settings_file.is_file():
+        existing: dict = {}
+        if claude_json_file.is_file():
             try:
-                settings = json.loads(settings_file.read_text())
+                existing = json.loads(claude_json_file.read_text())
             except json.JSONDecodeError:
                 pass
 
-        settings.update(mcp_block)
-        settings_file.write_text(json.dumps(settings, indent=2) + "\n")
-        click.echo(f"  ✓ {name}/settings.json (MCP servers: {', '.join(servers)})")
+        existing_mcp = existing.get("mcpServers", {})
+        existing_mcp.update(mcp_block.get("mcpServers", {}))
+        existing["mcpServers"] = existing_mcp
+
+        claude_json_file.write_text(json.dumps(existing, indent=2) + "\n")
+        click.echo(f"  ✓ {name}/.claude.json (MCP servers: {', '.join(servers)})")
 
 
 def deploy_claude_symlink(cfg: Config) -> None:
