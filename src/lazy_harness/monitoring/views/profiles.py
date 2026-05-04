@@ -40,22 +40,30 @@ def _auth_email(config_dir: Path) -> str:
     return ""
 
 
-def _settings_counts(config_dir: Path) -> tuple[int, int]:
-    """Return (hook_count, mcp_count) read from settings.json."""
-    settings_file = config_dir / "settings.json"
-    if not settings_file.is_file():
-        return 0, 0
-    try:
-        settings = json.loads(settings_file.read_text())
-    except (json.JSONDecodeError, OSError):
-        return 0, 0
+def _profile_counts(config_dir: Path) -> tuple[int, int]:
+    """Return (hook_count, mcp_count). Hooks live in settings.json; MCPs in .claude.json."""
     hook_count = 0
-    for hook_list in settings.get("hooks", {}).values():
-        if isinstance(hook_list, list):
-            hook_count += sum(
-                len(h.get("hooks", [])) if isinstance(h, dict) else 0 for h in hook_list
-            )
-    mcp_count = len(settings.get("mcpServers", {}))
+    settings_file = config_dir / "settings.json"
+    if settings_file.is_file():
+        try:
+            settings = json.loads(settings_file.read_text())
+            for hook_list in settings.get("hooks", {}).values():
+                if isinstance(hook_list, list):
+                    hook_count += sum(
+                        len(h.get("hooks", [])) if isinstance(h, dict) else 0 for h in hook_list
+                    )
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    mcp_count = 0
+    claude_json_file = config_dir / ".claude.json"
+    if claude_json_file.is_file():
+        try:
+            claude_json = json.loads(claude_json_file.read_text())
+            mcp_count = len(claude_json.get("mcpServers", {}))
+        except (json.JSONDecodeError, OSError):
+            pass
+
     return hook_count, mcp_count
 
 
@@ -77,7 +85,7 @@ def render(ctx: StatusContext, console: Console) -> None:
         else:
             status = "[yellow]exists[/yellow]"
 
-        hooks, mcps = _settings_counts(p.config_dir)
+        hooks, mcps = _profile_counts(p.config_dir)
         email = _auth_email(p.config_dir) or "—"
         table.add_row(
             label,
