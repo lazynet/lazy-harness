@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.15.3](https://github.com/lazynet/lazy-harness/compare/v0.15.2...v0.15.3) (2026-05-04)
+
+
+### Refactors
+
+* **knowledge:** make session classify rules configurable (ADR-028) ([#58](https://github.com/lazynet/lazy-harness/issues/58)) ([e20e504](https://github.com/lazynet/lazy-harness/commit/e20e504dc71b1b3e8164778307534b033e0ac173))
+
+
+### Documentation
+
+* **readme:** describe full five-layer memory stack with engram, qmd, graphify ([0983355](https://github.com/lazynet/lazy-harness/commit/0983355d5d806d71317c5fe7357c3d5af4680e61))
+* **readme:** fix qmd upstream url (tobi/qmd, not lazynet/qmd) ([3064897](https://github.com/lazynet/lazy-harness/commit/30648978babfd1c07fd665ea9a4f1e182987b4b4))
+* **readme:** redesign for value-first structure and richer feature surface ([da2421e](https://github.com/lazynet/lazy-harness/commit/da2421ef0827c6f7171d9bfab083b4459969034c))
+
 ## [0.15.2](https://github.com/lazynet/lazy-harness/compare/v0.15.1...v0.15.2) (2026-05-04)
 
 
