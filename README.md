@@ -49,7 +49,7 @@ AI coding agents ship as a chat interface and a file tool. That's enough for a d
 | **Profiles** | Isolate `personal`, `work`, `client` — each with its own `CLAUDE.md`, `settings.json`, skills and knowledge. Switch by directory or env var. | `lh profile add work --config-dir ~/.claude-work --roots ~/repos/work` |
 | **Hooks** | Cross-platform hook engine with built-ins for session-start context injection, pre-compact summaries, session export and compound-loop enforcement. Bring your own via `config.toml`. | `lh hooks list` |
 | **Monitoring** | SQLite-backed metrics on every session — duration, tokens, tools, cost. Ten built-in dashboard views. | `lh status sessions --period week` |
-| **Knowledge** | Filesystem knowledge directory for sessions and distilled learnings, optionally indexed by [QMD](https://github.com/lazynet/qmd) for semantic search. | `lh knowledge sync && lh knowledge embed` |
+| **Knowledge** | Filesystem knowledge directory for sessions and distilled learnings, optionally indexed by [QMD](https://github.com/tobi/qmd) for semantic search. | `lh knowledge sync && lh knowledge embed` |
 | **Scheduler** | One interface over launchd, systemd and cron. Declare jobs in TOML; the harness writes the native unit files. | `lh scheduler install` |
 | **Migration** | Take an existing Claude Code setup and convert it in place — dry-run gate, full backup, one-command rollback. | `lh migrate --dry-run` |
 
@@ -84,7 +84,7 @@ The single feature most users notice on day one is that the agent stops forgetti
 | **Curated semantic** | `MEMORY.md` (file, ≤ 200 lines) | shipped — `<config_dir>/projects/<slug>/memory/` | "What rules and patterns govern this project?" |
 | **Distilled episodic** | `decisions.jsonl` / `failures.jsonl` (append-only) | shipped — written by the compound-loop worker | "What did we decide? What broke and why?" |
 | **Raw episodic** | [Engram](https://github.com/Gentleman-Programming/engram) — SQLite + FTS5, MCP server | external CLI, auto-wired when installed | "What did we do in this project last week, and when?" |
-| **Searchable semantic** | [QMD](https://github.com/lazynet/qmd) — BM25 + vectors, MCP server | external CLI, auto-wired when installed | "Where did I see this pattern across all my notes and repos?" |
+| **Searchable semantic** | [QMD](https://github.com/tobi/qmd) — BM25 + vectors, MCP server | external CLI, auto-wired when installed | "Where did I see this pattern across all my notes and repos?" |
 | **Structural** | [Graphify](https://github.com/safishamsi/graphify) — tree-sitter call graph (`graphify-out/graph.json`) | external CLI, detected and exposed via `lh doctor` and the `/graphify` skill | "What calls X? What does this module look like?" |
 
 The layers map to three classic memory archetypes: **episodic** (distilled + raw), **semantic** (curated + searchable) and **structural** (the code-graph index). User-facing rule: pick the layer first, then the tool — `lh doctor` and the `lh config` wizards group their output the same way.
