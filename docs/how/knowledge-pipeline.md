@@ -210,3 +210,67 @@ cd ~/Documents/lazy-harness-knowledge && git init
 ```
 
 Moving to a new machine is "point `config.toml`'s `[knowledge].path` at the same directory and run `qmd update`". Nothing inside the framework holds state that can diverge from the directory contents.
+
+## Other consumers of the same pipeline
+
+QMD is the headline consumer of the knowledge tree, but it is not the only one. Two more pieces plug into the same on-disk artifacts and are worth understanding alongside the main pipeline.
+
+### Engram persistence loop — JSONL mirrored into a per-project store
+
+Module: `src/lazy_harness/knowledge/engram_persist.py`. Wired as a `Stop` hook (`engram-persist`) that runs **after** `compound-loop` writes its new entries. Design rationale: [ADR-029](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/029-engram-persist-deterministic-mirror.md).
+
+While the JSONL pair (`decisions.jsonl` / `failures.jsonl`) is the file-of-record, [Engram](https://github.com/Gentleman-Programming/engram) is the agent's MCP-queryable view of the same data. The mirror keeps both views in sync without dual-writing from `compound-loop` itself — `compound-loop` only writes to JSONL, and `engram-persist` reads what is new and ships it to `engram save`.
+
+Determinism comes from a **per-file byte cursor** stored alongside each project's memory dir, in `<memory_dir>/engram_cursor.json`:
+
+```json
+{
+  "version": 1,
+  "decisions_offset": 18234,
+  "failures_offset": 5120,
+  "updated_at": "2026-04-13T18:33:01Z"
+}
+```
+
+Each run, for each kind:
+
+1. Open the JSONL, seek to the stored offset.
+2. Read whole lines until EOF. Partial lines are deferred (the writer might still be flushing the entry).
+3. Decode each line as JSON; malformed lines advance the cursor and are counted as `skipped_malformed` — they are not retried.
+4. Call `engram save <title> <json> --type <kind> --project <project_key> --scope project`. The project key is `git rev-parse --git-common-dir`'s basename, so worktrees collapse onto the parent repo.
+5. **On success**, advance the cursor (atomic tempfile + `os.replace`).
+6. **On failure**, leave the cursor untouched and stop processing this kind. The next run picks up from the same offset → at-least-once delivery, ordering preserved.
+
+This produces three things on disk besides the Engram DB itself:
+
+- `<memory_dir>/engram_cursor.json` — offsets per kind, atomically updated.
+- `~/.claude/logs/engram_persist.log` — append-only error log (subprocess failures, missing binary).
+- `~/.claude/logs/engram_persist_metrics.jsonl` — one record per run (run summary) plus one per slow `engram save` (≥ 500 ms). `lh doctor` reads this to classify the loop's health as `ok` / `warn` / `fail` based on age, failure rate, and cursor lag.
+
+If `engram` is not on `PATH`, the loop logs a no-op and exits cleanly. Like every other external integration in the framework, this layer is opt-in: install `engram`, declare `[memory.engram].enabled = true`, the rest of the pipeline keeps working unchanged.
+
+### Structural layer — Graphify
+
+Module: `src/lazy_harness/knowledge/graphify.py`. Pinned to a specific Graphify version (see [ADR-023](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/023-graphify-code-structure.md)) so that an upgrade is an explicit decision rather than a transparent behaviour change.
+
+[Graphify](https://github.com/safishamsi/graphify) is a tree-sitter–based code-structure indexer covering 25 languages. Where QMD answers "where did we discuss X across all my notes?", Graphify answers "what calls this function?", "explain this module", or "show me the dependency neighbourhood of this symbol". Its output is a JSON graph plus an interactive HTML report under `graphify-out/` **inside each repo**, not in the knowledge directory.
+
+The harness's job is integration, not re-implementation:
+
+- `is_graphify_available()` probes `shutil.which("graphify")`. If absent, every other piece of the framework keeps working — the structural layer is simply missing.
+- `check_version()` parses `graphify --version` and compares against `PINNED_VERSION`. `lh doctor` surfaces a row when the installed version drifts from the pin.
+- `run_graphify(action, target, timeout)` is a thin wrapper around `subprocess.run(["graphify", action, target])`, used by the `/graphify` skill in interactive sessions. The framework never invokes Graphify automatically — building the graph is up to the user (or a scheduled job, or a post-commit hook).
+
+Configuration lives under `[knowledge.structure]` in `config.toml`:
+
+```toml
+[knowledge.structure]
+engine = "graphify"
+enabled = true
+auto_rebuild_on_commit = false
+version = "0.6.9"
+```
+
+`enabled = true` is what `lh deploy` reads to wire the Graphify MCP entry into each profile's `settings.json`. With `auto_rebuild_on_commit = true`, `lh deploy` also installs a `post-commit` git hook that triggers a graph rebuild on every commit — useful in actively-edited repos where stale graph data would mislead the agent.
+
+Because `graphify-out/` is checked into the repo by convention, teammates and future sessions reuse the index without rebuilding. Adding it to `.gitignore` is a deliberate (if rare) choice for repos where build cost dominates over reuse.

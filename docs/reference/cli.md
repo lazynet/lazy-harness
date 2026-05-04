@@ -21,7 +21,7 @@ Checks environment health and reports the status of optional features. Use it as
 The output has two parts:
 
 - **Environment checks** — Python version, agent binary present, config readable, profile dirs writable, `direnv` detected.
-- **Features section** ([ADR-025](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/025-doctor-features-section.md)) — one row per memory-stack tool (`qmd`, `engram`, `graphify`) with state (`active`, `dormant`, `missing`), installed version vs pinned version, and a one-line hint when something needs attention. Tools that need an explicit enable in `config.toml` (e.g. `[memory.engram].enabled = true`) show as `dormant` until the flag flips.
+- **Features section** ([ADR-025](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/025-doctor-features-section.md)) — one row per memory-stack tool (`qmd`, `engram`, `graphify`) with state (`active`, `dormant`, `missing`), installed version vs pinned version, and a one-line hint when something needs attention. Tools that need an explicit enable in `config.toml` (e.g. `[memory.engram].enabled = true`) show as `dormant` until the flag flips. The `engram-persist` row reports loop health (`ok` / `warn` / `fail` / `missing`) classified from `~/.claude/logs/engram_persist_metrics.jsonl` against three thresholds: last-run age (warn ≥ 24 h, fail ≥ 7 d), recent failure rate (warn > 0%, fail > 10%), and cursor lag in bytes (fail ≥ 64 KiB).
 
 ```bash
 lh doctor
@@ -35,8 +35,10 @@ Interactive wizards that write a typed config block back into `~/.config/lazy-ha
 
 Currently shipped wizards:
 
-- `lh config memory --init` — configures `[memory.engram]` (enable, project scope, optional sync settings).
-- `lh config knowledge --init` — configures `[knowledge]` (path, sessions/learnings subdirs, search engine, structure backend).
+- **`lh config memory --init`** — writes `[memory.engram]`. Probes whether `engram` is on `PATH` first; when missing, prints the pinned version and the install hint, then asks whether to write the section anyway (so a config can be staged before the binary lands). Prompts for `enabled`, `git_sync` (commit per-repo memory chunks under `.engram/chunks/`), and `cloud` (opt-in cloud sync, off by default to preserve the local-first guarantee). The pinned version is stamped automatically.
+- **`lh config knowledge --init`** — writes `[knowledge.structure]` for Graphify. Same probe-and-stage pattern as the memory wizard: prompts for `enabled` and `auto_rebuild_on_commit` (registers a per-repo `post-commit` hook that triggers a rebuild). Pinned Graphify version is stamped automatically.
+
+Both wizards stamp the pinned tool version into the resulting block so `lh doctor` can later flag drift between the install and the config.
 
 ```bash
 lh config memory --init
@@ -108,9 +110,13 @@ lh migrate --rollback
 
 ## `lh metrics`
 
-Ingests agent session JSONLs into the monitoring SQLite DB so `lh status` can show real sessions/tokens/cost numbers.
+Manages the metrics pipeline: session-rollup ingestion plus per-event sink fanout.
 
-`lh metrics ingest` walks every profile's `<config_dir>/projects/**/*.jsonl`, aggregates token usage per `(session, model)`, prices it with `[monitoring.pricing]` overrides (falling back to `DEFAULT_PRICING`), and UPSERTs into `session_stats`. The pipeline is safe to run repeatedly — it tracks each session's file mtime in a separate `ingest_meta` table and skips files that haven't changed since the previous run. Re-ingesting the same file is idempotent: totals are re-computed from the full (append-only) JSONL and overwrite prior rows, so token counts never accumulate double.
+### `lh metrics ingest`
+
+Walks every profile's `<config_dir>/projects/**/*.jsonl`, aggregates token usage per `(session, model)`, prices it with `[monitoring.pricing]` overrides (falling back to `DEFAULT_PRICING`), and UPSERTs into `session_stats`. The pipeline is safe to run repeatedly — it tracks each session's file mtime in a separate `ingest_meta` table and skips files that haven't changed since the previous run. Re-ingesting the same file is idempotent: totals are re-computed from the full (append-only) JSONL and overwrite prior rows, so token counts never accumulate double.
+
+After the SQL upsert, every active sink declared in `[metrics].sinks` writes the resulting events. With the default `["sqlite_local"]`, that is a no-op write into the same DB. With `http_remote` added, ingest also opportunistically drains the outbox in the same process, so a single `lh metrics ingest` tick covers both write and ship.
 
 `--dry-run` parses everything but writes to an in-memory DB so you can preview the scan without touching the real one. `-v/--verbose` surfaces any per-file errors the walk hit.
 
@@ -120,6 +126,27 @@ Pair with `lh scheduler` to keep the DB fresh — add a job under `[scheduler.jo
 lh metrics ingest --dry-run
 lh metrics ingest
 ```
+
+### `lh metrics drain`
+
+Force-drains the outbox for every configured remote sink without re-running ingest. Useful after a backend outage to flush the backlog without paying the cost of re-scanning every JSONL. Honors the same per-row exponential backoff and 60-second lease as the opportunistic drain inside `ingest`.
+
+```bash
+lh metrics drain
+```
+
+Output is one summary line: `drain complete: <sent> sent, <failed> failed`.
+
+### `lh metrics status`
+
+Prints per-sink outbox counters (`pending`, `sending`, `sent`) for every non-`sqlite_local` sink. Use it to spot a stuck `http_remote` without `sqlite3`-ing the DB.
+
+```bash
+lh metrics status
+# http_remote  pending: 12  sending: 0  sent: 8431
+```
+
+Mechanics — sinks, outbox, drain policy, idempotency: [how the metrics ingest pipeline works](../how/metrics-ingest.md#the-sink-layer).
 
 ## `lh profile`
 

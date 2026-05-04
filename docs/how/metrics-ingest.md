@@ -111,11 +111,109 @@ A tempting alternative is to ingest from the `Stop` / `session-export` hook so t
 
 If you want live updates anyway, nothing stops you from calling `lh metrics ingest` from a local post-stop hook — just accept that you own the failure mode.
 
+## The sink layer
+
+Ingest writes session-level rollups (`session_stats`) to one SQLite file. The sink layer is the orthogonal channel for **per-event telemetry** — one record per assistant message, fan-out to one or more destinations. This is what the framework uses to ship metrics to a remote backend, with on-disk buffering and retry, without coupling the ingest pipeline to any of it.
+
+### Built-in sinks
+
+Two sinks ship with the framework:
+
+| Sink | When it writes | What it does |
+|---|---|---|
+| `sqlite_local` | Always on | Upserts each `MetricEvent` into `session_stats` keyed by `(session, model)`. Identity columns (`user_id`, `tenant_id`) are stamped on every row. Never fails under normal conditions. |
+| `http_remote` | Opt-in | Serializes the event as JSON, enqueues it on a persistent `sink_outbox` table. The actual HTTP POST happens later, in batches, via `drain_http_remote`. |
+
+The list of active sinks is declared in `[metrics].sinks`. With no `[metrics]` block, the default is `["sqlite_local"]` and the framework does zero network I/O — that property is load-bearing for offline-friendly setups, so adding a new built-in sink that talks to the network without an explicit opt-in is rejected by the config parser.
+
+### Why an outbox
+
+`http_remote.write()` does not POST. It only enqueues. Three reasons:
+
+1. **Hooks must be fast.** A `Stop` hook that blocks on a 5-second HTTP timeout drags out every session close. Enqueue is microseconds.
+2. **Network is unreliable.** A failed POST should not lose the event. Persisting to SQLite first means the worst case is "send later", not "send never".
+3. **Multiple `lh` processes.** Two terminals running `lh` in parallel both ingest, both enqueue. Without an outbox, both would also send — duplicating events on the backend.
+
+The outbox solves (3) with a **claim-with-lease** protocol: when a worker drains a batch, it stamps a 60-second lease on those rows. Other `lh` processes skip leased rows. If a worker crashes mid-send, the lease expires and the next drainer picks them up.
+
+### Drain — when and how
+
+Two triggers fire `drain_http_remote`:
+
+1. **Opportunistic.** Every `lh metrics ingest` drains after it ingests, in the same process. This means the cron-driven ingest cadence is also the drain cadence, with no extra wiring.
+2. **Explicit.** `lh metrics drain` runs only the drain phase. Useful for catching up after a backend outage without re-running the full ingest.
+
+The drainer iterates the claimed batch, POSTs each event, and writes back per-row state:
+
+| Outcome | Action |
+|---|---|
+| HTTP 2xx | Mark `sent`. Row is removed from pending. |
+| HTTP non-2xx | Mark `failed` with `error="HTTP <code>"`. Row stays pending; `attempts` increments; next-retry timestamp set with exponential backoff. |
+| Network error / timeout | Same as non-2xx, with `error=<exception class>`. |
+
+Backoff per row: first failure waits 1 s, then doubles, capped at 300 s. The cap means an event genuinely stuck on a broken backend retries every 5 minutes forever — up to whatever `[metrics].pending_ttl_days` you set, after which expired rows are pruned.
+
+End-to-end idempotency comes from the `event_id` field on every `MetricEvent`. The receiving backend is expected to upsert by it. Re-sending after a crash mid-POST is therefore safe.
+
+### Configuration
+
+Minimal — `sqlite_local` only, no remote shipping:
+
+```toml
+# (no [metrics] block at all)
+```
+
+With remote shipping:
+
+```toml
+[metrics]
+sinks = ["sqlite_local", "http_remote"]
+user_id = "team-42"           # stamped on every event row
+tenant_id = "acme"            # stamped on every event row
+pending_ttl_days = 30         # outbox rows older than this are pruned
+
+[metrics.sink_options.http_remote]
+url = "https://metrics.example.com/v1/ingest"
+timeout_seconds = 5.0         # per request
+batch_size = 50               # events claimed per drain pass
+```
+
+Validation rules (enforced by the config parser):
+
+- A name in `sinks` other than `sqlite_local` **requires** a matching `[metrics.sink_options.<name>]` block. Missing options is a hard error at load time.
+- A `[metrics.sink_options.<name>]` block whose name is not in `sinks` is silently ignored (dead config).
+- `http_remote` rejects an empty `url`.
+
+The legacy `[monitoring]` block (`db`, `pricing`) is independent of `[metrics]`. They coexist: `[monitoring]` controls the SQLite file's location and pricing rates for ingest cost rollups; `[metrics]` controls per-event fanout. A future migration may unify them; today they live side by side.
+
+### Health
+
+`lh metrics status` prints per-sink counts (`pending` / `sending` / `sent`) so a stuck `http_remote` is visible without inspecting the DB:
+
+```bash
+$ lh metrics status
+http_remote  pending: 12  sending: 0  sent: 8431
+```
+
+For deeper inspection:
+
+```bash
+sqlite3 ~/.config/lazy-harness/metrics.db <<'SQL'
+SELECT sink_name, COUNT(*) AS rows, SUM(attempts) AS retries
+FROM sink_outbox
+WHERE status = 'pending'
+GROUP BY sink_name;
+SQL
+```
+
 ## Pointers
 
 - Pipeline: `src/lazy_harness/monitoring/ingest.py`
 - Producer: `src/lazy_harness/monitoring/collector.py`
 - Sink + schema: `src/lazy_harness/monitoring/db.py`
 - Pricing table: `src/lazy_harness/monitoring/pricing.py`
+- Sinks: `src/lazy_harness/monitoring/sinks/{sqlite_local,http_remote,worker}.py`
+- Sink wiring: `src/lazy_harness/monitoring/sink_setup.py`
+- Sink contracts (`MetricEvent`, `SinkWriteResult`, `DrainResult`, `SinkHealth`): `src/lazy_harness/plugins/contracts.py`
 - CLI: `src/lazy_harness/cli/metrics_cmd.py`
 - Tests: `tests/unit/test_ingest.py`, `tests/unit/test_pricing.py`, `tests/integration/test_metrics_cmd.py`

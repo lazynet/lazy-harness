@@ -11,6 +11,7 @@ When you move from "occasionally ask Claude to explain a diff" to "pair with Cla
 - **No observability.** How much did last week cost? Which sessions actually changed the repo? Which tools were called? You can't answer any of these.
 - **Knowledge is write-only.** You learn something in a session and it dies when the window closes. There is no loop back into future sessions.
 - **Recurring jobs are yours to build.** Want a pre-compact summary? A weekly knowledge review? A nightly QMD re-index? You write the scheduler glue yourself, per platform.
+- **No guardrails on tool use.** Out of the box the agent can `rm -rf`, `git reset --hard`, `terraform destroy`, or `cat .env` with no second-look. The blast radius of a bad turn is the blast radius of a shell. Per-profile policy belongs in front of every tool call.
 - **Migration is all-or-nothing.** Adopting a new convention — moving knowledge, renaming profiles, splitting a setup — means editing many files by hand and praying.
 
 Every one of these is solvable with enough shell scripts, cron entries, and discipline. That's what `lazy-harness` is: the shell scripts, the schedulers, and the discipline, packaged.

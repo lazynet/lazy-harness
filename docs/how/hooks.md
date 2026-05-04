@@ -11,7 +11,7 @@ A hook is an executable that:
 1. Is invoked by the agent (not by `lazy-harness`) when a specific event fires.
 2. Reads a JSON payload describing the event from stdin.
 3. Optionally writes a JSON object with `hookSpecificOutput` on stdout.
-4. Exits with code 0. **Always.** A hook that exits non-zero risks breaking the agent's session.
+4. Exits with code 0. **Always**, with one deliberate exception: the `PreToolUse` security hook exits 2 when it decides to block, which is how Claude Code expects a `PreToolUse` decision to be communicated. Every other built-in is exit-0-always, including on error.
 
 Built-in hooks ship inside the framework as Python scripts under `src/lazy_harness/hooks/builtins/`. User hooks live under `~/.config/lazy-harness/hooks/<name>.py` (or whatever language you prefer as long as the binary is executable and reads stdin).
 
@@ -38,16 +38,16 @@ scripts = ["post-compact"]
 
 ## Event glossary
 
-| `config.toml` event | Claude Code event | When it fires | Typical use |
-|---|---|---|---|
-| `session_start` | `SessionStart` | Right after Claude Code starts a session | Inject additional context |
-| `session_stop` | `Stop` | After every LLM turn (not once at shutdown) | Export session, queue gated async work |
-| `session_end` | `SessionEnd` | Exactly once at real session termination (`/exit`, `/clear`, logout) | Force final end-of-session work |
-| `pre_compact` | `PreCompact` | Immediately before Claude Code compacts conversation history | Preserve working state |
-| `post_compact` | `PostCompact` | Immediately after Claude Code compacts conversation history | Re-inject preserved working state |
-| `pre_tool_use` | `PreToolUse` | Before each tool call | Guardrails, policy enforcement |
-| `post_tool_use` | `PostToolUse` | After each tool call | Logging, side-effect observers |
-| `notification` | `Notification` | Ad-hoc agent notifications | Desktop notifications, integrations |
+| `config.toml` event | Claude Code event | When it fires | Built-ins shipped | Typical use |
+|---|---|---|---|---|
+| `session_start` | `SessionStart` | Right after Claude Code starts a session | `context-inject` | Inject additional context |
+| `session_stop` | `Stop` | After every LLM turn (not once at shutdown) | `session-export`, `compound-loop`, `engram-persist` | Export session, queue gated async work, mirror new memory entries |
+| `session_end` | `SessionEnd` | Exactly once at real session termination (`/exit`, `/clear`, logout) | `session-end` | Force final end-of-session work |
+| `pre_compact` | `PreCompact` | Immediately before Claude Code compacts conversation history | `pre-compact` | Preserve working state |
+| `post_compact` | `PostCompact` | Immediately after Claude Code compacts conversation history | `post-compact` | Re-inject preserved working state |
+| `pre_tool_use` | `PreToolUse` | Before each tool call | `pre-tool-use-security` | Block destructive / exfiltration commands |
+| `post_tool_use` | `PostToolUse` | After each tool call | `post-tool-use-format` | Auto-format edited files, side-effect observers |
+| `notification` | `Notification` | Ad-hoc agent notifications | — | Desktop notifications, integrations |
 
 The mapping lives in `ClaudeCodeAdapter.generate_hook_config` — other agents may expose different event names, but the `config.toml` side is stable.
 
@@ -191,7 +191,112 @@ The worker is the same, the prompt is the same, the persistence layer is the sam
 
 A harness-agnostic fallback is also available as a CLI command: `lh knowledge handoff-now` runs the same force path on demand. Useful before `/compact`, before closing a terminal without `/exit`, or on Claude Code builds that predate the `SessionEnd` event.
 
-## How the five hooks complement each other
+### `pre-tool-use-security` — runs on `PreToolUse`
+
+Source: `src/lazy_harness/hooks/builtins/pre_tool_use_security.py`.
+
+Responsibility: stop high-blast-radius shell commands **before** the agent runs them. This is the framework's only built-in that exits non-zero on purpose — Claude Code interprets exit code 2 from a `PreToolUse` hook as a **block** decision and surfaces the hook's stderr message back into the agent's turn so it can adapt.
+
+Scope: only `Bash` tool calls are inspected. Every other tool name (Read, Edit, Write, MCP tools, …) is a fast exit 0. The hook reads `tool_input.command` from stdin and walks an ordered list of regex rules grouped by category. The first match wins; later rules are not evaluated.
+
+Categories shipped:
+
+| Category | Examples blocked |
+|---|---|
+| `filesystem` | `rm -rf …`, `truncate <file>` |
+| `git` | `git push --force` (without `--force-with-lease`), `git reset --hard`, `git add -f .env`/`*.pem`/`id_rsa`/credentials |
+| `sql` | `DROP TABLE`, `DROP DATABASE`, `TRUNCATE TABLE` |
+| `terraform` | `terraform destroy`, `terraform apply -auto-approve`, `terraform apply -replace=…`, `terraform state rm`/`push` |
+| `credentials` | reads of `.env` (excluding `.env.example` / `.sample` / `.template`), `.ssh/id_*` private keys (excluding `*.pub`), `.aws/credentials` & `.aws/config`, any `.pem` / `.key` / `.p12` |
+
+When a rule matches, the hook writes a structured message to stderr —
+
+```
+Blocked by lazy-harness PreToolUse: <reason> (<category>).
+Matched: <truncated command>
+If this is intentional, add a regex pattern to
+[hooks.pre_tool_use] allow_patterns in your profile config.toml.
+```
+
+— and exits 2.
+
+**Per-profile allowlist.** A specific command can be rescued by adding a regex to `[hooks.pre_tool_use].allow_patterns` in `config.toml`:
+
+```toml
+[hooks.pre_tool_use]
+allow_patterns = [
+    # Allow `terraform destroy` only against the test workspace
+    "terraform\\s+destroy.*-target=module\\.scratch",
+    # Allow reading the example env file (already excluded by default,
+    # shown here as the shape of an override)
+    "cat\\s+\\.env\\.example",
+]
+```
+
+Rules of the allowlist:
+
+- It is consulted **only when a block rule already matched**. A pattern that matches no block rule is dead config; harmless but useless.
+- Patterns are full Python `re.search` regexes. Broken patterns are skipped silently — they cannot turn the hook into a hard error.
+- If `config.toml` cannot be read or the section is missing, the allowlist is empty. This is fail-safe: stricter blocking, never weaker.
+- Matching is per-command, not per-rule. One pattern can rescue any block rule it covers.
+
+**Where it writes:** nowhere on disk. Logs go to the standard `~/.claude/logs/hooks.log` like every other built-in.
+
+The full rule list and the rationale behind each category live in [`specs/designs/2026-04-17-security-hooks-cluster-design.md`](https://github.com/lazynet/lazy-harness/blob/main/specs/designs/2026-04-17-security-hooks-cluster-design.md).
+
+### `post-tool-use-format` — runs on `PostToolUse`
+
+Source: `src/lazy_harness/hooks/builtins/post_tool_use_format.py`.
+
+Responsibility: keep edited Python files formatted without forcing a separate workflow step. Fires after every successful tool call; matches `Edit` or `Write` against any path ending in `.py` and runs `ruff format <path>` with a 10-second timeout.
+
+Behaviour:
+
+- Non-Python files: instant exit 0.
+- Tools other than `Edit` / `Write`: instant exit 0.
+- `ruff` not on `PATH`, or `ruff format` times out, or the file does not exist: exit 0 (the hook never fails the agent's turn).
+
+This is the simplest built-in and the easiest extension point — a project that prefers `black` over `ruff format`, or that wants to format `.go` files with `gofmt`, can copy this file into `~/.config/lazy-harness/hooks/` under a different name and register it in `[hooks.post_tool_use]` instead.
+
+**Where it writes:** the file the agent just edited (in place, via `ruff format`). Nothing else.
+
+### `engram-persist` — runs on `Stop`
+
+Source: `src/lazy_harness/hooks/builtins/engram_persist.py` (the wrapper) + `src/lazy_harness/knowledge/engram_persist.py` (the `EngramPersister` class).
+
+Responsibility: deterministically mirror new entries from `decisions.jsonl` and `failures.jsonl` into [Engram](https://github.com/Gentleman-Programming/engram) so the same observation is queryable both via `grep` over the JSONL and via `mem_search` from any future session. Runs after `compound-loop` writes its new entries on the same `Stop` event.
+
+Mechanism: per-file byte cursors in `<memory_dir>/engram_cursor.json`.
+
+```json
+{
+  "version": 1,
+  "decisions_offset": 18234,
+  "failures_offset": 5120,
+  "updated_at": "2026-04-13T18:33:01Z"
+}
+```
+
+For each kind (`decision`, `failure`):
+
+1. Open the matching JSONL, seek to the stored byte offset.
+2. Read line by line. Partial lines at EOF are deferred to the next run (the producer might still be flushing).
+3. Decode each line as JSON. Malformed lines are counted (`skipped_malformed`) and the cursor advances past them — they are not retried.
+4. For each well-formed entry, invoke `engram save <title> <json> --type <kind> --project <key> --scope project`. The title is the entry's `summary` field truncated to 200 chars; the body is the canonical JSON of the entry.
+5. **On success**, advance the cursor to the new file position and persist `engram_cursor.json` atomically (tempfile + `os.replace`).
+6. **On failure**, leave the cursor untouched and stop processing this kind for this run. The next run retries the same offset → at-least-once delivery, with a strict ordering guarantee (no entry skipped over a transient failure).
+
+Project key resolution: `git rev-parse --git-common-dir` so worktrees collapse onto the main repo's basename. This prevents `lazy-harness` and `.worktrees/feat-foo` from showing up as two separate Engram projects.
+
+If `engram` is not on `PATH`, the run logs `engram binary not on PATH; skipping run (no-op)` and exits 0.
+
+**Where it writes:**
+
+- `<memory_dir>/engram_cursor.json` — the per-kind byte cursors.
+- `~/.claude/logs/engram_persist.log` — append-only error log (subprocess failures, missing binary).
+- `~/.claude/logs/engram_persist_metrics.jsonl` — one JSONL record per run (run summary) plus one record per slow `engram save` (≥ 500 ms). The `lh doctor` "engram-persist" feature row reads this file via `monitoring/engram_persist_health.py` to classify state as `ok` / `warn` / `fail` based on last-run age, recent failure rate, and cursor lag.
+
+## How the hooks complement each other
 
 The magic is the composition, not any single hook. A full session lifecycle:
 
@@ -205,6 +310,8 @@ The magic is the composition, not any single hook. A full session lifecycle:
 └──────────────────────┘      └──────────────────────┘
               │
               │  user ↔ agent conversation
+              │  (every Bash tool call → PreToolUse → pre-tool-use-security)
+              │  (every Edit/Write tool call → PostToolUse → post-tool-use-format)
               ▼
 ┌──────────────────────┐      ┌──────────────────────┐
 │  PreCompact           │──►   │ pre-compact          │
@@ -231,6 +338,15 @@ The magic is the composition, not any single hook. A full session lifecycle:
 │                       │      │   failures.jsonl,    │
 │                       │      │   handoff.md,        │
 │                       │      │   learnings/*.md     │
+│                       │                              │
+│                       │──►   │ engram-persist       │
+│                       │      │ mirrors new JSONL    │
+│                       │      │ entries → Engram     │
+│                       │      │ via byte cursor      │
+│                       │      │ writes:              │
+│                       │      │   engram_cursor.json,│
+│                       │      │   engram_persist     │
+│                       │      │   _metrics.jsonl     │
 └──────────────────────┘      └──────────────────────┘
               │
               │  user types /exit or /clear
