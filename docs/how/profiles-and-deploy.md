@@ -32,12 +32,12 @@ default = "personal"
 
 [profiles.personal]
 config_dir    = "~/.claude-personal"
-roots         = ["~/repos/lazy", "~/Documents"]
+roots         = ["~/code/personal", "~/notes"]
 lazynorth_doc = "LazyNorth-personal.md"
 
 [profiles.work]
 config_dir    = "~/.claude-work"
-roots         = ["~/repos/flex"]
+roots         = ["~/code/work"]
 lazynorth_doc = "LazyNorth-work.md"
 ```
 
@@ -45,7 +45,7 @@ Fields:
 
 - **`default`** — which profile `~/.claude` symlinks to, and which profile is used when the cwd does not match any profile's roots.
 - **`config_dir`** — the target directory for the profile. Can be anything, but the `~/.claude-<name>` convention is what the deploy and selftest assume.
-- **`roots`** — list of directories; any cwd below one of these resolves to this profile. Longest-prefix match wins, so `~/repos/flex` beats `~/repos` if both are declared.
+- **`roots`** — list of directories; any cwd below one of these resolves to this profile. Longest-prefix match wins, so `~/code/work` beats `~/code` if both are declared.
 - **`lazynorth_doc`** — optional. The filename inside the LazyNorth directory (if enabled in `[lazynorth]`) to pull strategic context from for this profile.
 
 Profile management commands:
@@ -53,7 +53,7 @@ Profile management commands:
 ```bash
 lh profile list                                           # show all with status
 lh profile add work --config-dir ~/.claude-work \
-                    --roots ~/repos/flex
+                    --roots ~/code/work
 lh profile remove experimental                            # cannot remove default
 ```
 
@@ -81,7 +81,7 @@ def resolve_profile(cfg: Config, cwd: Path | None = None) -> str:
 
 Longest-matching-root wins. This is the rule that decides which `CLAUDE_CONFIG_DIR` a newly launched session points at — either via `lh run` (which wraps `claude` and sets the env var) or via a shell wrapper the user installs.
 
-The rule matters when profiles overlap: if one profile says `roots = ["~/repos"]` and another says `roots = ["~/repos/flex"]`, a session in `~/repos/flex/project` picks the second because its matching root is longer.
+The rule matters when profiles overlap: if one profile says `roots = ["~/code"]` and another says `roots = ["~/code/work"]`, a session in `~/code/work/project` picks the second because its matching root is longer.
 
 ## Deploy flow — what `lh deploy` actually does
 

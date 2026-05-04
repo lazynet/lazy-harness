@@ -6,7 +6,7 @@
 - **[uv](https://docs.astral.sh/uv/).** The Python package manager used to install lazy-harness. Install with `curl -LsSf https://astral.sh/uv/install.sh | sh`.
 - **Claude Code** (the agent lazy-harness wraps). Install from [claude.com/claude-code](https://claude.com/claude-code).
 - **git** (for the install step — lazy-harness is not on PyPI yet).
-- Optional: [QMD](https://github.com/lazynet/qmd) for semantic search across your knowledge directory.
+- Optional: [QMD](https://github.com/tobi/qmd) for semantic search across your knowledge directory.
 
 ## Platforms
 

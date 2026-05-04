@@ -26,7 +26,7 @@ When a feature requires new abstractions, the abstraction is built **inside** th
 
 Debt that you chose deliberately (with an ADR) is fine. Debt that accumulated because nobody said no is not. Every PR that adds complexity without removing equivalent complexity gets a second look. "We'll clean it up later" is a commitment, and commitments get ADRs.
 
-The [backlog file](https://github.com/lazynet/lazy-harness/blob/main/docs/backlog.md) exists specifically to make debt visible. If it is not written down, it does not count as known.
+The [backlog file](https://github.com/lazynet/lazy-harness/blob/main/specs/backlog.md) exists specifically to make debt visible. If it is not written down, it does not count as known.
 
 ## 5. Code > docs > conversation
 

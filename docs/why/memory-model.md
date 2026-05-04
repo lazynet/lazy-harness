@@ -61,7 +61,7 @@ This is the union of everything the harness has learned across every project, ev
 
 ### QMD indexing
 
-If you have [QMD](https://github.com/lazynet/qmd) installed, `lazy-harness` configures a collection pointing at the knowledge directory. QMD indexes markdown semantically and exposes a `recall` command that works across your entire history.
+If you have [QMD](https://github.com/tobi/qmd) installed, `lazy-harness` configures a collection pointing at the knowledge directory. QMD indexes markdown semantically and exposes a `recall` command that works across your entire history.
 
 The critical affordance: you can ask "when did I last debug a circular import in Python?" and get back the specific session from six months ago. The short-term memory model is stateless by design; the long-term one is where the lessons accumulate.
 
