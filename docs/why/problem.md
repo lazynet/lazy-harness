@@ -29,5 +29,5 @@ Extracting `lazy-harness` as a generic framework made the boundary explicit: the
 
 - It is not a Claude Code fork. It wraps Claude Code (and in the future other agents) without modifying them.
 - It is not a chat wrapper. It never proxies your messages. It only manipulates the environment around the agent.
-- It is not an MCP server. It interacts with Claude Code via settings, hooks, and the filesystem.
+- It is not itself an MCP server, though it does orchestrate third-party MCP servers (QMD, Engram) into each profile's `settings.json` when those tools are installed. Its own integration with Claude Code is via settings, hooks, and the filesystem.
 - It is not opinionated about your workflow. Every default is overridable; every feature is opt-in via `config.toml`.
