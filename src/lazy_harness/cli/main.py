@@ -62,5 +62,9 @@ def register_commands() -> None:
 
     cli.add_command(config, "config")
 
+    from lazy_harness.cli.memory_cmd import memory
+
+    cli.add_command(memory, "memory")
+
 
 register_commands()
