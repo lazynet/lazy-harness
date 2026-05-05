@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.0](https://github.com/lazynet/lazy-harness/compare/v0.18.0...v0.19.0) (2026-05-05)
+
+
+### Features
+
+* lh profile sync-claude-md + auto-sync hook ([#76](https://github.com/lazynet/lazy-harness/issues/76)) ([d6e0b3b](https://github.com/lazynet/lazy-harness/commit/d6e0b3b0b74af1c0fe228d1b9a8874e20c339945))
+
 ## [0.18.0](https://github.com/lazynet/lazy-harness/compare/v0.17.1...v0.18.0) (2026-05-05)
 
 
