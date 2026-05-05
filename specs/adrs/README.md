@@ -39,7 +39,7 @@ Decisions that define the `lazy-harness` project itself.
 | [027](./027-memory-stack-overview.md) | accepted | Memory stack overview — five-layer model | Names the user-facing layer model that ADR-016/022/023/024 produced. No new mechanism, only canonical vocabulary. |
 | [028](./028-classify-rules-configurable.md) | accepted | Configurable session classification rules | Lift the four hardcoded `_classify` rules into typed `[[knowledge.classify_rules]]` config; defaults reproduce historical behaviour. |
 | [029](./029-engram-persist-deterministic-mirror.md) | accepted | Deterministic Engram mirror via Stop hook | Deterministic Engram mirror via Stop hook (engram-persist) |
-| [030](./030-memory-stack-glue-layer.md) | proposed | Memory stack glue layer — discoverability, freshness, consistency | Seven deterministic glue components closing prompted gaps in the ADR-027 model. No new layer; better integration. |
+| [030](./030-memory-stack-glue-layer.md) | accepted | Memory stack glue layer — discoverability, freshness, consistency | Seven deterministic glue components closing prompted gaps in the ADR-027 model. No new layer; better integration. |
 
 ### Status values
 
@@ -49,7 +49,7 @@ Each active ADR carries one of the following statuses in its header. The column 
 |---|---|
 | `accepted` | Decision taken **and** embodied in code, config, or tests. Default state for a shipping decision. |
 | `accepted-deferred` | Decision taken and locked, but implementation is intentionally not yet scheduled. The ADR is not incomplete — its realisation is waiting for a specific trigger documented in the ADR itself. |
-| `proposed` | Written and reasoned, but not yet committed to. Open for revision. ADR-030 currently holds this status. |
+| `proposed` | Written and reasoned, but not yet committed to. Open for revision. No active ADR currently holds this status. |
 | `superseded-by: NNN` | Replaced by a later ADR. The record is kept for history; the pointer names its replacement. No active ADR currently holds this status. |
 
 New decisions default to `accepted` once they ship. A decision that turns out wrong is **superseded** by a new ADR rather than edited in place.

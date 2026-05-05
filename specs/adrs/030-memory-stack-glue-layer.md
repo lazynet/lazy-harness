@@ -1,6 +1,6 @@
 # ADR-030: Memory stack glue layer — discoverability, freshness, and consistency
 
-**Status:** proposed
+**Status:** accepted
 **Date:** 2026-05-05
 **Supersedes:** —
 **Superseded by:** —
