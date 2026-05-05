@@ -149,6 +149,7 @@ class CompoundLoopConfig:
     reprocess_min_growth_seconds: int = 120
     grading_enabled: bool = True
     lazymind_dir: str | None = None
+    slim_handoff_enabled: bool = True
 
 
 @dataclass

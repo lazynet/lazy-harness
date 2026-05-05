@@ -57,6 +57,79 @@ def test_compound_loop_config_default_reprocess_min_growth_seconds_is_120() -> N
     assert CompoundLoopConfig().reprocess_min_growth_seconds == 120
 
 
+def test_compound_loop_config_default_slim_handoff_enabled_is_true() -> None:
+    assert CompoundLoopConfig().slim_handoff_enabled is True
+
+
+def test_write_slim_handoff_returns_false_when_session_has_no_user_prompts(
+    tmp_path: Path,
+) -> None:
+    from lazy_harness.knowledge.compound_loop import write_slim_handoff
+
+    session = tmp_path / "s.jsonl"
+    _write_jsonl(
+        session,
+        [
+            {"type": "permission-mode"},
+            {"type": "system", "cwd": "/tmp/proj"},
+            {"type": "assistant", "message": {"content": "no user msgs"}},
+        ],
+    )
+    memory_dir = tmp_path / "memory"
+
+    assert write_slim_handoff(session, memory_dir, str(tmp_path)) is False
+    assert not (memory_dir / "handoff.md").exists()
+
+
+def test_write_slim_handoff_writes_file_with_last_user_prompt(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.compound_loop import write_slim_handoff
+
+    session = _interactive_session(tmp_path)
+    memory_dir = tmp_path / "memory"
+
+    assert write_slim_handoff(session, memory_dir, str(tmp_path)) is True
+
+    handoff_path = memory_dir / "handoff.md"
+    assert handoff_path.is_file()
+    body = handoff_path.read_text()
+    assert "next step please" in body
+
+
+def test_write_slim_handoff_creates_memory_dir_if_missing(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.compound_loop import write_slim_handoff
+
+    session = _interactive_session(tmp_path)
+    memory_dir = tmp_path / "deep" / "nested" / "memory"
+    assert not memory_dir.exists()
+
+    assert write_slim_handoff(session, memory_dir, str(tmp_path)) is True
+    assert (memory_dir / "handoff.md").is_file()
+
+
+def test_write_slim_handoff_body_marks_origin_as_slim(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.compound_loop import write_slim_handoff
+
+    session = _interactive_session(tmp_path)
+    memory_dir = tmp_path / "memory"
+    write_slim_handoff(session, memory_dir, str(tmp_path))
+    body = (memory_dir / "handoff.md").read_text()
+    assert "slim" in body.lower()
+
+
+def test_write_slim_handoff_overwrites_existing_handoff(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.compound_loop import write_slim_handoff
+
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    (memory_dir / "handoff.md").write_text("# Old rich handoff\n\nstale content\n")
+
+    session = _interactive_session(tmp_path)
+    write_slim_handoff(session, memory_dir, str(tmp_path))
+    body = (memory_dir / "handoff.md").read_text()
+    assert "stale content" not in body
+    assert "next step please" in body
+
+
 def test_is_interactive_session_true(tmp_path: Path) -> None:
     session = tmp_path / "s.jsonl"
     _write_jsonl(session, [{"type": "permission-mode"}])
@@ -582,6 +655,77 @@ def test_process_task_skips_below_min_chars(tmp_path: Path) -> None:
     task = create_task(queue, Path("/tmp"), session, "abcd1234", memory)
     outcome = process_task(task, _cfg(), learnings, invoke=lambda *a, **kw: None)
     assert "user chars" in outcome.skipped
+
+
+def test_process_task_writes_slim_handoff_when_min_chars_gate_blocks(
+    tmp_path: Path,
+) -> None:
+    queue = tmp_path / "queue"
+    memory = tmp_path / "memory"
+    learnings = tmp_path / "Learnings"
+    session = tmp_path / "s.jsonl"
+    _write_jsonl(
+        session,
+        [
+            {"type": "permission-mode"},
+            {"type": "user", "message": {"content": "short prompt please"}},
+            {"type": "assistant", "message": {"content": "ok"}},
+        ],
+    )
+    task = create_task(queue, Path("/tmp"), session, "abcd1234", memory)
+    outcome = process_task(task, _cfg(), learnings, invoke=lambda *a, **kw: None)
+
+    assert "user chars" in outcome.skipped
+    handoff = memory / "handoff.md"
+    assert handoff.is_file()
+    body = handoff.read_text()
+    assert "short prompt please" in body
+    assert "slim" in body.lower()
+
+
+def test_process_task_writes_slim_handoff_when_min_messages_gate_blocks(
+    tmp_path: Path,
+) -> None:
+    queue = tmp_path / "queue"
+    memory = tmp_path / "memory"
+    learnings = tmp_path / "Learnings"
+    session = tmp_path / "s.jsonl"
+    _write_jsonl(
+        session,
+        [
+            {"type": "permission-mode"},
+            {"type": "user", "message": {"content": "x" * 250}},
+        ],
+    )
+    task = create_task(queue, Path("/tmp"), session, "abcd1234", memory)
+    outcome = process_task(task, _cfg(), learnings, invoke=lambda *a, **kw: None)
+
+    assert "messages" in outcome.skipped
+    handoff = memory / "handoff.md"
+    assert handoff.is_file()
+
+
+def test_process_task_does_not_write_slim_handoff_when_disabled(
+    tmp_path: Path,
+) -> None:
+    queue = tmp_path / "queue"
+    memory = tmp_path / "memory"
+    learnings = tmp_path / "Learnings"
+    session = tmp_path / "s.jsonl"
+    _write_jsonl(
+        session,
+        [
+            {"type": "permission-mode"},
+            {"type": "user", "message": {"content": "short prompt please"}},
+            {"type": "assistant", "message": {"content": "ok"}},
+        ],
+    )
+    task = create_task(queue, Path("/tmp"), session, "abcd1234", memory)
+    cfg = _cfg(slim_handoff_enabled=False)
+    outcome = process_task(task, cfg, learnings, invoke=lambda *a, **kw: None)
+
+    assert "user chars" in outcome.skipped
+    assert not (memory / "handoff.md").exists()
 
 
 def test_process_task_calls_invoke_and_persists(tmp_path: Path) -> None:
