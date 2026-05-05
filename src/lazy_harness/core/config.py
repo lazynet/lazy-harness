@@ -137,6 +137,7 @@ class ContextInjectConfig:
     last_session_enabled: bool = True
     qmd_suggest_enabled: bool = True
     qmd_suggest_top_k: int = 3
+    graphify_surface_enabled: bool = True
 
 
 @dataclass

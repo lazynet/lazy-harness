@@ -465,6 +465,83 @@ def _prepend_truncation_banner(body: str, dropped: list[str], max_chars: int) ->
     return f"{banner}\n\n{body}"
 
 
+def graphify_section(graphify_dir: Path, repo_root: Path) -> str:
+    """Either a staleness banner or a content summary, depending on freshness.
+
+    Returns "" when `graphify-out/graph.json` does not exist (no graph yet).
+    Stale (mtime < HEAD timestamp) → "## Notice" banner pointing at /graphify.
+    Fresh → "## Code structure" summary with node/edge/community counts.
+
+    Fail-soft on any IO or parse error — returns "".
+    """
+    graph_json = graphify_dir / "graph.json"
+    if not graph_json.is_file():
+        return ""
+
+    try:
+        graph_mtime = graph_json.stat().st_mtime
+    except OSError:
+        return ""
+
+    head_ts: float | None = None
+    try:
+        result = subprocess.run(
+            ["git", "log", "-1", "--format=%ct"],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            head_ts = float(result.stdout.strip())
+    except (OSError, subprocess.SubprocessError, ValueError):
+        head_ts = None
+
+    if head_ts is not None and graph_mtime < head_ts:
+        from datetime import datetime as _dt
+
+        head_date = _dt.fromtimestamp(head_ts).strftime("%Y-%m-%d")
+        graph_date = _dt.fromtimestamp(graph_mtime).strftime("%Y-%m-%d")
+        return (
+            f"## Notice\n"
+            f"graphify-out/ is stale (last built {graph_date}, HEAD {head_date}). "
+            f"Run /graphify to refresh."
+        )
+
+    try:
+        data = json.loads(graph_json.read_text())
+    except (json.JSONDecodeError, OSError, ValueError):
+        return ""
+
+    nodes = data.get("nodes", [])
+    edges = data.get("edges", [])
+    if not isinstance(nodes, list):
+        return ""
+
+    community_counts: dict[int, int] = {}
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        cid = node.get("community")
+        if cid is None:
+            continue
+        try:
+            cid_int = int(cid)
+        except (TypeError, ValueError):
+            continue
+        community_counts[cid_int] = community_counts.get(cid_int, 0) + 1
+
+    edge_count = len(edges) if isinstance(edges, list) else 0
+    lines: list[str] = ["## Code structure"]
+    lines.append(f"- {len(nodes)} nodes · {edge_count} edges · {len(community_counts)} communities")
+    if community_counts:
+        top = sorted(community_counts.items(), key=lambda kv: -kv[1])[:3]
+        labels = ", ".join(f"#{cid}({n})" for cid, n in top)
+        lines.append(f"- Largest communities: {labels}")
+    return "\n".join(lines)
+
+
 def qmd_suggest_context(query_text: str, top_k: int = 3, timeout: int = 5) -> str:
     """Top-K vault notes related to the current task as markdown.
 
@@ -562,13 +639,18 @@ def main() -> None:
         if branch_name:
             suggest_ctx = qmd_suggest_context(branch_name, cfg.context_inject.qmd_suggest_top_k)
 
+    graphify_ctx = ""
+    if cfg is None or cfg.context_inject.graphify_surface_enabled:
+        graphify_ctx = graphify_section(cwd / "graphify-out", cwd)
+
     # Sections wrapped with markdown headings
     git_section = f"## Git\n{git_ctx}" if git_ctx else ""
     session_section = f"## Last session\n{last_session_ctx}" if last_session_ctx else ""
     handoff_section = f"## Handoff from last session\n{handoff_ctx}" if handoff_ctx else ""
     episodic_section = f"## Recent history\n{episodic_ctx}" if episodic_ctx else ""
     north_section = f"## LazyNorth\n{north_ctx}" if north_ctx else ""
-    suggest_section = f"## Relevant vault notes\n{suggest_ctx}" if suggest_ctx else ""
+    suggest_only = f"## Relevant vault notes\n{suggest_ctx}" if suggest_ctx else ""
+    suggest_section = "\n\n".join(s for s in [graphify_ctx, suggest_only] if s)
 
     max_chars = cfg.context_inject.max_body_chars if cfg is not None else 3000
     body = _truncate_body(
