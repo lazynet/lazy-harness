@@ -1,0 +1,135 @@
+"""Tests for `lh memory cross-profile-check` (ADR-030 G7)."""
+
+from __future__ import annotations
+
+import hashlib
+from pathlib import Path
+
+from click.testing import CliRunner
+
+
+def _make_profile(profile_dir: Path, projects: dict[str, str]) -> None:
+    """Create a fake `<profile>/projects/<key>/memory/MEMORY.md` tree."""
+    for key, content in projects.items():
+        memory_dir = profile_dir / "projects" / key / "memory"
+        memory_dir.mkdir(parents=True)
+        (memory_dir / "MEMORY.md").write_text(content)
+
+
+def test_enumerate_profile_projects_lists_keys_with_memory_md(tmp_path: Path) -> None:
+    from lazy_harness.cli.memory_cmd import enumerate_profile_projects
+
+    profile_dir = tmp_path / "profile"
+    _make_profile(
+        profile_dir,
+        {
+            "-Users-x-repos-foo": "alpha",
+            "-Users-x-repos-bar": "beta",
+        },
+    )
+    result = enumerate_profile_projects(profile_dir)
+    assert set(result.keys()) == {"-Users-x-repos-foo", "-Users-x-repos-bar"}
+    foo = result["-Users-x-repos-foo"]
+    assert foo["memory_md_lines"] == 1
+    assert foo["memory_md_sha"] == hashlib.sha256(b"alpha").hexdigest()[:12]
+
+
+def test_enumerate_profile_projects_returns_empty_for_missing_dir(
+    tmp_path: Path,
+) -> None:
+    from lazy_harness.cli.memory_cmd import enumerate_profile_projects
+
+    assert enumerate_profile_projects(tmp_path / "missing") == {}
+
+
+def test_enumerate_profile_projects_skips_keys_without_memory_md(
+    tmp_path: Path,
+) -> None:
+    from lazy_harness.cli.memory_cmd import enumerate_profile_projects
+
+    profile_dir = tmp_path / "p"
+    (profile_dir / "projects" / "key1" / "memory").mkdir(parents=True)
+    # No MEMORY.md → key1 should not appear
+    result = enumerate_profile_projects(profile_dir)
+    assert result == {}
+
+
+def test_find_cross_profile_divergences_flags_shared_keys_with_different_content(
+    tmp_path: Path,
+) -> None:
+    from lazy_harness.cli.memory_cmd import find_cross_profile_divergences
+
+    profile_data = {
+        "lazy": {
+            "-foo": {"memory_md_sha": "aaa", "memory_md_lines": 10},
+            "-bar": {"memory_md_sha": "bbb", "memory_md_lines": 5},
+        },
+        "flex": {
+            "-foo": {"memory_md_sha": "ccc", "memory_md_lines": 12},  # divergent
+            "-baz": {"memory_md_sha": "ddd", "memory_md_lines": 7},
+        },
+    }
+    divergences = find_cross_profile_divergences(profile_data)
+    keys = {d["project_key"] for d in divergences}
+    assert "-foo" in keys
+    assert "-bar" not in keys
+    assert "-baz" not in keys
+
+
+def test_find_cross_profile_divergences_ignores_matching_keys(
+    tmp_path: Path,
+) -> None:
+    from lazy_harness.cli.memory_cmd import find_cross_profile_divergences
+
+    profile_data = {
+        "lazy": {"-foo": {"memory_md_sha": "aaa", "memory_md_lines": 10}},
+        "flex": {"-foo": {"memory_md_sha": "aaa", "memory_md_lines": 10}},
+    }
+    assert find_cross_profile_divergences(profile_data) == []
+
+
+def test_memory_group_registered_on_top_level_cli() -> None:
+    from lazy_harness.cli.main import cli
+
+    assert "memory" in cli.commands
+
+
+def test_cross_profile_check_cli_prints_report(tmp_path: Path, monkeypatch) -> None:
+    """Black-box: `lh memory cross-profile-check` exits 0 and prints summary."""
+    from lazy_harness.cli.memory_cmd import memory
+
+    # Two profile dirs with one overlapping divergent project
+    lazy_dir = tmp_path / ".claude-lazy"
+    flex_dir = tmp_path / ".claude-flex"
+    _make_profile(lazy_dir, {"-Users-x-repos-foo": "lazy version"})
+    _make_profile(flex_dir, {"-Users-x-repos-foo": "flex version"})
+
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(f"""[harness]
+version = "1"
+
+[agent]
+type = "claude-code"
+
+[profiles]
+default = "lazy"
+
+[profiles.lazy]
+config_dir = "{lazy_dir}"
+roots = ["~"]
+
+[profiles.flex]
+config_dir = "{flex_dir}"
+roots = ["~"]
+""")
+
+    monkeypatch.setattr("lazy_harness.core.paths.config_file", lambda: config_path)
+    monkeypatch.setattr("lazy_harness.cli.memory_cmd.config_file", lambda: config_path)
+
+    runner = CliRunner()
+    result = runner.invoke(memory, ["cross-profile-check"])
+    assert result.exit_code == 0, result.output
+    assert "lazy" in result.output
+    assert "flex" in result.output
+    assert "-Users-x-repos-foo" in result.output
+    assert "diverge" in result.output.lower()
