@@ -280,3 +280,58 @@ def test_profile_envrc_idempotent(home_dir: Path) -> None:
     assert result.exit_code == 0
     assert (root / ".envrc").read_text() == first
     assert "unchanged" in result.output
+
+
+def _seed_segmented_profile(home_dir: Path, name: str = "personal") -> Path:
+    """Lay out config + segmented profile dir under tmp HOME."""
+    _setup_config(home_dir)
+    profiles_dir = home_dir / ".config" / "lazy-harness" / "profiles"
+    common = profiles_dir / "_common"
+    common.mkdir(parents=True)
+    (common / "CLAUDE.common.md").write_text("# common rules\n")
+    p = profiles_dir / name
+    p.mkdir()
+    (p / "CLAUDE.head.md").write_text("# head\n")
+    (p / "CLAUDE.tail.md").write_text("# tail\n")
+    return p
+
+
+def test_profile_sync_claude_md_writes_output(home_dir: Path) -> None:
+    profile_dir = _seed_segmented_profile(home_dir)
+    runner = CliRunner()
+    result = runner.invoke(cli, ["profile", "sync-claude-md"])
+    assert result.exit_code == 0, result.output
+    out = (profile_dir / "CLAUDE.md").read_text()
+    assert "# common rules" in out
+    assert "written" in result.output
+
+
+def test_profile_sync_claude_md_idempotent(home_dir: Path) -> None:
+    _seed_segmented_profile(home_dir)
+    runner = CliRunner()
+    runner.invoke(cli, ["profile", "sync-claude-md"])
+    result = runner.invoke(cli, ["profile", "sync-claude-md"])
+    assert result.exit_code == 0
+    assert "unchanged" in result.output
+
+
+def test_profile_sync_claude_md_missing_common_errors(home_dir: Path) -> None:
+    _setup_config(home_dir)
+    profiles_dir = home_dir / ".config" / "lazy-harness" / "profiles"
+    p = profiles_dir / "personal"
+    p.mkdir(parents=True)
+    (p / "CLAUDE.head.md").write_text("# head\n")
+    (p / "CLAUDE.tail.md").write_text("# tail\n")
+    runner = CliRunner()
+    result = runner.invoke(cli, ["profile", "sync-claude-md"])
+    assert result.exit_code != 0
+    assert "common" in result.output.lower()
+
+
+def test_profile_sync_claude_md_no_profiles_dir(home_dir: Path) -> None:
+    """If `profiles/` doesn't exist (e.g. fresh install), exit cleanly with a hint."""
+    _setup_config(home_dir)
+    runner = CliRunner()
+    result = runner.invoke(cli, ["profile", "sync-claude-md"])
+    assert result.exit_code == 0
+    assert "no profiles" in result.output.lower()

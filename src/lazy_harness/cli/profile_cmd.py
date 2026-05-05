@@ -16,8 +16,9 @@ from lazy_harness.core.move_projects import (
 from lazy_harness.core.move_projects import (
     move_projects as do_move_projects,
 )
-from lazy_harness.core.paths import config_file, contract_path, expand_path
+from lazy_harness.core.paths import config_dir, config_file, contract_path, expand_path
 from lazy_harness.core.profiles import ProfileError, add_profile, list_profiles, remove_profile
+from lazy_harness.core.sync_claude import SyncError, sync_profiles
 
 
 def deploy_envrc_for_all_profiles(cfg: Config) -> list[EnvrcResult]:
@@ -279,6 +280,37 @@ def profile_envrc(dry_run: bool) -> None:
         console.print("[bold]Next:[/bold] run [cyan]direnv allow[/cyan] in each updated root:")
         for r in needs_allow:
             console.print(f"  cd {contract_path(r.path.parent)} && direnv allow")
+
+
+@profile.command("sync-claude-md")
+def profile_sync_claude_md() -> None:
+    """Regenerate <profile>/CLAUDE.md from segmented sources.
+
+    Concatenates `<profile>/CLAUDE.head.md` + `_common/CLAUDE.common.md` +
+    `<profile>/CLAUDE.tail.md` for every profile dir under
+    `~/.config/lazy-harness/profiles/` that carries the three files. Profile
+    dirs without the segments (flat layout) are skipped, not erased.
+    """
+    console = Console()
+    profiles_dir = config_dir() / "profiles"
+    if not profiles_dir.is_dir():
+        console.print(f"No profiles directory at {contract_path(profiles_dir)}.")
+        return
+
+    try:
+        results = sync_profiles(profiles_dir)
+    except SyncError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(1)
+
+    if not results:
+        console.print("[dim]No profile dirs found.[/dim]")
+        return
+
+    for r in results:
+        style = {"written": "green", "unchanged": "dim", "skipped": "yellow"}.get(r.action, "")
+        suffix = f" ({r.reason})" if r.reason else ""
+        console.print(f"[{style}]{r.action:9}[/{style}] {r.profile}{suffix}")
 
 
 @profile.command("remove")

@@ -68,7 +68,7 @@ def run_wizard(answers: WizardAnswers, *, config_path: Path) -> None:
                 "allow_patterns": [],
             },
             "post_tool_use": {
-                "scripts": ["post-tool-use-format"],
+                "scripts": ["post-tool-use-format", "post-tool-use-sync-claude"],
             },
         },
     }
