@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -12,6 +13,13 @@ class QmdResult:
     exit_code: int
     stdout: str
     stderr: str
+
+
+@dataclass
+class QmdHit:
+    file: str
+    title: str
+    score: float
 
 
 def is_qmd_available() -> bool:
@@ -51,3 +59,40 @@ def status() -> QmdResult:
 def mcp_server_config() -> dict:
     """Declarative MCP entry for QMD (consumed by deploy_mcp_servers)."""
     return {"command": "qmd", "args": ["mcp"]}
+
+
+def query(text: str, limit: int = 3, timeout: int = 5) -> list[QmdHit]:
+    """BM25 keyword search via `qmd search --json`. Top `limit` hits.
+
+    Returns an empty list on any failure (qmd missing, timeout, parse error,
+    non-zero exit). Used by context-inject to surface vault notes at session
+    start without blocking on a misbehaving qmd.
+    """
+    cmd = ["qmd", "search", text, "--json"]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return []
+    if result.returncode != 0:
+        return []
+    try:
+        data = json.loads(result.stdout)
+    except (json.JSONDecodeError, ValueError):
+        return []
+    if not isinstance(data, list):
+        return []
+    hits: list[QmdHit] = []
+    for entry in data[:limit]:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            hits.append(
+                QmdHit(
+                    file=str(entry.get("file", "")),
+                    title=str(entry.get("title", "")),
+                    score=float(entry.get("score", 0.0)),
+                )
+            )
+        except (TypeError, ValueError):
+            continue
+    return hits

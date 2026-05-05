@@ -262,6 +262,126 @@ def test_truncate_body_no_banner_when_body_fits() -> None:
     assert not full.startswith("[truncated:")
 
 
+def test_context_inject_config_qmd_suggest_defaults() -> None:
+    from lazy_harness.core.config import ContextInjectConfig
+
+    cfg = ContextInjectConfig()
+    assert cfg.qmd_suggest_enabled is True
+    assert cfg.qmd_suggest_top_k == 3
+
+
+def test_qmd_suggest_context_returns_empty_when_no_hits(monkeypatch) -> None:
+    from lazy_harness.hooks.builtins import context_inject as mod
+
+    monkeypatch.setattr("lazy_harness.knowledge.qmd.query", lambda *a, **kw: [])
+    assert mod.qmd_suggest_context("anything", top_k=3) == ""
+
+
+def test_qmd_suggest_context_formats_hits_as_markdown(monkeypatch) -> None:
+    from lazy_harness.hooks.builtins import context_inject as mod
+    from lazy_harness.knowledge.qmd import QmdHit
+
+    hits = [
+        QmdHit(file="qmd://col/a.md", title="Auth notes", score=0.91),
+        QmdHit(file="qmd://col/b.md", title="OAuth flow", score=0.87),
+    ]
+    monkeypatch.setattr("lazy_harness.knowledge.qmd.query", lambda *a, **kw: hits)
+    out = mod.qmd_suggest_context("auth", top_k=3)
+    assert "Auth notes" in out
+    assert "OAuth flow" in out
+    assert "qmd://col/a.md" in out
+
+
+def test_qmd_suggest_context_returns_empty_for_blank_query(monkeypatch) -> None:
+    from lazy_harness.hooks.builtins import context_inject as mod
+
+    called = {"n": 0}
+
+    def fake_query(*a, **kw):
+        called["n"] += 1
+        return []
+
+    monkeypatch.setattr("lazy_harness.knowledge.qmd.query", fake_query)
+    assert mod.qmd_suggest_context("", top_k=3) == ""
+    assert called["n"] == 0
+
+
+def test_truncate_body_includes_suggest_section_when_body_fits() -> None:
+    git = "## Git\nbranch"
+    suggest = "## Relevant vault notes\n- [a](qmd://a.md)"
+    episodic = "## Recent history\nrecent"
+
+    full = _truncate_body(3000, git, "", "", "", episodic, suggest_section=suggest)
+    assert "## Relevant vault notes" in full
+    assert "## Recent history" in full
+    # Order: suggest before episodic per ADR-030 G3
+    assert full.index("## Relevant vault notes") < full.index("## Recent history")
+
+
+def test_context_inject_includes_qmd_suggest_section_when_qmd_returns_hits(
+    tmp_path: Path,
+) -> None:
+    """Black-box: hook subprocess sees a fake qmd in PATH and surfaces results."""
+    import os as _os
+
+    subprocess.run(["git", "init"], cwd=str(tmp_path), capture_output=True)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "init"],
+        cwd=str(tmp_path),
+        capture_output=True,
+        env={
+            **_os.environ,
+            "GIT_AUTHOR_NAME": "test",
+            "GIT_AUTHOR_EMAIL": "t@t",
+            "GIT_COMMITTER_NAME": "test",
+            "GIT_COMMITTER_EMAIL": "t@t",
+        },
+    )
+
+    bin_dir = tmp_path / "fake_bin"
+    bin_dir.mkdir()
+    fake_qmd = bin_dir / "qmd"
+    fake_qmd.write_text(
+        "#!/usr/bin/env bash\n"
+        'echo \'[{"file": "qmd://col/a.md", "title": "Auth notes", "score": 0.9}]\'\n'
+    )
+    fake_qmd.chmod(0o755)
+
+    hook_path = (
+        Path(__file__).parent.parent.parent
+        / "src"
+        / "lazy_harness"
+        / "hooks"
+        / "builtins"
+        / "context_inject.py"
+    )
+    env = {**_os.environ, "PATH": f"{bin_dir}:{_os.environ['PATH']}"}
+    result = subprocess.run(
+        [sys.executable, str(hook_path)],
+        input="{}",
+        capture_output=True,
+        text=True,
+        cwd=str(tmp_path),
+        timeout=10,
+        env=env,
+    )
+    assert result.returncode == 0
+    ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+    assert "## Relevant vault notes" in ctx
+    assert "Auth notes" in ctx
+
+
+def test_truncate_body_drops_episodic_before_suggest() -> None:
+    git = "## Git\nb"
+    suggest = "## Relevant vault notes\n" + "v" * 100
+    episodic = "## Recent history\n" + "e" * 1000
+
+    trimmed = _truncate_body(300, git, "", "", "", episodic, suggest_section=suggest)
+    assert "## Recent history" not in trimmed
+    assert "## Relevant vault notes" in trimmed
+    assert trimmed.startswith("[truncated:")
+
+
 def test_truncate_body_banner_lists_all_dropped_sections() -> None:
     git = "## Git\nbranch"
     big_north = "## LazyNorth\n" + "n" * 5000

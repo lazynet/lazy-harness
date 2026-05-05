@@ -135,6 +135,8 @@ class ContextInjectConfig:
     enabled: bool = True
     max_body_chars: int = 3000
     last_session_enabled: bool = True
+    qmd_suggest_enabled: bool = True
+    qmd_suggest_top_k: int = 3
 
 
 @dataclass
