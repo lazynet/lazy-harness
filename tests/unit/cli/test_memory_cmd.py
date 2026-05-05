@@ -94,6 +94,89 @@ def test_memory_group_registered_on_top_level_cli() -> None:
     assert "memory" in cli.commands
 
 
+def _write_jsonl(path: Path, records: list[dict]) -> None:
+    import json as _json
+
+    with open(path, "w") as f:
+        for r in records:
+            f.write(_json.dumps(r) + "\n")
+
+
+def test_consolidate_reads_jsonl_and_invokes_claude(tmp_path: Path, monkeypatch) -> None:
+    """Reads decisions.jsonl + failures.jsonl, builds prompt, calls invoke."""
+    from lazy_harness.cli.memory_cmd import memory
+
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    _write_jsonl(
+        memory_dir / "decisions.jsonl",
+        [
+            {"ts": "2026-05-01", "decision": "use uv for deps"},
+            {"ts": "2026-05-02", "decision": "ruff over black"},
+        ],
+    )
+    _write_jsonl(
+        memory_dir / "failures.jsonl",
+        [{"ts": "2026-05-03", "failure": "missed strict mypy"}],
+    )
+
+    captured: dict = {}
+
+    def fake_invoke(prompt: str, model: str, timeout: int) -> str:
+        captured["prompt"] = prompt
+        captured["model"] = model
+        return "## Proposed additions\n- prefer uv over pip everywhere"
+
+    monkeypatch.setattr("lazy_harness.cli.memory_cmd._invoke_claude", fake_invoke)
+
+    runner = CliRunner()
+    result = runner.invoke(memory, ["consolidate", "--memory-dir", str(memory_dir)])
+    assert result.exit_code == 0, result.output
+    assert "Proposed additions" in result.output
+    assert "use uv for deps" in captured["prompt"]
+    assert "missed strict mypy" in captured["prompt"]
+
+
+def test_consolidate_exits_with_message_when_no_jsonl_present(
+    tmp_path: Path,
+) -> None:
+    from lazy_harness.cli.memory_cmd import memory
+
+    runner = CliRunner()
+    result = runner.invoke(memory, ["consolidate", "--memory-dir", str(tmp_path)])
+    assert result.exit_code == 0
+    assert "no entries" in result.output.lower()
+
+
+def test_consolidate_respects_last_n_flag(tmp_path: Path, monkeypatch) -> None:
+    from lazy_harness.cli.memory_cmd import memory
+
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    _write_jsonl(
+        memory_dir / "decisions.jsonl",
+        [{"decision": f"d{i}"} for i in range(20)],
+    )
+
+    captured: dict = {}
+
+    def fake_invoke(prompt: str, model: str, timeout: int) -> str:
+        captured["prompt"] = prompt
+        return "ok"
+
+    monkeypatch.setattr("lazy_harness.cli.memory_cmd._invoke_claude", fake_invoke)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        memory,
+        ["consolidate", "--memory-dir", str(memory_dir), "--last", "5"],
+    )
+    assert result.exit_code == 0, result.output
+    assert "d19" in captured["prompt"]
+    assert "d15" in captured["prompt"]
+    assert "d14" not in captured["prompt"]
+
+
 def test_cross_profile_check_cli_prints_report(tmp_path: Path, monkeypatch) -> None:
     """Black-box: `lh memory cross-profile-check` exits 0 and prints summary."""
     from lazy_harness.cli.memory_cmd import memory
