@@ -39,25 +39,30 @@ def deploy_profiles(cfg: Config) -> None:
 
 def deploy_hooks(cfg: Config) -> None:
     """Generate agent-native hook config for each profile."""
+    from lazy_harness.agents.base import HookEntry
     from lazy_harness.agents.registry import get_agent
     from lazy_harness.hooks.loader import resolve_hooks_for_event
 
     agent = get_agent(cfg.agent.type)
 
-    hook_commands: dict[str, list[str]] = {}
+    hook_entries: dict[str, list[str | HookEntry]] = {}
     for event_name in cfg.hooks:
         hooks = resolve_hooks_for_event(cfg, event_name)
         if hooks:
-            commands: list[str] = []
+            entries: list[str | HookEntry] = []
             for hook in hooks:
-                commands.append(f"{sys.executable} {hook.path}")
-            hook_commands[event_name] = commands
+                command = f"{sys.executable} {hook.path}"
+                if hook.matcher is not None:
+                    entries.append(HookEntry(command=command, matcher=hook.matcher))
+                else:
+                    entries.append(command)
+            hook_entries[event_name] = entries
 
-    if not hook_commands:
+    if not hook_entries:
         click.echo("  No hooks to deploy.")
         return
 
-    agent_hooks = agent.generate_hook_config(hook_commands)
+    agent_hooks = agent.generate_hook_config(hook_entries)
 
     for name, entry in cfg.profiles.items.items():
         target_dir = expand_path(entry.config_dir)

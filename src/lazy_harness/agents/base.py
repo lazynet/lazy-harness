@@ -2,8 +2,22 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
+
+
+@dataclass(frozen=True)
+class HookEntry:
+    """One hook command to be installed under an event.
+
+    `matcher` overrides the agent's default matcher for this event when set.
+    Used so a single event (e.g. `pre_tool_use`) can dispatch hooks to
+    different tool matchers (`Bash` vs `Edit|Write`).
+    """
+
+    command: str
+    matcher: str | None = None
 
 
 @runtime_checkable
