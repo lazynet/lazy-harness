@@ -112,6 +112,24 @@ def test_post_tool_use_format_resolves_to_concrete_file() -> None:
     assert info.path.is_file()
 
 
+def test_post_tool_use_sync_claude_is_registered_as_builtin() -> None:
+    from lazy_harness.hooks.loader import _BUILTIN_HOOKS
+
+    assert "post-tool-use-sync-claude" in _BUILTIN_HOOKS
+    spec = _BUILTIN_HOOKS["post-tool-use-sync-claude"]
+    assert spec.module == "lazy_harness.hooks.builtins.post_tool_use_sync_claude"
+
+
+def test_post_tool_use_sync_claude_resolves_to_concrete_file() -> None:
+    from lazy_harness.hooks.loader import resolve_hook
+
+    info = resolve_hook("post-tool-use-sync-claude")
+    assert info is not None
+    assert info.is_builtin is True
+    assert info.path.name == "post_tool_use_sync_claude.py"
+    assert info.path.is_file()
+
+
 def test_post_compact_is_registered_as_builtin() -> None:
     from lazy_harness.hooks.loader import _BUILTIN_HOOKS
 

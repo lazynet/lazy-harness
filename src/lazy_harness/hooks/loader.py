@@ -38,6 +38,10 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
     "post-tool-use-format": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.post_tool_use_format"
     ),
+    "post-tool-use-sync-claude": BuiltinHookSpec(
+        module="lazy_harness.hooks.builtins.post_tool_use_sync_claude",
+        matcher="Edit|Write",
+    ),
     "pre-compact": BuiltinHookSpec(module="lazy_harness.hooks.builtins.pre_compact"),
     "pre-tool-use-memory-size": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.pre_tool_use_memory_size",
