@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.18.0](https://github.com/lazynet/lazy-harness/compare/v0.17.1...v0.18.0) (2026-05-05)
+
+
+### Features
+
+* graphify integration in context_inject (G4) ([#71](https://github.com/lazynet/lazy-harness/issues/71)) ([b585a10](https://github.com/lazynet/lazy-harness/commit/b585a109f9f1cc74637a43f831abe00fe4b56517))
+* lh memory consolidate command (G2 consolidator) ([#73](https://github.com/lazynet/lazy-harness/issues/73)) ([504b075](https://github.com/lazynet/lazy-harness/commit/504b0759cb85a1e330000ce9aea3f3bd85512213))
+* lh memory cross-profile-check command (G7) ([#72](https://github.com/lazynet/lazy-harness/issues/72)) ([9f84e17](https://github.com/lazynet/lazy-harness/commit/9f84e1780bb554c5c0a8c16123a6d97b512859d8))
+* MEMORY.md size warning hook with per-script matcher (G2) ([#68](https://github.com/lazynet/lazy-harness/issues/68)) ([ef082ca](https://github.com/lazynet/lazy-harness/commit/ef082ca99f3e164e161a5b030377c300c8980b2c))
+* slim_handoff fast-path when compound_loop gates block (G1) ([#69](https://github.com/lazynet/lazy-harness/issues/69)) ([1502019](https://github.com/lazynet/lazy-harness/commit/150201932b2a111c131bdd3455336d6880bc0991))
+* surface dropped sections in context_inject truncation (G5) ([#67](https://github.com/lazynet/lazy-harness/issues/67)) ([5a0ab97](https://github.com/lazynet/lazy-harness/commit/5a0ab976a6b3460875d063878838987e0cf8af3a))
+* surface QMD vault hits in context_inject (G3) ([#70](https://github.com/lazynet/lazy-harness/issues/70)) ([ded34be](https://github.com/lazynet/lazy-harness/commit/ded34be1bc52da9acda47926158029c415be9ce0))
+
+
+### Documentation
+
+* add ADR-030 memory stack glue layer (proposed) ([#65](https://github.com/lazynet/lazy-harness/issues/65)) ([607cfab](https://github.com/lazynet/lazy-harness/commit/607cfab1702a0d5f2db63092e447f1a4a1292879))
+* ADR-030 → accepted (all 7 components shipped) ([#75](https://github.com/lazynet/lazy-harness/issues/75)) ([cf518e3](https://github.com/lazynet/lazy-harness/commit/cf518e3eb84e4d168a0ace16006566ad36c43aaa))
+* glue-layer paragraph in overview + ADR-027 annotation (G6) ([#74](https://github.com/lazynet/lazy-harness/issues/74)) ([3477061](https://github.com/lazynet/lazy-harness/commit/347706174bb7407f296eb38051f044a1d97735a5))
+
 ## [0.17.1](https://github.com/lazynet/lazy-harness/compare/v0.17.0...v0.17.1) (2026-05-04)
 
 
