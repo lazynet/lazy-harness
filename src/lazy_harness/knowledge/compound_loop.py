@@ -52,6 +52,132 @@ def is_interactive_session(session_jsonl: Path) -> bool:
         return False
 
 
+def _last_user_prompt(session_jsonl: Path) -> str | None:
+    """Last user-typed text in the session, or None if there are none."""
+    last: str | None = None
+    try:
+        with open(session_jsonl) as f:
+            for line in f:
+                try:
+                    d = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                if d.get("type") != "user":
+                    continue
+                msg = d.get("message", {})
+                content = msg.get("content", "")
+                if isinstance(content, str):
+                    text = content.strip()
+                    if text:
+                        last = text
+                elif isinstance(content, list):
+                    parts = [
+                        block.get("text", "").strip()
+                        for block in content
+                        if isinstance(block, dict) and block.get("type") == "text"
+                    ]
+                    joined = "\n".join(p for p in parts if p)
+                    if joined:
+                        last = joined
+    except OSError:
+        return None
+    return last
+
+
+def _files_touched(session_jsonl: Path, limit: int = 20) -> list[str]:
+    """File paths surfaced by assistant tool_use blocks (Edit/Write/Read)."""
+    seen: list[str] = []
+    seen_set: set[str] = set()
+    try:
+        with open(session_jsonl) as f:
+            for line in f:
+                try:
+                    d = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                if d.get("type") != "assistant":
+                    continue
+                msg = d.get("message", {})
+                content = msg.get("content", "")
+                if not isinstance(content, list):
+                    continue
+                for block in content:
+                    if not isinstance(block, dict):
+                        continue
+                    if block.get("type") != "tool_use":
+                        continue
+                    inp = block.get("input", {})
+                    if not isinstance(inp, dict):
+                        continue
+                    path = inp.get("file_path") or inp.get("path") or ""
+                    if not path or path in seen_set:
+                        continue
+                    seen.append(path)
+                    seen_set.add(path)
+    except OSError:
+        return []
+    return seen[-limit:]
+
+
+def _current_branch(cwd: Path) -> str:
+    try:
+        result = subprocess.run(
+            ["git", "branch", "--show-current"],
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
+
+
+def write_slim_handoff(
+    session_jsonl: Path,
+    memory_dir: Path,
+    cwd: str,
+) -> bool:
+    """Deterministic minimal handoff written when LLM evaluation is gated out.
+
+    Captures branch, last user prompt verbatim, and files touched. Returns
+    True if a handoff was written, False if there was nothing useful to record
+    (no user prompts in the session). Overwrites any existing handoff.md.
+    """
+    last_prompt = _last_user_prompt(session_jsonl)
+    if not last_prompt:
+        return False
+
+    branch = _current_branch(Path(cwd)) if cwd else ""
+    files = _files_touched(session_jsonl)
+    written_at = datetime.now().astimezone().isoformat(timespec="seconds")
+
+    lines: list[str] = ["# Handoff (slim)", ""]
+    lines.append("Compound-loop gates blocked LLM evaluation; this is a deterministic snapshot.")
+    lines.append("")
+    lines.append(f"- Written at: {written_at}")
+    if branch:
+        lines.append(f"- Branch: `{branch}`")
+    lines.append("")
+    lines.append("## Last user prompt")
+    lines.append("")
+    lines.append(last_prompt)
+    lines.append("")
+    if files:
+        lines.append("## Files touched")
+        lines.append("")
+        for fp in files:
+            lines.append(f"- `{fp}`")
+        lines.append("")
+
+    memory_dir.mkdir(parents=True, exist_ok=True)
+    _atomic_write(memory_dir / "handoff.md", "\n".join(lines))
+    return True
+
+
 def count_user_chars(session_jsonl: Path) -> int:
     """Total characters in user text messages. Used as a signal of session weight."""
     total = 0
@@ -681,10 +807,14 @@ def process_task(
 
     user_chars = count_user_chars(session_jsonl)
     if user_chars < cfg.min_user_chars:
+        if cfg.slim_handoff_enabled:
+            write_slim_handoff(session_jsonl, memory_dir, cwd)
         return TaskOutcome(skipped=f"{user_chars} user chars (min {cfg.min_user_chars})")
 
     summary, msg_count = extract_messages(session_jsonl)
     if not summary or msg_count < cfg.min_messages:
+        if cfg.slim_handoff_enabled:
+            write_slim_handoff(session_jsonl, memory_dir, cwd)
         return TaskOutcome(skipped=f"{msg_count} messages (min {cfg.min_messages})")
 
     existing_decisions = collect_existing_decisions(memory_dir)
