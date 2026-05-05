@@ -424,16 +424,30 @@ def _truncate_body(
     session_section: str,
     handoff_section: str,
     episodic_section: str,
+    suggest_section: str = "",
 ) -> str:
-    """Drop sections in priority order until body fits: episodic → north →
-    handoff. When sections are dropped, prepend a [truncated: ...] line so the
-    loss is observable rather than silent."""
+    """Drop sections in priority order until body fits: episodic → suggest →
+    north → handoff. `suggest_section` (vault notes from ADR-030 G3) is
+    placed before episodic in document order and dropped right after it so
+    durable vault context outranks session-specific recent history."""
     body = _join_sections(
-        git_section, north_section, session_section, handoff_section, episodic_section
+        git_section,
+        north_section,
+        session_section,
+        handoff_section,
+        suggest_section,
+        episodic_section,
     )
     if len(body) <= max_chars:
         return body
     dropped = ["Recent history"]
+    body = _join_sections(
+        git_section, north_section, session_section, handoff_section, suggest_section
+    )
+    if len(body) <= max_chars:
+        return _prepend_truncation_banner(body, dropped, max_chars)
+    if suggest_section:
+        dropped.append("Relevant vault notes")
     body = _join_sections(git_section, north_section, session_section, handoff_section)
     if len(body) <= max_chars:
         return _prepend_truncation_banner(body, dropped, max_chars)
@@ -449,6 +463,27 @@ def _truncate_body(
 def _prepend_truncation_banner(body: str, dropped: list[str], max_chars: int) -> str:
     banner = f"[truncated: dropped {', '.join(dropped)} to fit {max_chars}-char budget]"
     return f"{banner}\n\n{body}"
+
+
+def qmd_suggest_context(query_text: str, top_k: int = 3, timeout: int = 5) -> str:
+    """Top-K vault notes related to the current task as markdown.
+
+    Returns "" when the query is blank or qmd has no hits — caller should
+    omit the section entirely. Fail-soft: never raises.
+    """
+    query_text = query_text.strip()
+    if not query_text:
+        return ""
+    from lazy_harness.knowledge import qmd
+
+    hits = qmd.query(query_text, limit=top_k, timeout=timeout)
+    if not hits:
+        return ""
+    lines: list[str] = []
+    for hit in hits:
+        title = hit.title or hit.file
+        lines.append(f"- [{title}]({hit.file})")
+    return "\n".join(lines)
 
 
 # --------------------------------------------------------------------------- #
@@ -516,12 +551,24 @@ def main() -> None:
     handoff_ctx = handoff_context(memory_dir)
     episodic_ctx = episodic_context(memory_dir)
 
+    suggest_ctx = ""
+    if cfg is not None and cfg.context_inject.qmd_suggest_enabled:
+        branch_name = ""
+        if git_ctx:
+            for line in git_ctx.splitlines():
+                if line.startswith("Branch:"):
+                    branch_name = line.split(":", 1)[1].strip()
+                    break
+        if branch_name:
+            suggest_ctx = qmd_suggest_context(branch_name, cfg.context_inject.qmd_suggest_top_k)
+
     # Sections wrapped with markdown headings
     git_section = f"## Git\n{git_ctx}" if git_ctx else ""
     session_section = f"## Last session\n{last_session_ctx}" if last_session_ctx else ""
     handoff_section = f"## Handoff from last session\n{handoff_ctx}" if handoff_ctx else ""
     episodic_section = f"## Recent history\n{episodic_ctx}" if episodic_ctx else ""
     north_section = f"## LazyNorth\n{north_ctx}" if north_ctx else ""
+    suggest_section = f"## Relevant vault notes\n{suggest_ctx}" if suggest_ctx else ""
 
     max_chars = cfg.context_inject.max_body_chars if cfg is not None else 3000
     body = _truncate_body(
@@ -531,6 +578,7 @@ def main() -> None:
         session_section,
         handoff_section,
         episodic_section,
+        suggest_section=suggest_section,
     )
     if not body:
         body = "New project, no prior context."
