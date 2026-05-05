@@ -248,9 +248,7 @@ def _parse_handoff_frontmatter(text: str) -> tuple[dict[str, str], str]:
     return meta, body
 
 
-def _classify_handoff_staleness(
-    meta: dict[str, str], latest_session: Path | None
-) -> str | None:
+def _classify_handoff_staleness(meta: dict[str, str], latest_session: Path | None) -> str | None:
     """Return a reason string if the handoff is stale, None if fresh.
 
     Fresh means: the handoff's session_id matches the latest session JSONL on
@@ -306,8 +304,7 @@ def handoff_context(memory_dir: Path) -> str:
             body = body.strip()
             if not meta:
                 parts.append(
-                    "(legacy handoff — no provenance metadata, treat with caution)\n"
-                    + body
+                    "(legacy handoff — no provenance metadata, treat with caution)\n" + body
                 )
             else:
                 sessions_dir = memory_dir.parent
@@ -321,8 +318,7 @@ def handoff_context(memory_dir: Path) -> str:
                         f"{stale_reason}\n"
                         "Do NOT trust the items below as current. "
                         "Ask the user what's actually pending.\n\n"
-                        "--- stale content below ---\n"
-                        + body
+                        "--- stale content below ---\n" + body
                     )
 
     pre_compact = memory_dir / "pre-compact-summary.md"
@@ -372,9 +368,7 @@ def episodic_context(memory_dir: Path, limit: int = 3) -> str:
     if decisions:
         parts.append("Recent decisions:\n" + "\n".join(decisions))
 
-    failures = _jsonl_tail_summaries(
-        memory_dir / "failures.jsonl", limit, include_prevention=True
-    )
+    failures = _jsonl_tail_summaries(memory_dir / "failures.jsonl", limit, include_prevention=True)
     if failures:
         parts.append("Recent failures:\n" + "\n".join(failures))
 
@@ -386,9 +380,7 @@ def episodic_context(memory_dir: Path, limit: int = 3) -> str:
 # --------------------------------------------------------------------------- #
 
 
-def _profile_for_config_dir(
-    config_dir: str, profiles: dict[str, object]
-) -> tuple[str, str]:
+def _profile_for_config_dir(config_dir: str, profiles: dict[str, object]) -> tuple[str, str]:
     """Returns (profile_name, lazynorth_doc) by matching CLAUDE_CONFIG_DIR
     against each profile's config_dir. Returns ('', '') if no match."""
     if not config_dir:
@@ -410,9 +402,7 @@ def _join_sections(*sections: str) -> str:
     return "\n\n".join(s for s in sections if s)
 
 
-def _compose_banner(
-    git_ctx: str, last_session_ctx: str, handoff_ctx: str
-) -> str:
+def _compose_banner(git_ctx: str, last_session_ctx: str, handoff_ctx: str) -> str:
     parts: list[str] = []
     branch_match = re.search(r"^Branch:\s*(\S+)", git_ctx, re.MULTILINE)
     if branch_match:
@@ -436,20 +426,29 @@ def _truncate_body(
     episodic_section: str,
 ) -> str:
     """Drop sections in priority order until body fits: episodic → north →
-    handoff. Matches the bash sed-based truncation logic."""
+    handoff. When sections are dropped, prepend a [truncated: ...] line so the
+    loss is observable rather than silent."""
     body = _join_sections(
         git_section, north_section, session_section, handoff_section, episodic_section
     )
     if len(body) <= max_chars:
         return body
+    dropped = ["Recent history"]
     body = _join_sections(git_section, north_section, session_section, handoff_section)
     if len(body) <= max_chars:
-        return body
+        return _prepend_truncation_banner(body, dropped, max_chars)
+    dropped.append("LazyNorth")
     body = _join_sections(git_section, session_section, handoff_section)
     if len(body) <= max_chars:
-        return body
+        return _prepend_truncation_banner(body, dropped, max_chars)
+    dropped.append("Handoff from last session")
     body = _join_sections(git_section, session_section)
-    return body
+    return _prepend_truncation_banner(body, dropped, max_chars)
+
+
+def _prepend_truncation_banner(body: str, dropped: list[str], max_chars: int) -> str:
+    banner = f"[truncated: dropped {', '.join(dropped)} to fit {max_chars}-char budget]"
+    return f"{banner}\n\n{body}"
 
 
 # --------------------------------------------------------------------------- #
@@ -520,15 +519,11 @@ def main() -> None:
     # Sections wrapped with markdown headings
     git_section = f"## Git\n{git_ctx}" if git_ctx else ""
     session_section = f"## Last session\n{last_session_ctx}" if last_session_ctx else ""
-    handoff_section = (
-        f"## Handoff from last session\n{handoff_ctx}" if handoff_ctx else ""
-    )
+    handoff_section = f"## Handoff from last session\n{handoff_ctx}" if handoff_ctx else ""
     episodic_section = f"## Recent history\n{episodic_ctx}" if episodic_ctx else ""
     north_section = f"## LazyNorth\n{north_ctx}" if north_ctx else ""
 
-    max_chars = (
-        cfg.context_inject.max_body_chars if cfg is not None else 3000
-    )
+    max_chars = cfg.context_inject.max_body_chars if cfg is not None else 3000
     body = _truncate_body(
         max_chars,
         git_section,
