@@ -247,6 +247,17 @@ Every piece of state the framework persists lives in one of three places. All th
 
 There is a fourth semi-persistent store scoped to each deployed profile — `<CLAUDE_CONFIG_DIR>/projects/<encoded-cwd>/memory/` — which holds `decisions.jsonl`, `failures.jsonl`, `handoff.md`, `pre-compact-summary.md`, and `MEMORY.md`. This is written both by the framework's hooks and by Claude Code itself. It lives in the deployed target dir rather than the source, so version-controlled dotfiles do not accumulate ephemeral session state.
 
+## Memory glue layer — connecting the five layers
+
+The five-layer memory model ([ADR-027](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/027-memory-stack-overview.md)) names the stores; the glue layer ([ADR-030](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/030-memory-stack-glue-layer.md)) makes them work together without depending on the agent remembering its own conventions.
+
+The two key shifts:
+
+- **Deterministic surfacing at SessionStart.** `context_inject` automatically emits a top-3 BM25 query into the QMD vault (using the current branch name) and a `Code structure` summary from the local Graphify graph (or a staleness banner if the graph is older than `git HEAD`). Both fail-soft if the underlying tool is missing. Truncation losses are surfaced as a single `[truncated: ...]` line so the 3000-char budget is tunable from real evidence.
+- **Deterministic capture at session close.** The Stop chain runs `session-export → compound-loop → engram-persist`. When `compound-loop`'s LLM-evaluation gates block (short sessions), a deterministic `slim_handoff` fast-path still writes branch + last user prompt + files touched to `handoff.md` so the next session is never blind. The `engram-persist` hook mirrors `decisions.jsonl` / `failures.jsonl` into Engram via cursor-based at-least-once semantics.
+
+What stays prompted (agent judgment): which decisions are worth a manual `mem_save` mid-session, when to deepen a QMD search past the suggester, when to consolidate `MEMORY.md` via `lh memory consolidate`. The harness forces *when* and *where* artifacts are written; *what's worth keeping* remains the agent's call.
+
 ## Deployment
 
 Install:

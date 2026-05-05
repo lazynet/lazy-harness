@@ -3,6 +3,15 @@
 **Status:** accepted
 **Date:** 2026-05-03
 
+> **Note (2026-05-05):** [ADR-030](030-memory-stack-glue-layer.md) closes the
+> prompted gaps in the model below by adding a deterministic glue layer
+> (slim_handoff, MEMORY.md size warning, QMD/Graphify surfacing in
+> `context_inject`, truncation visibility, cross-profile observability).
+> The five-layer table is unchanged; only the integration between layers is.
+> The "two episodic layers coexist" framing is updated by ADR-030 to
+> "two episodic layers serve different query profiles over the same data"
+> (Engram is now a deterministic mirror of JSONL per ADR-029).
+
 ## Context
 
 ADR-016 added the knowledge directory and optional QMD. ADR-022 added Engram for episodic memory. ADR-023 added Graphify for code-structure memory. ADR-024 added the MCP deploy seam that wires all three into each profile's `settings.json`. Each ADR is correct for its own scope, but no single document explains how the resulting layers fit together at the user level.
