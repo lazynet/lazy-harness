@@ -9,23 +9,45 @@ from lazy_harness.core.config import Config
 from lazy_harness.core.paths import config_dir
 
 
+@dataclass(frozen=True)
+class BuiltinHookSpec:
+    """Registry entry for a builtin hook.
+
+    `matcher` is an optional per-hook matcher override consumed by the agent
+    adapter when generating native hook config (e.g. settings.json). Unset =
+    the agent's event-level default applies.
+    """
+
+    module: str
+    matcher: str | None = None
+
+
 @dataclass
 class HookInfo:
     name: str
     path: Path
     is_builtin: bool
+    matcher: str | None = None
 
 
-_BUILTIN_HOOKS: dict[str, str] = {
-    "compound-loop": "lazy_harness.hooks.builtins.compound_loop",
-    "context-inject": "lazy_harness.hooks.builtins.context_inject",
-    "engram-persist": "lazy_harness.hooks.builtins.engram_persist",
-    "post-compact": "lazy_harness.hooks.builtins.post_compact",
-    "post-tool-use-format": "lazy_harness.hooks.builtins.post_tool_use_format",
-    "pre-compact": "lazy_harness.hooks.builtins.pre_compact",
-    "pre-tool-use-security": "lazy_harness.hooks.builtins.pre_tool_use_security",
-    "session-end": "lazy_harness.hooks.builtins.session_end",
-    "session-export": "lazy_harness.hooks.builtins.session_export",
+_BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
+    "compound-loop": BuiltinHookSpec(module="lazy_harness.hooks.builtins.compound_loop"),
+    "context-inject": BuiltinHookSpec(module="lazy_harness.hooks.builtins.context_inject"),
+    "engram-persist": BuiltinHookSpec(module="lazy_harness.hooks.builtins.engram_persist"),
+    "post-compact": BuiltinHookSpec(module="lazy_harness.hooks.builtins.post_compact"),
+    "post-tool-use-format": BuiltinHookSpec(
+        module="lazy_harness.hooks.builtins.post_tool_use_format"
+    ),
+    "pre-compact": BuiltinHookSpec(module="lazy_harness.hooks.builtins.pre_compact"),
+    "pre-tool-use-memory-size": BuiltinHookSpec(
+        module="lazy_harness.hooks.builtins.pre_tool_use_memory_size",
+        matcher="Edit|Write",
+    ),
+    "pre-tool-use-security": BuiltinHookSpec(
+        module="lazy_harness.hooks.builtins.pre_tool_use_security"
+    ),
+    "session-end": BuiltinHookSpec(module="lazy_harness.hooks.builtins.session_end"),
+    "session-export": BuiltinHookSpec(module="lazy_harness.hooks.builtins.session_export"),
 }
 
 
@@ -34,12 +56,17 @@ def list_builtin_hooks() -> list[str]:
 
 
 def _find_builtin(name: str) -> HookInfo | None:
-    module_path = _BUILTIN_HOOKS.get(name)
-    if module_path is None:
+    spec = _BUILTIN_HOOKS.get(name)
+    if spec is None:
         return None
-    parts = module_path.split(".")
+    parts = spec.module.split(".")
     base = Path(__file__).parent / "builtins" / f"{parts[-1]}.py"
-    return HookInfo(name=name, path=base, is_builtin=True)
+    return HookInfo(
+        name=name,
+        path=base,
+        is_builtin=True,
+        matcher=spec.matcher,
+    )
 
 
 def _find_user_hook(name: str, user_hooks_dir: Path | None = None) -> HookInfo | None:

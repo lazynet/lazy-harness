@@ -10,6 +10,7 @@ from lazy_harness.cli.main import cli
 from lazy_harness.core.config import (
     Config,
     HarnessConfig,
+    HookEventConfig,
     ProfileEntry,
     ProfilesConfig,
     save_config,
@@ -101,6 +102,50 @@ def test_deploy_generates_hooks_in_settings(home_dir: Path) -> None:
     settings = json.loads(settings_file.read_text())
     assert "hooks" in settings
     assert "SessionStart" in settings["hooks"]
+
+
+def test_deploy_writes_per_script_matcher_in_settings(home_dir: Path, monkeypatch) -> None:
+    """Plumbs HookInfo.matcher → HookEntry.matcher → settings.json matcher."""
+    import json
+
+    from lazy_harness.hooks import loader
+    from lazy_harness.hooks.loader import BuiltinHookSpec
+
+    monkeypatch.setitem(
+        loader._BUILTIN_HOOKS,
+        "test-pre-tool-use-with-matcher",
+        BuiltinHookSpec(
+            module="lazy_harness.hooks.builtins.pre_tool_use_security",
+            matcher="Edit|Write",
+        ),
+    )
+
+    config_path = home_dir / ".config" / "lazy-harness" / "config.toml"
+    target_dir = home_dir / ".claude-personal"
+
+    cfg = Config(
+        harness=HarnessConfig(version="1"),
+        profiles=ProfilesConfig(
+            default="personal",
+            items={"personal": ProfileEntry(config_dir=str(target_dir), roots=["~"])},
+        ),
+        hooks={
+            "pre_tool_use": HookEventConfig(
+                scripts=["test-pre-tool-use-with-matcher", "pre-tool-use-security"]
+            )
+        },
+    )
+    save_config(cfg, config_path)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["deploy"])
+    assert result.exit_code == 0
+
+    settings = json.loads((target_dir / "settings.json").read_text())
+    pre_tool = settings["hooks"]["PreToolUse"]
+    matchers = [entry["matcher"] for entry in pre_tool]
+    assert "Edit|Write" in matchers
+    assert "Bash" in matchers
 
 
 def test_deploy_creates_claude_symlink(home_dir: Path) -> None:

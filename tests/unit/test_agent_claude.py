@@ -155,6 +155,29 @@ def test_generate_hook_config_keeps_empty_matcher_for_other_events() -> None:
     assert entries[0]["matcher"] == ""
 
 
+def test_generate_hook_config_respects_per_script_matcher_override() -> None:
+    from lazy_harness.agents.base import HookEntry
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    adapter = ClaudeCodeAdapter()
+    result = adapter.generate_hook_config(
+        {
+            "pre_tool_use": [
+                HookEntry(command="hook-a", matcher="Edit|Write"),
+                "pre-tool-use-security",
+            ]
+        }
+    )
+    entries = result["PreToolUse"]
+    assert len(entries) == 2
+    edit_write = [e for e in entries if e["matcher"] == "Edit|Write"]
+    bash = [e for e in entries if e["matcher"] == "Bash"]
+    assert len(edit_write) == 1
+    assert edit_write[0]["hooks"][0]["command"] == "hook-a"
+    assert len(bash) == 1
+    assert bash[0]["hooks"][0]["command"] == "pre-tool-use-security"
+
+
 def test_claude_adapter_generate_mcp_config_returns_dict() -> None:
     from lazy_harness.agents.claude_code import ClaudeCodeAdapter
 

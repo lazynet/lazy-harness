@@ -6,6 +6,7 @@ import os
 import shutil
 from pathlib import Path
 
+from lazy_harness.agents.base import HookEntry
 from lazy_harness.core.paths import expand_path
 
 
@@ -54,8 +55,12 @@ class ClaudeCodeAdapter:
             "notification",
         ]
 
-    def generate_hook_config(self, hooks: dict[str, list[str]]) -> dict:
-        """Generate Claude Code settings.json hooks section."""
+    def generate_hook_config(self, hooks: dict[str, list[str | HookEntry]]) -> dict:
+        """Generate Claude Code settings.json hooks section.
+
+        Each value can be a plain command string (uses the event's default
+        matcher) or a `HookEntry` (overrides the matcher per-script).
+        """
         hook_event_map = {
             "session_start": "SessionStart",
             "session_stop": "Stop",
@@ -74,13 +79,19 @@ class ClaudeCodeAdapter:
             cc_event = hook_event_map.get(event)
             if not cc_event:
                 continue
-            matcher = matcher_map.get(event, "")
+            default_matcher = matcher_map.get(event, "")
             matchers = []
             for script in scripts:
+                if isinstance(script, HookEntry):
+                    command = script.command
+                    matcher = script.matcher or default_matcher
+                else:
+                    command = script
+                    matcher = default_matcher
                 matchers.append(
                     {
                         "matcher": matcher,
-                        "hooks": [{"type": "command", "command": script}],
+                        "hooks": [{"type": "command", "command": command}],
                     }
                 )
             settings_hooks[cc_event] = matchers
