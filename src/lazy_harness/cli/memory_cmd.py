@@ -8,6 +8,7 @@ from pathlib import Path
 import click
 
 from lazy_harness.core.paths import config_file, expand_path
+from lazy_harness.knowledge.compound_loop import invoke_claude as _invoke_claude
 
 
 def enumerate_profile_projects(profile_dir: Path) -> dict[str, dict]:
@@ -117,3 +118,81 @@ def cross_profile_check() -> None:
     else:
         click.echo()
         click.echo("No cross-profile divergences detected.")
+
+
+def _read_jsonl_tail(path: Path, last: int) -> list[str]:
+    if not path.is_file():
+        return []
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        return []
+    return [line for line in lines[-last:] if line.strip()]
+
+
+def _build_consolidate_prompt(decisions: list[str], failures: list[str]) -> str:
+    sections: list[str] = [
+        "You are reviewing append-only episodic logs from a coding agent's session.",
+        "Identify recurring patterns and propose additions to the project's curated",
+        "MEMORY.md (max 200 lines, distilled rules and conventions). Output only the",
+        "additions as markdown bullets — no preamble. Each addition must include the",
+        "source decisions/failures that motivate it. Skip anything that is already a",
+        "one-off or session-specific.",
+    ]
+    if decisions:
+        sections.append("\n## decisions.jsonl entries")
+        sections.extend(decisions)
+    if failures:
+        sections.append("\n## failures.jsonl entries")
+        sections.extend(failures)
+    return "\n".join(sections)
+
+
+@memory.command("consolidate")
+@click.option(
+    "--memory-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Memory directory to read from. Defaults to <cwd>/memory.",
+)
+@click.option(
+    "--last",
+    type=int,
+    default=50,
+    show_default=True,
+    help="Tail this many entries from each JSONL.",
+)
+@click.option(
+    "--model",
+    default="claude-haiku-4-5-20251001",
+    show_default=True,
+    help="Headless model for the proposal.",
+)
+@click.option(
+    "--timeout",
+    type=int,
+    default=120,
+    show_default=True,
+    help="Claude invocation timeout in seconds.",
+)
+def consolidate(memory_dir: Path | None, last: int, model: str, timeout: int) -> None:
+    """Propose MEMORY.md additions from recent decisions/failures (read-only)."""
+    target = memory_dir or (Path.cwd() / "memory")
+    decisions = _read_jsonl_tail(target / "decisions.jsonl", last)
+    failures = _read_jsonl_tail(target / "failures.jsonl", last)
+    if not decisions and not failures:
+        click.echo(
+            f"No entries in decisions.jsonl/failures.jsonl — nothing to consolidate at {target}."
+        )
+        return
+
+    prompt = _build_consolidate_prompt(decisions, failures)
+    result = _invoke_claude(prompt, model, timeout)
+    if not result:
+        click.echo("Claude returned empty output. Try again or increase --timeout.")
+        return
+    click.echo(result)
+    click.echo(
+        "\n# Above is a proposal — review before pasting into MEMORY.md.\n"
+        "# Use LH_MEMORY_SIZE_BYPASS=1 if your edit transiently exceeds 200 lines."
+    )
