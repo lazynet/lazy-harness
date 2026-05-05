@@ -270,6 +270,72 @@ def test_context_inject_config_qmd_suggest_defaults() -> None:
     assert cfg.qmd_suggest_top_k == 3
 
 
+def test_context_inject_config_graphify_surface_default_is_true() -> None:
+    from lazy_harness.core.config import ContextInjectConfig
+
+    cfg = ContextInjectConfig()
+    assert cfg.graphify_surface_enabled is True
+
+
+def test_context_inject_includes_graphify_summary_when_graph_is_fresh(
+    tmp_path: Path,
+) -> None:
+    """Black-box: hook subprocess sees a fresh graph.json and emits the summary."""
+    import os as _os
+    import time as _time
+
+    subprocess.run(["git", "init"], cwd=str(tmp_path), capture_output=True)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "init"],
+        cwd=str(tmp_path),
+        capture_output=True,
+        env={
+            **_os.environ,
+            "GIT_AUTHOR_NAME": "t",
+            "GIT_AUTHOR_EMAIL": "t@t",
+            "GIT_COMMITTER_NAME": "t",
+            "GIT_COMMITTER_EMAIL": "t@t",
+        },
+    )
+    out = tmp_path / "graphify-out"
+    out.mkdir()
+    (out / "graph.json").write_text(
+        json.dumps(
+            {
+                "nodes": [
+                    {"id": "x", "community": 0},
+                    {"id": "y", "community": 0},
+                    {"id": "z", "community": 1},
+                ],
+                "edges": [],
+            }
+        )
+    )
+    fresh_ts = _time.time() + 5
+    _os.utime(out / "graph.json", (fresh_ts, fresh_ts))
+
+    hook_path = (
+        Path(__file__).parent.parent.parent
+        / "src"
+        / "lazy_harness"
+        / "hooks"
+        / "builtins"
+        / "context_inject.py"
+    )
+    result = subprocess.run(
+        [sys.executable, str(hook_path)],
+        input="{}",
+        capture_output=True,
+        text=True,
+        cwd=str(tmp_path),
+        timeout=10,
+    )
+    assert result.returncode == 0
+    ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+    assert "## Code structure" in ctx
+    assert "3 nodes" in ctx
+
+
 def test_qmd_suggest_context_returns_empty_when_no_hits(monkeypatch) -> None:
     from lazy_harness.hooks.builtins import context_inject as mod
 
@@ -304,6 +370,86 @@ def test_qmd_suggest_context_returns_empty_for_blank_query(monkeypatch) -> None:
     monkeypatch.setattr("lazy_harness.knowledge.qmd.query", fake_query)
     assert mod.qmd_suggest_context("", top_k=3) == ""
     assert called["n"] == 0
+
+
+def test_graphify_section_returns_empty_when_graph_missing(tmp_path: Path) -> None:
+    from lazy_harness.hooks.builtins.context_inject import graphify_section
+
+    assert graphify_section(tmp_path / "no-such-out", tmp_path) == ""
+
+
+def test_graphify_section_emits_staleness_banner_when_graph_older_than_head(
+    tmp_path: Path,
+) -> None:
+    import os as _os
+    import time as _time
+
+    from lazy_harness.hooks.builtins.context_inject import graphify_section
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=str(repo), capture_output=True)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "init"],
+        cwd=str(repo),
+        capture_output=True,
+        env={
+            **_os.environ,
+            "GIT_AUTHOR_NAME": "t",
+            "GIT_AUTHOR_EMAIL": "t@t",
+            "GIT_COMMITTER_NAME": "t",
+            "GIT_COMMITTER_EMAIL": "t@t",
+        },
+    )
+    out = repo / "graphify-out"
+    out.mkdir()
+    graph = out / "graph.json"
+    graph.write_text(json.dumps({"nodes": [], "edges": []}))
+    old_ts = _time.time() - 86400
+    _os.utime(graph, (old_ts, old_ts))
+
+    section = graphify_section(out, repo)
+    assert "stale" in section.lower()
+    assert "/graphify" in section
+
+
+def test_graphify_section_emits_content_summary_when_fresh(tmp_path: Path) -> None:
+    import os as _os
+    import time as _time
+
+    from lazy_harness.hooks.builtins.context_inject import graphify_section
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=str(repo), capture_output=True)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "init"],
+        cwd=str(repo),
+        capture_output=True,
+        env={
+            **_os.environ,
+            "GIT_AUTHOR_NAME": "t",
+            "GIT_AUTHOR_EMAIL": "t@t",
+            "GIT_COMMITTER_NAME": "t",
+            "GIT_COMMITTER_EMAIL": "t@t",
+        },
+    )
+    out = repo / "graphify-out"
+    out.mkdir()
+    graph = out / "graph.json"
+    nodes = (
+        [{"id": f"n{i}", "community": 0, "source_file": "a.py"} for i in range(5)]
+        + [{"id": f"n{i + 100}", "community": 1, "source_file": "b.py"} for i in range(3)]
+        + [{"id": f"n{i + 200}", "community": 2, "source_file": "c.py"} for i in range(2)]
+    )
+    graph.write_text(json.dumps({"nodes": nodes, "edges": []}))
+    fresh_ts = _time.time() + 5
+    _os.utime(graph, (fresh_ts, fresh_ts))
+
+    section = graphify_section(out, repo)
+    assert "Code structure" in section
+    assert "10 nodes" in section
+    assert "3 communities" in section
 
 
 def test_truncate_body_includes_suggest_section_when_body_fits() -> None:
