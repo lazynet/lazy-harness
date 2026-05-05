@@ -169,9 +169,7 @@ def test_lazynorth_context_combines_universal_and_profile(tmp_path: Path) -> Non
 def test_lazynorth_context_handles_missing_profile_doc(tmp_path: Path) -> None:
     root = tmp_path / "LazyNorth"
     root.mkdir()
-    (root / "LazyNorth.md").write_text(
-        "---\n---\n\n## Section\n- point\n"
-    )
+    (root / "LazyNorth.md").write_text("---\n---\n\n## Section\n- point\n")
     result = lazynorth_context(root, "LazyNorth.md", "")
     assert "## Section" in result
 
@@ -186,12 +184,8 @@ def test_profile_for_config_dir_matches(tmp_path: Path) -> None:
     flex_dir = tmp_path / "claude-flex"
     flex_dir.mkdir()
     profiles = {
-        "lazy": ProfileEntry(
-            config_dir=str(lazy_dir), lazynorth_doc="LazyNorth-Lazy.md"
-        ),
-        "flex": ProfileEntry(
-            config_dir=str(flex_dir), lazynorth_doc="LazyNorth-Flex.md"
-        ),
+        "lazy": ProfileEntry(config_dir=str(lazy_dir), lazynorth_doc="LazyNorth-Lazy.md"),
+        "flex": ProfileEntry(config_dir=str(flex_dir), lazynorth_doc="LazyNorth-Flex.md"),
     }
     name, doc = _profile_for_config_dir(str(lazy_dir), profiles)
     assert name == "lazy"
@@ -211,7 +205,7 @@ def test_profile_for_config_dir_no_match() -> None:
 
 def test_compose_banner_with_all_parts() -> None:
     git = "Branch: main\nLast commit: abc hello"
-    session = "Last session: 2026-04-10 (42 messages)\nWorking on: \"fix bug\""
+    session = 'Last session: 2026-04-10 (42 messages)\nWorking on: "fix bug"'
     handoff = "do stuff"
     banner = _compose_banner(git, session, handoff)
     assert "on main" in banner
@@ -247,13 +241,46 @@ def test_truncate_body_extreme() -> None:
     assert "## LazyNorth" not in result
 
 
+def test_truncate_body_emits_banner_when_episodic_dropped() -> None:
+    git = "## Git\nbranch"
+    north = "## LazyNorth\n" + "n" * 500
+    session = "## Last session\nshort"
+    handoff = "## Handoff from last session\nh"
+    episodic = "## Recent history\n" + "e" * 500
+
+    result = _truncate_body(800, git, north, session, handoff, episodic)
+
+    first_line = result.splitlines()[0]
+    assert first_line.startswith("[truncated:")
+    assert "Recent history" in first_line
+    assert "800-char budget" in first_line
+
+
+def test_truncate_body_no_banner_when_body_fits() -> None:
+    git = "## Git\nbranch"
+    full = _truncate_body(3000, git, "", "", "", "")
+    assert not full.startswith("[truncated:")
+
+
+def test_truncate_body_banner_lists_all_dropped_sections() -> None:
+    git = "## Git\nbranch"
+    big_north = "## LazyNorth\n" + "n" * 5000
+    big_handoff = "## Handoff from last session\n" + "h" * 5000
+    big_episodic = "## Recent history\n" + "e" * 5000
+    result = _truncate_body(100, git, big_north, "", big_handoff, big_episodic)
+
+    first_line = result.splitlines()[0]
+    assert first_line.startswith("[truncated:")
+    assert "Recent history" in first_line
+    assert "LazyNorth" in first_line
+    assert "Handoff from last session" in first_line
+
+
 def test_handoff_context_from_files(tmp_path: Path) -> None:
     memory = tmp_path / "memory"
     memory.mkdir()
     (memory / "handoff.md").write_text("Pendiente:\n- thing 1\n")
-    (memory / "pre-compact-summary.md").write_text(
-        "<!-- auto -->\n## Tasks\n- resumed work\n"
-    )
+    (memory / "pre-compact-summary.md").write_text("<!-- auto -->\n## Tasks\n- resumed work\n")
     result = handoff_context(memory)
     assert "thing 1" in result
     assert "Pre-compact context:" in result
@@ -347,12 +374,9 @@ def test_episodic_context_tail(tmp_path: Path) -> None:
     memory = tmp_path / "memory"
     memory.mkdir()
     (memory / "decisions.jsonl").write_text(
-        json.dumps({"summary": "d1"}) + "\n"
-        + json.dumps({"summary": "d2"}) + "\n"
+        json.dumps({"summary": "d1"}) + "\n" + json.dumps({"summary": "d2"}) + "\n"
     )
-    (memory / "failures.jsonl").write_text(
-        json.dumps({"summary": "f1", "prevention": "x"}) + "\n"
-    )
+    (memory / "failures.jsonl").write_text(json.dumps({"summary": "f1", "prevention": "x"}) + "\n")
     result = episodic_context(memory)
     assert "Recent decisions" in result
     assert "- d1" in result
