@@ -45,8 +45,8 @@ scripts = ["post-compact"]
 | `session_end` | `SessionEnd` | Exactly once at real session termination (`/exit`, `/clear`, logout) | `session-end` | Force final end-of-session work |
 | `pre_compact` | `PreCompact` | Immediately before Claude Code compacts conversation history | `pre-compact` | Preserve working state |
 | `post_compact` | `PostCompact` | Immediately after Claude Code compacts conversation history | `post-compact` | Re-inject preserved working state |
-| `pre_tool_use` | `PreToolUse` | Before each tool call | `pre-tool-use-security` | Block destructive / exfiltration commands |
-| `post_tool_use` | `PostToolUse` | After each tool call | `post-tool-use-format` | Auto-format edited files, side-effect observers |
+| `pre_tool_use` | `PreToolUse` | Before each tool call | `pre-tool-use-security`, `pre-tool-use-memory-size` | Block destructive / exfiltration commands, warn before MEMORY.md exceeds the 200-line ceiling |
+| `post_tool_use` | `PostToolUse` | After each tool call | `post-tool-use-format`, `post-tool-use-sync-claude` | Auto-format edited files, regenerate segmented `CLAUDE.md` after profile edits |
 | `notification` | `Notification` | Ad-hoc agent notifications | — | Desktop notifications, integrations |
 
 The mapping lives in `ClaudeCodeAdapter.generate_hook_config` — other agents may expose different event names, but the `config.toml` side is stable.
@@ -66,6 +66,7 @@ Sections composed, in priority order:
 3. **`## Last session`** — the most recent exported session matching this project's name. Displays date, message count, and the first non-empty user message of that session (truncated to 80 chars). Pulled from the knowledge directory, so it is scoped by project and spans profiles if you run multiple.
 4. **`## Handoff from last session`** — contents of `memory/handoff.md` (written by `compound-loop`) plus `memory/pre-compact-summary.md` (written by `pre-compact`) from the project's per-cwd memory dir.
 5. **`## Recent history`** — the last 3 entries from `decisions.jsonl` and the last 3 from `failures.jsonl`, with failures including their prevention field.
+6. **`## Proposals to review`** — contents of `memory/claude-md.proposal.md` when present. The compound-loop worker writes this file when it has surfaced patterns worth promoting into `CLAUDE.md` (curated semantic layer). Injecting them at session start lets you review and apply them by hand; `context-inject` never edits `CLAUDE.md` or `MEMORY.md` itself.
 
 The body is truncated to `cfg.context_inject.max_body_chars` (default 3000) by dropping sections in the order `episodic → lazynorth → handoff`. A compact banner is also emitted as `systemMessage` so the agent can surface "Session context loaded: on main | Last session: 2026-04-12 18:32 | has handoff notes" without printing the full body.
 
@@ -155,6 +156,8 @@ This is the hook that does the heaviest lifting. It is split into two pieces del
 **Where it writes (via `persist_results`):**
 - `<memory_dir>/decisions.jsonl` — appended structured decisions.
 - `<memory_dir>/failures.jsonl` — appended preventable errors.
+- `<memory_dir>/grades.jsonl` — appended self-graded distillation quality ([ADR-021](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/021-async-response-grading.md)).
+- `<memory_dir>/claude-md.proposal.md` — appended proposed additions to `MEMORY.md` / `CLAUDE.md` for the human to review. Surfaced by `context-inject` on the next session start.
 - `<learnings_dir>/YYYY-MM/YYYY-MM-DD-<slug>.md` — one markdown file per learning, atomic write.
 - `<memory_dir>/handoff.md` — overwritten with the current pending items, or deleted if empty.
 
@@ -244,6 +247,23 @@ Rules of the allowlist:
 
 The full rule list and the rationale behind each category live in [`specs/designs/2026-04-17-security-hooks-cluster-design.md`](https://github.com/lazynet/lazy-harness/blob/main/specs/designs/2026-04-17-security-hooks-cluster-design.md).
 
+### `pre-tool-use-memory-size` — runs on `PreToolUse`
+
+Source: `src/lazy_harness/hooks/builtins/pre_tool_use_memory_size.py`.
+
+Responsibility: warn — never block — when an `Edit` or `Write` would push the per-project `MEMORY.md` past the curated 200-line ceiling ([ADR-030](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/030-memory-stack-glue-layer.md) G2). The ceiling is a soft contract for the curated semantic layer: Claude Code itself truncates `MEMORY.md` if it overflows, so the file is worthless past that bound.
+
+Mechanics:
+
+1. Scope check — the hook only acts on `Edit` / `Write` tool calls whose `file_path` ends in `/memory/MEMORY.md`. Every other tool / path: instant exit 0.
+2. Project the post-operation line count from the tool input: `Write` uses `content` directly; `Edit` reads the current file, applies `old_string` → `new_string` (honouring `replace_all`) in memory, and counts the result.
+3. If the projected line count exceeds 200, emit a `hookSpecificOutput.systemMessage` warning suggesting `lh memory consolidate` to distill recent JSONL entries before adding more.
+4. Always exit 0. This is a warning hook, not a guard.
+
+Bypass for tooling that legitimately rewrites `MEMORY.md` (the consolidator pathway): set `LH_MEMORY_SIZE_BYPASS=1` in the subprocess environment.
+
+**Where it writes:** nowhere on disk. Only stdout (the warning) and the standard hook log.
+
 ### `post-tool-use-format` — runs on `PostToolUse`
 
 Source: `src/lazy_harness/hooks/builtins/post_tool_use_format.py`.
@@ -259,6 +279,21 @@ Behaviour:
 This is the simplest built-in and the easiest extension point — a project that prefers `black` over `ruff format`, or that wants to format `.go` files with `gofmt`, can copy this file into `~/.config/lazy-harness/hooks/` under a different name and register it in `[hooks.post_tool_use]` instead.
 
 **Where it writes:** the file the agent just edited (in place, via `ruff format`). Nothing else.
+
+### `post-tool-use-sync-claude` — runs on `PostToolUse`
+
+Source: `src/lazy_harness/hooks/builtins/post_tool_use_sync_claude.py`.
+
+Responsibility: keep a profile's composed `CLAUDE.md` in sync with its segmented sources. The framework lets a profile split its agent-facing memory across `CLAUDE.head.md`, `CLAUDE.tail.md`, and `CLAUDE.common.md` (shared via `_common/`); on every edit to one of those segments the composed `CLAUDE.md` would drift unless something re-stitched it.
+
+Mechanics:
+
+1. Scope check — the hook only acts on `Edit` / `Write` tool calls whose `file_path` basename is one of `CLAUDE.head.md`, `CLAUDE.tail.md`, or `CLAUDE.common.md`. Every other tool / path: instant exit 0.
+2. Walk parent dirs of the edited file to find the enclosing `profiles/` root.
+3. Call `sync_profiles(<profiles_dir>)` to regenerate every profile's composed `CLAUDE.md` from its segments.
+4. Fail-soft: any exception is swallowed and the hook still exits 0. A sync failure must never block the agent's turn.
+
+**Where it writes:** each profile's `CLAUDE.md` under `<profiles_dir>/<name>/CLAUDE.md` (in place). The segment files themselves are not touched.
 
 ### `engram-persist` — runs on `Stop`
 

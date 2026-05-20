@@ -46,13 +46,17 @@ src/lazy_harness/
 ├── core/            # config, paths, profiles, envrc — foundational
 ├── agents/          # agent adapter protocol + Claude Code adapter
 ├── hooks/           # hook engine + loader + built-in hooks
-├── knowledge/       # session export, QMD wrapper, compound loop
-├── monitoring/      # SQLite ingest, views, dashboard
+├── knowledge/       # session export, QMD wrapper, compound loop, graphify wrapper
+├── memory/          # engram wrapper (ADR-022 episodic backend)
+├── monitoring/      # SQLite ingest, views, dashboard, engram-persist health
 ├── scheduler/       # launchd, systemd, cron backends + manager
 ├── migrate/         # detector, planner, executor, rollback, steps/
 ├── init/            # interactive `lh init` wizard
 ├── selftest/        # runner, checks/
-└── deploy/          # symlink engine, agent config generation
+├── deploy/          # symlink engine, agent config generation, MCP wiring
+├── wizards/         # `lh config <feature> --init` flows (ADR-026)
+├── plugins/         # extension-point registry (metrics sinks, future surfaces)
+└── features.py      # `lh doctor` Features section helper (ADR-025)
 tests/               # mirrors src/lazy_harness/ one-to-one
 templates/           # file templates (profile scaffolds, etc.)
 docs/                # this site

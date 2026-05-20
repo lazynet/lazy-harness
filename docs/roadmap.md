@@ -13,10 +13,10 @@ Where `lazy-harness` is heading. This is a **curated list of committed themes**,
 
 The pre-commit gate defined in [`CLAUDE.md`](https://github.com/lazynet/lazy-harness/blob/main/CLAUDE.md) requires `pytest`, `ruff`, and `mkdocs build --strict` to all pass cleanly. That invariant is the floor every other change builds on.
 
-- [ ] Rewrite `tests/unit/test_version.py` to compare `pyproject.toml` and `src/lazy_harness/__init__.py` against each other (no hardcoded expected value).
-- [ ] Resolve 23 preexisting `ruff check src tests` findings — auto-fix the fixable, justify or exclude the rest.
-- [ ] Make the pre-commit gate green on `main` and keep it green.
-- [ ] Add a GitHub Actions workflow that runs the gate on every PR and blocks merge on failure.
+- [x] Rewrite `tests/unit/test_version.py` to compare `pyproject.toml` and `src/lazy_harness/__init__.py` against each other (no hardcoded expected value).
+- [x] Resolve 23 preexisting `ruff check src tests` findings — auto-fix the fixable, justify or exclude the rest.
+- [x] Make the pre-commit gate green on `main` and keep it green.
+- [ ] Add a GitHub Actions workflow that runs `pytest` and `ruff` on every PR and blocks merge on failure. The docs build is already enforced by [`docs.yml`](https://github.com/lazynet/lazy-harness/blob/main/.github/workflows/docs.yml); pytest and ruff still run locally only.
 
 ## Theme 2 — Knowledge pipeline maturity
 
@@ -32,7 +32,7 @@ Decisions the audit surfaced that are waiting on real evidence before being prom
 
 - [ ] **Legacy ADR-010 Ollama backend.** Decide: promote to active ADR as a configurable alternative, or reject with a "revisit if cost/rate-limit pressure appears" note. Trigger: if you hit Claude API cost or throttling limits driving compound-loop failures in practice.
 - [ ] **Legacy ADR-013 Proactivity levels.** Decide: promote as per-profile configuration, or reject and keep proactivity encoded as prose in each profile's `CLAUDE.md`. Trigger: when a third profile (beyond `lazy` and `flex`) is added and the difference in autonomy stops fitting in prose.
-- [ ] **ADR-018 implementation.** Build the `lh config <feature>` command group and the "Features" section of `lh doctor`. Trigger: when the second extension point (beyond `metrics_sink`) ships and the wizard UX has a concrete second example to design against.
+- [x] **ADR-018 implementation.** Built — `lh doctor` exposes a Features section ([ADR-025](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/025-doctor-features-section.md)) and `lh config <feature> --init` ships wizards for `memory` and `knowledge` ([ADR-026](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/026-config-wizards.md)).
 
 ## Theme 4 — Framework extensibility
 
@@ -43,4 +43,4 @@ The plugin system (metrics sinks, ADR-004 agent adapters) is the framework's gro
 
 ## Closed themes
 
-None yet. As themes complete, they move into this section with the date and the PR references that closed them.
+- **2026-05 — ADR-018 feature discoverability.** Closed by [ADR-025](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/025-doctor-features-section.md) (`lh doctor` Features section) and [ADR-026](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/026-config-wizards.md) (`lh config <feature> --init` wizards). Originally Theme 3, moved here as the implementation landed across the 0.10-0.20 release line.

@@ -33,7 +33,9 @@ If you want the design rationale, read [ADR-008 — Compound loop async worker](
 ┌────────────────────────────────────────────────┐
 │ memory/decisions.jsonl          (append)       │
 │ memory/failures.jsonl           (append)       │
+│ memory/grades.jsonl             (append)       │
 │ memory/handoff.md               (overwrite)    │
+│ memory/claude-md.proposal.md    (append)       │
 │ learnings/YYYY-MM/<slug>.md     (atomic)       │
 └────────────────────────────────────────────────┘
        │ moves task file
@@ -104,7 +106,7 @@ Steps:
 
 ## Phase 3 — What gets written
 
-`persist_results` takes the parsed JSON from the LLM and writes four categories of output, all using atomic writes where applicable.
+`persist_results` takes the parsed JSON from the LLM and writes six categories of output, all using atomic writes where applicable.
 
 ### `decisions.jsonl` — medium-term episodic store
 
@@ -135,6 +137,20 @@ Same format, different fields:
 ```
 
 The `prevention` field is the critical one — this is what the `context-inject` hook surfaces in `## Recent history` on the next session start, specifically to put the prevention in the agent's face before it repeats the same mistake.
+
+### `grades.jsonl` — self-graded distillation quality
+
+Same one-line-per-entry format. The worker prompt asks the LLM to score the run it just produced ([ADR-021](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/021-async-response-grading.md)) so a future review can spot sessions where the distillation went off the rails — empty outputs from a long session, an LLM that started hallucinating decisions, a confidence drop after a model swap.
+
+```json
+{"ts":"2026-04-13T18:32:45-03:00","type":"grade",
+ "session_id":"abc123","project":"lazy-harness",
+ "quality":"good","issues":["none"],
+ "reasoning":"clean session, decisions and learnings are well-grounded",
+ "confidence":0.9}
+```
+
+Poor grades (`quality: "poor"`, low confidence, or recurring issues) escalate to the project's PRJ.md as a flag for the human to review. The file is append-only and not surfaced in `context-inject` — it is an audit trail, not session context.
 
 ### `handoff.md` — open items for next session
 
@@ -180,6 +196,23 @@ Body:
 
 These are the entries QMD picks up and indexes semantically. The `scope` field (`universal | backend | infra | consulting`) lets a future query say "give me infra-scoped learnings from the last year".
 
+### `claude-md.proposal.md` — staged additions to the curated semantic layer
+
+`MEMORY.md` (the project's curated semantic layer) has a hard ceiling of ~200 lines and is owned by the human — the worker is not allowed to edit it directly (see "What the loop does NOT do" below). Instead, when the LLM identifies a workflow rule or convention that emerged during the session and would belong as a bullet in *that project's* `CLAUDE.md` or `MEMORY.md`, it returns a `claude_md_proposals` entry. The worker appends these to `<memory_dir>/claude-md.proposal.md`:
+
+```markdown
+<!-- claude-md proposals (append-only). Review and merge into CLAUDE.md or discard. -->
+
+## 2026-04-13T18:32:45-03:00
+
+- **Rule:** Always run `uv run --group docs mkdocs build --strict` before committing docs changes
+  - **Rationale:** Catches broken anchors and missing references that pass local preview but fail CI
+```
+
+`context-inject` reads this file on the next session start and surfaces it under `## Proposals to review` so the human sees it without having to grep the memory dir. The proposals only land in `MEMORY.md` (or another curated file) if the human chooses to merge them — the loop never crosses that line on its own.
+
+The file is append-only. Either edit it down to nothing after merging, or delete it: an empty file is the signal that there is nothing pending review.
+
 ## De-duplication — why the same learning does not appear twice
 
 Every worker invocation passes the current tail of decisions, failures, and learnings into the prompt with explicit anti-dup instructions ("avoid duplicates", "Do NOT repeat these or semantic equivalents"). The LLM is the dedup mechanism — a semantic filter, not a string match.
@@ -190,7 +223,7 @@ When a genuinely duplicate learning sneaks past the LLM filter, two things catch
 
 ## What the loop does NOT do
 
-- **It does not edit `MEMORY.md`.** That file is maintained by Claude Code itself during normal sessions via the auto-memory system documented in the user's `CLAUDE.md`. The compound loop owns the `.jsonl` and `learnings/` layers; `MEMORY.md` is orthogonal.
+- **It does not edit `MEMORY.md` or `CLAUDE.md` directly.** Those files are maintained by Claude Code itself during normal sessions via the auto-memory system documented in the user's `CLAUDE.md`. The compound loop *proposes* additions via `claude-md.proposal.md` (above) and `context-inject` surfaces them on the next session start, but only the human decides whether to merge them. The loop owns the `.jsonl`, `learnings/`, and `*.proposal.md` layers; `MEMORY.md` and `CLAUDE.md` are orthogonal.
 - **It does not block session close.** Everything heavy happens after the producer exits. A session that closed at 18:32:45 with a busy queue behind it will still close at 18:32:45.
 - **It does not write to the knowledge directory's `sessions/` subtree.** That is `session-export`'s job. The loop only writes to `memory/*.jsonl`, `memory/handoff.md`, and `learnings/*.md`.
 - **It does not fail the session if Claude is unreachable.** `invoke_claude` timing out or returning empty just marks the task skipped and moves on. Memory enrichment is best-effort by design.

@@ -89,11 +89,45 @@ Manages the knowledge directory and its QMD index.
 
 `lh knowledge context-gen` regenerates the auto-updated stats blocks inside QMD collection contexts (the `<!-- auto -->` markers). `--dry-run` shows changes without writing.
 
+`lh knowledge handoff-now` forces a compound-loop evaluation for the current session, bypassing the debounce and growth gates the Stop hook applies. Same semantics as the `SessionEnd` hook ([ADR-019](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/019-handoff-session-end-freshness.md)); use it manually before `/compact`, before closing a terminal without `/exit`, or on Claude Code builds that predate the `SessionEnd` event.
+
+`lh knowledge export-session <session-file>` is the escape hatch for sessions the `Stop` / `session-export` hook skipped — for example, a real session the non-interactive heuristic mis-classified. `--force` bypasses the interactive-session filter and the unchanged-file guard.
+
 ```bash
 lh knowledge status
 lh knowledge sync --collection my-project
 lh knowledge embed
 lh knowledge context-gen --dry-run
+lh knowledge handoff-now
+lh knowledge export-session ~/.claude/projects/-Users-me-repo/abc123.jsonl --force
+```
+
+## `lh memory`
+
+Diagnostic commands for the memory stack. Read-only inspection plus a propose-only consolidator — none of these write to `MEMORY.md` directly. Pair them with `lh status memory` for per-project counts.
+
+### `lh memory consolidate`
+
+Proposes additions to `MEMORY.md` distilled from the most recent decisions and failures in the per-project memory dir. The command is read-only: it prints a proposal to stdout (typically a few bullet points fit for the curated semantic layer) and never edits `MEMORY.md` itself. Pair it with the warning emitted by `pre-tool-use-memory-size` when the file is near the 200-line ceiling ([ADR-030](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/030-memory-stack-glue-layer.md) G2).
+
+Flags:
+
+- `--memory-dir <path>` — directory to read from. Defaults to `<cwd>/memory`.
+- `--last <n>` — tail this many entries from each JSONL. Default `50`.
+- `--model <id>` — headless model used to draft the proposal. Default `claude-haiku-4-5-20251001`.
+- `--timeout <seconds>` — Claude invocation timeout. Default `120`.
+
+```bash
+lh memory consolidate
+lh memory consolidate --memory-dir ~/.claude/projects/-Users-me-repo/memory --last 100
+```
+
+### `lh memory cross-profile-check`
+
+Walks every profile's memory tree and reports which projects have memory artifacts under each. The output flags cross-profile divergences — the same logical project appearing with conflicting memory under more than one profile, typically a sign that `lh profile move` is needed (see `lh profile move`).
+
+```bash
+lh memory cross-profile-check
 ```
 
 ## `lh migrate`
