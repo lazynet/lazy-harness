@@ -17,6 +17,7 @@ from lazy_harness.hooks.builtins.context_inject import (
     handoff_context,
     last_session_context,
     lazynorth_context,
+    proposals_context,
 )
 
 
@@ -628,6 +629,76 @@ def test_handoff_context_legacy_no_frontmatter(tmp_path: Path) -> None:
     result = handoff_context(memory)
     assert "legacy thing" in result
     assert "legacy" in result.lower()
+
+
+def test_proposals_context_reads_file_stripping_html_comment(tmp_path: Path) -> None:
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    (memory / "claude-md.proposal.md").write_text(
+        "<!-- claude-md proposals (append-only). Review and merge into CLAUDE.md or discard. -->\n"
+        "\n"
+        "## 2026-05-20T10:00:00-03:00\n"
+        "\n"
+        "- **Rule:** Always use os.replace for iCloud-synced paths\n"
+        "  - **Rationale:** Non-atomic writes cause conflict copies\n"
+    )
+
+    result = proposals_context(memory)
+
+    assert "Always use os.replace for iCloud-synced paths" in result
+    assert "Non-atomic writes cause conflict copies" in result
+    assert "claude-md proposals (append-only)" not in result
+
+
+def test_proposals_context_no_file_returns_empty(tmp_path: Path) -> None:
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    assert proposals_context(memory) == ""
+
+
+def test_context_inject_surfaces_proposals_section_in_stdout(tmp_path: Path) -> None:
+    encoded = "-" + str(tmp_path).replace("/", "-").lstrip("-")
+    claude_dir = tmp_path / ".claude"
+    memory = claude_dir / "projects" / encoded / "memory"
+    memory.mkdir(parents=True)
+    (memory / "claude-md.proposal.md").write_text(
+        "<!-- claude-md proposals (append-only). Review and merge into CLAUDE.md or discard. -->\n"
+        "\n"
+        "## 2026-05-20T10:00:00-03:00\n"
+        "\n"
+        "- **Rule:** Verify changelog before reading subagent claims\n"
+        "  - **Rationale:** Subagent hallucinated worktree.bgIsolation as boolean\n"
+    )
+
+    hook_path = (
+        Path(__file__).parent.parent.parent
+        / "src"
+        / "lazy_harness"
+        / "hooks"
+        / "builtins"
+        / "context_inject.py"
+    )
+
+    import os
+
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": str(tmp_path),
+        "CLAUDE_CONFIG_DIR": str(claude_dir),
+    }
+    result = subprocess.run(
+        [sys.executable, str(hook_path)],
+        input="{}",
+        capture_output=True,
+        text=True,
+        cwd=str(tmp_path),
+        timeout=10,
+        env=env,
+    )
+    assert result.returncode == 0
+    ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+    assert "## Proposals to review" in ctx
+    assert "Verify changelog before reading subagent claims" in ctx
 
 
 def test_handoff_context_no_file_returns_empty(tmp_path: Path) -> None:
