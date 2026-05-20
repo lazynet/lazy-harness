@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.20.0](https://github.com/lazynet/lazy-harness/compare/v0.19.0...v0.20.0) (2026-05-20)
+
+
+### Features
+
+* compound-loop emits claude-md proposals ([#82](https://github.com/lazynet/lazy-harness/issues/82)) ([cdfe8bd](https://github.com/lazynet/lazy-harness/commit/cdfe8bde7822e48c3b4d22eab75e194e9f5679af))
+* context_inject surfaces claude-md proposals ([#83](https://github.com/lazynet/lazy-harness/issues/83)) ([c0f0519](https://github.com/lazynet/lazy-harness/commit/c0f0519b82ef8e1f8a7516263c53a80399976b46))
+* tail decisions/failures jsonl in PreCompact summary ([#81](https://github.com/lazynet/lazy-harness/issues/81)) ([4b9a4f5](https://github.com/lazynet/lazy-harness/commit/4b9a4f55d63e07a86b282e2108de388fc03073b5))
+
 ## [0.19.0](https://github.com/lazynet/lazy-harness/compare/v0.18.0...v0.19.0) (2026-05-05)
 
 
