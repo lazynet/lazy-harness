@@ -73,6 +73,42 @@ def build_summary(user_msgs: list[str], files: list[str]) -> str:
     return "\n".join(parts)
 
 
+def tail_jsonl_summaries(path: Path, limit: int = 3) -> list[str]:
+    if not path.is_file():
+        return []
+    summaries: list[str] = []
+    try:
+        for line in path.read_text().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            summary = obj.get("summary", "")
+            if isinstance(summary, str) and summary:
+                summaries.append(summary[:200])
+    except OSError:
+        return []
+    return summaries[-limit:]
+
+
+def build_memory_tails(memory_dir: Path) -> str:
+    parts: list[str] = []
+    decisions = tail_jsonl_summaries(memory_dir / "decisions.jsonl")
+    if decisions:
+        parts.append("## Recent decisions")
+        for s in decisions:
+            parts.append(f"- {s}")
+    failures = tail_jsonl_summaries(memory_dir / "failures.jsonl")
+    if failures:
+        parts.append("\n## Recent failures")
+        for s in failures:
+            parts.append(f"- {s}")
+    return "\n".join(parts)
+
+
 def main() -> None:
     try:
         input_data = json.load(sys.stdin)
@@ -112,6 +148,10 @@ def main() -> None:
 
             user_msgs, files = parse_transcript(transcript_path)
             summary = build_summary(user_msgs, files)
+
+    memory_tails = build_memory_tails(memory_dir)
+    if memory_tails:
+        summary = f"{summary}\n\n{memory_tails}" if summary else memory_tails
 
     if summary:
         summary_file = memory_dir / "pre-compact-summary.md"
