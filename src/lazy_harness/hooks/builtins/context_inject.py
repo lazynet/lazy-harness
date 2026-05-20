@@ -7,6 +7,7 @@ Outputs JSON with `hookSpecificOutput` for Claude Code. Sections composed:
     ## LazyNorth       — strategic compass (universal + per-profile)
     ## Last session    — most recent exported session for this project
     ## Handoff         — handoff.md + pre-compact-summary.md
+    ## Proposals       — claude-md.proposal.md from compound-loop
     ## Recent history  — decisions.jsonl + failures.jsonl tails
 
 Read-only. Always exits 0. Logs to `<CLAUDE_CONFIG_DIR>/logs/hooks.log`.
@@ -337,6 +338,20 @@ def handoff_context(memory_dir: Path) -> str:
     return "\n\n".join(p for p in parts if p)
 
 
+def proposals_context(memory_dir: Path) -> str:
+    """Return body of claude-md.proposal.md (compound-loop output for the human to
+    review), with the HTML comment header stripped. Empty string when no file."""
+    proposal_file = memory_dir / "claude-md.proposal.md"
+    if not proposal_file.is_file():
+        return ""
+    try:
+        raw = proposal_file.read_text()
+    except OSError:
+        return ""
+    filtered = [ln for ln in raw.splitlines() if not ln.lstrip().startswith("<!--")]
+    return "\n".join(filtered).strip()
+
+
 def _jsonl_tail_summaries(path: Path, limit: int, include_prevention: bool) -> list[str]:
     if not path.is_file():
         return []
@@ -425,16 +440,19 @@ def _truncate_body(
     handoff_section: str,
     episodic_section: str,
     suggest_section: str = "",
+    proposals_section: str = "",
 ) -> str:
     """Drop sections in priority order until body fits: episodic → suggest →
-    north → handoff. `suggest_section` (vault notes from ADR-030 G3) is
-    placed before episodic in document order and dropped right after it so
-    durable vault context outranks session-specific recent history."""
+    proposals → north → handoff. Proposals (compound-loop suggestions to merge
+    into CLAUDE.md) sit between handoff and vault notes in document order, and
+    are dropped after vault notes since they describe past work rather than
+    pending action."""
     body = _join_sections(
         git_section,
         north_section,
         session_section,
         handoff_section,
+        proposals_section,
         suggest_section,
         episodic_section,
     )
@@ -442,12 +460,24 @@ def _truncate_body(
         return body
     dropped = ["Recent history"]
     body = _join_sections(
-        git_section, north_section, session_section, handoff_section, suggest_section
+        git_section,
+        north_section,
+        session_section,
+        handoff_section,
+        proposals_section,
+        suggest_section,
     )
     if len(body) <= max_chars:
         return _prepend_truncation_banner(body, dropped, max_chars)
     if suggest_section:
         dropped.append("Relevant vault notes")
+    body = _join_sections(
+        git_section, north_section, session_section, handoff_section, proposals_section
+    )
+    if len(body) <= max_chars:
+        return _prepend_truncation_banner(body, dropped, max_chars)
+    if proposals_section:
+        dropped.append("Proposals to review")
     body = _join_sections(git_section, north_section, session_section, handoff_section)
     if len(body) <= max_chars:
         return _prepend_truncation_banner(body, dropped, max_chars)
@@ -626,6 +656,7 @@ def main() -> None:
             )
 
     handoff_ctx = handoff_context(memory_dir)
+    proposals_ctx = proposals_context(memory_dir)
     episodic_ctx = episodic_context(memory_dir)
 
     suggest_ctx = ""
@@ -647,6 +678,7 @@ def main() -> None:
     git_section = f"## Git\n{git_ctx}" if git_ctx else ""
     session_section = f"## Last session\n{last_session_ctx}" if last_session_ctx else ""
     handoff_section = f"## Handoff from last session\n{handoff_ctx}" if handoff_ctx else ""
+    proposals_section = f"## Proposals to review\n{proposals_ctx}" if proposals_ctx else ""
     episodic_section = f"## Recent history\n{episodic_ctx}" if episodic_ctx else ""
     north_section = f"## LazyNorth\n{north_ctx}" if north_ctx else ""
     suggest_only = f"## Relevant vault notes\n{suggest_ctx}" if suggest_ctx else ""
@@ -661,6 +693,7 @@ def main() -> None:
         handoff_section,
         episodic_section,
         suggest_section=suggest_section,
+        proposals_section=proposals_section,
     )
     if not body:
         body = "New project, no prior context."
