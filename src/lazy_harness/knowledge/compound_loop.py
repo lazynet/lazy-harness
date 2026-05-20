@@ -442,6 +442,9 @@ Return ONLY this JSON structure (no markdown fences, no explanation):
     {{"title": "...", "learning": "1-2 sentences", "context": "...", "scope": "universal|backend|infra|consulting", "tags": ["..."]}}
   ],
   "handoff": ["concrete pending item for next session"],
+  "claude_md_proposals": [
+    {{"rule": "one-line workflow rule worth adding to this project's CLAUDE.md", "rationale": "why this rule belongs in CLAUDE.md specifically"}}
+  ],
   "grade": {{
     "quality": "excellent|good|acceptable|poor",
     "issues": ["incomplete|hallucination|tool_misuse|missed_context|wrong_approach|inefficient|none"],
@@ -454,10 +457,11 @@ Rules:
 - decisions: architectural or design decisions made. Skip if already in recent decisions above.
 - failures: preventable errors. Skip if already in recent failures above. Include root cause and prevention.
 - learnings: ONLY transferable knowledge useful outside this project. Universal patterns, reusable insights. Project-specific stuff goes in decisions.
+- claude_md_proposals: workflow rules or conventions that emerged this session and would belong as a bullet in *this project's* CLAUDE.md. Different from learnings (cross-project) and decisions (one-off). Only include if the rule is concrete, durable, and specific to how to work in this repo. Empty list `[]` if nothing qualifies — this is the common case.
 - CRITICAL: Check ALL existing lists above. If a decision, failure, or learning already exists that covers the same concept (even with different wording), do NOT generate a new one. Only add genuinely new insights.
 - handoff: concrete, actionable items left pending for the next session. NOT summaries of what was done. Only what remains to be done. If everything was resolved or it was just a Q&A, return [].
 - grade: rate the assistant's overall performance against the user's intent. quality is one of excellent|good|acceptable|poor. issues come from this fixed taxonomy: incomplete (stopped before resolving), hallucination (invented APIs/files/tools), tool_misuse (wrong tool/args/repeated failures), missed_context (ignored a stated constraint), wrong_approach (solved a different problem), inefficient (right answer, avoidable cost), none (no issues observed). Use ["none"] when quality is excellent or good. confidence is 0.0-1.0. reasoning must reference concrete evidence from the transcript.
-- Empty session or just status checks? Return {{"decisions": [], "failures": [], "learnings": [], "handoff": [], "grade": {{"quality": "good", "issues": ["none"], "reasoning": "trivial session", "confidence": 0.9}}}}
+- Empty session or just status checks? Return {{"decisions": [], "failures": [], "learnings": [], "handoff": [], "claude_md_proposals": [], "grade": {{"quality": "good", "issues": ["none"], "reasoning": "trivial session", "confidence": 0.9}}}}
 - Output ONLY the JSON object."""
 
 
@@ -644,6 +648,30 @@ deprecated_reason: null
         with open(memory_dir / "grades.jsonl", "a") as f:
             f.write(json.dumps(grade_entry, ensure_ascii=False) + "\n")
         wrote.append(f"grade: {grade.get('quality', '')}")
+
+    proposals = [
+        p for p in data.get("claude_md_proposals", []) if isinstance(p, dict) and p.get("rule")
+    ]
+    if proposals:
+        proposal_file = memory_dir / "claude-md.proposal.md"
+        block_lines = [f"## {timestamp}\n"]
+        for p in proposals:
+            block_lines.append(f"- **Rule:** {p.get('rule', '')}")
+            rationale = p.get("rationale", "")
+            if rationale:
+                block_lines.append(f"  - **Rationale:** {rationale}")
+        block_lines.append("")
+        block = "\n".join(block_lines)
+        if proposal_file.exists():
+            existing = proposal_file.read_text()
+            _atomic_write(proposal_file, existing + "\n" + block)
+        else:
+            header = (
+                "<!-- claude-md proposals (append-only). "
+                "Review and merge into CLAUDE.md or discard. -->\n\n"
+            )
+            _atomic_write(proposal_file, header + block)
+        wrote.append(f"claude_md_proposals: {len(proposals)}")
 
     handoff_file = memory_dir / "handoff.md"
     handoff_items = data.get("handoff", [])
