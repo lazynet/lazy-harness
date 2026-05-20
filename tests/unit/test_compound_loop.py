@@ -880,6 +880,90 @@ def test_persist_results_without_grade_field_does_not_create_grades_jsonl(
     assert not (memory / "grades.jsonl").exists()
 
 
+def test_persist_results_writes_claude_md_proposals_when_present(tmp_path: Path) -> None:
+    memory = tmp_path / "memory"
+    learnings = tmp_path / "Learnings"
+    data = {
+        "decisions": [],
+        "failures": [],
+        "learnings": [],
+        "handoff": [],
+        "claude_md_proposals": [
+            {
+                "rule": "Always use os.replace for writes into iCloud-synced paths",
+                "rationale": "Non-atomic writes produce conflict copies that break the memory dir",
+            },
+            {
+                "rule": "Prefer Bash(grep:*) over reading whole files for symbol lookup",
+                "rationale": "Lower context cost on large repos",
+            },
+        ],
+    }
+    wrote = persist_results(data, memory, learnings, "proj", "2026-05-20T10:00:00-03:00")
+
+    proposal_file = memory / "claude-md.proposal.md"
+    assert proposal_file.is_file()
+    content = proposal_file.read_text()
+    assert "2026-05-20T10:00:00-03:00" in content
+    assert "Always use os.replace for writes into iCloud-synced paths" in content
+    assert "Non-atomic writes produce conflict copies" in content
+    assert "Prefer Bash(grep:*) over reading whole files for symbol lookup" in content
+    assert any("claude_md_proposals: 2" in line for line in wrote)
+
+
+def test_persist_results_appends_claude_md_proposals_without_overwriting(
+    tmp_path: Path,
+) -> None:
+    memory = tmp_path / "memory"
+    learnings = tmp_path / "Learnings"
+    base_data = {
+        "decisions": [],
+        "failures": [],
+        "learnings": [],
+        "handoff": [],
+        "claude_md_proposals": [{"rule": "earlier rule", "rationale": "earlier why"}],
+    }
+    persist_results(base_data, memory, learnings, "proj", "2026-05-19T10:00:00-03:00")
+
+    later_data = {
+        "decisions": [],
+        "failures": [],
+        "learnings": [],
+        "handoff": [],
+        "claude_md_proposals": [{"rule": "newer rule", "rationale": "newer why"}],
+    }
+    persist_results(later_data, memory, learnings, "proj", "2026-05-20T10:00:00-03:00")
+
+    content = (memory / "claude-md.proposal.md").read_text()
+    assert "earlier rule" in content
+    assert "newer rule" in content
+    assert content.index("earlier rule") < content.index("newer rule")
+
+
+def test_persist_results_skips_proposal_file_when_no_proposals(tmp_path: Path) -> None:
+    memory = tmp_path / "memory"
+    learnings = tmp_path / "Learnings"
+    data = {"decisions": [], "failures": [], "learnings": [], "handoff": []}
+    persist_results(data, memory, learnings, "proj", "2026-05-20T10:00:00-03:00")
+    assert not (memory / "claude-md.proposal.md").exists()
+
+
+def test_build_prompt_includes_claude_md_proposals_schema() -> None:
+    prompt = build_prompt(
+        project_name="proj",
+        cwd="/tmp/proj",
+        session_id="sess1234",
+        timestamp="2026-05-20T10:00:00-03:00",
+        existing_decisions="",
+        existing_failures="",
+        existing_learnings="",
+        summary="## User\n\nhi",
+    )
+    assert "claude_md_proposals" in prompt
+    assert '"rule"' in prompt
+    assert '"rationale"' in prompt
+
+
 def _build_lazymind(tmp_path: Path, prj_names: list[str]) -> Path:
     lazymind = tmp_path / "LazyMind"
     projects = lazymind / "1-Projects"
