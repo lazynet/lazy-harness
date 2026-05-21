@@ -197,3 +197,21 @@ def test_post_compact_resolves_to_concrete_file() -> None:
     assert info.is_builtin is True
     assert info.path.name == "post_compact.py"
     assert info.path.is_file()
+
+
+def test_resolve_script_names_returns_hookinfo_list() -> None:
+    from lazy_harness.hooks.loader import resolve_script_names
+
+    result = resolve_script_names(["context-inject"])
+
+    assert len(result) == 1
+    assert result[0].name == "context-inject"
+    assert result[0].is_builtin is True
+
+
+def test_resolve_script_names_skips_unresolvable() -> None:
+    from lazy_harness.hooks.loader import resolve_script_names
+
+    result = resolve_script_names(["context-inject", "no-such-hook-xyz"])
+
+    assert [h.name for h in result] == ["context-inject"]

@@ -87,15 +87,20 @@ def resolve_hook(name: str, user_hooks_dir: Path | None = None) -> HookInfo | No
     return _find_builtin(name) or _find_user_hook(name, user_hooks_dir)
 
 
+def resolve_script_names(names: list[str], user_hooks_dir: Path | None = None) -> list[HookInfo]:
+    """Resolve a list of hook names to HookInfo records, skipping unresolvable."""
+    hooks: list[HookInfo] = []
+    for script_name in names:
+        hook = resolve_hook(script_name, user_hooks_dir)
+        if hook:
+            hooks.append(hook)
+    return hooks
+
+
 def resolve_hooks_for_event(
     cfg: Config, event: str, user_hooks_dir: Path | None = None
 ) -> list[HookInfo]:
     event_cfg = cfg.hooks.get(event)
     if not event_cfg:
         return []
-    hooks: list[HookInfo] = []
-    for script_name in event_cfg.scripts:
-        hook = resolve_hook(script_name, user_hooks_dir)
-        if hook:
-            hooks.append(hook)
-    return hooks
+    return resolve_script_names(event_cfg.scripts, user_hooks_dir)
