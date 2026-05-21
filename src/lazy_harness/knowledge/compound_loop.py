@@ -11,12 +11,14 @@ isolation without mocking a class.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import shutil
 import subprocess
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -24,6 +26,185 @@ from lazy_harness.core.config import CompoundLoopConfig
 
 _INTERACTIVE_MARKERS = ("permission-mode", "last-prompt")
 _INTERACTIVE_SCAN_LINES = 10
+
+_INSIGHT_PATTERN = re.compile(r"★ Insight ─+\s*\n(.*?)\n─+", re.DOTALL)
+
+
+@dataclass(frozen=True)
+class Insight:
+    """One verbatim `★ Insight ─` block captured from an assistant message."""
+
+    body: str
+    message_index: int
+    timestamp: str
+    session_id: str
+    content_hash: str
+
+
+def _normalize_for_hash(body: str) -> str:
+    return " ".join(body.split())
+
+
+def _content_hash(body: str) -> str:
+    return hashlib.sha256(_normalize_for_hash(body).encode("utf-8")).hexdigest()[:16]
+
+
+def _assistant_text(message: dict) -> str:
+    content = message.get("content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(
+            block.get("text", "")
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+    return ""
+
+
+def extract_insights(session_jsonl: Path, since_index: int = 0) -> list[Insight]:
+    """Stream a session JSONL and return one `Insight` per `★ Insight ─` block.
+
+    Only assistant messages are scanned — user messages with the same marker
+    are ignored deliberately so the human cannot fabricate canonical insights
+    by copy-pasting the markup.
+    """
+    insights: list[Insight] = []
+    session_id = session_jsonl.stem
+    try:
+        with open(session_jsonl) as f:
+            for index, line in enumerate(f):
+                if index < since_index:
+                    continue
+                try:
+                    record = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                if record.get("type") != "assistant":
+                    continue
+                text = _assistant_text(record.get("message", {}))
+                ts = record.get("timestamp", "") or ""
+                for match in _INSIGHT_PATTERN.finditer(text):
+                    body = match.group(1)
+                    insights.append(
+                        Insight(
+                            body=body,
+                            message_index=index,
+                            timestamp=ts,
+                            session_id=session_id,
+                            content_hash=_content_hash(body),
+                        )
+                    )
+    except OSError:
+        return []
+    return insights
+
+
+def _insight_date(timestamp: str) -> datetime:
+    if timestamp:
+        try:
+            return datetime.fromisoformat(timestamp)
+        except ValueError:
+            pass
+    return datetime.now()
+
+
+def _format_insight_md(insight: Insight) -> str:
+    return (
+        "---\n"
+        f"session_id: {insight.session_id}\n"
+        f"message_index: {insight.message_index}\n"
+        f"timestamp: {insight.timestamp}\n"
+        "source: assistant\n"
+        f"content_hash: {insight.content_hash}\n"
+        "---\n"
+        f"{insight.body}\n"
+    )
+
+
+def _existing_insight_hashes(insights_dir: Path) -> set[str]:
+    hashes: set[str] = set()
+    if not insights_dir.is_dir():
+        return hashes
+    for path in insights_dir.rglob("*.md"):
+        try:
+            text = path.read_text()
+        except OSError:
+            continue
+        match = re.search(r"^content_hash:\s*(\S+)", text, re.MULTILINE)
+        if match:
+            hashes.add(match.group(1))
+    return hashes
+
+
+def _first_line(text: str) -> str:
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return ""
+
+
+def persist_insights(memory_dir: Path, insights: list[Insight]) -> list[Path]:
+    """Write each Insight to `memory_dir/insights/YYYY-MM/<filename>.md`.
+
+    Idempotent across re-runs: insights whose `content_hash` already exists on
+    disk are skipped. Returns the list of paths actually written.
+    """
+    if not insights:
+        return []
+    insights_dir = memory_dir / "insights"
+    existing = _existing_insight_hashes(insights_dir)
+    written: list[Path] = []
+    for insight in insights:
+        if insight.content_hash in existing:
+            continue
+        date = _insight_date(insight.timestamp)
+        ym = date.strftime("%Y-%m")
+        ymd = date.strftime("%Y-%m-%d")
+        short = insight.session_id[:8]
+        month_dir = insights_dir / ym
+        month_dir.mkdir(parents=True, exist_ok=True)
+        n = 1
+        while (month_dir / f"{ymd}-{short}-{n}.md").exists():
+            n += 1
+        path = month_dir / f"{ymd}-{short}-{n}.md"
+        _atomic_write(path, _format_insight_md(insight))
+        existing.add(insight.content_hash)
+        written.append(path)
+    return written
+
+
+def _insight_cursor_path(memory_dir: Path) -> Path:
+    return memory_dir / "insights" / ".cursor.json"
+
+
+def _read_insight_cursor(memory_dir: Path, session_id: str) -> int:
+    """Return the last processed insight message index for this session, or -1."""
+    path = _insight_cursor_path(memory_dir)
+    if not path.is_file():
+        return -1
+    try:
+        data = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError, ValueError):
+        return -1
+    value = data.get(session_id, -1)
+    return value if isinstance(value, int) else -1
+
+
+def _write_insight_cursor(memory_dir: Path, session_id: str, last_index: int) -> None:
+    path = _insight_cursor_path(memory_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data: dict[str, int] = {}
+    if path.is_file():
+        try:
+            existing = json.loads(path.read_text())
+            if isinstance(existing, dict):
+                data = {k: v for k, v in existing.items() if isinstance(v, int)}
+        except (json.JSONDecodeError, OSError, ValueError):
+            data = {}
+    data[session_id] = last_index
+    _atomic_write(path, json.dumps(data, sort_keys=True) + "\n")
 
 
 def is_interactive_session(session_jsonl: Path) -> bool:
@@ -406,9 +587,18 @@ def build_prompt(
     existing_failures: str,
     existing_learnings: str,
     summary: str,
+    captured_insights: list[Insight] | None = None,
 ) -> str:
     """Build the headless-Claude prompt. Ported verbatim from the bash worker
     to preserve the calibration of the evaluator — reword with care."""
+    insights_section = ""
+    if captured_insights:
+        titles = "\n".join(f"- {_first_line(i.body)}" for i in captured_insights)
+        insights_section = (
+            "\n## Insights already captured verbatim from this session "
+            "(DO NOT re-emit as learnings):\n"
+            f"{titles}\n"
+        )
     return f"""You are evaluating a Claude Code session for learnings. Analyze the conversation and output ONLY valid JSON.
 
 Project: {project_name}
@@ -424,7 +614,7 @@ Timestamp: {timestamp}
 
 ## Existing learnings already recorded (DO NOT repeat these or semantic equivalents):
 {existing_learnings}
-
+{insights_section}
 ## Session conversation:
 {summary}
 
@@ -833,14 +1023,22 @@ def process_task(
     if not is_interactive_session(session_jsonl):
         return TaskOutcome(skipped=f"non-interactive: {session_id[:8]}")
 
+    cursor = _read_insight_cursor(memory_dir, session_id)
+    insights = extract_insights(session_jsonl, since_index=cursor + 1)
+    persisted_insights = persist_insights(memory_dir, insights) if insights else []
+    if insights:
+        last_idx = max(i.message_index for i in insights)
+        _write_insight_cursor(memory_dir, session_id, last_idx)
+    insight_bypass = bool(insights)
+
     user_chars = count_user_chars(session_jsonl)
-    if user_chars < cfg.min_user_chars:
+    if user_chars < cfg.min_user_chars and not insight_bypass:
         if cfg.slim_handoff_enabled:
             write_slim_handoff(session_jsonl, memory_dir, cwd)
         return TaskOutcome(skipped=f"{user_chars} user chars (min {cfg.min_user_chars})")
 
     summary, msg_count = extract_messages(session_jsonl)
-    if not summary or msg_count < cfg.min_messages:
+    if (not summary or msg_count < cfg.min_messages) and not insight_bypass:
         if cfg.slim_handoff_enabled:
             write_slim_handoff(session_jsonl, memory_dir, cwd)
         return TaskOutcome(skipped=f"{msg_count} messages (min {cfg.min_messages})")
@@ -879,6 +1077,9 @@ def process_task(
         session_id=session_id,
         session_jsonl=session_jsonl,
     )
+
+    if persisted_insights:
+        wrote.append(f"insights: {len(persisted_insights)}")
 
     grade = data.get("grade")
     if cfg.grading_enabled and isinstance(grade, dict) and cfg.lazymind_dir:

@@ -10,12 +10,14 @@ import pytest
 
 from lazy_harness.core.config import CompoundLoopConfig
 from lazy_harness.knowledge.compound_loop import (
+    Insight,
     build_prompt,
     collect_existing_decisions,
     collect_existing_failures,
     collect_existing_learnings,
     count_user_chars,
     create_task,
+    extract_insights,
     extract_messages,
     is_debounced,
     is_interactive_session,
@@ -23,6 +25,7 @@ from lazy_harness.knowledge.compound_loop import (
     move_to_done,
     parse_response,
     parse_task,
+    persist_insights,
     persist_results,
     process_task,
     should_queue_task,
@@ -1152,3 +1155,356 @@ def test_process_task_persists_grade_and_appends_backlog(tmp_path: Path) -> None
     assert outcome.was_processed
     assert (memory / "grades.jsonl").is_file()
     assert "Session quality regression" in prj_md.read_text()
+
+
+# ---------------------------------------------------------------------------
+# extract_insights — deterministic regex extraction of `★ Insight ─` blocks
+# ---------------------------------------------------------------------------
+
+
+INSIGHT_OPEN = "★ Insight ─────────────────────────────────────"
+INSIGHT_CLOSE = "─────────────────────────────────────────────────"
+
+
+def _insight_block(body: str) -> str:
+    return f"{INSIGHT_OPEN}\n{body}\n{INSIGHT_CLOSE}"
+
+
+def test_extract_insights_parses_single_block(tmp_path: Path) -> None:
+    session = tmp_path / "s.jsonl"
+    body = "Symlinks beat copies because deploys stay zero-cost\nand source stays read-only."
+    _write_jsonl(
+        session,
+        [
+            {"type": "permission-mode"},
+            {"type": "user", "message": {"content": "ask"}},
+            {
+                "type": "assistant",
+                "message": {"content": f"Here is context.\n\n{_insight_block(body)}\n\nDone."},
+            },
+        ],
+    )
+
+    insights = extract_insights(session)
+
+    assert len(insights) == 1
+    insight = insights[0]
+    assert isinstance(insight, Insight)
+    assert insight.body == body
+    assert insight.message_index == 2
+
+
+def test_extract_insights_parses_multiple_blocks_per_message(tmp_path: Path) -> None:
+    session = tmp_path / "s.jsonl"
+    body_a = "Symlinks are zero-cost to update."
+    body_b = "PreToolUse exit-2 is the only block channel."
+    combined = f"Intro.\n\n{_insight_block(body_a)}\n\nMiddle.\n\n{_insight_block(body_b)}\n\nEnd."
+    _write_jsonl(
+        session,
+        [
+            {"type": "permission-mode"},
+            {"type": "assistant", "message": {"content": combined}},
+        ],
+    )
+
+    insights = extract_insights(session)
+
+    assert [i.body for i in insights] == [body_a, body_b]
+    assert all(i.message_index == 1 for i in insights)
+
+
+def test_extract_insights_ignores_user_messages(tmp_path: Path) -> None:
+    session = tmp_path / "s.jsonl"
+    body = "User-authored fake insight that must not count."
+    _write_jsonl(
+        session,
+        [
+            {"type": "permission-mode"},
+            {"type": "user", "message": {"content": _insight_block(body)}},
+            {"type": "assistant", "message": {"content": "Acknowledged."}},
+        ],
+    )
+
+    assert extract_insights(session) == []
+
+
+def test_extract_insights_respects_since_index(tmp_path: Path) -> None:
+    session = tmp_path / "s.jsonl"
+    early = "Stale insight from earlier in the session."
+    late = "Fresh insight after since_index."
+    _write_jsonl(
+        session,
+        [
+            {"type": "permission-mode"},
+            {"type": "assistant", "message": {"content": _insight_block(early)}},
+            {"type": "user", "message": {"content": "more"}},
+            {"type": "assistant", "message": {"content": _insight_block(late)}},
+        ],
+    )
+
+    insights = extract_insights(session, since_index=2)
+
+    assert [i.body for i in insights] == [late]
+    assert insights[0].message_index == 3
+
+
+def test_persist_insights_writes_verbatim_with_frontmatter(tmp_path: Path) -> None:
+    memory = tmp_path / "memory"
+    insight = Insight(
+        body="Worker locks need lsof, not mtime.",
+        message_index=7,
+        timestamp="2026-05-20T15:30:00-03:00",
+        session_id="abcdef12-3456-7890-abcd-ef1234567890",
+        content_hash="deadbeefcafe1234",
+    )
+
+    written = persist_insights(memory, [insight])
+
+    assert len(written) == 1
+    path = written[0]
+    assert path.parent.name == "2026-05"
+    assert path.parent.parent.name == "insights"
+    assert path.parent.parent.parent == memory
+    assert path.suffix == ".md"
+
+    content = path.read_text()
+    assert content.startswith("---\n")
+    assert "session_id: abcdef12-3456-7890-abcd-ef1234567890" in content
+    assert "message_index: 7" in content
+    assert "timestamp: 2026-05-20T15:30:00-03:00" in content
+    assert "source: assistant" in content
+    assert "content_hash: deadbeefcafe1234" in content
+    assert content.endswith("Worker locks need lsof, not mtime.\n")
+
+
+def test_persist_insights_is_idempotent_by_hash(tmp_path: Path) -> None:
+    memory = tmp_path / "memory"
+    insight = Insight(
+        body="Atomic writes are mandatory on iCloud-backed dirs.",
+        message_index=3,
+        timestamp="2026-05-20T15:30:00-03:00",
+        session_id="11111111-2222-3333-4444-555555555555",
+        content_hash="aaaaaaaaaaaa1234",
+    )
+
+    first = persist_insights(memory, [insight])
+    second = persist_insights(memory, [insight])
+
+    assert len(first) == 1
+    assert second == []
+    md_files = list((memory / "insights").rglob("*.md"))
+    assert len(md_files) == 1
+
+
+def test_process_task_bypasses_gate_when_insights_present(tmp_path: Path) -> None:
+    queue = tmp_path / "queue"
+    memory = tmp_path / "memory"
+    learnings = tmp_path / "Learnings"
+    session = tmp_path / "s.jsonl"
+    body = "Symlinks beat copies because deploys stay zero-cost."
+    _write_jsonl(
+        session,
+        [
+            {"type": "permission-mode"},
+            {"type": "user", "message": {"content": "short ask"}},
+            {"type": "assistant", "message": {"content": _insight_block(body)}},
+        ],
+    )
+    task = create_task(queue, Path("/tmp"), session, "abcd1234", memory)
+    response = json.dumps(
+        {
+            "decisions": [],
+            "failures": [],
+            "learnings": [],
+            "handoff": [],
+            "claude_md_proposals": [],
+        }
+    )
+
+    outcome = process_task(task, _cfg(), learnings, invoke=lambda *a, **kw: response)
+
+    assert outcome.skipped is None or "user chars" not in outcome.skipped
+    insight_files = list((memory / "insights").rglob("*.md"))
+    assert len(insight_files) == 1
+    assert body in insight_files[0].read_text()
+
+
+def test_process_task_still_gates_empty_short_session(tmp_path: Path) -> None:
+    queue = tmp_path / "queue"
+    memory = tmp_path / "memory"
+    learnings = tmp_path / "Learnings"
+    session = tmp_path / "s.jsonl"
+    _write_jsonl(
+        session,
+        [
+            {"type": "permission-mode"},
+            {"type": "user", "message": {"content": "hi"}},
+            {"type": "assistant", "message": {"content": "ok"}},
+        ],
+    )
+    task = create_task(queue, Path("/tmp"), session, "deadbeef", memory)
+
+    outcome = process_task(task, _cfg(), learnings, invoke=lambda *a, **kw: None)
+
+    assert outcome.skipped is not None
+    assert "user chars" in outcome.skipped
+    assert not (memory / "insights").exists()
+
+
+def test_build_prompt_includes_captured_insights_block(tmp_path: Path) -> None:
+    insights = [
+        Insight(
+            body="Symlinks beat copies — first insight body.",
+            message_index=2,
+            timestamp="2026-05-20T15:00:00-03:00",
+            session_id="sess1",
+            content_hash="hash1",
+        ),
+        Insight(
+            body="PreToolUse exit-2 is the only block channel.",
+            message_index=4,
+            timestamp="2026-05-20T15:05:00-03:00",
+            session_id="sess1",
+            content_hash="hash2",
+        ),
+    ]
+
+    prompt = build_prompt(
+        project_name="lazy-harness",
+        cwd="/repo",
+        session_id="sess1",
+        timestamp="2026-05-20T15:30:00-03:00",
+        existing_decisions="",
+        existing_failures="",
+        existing_learnings="",
+        summary="## User\nx\n## Assistant\ny\n",
+        captured_insights=insights,
+    )
+
+    assert "DO NOT re-emit as learnings" in prompt
+    assert "Symlinks beat copies — first insight body." in prompt
+    assert "PreToolUse exit-2 is the only block channel." in prompt
+
+
+def test_insights_persisted_even_if_claude_invocation_fails(tmp_path: Path) -> None:
+    queue = tmp_path / "queue"
+    memory = tmp_path / "memory"
+    learnings = tmp_path / "Learnings"
+    session = tmp_path / "s.jsonl"
+    body = "Durability proof — insight must survive an LLM timeout."
+    _write_jsonl(
+        session,
+        [
+            {"type": "permission-mode"},
+            {"type": "user", "message": {"content": "x" * 250}},
+            {"type": "assistant", "message": {"content": _insight_block(body)}},
+            {"type": "user", "message": {"content": "more"}},
+            {"type": "assistant", "message": {"content": "ack"}},
+        ],
+    )
+    task = create_task(queue, Path("/tmp"), session, "feedface", memory)
+
+    outcome = process_task(task, _cfg(), learnings, invoke=lambda *a, **kw: None)
+
+    # invoke returned None → outcome is skipped, but insight file must already exist
+    assert outcome.skipped is not None
+    insight_files = list((memory / "insights").rglob("*.md"))
+    assert len(insight_files) == 1
+    assert body in insight_files[0].read_text()
+
+
+def test_delta_scan_skips_already_processed_indices(tmp_path: Path) -> None:
+    queue = tmp_path / "queue"
+    memory = tmp_path / "memory"
+    learnings = tmp_path / "Learnings"
+    session = tmp_path / "s.jsonl"
+    first_body = "First insight from run 1."
+    _write_jsonl(
+        session,
+        [
+            {"type": "permission-mode"},
+            {"type": "user", "message": {"content": "x" * 250}},
+            {"type": "assistant", "message": {"content": _insight_block(first_body)}},
+            {"type": "user", "message": {"content": "more"}},
+            {"type": "assistant", "message": {"content": "ok"}},
+        ],
+    )
+    task = create_task(queue, Path("/tmp"), session, "deadbabe", memory)
+    response = json.dumps(
+        {"decisions": [], "failures": [], "learnings": [], "handoff": [], "claude_md_proposals": []}
+    )
+
+    # Run 1
+    process_task(task, _cfg(), learnings, invoke=lambda *a, **kw: response)
+
+    cursor_path = memory / "insights" / ".cursor.json"
+    assert cursor_path.is_file()
+    cursor = json.loads(cursor_path.read_text())
+    # session_id was passed to create_task as "deadbabe"
+    assert cursor.get("deadbabe") == 2  # index of the assistant message with insight
+
+    # Append more messages including a second insight at index 6
+    second_body = "Second insight from run 2 (deltas only)."
+    with open(session, "a") as f:
+        f.write(json.dumps({"type": "user", "message": {"content": "follow up"}}) + "\n")
+        f.write(
+            json.dumps({"type": "assistant", "message": {"content": _insight_block(second_body)}})
+            + "\n"
+        )
+
+    # Stub extract_insights to assert it gets called with since_index past run-1 cursor.
+    captured: dict[str, int] = {}
+    real_extract = extract_insights
+
+    def _spy(jsonl: Path, since_index: int = 0) -> list[Insight]:  # noqa: ARG001
+        captured["since_index"] = since_index
+        return real_extract(jsonl, since_index=since_index)
+
+    import lazy_harness.knowledge.compound_loop as cl_mod
+
+    monkey_target = cl_mod.extract_insights
+    cl_mod.extract_insights = _spy  # type: ignore[assignment]
+    try:
+        # need a fresh task file because the previous one moved to done conceptually,
+        # but process_task in tests doesn't move it — re-create to be explicit
+        task2 = create_task(queue, Path("/tmp"), session, "deadbabe", memory)
+        process_task(task2, _cfg(), learnings, invoke=lambda *a, **kw: response)
+    finally:
+        cl_mod.extract_insights = monkey_target  # type: ignore[assignment]
+
+    assert captured["since_index"] == 3  # cursor (2) + 1
+
+    # Both insight bodies are now on disk
+    files = sorted((memory / "insights").rglob("*.md"))
+    bodies = [p.read_text() for p in files]
+    assert any(first_body in b for b in bodies)
+    assert any(second_body in b for b in bodies)
+
+    # Cursor advanced
+    cursor = json.loads(cursor_path.read_text())
+    assert cursor.get("deadbabe") == 6
+
+
+def test_extract_insights_matches_explanatory_output_style_markers(tmp_path: Path) -> None:
+    """Contract test — pins the exact Unicode marker shape Claude Code emits
+    when running with the `explanatory` output style. If this test fails, the
+    output style template changed and the regex in compound_loop needs an
+    update to keep capturing real insights."""
+    star = "★"  # ★
+    dash = "─"  # ─ (BOX DRAWINGS LIGHT HORIZONTAL)
+    open_marker = f"{star} Insight {dash * 45}"
+    close_marker = dash * 49
+    body = "Pinned canonical body."
+    text = f"intro\n\n{open_marker}\n{body}\n{close_marker}\n\nend"
+
+    session = tmp_path / "s.jsonl"
+    _write_jsonl(
+        session,
+        [
+            {"type": "permission-mode"},
+            {"type": "assistant", "message": {"content": text}},
+        ],
+    )
+
+    insights = extract_insights(session)
+    assert [i.body for i in insights] == [body]
