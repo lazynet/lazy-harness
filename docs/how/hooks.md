@@ -153,11 +153,13 @@ This is the hook that does the heaviest lifting. It is split into two pieces del
 3. For each task: parse metadata → filter trivial sessions (`min_user_chars`, `min_messages`) → collect existing decisions/failures/learnings for deduplication → build prompt with `build_prompt` (ported verbatim from the predecessor; the wording is calibration, not code) → call `claude -p --model <model>` with a configurable timeout → parse the JSON response with `parse_response` (handles bare JSON, fenced JSON, and prose-preamble JSON) → persist with `persist_results`.
 4. Move the task to `queue/done/` regardless of outcome — failures never block the queue.
 
-**Where it writes (via `persist_results`):**
+**Where it writes (via `persist_results` + `persist_insights`):**
 - `<memory_dir>/decisions.jsonl` — appended structured decisions.
 - `<memory_dir>/failures.jsonl` — appended preventable errors.
 - `<memory_dir>/grades.jsonl` — appended self-graded distillation quality ([ADR-021](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/021-async-response-grading.md)).
 - `<memory_dir>/claude-md.proposal.md` — appended proposed additions to `MEMORY.md` / `CLAUDE.md` for the human to review. Surfaced by `context-inject` on the next session start.
+- `<memory_dir>/insights/YYYY-MM/*.md` — verbatim `★ Insight ─` blocks captured deterministically (regex, not LLM) before the headless extractor runs. Survives LLM timeouts and bypasses the `min_user_chars` / `min_messages` gates. Detailed mechanics in the [compound-loop how page](memory-compound.md).
+- `<memory_dir>/insights/.cursor.json` — per-session last-processed message index, so subsequent Stop hooks scan only the delta.
 - `<learnings_dir>/YYYY-MM/YYYY-MM-DD-<slug>.md` — one markdown file per learning, atomic write.
 - `<memory_dir>/handoff.md` — overwritten with the current pending items, or deleted if empty.
 

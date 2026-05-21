@@ -46,22 +46,13 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 - [x] **PostToolUse sync-claude** — regenerates segmented `CLAUDE.md` (head/tail/common) when a profile segment is edited; fail-soft
 - [x] **Rename a lazy-harness** — repo, package (`lazy_harness`), CLI (`lh`), docs site (`lazynet.github.io/lazy-harness`)
 - [x] **Docs coherence pass 2026-05-20** — `lh memory` + `lh knowledge` subcommands completos en CLI reference, hooks documentados (`pre-tool-use-memory-size`, `post-tool-use-sync-claude`), `claude-md.proposal.md` + `grades.jsonl` documentados en compound-loop how page
+- [x] **Compound-loop insight capture + delta-by-index** — `★ Insight ─` blocks captured verbatim via regex pre-LLM, gate-bypass when insights present, hash-based dedup, per-session message-index cursor for delta scans (`memory/insights/.cursor.json`). 12 tests TDD. Closed both gate-out (short sessions) and tail-of-20 (long sessions) loss paths from the design [`specs/designs/2026-04-13-compound-loop-insight-capture.md`](designs/2026-04-13-compound-loop-insight-capture.md).
 
 ---
 
 ## Open — Prioridad ALTA
 
-### compound-loop: insight capture + learnings lost on long sessions
-
-**Síntoma (insight capture):** los bloques `★ Insight ─` del output style `explanatory` se pierden — gate-out en sesiones cortas, tail-of-20 en sesiones largas.
-
-**Spec:** [`specs/designs/2026-04-13-compound-loop-insight-capture.md`](designs/2026-04-13-compound-loop-insight-capture.md)
-
-**Síntoma (learnings lost):** sesión 4bc38694 (118 mensajes, ~3h) solo disparó extracción una vez. El worker marca `session_id` como processed con flag booleano — en sesiones largas perdés el 97% del contenido.
-
-**Recomendación:** delta-by-index. Trackear último `message_index` procesado por session_id. Implementar juntos con insight capture (comparten mecanismo).
-
-**Impacto:** alto — es el mecanismo principal de captura de learnings.
+_(empty — insight capture + delta-by-index shipped 2026-05-20)_
 
 ---
 

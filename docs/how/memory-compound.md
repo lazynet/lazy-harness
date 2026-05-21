@@ -36,6 +36,8 @@ If you want the design rationale, read [ADR-008 — Compound loop async worker](
 │ memory/grades.jsonl             (append)       │
 │ memory/handoff.md               (overwrite)    │
 │ memory/claude-md.proposal.md    (append)       │
+│ memory/insights/YYYY-MM/*.md    (atomic)       │
+│ memory/insights/.cursor.json    (overwrite)    │
 │ learnings/YYYY-MM/<slug>.md     (atomic)       │
 └────────────────────────────────────────────────┘
        │ moves task file
@@ -195,6 +197,38 @@ Body:
 ```
 
 These are the entries QMD picks up and indexes semantically. The `scope` field (`universal | backend | infra | consulting`) lets a future query say "give me infra-scoped learnings from the last year".
+
+### `insights/YYYY-MM/*.md` — verbatim `★ Insight ─` blocks
+
+Insights surfaced mid-conversation by the assistant (via the `explanatory` output style) are captured deterministically — **regex, not LLM** — and persisted before any call to `claude -p` runs. This is the durability guarantee: an insight never depends on the headless extractor succeeding.
+
+Captured properties:
+
+- **Verbatim body.** The text between the open `★ Insight ─...` line and the trailing `─...` line is preserved exactly. The LLM step does not paraphrase it.
+- **Gate-bypass.** If a session produces at least one insight, the `min_user_chars` and `min_messages` gates that normally skip thin sessions are bypassed. A dense single-question session with one insight still gets processed.
+- **Hash-based dedup.** Each insight's `content_hash` is checked against existing files under `memory/insights/` before write. Re-running the worker on the same session never produces duplicates.
+- **Delta scanning.** `memory/insights/.cursor.json` stores the last processed message index per `session_id`. Subsequent Stop hooks on the same session re-scan only the delta, bounding cost on long sessions.
+- **LLM coordination.** Captured insights are passed into the worker prompt under a `## Insights already captured verbatim … (DO NOT re-emit as learnings)` section, so the LLM does not re-encode them as paraphrased learnings.
+
+File layout matches `learnings/`:
+
+```
+memory/insights/2026-05/2026-05-20-abcdef12-1.md
+```
+
+Frontmatter:
+
+```yaml
+---
+session_id: <full>
+message_index: <int>
+timestamp: <iso8601>
+source: assistant
+content_hash: <16 hex chars>
+---
+```
+
+User messages with the same Unicode markers are ignored deliberately — only the assistant can author a canonical insight.
 
 ### `claude-md.proposal.md` — staged additions to the curated semantic layer
 
