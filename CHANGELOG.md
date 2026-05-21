@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.21.0](https://github.com/lazynet/lazy-harness/compare/v0.20.0...v0.21.0) (2026-05-21)
+
+
+### Features
+
+* capture insights deterministically in compound-loop ([#86](https://github.com/lazynet/lazy-harness/issues/86)) ([9a5e9a3](https://github.com/lazynet/lazy-harness/commit/9a5e9a3be9d409b5307cf859bcb17e20d5a023f0))
+* default hooks merge layer in lh deploy ([#87](https://github.com/lazynet/lazy-harness/issues/87)) ([0dc4259](https://github.com/lazynet/lazy-harness/commit/0dc425968ce8d7c3f87d1e66454daa392daaf2db))
+
+
+### Documentation
+
+* align cli/hooks/memory references with 0.20.0 features ([57efe48](https://github.com/lazynet/lazy-harness/commit/57efe48dee5d942c5b4ff09a58d9964a0bf7be8a))
+
 ## [0.20.0](https://github.com/lazynet/lazy-harness/compare/v0.19.0...v0.20.0) (2026-05-20)
 
 
