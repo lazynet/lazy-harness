@@ -1,5 +1,12 @@
 # lazy-harness configuration
 # Docs: https://github.com/lazynet/lazy-harness
+#
+# Hook configuration is OPTIONAL. lh deploy applies a framework-provided
+# default set (context-inject on SessionStart, compound-loop on Stop, the
+# PreToolUse security cluster, etc.). To override a single event, declare
+# [hooks.<event>] with scripts = [...]. To opt out of an event entirely,
+# declare it with scripts = []. See docs/how/hooks.md#default-hooks for the
+# full default list and ADR-031 for the rationale.
 
 [harness]
 version = "1"

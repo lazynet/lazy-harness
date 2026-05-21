@@ -51,6 +51,26 @@ scripts = ["post-compact"]
 
 The mapping lives in `ClaudeCodeAdapter.generate_hook_config` — other agents may expose different event names, but the `config.toml` side is stable.
 
+## Default hooks
+
+`lh deploy` ships with an opinionated default set ([ADR-031](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/031-default-hooks-merge.md)): a fresh profile gets the framework's built-in hooks wired into `settings.json` automatically. You do **not** need to declare them in `config.toml` for them to fire.
+
+| Event | Default built-ins |
+|---|---|
+| `session_start` | `context-inject` |
+| `session_stop` | `session-export`, `compound-loop`, `engram-persist` |
+| `session_end` | `session-end` |
+| `pre_compact` | `pre-compact` |
+| `post_compact` | `post-compact` |
+| `pre_tool_use` | `pre-tool-use-security`, `pre-tool-use-memory-size` |
+| `post_tool_use` | `post-tool-use-format`, `post-tool-use-sync-claude` |
+
+**Overriding.** Declaring `[hooks.<event>]` with `scripts = [...]` in `config.toml` replaces the default for that event. The smallest override unit is one event — there is no per-script disable. To opt out of a single event entirely, declare it with `scripts = []`. Events declared in `config.toml` that the framework does not know about (e.g. `notification`) pass through verbatim.
+
+**Backups when manual entries are removed.** `settings.json["hooks"]` is wholly framework-owned. If `lh deploy` finds a hook command in the existing block that does not appear in the effective set (typically a hand-edit), it writes `settings.json.bak` next to `settings.json` and prints a one-line warning listing the removed command. No chain of backups is kept; version-control `~/.config/lazy-harness/` if you want a longer history.
+
+The literal default set lives in `src/lazy_harness/deploy/defaults.py`.
+
 ## The built-ins
 
 ### `context-inject` — runs on `SessionStart`
