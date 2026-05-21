@@ -37,17 +37,45 @@ def deploy_profiles(cfg: Config) -> None:
                 click.echo(f"  ✓ {name}/{item.name}")
 
 
+def _hook_commands(hook_block: dict) -> set[str]:
+    """Collect every command string from a Claude Code hooks block."""
+    commands: set[str] = set()
+    if not isinstance(hook_block, dict):
+        return commands
+    for entries in hook_block.values():
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            for h in entry.get("hooks", []):
+                if isinstance(h, dict):
+                    cmd = h.get("command")
+                    if isinstance(cmd, str):
+                        commands.add(cmd)
+    return commands
+
+
+def _unknown_hook_commands(existing: dict, new: dict) -> list[str]:
+    """Commands present in `existing` but absent from `new`, sorted for stable output."""
+    return sorted(_hook_commands(existing) - _hook_commands(new))
+
+
 def deploy_hooks(cfg: Config) -> None:
     """Generate agent-native hook config for each profile."""
     from lazy_harness.agents.base import HookEntry
     from lazy_harness.agents.registry import get_agent
-    from lazy_harness.hooks.loader import resolve_hooks_for_event
+    from lazy_harness.deploy.defaults import merge_with_defaults
+    from lazy_harness.hooks.loader import resolve_script_names
 
     agent = get_agent(cfg.agent.type)
 
+    effective = merge_with_defaults(cfg.hooks)
     hook_entries: dict[str, list[str | HookEntry]] = {}
-    for event_name in cfg.hooks:
-        hooks = resolve_hooks_for_event(cfg, event_name)
+    for event_name, script_names in effective.items():
+        if not script_names:
+            continue
+        hooks = resolve_script_names(script_names)
         if hooks:
             entries: list[str | HookEntry] = []
             for hook in hooks:
@@ -70,11 +98,25 @@ def deploy_hooks(cfg: Config) -> None:
         settings_file = target_dir / "settings.json"
 
         settings: dict = {}
+        existing_raw = ""
         if settings_file.is_file():
+            existing_raw = settings_file.read_text()
             try:
-                settings = json.loads(settings_file.read_text())
+                settings = json.loads(existing_raw)
             except json.JSONDecodeError:
-                pass
+                settings = {}
+
+        existing_hooks = settings.get("hooks", {}) if isinstance(settings, dict) else {}
+        unknowns = _unknown_hook_commands(existing_hooks, agent_hooks)
+        if unknowns:
+            backup = settings_file.with_suffix(".json.bak")
+            backup.write_text(existing_raw)
+            click.echo(
+                f"  ⚠  {name}/settings.json had {len(unknowns)} unknown hook "
+                f"entries; backup saved to {backup.name}."
+            )
+            for cmd in unknowns:
+                click.echo(f"      removed: {cmd[:80]}")
 
         settings["hooks"] = agent_hooks
         settings_file.write_text(json.dumps(settings, indent=2) + "\n")

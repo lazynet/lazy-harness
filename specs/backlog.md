@@ -47,6 +47,7 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 - [x] **Rename a lazy-harness** — repo, package (`lazy_harness`), CLI (`lh`), docs site (`lazynet.github.io/lazy-harness`)
 - [x] **Docs coherence pass 2026-05-20** — `lh memory` + `lh knowledge` subcommands completos en CLI reference, hooks documentados (`pre-tool-use-memory-size`, `post-tool-use-sync-claude`), `claude-md.proposal.md` + `grades.jsonl` documentados en compound-loop how page
 - [x] **Compound-loop insight capture + delta-by-index** — `★ Insight ─` blocks captured verbatim via regex pre-LLM, gate-bypass when insights present, hash-based dedup, per-session message-index cursor for delta scans (`memory/insights/.cursor.json`). 12 tests TDD. Closed both gate-out (short sessions) and tail-of-20 (long sessions) loss paths from the design [`specs/designs/2026-04-13-compound-loop-insight-capture.md`](designs/2026-04-13-compound-loop-insight-capture.md).
+- [x] **`lh deploy` default hooks merge** — `DEFAULT_HOOKS` literal in `deploy/defaults.py` + `merge_with_defaults` pure function; per-event override via config.toml (`scripts = []` opts out); framework-owned `settings.json[hooks]` with backup + warning when manual entries are clobbered (ADR-031, 11 tests TDD). Also fixed `ClaudeCodeAdapter` missing `post_compact → PostCompact` mapping. Closes the 2026-04-17 partial-config drift and makes built-ins out-of-the-box.
 
 ---
 
@@ -57,22 +58,6 @@ _(empty — insight capture + delta-by-index shipped 2026-05-20)_
 ---
 
 ## Open — Prioridad MEDIA
-
-### `lh deploy` — merge hook defaults instead of total overwrite
-
-**Síntoma:** `deploy/engine.py` hace `settings["hooks"] = agent_hooks`, sobrescribiendo el bloque completo con solo lo declarado en `config.toml`. Si un profile existente tenía hooks estáticos en `settings.json` (desplegados por migrate, deploys viejos, o ediciones manuales), al agregar cualquier bloque `[hooks.*]` al `config.toml` se pierden todos los demás silenciosamente.
-
-**Caso real (2026-04-17):** pegar `[hooks.pre_tool_use]` + `[hooks.post_tool_use]` en un `config.toml` que no tenía ningún bloque `[hooks.*]` barrió `SessionStart` (context-inject), `Stop` (session-export + compound-loop), y `PreCompact` (pre-compact) del settings.json. Hubo que redeclararlos manualmente. Peor: reveló que `session-end` del PR #22 nunca había llegado al settings.json de este profile — drift silencioso pre-existente.
-
-**Acción (Opción A — elegida):** definir un set `DEFAULT_HOOKS` en código (probablemente `src/lazy_harness/deploy/defaults.py`) mergeado con los bloques de `config.toml`. Override explícito vía `scripts = []` para desactivar un default, o `enabled = false` — decisión de sintaxis a cerrar en el design spec.
-
-**Decisiones pendientes del spec:**
-1. Shape del default: lista de scripts per event, o dict `event → scripts`?
-2. Cómo desactivar: `scripts = []` (implícito) vs `enabled = false` (explícito)?
-3. Adopción cuando un default nuevo se agrega en un release posterior: opt-in automático al hacer `lh deploy`, o requiere acción del user?
-4. Dónde vive la lista: Python literal vs TOML embedido en el paquete (para que `lh config show-defaults` pueda imprimirlo sin importar código)?
-
-**Impacto:** footgun serio para cualquier user que tenga profiles pre-existentes y quiera adoptar features nuevas. Onboarding del cluster de security hooks fue el primer caso que lo expuso — el próximo feature que agregue hooks va a pegarle a todos de nuevo si no se arregla.
 
 ### Audit CLAUDE.md triple por context clash
 
