@@ -8,7 +8,7 @@ import sys
 import click
 
 from lazy_harness.core.config import Config
-from lazy_harness.core.paths import _home, config_dir, expand_path
+from lazy_harness.core.paths import config_dir, expand_path
 from lazy_harness.deploy.symlinks import ensure_symlink
 
 
@@ -38,7 +38,7 @@ def deploy_profiles(cfg: Config) -> None:
 
 
 def _hook_commands(hook_block: dict) -> set[str]:
-    """Collect every command string from a Claude Code hooks block."""
+    """Collect every command string from an agent hooks block."""
     commands: set[str] = set()
     if not isinstance(hook_block, dict):
         return commands
@@ -70,7 +70,7 @@ def deploy_hooks(cfg: Config) -> None:
 
     agent = get_agent(cfg.agent.type)
 
-    effective = merge_with_defaults(cfg.hooks)
+    effective = merge_with_defaults(cfg.hooks, agent)
     hook_entries: dict[str, list[str | HookEntry]] = {}
     for event_name, script_names in effective.items():
         if not script_names:
@@ -142,12 +142,7 @@ def _collect_mcp_servers(cfg: Config) -> dict[str, dict]:
 
 
 def deploy_mcp_servers(cfg: Config) -> None:
-    """Write detected MCP server entries into each profile's .claude.json.
-
-    Claude Code reads MCP servers from .claude.json (not settings.json), so
-    that's where the deploy must merge them. The rest of .claude.json
-    (history, projects, userID, ...) is preserved untouched.
-    """
+    """Write detected MCP server entries into each profile's agent MCP config file."""
     from lazy_harness.agents.registry import get_agent
 
     servers = _collect_mcp_servers(cfg)
@@ -156,17 +151,22 @@ def deploy_mcp_servers(cfg: Config) -> None:
         return
 
     agent = get_agent(cfg.agent.type)
+    mcp_file_name = agent.mcp_config_file()
+    if not mcp_file_name:
+        click.echo("  Agent does not use a separate MCP config file — skipping.")
+        return
+
     mcp_block = agent.generate_mcp_config(servers)
 
     for name, entry in cfg.profiles.items.items():
         target_dir = expand_path(entry.config_dir)
         target_dir.mkdir(parents=True, exist_ok=True)
-        claude_json_file = target_dir / ".claude.json"
+        mcp_config_file = target_dir / mcp_file_name
 
         existing: dict = {}
-        if claude_json_file.is_file():
+        if mcp_config_file.is_file():
             try:
-                existing = json.loads(claude_json_file.read_text())
+                existing = json.loads(mcp_config_file.read_text())
             except json.JSONDecodeError:
                 pass
 
@@ -174,22 +174,27 @@ def deploy_mcp_servers(cfg: Config) -> None:
         existing_mcp.update(mcp_block.get("mcpServers", {}))
         existing["mcpServers"] = existing_mcp
 
-        claude_json_file.write_text(json.dumps(existing, indent=2) + "\n")
-        click.echo(f"  ✓ {name}/.claude.json (MCP servers: {', '.join(servers)})")
+        mcp_config_file.write_text(json.dumps(existing, indent=2) + "\n")
+        click.echo(f"  ✓ {name}/{mcp_file_name} (MCP servers: {', '.join(servers)})")
 
 
 def deploy_claude_symlink(cfg: Config) -> None:
-    """Create ~/.claude symlink to default profile's config dir."""
+    """Create the agent's global config symlink to the default profile's config dir."""
+    from lazy_harness.agents.registry import get_agent
+
+    agent = get_agent(cfg.agent.type)
+    link_path = agent.global_config_link()
+    if link_path is None:
+        return
+
     default_name = cfg.profiles.default
     entry = cfg.profiles.items.get(default_name)
     if not entry:
         return
 
-    claude_link = _home() / ".claude"
     target = expand_path(entry.config_dir)
-
-    status = ensure_symlink(target, claude_link)
+    status = ensure_symlink(target, link_path)
     if status == "exists":
-        click.echo(f"  · ~/.claude → {entry.config_dir} (already linked)")
+        click.echo(f"  · {link_path} → {entry.config_dir} (already linked)")
     else:
-        click.echo(f"  ✓ ~/.claude → {entry.config_dir}")
+        click.echo(f"  ✓ {link_path} → {entry.config_dir}")

@@ -38,9 +38,10 @@ def _fmt_bytes(n: int) -> str:
     return f"{n / (1024 * 1024):.1f} MB"
 
 
-def _engram_persist_metrics_path() -> Path:
-    base = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
-    return base / "logs" / "engram_persist_metrics.jsonl"
+def _engram_persist_metrics_path(agent_env_var: str, logs_subdir: str) -> Path:
+    env_val = os.environ.get(agent_env_var) if agent_env_var else None
+    base = Path(env_val) if env_val else Path.home() / ".claude"
+    return base / (logs_subdir or "logs") / "engram_persist_metrics.jsonl"
 
 
 def _render_engram_persist(console: Console, health: EngramPersistHealth) -> bool:
@@ -99,6 +100,7 @@ def doctor() -> None:
         console.print(f"[green]✓[/green] Agent: {agent.name}")
     except AgentNotFoundError as e:
         console.print(f"[red]✗[/red] Agent: {e}")
+        agent = get_agent("null")
         ok = False
 
     console.print()
@@ -169,7 +171,10 @@ def doctor() -> None:
         for name, url in remote_urls:
             console.print(f"  {name} → {url}")
 
-    health = collect_engram_persist_health(_engram_persist_metrics_path(), now=datetime.now(UTC))
+    health = collect_engram_persist_health(
+        _engram_persist_metrics_path(agent.env_var(), agent.session_dirs().get("logs", "logs")),
+        now=datetime.now(UTC),
+    )
     if not _render_engram_persist(console, health):
         ok = False
 

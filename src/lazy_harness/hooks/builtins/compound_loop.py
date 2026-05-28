@@ -62,9 +62,13 @@ def main() -> None:
     except ImportError:
         return
 
-    claude_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
-    log_dir = claude_dir / "logs"
-    queue_dir = claude_dir / "queue"
+    # Preliminary dir resolution for log file — config not yet loaded.
+    # The active agent sets its own env var before firing hooks, so reading
+    # CLAUDE_CONFIG_DIR here is correct for Claude Code; other agents will set
+    # their own env var and the log path will be re-resolved below once the
+    # agent type is known from config.
+    _pre_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
+    log_dir = _pre_dir / "logs"
     log_file = log_dir / "hooks.log"
 
     _log(log_file, f"fired cwd={Path.cwd()}")
@@ -82,9 +86,17 @@ def main() -> None:
         _log(log_file, "disabled in config, skipping")
         return
 
+    from lazy_harness.agents.registry import get_agent
+
+    agent = get_agent(cfg.agent.type)
+    env_val = os.environ.get(agent.env_var()) if agent.env_var() else None
+    agent_dir = Path(env_val) if env_val else _pre_dir
+    subdirs = agent.session_dirs()
+    queue_dir = agent_dir / (subdirs.get("queue") or "queue")
+
     cwd = Path.cwd()
     encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
-    sessions_dir = claude_dir / "projects" / encoded
+    sessions_dir = agent_dir / (subdirs.get("sessions") or "projects") / encoded
 
     session_jsonl = _find_latest_session(sessions_dir)
     if session_jsonl is None:

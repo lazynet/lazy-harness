@@ -212,3 +212,31 @@ def test_claude_adapter_generate_mcp_config_passes_env() -> None:
     }
     result = ClaudeCodeAdapter().generate_mcp_config(servers)
     assert result["mcpServers"]["engram"]["env"] == {"ENGRAM_PORT": "7437"}
+
+
+def test_claude_adapter_global_config_link() -> None:
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    result = ClaudeCodeAdapter().global_config_link()
+    assert result == Path.home() / ".claude"
+
+
+def test_claude_adapter_mcp_config_file() -> None:
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    assert ClaudeCodeAdapter().mcp_config_file() == ".claude.json"
+
+
+def test_claude_adapter_session_dirs() -> None:
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    dirs = ClaudeCodeAdapter().session_dirs()
+    assert dirs["sessions"] == "projects"
+    assert dirs["logs"] == "logs"
+    assert dirs["queue"] == "queue"
+
+
+def test_claude_adapter_system_doc_name() -> None:
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    assert ClaudeCodeAdapter().system_doc_name() == "CLAUDE.md"

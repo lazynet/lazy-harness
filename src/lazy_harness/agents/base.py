@@ -63,3 +63,34 @@ class AgentAdapter(Protocol):
     def env_var(self) -> str:
         """Name of the environment variable that selects the profile config dir."""
         ...
+
+    def global_config_link(self) -> Path | None:
+        """Canonical global symlink for this agent (e.g. ~/.claude).
+
+        Return None if the agent does not use a global symlink convention.
+        `lh deploy` only creates the symlink when this is non-None.
+        """
+        ...
+
+    def mcp_config_file(self) -> str:
+        """Filename inside the config dir that holds MCP server config.
+
+        Claude Code: '.claude.json'. Return empty string if MCP config
+        is merged into the main settings file.
+        """
+        ...
+
+    def session_dirs(self) -> dict[str, str]:
+        """Subdirectory names for agent-managed session artefacts.
+
+        Keys: 'sessions', 'logs', 'queue'. Empty string means not available.
+        Claude Code: {'sessions': 'projects', 'logs': 'logs', 'queue': 'queue'}
+        """
+        ...
+
+    def system_doc_name(self) -> str:
+        """Primary system-instruction document filename (e.g. 'CLAUDE.md').
+
+        Return empty string for agents that use a different injection mechanism.
+        """
+        ...

@@ -197,15 +197,27 @@ def knowledge_handoff_now() -> None:
         console.print("[red]compound_loop is disabled in config.toml[/red]")
         raise SystemExit(1)
 
-    claude_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
+    from lazy_harness.agents.registry import get_agent
+
+    agent = get_agent(cfg.agent.type)
+    env_val = os.environ.get(agent.env_var()) if agent.env_var() else None
+    if env_val:
+        agent_dir = Path(env_val)
+    else:
+        default_entry = cfg.profiles.items.get(cfg.profiles.default)
+        agent_dir = (
+            expand_path(default_entry.config_dir) if default_entry else Path.home() / ".claude"
+        )
+    subdirs = agent.session_dirs()
     cwd = Path.cwd()
     encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
-    sessions_dir = claude_dir / "projects" / encoded
-    queue_dir = claude_dir / "queue"
-    log_dir = claude_dir / "logs"
+    sessions_dir = agent_dir / (subdirs.get("sessions") or "projects") / encoded
+    queue_dir = agent_dir / (subdirs.get("queue") or "queue")
+    log_dir = agent_dir / (subdirs.get("logs") or "logs")
 
-    jsonl_files = [p for p in sessions_dir.glob("*.jsonl") if p.is_file()] \
-        if sessions_dir.is_dir() else []
+    jsonl_files = (
+        [p for p in sessions_dir.glob("*.jsonl") if p.is_file()] if sessions_dir.is_dir() else []
+    )
     if not jsonl_files:
         console.print(f"[red]No session JSONL under {contract_path(sessions_dir)}[/red]")
         raise SystemExit(1)
