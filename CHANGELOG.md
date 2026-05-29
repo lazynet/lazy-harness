@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.22.0](https://github.com/lazynet/lazy-harness/compare/v0.21.0...v0.22.0) (2026-05-29)
+
+
+### Features
+
+* close agent adapter protocol gaps (ADR-032) ([#88](https://github.com/lazynet/lazy-harness/issues/88)) ([f29460b](https://github.com/lazynet/lazy-harness/commit/f29460b4284ade49525e157d119f396c2cef6203))
+
 ## [0.21.0](https://github.com/lazynet/lazy-harness/compare/v0.20.0...v0.21.0) (2026-05-21)
 
 
