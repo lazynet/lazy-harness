@@ -99,6 +99,18 @@ class ClaudeCodeAdapter:
             settings_hooks[cc_event] = matchers
         return settings_hooks
 
+    def global_config_link(self) -> Path | None:
+        return Path.home() / ".claude"
+
+    def mcp_config_file(self) -> str:
+        return ".claude.json"
+
+    def session_dirs(self) -> dict[str, str]:
+        return {"sessions": "projects", "logs": "logs", "queue": "queue"}
+
+    def system_doc_name(self) -> str:
+        return "CLAUDE.md"
+
     def generate_mcp_config(self, servers: dict[str, dict]) -> dict:
         normalized: dict[str, dict] = {}
         for name, entry in servers.items():

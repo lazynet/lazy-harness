@@ -15,8 +15,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from lazy_harness.core.sync_claude import sync_profiles
+from lazy_harness.core.sync_agent_md import sync_profiles
 
+# Segment filenames are Claude Code-specific. A future adapter extension may
+# make these dynamic; for now the hook name intentionally stays claude-specific.
 SEGMENT_FILES = {"CLAUDE.head.md", "CLAUDE.tail.md", "CLAUDE.common.md"}
 
 
@@ -58,7 +60,13 @@ def main() -> None:
     if profiles_dir is None:
         sys.exit(0)
     try:
-        sync_profiles(profiles_dir)
+        from lazy_harness.agents.registry import get_agent
+        from lazy_harness.core.config import load_config
+        from lazy_harness.core.paths import config_file
+
+        cfg = load_config(config_file())
+        agent = get_agent(cfg.agent.type)
+        sync_profiles(profiles_dir, agent)
     except Exception:
         pass
     sys.exit(0)

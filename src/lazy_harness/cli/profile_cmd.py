@@ -18,7 +18,7 @@ from lazy_harness.core.move_projects import (
 )
 from lazy_harness.core.paths import config_dir, config_file, contract_path, expand_path
 from lazy_harness.core.profiles import ProfileError, add_profile, list_profiles, remove_profile
-from lazy_harness.core.sync_claude import SyncError, sync_profiles
+from lazy_harness.core.sync_agent_md import SyncError, sync_profiles
 
 
 def deploy_envrc_for_all_profiles(cfg: Config) -> list[EnvrcResult]:
@@ -298,7 +298,14 @@ def profile_sync_claude_md() -> None:
         return
 
     try:
-        results = sync_profiles(profiles_dir)
+        cfg = load_config(config_file())
+        agent = get_agent(cfg.agent.type)
+    except (ConfigError, AgentNotFoundError) as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(1)
+
+    try:
+        results = sync_profiles(profiles_dir, agent)
     except SyncError as e:
         console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(1)
