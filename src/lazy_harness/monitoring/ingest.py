@@ -200,7 +200,7 @@ def ingest_profile(
             )
         )
 
-    db.replace_profile_stats(profile.name, entries)
+    db.upsert_stats(entries)
     report.sessions_updated = len({e["session"] for e in entries})
 
     if sinks:
