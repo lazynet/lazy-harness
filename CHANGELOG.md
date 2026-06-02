@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.22.1](https://github.com/lazynet/lazy-harness/compare/v0.22.0...v0.22.1) (2026-06-02)
+
+
+### Bug Fixes
+
+* accumulate metrics across transcript retention ([#91](https://github.com/lazynet/lazy-harness/issues/91)) ([cbb1fff](https://github.com/lazynet/lazy-harness/commit/cbb1fffa4663df4717c5a7b0c2431c5818bbcd2d))
+* add claude-opus-4-8 to pricing table ([#90](https://github.com/lazynet/lazy-harness/issues/90)) ([d4532f7](https://github.com/lazynet/lazy-harness/commit/d4532f75174dd08981c360bf9e59541bed6af5c0))
+
 ## [0.22.0](https://github.com/lazynet/lazy-harness/compare/v0.21.0...v0.22.0) (2026-05-29)
 
 
