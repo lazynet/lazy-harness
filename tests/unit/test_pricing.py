@@ -73,6 +73,24 @@ def test_default_pricing_includes_opus_4_7() -> None:
     }
 
 
+def test_default_pricing_includes_opus_4_8() -> None:
+    """claude-opus-4-8 must carry the same per-token rates as the opus tier.
+
+    Opus 4.8 (released 2026-05) sits in the same Claude 4 Opus tier with
+    $5/$25 per-million input/output LiteLLM rates. Without this entry
+    calculate_cost silently returns 0.0 for all opus-4-8 sessions.
+    """
+    from lazy_harness.monitoring.pricing import default_pricing
+
+    pricing = default_pricing()
+    assert pricing["claude-opus-4-8"] == {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.5,
+        "cache_create": 6.25,
+    }
+
+
 def test_load_pricing_with_config_overrides(config_dir: Path) -> None:
     from lazy_harness.monitoring.pricing import load_pricing
 
