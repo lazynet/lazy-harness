@@ -139,6 +139,46 @@ def test_ingest_reflects_session_growth(tmp_path: Path) -> None:
     db.close()
 
 
+def test_ingest_preserves_sessions_after_transcript_pruned(tmp_path: Path) -> None:
+    """A session's stats survive once its transcript is pruned by retention.
+
+    Claude Code deletes transcripts older than cleanupPeriodDays. The metrics
+    ledger must not drop those sessions on the next ingest, otherwise cost
+    history silently shrinks to a rolling retention-window view.
+    """
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.ingest import ingest_profile
+    from lazy_harness.monitoring.pricing import load_pricing
+
+    prof = _profile(tmp_path, "lazy")
+    projects = prof.config_dir / "projects"
+    old = _write_session(
+        projects,
+        "-Users-foo-repos-demo",
+        "aaaaaaaa-0000-0000-0000-000000000000",
+        [_assistant_msg(inp=100, out=50, msg_id="old-1")],
+    )
+
+    db = MetricsDB(tmp_path / "metrics.db")
+    pricing = load_pricing()
+    ingest_profile(prof, db, pricing)
+
+    # Retention prunes the old transcript; a fresh session arrives.
+    old.unlink()
+    _write_session(
+        projects,
+        "-Users-foo-repos-demo",
+        "bbbbbbbb-0000-0000-0000-000000000000",
+        [_assistant_msg(inp=200, out=80, msg_id="new-1")],
+    )
+    ingest_profile(prof, db, pricing)
+
+    sessions = {r["session"] for r in db.query_stats(period="all")}
+    assert "aaaaaaaa-0000-0000-0000-000000000000" in sessions  # pruned but preserved
+    assert "bbbbbbbb-0000-0000-0000-000000000000" in sessions
+    db.close()
+
+
 def test_ingest_isolates_profiles(tmp_path: Path) -> None:
     from lazy_harness.monitoring.db import MetricsDB
     from lazy_harness.monitoring.ingest import ingest_profile
