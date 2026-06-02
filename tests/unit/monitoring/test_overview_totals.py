@@ -91,8 +91,12 @@ def test_overview_splits_sessions_and_tokens_per_profile(tmp_path: Path) -> None
     """Sessions and Tokens rows must break down per profile with an 'all' totalizer."""
     from datetime import datetime
 
-    today = datetime.now().strftime("%Y-%m-%d")
-    month = datetime.now().strftime("%Y-%m")
+    now = datetime.now()
+    today = now.strftime("%Y-%m-%d")
+    month = now.strftime("%Y-%m")
+    # A day in the current month guaranteed not to be today, so this session
+    # counts toward "this month" but not "today" even when run on the 1st.
+    other_day = f"{month}-02" if now.day == 1 else f"{month}-01"
     cfg = _cfg_two(tmp_path)
     db = MetricsDB(tmp_path / "metrics.db")
     db.upsert_stats(
@@ -111,7 +115,7 @@ def test_overview_splits_sessions_and_tokens_per_profile(tmp_path: Path) -> None
             },
             {
                 "session": "lazy-s2",
-                "date": f"{month}-01",
+                "date": other_day,
                 "model": "claude-opus-4-6",
                 "profile": "lazy",
                 "project": "p",
