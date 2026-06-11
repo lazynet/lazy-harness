@@ -107,3 +107,25 @@ def test_robust_to_garbage_payload(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     assert out.startswith("lazy")
     assert "0K/0K" in out
+
+
+def test_profile_label_routes_through_agent_adapter(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """ADR-032 L3: the profile label must derive from the configured agent's
+    runtime dir. With agent.type = "null" it must come from ~/.null even when
+    CLAUDE_CONFIG_DIR points elsewhere."""
+    from lazy_harness.core import paths as paths_mod
+    from lazy_harness.monitoring.statusline import format_statusline
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / ".claude-decoy"))
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text('[harness]\nversion = "1"\n\n[agent]\ntype = "null"\n')
+    monkeypatch.setattr(paths_mod, "config_file", lambda: cfg_file)
+
+    out = format_statusline({})
+    assert out.startswith(".null ")

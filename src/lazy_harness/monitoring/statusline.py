@@ -18,15 +18,36 @@ from pathlib import Path
 from typing import Any
 
 
-def _profile_label() -> str:
-    """Derive the profile name from CLAUDE_CONFIG_DIR.
+def _agent_runtime_dir() -> Path:
+    """Runtime config dir of the configured agent (ADR-032 L3).
 
-    Examples:
+    Imports are kept local so importing this module stays cheap; the Claude
+    Code adapter is the bootstrap default when no config is loadable, which
+    resolves exactly like the historical CLAUDE_CONFIG_DIR read.
+    """
+    from lazy_harness.agents.registry import get_agent
+    from lazy_harness.core.config import ConfigError, load_config
+    from lazy_harness.core.paths import agent_runtime_dir, config_file
+
+    cfg = None
+    cf = config_file()
+    if cf.is_file():
+        try:
+            cfg = load_config(cf)
+        except ConfigError:
+            cfg = None
+    return agent_runtime_dir(get_agent(cfg.agent.type if cfg is not None else "claude-code"))
+
+
+def _profile_label() -> str:
+    """Derive the profile name from the agent's runtime config dir.
+
+    Examples (Claude Code):
       ~/.claude-lazy → 'lazy'
       ~/.claude-flex → 'flex'
       ~/.claude      → 'default'
     """
-    config_dir = os.environ.get("CLAUDE_CONFIG_DIR") or str(Path.home() / ".claude")
+    config_dir = str(_agent_runtime_dir())
     base = os.path.basename(config_dir.rstrip("/"))
     if base.startswith(".claude-"):
         return base[len(".claude-") :] or "default"
@@ -86,7 +107,5 @@ def format_statusline(payload: dict[str, Any]) -> str:
     free_str = f"{free_pct}%" if free_pct not in (None, "") else "?%"
 
     return (
-        f"{' '.join(parts)} | "
-        f"{_to_k(in_tok)}K/{_to_k(out_tok)}K tok {cost_fmt} | "
-        f"{free_str} free"
+        f"{' '.join(parts)} | {_to_k(in_tok)}K/{_to_k(out_tok)}K tok {cost_fmt} | {free_str} free"
     )
