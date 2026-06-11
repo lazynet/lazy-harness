@@ -65,6 +65,79 @@ def test_session_export_hook_exits_zero(tmp_path: Path) -> None:
     assert result.returncode == 0
 
 
+def test_session_export_routes_paths_through_agent_adapter(tmp_path: Path, monkeypatch) -> None:
+    """ADR-032 L3/L4: the sessions dir must come from the configured agent
+    adapter, not from a hardcoded CLAUDE_CONFIG_DIR read. With agent.type =
+    "null" resolution must land under ~/.null even when CLAUDE_CONFIG_DIR
+    points elsewhere."""
+    import io
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    decoy_dir = tmp_path / "decoy-claude"
+
+    cwd = tmp_path / "proj"
+    cwd.mkdir()
+    encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
+    sessions_dir = home / ".null" / "projects" / encoded
+    sessions_dir.mkdir(parents=True)
+    session_file = sessions_dir / "abc12345.jsonl"
+    messages = [
+        {"type": "permission-mode", "timestamp": "2026-04-12T10:00:00"},
+        {"type": "system", "cwd": str(cwd), "timestamp": "2026-04-12T10:00:00"},
+        {
+            "type": "user",
+            "message": {"content": "a" * 250},
+            "timestamp": "2026-04-12T10:00:01",
+        },
+        {
+            "type": "assistant",
+            "message": {"content": "first answer here"},
+            "timestamp": "2026-04-12T10:00:02",
+        },
+        {
+            "type": "user",
+            "message": {"content": "second question"},
+            "timestamp": "2026-04-12T10:00:03",
+        },
+        {
+            "type": "assistant",
+            "message": {"content": "second answer"},
+            "timestamp": "2026-04-12T10:00:04",
+        },
+    ]
+    session_file.write_text("\n".join(json.dumps(m) for m in messages) + "\n")
+
+    knowledge_dir = tmp_path / "knowledge"
+    knowledge_dir.mkdir()
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        f"""
+[harness]
+version = "1"
+
+[agent]
+type = "null"
+
+[knowledge]
+path = "{knowledge_dir}"
+"""
+    )
+    from lazy_harness.core import paths as paths_mod
+    from lazy_harness.hooks.builtins import session_export as hook_mod
+
+    monkeypatch.setattr(paths_mod, "config_file", lambda: cfg_file)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(decoy_dir))
+    monkeypatch.chdir(cwd)
+    monkeypatch.setattr("sys.stdin", io.StringIO("{}"))
+    monkeypatch.setattr(hook_mod.shutil, "which", lambda _: None)
+    hook_mod.main()
+
+    exported = list((knowledge_dir / "sessions").rglob("*.md"))
+    assert len(exported) == 1
+
+
 def test_session_export_registered() -> None:
     from lazy_harness.hooks.loader import list_builtin_hooks
 
