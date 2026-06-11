@@ -101,7 +101,7 @@ Steps:
       - `collect_existing_failures` — tail of `failures.jsonl`
       - `collect_existing_learnings` — the titles of the most recent 50 learnings markdown files
     - **Build the prompt.** `build_prompt` composes a headless-Claude prompt that embeds all of the above plus the session summary. The prompt is calibration — its wording was iterated against hundreds of real sessions in the predecessor, and it is documented as load-bearing.
-    - **Call Claude headlessly.** `invoke_claude` runs `claude -p --model <model> --output-format text` with `timeout=timeout_seconds`. Returns stdout, or `None` on timeout / missing binary / empty output.
+    - **Call the LLM backend.** `invoke_llm` runs the configured `[compound_loop].backend` (default: headless `claude -p --model <model> --output-format text`; alternatively any OpenAI-compatible endpoint such as Ollama) with `timeout=timeout_seconds`. Returns the response text, or `None` on timeout / unreachable backend / empty output.
     - **Parse the response.** `parse_response` strips markdown fences, then does three things in order: try raw `json.loads`, then look for the first `{` and walk a balanced-brace state machine to extract a JSON object out of a prose preamble, then give up and return `None`.
     - **Persist.** `persist_results` does the writes (next section).
 5. **Move task to `done/`.** Always, even on failure. A poison task must not block the queue.
@@ -260,7 +260,7 @@ When a genuinely duplicate learning sneaks past the LLM filter, two things catch
 - **It does not edit `MEMORY.md` or `CLAUDE.md` directly.** Those files are maintained by Claude Code itself during normal sessions via the auto-memory system documented in the user's `CLAUDE.md`. The compound loop *proposes* additions via `claude-md.proposal.md` (above) and `context-inject` surfaces them on the next session start, but only the human decides whether to merge them. The loop owns the `.jsonl`, `learnings/`, and `*.proposal.md` layers; `MEMORY.md` and `CLAUDE.md` are orthogonal.
 - **It does not block session close.** Everything heavy happens after the producer exits. A session that closed at 18:32:45 with a busy queue behind it will still close at 18:32:45.
 - **It does not write to the knowledge directory's `sessions/` subtree.** That is `session-export`'s job. The loop only writes to `memory/*.jsonl`, `memory/handoff.md`, and `learnings/*.md`.
-- **It does not fail the session if Claude is unreachable.** `invoke_claude` timing out or returning empty just marks the task skipped and moves on. Memory enrichment is best-effort by design.
+- **It does not fail the session if the LLM backend is unreachable.** `invoke_llm` timing out or returning empty just marks the task skipped and moves on. Memory enrichment is best-effort by design.
 
 ## Tuning knobs
 
