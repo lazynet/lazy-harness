@@ -27,6 +27,7 @@ This is a **public repository**. Public surface (README, `docs/` pages, commit m
 3. **Conventional commits, no AI trailers.** Format: `type: short description` (e.g. `fix: handle missing profile dir`). Do **not** add `Co-Authored-By` or any AI-attribution trailers. Do **not** skip hooks with `--no-verify`. Create new commits instead of amending published ones.
 4. **Pre-commit verification is all three checks.** Run `/tdd-check` before every commit: `uv run pytest`, `uv run ruff check src tests`, and `uv run --group docs mkdocs build --strict` must all pass with pristine output.
 5. **Versions are owned by release-please.** Never hand-bump `pyproject.toml` or `src/lazy_harness/__init__.py`, never tag `vX.Y.Z` manually. Mechanism and commit-type rules: [`specs/workflow/release-flow.md`](specs/workflow/release-flow.md).
+6. **Docs coherence is audited before every release.** Before a release-please release is cut, verify the CLI reference matches implemented commands, hooks docs match registered hooks, memory architecture docs match compound-loop artifacts, and the roadmap reflects completed ADR items. `uv run --group docs mkdocs build --strict` must pass.
 
 ## What NOT to do
 
@@ -36,6 +37,7 @@ This is a **public repository**. Public surface (README, `docs/` pages, commit m
 - Do not introduce abstractions for hypothetical future needs. Three similar lines beats a premature abstraction.
 - Do not reintroduce references to the project's pre-rename name or any individual user's name into public surface: `README.md`, `docs/index.md`, `docs/why/*`, `docs/getting-started/*`, `docs/reference/*`, `docs/architecture/overview.md`, `mkdocs.yml`. Only `specs/archive/**` is allowed to carry that history.
 - Do not edit files in `specs/archive/**` to "fix" historical references, stale paths, or outdated nomenclature. That tree is frozen on purpose. Moving files as part of a wider restructure is fine; editing their content is not.
+- Do not claim a persistence operation (file write, sync, deletion) happened without verifying it with explicit file or git output.
 - Do not commit secrets, credentials, or personal identifying information.
 
 ## Where things live
