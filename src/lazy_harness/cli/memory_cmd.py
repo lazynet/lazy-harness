@@ -8,7 +8,8 @@ from pathlib import Path
 import click
 
 from lazy_harness.core.paths import config_file, expand_path
-from lazy_harness.knowledge.compound_loop import invoke_claude as _invoke_claude
+from lazy_harness.knowledge.compound_loop import invoke_llm as _invoke_llm
+from lazy_harness.llm.claude import ClaudeBackend
 
 
 def enumerate_profile_projects(profile_dir: Path) -> dict[str, dict]:
@@ -187,9 +188,9 @@ def consolidate(memory_dir: Path | None, last: int, model: str, timeout: int) ->
         return
 
     prompt = _build_consolidate_prompt(decisions, failures)
-    result = _invoke_claude(prompt, model, timeout)
+    result = _invoke_llm(prompt, ClaudeBackend(), model, timeout)
     if not result:
-        click.echo("Claude returned empty output. Try again or increase --timeout.")
+        click.echo("The LLM backend returned empty output. Try again or increase --timeout.")
         return
     click.echo(result)
     click.echo(

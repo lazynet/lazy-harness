@@ -23,6 +23,8 @@ from datetime import datetime
 from pathlib import Path
 
 from lazy_harness.core.config import CompoundLoopConfig
+from lazy_harness.llm.base import LLMBackend, LLMBackendError
+from lazy_harness.llm.claude import ClaudeBackend
 
 _INTERACTIVE_MARKERS = ("permission-mode", "last-prompt")
 _INTERACTIVE_SCAN_LINES = 10
@@ -710,20 +712,17 @@ def parse_response(raw_output: str) -> dict | None:
     return None
 
 
-def invoke_claude(prompt: str, model: str, timeout: int) -> str | None:
-    """Run `claude -p` with the given prompt. Returns stdout or None on failure."""
+def invoke_llm(prompt: str, backend: LLMBackend, model: str, timeout: int) -> str | None:
+    """Run a single-turn completion via the backend (ADR-033).
+
+    Returns the response text, or None on failure or empty output — the
+    historical `invoke_claude` contract, now provider-agnostic.
+    """
     try:
-        result = subprocess.run(
-            ["claude", "-p", "--model", model, "--output-format", "text"],
-            input=prompt,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-        output = result.stdout.strip()
-        return output if output else None
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        output = backend.complete(prompt, model, timeout)
+    except LLMBackendError:
         return None
+    return output if output else None
 
 
 def _atomic_write(path: Path, content: str) -> None:
@@ -1007,9 +1006,11 @@ def process_task(
     task_file: Path,
     cfg: CompoundLoopConfig,
     learnings_dir: Path,
-    invoke: callable = invoke_claude,
+    backend: LLMBackend | None = None,
 ) -> TaskOutcome:
-    """Process one queued task. `invoke` is injected for testing."""
+    """Process one queued task. `backend` defaults to ClaudeBackend (ADR-033)."""
+    if backend is None:
+        backend = ClaudeBackend()
     meta = parse_task(task_file)
     session_jsonl = Path(meta.get("session_jsonl", ""))
     session_id = meta.get("session_id", "")
@@ -1059,9 +1060,9 @@ def process_task(
         summary,
     )
 
-    raw_output = invoke(prompt, cfg.model, cfg.timeout_seconds)
+    raw_output = invoke_llm(prompt, backend, cfg.model, cfg.timeout_seconds)
     if not raw_output:
-        return TaskOutcome(skipped=f"claude returned empty for {session_id[:8]}")
+        return TaskOutcome(skipped=f"{backend.name} returned empty for {session_id[:8]}")
 
     data = parse_response(raw_output)
     if data is None:

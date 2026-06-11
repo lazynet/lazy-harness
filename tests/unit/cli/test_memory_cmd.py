@@ -122,12 +122,13 @@ def test_consolidate_reads_jsonl_and_invokes_claude(tmp_path: Path, monkeypatch)
 
     captured: dict = {}
 
-    def fake_invoke(prompt: str, model: str, timeout: int) -> str:
+    def fake_invoke(prompt: str, backend: object, model: str, timeout: int) -> str:
         captured["prompt"] = prompt
+        captured["backend"] = backend
         captured["model"] = model
         return "## Proposed additions\n- prefer uv over pip everywhere"
 
-    monkeypatch.setattr("lazy_harness.cli.memory_cmd._invoke_claude", fake_invoke)
+    monkeypatch.setattr("lazy_harness.cli.memory_cmd._invoke_llm", fake_invoke)
 
     runner = CliRunner()
     result = runner.invoke(memory, ["consolidate", "--memory-dir", str(memory_dir)])
@@ -160,11 +161,11 @@ def test_consolidate_respects_last_n_flag(tmp_path: Path, monkeypatch) -> None:
 
     captured: dict = {}
 
-    def fake_invoke(prompt: str, model: str, timeout: int) -> str:
+    def fake_invoke(prompt: str, backend: object, model: str, timeout: int) -> str:
         captured["prompt"] = prompt
         return "ok"
 
-    monkeypatch.setattr("lazy_harness.cli.memory_cmd._invoke_claude", fake_invoke)
+    monkeypatch.setattr("lazy_harness.cli.memory_cmd._invoke_llm", fake_invoke)
 
     runner = CliRunner()
     result = runner.invoke(
