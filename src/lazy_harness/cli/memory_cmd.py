@@ -7,9 +7,31 @@ from pathlib import Path
 
 import click
 
+from lazy_harness.core.config import ConfigError, load_config
 from lazy_harness.core.paths import config_file, expand_path
 from lazy_harness.knowledge.compound_loop import invoke_llm as _invoke_llm
+from lazy_harness.llm.base import LLMBackend, LLMBackendError
 from lazy_harness.llm.claude import ClaudeBackend
+from lazy_harness.llm.registry import LLMBackendNotFoundError, get_backend
+
+
+def _resolve_backend() -> LLMBackend:
+    """Resolve [compound_loop].backend from config.toml (ADR-033).
+
+    Missing or unloadable config falls back to ClaudeBackend — the same
+    bootstrap default as the compound-loop worker.
+    """
+    cf = config_file()
+    if not cf.is_file():
+        return ClaudeBackend()
+    try:
+        cfg = load_config(cf)
+    except ConfigError:
+        return ClaudeBackend()
+    try:
+        return get_backend(cfg.compound_loop)
+    except (LLMBackendError, LLMBackendNotFoundError) as e:
+        raise click.ClickException(str(e)) from e
 
 
 def enumerate_profile_projects(profile_dir: Path) -> dict[str, dict]:
@@ -188,7 +210,7 @@ def consolidate(memory_dir: Path | None, last: int, model: str, timeout: int) ->
         return
 
     prompt = _build_consolidate_prompt(decisions, failures)
-    result = _invoke_llm(prompt, ClaudeBackend(), model, timeout)
+    result = _invoke_llm(prompt, _resolve_backend(), model, timeout)
     if not result:
         click.echo("The LLM backend returned empty output. Try again or increase --timeout.")
         return

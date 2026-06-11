@@ -217,3 +217,68 @@ roots = ["~"]
     assert "flex" in result.output
     assert "-Users-x-repos-foo" in result.output
     assert "diverge" in result.output.lower()
+
+
+def test_consolidate_resolves_backend_from_config(tmp_path: Path, monkeypatch) -> None:
+    """ADR-033: consolidate uses the [compound_loop].backend from config.toml."""
+    from lazy_harness.cli import memory_cmd as mod
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        """
+[harness]
+version = "1"
+
+[compound_loop]
+backend = "ollama"
+"""
+    )
+    monkeypatch.setattr(mod, "config_file", lambda: cfg_file)
+
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    _write_jsonl(memory_dir / "decisions.jsonl", [{"decision": "x"}])
+
+    captured: dict = {}
+
+    def fake_invoke(prompt: str, backend: object, model: str, timeout: int) -> str:
+        captured["backend"] = backend
+        return "ok"
+
+    monkeypatch.setattr(mod, "_invoke_llm", fake_invoke)
+
+    runner = CliRunner()
+    result = runner.invoke(mod.memory, ["consolidate", "--memory-dir", str(memory_dir)])
+    assert result.exit_code == 0, result.output
+
+    from lazy_harness.llm.openai_compat import OpenAICompatibleBackend
+
+    assert isinstance(captured["backend"], OpenAICompatibleBackend)
+
+
+def test_consolidate_falls_back_to_claude_backend_without_config(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from lazy_harness.cli import memory_cmd as mod
+
+    monkeypatch.setattr(mod, "config_file", lambda: tmp_path / "missing" / "config.toml")
+
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    _write_jsonl(memory_dir / "decisions.jsonl", [{"decision": "x"}])
+
+    captured: dict = {}
+
+    def fake_invoke(prompt: str, backend: object, model: str, timeout: int) -> str:
+        captured["backend"] = backend
+        return "ok"
+
+    monkeypatch.setattr(mod, "_invoke_llm", fake_invoke)
+
+    runner = CliRunner()
+    result = runner.invoke(mod.memory, ["consolidate", "--memory-dir", str(memory_dir)])
+    assert result.exit_code == 0, result.output
+
+    from lazy_harness.llm.claude import ClaudeBackend
+
+    assert isinstance(captured["backend"], ClaudeBackend)
