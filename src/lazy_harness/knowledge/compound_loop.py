@@ -1,9 +1,10 @@
-"""Compound-loop evaluator — distills session learnings via headless Claude.
+"""Compound-loop evaluator — distills session learnings via an LLM backend.
 
 Port of lazy-claudecode/scripts/hooks/compound-loop-worker. Runs as a
 background worker off a file queue: each task points at a session JSONL,
-and the worker invokes `claude -p` to extract decisions, failures,
-learnings, and handoff items, persisting to JSONL + markdown.
+and the worker invokes the configured LLM backend (ADR-033; default headless
+`claude -p`) to extract decisions, failures, learnings, and handoff items,
+persisting to JSONL + markdown.
 
 The module is intentionally flat so each pure function is testable in
 isolation without mocking a class.
