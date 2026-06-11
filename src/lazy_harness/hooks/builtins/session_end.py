@@ -18,10 +18,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-from lazy_harness.hooks.builtins._shared import find_latest_session, make_log
-
-_log = make_log("session-end")
-
 
 def main() -> None:
     try:
@@ -33,9 +29,13 @@ def main() -> None:
         from lazy_harness.agents.registry import get_agent
         from lazy_harness.core.config import Config, ConfigError, load_config
         from lazy_harness.core.paths import agent_runtime_dir, config_file
+        from lazy_harness.hooks.builtins._shared import find_latest_session, make_log
         from lazy_harness.knowledge.compound_loop import create_task, should_queue_task
     except ImportError:
+        # Broken/uninstalled package: silently no-op, never block the agent.
         return
+
+    _log = make_log("session-end")
 
     # Pre-config bootstrap: the agent type is unknown until config loads, so
     # resolve the log path via the Claude Code adapter (identical to the

@@ -15,13 +15,21 @@ import json
 import os
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
-
-from lazy_harness.hooks.builtins._shared import make_log
 
 _FRESHNESS_WINDOW_SECONDS = 300
 
-_log = make_log("post-compact")
+
+def _bootstrap_log(log_file: Path, msg: str) -> None:
+    """Stand-in for `_shared.make_log` when lazy_harness is not importable."""
+    try:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().astimezone().isoformat(timespec="seconds")
+        with open(log_file, "a") as f:
+            f.write(f"{ts} post-compact: {msg}\n")
+    except OSError:
+        pass
 
 
 def _strip_html_comments(text: str) -> str:
@@ -57,6 +65,14 @@ def main() -> None:
         json.load(sys.stdin)
     except (json.JSONDecodeError, EOFError, ValueError):
         pass
+
+    try:
+        from lazy_harness.hooks.builtins._shared import make_log
+
+        _log = make_log("post-compact")
+    except ImportError:
+        # Bootstrap fallback, same contract as _resolve_agent_dirs.
+        _log = _bootstrap_log
 
     cwd = Path.cwd()
     agent_dir, subdirs = _resolve_agent_dirs()

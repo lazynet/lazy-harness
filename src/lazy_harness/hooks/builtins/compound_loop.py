@@ -13,10 +13,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-from lazy_harness.hooks.builtins._shared import find_latest_session, make_log
-
-_log = make_log("compound-loop")
-
 
 def _rotate_log(log_file: Path, max_bytes: int = 102400, keep_lines: int = 500) -> None:
     try:
@@ -37,6 +33,7 @@ def main() -> None:
         from lazy_harness.agents.registry import get_agent
         from lazy_harness.core.config import Config, ConfigError, load_config
         from lazy_harness.core.paths import agent_runtime_dir, config_file
+        from lazy_harness.hooks.builtins._shared import find_latest_session, make_log
         from lazy_harness.knowledge.compound_loop import (
             create_task,
             is_debounced,
@@ -44,7 +41,10 @@ def main() -> None:
             should_reprocess,
         )
     except ImportError:
+        # Broken/uninstalled package: silently no-op, never block the agent.
         return
+
+    _log = make_log("compound-loop")
 
     # Preliminary dir resolution for log file — config not yet loaded, so the
     # agent type is unknown and the Claude Code adapter is the bootstrap

@@ -15,9 +15,16 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from lazy_harness.hooks.builtins._shared import make_log
 
-_log = make_log("pre-compact")
+def _bootstrap_log(log_file: Path, msg: str) -> None:
+    """Stand-in for `_shared.make_log` when lazy_harness is not importable."""
+    try:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().astimezone().isoformat(timespec="seconds")
+        with open(log_file, "a") as f:
+            f.write(f"{ts} pre-compact: {msg}\n")
+    except OSError:
+        pass
 
 
 def parse_transcript(path: Path) -> tuple[list[str], list[str]]:
@@ -132,6 +139,14 @@ def main() -> None:
         input_data = json.load(sys.stdin)
     except (json.JSONDecodeError, EOFError, ValueError):
         input_data = {}
+
+    try:
+        from lazy_harness.hooks.builtins._shared import make_log
+
+        _log = make_log("pre-compact")
+    except ImportError:
+        # Bootstrap fallback, same contract as _resolve_agent_dirs.
+        _log = _bootstrap_log
 
     cwd = Path.cwd()
     agent_dir, subdirs = _resolve_agent_dirs()
