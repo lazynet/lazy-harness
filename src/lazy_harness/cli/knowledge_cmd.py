@@ -198,15 +198,18 @@ def knowledge_handoff_now() -> None:
         raise SystemExit(1)
 
     from lazy_harness.agents.registry import get_agent
+    from lazy_harness.core.paths import agent_runtime_dir
 
     agent = get_agent(cfg.agent.type)
     env_val = os.environ.get(agent.env_var()) if agent.env_var() else None
     if env_val:
         agent_dir = Path(env_val)
     else:
+        # Prefer the default profile's config dir; otherwise let the adapter
+        # resolve its runtime dir (ADR-032 L3 — no hardcoded ~/.claude).
         default_entry = cfg.profiles.items.get(cfg.profiles.default)
         agent_dir = (
-            expand_path(default_entry.config_dir) if default_entry else Path.home() / ".claude"
+            expand_path(default_entry.config_dir) if default_entry else agent_runtime_dir(agent)
         )
     subdirs = agent.session_dirs()
     cwd = Path.cwd()
