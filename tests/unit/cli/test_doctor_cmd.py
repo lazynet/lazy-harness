@@ -86,3 +86,105 @@ def test_engram_persist_metrics_path_routes_through_agent_adapter(
     result = _engram_persist_metrics_path(NullAdapter())
 
     assert result == home / ".null" / "logs" / "engram_persist_metrics.jsonl"
+
+
+# --- LLM backend section (ADR-033) ---
+
+
+def _recording_console():
+    import io
+
+    from rich.console import Console
+
+    buf = io.StringIO()
+    return Console(file=buf, force_terminal=False), buf
+
+
+def test_render_llm_backend_claude_ok_when_binary_on_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from lazy_harness.cli.doctor_cmd import _render_llm_backend
+    from lazy_harness.core.config import CompoundLoopConfig
+
+    monkeypatch.setattr(
+        "lazy_harness.cli.doctor_cmd.shutil.which",
+        lambda name: "/opt/bin/claude" if name == "claude" else None,
+    )
+    console, buf = _recording_console()
+    assert _render_llm_backend(console, CompoundLoopConfig()) is True
+    assert "claude" in buf.getvalue()
+
+
+def test_render_llm_backend_claude_missing_binary_is_warning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from lazy_harness.cli.doctor_cmd import _render_llm_backend
+    from lazy_harness.core.config import CompoundLoopConfig
+
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.shutil.which", lambda _name: None)
+    console, buf = _recording_console()
+    assert _render_llm_backend(console, CompoundLoopConfig()) is True
+    assert "not found" in buf.getvalue()
+
+
+def test_render_llm_backend_ollama_reachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lazy_harness.cli.doctor_cmd import _render_llm_backend
+    from lazy_harness.core.config import CompoundLoopConfig
+
+    captured: dict = {}
+
+    def fake_get(url, **kwargs):  # noqa: ANN001, ANN003
+        captured["url"] = url
+        captured["timeout"] = kwargs.get("timeout")
+        return object()
+
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.httpx.get", fake_get)
+    console, buf = _recording_console()
+    cfg = CompoundLoopConfig(backend="ollama")
+    assert _render_llm_backend(console, cfg) is True
+    assert captured["url"] == "http://localhost:11434"
+    assert captured["timeout"] == 2
+    assert "reachable" in buf.getvalue()
+
+
+def test_render_llm_backend_unreachable_is_warning_not_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import httpx
+
+    from lazy_harness.cli.doctor_cmd import _render_llm_backend
+    from lazy_harness.core.config import CompoundLoopConfig
+
+    def fake_get(url, **kwargs):  # noqa: ANN001, ANN003
+        raise httpx.ConnectError("refused")
+
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.httpx.get", fake_get)
+    console, buf = _recording_console()
+    cfg = CompoundLoopConfig(backend="mlx")
+    assert _render_llm_backend(console, cfg) is True
+    assert "not reachable" in buf.getvalue()
+
+
+def test_render_llm_backend_unknown_backend_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lazy_harness.cli.doctor_cmd import _render_llm_backend
+    from lazy_harness.core.config import CompoundLoopConfig
+
+    console, buf = _recording_console()
+    cfg = CompoundLoopConfig(backend="no-such-backend")
+    assert _render_llm_backend(console, cfg) is False
+    out = buf.getvalue()
+    assert "no-such-backend" in out
+    assert "ollama" in out
+
+
+def test_doctor_output_includes_llm_backend_section(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    cfg = _write_config(tmp_path)
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.shutil.which", lambda _name: None)
+    runner = CliRunner()
+    result = runner.invoke(doctor, [])
+    assert "LLM backend" in result.output

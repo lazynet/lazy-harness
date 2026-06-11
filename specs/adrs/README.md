@@ -42,7 +42,7 @@ Decisions that define the `lazy-harness` project itself.
 | [030](./030-memory-stack-glue-layer.md) | accepted | Memory stack glue layer — discoverability, freshness, consistency | Seven deterministic glue components closing prompted gaps in the ADR-027 model. No new layer; better integration. |
 | [031](./031-default-hooks-merge.md) | accepted | Default hooks merge layer in `lh deploy` | Implicit default hook set merged per-event with user overrides; framework hooks deploy automatically on fresh init. |
 | [032](./032-agent-adapter-completeness.md) | accepted | Agent adapter completeness — closing Claude-specific leaks | Four new Protocol methods close seven locations where Claude-specific assumptions bypass the adapter seam. |
-| [033](./033-llm-backend-abstraction.md) | accepted-deferred | LLM backend abstraction — provider-agnostic inference | New `LLMBackend` Protocol decouples framework-internal inference from the agent CLI choice. Covers Ollama, MLX, and any OpenAI-compatible endpoint. |
+| [033](./033-llm-backend-abstraction.md) | accepted | LLM backend abstraction — provider-agnostic inference | New `LLMBackend` Protocol decouples framework-internal inference from the agent CLI choice. Covers Ollama, MLX, and any OpenAI-compatible endpoint. Implemented 2026-06-11. |
 
 ### Status values
 

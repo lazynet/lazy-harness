@@ -7,13 +7,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import click
+import httpx
 from rich.console import Console
 
 from lazy_harness.agents.base import AgentAdapter
 from lazy_harness.agents.registry import AgentNotFoundError, get_agent
-from lazy_harness.core.config import ConfigError, load_config
+from lazy_harness.core.config import CompoundLoopConfig, ConfigError, load_config
 from lazy_harness.core.paths import agent_runtime_dir, config_file, contract_path, expand_path
 from lazy_harness.core.profiles import list_profiles
+from lazy_harness.llm import LLMBackendError, LLMBackendNotFoundError, get_backend
+from lazy_harness.llm.openai_compat import OpenAICompatibleBackend
 from lazy_harness.monitoring.engram_persist_health import (
     EngramPersistHealth,
     collect_engram_persist_health,
@@ -71,6 +74,41 @@ def _render_engram_persist(console: Console, health: EngramPersistHealth) -> boo
     console.print(f"  {icons[lag_state]} Cursor lag {_fmt_bytes(lag)}")
 
     return health.state != "fail"
+
+
+def _render_llm_backend(console: Console, cl_cfg: CompoundLoopConfig) -> bool:
+    """ADR-033: report whether the configured inference backend is usable.
+
+    Reachability problems are warnings (compound-loop is best-effort); only a
+    backend name the registry cannot resolve is a hard failure.
+    """
+    console.print("\n[bold]LLM backend[/bold]")
+    try:
+        backend = get_backend(cl_cfg)
+    except (LLMBackendError, LLMBackendNotFoundError) as e:
+        console.print(f"  [red]✗[/red] {e}")
+        return False
+
+    if isinstance(backend, OpenAICompatibleBackend):
+        url = backend._base_url
+        try:
+            httpx.get(url, timeout=2)
+            console.print(f"  [green]✓[/green] {cl_cfg.backend} reachable at {url}")
+        except httpx.HTTPError:
+            console.print(
+                f"  [yellow]![/yellow] {cl_cfg.backend} not reachable at {url} — "
+                "compound-loop inference will fail until the endpoint is up"
+            )
+        return True
+
+    if shutil.which("claude"):
+        console.print("  [green]✓[/green] claude binary on PATH")
+    else:
+        console.print(
+            "  [yellow]![/yellow] claude binary not found on PATH — "
+            "install Claude Code or set [compound_loop].backend"
+        )
+    return True
 
 
 @click.command("doctor")
@@ -170,6 +208,9 @@ def doctor() -> None:
     else:
         for name, url in remote_urls:
             console.print(f"  {name} → {url}")
+
+    if not _render_llm_backend(console, cfg.compound_loop):
+        ok = False
 
     health = collect_engram_persist_health(
         _engram_persist_metrics_path(agent),

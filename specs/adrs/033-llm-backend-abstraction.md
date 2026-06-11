@@ -1,7 +1,8 @@
 # ADR-033: LLM backend abstraction — provider-agnostic inference
 
-**Status:** accepted-deferred
+**Status:** accepted
 **Date:** 2026-05-27
+**Implemented:** 2026-06-11 — `src/lazy_harness/llm/` (Protocol, ClaudeBackend, OpenAICompatibleBackend, registry), config fields, worker/CLI wiring, `lh doctor` check.
 **Supersedes:** —
 **Superseded by:** —
 **Related:** ADR-004 (agent-adapter-pattern), ADR-008 (compound-loop-async-worker),

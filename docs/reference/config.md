@@ -317,6 +317,31 @@ Rules:
 | `learnings_subdir`             | string         | `"learnings"`                 | no       | Subdir under the knowledge dir where learnings are written.                                                                                                                                            |
 | `grading_enabled`              | bool           | `true`                        | no       | When true, the worker also runs the asynchronous response-grading pass alongside distillation. See [ADR-021](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/021-async-response-grading.md). |
 | `lazymind_dir`                 | string / null  | `null`                        | no       | Optional override for the LazyMind-style knowledge root used by the loop. `null` means the default derived from `[knowledge].path`.                                                                    |
+| `backend`                      | string         | `"claude"`                    | no       | LLM backend for the loop's inference calls: `claude`, `ollama`, `mlx`, or `openai-compatible`. See [ADR-033](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/033-llm-backend-abstraction.md). |
+| `backend_options`              | table          | `{}`                          | no       | Options for the backend, under `[compound_loop.backend_options]`. `base_url` (required for `openai-compatible`, preset for `ollama`/`mlx`) and `api_key` (default `"none"`).                          |
+
+### Choosing an LLM backend
+
+The compound loop's inference calls are decoupled from the agent you run. The default backend shells out to the `claude` binary; any OpenAI-compatible endpoint (Ollama, MLX serve, LM Studio, OpenRouter, ...) works as a drop-in replacement:
+
+```toml
+[compound_loop]
+backend = "claude"                    # default, unchanged behaviour
+model   = "claude-haiku-4-5-20251001" # default, unchanged
+
+# Opt into Ollama — only these two lines change:
+# backend = "ollama"
+# model   = "llama3.2:3b"
+
+# Custom OpenAI-compatible endpoint:
+# backend = "openai-compatible"
+# model   = "mistral-nemo"
+# [compound_loop.backend_options]
+# base_url = "http://my-gpu-box:11434"
+# api_key  = "sk-..."
+```
+
+The `ollama` and `mlx` aliases preset `base_url` to `http://localhost:11434` and `http://localhost:8080` respectively; `backend_options.base_url` overrides the preset. `lh doctor` reports whether the configured backend is usable (binary on PATH for `claude`, endpoint reachable for the HTTP backends).
 
 ## `[lazynorth]`
 

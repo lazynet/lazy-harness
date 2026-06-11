@@ -19,6 +19,7 @@ from lazy_harness.knowledge.compound_loop import (
     create_task,
     extract_insights,
     extract_messages,
+    invoke_llm,
     is_debounced,
     is_interactive_session,
     last_processed_mtime,
@@ -32,6 +33,40 @@ from lazy_harness.knowledge.compound_loop import (
     should_reprocess,
     strip_markdown_fences,
 )
+from lazy_harness.llm.base import LLMBackendError
+
+
+class StubBackend:
+    """In-memory LLMBackend — proves invoke_llm needs no subprocess mocking."""
+
+    def __init__(self, fn: Any) -> None:  # fn: (prompt, model, timeout) -> str
+        self._fn = fn
+
+    @property
+    def name(self) -> str:
+        return "stub"
+
+    def default_model(self) -> str:
+        return "stub-model"
+
+    def complete(self, prompt: str, model: str, timeout: int) -> str:
+        return self._fn(prompt, model, timeout)
+
+
+def test_invoke_llm_returns_backend_completion() -> None:
+    backend = StubBackend(lambda prompt, model, timeout: f"{prompt}|{model}|{timeout}")
+    assert invoke_llm("p", backend, "m", 7) == "p|m|7"
+
+
+def test_invoke_llm_returns_none_on_backend_error() -> None:
+    def _boom(prompt: str, model: str, timeout: int) -> str:
+        raise LLMBackendError("down")
+
+    assert invoke_llm("p", StubBackend(_boom), "m", 7) is None
+
+
+def test_invoke_llm_returns_none_on_empty_output() -> None:
+    assert invoke_llm("p", StubBackend(lambda *a: ""), "m", 7) is None
 
 
 def _write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
@@ -624,9 +659,19 @@ def test_process_task_skips_missing_session(tmp_path: Path) -> None:
     memory = tmp_path / "memory"
     learnings = tmp_path / "Learnings"
     task = create_task(queue, Path("/tmp"), tmp_path / "nope.jsonl", "abcd1234", memory)
-    outcome = process_task(task, _cfg(), learnings, invoke=lambda *a, **kw: None)
+    outcome = process_task(task, _cfg(), learnings, backend=StubBackend(lambda *a: ""))
     assert not outcome.was_processed
     assert "not found" in outcome.skipped
+
+
+def test_process_task_requires_explicit_backend(tmp_path: Path) -> None:
+    """ADR-033: no silent ClaudeBackend fallback — callers must pass a backend."""
+    queue = tmp_path / "queue"
+    memory = tmp_path / "memory"
+    learnings = tmp_path / "Learnings"
+    task = create_task(queue, Path("/tmp"), tmp_path / "nope.jsonl", "abcd1234", memory)
+    with pytest.raises(TypeError):
+        process_task(task, _cfg(), learnings)  # type: ignore[call-arg]
 
 
 def test_process_task_skips_non_interactive(tmp_path: Path) -> None:
@@ -636,7 +681,7 @@ def test_process_task_skips_non_interactive(tmp_path: Path) -> None:
     session = tmp_path / "s.jsonl"
     _write_jsonl(session, [{"type": "queue-operation"}])
     task = create_task(queue, Path("/tmp"), session, "abcd1234", memory)
-    outcome = process_task(task, _cfg(), learnings, invoke=lambda *a, **kw: None)
+    outcome = process_task(task, _cfg(), learnings, backend=StubBackend(lambda *a: ""))
     assert "non-interactive" in outcome.skipped
 
 
@@ -656,7 +701,7 @@ def test_process_task_skips_below_min_chars(tmp_path: Path) -> None:
         ],
     )
     task = create_task(queue, Path("/tmp"), session, "abcd1234", memory)
-    outcome = process_task(task, _cfg(), learnings, invoke=lambda *a, **kw: None)
+    outcome = process_task(task, _cfg(), learnings, backend=StubBackend(lambda *a: ""))
     assert "user chars" in outcome.skipped
 
 
@@ -676,7 +721,7 @@ def test_process_task_writes_slim_handoff_when_min_chars_gate_blocks(
         ],
     )
     task = create_task(queue, Path("/tmp"), session, "abcd1234", memory)
-    outcome = process_task(task, _cfg(), learnings, invoke=lambda *a, **kw: None)
+    outcome = process_task(task, _cfg(), learnings, backend=StubBackend(lambda *a: ""))
 
     assert "user chars" in outcome.skipped
     handoff = memory / "handoff.md"
@@ -701,7 +746,7 @@ def test_process_task_writes_slim_handoff_when_min_messages_gate_blocks(
         ],
     )
     task = create_task(queue, Path("/tmp"), session, "abcd1234", memory)
-    outcome = process_task(task, _cfg(), learnings, invoke=lambda *a, **kw: None)
+    outcome = process_task(task, _cfg(), learnings, backend=StubBackend(lambda *a: ""))
 
     assert "messages" in outcome.skipped
     handoff = memory / "handoff.md"
@@ -725,7 +770,7 @@ def test_process_task_does_not_write_slim_handoff_when_disabled(
     )
     task = create_task(queue, Path("/tmp"), session, "abcd1234", memory)
     cfg = _cfg(slim_handoff_enabled=False)
-    outcome = process_task(task, cfg, learnings, invoke=lambda *a, **kw: None)
+    outcome = process_task(task, cfg, learnings, backend=StubBackend(lambda *a: ""))
 
     assert "user chars" in outcome.skipped
     assert not (memory / "handoff.md").exists()
@@ -759,7 +804,9 @@ def test_process_task_calls_invoke_and_persists(tmp_path: Path) -> None:
             }
         )
 
-    outcome = process_task(task, _cfg(model="test-model"), learnings, invoke=fake_invoke)
+    outcome = process_task(
+        task, _cfg(model="test-model"), learnings, backend=StubBackend(fake_invoke)
+    )
     assert outcome.was_processed
     assert captured["model"] == "test-model"
     assert "Session conversation" in captured["prompt"]
@@ -773,7 +820,7 @@ def test_process_task_skips_on_invoke_failure(tmp_path: Path) -> None:
     learnings = tmp_path / "Learnings"
     session = _interactive_session(tmp_path)
     task = create_task(queue, Path("/tmp/proj"), session, "abcd1234", memory)
-    outcome = process_task(task, _cfg(), learnings, invoke=lambda *a, **kw: None)
+    outcome = process_task(task, _cfg(), learnings, backend=StubBackend(lambda *a: ""))
     assert "empty" in outcome.skipped
 
 
@@ -783,7 +830,9 @@ def test_process_task_skips_on_bad_json(tmp_path: Path) -> None:
     learnings = tmp_path / "Learnings"
     session = _interactive_session(tmp_path)
     task = create_task(queue, Path("/tmp/proj"), session, "abcd1234", memory)
-    outcome = process_task(task, _cfg(), learnings, invoke=lambda *a, **kw: "not json at all")
+    outcome = process_task(
+        task, _cfg(), learnings, backend=StubBackend(lambda *a: "not json at all")
+    )
     assert "JSON parse failed" in outcome.skipped
 
 
@@ -1150,7 +1199,7 @@ def test_process_task_persists_grade_and_appends_backlog(tmp_path: Path) -> None
         min_user_chars=100,
         lazymind_dir=str(lazymind),
     )
-    outcome = process_task(task, cfg, learnings, invoke=lambda *a, **kw: response)
+    outcome = process_task(task, cfg, learnings, backend=StubBackend(lambda *a: response))
 
     assert outcome.was_processed
     assert (memory / "grades.jsonl").is_file()
@@ -1321,7 +1370,7 @@ def test_process_task_bypasses_gate_when_insights_present(tmp_path: Path) -> Non
         }
     )
 
-    outcome = process_task(task, _cfg(), learnings, invoke=lambda *a, **kw: response)
+    outcome = process_task(task, _cfg(), learnings, backend=StubBackend(lambda *a: response))
 
     assert outcome.skipped is None or "user chars" not in outcome.skipped
     insight_files = list((memory / "insights").rglob("*.md"))
@@ -1344,7 +1393,7 @@ def test_process_task_still_gates_empty_short_session(tmp_path: Path) -> None:
     )
     task = create_task(queue, Path("/tmp"), session, "deadbeef", memory)
 
-    outcome = process_task(task, _cfg(), learnings, invoke=lambda *a, **kw: None)
+    outcome = process_task(task, _cfg(), learnings, backend=StubBackend(lambda *a: ""))
 
     assert outcome.skipped is not None
     assert "user chars" in outcome.skipped
@@ -1404,9 +1453,9 @@ def test_insights_persisted_even_if_claude_invocation_fails(tmp_path: Path) -> N
     )
     task = create_task(queue, Path("/tmp"), session, "feedface", memory)
 
-    outcome = process_task(task, _cfg(), learnings, invoke=lambda *a, **kw: None)
+    outcome = process_task(task, _cfg(), learnings, backend=StubBackend(lambda *a: ""))
 
-    # invoke returned None → outcome is skipped, but insight file must already exist
+    # backend returned empty → outcome is skipped, but insight file must already exist
     assert outcome.skipped is not None
     insight_files = list((memory / "insights").rglob("*.md"))
     assert len(insight_files) == 1
@@ -1435,7 +1484,7 @@ def test_delta_scan_skips_already_processed_indices(tmp_path: Path) -> None:
     )
 
     # Run 1
-    process_task(task, _cfg(), learnings, invoke=lambda *a, **kw: response)
+    process_task(task, _cfg(), learnings, backend=StubBackend(lambda *a: response))
 
     cursor_path = memory / "insights" / ".cursor.json"
     assert cursor_path.is_file()
@@ -1468,7 +1517,7 @@ def test_delta_scan_skips_already_processed_indices(tmp_path: Path) -> None:
         # need a fresh task file because the previous one moved to done conceptually,
         # but process_task in tests doesn't move it — re-create to be explicit
         task2 = create_task(queue, Path("/tmp"), session, "deadbabe", memory)
-        process_task(task2, _cfg(), learnings, invoke=lambda *a, **kw: response)
+        process_task(task2, _cfg(), learnings, backend=StubBackend(lambda *a: response))
     finally:
         cl_mod.extract_insights = monkey_target  # type: ignore[assignment]
 

@@ -20,6 +20,7 @@ from lazy_harness.knowledge.compound_loop import (
     move_to_done,
     process_task,
 )
+from lazy_harness.llm import LLMBackend, get_backend
 
 
 def _log(log_file: Path, msg: str) -> None:
@@ -70,6 +71,7 @@ def _drain_queue(
     cl_cfg: CompoundLoopConfig,
     learnings_dir: Path,
     log_file: Path,
+    backend: LLMBackend,
 ) -> None:
     while True:
         pending = sorted(queue_dir.glob("*.task"))
@@ -80,7 +82,7 @@ def _drain_queue(
                 continue
             _log(log_file, f"processing {task_file.name}")
             try:
-                outcome = process_task(task_file, cl_cfg, learnings_dir)
+                outcome = process_task(task_file, cl_cfg, learnings_dir, backend=backend)
             except Exception as e:  # noqa: BLE001 — worker must not crash the queue
                 _log(log_file, f"error processing {task_file.name}: {e}")
                 move_to_done(queue_dir, task_file)
@@ -132,9 +134,15 @@ def main() -> int:
             _log(log_file, "disabled in config, exiting")
             return 0
 
+        try:
+            backend = get_backend(cfg.compound_loop)
+        except Exception as e:  # noqa: BLE001 — misconfigured backend must not crash
+            _log(log_file, f"backend resolution failed: {e}")
+            return 0
+
         learnings_dir = _resolve_learnings_dir(cfg)
         _log(log_file, "started, checking queue")
-        _drain_queue(queue_dir, cfg.compound_loop, learnings_dir, log_file)
+        _drain_queue(queue_dir, cfg.compound_loop, learnings_dir, log_file, backend)
         _log(log_file, "queue empty, exiting")
         return 0
     finally:
