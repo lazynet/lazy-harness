@@ -385,8 +385,9 @@ def episodic_context(memory_dir: Path, limit: int = 3) -> str:
 
 
 def _profile_for_config_dir(config_dir: str, profiles: dict[str, object]) -> tuple[str, str]:
-    """Returns (profile_name, lazynorth_doc) by matching CLAUDE_CONFIG_DIR
-    against each profile's config_dir. Returns ('', '') if no match."""
+    """Returns (profile_name, lazynorth_doc) by matching the agent's
+    config-dir env var against each profile's config_dir. Returns ('', '')
+    if no match."""
     if not config_dir:
         return ("", "")
     expanded = str(Path(os.path.expanduser(config_dir)).resolve()) if config_dir else ""

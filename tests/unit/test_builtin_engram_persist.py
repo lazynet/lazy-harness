@@ -52,7 +52,11 @@ def test_wrapper_reads_stdin_and_invokes_engram(tmp_path: Path) -> None:
     shim_dir = tmp_path / "shimbin"
     _make_engram_shim(shim_dir, exit_code=0)
 
+    decoy_home = tmp_path / "home"
+    decoy_home.mkdir()
+
     env = os.environ.copy()
+    env["HOME"] = str(decoy_home)
     env["CLAUDE_CONFIG_DIR"] = str(claude_dir)
     env["PATH"] = str(shim_dir) + os.pathsep + env.get("PATH", "")
 
@@ -68,6 +72,9 @@ def test_wrapper_reads_stdin_and_invokes_engram(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     log = (shim_dir / "engram_invocations.log").read_text()
     assert " save hello " in log
+    # Pins that the env var wins in the bootstrap path: nothing may land in
+    # the ~/.claude fallback when CLAUDE_CONFIG_DIR is set.
+    assert not (decoy_home / ".claude").exists()
 
 
 def test_wrapper_routes_paths_through_agent_adapter(tmp_path: Path, monkeypatch) -> None:
