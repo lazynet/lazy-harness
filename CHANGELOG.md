@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.23.0](https://github.com/lazynet/lazy-harness/compare/v0.22.1...v0.23.0) (2026-06-11)
+
+
+### Features
+
+* claude-md proposals lifecycle (accept/reject with immunity registry) ([#99](https://github.com/lazynet/lazy-harness/issues/99)) ([c1b4344](https://github.com/lazynet/lazy-harness/commit/c1b4344aab647b0eac16c0550c3122573617425f))
+* failure promotion and memory hygiene checks ([#100](https://github.com/lazynet/lazy-harness/issues/100)) ([a90b43c](https://github.com/lazynet/lazy-harness/commit/a90b43c0b29046de873a682be3ca7aab147133d2))
+* LLM backend abstraction (ADR-033) ([#97](https://github.com/lazynet/lazy-harness/issues/97)) ([9f2119b](https://github.com/lazynet/lazy-harness/commit/9f2119b48ae4ea241459623492e646ecb0682215))
+* surface pending claude-md proposals despite context budget ([#98](https://github.com/lazynet/lazy-harness/issues/98)) ([a831ec4](https://github.com/lazynet/lazy-harness/commit/a831ec42f7f583c929dc74f87522c2ce36239132))
+
+
+### Bug Fixes
+
+* add claude-fable-5 to pricing table ([#94](https://github.com/lazynet/lazy-harness/issues/94)) ([7d611ad](https://github.com/lazynet/lazy-harness/commit/7d611ad6d5f44c22f68be6292898c9618bfce3b2))
+
+
+### Refactors
+
+* close ADR-032 agent-adapter leaks (L3/L4) ([#96](https://github.com/lazynet/lazy-harness/issues/96)) ([cab4ca2](https://github.com/lazynet/lazy-harness/commit/cab4ca26590fafe7a3b8091b5f67b1035e2e4b85))
+
+
+### Documentation
+
+* add docs-coherence and persistence-verification rules ([#93](https://github.com/lazynet/lazy-harness/issues/93)) ([5f48cf6](https://github.com/lazynet/lazy-harness/commit/5f48cf62197233c145f2700e4f2b5f81919a2d75))
+* **specs:** add 2026-06-11 adequacy plan with execution log ([5e9a2fc](https://github.com/lazynet/lazy-harness/commit/5e9a2fc9d9089351e8cb15e75cda838dc5a4c371))
+
 ## [0.22.1](https://github.com/lazynet/lazy-harness/compare/v0.22.0...v0.22.1) (2026-06-02)
 
 
