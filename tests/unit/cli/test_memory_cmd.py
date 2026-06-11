@@ -356,3 +356,225 @@ def test_consolidate_falls_back_to_claude_backend_without_config(
 
     assert isinstance(captured["backend"], ClaudeBackend)
     assert captured["model"] == ClaudeBackend().default_model()
+
+
+# --- proposals lifecycle (Phase 3c) ---
+
+PROPOSALS_TEXT = """\
+<!-- claude-md proposals (append-only). Review and merge into CLAUDE.md or discard. -->
+
+## 2026-05-20T10:00:00-03:00
+
+- **Rule:** Run a docs coherence pass before each release
+  - **Rationale:** Docs drifted twice before releases
+- **Rule:** Never amend published commits
+
+## 2026-05-27T09:30:00-03:00
+
+- **Rule:** Verify persistence with explicit file output
+  - **Rationale:** A write was claimed that never happened
+"""
+
+ARCHIVED_ONLY_TEXT = """\
+<!-- claude-md proposals (append-only). Review and merge into CLAUDE.md or discard. -->
+
+<!-- ARCHIVED 2026-06-11: both pending proposals were ACCEPTED and merged
+     via PR #93. No pending proposals. -->
+"""
+
+
+def _write_proposals(memory_dir: Path, text: str = PROPOSALS_TEXT) -> Path:
+    memory_dir.mkdir(parents=True, exist_ok=True)
+    path = memory_dir / "claude-md.proposal.md"
+    path.write_text(text)
+    return path
+
+
+def test_parse_proposals_extracts_rules_with_timestamps() -> None:
+    from lazy_harness.cli.memory_cmd import parse_proposals
+
+    proposals = parse_proposals(PROPOSALS_TEXT)
+    assert len(proposals) == 3
+    assert proposals[0].timestamp == "2026-05-20T10:00:00-03:00"
+    assert proposals[0].rule == "Run a docs coherence pass before each release"
+    assert proposals[0].rationale == "Docs drifted twice before releases"
+    assert proposals[1].rule == "Never amend published commits"
+    assert proposals[1].rationale == ""
+    assert proposals[2].timestamp == "2026-05-27T09:30:00-03:00"
+    assert proposals[2].rule == "Verify persistence with explicit file output"
+
+
+def test_parse_proposals_tolerates_archived_comments_only_file() -> None:
+    from lazy_harness.cli.memory_cmd import parse_proposals
+
+    assert parse_proposals(ARCHIVED_ONLY_TEXT) == []
+
+
+def test_parse_proposals_empty_text() -> None:
+    from lazy_harness.cli.memory_cmd import parse_proposals
+
+    assert parse_proposals("") == []
+
+
+def test_proposals_list_shows_numbered_pending(tmp_path: Path) -> None:
+    from lazy_harness.cli.memory_cmd import memory
+
+    memory_dir = tmp_path / "memory"
+    _write_proposals(memory_dir)
+    runner = CliRunner()
+    result = runner.invoke(memory, ["proposals", "list", "--memory-dir", str(memory_dir)])
+    assert result.exit_code == 0, result.output
+    assert "2026-05-20" in result.output
+    assert "2026-05-27" in result.output
+    assert "Run a docs coherence pass" in result.output
+    assert "3" in result.output  # third index present
+
+
+def test_proposals_list_empty_prints_friendly_message(tmp_path: Path) -> None:
+    from lazy_harness.cli.memory_cmd import memory
+
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    runner = CliRunner()
+    result = runner.invoke(memory, ["proposals", "list", "--memory-dir", str(memory_dir)])
+    assert result.exit_code == 0, result.output
+    assert "No pending claude-md proposals" in result.output
+
+
+def test_proposals_list_archived_only_counts_as_empty(tmp_path: Path) -> None:
+    from lazy_harness.cli.memory_cmd import memory
+
+    memory_dir = tmp_path / "memory"
+    _write_proposals(memory_dir, ARCHIVED_ONLY_TEXT)
+    runner = CliRunner()
+    result = runner.invoke(memory, ["proposals", "list", "--memory-dir", str(memory_dir)])
+    assert result.exit_code == 0, result.output
+    assert "No pending claude-md proposals" in result.output
+
+
+def test_proposals_accept_moves_entry_and_prints_rule(tmp_path: Path) -> None:
+    from lazy_harness.cli.memory_cmd import memory
+
+    memory_dir = tmp_path / "memory"
+    pending = _write_proposals(memory_dir)
+    runner = CliRunner()
+    result = runner.invoke(memory, ["proposals", "accept", "1", "--memory-dir", str(memory_dir)])
+    assert result.exit_code == 0, result.output
+
+    # Full rule text printed with the human-gate hint
+    assert "Run a docs coherence pass before each release" in result.output
+    assert "MEMORY.md" in result.output
+    assert "CLAUDE.md" in result.output
+
+    # Removed from pending, others intact
+    remaining = pending.read_text()
+    assert "Run a docs coherence pass" not in remaining
+    assert "Never amend published commits" in remaining
+    assert "Verify persistence with explicit file output" in remaining
+
+    # Appended to accepted registry with acceptance date
+    accepted = (memory_dir / "claude-md.accepted.md").read_text()
+    assert "- **Rule:** Run a docs coherence pass before each release" in accepted
+    assert "accepted: " in accepted
+    assert "## 2026-05-20T10:00:00-03:00" in accepted
+
+
+def test_proposals_accept_is_append_only(tmp_path: Path) -> None:
+    from lazy_harness.cli.memory_cmd import memory
+
+    memory_dir = tmp_path / "memory"
+    _write_proposals(memory_dir)
+    runner = CliRunner()
+    r1 = runner.invoke(memory, ["proposals", "accept", "1", "--memory-dir", str(memory_dir)])
+    r2 = runner.invoke(memory, ["proposals", "accept", "1", "--memory-dir", str(memory_dir)])
+    assert r1.exit_code == 0 and r2.exit_code == 0
+    accepted = (memory_dir / "claude-md.accepted.md").read_text()
+    assert "Run a docs coherence pass before each release" in accepted
+    assert "Never amend published commits" in accepted
+
+
+def test_proposals_accept_out_of_range_errors(tmp_path: Path) -> None:
+    from lazy_harness.cli.memory_cmd import memory
+
+    memory_dir = tmp_path / "memory"
+    _write_proposals(memory_dir)
+    runner = CliRunner()
+    result = runner.invoke(memory, ["proposals", "accept", "9", "--memory-dir", str(memory_dir)])
+    assert result.exit_code != 0
+    assert "9" in result.output
+
+
+def test_proposals_reject_records_date_and_reason(tmp_path: Path) -> None:
+    from lazy_harness.cli.memory_cmd import memory
+
+    memory_dir = tmp_path / "memory"
+    pending = _write_proposals(memory_dir)
+    runner = CliRunner()
+    result = runner.invoke(
+        memory,
+        [
+            "proposals",
+            "reject",
+            "2",
+            "--reason",
+            "too strict for this repo",
+            "--memory-dir",
+            str(memory_dir),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+    remaining = pending.read_text()
+    assert "Never amend published commits" not in remaining
+    assert "Run a docs coherence pass" in remaining
+
+    rejected = (memory_dir / "claude-md.rejected.md").read_text()
+    assert "- **Rule:** Never amend published commits" in rejected
+    assert "rejected: " in rejected
+    assert "reason: too strict for this repo" in rejected
+
+
+def test_proposals_reject_requires_reason(tmp_path: Path) -> None:
+    from lazy_harness.cli.memory_cmd import memory
+
+    memory_dir = tmp_path / "memory"
+    _write_proposals(memory_dir)
+    runner = CliRunner()
+    result = runner.invoke(memory, ["proposals", "reject", "1", "--memory-dir", str(memory_dir)])
+    assert result.exit_code != 0
+
+
+def test_proposals_accept_drops_header_when_section_empties(tmp_path: Path) -> None:
+    from lazy_harness.cli.memory_cmd import memory
+
+    memory_dir = tmp_path / "memory"
+    pending = _write_proposals(memory_dir)
+    runner = CliRunner()
+    # Section 2026-05-27 has a single rule (index 3)
+    result = runner.invoke(memory, ["proposals", "accept", "3", "--memory-dir", str(memory_dir)])
+    assert result.exit_code == 0, result.output
+    remaining = pending.read_text()
+    assert "## 2026-05-27T09:30:00-03:00" not in remaining
+    assert "## 2026-05-20T10:00:00-03:00" in remaining
+
+
+def test_proposals_default_memory_dir_follows_agent_runtime_dir(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from lazy_harness.cli.memory_cmd import memory
+
+    agent_dir = tmp_path / "agent"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    encoded = "-" + str(repo).replace("/", "-").lstrip("-")
+    memory_dir = agent_dir / "projects" / encoded / "memory"
+    _write_proposals(memory_dir)
+
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(agent_dir))
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path / "no-config"))
+    monkeypatch.chdir(repo)
+
+    runner = CliRunner()
+    result = runner.invoke(memory, ["proposals", "list"])
+    assert result.exit_code == 0, result.output
+    assert "Run a docs coherence pass" in result.output
