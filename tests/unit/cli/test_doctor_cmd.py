@@ -68,3 +68,21 @@ def test_doctor_renders_features_section(monkeypatch: pytest.MonkeyPatch, tmp_pa
     assert "qmd" in result.output
     assert "engram" in result.output
     assert "graphify" in result.output
+
+
+def test_engram_persist_metrics_path_routes_through_agent_adapter(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """ADR-032 L3: the metrics path must come from the agent adapter, not a
+    hardcoded ~/.claude fallback."""
+    from lazy_harness.agents.registry import NullAdapter
+    from lazy_harness.cli.doctor_cmd import _engram_persist_metrics_path
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "decoy-claude"))
+
+    result = _engram_persist_metrics_path(NullAdapter())
+
+    assert result == home / ".null" / "logs" / "engram_persist_metrics.jsonl"
