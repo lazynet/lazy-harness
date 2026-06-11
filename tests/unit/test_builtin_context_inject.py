@@ -720,3 +720,40 @@ def test_episodic_context_tail(tmp_path: Path) -> None:
     assert "- d2" in result
     assert "Recent failures" in result
     assert "- f1 → x" in result
+
+
+def test_context_inject_routes_memory_dir_through_agent_adapter(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """ADR-032 L3/L4: the memory dir must come from the configured agent
+    adapter. With agent.type = "null" the handoff must be read from under
+    ~/.null even when CLAUDE_CONFIG_DIR points elsewhere."""
+    import io
+    import json as _json
+    import sys as _sys
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "decoy-claude"))
+
+    cwd = tmp_path / "proj"
+    cwd.mkdir()
+    encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
+    memory_dir = home / ".null" / "projects" / encoded / "memory"
+    memory_dir.mkdir(parents=True)
+    (memory_dir / "handoff.md").write_text("resume the adapter-routing work\n")
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text('[harness]\nversion = "1"\n\n[agent]\ntype = "null"\n')
+    from lazy_harness.core import paths as paths_mod
+    from lazy_harness.hooks.builtins import context_inject as hook_mod
+
+    monkeypatch.setattr(paths_mod, "config_file", lambda: cfg_file)
+    monkeypatch.chdir(cwd)
+    monkeypatch.setattr(_sys, "stdin", io.StringIO("{}"))
+    hook_mod.main()
+
+    payload = _json.loads(capsys.readouterr().out)
+    body = payload["hookSpecificOutput"]["additionalContext"]
+    assert "resume the adapter-routing work" in body
