@@ -153,6 +153,8 @@ class CompoundLoopConfig:
     grading_enabled: bool = True
     lazymind_dir: str | None = None
     slim_handoff_enabled: bool = True
+    backend: str = "claude"
+    backend_options: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -400,6 +402,8 @@ def load_config(path: Path) -> Config:
             ),
             grading_enabled=cl_raw.get("grading_enabled", CompoundLoopConfig.grading_enabled),
             lazymind_dir=cl_raw.get("lazymind_dir", CompoundLoopConfig.lazymind_dir),
+            backend=cl_raw.get("backend", CompoundLoopConfig.backend),
+            backend_options={str(k): str(v) for k, v in cl_raw.get("backend_options", {}).items()},
         )
 
     metrics_raw = raw.get("metrics", {})

@@ -265,3 +265,57 @@ version = "0.6.9"
     assert cfg.knowledge.structure.auto_rebuild_on_commit is True
     assert cfg.knowledge.structure.engine == "graphify"
     assert cfg.knowledge.structure.version == "0.6.9"
+
+
+def test_compound_loop_backend_defaults_when_missing() -> None:
+    from lazy_harness.core.config import CompoundLoopConfig, Config
+
+    assert CompoundLoopConfig().backend == "claude"
+    assert CompoundLoopConfig().backend_options == {}
+    cfg = Config()
+    assert cfg.compound_loop.backend == "claude"
+    assert cfg.compound_loop.backend_options == {}
+
+
+def test_compound_loop_backend_parses_from_toml(config_dir: Path) -> None:
+    config_file = config_dir / "config.toml"
+    config_file.write_text("""
+[harness]
+version = "1"
+
+[compound_loop]
+enabled = true
+backend = "openai-compatible"
+model = "mistral-nemo"
+
+[compound_loop.backend_options]
+base_url = "http://my-gpu-box:11434"
+api_key = "sk-test"
+""")
+    from lazy_harness.core.config import load_config
+
+    cfg = load_config(config_file)
+    assert cfg.compound_loop.backend == "openai-compatible"
+    assert cfg.compound_loop.backend_options == {
+        "base_url": "http://my-gpu-box:11434",
+        "api_key": "sk-test",
+    }
+    assert cfg.compound_loop.model == "mistral-nemo"
+
+
+def test_compound_loop_backend_defaults_to_claude_when_section_present(
+    config_dir: Path,
+) -> None:
+    config_file = config_dir / "config.toml"
+    config_file.write_text("""
+[harness]
+version = "1"
+
+[compound_loop]
+enabled = true
+""")
+    from lazy_harness.core.config import load_config
+
+    cfg = load_config(config_file)
+    assert cfg.compound_loop.backend == "claude"
+    assert cfg.compound_loop.backend_options == {}
