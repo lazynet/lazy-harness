@@ -100,7 +100,10 @@ def main() -> int:
     # loadable config the Claude Code adapter is the bootstrap default, which
     # resolves exactly like the historical CLAUDE_CONFIG_DIR read.
     cfg = _load_config()
-    agent = get_agent(cfg.agent.type if cfg is not None else "claude-code")
+    try:
+        agent = get_agent(cfg.agent.type if cfg is not None else "claude-code")
+    except Exception:  # noqa: BLE001 — unknown agent.type must not kill the worker
+        agent = get_agent("claude-code")
     agent_dir = agent_runtime_dir(agent)
     subdirs = agent.session_dirs()
     log_dir = agent_dir / (subdirs.get("logs") or "logs")

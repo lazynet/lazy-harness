@@ -25,9 +25,14 @@ def _agent_runtime_dir() -> Path:
     Code adapter is the bootstrap default when no config is loadable, which
     resolves exactly like the historical CLAUDE_CONFIG_DIR read.
     """
-    from lazy_harness.agents.registry import get_agent
-    from lazy_harness.core.config import ConfigError, load_config
-    from lazy_harness.core.paths import agent_runtime_dir, config_file
+    try:
+        from lazy_harness.agents.registry import get_agent
+        from lazy_harness.core.config import ConfigError, load_config
+        from lazy_harness.core.paths import agent_runtime_dir, config_file
+    except ImportError:
+        # Broken install: fall back to the pre-ADR-032 env read so the
+        # statusline keeps rendering instead of crashing.
+        return Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
 
     cfg = None
     cf = config_file()

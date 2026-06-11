@@ -129,3 +129,34 @@ def test_profile_label_routes_through_agent_adapter(
 
     out = format_statusline({})
     assert out.startswith(".null ")
+
+
+def test_profile_label_survives_broken_lazy_harness_install(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the lazy_harness internals are not importable (broken install), the
+    statusline must not crash: it falls back to the pre-ADR-032 env read."""
+    import sys
+
+    from lazy_harness.monitoring.statusline import format_statusline
+
+    monkeypatch.setitem(sys.modules, "lazy_harness.agents.registry", None)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", "/Users/lazynet/.claude-lazy")
+
+    out = format_statusline(_full_payload())
+    assert out.startswith("lazy ")
+
+
+def test_profile_label_broken_install_defaults_to_home_claude(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    from lazy_harness.monitoring.statusline import format_statusline
+
+    monkeypatch.setitem(sys.modules, "lazy_harness.agents.registry", None)
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    monkeypatch.setenv("HOME", "/tmp/whatever")
+
+    out = format_statusline({})
+    assert out.startswith("default ")
