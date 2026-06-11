@@ -1720,3 +1720,146 @@ def test_process_task_feeds_rejected_proposals_into_prompt(tmp_path: Path) -> No
     assert outcome.was_processed
     assert "Previously rejected proposals" in captured["prompt"]
     assert "- Never amend published commits" in captured["prompt"]
+
+
+# --- failure promotion via grading prompt (Phase 3b) ---
+
+
+def _write_failures(memory: Path, entries: list[dict[str, Any]]) -> None:
+    memory.mkdir(parents=True, exist_ok=True)
+    with open(memory / "failures.jsonl", "a") as f:
+        for e in entries:
+            f.write(json.dumps(e) + "\n")
+
+
+def test_collect_recent_failures_renders_compact_lines(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.compound_loop import collect_recent_failures
+
+    memory = tmp_path / "memory"
+    _write_failures(
+        memory,
+        [
+            {
+                "ts": "2026-06-10T09:00:00-03:00",
+                "summary": "stale handoff loaded",
+                "root_cause": "worker crashed mid-write",
+                "prevention": "check worker log mtime",
+            },
+            {"ts": "2026-06-11T10:00:00-03:00", "summary": "lint gate skipped"},
+        ],
+    )
+    lines = collect_recent_failures(memory)
+    assert lines == [
+        "- 2026-06-10: stale handoff loaded (root cause: worker crashed mid-write; "
+        "prevention: check worker log mtime)",
+        "- 2026-06-11: lint gate skipped",
+    ]
+
+
+def test_collect_recent_failures_missing_file_returns_empty(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.compound_loop import collect_recent_failures
+
+    assert collect_recent_failures(tmp_path / "memory") == []
+
+
+def test_collect_recent_failures_empty_file_returns_empty(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.compound_loop import collect_recent_failures
+
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    (memory / "failures.jsonl").write_text("")
+    assert collect_recent_failures(memory) == []
+
+
+def test_collect_recent_failures_caps_at_limit(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.compound_loop import collect_recent_failures
+
+    memory = tmp_path / "memory"
+    _write_failures(
+        memory,
+        [{"ts": f"2026-05-{i:02d}T00:00:00Z", "summary": f"failure {i}"} for i in range(1, 41)],
+    )
+    lines = collect_recent_failures(memory)
+    assert len(lines) == 30
+    assert "failure 11" in lines[0]
+    assert "failure 40" in lines[-1]
+
+
+def test_collect_recent_failures_skips_malformed_lines(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.compound_loop import collect_recent_failures
+
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    (memory / "failures.jsonl").write_text(
+        '{"ts": "2026-06-10T00:00:00Z", "summary": "good one"}\n'
+        "not json at all\n"
+        '{"ts": "2026-06-11T00:00:00Z"}\n'
+    )
+    lines = collect_recent_failures(memory)
+    assert lines == ["- 2026-06-10: good one"]
+
+
+def test_build_prompt_includes_recorded_failures_section() -> None:
+    prompt = build_prompt(
+        project_name="proj",
+        cwd="/tmp/proj",
+        session_id="sess1",
+        timestamp="2026-06-11T10:00:00-03:00",
+        existing_decisions="",
+        existing_failures="",
+        existing_learnings="",
+        summary="## User\nx",
+        recent_failures=[
+            "- 2026-06-10: stale handoff loaded (root cause: worker crashed mid-write)",
+            "- 2026-06-11: lint gate skipped",
+        ],
+    )
+    assert "## Recorded failures from previous sessions" in prompt
+    assert "- 2026-06-10: stale handoff loaded" in prompt
+    assert "- 2026-06-11: lint gate skipped" in prompt
+    assert "[EVITAR]" in prompt
+    assert "2+ times" in prompt
+
+
+def test_build_prompt_omits_recorded_failures_section_when_empty() -> None:
+    prompt = build_prompt(
+        project_name="proj",
+        cwd="/tmp/proj",
+        session_id="sess1",
+        timestamp="2026-06-11T10:00:00-03:00",
+        existing_decisions="",
+        existing_failures="",
+        existing_learnings="",
+        summary="## User\nx",
+    )
+    assert "Recorded failures from previous sessions" not in prompt
+    assert "[EVITAR]" not in prompt
+
+
+def test_process_task_feeds_recent_failures_into_prompt(tmp_path: Path) -> None:
+    queue = tmp_path / "queue"
+    memory = tmp_path / "memory"
+    _write_failures(
+        memory,
+        [
+            {
+                "ts": "2026-06-10T09:00:00-03:00",
+                "summary": "stale handoff loaded",
+                "root_cause": "worker crashed mid-write",
+            }
+        ],
+    )
+    learnings = tmp_path / "Learnings"
+    session = _interactive_session(tmp_path)
+    task = create_task(queue, Path("/tmp/proj"), session, "abcd1234efgh", memory)
+
+    captured: dict[str, Any] = {}
+
+    def fake_invoke(prompt: str, model: str, timeout: int) -> str:
+        captured["prompt"] = prompt
+        return json.dumps({"decisions": [], "failures": [], "learnings": [], "handoff": []})
+
+    outcome = process_task(task, _cfg(), learnings, backend=StubBackend(fake_invoke))
+    assert outcome.was_processed
+    assert "## Recorded failures from previous sessions" in captured["prompt"]
+    assert "- 2026-06-10: stale handoff loaded" in captured["prompt"]

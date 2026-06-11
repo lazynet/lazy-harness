@@ -247,6 +247,8 @@ User messages with the same Unicode markers are ignored deliberately — only th
 
 The file is append-only from the worker's side. Pending entries are reviewed with the `lh memory proposals` subcommands (see the [CLI reference](../reference/cli.md#lh-memory-proposals)): `accept` archives an entry to `claude-md.accepted.md` and prints the rule for manual merge; `reject --reason` records it in `claude-md.rejected.md`. The rejected file doubles as an immunity registry — the grading prompt carries the last 20 rejected rules with an instruction not to re-propose equivalents, so a discarded rule stays discarded.
 
+The grading prompt also receives the last 30 entries from `failures.jsonl` under a `## Recorded failures from previous sessions` section. When the same root cause shows up two or more times — across sessions or within one — the LLM is instructed to emit a proposal whose rule starts with `[EVITAR]`, capturing the prevention. Repeated mistakes graduate into candidate rules instead of accumulating silently; the human gate on merging stays unchanged. `lh doctor` reports the state of this pipeline in its *Memory hygiene* section: `MEMORY.md` size against the 200-line cap, pending proposal count and age, and accepted/rejected totals.
+
 ## De-duplication — why the same learning does not appear twice
 
 Every worker invocation passes the current tail of decisions, failures, and learnings into the prompt with explicit anti-dup instructions ("avoid duplicates", "Do NOT repeat these or semantic equivalents"). The LLM is the dedup mechanism — a semantic filter, not a string match.
