@@ -18,6 +18,7 @@ from lazy_harness.hooks.builtins.context_inject import (
     last_session_context,
     lazynorth_context,
     proposals_context,
+    proposals_summary_line,
 )
 
 
@@ -699,6 +700,223 @@ def test_context_inject_surfaces_proposals_section_in_stdout(tmp_path: Path) -> 
     ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
     assert "## Proposals to review" in ctx
     assert "Verify changelog before reading subagent claims" in ctx
+
+
+def test_proposals_summary_line_counts_entries_and_oldest_date(tmp_path: Path) -> None:
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    (memory / "claude-md.proposal.md").write_text(
+        "<!-- claude-md proposals (append-only). Review and merge into CLAUDE.md or discard. -->\n"
+        "\n"
+        "## 2026-05-20T10:00:00-03:00\n"
+        "\n"
+        "- **Rule:** Always use os.replace for iCloud-synced paths\n"
+        "\n"
+        "## 2026-05-18T09:00:00-03:00\n"
+        "\n"
+        "- **Rule:** Verify changelog before reading subagent claims\n"
+    )
+
+    line = proposals_summary_line(memory)
+
+    assert line == (
+        "⚠ 2 claude-md proposal(s) pending (oldest 2026-05-18) — review: lh memory proposals"
+    )
+
+
+def test_proposals_summary_line_counts_rules_within_one_section(tmp_path: Path) -> None:
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    (memory / "claude-md.proposal.md").write_text(
+        "<!-- claude-md proposals (append-only). Review and merge into CLAUDE.md or discard. -->\n"
+        "\n"
+        "## 2026-05-20T10:00:00-03:00\n"
+        "\n"
+        "- **Rule:** Always use os.replace for iCloud-synced paths\n"
+        "- **Rule:** Verify changelog before reading subagent claims\n"
+    )
+
+    line = proposals_summary_line(memory)
+
+    assert line == (
+        "⚠ 2 claude-md proposal(s) pending (oldest 2026-05-20) — review: lh memory proposals"
+    )
+
+
+def test_proposals_summary_line_ignores_content_inside_html_comments(tmp_path: Path) -> None:
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    (memory / "claude-md.proposal.md").write_text(
+        "<!-- archived 2026-01-05\n"
+        "## 2026-01-01T08:00:00-03:00\n"
+        "\n"
+        "- **Rule:** Archived rule that must not count\n"
+        "-->\n"
+        "\n"
+        "## 2026-05-20T10:00:00-03:00\n"
+        "\n"
+        "- **Rule:** Always use os.replace for iCloud-synced paths\n"
+    )
+
+    line = proposals_summary_line(memory)
+
+    assert line == (
+        "⚠ 1 claude-md proposal(s) pending (oldest 2026-05-20) — review: lh memory proposals"
+    )
+
+
+def test_proposals_summary_line_empty_when_no_pending_entries(tmp_path: Path) -> None:
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    (memory / "claude-md.proposal.md").write_text(
+        "<!-- claude-md proposals (append-only). Review and merge into CLAUDE.md or discard. -->\n"
+        "\n"
+        "Archived notes without any timestamped entry headings.\n"
+    )
+
+    assert proposals_summary_line(memory) == ""
+
+
+def test_proposals_summary_line_empty_when_no_file(tmp_path: Path) -> None:
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    assert proposals_summary_line(memory) == ""
+
+
+def test_truncate_body_emits_proposals_summary_when_section_dropped() -> None:
+    git = "## Git\nBranch: main"
+    proposals = "## Proposals to review\n" + ("p" * 600)
+    summary = "⚠ 1 claude-md proposal(s) pending (oldest 2026-05-20) — review: lh memory proposals"
+
+    result = _truncate_body(
+        200, git, "", "", "", "", proposals_section=proposals, proposals_summary=summary
+    )
+
+    assert "## Proposals to review" not in result
+    assert summary in result
+
+
+def test_truncate_body_omits_summary_when_proposals_section_shown() -> None:
+    git = "## Git\nBranch: main"
+    proposals = "## Proposals to review\n- a pending rule"
+    summary = "⚠ 1 claude-md proposal(s) pending (oldest 2026-05-20) — review: lh memory proposals"
+
+    result = _truncate_body(
+        3000, git, "", "", "", "", proposals_section=proposals, proposals_summary=summary
+    )
+
+    assert "## Proposals to review" in result
+    assert summary not in result
+
+
+def test_truncate_body_proposals_summary_survives_extreme_truncation() -> None:
+    git = "## Git\nBranch: main"
+    big_north = "## LazyNorth\n" + ("n" * 500)
+    big_handoff = "## Handoff from last session\n" + ("h" * 500)
+    big_episodic = "## Recent history\n" + ("e" * 500)
+    proposals = "## Proposals to review\n" + ("p" * 500)
+    summary = "⚠ 3 claude-md proposal(s) pending (oldest 2026-05-01) — review: lh memory proposals"
+
+    result = _truncate_body(
+        50,
+        git,
+        big_north,
+        "",
+        big_handoff,
+        big_episodic,
+        proposals_section=proposals,
+        proposals_summary=summary,
+    )
+
+    assert "## Proposals to review" not in result
+    assert summary in result
+
+
+def _run_hook_in_process(monkeypatch, capsys, cwd: Path, cfg_file: Path) -> str:
+    import io
+    import json as _json
+    import sys as _sys
+
+    from lazy_harness.core import paths as paths_mod
+    from lazy_harness.hooks.builtins import context_inject as hook_mod
+
+    monkeypatch.setattr(paths_mod, "config_file", lambda: cfg_file)
+    monkeypatch.chdir(cwd)
+    monkeypatch.setattr(_sys, "stdin", io.StringIO("{}"))
+    hook_mod.main()
+    payload = _json.loads(capsys.readouterr().out)
+    return str(payload["hookSpecificOutput"]["additionalContext"])
+
+
+def test_context_inject_emits_proposals_summary_under_budget_pressure(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    claude_dir = tmp_path / "claude"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_dir))
+
+    cwd = tmp_path / "proj"
+    cwd.mkdir()
+    encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
+    memory_dir = claude_dir / "projects" / encoded / "memory"
+    memory_dir.mkdir(parents=True)
+    (memory_dir / "claude-md.proposal.md").write_text(
+        "<!-- claude-md proposals (append-only). -->\n"
+        "\n"
+        "## 2026-05-20T10:00:00-03:00\n"
+        "\n"
+        "- **Rule:** " + ("x" * 400) + "\n"
+        "\n"
+        "## 2026-05-18T09:00:00-03:00\n"
+        "\n"
+        "- **Rule:** " + ("y" * 400) + "\n"
+    )
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text('[harness]\nversion = "1"\n\n[context_inject]\nmax_body_chars = 200\n')
+
+    body = _run_hook_in_process(monkeypatch, capsys, cwd, cfg_file)
+
+    assert "## Proposals to review" not in body
+    assert (
+        "⚠ 2 claude-md proposal(s) pending (oldest 2026-05-18) — review: lh memory proposals"
+    ) in body
+
+
+def test_context_inject_proposals_summary_knob_false_restores_old_behavior(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    claude_dir = tmp_path / "claude"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_dir))
+
+    cwd = tmp_path / "proj"
+    cwd.mkdir()
+    encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
+    memory_dir = claude_dir / "projects" / encoded / "memory"
+    memory_dir.mkdir(parents=True)
+    (memory_dir / "claude-md.proposal.md").write_text(
+        "<!-- claude-md proposals (append-only). -->\n"
+        "\n"
+        "## 2026-05-20T10:00:00-03:00\n"
+        "\n"
+        "- **Rule:** " + ("x" * 400) + "\n"
+    )
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        '[harness]\nversion = "1"\n\n'
+        "[context_inject]\nmax_body_chars = 200\nproposals_summary = false\n"
+    )
+
+    body = _run_hook_in_process(monkeypatch, capsys, cwd, cfg_file)
+
+    assert "## Proposals to review" not in body
+    assert "claude-md proposal(s) pending" not in body
 
 
 def test_handoff_context_no_file_returns_empty(tmp_path: Path) -> None:

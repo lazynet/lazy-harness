@@ -341,6 +341,35 @@ def proposals_context(memory_dir: Path) -> str:
     return "\n".join(filtered).strip()
 
 
+_PROPOSAL_ENTRY_RE = re.compile(r"^## (\d{4}-\d{2}-\d{2})", re.MULTILINE)
+_PROPOSAL_RULE_RE = re.compile(r"^\s*- \*\*Rule:\*\*", re.MULTILINE)
+_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+
+
+def proposals_summary_line(memory_dir: Path) -> str:
+    """One-line reminder that pending claude-md proposals exist, so the
+    self-healing channel stays visible even when the full section is dropped
+    under budget pressure. Counts individual ``- **Rule:**`` bullets to match
+    ``lh memory proposals list`` numbering; HTML comment blocks (archived
+    content) are stripped before counting. Empty string when none."""
+    proposal_file = memory_dir / "claude-md.proposal.md"
+    if not proposal_file.is_file():
+        return ""
+    try:
+        raw = proposal_file.read_text()
+    except OSError:
+        return ""
+    visible = _HTML_COMMENT_RE.sub("", raw)
+    rules = _PROPOSAL_RULE_RE.findall(visible)
+    dates = _PROPOSAL_ENTRY_RE.findall(visible)
+    if not rules or not dates:
+        return ""
+    return (
+        f"⚠ {len(rules)} claude-md proposal(s) pending (oldest {min(dates)}) "
+        "— review: lh memory proposals"
+    )
+
+
 def _jsonl_tail_summaries(path: Path, limit: int, include_prevention: bool) -> list[str]:
     if not path.is_file():
         return []
@@ -431,12 +460,15 @@ def _truncate_body(
     episodic_section: str,
     suggest_section: str = "",
     proposals_section: str = "",
+    proposals_summary: str = "",
 ) -> str:
     """Drop sections in priority order until body fits: episodic → suggest →
     proposals → north → handoff. Proposals (compound-loop suggestions to merge
     into CLAUDE.md) sit between handoff and vault notes in document order, and
     are dropped after vault notes since they describe past work rather than
-    pending action."""
+    pending action. When the proposals section is dropped and
+    ``proposals_summary`` is non-empty, that one-liner is emitted alongside the
+    truncation banner so pending proposals are never silently hidden."""
     body = _join_sections(
         git_section,
         north_section,
@@ -466,22 +498,28 @@ def _truncate_body(
     )
     if len(body) <= max_chars:
         return _prepend_truncation_banner(body, dropped, max_chars)
+    summary_line = ""
     if proposals_section:
         dropped.append("Proposals to review")
+        summary_line = proposals_summary
     body = _join_sections(git_section, north_section, session_section, handoff_section)
     if len(body) <= max_chars:
-        return _prepend_truncation_banner(body, dropped, max_chars)
+        return _prepend_truncation_banner(body, dropped, max_chars, summary_line)
     dropped.append("LazyNorth")
     body = _join_sections(git_section, session_section, handoff_section)
     if len(body) <= max_chars:
-        return _prepend_truncation_banner(body, dropped, max_chars)
+        return _prepend_truncation_banner(body, dropped, max_chars, summary_line)
     dropped.append("Handoff from last session")
     body = _join_sections(git_section, session_section)
-    return _prepend_truncation_banner(body, dropped, max_chars)
+    return _prepend_truncation_banner(body, dropped, max_chars, summary_line)
 
 
-def _prepend_truncation_banner(body: str, dropped: list[str], max_chars: int) -> str:
+def _prepend_truncation_banner(
+    body: str, dropped: list[str], max_chars: int, extra_line: str = ""
+) -> str:
     banner = f"[truncated: dropped {', '.join(dropped)} to fit {max_chars}-char budget]"
+    if extra_line:
+        banner = f"{banner}\n{extra_line}"
     return f"{banner}\n\n{body}"
 
 
@@ -661,6 +699,9 @@ def main() -> None:
 
     handoff_ctx = handoff_context(memory_dir)
     proposals_ctx = proposals_context(memory_dir)
+    proposals_summary = ""
+    if cfg is None or cfg.context_inject.proposals_summary:
+        proposals_summary = proposals_summary_line(memory_dir)
     episodic_ctx = episodic_context(memory_dir)
 
     suggest_ctx = ""
@@ -698,6 +739,7 @@ def main() -> None:
         episodic_section,
         suggest_section=suggest_section,
         proposals_section=proposals_section,
+        proposals_summary=proposals_summary,
     )
     if not body:
         body = "New project, no prior context."

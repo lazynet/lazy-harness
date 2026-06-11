@@ -97,6 +97,7 @@ path = "~/vault/LazyNorth"
 enabled = true
 max_body_chars = 3000
 last_session_enabled = true
+proposals_summary = true
 ```
 
 ## `[harness]`
@@ -358,6 +359,7 @@ The `ollama` and `mlx` aliases preset `base_url` to `http://localhost:11434` and
 | `enabled`              | bool | `true`  | no       | Whether the SessionStart hook injects context into the session. |
 | `max_body_chars`       | int  | `3000`  | no       | Cap on injected body length.                                    |
 | `last_session_enabled` | bool | `true`  | no       | Whether to include a digest of the previous session.            |
+| `proposals_summary`    | bool | `true`  | no       | Whether a one-line summary of pending claude-md proposals is emitted even when the full proposals section is dropped to fit the char budget. |
 
 ## Environment variable overrides
 
