@@ -15,9 +15,8 @@ from lazy_harness.agents.registry import AgentNotFoundError, get_agent
 from lazy_harness.core.config import CompoundLoopConfig, ConfigError, load_config
 from lazy_harness.core.paths import agent_runtime_dir, config_file, contract_path, expand_path
 from lazy_harness.core.profiles import list_profiles
-from lazy_harness.llm.base import LLMBackendError
+from lazy_harness.llm import LLMBackendError, LLMBackendNotFoundError, get_backend
 from lazy_harness.llm.openai_compat import OpenAICompatibleBackend
-from lazy_harness.llm.registry import LLMBackendNotFoundError, get_backend
 from lazy_harness.monitoring.engram_persist_health import (
     EngramPersistHealth,
     collect_engram_persist_health,

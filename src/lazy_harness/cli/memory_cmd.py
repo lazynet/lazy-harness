@@ -10,9 +10,13 @@ import click
 from lazy_harness.core.config import ConfigError, load_config
 from lazy_harness.core.paths import config_file, expand_path
 from lazy_harness.knowledge.compound_loop import invoke_llm as _invoke_llm
-from lazy_harness.llm.base import LLMBackend, LLMBackendError
+from lazy_harness.llm import (
+    LLMBackend,
+    LLMBackendError,
+    LLMBackendNotFoundError,
+    get_backend,
+)
 from lazy_harness.llm.claude import ClaudeBackend
-from lazy_harness.llm.registry import LLMBackendNotFoundError, get_backend
 
 
 def _resolve_backend_and_model() -> tuple[LLMBackend, str]:

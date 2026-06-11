@@ -24,7 +24,7 @@ from datetime import datetime
 from pathlib import Path
 
 from lazy_harness.core.config import CompoundLoopConfig
-from lazy_harness.llm.base import LLMBackend, LLMBackendError
+from lazy_harness.llm import LLMBackend, LLMBackendError
 
 _INTERACTIVE_MARKERS = ("permission-mode", "last-prompt")
 _INTERACTIVE_SCAN_LINES = 10

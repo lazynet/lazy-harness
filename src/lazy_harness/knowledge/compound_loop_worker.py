@@ -20,8 +20,7 @@ from lazy_harness.knowledge.compound_loop import (
     move_to_done,
     process_task,
 )
-from lazy_harness.llm.base import LLMBackend
-from lazy_harness.llm.registry import get_backend
+from lazy_harness.llm import LLMBackend, get_backend
 
 
 def _log(log_file: Path, msg: str) -> None:
