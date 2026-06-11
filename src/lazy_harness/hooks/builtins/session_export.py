@@ -13,27 +13,11 @@ import os
 import shutil
 import subprocess
 import sys
-from datetime import datetime
 from pathlib import Path
 
+from lazy_harness.hooks.builtins._shared import find_latest_session, make_log
 
-def _log(log_file: Path, msg: str) -> None:
-    try:
-        log_file.parent.mkdir(parents=True, exist_ok=True)
-        ts = datetime.now().astimezone().isoformat(timespec="seconds")
-        with open(log_file, "a") as f:
-            f.write(f"{ts} session-export: {msg}\n")
-    except OSError:
-        pass
-
-
-def _find_latest_session(sessions_dir: Path) -> Path | None:
-    if not sessions_dir.is_dir():
-        return None
-    jsonl_files = [p for p in sessions_dir.glob("*.jsonl") if p.is_file()]
-    if not jsonl_files:
-        return None
-    return max(jsonl_files, key=lambda f: f.stat().st_mtime)
+_log = make_log("session-export")
 
 
 def main() -> None:
@@ -81,7 +65,7 @@ def main() -> None:
 
     encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
     sessions_dir = agent_dir / (subdirs.get("sessions") or "projects") / encoded
-    session_file = _find_latest_session(sessions_dir)
+    session_file = find_latest_session(sessions_dir)
     if session_file is None:
         _log(log_file, "no session JSONL found")
         return

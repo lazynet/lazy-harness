@@ -15,20 +15,13 @@ import json
 import os
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
+
+from lazy_harness.hooks.builtins._shared import make_log
 
 _FRESHNESS_WINDOW_SECONDS = 300
 
-
-def _log(log_file: Path, msg: str) -> None:
-    try:
-        log_file.parent.mkdir(parents=True, exist_ok=True)
-        ts = datetime.now().astimezone().isoformat(timespec="seconds")
-        with open(log_file, "a") as f:
-            f.write(f"{ts} post-compact: {msg}\n")
-    except OSError:
-        pass
+_log = make_log("post-compact")
 
 
 def _strip_html_comments(text: str) -> str:

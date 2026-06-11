@@ -20,22 +20,15 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime
 from pathlib import Path
+
+from lazy_harness.hooks.builtins._shared import make_log
 
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
 
-
-def _log(log_file: Path, msg: str) -> None:
-    try:
-        log_file.parent.mkdir(parents=True, exist_ok=True)
-        ts = datetime.now().astimezone().isoformat(timespec="seconds")
-        with open(log_file, "a") as f:
-            f.write(f"{ts} session-context: {msg}\n")
-    except OSError:
-        pass
+_log = make_log("session-context")
 
 
 def _expand(p: str) -> Path:

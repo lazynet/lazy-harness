@@ -15,15 +15,9 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from lazy_harness.hooks.builtins._shared import make_log
 
-def _log(log_file: Path, msg: str) -> None:
-    try:
-        log_file.parent.mkdir(parents=True, exist_ok=True)
-        ts = datetime.now().astimezone().isoformat(timespec="seconds")
-        with open(log_file, "a") as f:
-            f.write(f"{ts} pre-compact: {msg}\n")
-    except OSError:
-        pass
+_log = make_log("pre-compact")
 
 
 def parse_transcript(path: Path) -> tuple[list[str], list[str]]:
