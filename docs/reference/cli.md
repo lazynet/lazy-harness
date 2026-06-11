@@ -130,6 +130,20 @@ Walks every profile's memory tree and reports which projects have memory artifac
 lh memory cross-profile-check
 ```
 
+### `lh memory proposals`
+
+Lifecycle for the `claude-md.proposal.md` entries the compound loop appends (see [Memory: the compound loop](../how/memory-compound.md)). All three subcommands take `--memory-dir <path>`; by default the per-project memory dir is resolved from the agent runtime dir and the current working directory.
+
+- `lh memory proposals list` — numbered table of pending proposals (index, date, rule excerpt).
+- `lh memory proposals accept <N>` — removes entry N from the pending file, archives it to `claude-md.accepted.md` with the acceptance date, and prints the full rule. It never edits `MEMORY.md` or `CLAUDE.md` itself — pasting the rule is the human's call.
+- `lh memory proposals reject <N> --reason "<text>"` — removes entry N and records it in `claude-md.rejected.md` with the date and reason. That file is an immunity registry: the grading prompt includes the last 20 rejected rules with an instruction not to re-propose equivalents.
+
+```bash
+lh memory proposals list
+lh memory proposals accept 1
+lh memory proposals reject 2 --reason "too strict for this repo"
+```
+
 ## `lh migrate`
 
 Takes an existing Claude Code install and converts it into a lazy-harness setup: backs up state, detects profiles and LaunchAgents, rewrites paths, writes a new `config.toml`.

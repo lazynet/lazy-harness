@@ -245,7 +245,7 @@ User messages with the same Unicode markers are ignored deliberately — only th
 
 `context-inject` reads this file on the next session start and surfaces it under `## Proposals to review` so the human sees it without having to grep the memory dir. The proposals only land in `MEMORY.md` (or another curated file) if the human chooses to merge them — the loop never crosses that line on its own.
 
-The file is append-only. Either edit it down to nothing after merging, or delete it: an empty file is the signal that there is nothing pending review.
+The file is append-only from the worker's side. Pending entries are reviewed with the `lh memory proposals` subcommands (see the [CLI reference](../reference/cli.md#lh-memory-proposals)): `accept` archives an entry to `claude-md.accepted.md` and prints the rule for manual merge; `reject --reason` records it in `claude-md.rejected.md`. The rejected file doubles as an immunity registry — the grading prompt carries the last 20 rejected rules with an instruction not to re-propose equivalents, so a discarded rule stays discarded.
 
 ## De-duplication — why the same learning does not appear twice
 
