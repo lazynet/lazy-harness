@@ -138,6 +138,7 @@ class ContextInjectConfig:
     qmd_suggest_enabled: bool = True
     qmd_suggest_top_k: int = 3
     graphify_surface_enabled: bool = True
+    proposals_summary: bool = True
 
 
 @dataclass
@@ -424,6 +425,9 @@ def load_config(path: Path) -> Config:
             max_body_chars=ci_raw.get("max_body_chars", ContextInjectConfig.max_body_chars),
             last_session_enabled=ci_raw.get(
                 "last_session_enabled", ContextInjectConfig.last_session_enabled
+            ),
+            proposals_summary=ci_raw.get(
+                "proposals_summary", ContextInjectConfig.proposals_summary
             ),
         )
 

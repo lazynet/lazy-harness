@@ -319,3 +319,28 @@ enabled = true
     cfg = load_config(config_file)
     assert cfg.compound_loop.backend == "claude"
     assert cfg.compound_loop.backend_options == {}
+
+
+def test_context_inject_proposals_summary_defaults_when_missing() -> None:
+    from lazy_harness.core.config import Config, ContextInjectConfig
+
+    assert ContextInjectConfig().proposals_summary is True
+    cfg = Config()
+    assert cfg.context_inject.proposals_summary is True
+
+
+def test_context_inject_proposals_summary_parses_from_toml(config_dir: Path) -> None:
+    config_file = config_dir / "config.toml"
+    config_file.write_text("""
+[harness]
+version = "1"
+
+[context_inject]
+max_body_chars = 1500
+proposals_summary = false
+""")
+    from lazy_harness.core.config import load_config
+
+    cfg = load_config(config_file)
+    assert cfg.context_inject.max_body_chars == 1500
+    assert cfg.context_inject.proposals_summary is False
