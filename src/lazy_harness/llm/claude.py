@@ -31,4 +31,6 @@ class ClaudeBackend:
             )
         except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
             raise LLMBackendError(str(e)) from e
+        if result.returncode != 0:
+            raise LLMBackendError(result.stderr.strip() or f"claude exited {result.returncode}")
         return result.stdout.strip()

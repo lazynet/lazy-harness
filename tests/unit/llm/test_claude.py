@@ -8,9 +8,9 @@ import pytest
 
 
 class _FakeCompleted:
-    def __init__(self, stdout: str, returncode: int = 0) -> None:
+    def __init__(self, stdout: str, returncode: int = 0, stderr: str = "") -> None:
         self.stdout = stdout
-        self.stderr = ""
+        self.stderr = stderr
         self.returncode = returncode
 
 
@@ -83,4 +83,32 @@ def test_complete_maps_subprocess_failures_to_llm_backend_error(
 
     monkeypatch.setattr(claude_mod.subprocess, "run", fake_run)
     with pytest.raises(LLMBackendError):
+        claude_mod.ClaudeBackend().complete("p", "m", 1)
+
+
+def test_complete_nonzero_exit_raises_with_stderr(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lazy_harness.llm import claude as claude_mod
+    from lazy_harness.llm.base import LLMBackendError
+
+    monkeypatch.setattr(
+        claude_mod.subprocess,
+        "run",
+        lambda *a, **kw: _FakeCompleted("", returncode=1, stderr="invalid api key\n"),
+    )
+    with pytest.raises(LLMBackendError, match="invalid api key"):
+        claude_mod.ClaudeBackend().complete("p", "m", 1)
+
+
+def test_complete_nonzero_exit_without_stderr_reports_exit_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from lazy_harness.llm import claude as claude_mod
+    from lazy_harness.llm.base import LLMBackendError
+
+    monkeypatch.setattr(
+        claude_mod.subprocess,
+        "run",
+        lambda *a, **kw: _FakeCompleted("", returncode=2, stderr="  \n"),
+    )
+    with pytest.raises(LLMBackendError, match="claude exited 2"):
         claude_mod.ClaudeBackend().complete("p", "m", 1)
