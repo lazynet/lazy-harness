@@ -2,6 +2,7 @@
 
 **Status:** accepted
 **Date:** 2026-05-27
+**Implemented:** 2026-06-11 — Protocol gaps (PR #88) and L3/L4 leak closures (PR #96) are merged.
 **Supersedes:** —
 **Superseded by:** —
 **Related:** ADR-004 (agent-adapter-pattern), ADR-032 (llm-backend-abstraction)
