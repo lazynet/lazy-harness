@@ -63,7 +63,7 @@ Claude Code only ever appends to an existing session JSONL, never rewrites past 
 
 ## Pricing
 
-`DEFAULT_PRICING` in `monitoring/pricing.py` holds per-million-token rates for the three Claude models currently observed in the wild (`claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`). The rates mirror what LiteLLM publishes in `model_prices_and_context_window.json`, which is also what `ccusage` consumes — keeping the two aligned is the only way the cost numbers on `lh status` reconcile with `npx ccusage`.
+`DEFAULT_PRICING` in `monitoring/pricing.py` holds per-million-token rates for the Claude models currently observed in the wild (`claude-opus-4-6`, `claude-opus-4-7`, `claude-opus-4-8`, `claude-fable-5`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`). The rates mirror what LiteLLM publishes in `model_prices_and_context_window.json`, which is also what `ccusage` consumes — keeping the two aligned is the only way the cost numbers on `lh status` reconcile with `npx ccusage`.
 
 You can override any model's rates per-install under `[monitoring.pricing]` in `config.toml`:
 

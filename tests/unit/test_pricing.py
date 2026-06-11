@@ -106,3 +106,22 @@ def test_load_pricing_with_config_overrides(config_dir: Path) -> None:
     )
     assert pricing["claude-opus-4-6"]["input"] == 20.0
     assert "claude-sonnet-4-6" in pricing
+
+
+def test_default_pricing_includes_fable_5() -> None:
+    """claude-fable-5 must carry the official $10/$50 per-million rates.
+
+    Fable 5 is priced above the Opus tier at $10/$50 per-million
+    input/output. Cache rates follow the table convention: read = 0.1x
+    input, create = 1.25x input. Without this entry calculate_cost
+    silently returns 0.0 for all fable-5 sessions.
+    """
+    from lazy_harness.monitoring.pricing import default_pricing
+
+    pricing = default_pricing()
+    assert pricing["claude-fable-5"] == {
+        "input": 10.0,
+        "output": 50.0,
+        "cache_read": 1.0,
+        "cache_create": 12.5,
+    }
