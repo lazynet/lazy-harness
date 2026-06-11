@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC
 from pathlib import Path
 
 import pytest
@@ -188,3 +189,85 @@ def test_doctor_output_includes_llm_backend_section(
     runner = CliRunner()
     result = runner.invoke(doctor, [])
     assert "LLM backend" in result.output
+
+
+def test_render_memory_hygiene_skips_when_no_memory_dir(tmp_path: Path) -> None:
+    from lazy_harness.cli.doctor_cmd import _render_memory_hygiene
+
+    console, buf = _recording_console()
+    assert _render_memory_hygiene(console, tmp_path / "missing") is True
+    assert "Memory hygiene" not in buf.getvalue()
+
+
+def test_render_memory_hygiene_reports_healthy_state(tmp_path: Path) -> None:
+    from datetime import datetime
+
+    from lazy_harness.cli.doctor_cmd import _render_memory_hygiene
+
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    (memory / "MEMORY.md").write_text("\n".join(f"- line {i}" for i in range(10)) + "\n")
+    (memory / "claude-md.proposal.md").write_text(
+        "## 2026-06-10T09:00:00-03:00\n\n"
+        "- **Rule:** keep it simple\n"
+        "  - **Rationale:** because\n"
+    )
+    (memory / "claude-md.accepted.md").write_text("- **Rule:** old accepted rule\n")
+    (memory / "claude-md.rejected.md").write_text("- **Rule:** old rejected rule\n")
+
+    console, buf = _recording_console()
+    now = datetime(2026, 6, 11, 12, 0, tzinfo=UTC)
+    assert _render_memory_hygiene(console, memory, now=now) is True
+    out = buf.getvalue()
+    assert "Memory hygiene" in out
+    assert "10/200" in out
+    assert "1 pending" in out
+    assert "1 accepted" in out
+    assert "1 rejected" in out
+
+
+def test_render_memory_hygiene_warns_near_memory_cap(tmp_path: Path) -> None:
+    from lazy_harness.cli.doctor_cmd import _render_memory_hygiene
+
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    (memory / "MEMORY.md").write_text("\n".join(f"- line {i}" for i in range(185)) + "\n")
+
+    console, buf = _recording_console()
+    assert _render_memory_hygiene(console, memory) is True
+    assert "185/200" in buf.getvalue()
+    assert "!" in buf.getvalue()
+
+
+def test_render_memory_hygiene_fails_over_memory_cap(tmp_path: Path) -> None:
+    from lazy_harness.cli.doctor_cmd import _render_memory_hygiene
+
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    (memory / "MEMORY.md").write_text("\n".join(f"- line {i}" for i in range(205)) + "\n")
+
+    console, buf = _recording_console()
+    assert _render_memory_hygiene(console, memory) is False
+    assert "205/200" in buf.getvalue()
+
+
+def test_render_memory_hygiene_warns_on_stale_pending_proposals(tmp_path: Path) -> None:
+    from datetime import datetime
+
+    from lazy_harness.cli.doctor_cmd import _render_memory_hygiene
+
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    (memory / "claude-md.proposal.md").write_text(
+        "## 2026-05-01T10:00:00-03:00\n\n"
+        "- **Rule:** stale rule\n"
+        "  - **Rationale:** old\n"
+    )
+
+    console, buf = _recording_console()
+    now = datetime(2026, 6, 11, 12, 0, tzinfo=UTC)
+    assert _render_memory_hygiene(console, memory, now=now) is True
+    out = buf.getvalue()
+    assert "1 pending" in out
+    assert "41d" in out
+    assert "lh memory proposals" in out

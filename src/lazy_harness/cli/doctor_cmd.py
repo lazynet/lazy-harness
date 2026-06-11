@@ -111,6 +111,70 @@ def _render_llm_backend(console: Console, cl_cfg: CompoundLoopConfig) -> bool:
     return True
 
 
+def _render_memory_hygiene(console: Console, memory_dir: Path, now: datetime | None = None) -> bool:
+    """Phase 3d: surface project-memory drift before it silently degrades.
+
+    Skips silently when the cwd has no project memory. Only an over-cap
+    MEMORY.md fails the check; everything else is informational/warning.
+    """
+    if not memory_dir.is_dir():
+        return True
+    from lazy_harness.cli.memory_cmd import parse_proposals
+
+    now = now or datetime.now(UTC)
+    ok = True
+    console.print("\n[bold]Memory hygiene[/bold]")
+
+    memory_md = memory_dir / "MEMORY.md"
+    if memory_md.is_file():
+        line_count = len(memory_md.read_text().splitlines())
+        if line_count > 200:
+            console.print(f"  [red]✗[/red] MEMORY.md {line_count}/200 lines — over the hard cap")
+            ok = False
+        elif line_count >= 180:
+            console.print(
+                f"  [yellow]![/yellow] MEMORY.md {line_count}/200 lines — consolidate soon"
+            )
+        else:
+            console.print(f"  [green]✓[/green] MEMORY.md {line_count}/200 lines")
+    else:
+        console.print("  [grey50]·[/grey50] No MEMORY.md")
+
+    proposal_file = memory_dir / "claude-md.proposal.md"
+    pending = parse_proposals(proposal_file.read_text()) if proposal_file.is_file() else []
+    if pending:
+        oldest = min(p.timestamp[:10] for p in pending if p.timestamp)
+        try:
+            age_days = (now.date() - datetime.strptime(oldest, "%Y-%m-%d").date()).days
+        except ValueError:
+            age_days = 0
+        state = "[yellow]![/yellow]" if age_days > 14 else "[green]✓[/green]"
+        console.print(
+            f"  {state} {len(pending)} pending proposal(s), oldest {age_days}d — "
+            "review: lh memory proposals list"
+        )
+    else:
+        console.print("  [green]✓[/green] 0 pending proposals")
+
+    counts = []
+    for label, name in (
+        ("accepted", "claude-md.accepted.md"),
+        ("rejected", "claude-md.rejected.md"),
+    ):
+        f = memory_dir / name
+        n = len(parse_proposals(f.read_text())) if f.is_file() else 0
+        counts.append(f"{n} {label}")
+    console.print(f"  [grey50]·[/grey50] {' · '.join(counts)}")
+
+    return ok
+
+
+def _project_memory_dir(agent: AgentAdapter) -> Path:
+    encoded = "-" + str(Path.cwd()).replace("/", "-").lstrip("-")
+    sessions_subdir = agent.session_dirs().get("sessions") or "projects"
+    return agent_runtime_dir(agent) / sessions_subdir / encoded / "memory"
+
+
 @click.command("doctor")
 def doctor() -> None:
     """Check environment health."""
@@ -217,6 +281,9 @@ def doctor() -> None:
         now=datetime.now(UTC),
     )
     if not _render_engram_persist(console, health):
+        ok = False
+
+    if not _render_memory_hygiene(console, _project_memory_dir(agent)):
         ok = False
 
     console.print()
