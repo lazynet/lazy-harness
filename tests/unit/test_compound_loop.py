@@ -1612,3 +1612,111 @@ reprocess_min_growth_seconds = 120
     hook_mod.main()
 
     assert len(list((agent_dir / "queue").glob("*.task"))) == 1
+
+
+# --- rejected-proposals immunity registry (Phase 3c) ---
+
+REJECTED_TEXT = """\
+<!-- rejected claude-md proposals (append-only immunity registry). -->
+
+## 2026-05-20T10:00:00-03:00
+rejected: 2026-06-11
+reason: too strict for this repo
+
+- **Rule:** Never amend published commits
+  - **Rationale:** Some rationale
+
+## 2026-05-27T09:30:00-03:00
+rejected: 2026-06-11
+reason: redundant with CI
+
+- **Rule:** Always run the full suite twice
+"""
+
+
+def test_collect_rejected_proposals_returns_rule_lines(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.compound_loop import collect_rejected_proposals
+
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    (memory / "claude-md.rejected.md").write_text(REJECTED_TEXT)
+    rules = collect_rejected_proposals(memory)
+    assert rules == [
+        "Never amend published commits",
+        "Always run the full suite twice",
+    ]
+
+
+def test_collect_rejected_proposals_missing_file_returns_empty(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.compound_loop import collect_rejected_proposals
+
+    assert collect_rejected_proposals(tmp_path / "memory") == []
+
+
+def test_collect_rejected_proposals_caps_at_limit(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.compound_loop import collect_rejected_proposals
+
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    lines = "\n".join(f"- **Rule:** rule number {i}" for i in range(30))
+    (memory / "claude-md.rejected.md").write_text(lines)
+    rules = collect_rejected_proposals(memory)
+    assert len(rules) == 20
+    assert rules[0] == "rule number 10"
+    assert rules[-1] == "rule number 29"
+
+
+def test_build_prompt_includes_rejected_proposals_section() -> None:
+    prompt = build_prompt(
+        project_name="proj",
+        cwd="/tmp/proj",
+        session_id="sess1",
+        timestamp="2026-06-11T10:00:00-03:00",
+        existing_decisions="",
+        existing_failures="",
+        existing_learnings="",
+        summary="## User\nx",
+        rejected_proposals=[
+            "Never amend published commits",
+            "Always run the full suite twice",
+        ],
+    )
+    assert "Previously rejected proposals" in prompt
+    assert "do NOT re-propose" in prompt
+    assert "- Never amend published commits" in prompt
+    assert "- Always run the full suite twice" in prompt
+
+
+def test_build_prompt_omits_rejected_section_when_none() -> None:
+    prompt = build_prompt(
+        project_name="proj",
+        cwd="/tmp/proj",
+        session_id="sess1",
+        timestamp="2026-06-11T10:00:00-03:00",
+        existing_decisions="",
+        existing_failures="",
+        existing_learnings="",
+        summary="## User\nx",
+    )
+    assert "Previously rejected proposals" not in prompt
+
+
+def test_process_task_feeds_rejected_proposals_into_prompt(tmp_path: Path) -> None:
+    queue = tmp_path / "queue"
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    (memory / "claude-md.rejected.md").write_text(REJECTED_TEXT)
+    learnings = tmp_path / "Learnings"
+    session = _interactive_session(tmp_path)
+    task = create_task(queue, Path("/tmp/proj"), session, "abcd1234efgh", memory)
+
+    captured: dict[str, Any] = {}
+
+    def fake_invoke(prompt: str, model: str, timeout: int) -> str:
+        captured["prompt"] = prompt
+        return json.dumps({"decisions": [], "failures": [], "learnings": [], "handoff": []})
+
+    outcome = process_task(task, _cfg(), learnings, backend=StubBackend(fake_invoke))
+    assert outcome.was_processed
+    assert "Previously rejected proposals" in captured["prompt"]
+    assert "- Never amend published commits" in captured["prompt"]
