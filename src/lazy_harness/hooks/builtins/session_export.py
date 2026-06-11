@@ -13,27 +13,7 @@ import os
 import shutil
 import subprocess
 import sys
-from datetime import datetime
 from pathlib import Path
-
-
-def _log(log_file: Path, msg: str) -> None:
-    try:
-        log_file.parent.mkdir(parents=True, exist_ok=True)
-        ts = datetime.now().astimezone().isoformat(timespec="seconds")
-        with open(log_file, "a") as f:
-            f.write(f"{ts} session-export: {msg}\n")
-    except OSError:
-        pass
-
-
-def _find_latest_session(sessions_dir: Path) -> Path | None:
-    if not sessions_dir.is_dir():
-        return None
-    jsonl_files = [p for p in sessions_dir.glob("*.jsonl") if p.is_file()]
-    if not jsonl_files:
-        return None
-    return max(jsonl_files, key=lambda f: f.stat().st_mtime)
 
 
 def main() -> None:
@@ -42,16 +22,24 @@ def main() -> None:
     except (json.JSONDecodeError, EOFError, ValueError):
         pass
 
-    claude_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
-    log_file = claude_dir / "logs" / "hooks.log"
+    try:
+        from lazy_harness.agents.registry import get_agent
+        from lazy_harness.core.config import ConfigError, load_config
+        from lazy_harness.core.paths import agent_runtime_dir, config_file
+        from lazy_harness.hooks.builtins._shared import find_latest_session, make_log
+    except ImportError:
+        # Broken/uninstalled package: silently no-op, never block the agent.
+        return
+
+    _log = make_log("session-export")
+
+    # Pre-config bootstrap: the agent type is unknown until config loads, so
+    # resolve the log path via the Claude Code adapter (identical to the
+    # historical CLAUDE_CONFIG_DIR read). Re-resolved below once config is in.
+    boot_dir = agent_runtime_dir(get_agent("claude-code"))
+    log_file = boot_dir / "logs" / "hooks.log"
     cwd = Path.cwd()
     _log(log_file, f"fired cwd={cwd}")
-
-    try:
-        from lazy_harness.core.config import ConfigError, load_config
-        from lazy_harness.core.paths import config_file
-    except ImportError:
-        return
 
     cf = config_file()
     if not cf.is_file():
@@ -63,6 +51,11 @@ def main() -> None:
         _log(log_file, f"config error: {e}")
         return
 
+    agent = get_agent(cfg.agent.type)
+    agent_dir = agent_runtime_dir(agent)
+    subdirs = agent.session_dirs()
+    log_file = agent_dir / (subdirs.get("logs") or "logs") / "hooks.log"
+
     if not cfg.knowledge.path:
         _log(log_file, "knowledge.path not set, skipping")
         return
@@ -71,8 +64,8 @@ def main() -> None:
     sessions_root = knowledge_dir / cfg.knowledge.sessions.subdir
 
     encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
-    sessions_dir = claude_dir / "projects" / encoded
-    session_file = _find_latest_session(sessions_dir)
+    sessions_dir = agent_dir / (subdirs.get("sessions") or "projects") / encoded
+    session_file = find_latest_session(sessions_dir)
     if session_file is None:
         _log(log_file, "no session JSONL found")
         return

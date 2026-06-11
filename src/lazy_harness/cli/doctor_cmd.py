@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
@@ -10,9 +9,10 @@ from pathlib import Path
 import click
 from rich.console import Console
 
+from lazy_harness.agents.base import AgentAdapter
 from lazy_harness.agents.registry import AgentNotFoundError, get_agent
 from lazy_harness.core.config import ConfigError, load_config
-from lazy_harness.core.paths import config_file, contract_path, expand_path
+from lazy_harness.core.paths import agent_runtime_dir, config_file, contract_path, expand_path
 from lazy_harness.core.profiles import list_profiles
 from lazy_harness.monitoring.engram_persist_health import (
     EngramPersistHealth,
@@ -38,10 +38,10 @@ def _fmt_bytes(n: int) -> str:
     return f"{n / (1024 * 1024):.1f} MB"
 
 
-def _engram_persist_metrics_path(agent_env_var: str, logs_subdir: str) -> Path:
-    env_val = os.environ.get(agent_env_var) if agent_env_var else None
-    base = Path(env_val) if env_val else Path.home() / ".claude"
-    return base / (logs_subdir or "logs") / "engram_persist_metrics.jsonl"
+def _engram_persist_metrics_path(agent: AgentAdapter) -> Path:
+    base = agent_runtime_dir(agent)
+    logs_subdir = agent.session_dirs().get("logs") or "logs"
+    return base / logs_subdir / "engram_persist_metrics.jsonl"
 
 
 def _render_engram_persist(console: Console, health: EngramPersistHealth) -> bool:
@@ -172,7 +172,7 @@ def doctor() -> None:
             console.print(f"  {name} → {url}")
 
     health = collect_engram_persist_health(
-        _engram_persist_metrics_path(agent.env_var(), agent.session_dirs().get("logs", "logs")),
+        _engram_persist_metrics_path(agent),
         now=datetime.now(UTC),
     )
     if not _render_engram_persist(console, health):

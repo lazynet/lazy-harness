@@ -49,18 +49,14 @@ reprocess_min_growth_seconds = 120
     return cfg_file
 
 
-def _patch_config_lookup(
-    monkeypatch: pytest.MonkeyPatch, claude_dir: Path
-) -> None:
+def _patch_config_lookup(monkeypatch: pytest.MonkeyPatch, claude_dir: Path) -> None:
     cfg_file = _write_minimal_config(claude_dir)
     from lazy_harness.core import paths as paths_mod
 
     monkeypatch.setattr(paths_mod, "config_file", lambda: cfg_file)
 
 
-def _run_session_end(
-    monkeypatch: pytest.MonkeyPatch, claude_dir: Path, cwd: Path
-) -> None:
+def _run_session_end(monkeypatch: pytest.MonkeyPatch, claude_dir: Path, cwd: Path) -> None:
     """Invoke session_end.main() in a controlled environment.
 
     stdin is replaced with '{}' so the JSON parse in main() succeeds, and
@@ -156,6 +152,55 @@ enabled = false
     _run_session_end(monkeypatch, claude_dir, cwd)
 
     assert list(queue_dir.glob("*.task")) == []
+
+
+def test_session_end_routes_paths_through_agent_adapter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ADR-032 L3/L4: dirs must come from the configured agent adapter, not
+    from a hardcoded CLAUDE_CONFIG_DIR read. With agent.type = "null" (no env
+    var, no global link) resolution must land under ~/.null even when
+    CLAUDE_CONFIG_DIR points elsewhere."""
+    import io
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    decoy_dir = tmp_path / "decoy-claude"
+
+    cwd = tmp_path / "proj"
+    cwd.mkdir()
+    encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
+    agent_dir = home / ".null"
+    sessions_dir = agent_dir / "projects" / encoded
+    sessions_dir.mkdir(parents=True)
+    _interactive_session_jsonl(sessions_dir, "abcd1234-deadbeef-0003")
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        """
+[harness]
+version = "1"
+
+[agent]
+type = "null"
+
+[compound_loop]
+enabled = true
+"""
+    )
+    from lazy_harness.core import paths as paths_mod
+    from lazy_harness.hooks.builtins import session_end as hook_mod
+
+    monkeypatch.setattr(paths_mod, "config_file", lambda: cfg_file)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(decoy_dir))
+    monkeypatch.chdir(cwd)
+    monkeypatch.setattr("sys.stdin", io.StringIO("{}"))
+    monkeypatch.setattr(hook_mod.subprocess, "Popen", lambda *a, **kw: None)
+    hook_mod.main()
+
+    assert len(list((agent_dir / "queue").glob("*.task"))) == 1
+    assert not (decoy_dir / "queue").exists()
 
 
 def test_session_end_hook_skips_when_no_session_found(

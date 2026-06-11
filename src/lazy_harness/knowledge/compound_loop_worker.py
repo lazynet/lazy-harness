@@ -13,8 +13,9 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from lazy_harness.agents.registry import get_agent
 from lazy_harness.core.config import CompoundLoopConfig, Config, ConfigError, load_config
-from lazy_harness.core.paths import config_file
+from lazy_harness.core.paths import agent_runtime_dir, config_file
 from lazy_harness.knowledge.compound_loop import (
     move_to_done,
     process_task,
@@ -95,9 +96,18 @@ def _drain_queue(
 
 
 def main() -> int:
-    claude_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
-    log_dir = claude_dir / "logs"
-    queue_dir = claude_dir / "queue"
+    # Resolve dirs via the configured agent adapter (ADR-032 L3/L4). Without a
+    # loadable config the Claude Code adapter is the bootstrap default, which
+    # resolves exactly like the historical CLAUDE_CONFIG_DIR read.
+    cfg = _load_config()
+    try:
+        agent = get_agent(cfg.agent.type if cfg is not None else "claude-code")
+    except Exception:  # noqa: BLE001 — unknown agent.type must not kill the worker
+        agent = get_agent("claude-code")
+    agent_dir = agent_runtime_dir(agent)
+    subdirs = agent.session_dirs()
+    log_dir = agent_dir / (subdirs.get("logs") or "logs")
+    queue_dir = agent_dir / (subdirs.get("queue") or "queue")
     queue_dir.mkdir(parents=True, exist_ok=True)
     (queue_dir / "done").mkdir(parents=True, exist_ok=True)
 
@@ -118,7 +128,6 @@ def main() -> int:
             _log(log_file, "another worker is running, exiting")
             return 0
 
-        cfg = _load_config()
         if cfg is None or not cfg.compound_loop.enabled:
             _log(log_file, "disabled in config, exiting")
             return 0

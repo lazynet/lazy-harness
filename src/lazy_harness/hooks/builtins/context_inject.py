@@ -10,7 +10,7 @@ Outputs JSON with `hookSpecificOutput` for Claude Code. Sections composed:
     ## Proposals       — claude-md.proposal.md from compound-loop
     ## Recent history  — decisions.jsonl + failures.jsonl tails
 
-Read-only. Always exits 0. Logs to `<CLAUDE_CONFIG_DIR>/logs/hooks.log`.
+Read-only. Always exits 0. Logs to `<agent runtime dir>/logs/hooks.log`.
 """
 
 from __future__ import annotations
@@ -20,22 +20,11 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime
 from pathlib import Path
 
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
-
-
-def _log(log_file: Path, msg: str) -> None:
-    try:
-        log_file.parent.mkdir(parents=True, exist_ok=True)
-        ts = datetime.now().astimezone().isoformat(timespec="seconds")
-        with open(log_file, "a") as f:
-            f.write(f"{ts} session-context: {msg}\n")
-    except OSError:
-        pass
 
 
 def _expand(p: str) -> Path:
@@ -396,8 +385,9 @@ def episodic_context(memory_dir: Path, limit: int = 3) -> str:
 
 
 def _profile_for_config_dir(config_dir: str, profiles: dict[str, object]) -> tuple[str, str]:
-    """Returns (profile_name, lazynorth_doc) by matching CLAUDE_CONFIG_DIR
-    against each profile's config_dir. Returns ('', '') if no match."""
+    """Returns (profile_name, lazynorth_doc) by matching the agent's
+    config-dir env var against each profile's config_dir. Returns ('', '')
+    if no match."""
     if not config_dir:
         return ("", "")
     expanded = str(Path(os.path.expanduser(config_dir)).resolve()) if config_dir else ""
@@ -604,16 +594,24 @@ def main() -> None:
     except (json.JSONDecodeError, EOFError, ValueError):
         pass
 
-    claude_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
-    log_file = claude_dir / "logs" / "hooks.log"
+    try:
+        from lazy_harness.agents.registry import get_agent
+        from lazy_harness.core.config import ConfigError, load_config
+        from lazy_harness.core.paths import agent_runtime_dir, config_file
+        from lazy_harness.hooks.builtins._shared import make_log
+    except ImportError:
+        # Broken/uninstalled package: silently no-op, never block the agent.
+        return
+
+    _log = make_log("session-context")
+
+    # Pre-config bootstrap: the agent type is unknown until config loads, so
+    # resolve the log path via the Claude Code adapter (identical to the
+    # historical CLAUDE_CONFIG_DIR read). Re-resolved below once config is in.
+    boot_dir = agent_runtime_dir(get_agent("claude-code"))
+    log_file = boot_dir / "logs" / "hooks.log"
     cwd = Path.cwd()
     _log(log_file, f"fired cwd={cwd}")
-
-    try:
-        from lazy_harness.core.config import ConfigError, load_config
-        from lazy_harness.core.paths import config_file
-    except ImportError:
-        return
 
     cf = config_file()
     cfg = None
@@ -623,9 +621,14 @@ def main() -> None:
         except ConfigError:
             cfg = None
 
+    agent = get_agent(cfg.agent.type if cfg is not None else "claude-code")
+    agent_dir = agent_runtime_dir(agent)
+    subdirs = agent.session_dirs()
+    log_file = agent_dir / (subdirs.get("logs") or "logs") / "hooks.log"
+
     # Sections
     encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
-    memory_dir = claude_dir / "projects" / encoded / "memory"
+    memory_dir = agent_dir / (subdirs.get("sessions") or "projects") / encoded / "memory"
 
     git_ctx = git_context(cwd)
 
@@ -645,8 +648,9 @@ def main() -> None:
             last_session_ctx = last_session_context(sessions_dir, cwd.name)
 
         if cfg.lazynorth.enabled and cfg.lazynorth.path:
+            env_var = agent.env_var()
             _, profile_doc = _profile_for_config_dir(
-                os.environ.get("CLAUDE_CONFIG_DIR", ""),
+                os.environ.get(env_var, "") if env_var else "",
                 cfg.profiles.items,
             )
             north_ctx = lazynorth_context(

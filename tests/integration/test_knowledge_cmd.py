@@ -163,3 +163,52 @@ def test_knowledge_no_path(home_dir: Path) -> None:
     runner = CliRunner()
     result = runner.invoke(cli, ["knowledge", "status"])
     assert "not configured" in result.output.lower() or result.exit_code != 0
+
+
+def test_knowledge_handoff_now_routes_paths_through_agent_adapter(
+    home_dir: Path, monkeypatch, tmp_path: Path
+) -> None:
+    """ADR-032 L3: when no profile entry resolves the agent dir, the fallback
+    must come from the agent adapter (~/.null for the null agent), not from a
+    hardcoded ~/.claude."""
+    config_path = home_dir / ".config" / "lazy-harness" / "config.toml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        """
+[harness]
+version = "1"
+
+[agent]
+type = "null"
+
+[compound_loop]
+enabled = true
+"""
+    )
+
+    agent_dir = home_dir / ".null"
+    cwd = tmp_path / "proj"
+    cwd.mkdir()
+    encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
+    sessions_dir = agent_dir / "projects" / encoded
+    sessions_dir.mkdir(parents=True)
+    _write_session_jsonl(
+        sessions_dir / "deadbeef-feed-cafe-babe-1234abcd0002.jsonl",
+        [
+            {"type": "permission-mode"},
+            {"type": "user", "message": {"content": "x" * 250}},
+            {"type": "assistant", "message": {"content": "ok"}},
+        ],
+    )
+
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "decoy-claude"))
+    monkeypatch.chdir(cwd)
+    from lazy_harness.cli import knowledge_cmd as knowledge_mod
+
+    monkeypatch.setattr(knowledge_mod.subprocess, "Popen", lambda *a, **kw: None)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["knowledge", "handoff-now"])
+
+    assert result.exit_code == 0, result.output
+    assert len(list((agent_dir / "queue").glob("*.task"))) == 1

@@ -1508,3 +1508,58 @@ def test_extract_insights_matches_explanatory_output_style_markers(tmp_path: Pat
 
     insights = extract_insights(session)
     assert [i.body for i in insights] == [body]
+
+
+def test_stop_hook_routes_paths_through_agent_adapter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ADR-032 L3/L4: the Stop hook must resolve dirs via the configured agent
+    adapter. With agent.type = "null" (no env var, no global link) resolution
+    must land under ~/.null even when CLAUDE_CONFIG_DIR points elsewhere."""
+    import io
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "decoy-claude"))
+
+    cwd = tmp_path / "proj"
+    cwd.mkdir()
+    encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
+    agent_dir = home / ".null"
+    sessions_dir = agent_dir / "projects" / encoded
+    sessions_dir.mkdir(parents=True)
+    _write_jsonl(
+        sessions_dir / "abcd1234-deadbeef-0001.jsonl",
+        [
+            {"type": "permission-mode"},
+            {"type": "user", "message": {"content": "a" * 250}},
+            {"type": "assistant", "message": {"content": "ok"}},
+        ],
+    )
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        """
+[harness]
+version = "1"
+
+[agent]
+type = "null"
+
+[compound_loop]
+enabled = true
+debounce_seconds = 60
+reprocess_min_growth_seconds = 120
+"""
+    )
+    from lazy_harness.core import paths as paths_mod
+    from lazy_harness.hooks.builtins import compound_loop as hook_mod
+
+    monkeypatch.setattr(paths_mod, "config_file", lambda: cfg_file)
+    monkeypatch.chdir(cwd)
+    monkeypatch.setattr("sys.stdin", io.StringIO("{}"))
+    monkeypatch.setattr(hook_mod.subprocess, "Popen", lambda *a, **kw: None)
+    hook_mod.main()
+
+    assert len(list((agent_dir / "queue").glob("*.task"))) == 1
