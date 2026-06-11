@@ -256,6 +256,78 @@ backend = "ollama"
     assert isinstance(captured["backend"], OpenAICompatibleBackend)
 
 
+def test_consolidate_model_defaults_to_compound_loop_config(tmp_path: Path, monkeypatch) -> None:
+    """No --model flag → model resolves from [compound_loop].model, like the worker."""
+    from lazy_harness.cli import memory_cmd as mod
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        """
+[harness]
+version = "1"
+
+[compound_loop]
+backend = "ollama"
+model = "llama3.2:3b"
+"""
+    )
+    monkeypatch.setattr(mod, "config_file", lambda: cfg_file)
+
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    _write_jsonl(memory_dir / "decisions.jsonl", [{"decision": "x"}])
+
+    captured: dict = {}
+
+    def fake_invoke(prompt: str, backend: object, model: str, timeout: int) -> str:
+        captured["model"] = model
+        return "ok"
+
+    monkeypatch.setattr(mod, "_invoke_llm", fake_invoke)
+
+    runner = CliRunner()
+    result = runner.invoke(mod.memory, ["consolidate", "--memory-dir", str(memory_dir)])
+    assert result.exit_code == 0, result.output
+    assert captured["model"] == "llama3.2:3b"
+
+
+def test_consolidate_model_flag_overrides_config(tmp_path: Path, monkeypatch) -> None:
+    from lazy_harness.cli import memory_cmd as mod
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        """
+[harness]
+version = "1"
+
+[compound_loop]
+backend = "ollama"
+model = "llama3.2:3b"
+"""
+    )
+    monkeypatch.setattr(mod, "config_file", lambda: cfg_file)
+
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    _write_jsonl(memory_dir / "decisions.jsonl", [{"decision": "x"}])
+
+    captured: dict = {}
+
+    def fake_invoke(prompt: str, backend: object, model: str, timeout: int) -> str:
+        captured["model"] = model
+        return "ok"
+
+    monkeypatch.setattr(mod, "_invoke_llm", fake_invoke)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        mod.memory,
+        ["consolidate", "--memory-dir", str(memory_dir), "--model", "qwen3:8b"],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["model"] == "qwen3:8b"
+
+
 def test_consolidate_falls_back_to_claude_backend_without_config(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -271,6 +343,7 @@ def test_consolidate_falls_back_to_claude_backend_without_config(
 
     def fake_invoke(prompt: str, backend: object, model: str, timeout: int) -> str:
         captured["backend"] = backend
+        captured["model"] = model
         return "ok"
 
     monkeypatch.setattr(mod, "_invoke_llm", fake_invoke)
@@ -282,3 +355,4 @@ def test_consolidate_falls_back_to_claude_backend_without_config(
     from lazy_harness.llm.claude import ClaudeBackend
 
     assert isinstance(captured["backend"], ClaudeBackend)
+    assert captured["model"] == ClaudeBackend().default_model()

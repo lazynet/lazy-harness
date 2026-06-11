@@ -15,21 +15,25 @@ from lazy_harness.llm.claude import ClaudeBackend
 from lazy_harness.llm.registry import LLMBackendNotFoundError, get_backend
 
 
-def _resolve_backend() -> LLMBackend:
-    """Resolve [compound_loop].backend from config.toml (ADR-033).
+def _resolve_backend_and_model() -> tuple[LLMBackend, str]:
+    """Resolve [compound_loop].backend and .model from config.toml (ADR-033).
 
-    Missing or unloadable config falls back to ClaudeBackend — the same
-    bootstrap default as the compound-loop worker.
+    Missing or unloadable config falls back to ClaudeBackend and its default
+    model — the same bootstrap default as the compound-loop worker. With a
+    loadable config the model is `[compound_loop].model`, mirroring how the
+    worker passes `cfg.model` to `process_task`.
     """
     cf = config_file()
     if not cf.is_file():
-        return ClaudeBackend()
+        backend: LLMBackend = ClaudeBackend()
+        return backend, backend.default_model()
     try:
         cfg = load_config(cf)
     except ConfigError:
-        return ClaudeBackend()
+        backend = ClaudeBackend()
+        return backend, backend.default_model()
     try:
-        return get_backend(cfg.compound_loop)
+        return get_backend(cfg.compound_loop), cfg.compound_loop.model
     except (LLMBackendError, LLMBackendNotFoundError) as e:
         raise click.ClickException(str(e)) from e
 
@@ -187,18 +191,17 @@ def _build_consolidate_prompt(decisions: list[str], failures: list[str]) -> str:
 )
 @click.option(
     "--model",
-    default="claude-haiku-4-5-20251001",
-    show_default=True,
-    help="Headless model for the proposal.",
+    default=None,
+    help="Headless model for the proposal. Defaults to [compound_loop].model.",
 )
 @click.option(
     "--timeout",
     type=int,
     default=120,
     show_default=True,
-    help="Claude invocation timeout in seconds.",
+    help="LLM invocation timeout in seconds.",
 )
-def consolidate(memory_dir: Path | None, last: int, model: str, timeout: int) -> None:
+def consolidate(memory_dir: Path | None, last: int, model: str | None, timeout: int) -> None:
     """Propose MEMORY.md additions from recent decisions/failures (read-only)."""
     target = memory_dir or (Path.cwd() / "memory")
     decisions = _read_jsonl_tail(target / "decisions.jsonl", last)
@@ -210,7 +213,8 @@ def consolidate(memory_dir: Path | None, last: int, model: str, timeout: int) ->
         return
 
     prompt = _build_consolidate_prompt(decisions, failures)
-    result = _invoke_llm(prompt, _resolve_backend(), model, timeout)
+    backend, default_model = _resolve_backend_and_model()
+    result = _invoke_llm(prompt, backend, model or default_model, timeout)
     if not result:
         click.echo("The LLM backend returned empty output. Try again or increase --timeout.")
         return
