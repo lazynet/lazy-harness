@@ -113,7 +113,7 @@ backend = "ollama"
 
     captured: dict = {}
 
-    def fake_process_task(task_file, cfg, learnings_dir, backend=None):  # noqa: ANN001
+    def fake_process_task(task_file, cfg, learnings_dir, backend):  # noqa: ANN001
         captured["backend"] = backend
         return TaskOutcome(skipped="stubbed")
 

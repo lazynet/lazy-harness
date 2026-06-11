@@ -664,6 +664,16 @@ def test_process_task_skips_missing_session(tmp_path: Path) -> None:
     assert "not found" in outcome.skipped
 
 
+def test_process_task_requires_explicit_backend(tmp_path: Path) -> None:
+    """ADR-033: no silent ClaudeBackend fallback — callers must pass a backend."""
+    queue = tmp_path / "queue"
+    memory = tmp_path / "memory"
+    learnings = tmp_path / "Learnings"
+    task = create_task(queue, Path("/tmp"), tmp_path / "nope.jsonl", "abcd1234", memory)
+    with pytest.raises(TypeError):
+        process_task(task, _cfg(), learnings)  # type: ignore[call-arg]
+
+
 def test_process_task_skips_non_interactive(tmp_path: Path) -> None:
     queue = tmp_path / "queue"
     memory = tmp_path / "memory"
@@ -794,7 +804,9 @@ def test_process_task_calls_invoke_and_persists(tmp_path: Path) -> None:
             }
         )
 
-    outcome = process_task(task, _cfg(model="test-model"), learnings, backend=StubBackend(fake_invoke))
+    outcome = process_task(
+        task, _cfg(model="test-model"), learnings, backend=StubBackend(fake_invoke)
+    )
     assert outcome.was_processed
     assert captured["model"] == "test-model"
     assert "Session conversation" in captured["prompt"]
@@ -818,7 +830,9 @@ def test_process_task_skips_on_bad_json(tmp_path: Path) -> None:
     learnings = tmp_path / "Learnings"
     session = _interactive_session(tmp_path)
     task = create_task(queue, Path("/tmp/proj"), session, "abcd1234", memory)
-    outcome = process_task(task, _cfg(), learnings, backend=StubBackend(lambda *a: "not json at all"))
+    outcome = process_task(
+        task, _cfg(), learnings, backend=StubBackend(lambda *a: "not json at all")
+    )
     assert "JSON parse failed" in outcome.skipped
 
 

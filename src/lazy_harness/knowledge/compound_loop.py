@@ -25,7 +25,6 @@ from pathlib import Path
 
 from lazy_harness.core.config import CompoundLoopConfig
 from lazy_harness.llm.base import LLMBackend, LLMBackendError
-from lazy_harness.llm.claude import ClaudeBackend
 
 _INTERACTIVE_MARKERS = ("permission-mode", "last-prompt")
 _INTERACTIVE_SCAN_LINES = 10
@@ -1007,11 +1006,9 @@ def process_task(
     task_file: Path,
     cfg: CompoundLoopConfig,
     learnings_dir: Path,
-    backend: LLMBackend | None = None,
+    backend: LLMBackend,
 ) -> TaskOutcome:
-    """Process one queued task. `backend` defaults to ClaudeBackend (ADR-033)."""
-    if backend is None:
-        backend = ClaudeBackend()
+    """Process one queued task with the resolved LLM backend (ADR-033)."""
     meta = parse_task(task_file)
     session_jsonl = Path(meta.get("session_jsonl", ""))
     session_id = meta.get("session_id", "")
