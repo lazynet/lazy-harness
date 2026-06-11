@@ -580,6 +580,28 @@ def collect_existing_failures(memory_dir: Path, limit: int = 10) -> str:
     return _collect_jsonl_summaries(memory_dir / "failures.jsonl", limit)
 
 
+def collect_rejected_proposals(memory_dir: Path, limit: int = 20) -> list[str]:
+    """Rule lines from claude-md.rejected.md — the immunity registry (Phase 3c).
+
+    Returns the last `limit` rejected rules (rules only, no reasons) so the
+    grading prompt can tell the evaluator not to re-propose them.
+    """
+    path = memory_dir / "claude-md.rejected.md"
+    if not path.is_file():
+        return []
+    try:
+        text = path.read_text()
+    except OSError:
+        return []
+    prefix = "- **Rule:**"
+    rules = [
+        line.strip()[len(prefix) :].strip()
+        for line in text.splitlines()
+        if line.strip().startswith(prefix)
+    ]
+    return rules[-limit:]
+
+
 def build_prompt(
     project_name: str,
     cwd: str,
@@ -590,6 +612,7 @@ def build_prompt(
     existing_learnings: str,
     summary: str,
     captured_insights: list[Insight] | None = None,
+    rejected_proposals: list[str] | None = None,
 ) -> str:
     """Build the headless-Claude prompt. Ported verbatim from the bash worker
     to preserve the calibration of the evaluator — reword with care."""
@@ -600,6 +623,14 @@ def build_prompt(
             "\n## Insights already captured verbatim from this session "
             "(DO NOT re-emit as learnings):\n"
             f"{titles}\n"
+        )
+    rejected_section = ""
+    if rejected_proposals:
+        rejected = "\n".join(f"- {rule}" for rule in rejected_proposals)
+        rejected_section = (
+            "\n## Previously rejected proposals — do NOT re-propose rules "
+            "equivalent to these:\n"
+            f"{rejected}\n"
         )
     return f"""You are evaluating a Claude Code session for learnings. Analyze the conversation and output ONLY valid JSON.
 
@@ -616,7 +647,7 @@ Timestamp: {timestamp}
 
 ## Existing learnings already recorded (DO NOT repeat these or semantic equivalents):
 {existing_learnings}
-{insights_section}
+{insights_section}{rejected_section}
 ## Session conversation:
 {summary}
 
@@ -1056,6 +1087,7 @@ def process_task(
         existing_failures,
         existing_learnings,
         summary,
+        rejected_proposals=collect_rejected_proposals(memory_dir),
     )
 
     raw_output = invoke_llm(prompt, backend, cfg.model, cfg.timeout_seconds)
