@@ -13,6 +13,10 @@ from __future__ import annotations
 import os
 import platform
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from lazy_harness.agents.base import AgentAdapter
 
 APP_NAME = "lazy-harness"
 
@@ -89,3 +93,20 @@ def contract_path(path: Path | str) -> str:
     if s.startswith(home):
         return "~" + s[len(home) :]
     return s
+
+
+def agent_runtime_dir(agent: AgentAdapter) -> Path:
+    """Resolve the agent's runtime config dir: adapter env var, else its global link.
+
+    Resolution order (ADR-032 L3 — never read agent env vars directly):
+    1. The adapter's env var (e.g. CLAUDE_CONFIG_DIR), if set and non-empty.
+    2. The adapter's global config link (e.g. ~/.claude), if it has one.
+    3. ~/.<agent name> as a last resort.
+    """
+    env_value = os.environ.get(agent.env_var()) if agent.env_var() else None
+    if env_value:
+        return Path(env_value)
+    link = agent.global_config_link()
+    if link is not None:
+        return link
+    return Path.home() / f".{agent.name}"

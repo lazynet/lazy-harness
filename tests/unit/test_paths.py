@@ -73,3 +73,31 @@ def test_contract_path(home_dir: Path) -> None:
     result = contract_path(full)
     assert result.startswith("~")
     assert "foo" in result
+
+
+def test_agent_runtime_dir_uses_adapter_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+    from lazy_harness.core.paths import agent_runtime_dir
+
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", "/tmp/fake-claude")
+    assert agent_runtime_dir(ClaudeCodeAdapter()) == Path("/tmp/fake-claude")
+
+
+def test_agent_runtime_dir_falls_back_to_global_config_link(
+    home_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+    from lazy_harness.core.paths import agent_runtime_dir
+
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    assert agent_runtime_dir(ClaudeCodeAdapter()) == home_dir / ".claude"
+
+
+def test_agent_runtime_dir_falls_back_to_dotted_agent_name(
+    home_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.agents.registry import NullAdapter
+    from lazy_harness.core.paths import agent_runtime_dir
+
+    # NullAdapter has no env var and no global config link.
+    assert agent_runtime_dir(NullAdapter()) == home_dir / ".null"
