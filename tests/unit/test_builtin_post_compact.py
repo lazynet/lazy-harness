@@ -106,3 +106,42 @@ def test_post_compact_exit_zero_on_empty_stdin(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0
+
+
+def test_post_compact_routes_paths_through_agent_adapter(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """ADR-032 L3/L4: the summary location must come from the configured agent
+    adapter. With agent.type = "null" it must be read from under ~/.null even
+    when CLAUDE_CONFIG_DIR points elsewhere."""
+    import io
+    import sys as _sys
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "decoy-claude"))
+
+    cwd = tmp_path / "proj"
+    cwd.mkdir()
+    encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
+    mem = home / ".null" / "projects" / encoded / "memory"
+    mem.mkdir(parents=True)
+    (mem / "pre-compact-summary.md").write_text(
+        "<!-- auto -->\n## Tasks in progress\n- adapter routing\n"
+    )
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text('[harness]\nversion = "1"\n\n[agent]\ntype = "null"\n')
+    from lazy_harness.core import paths as paths_mod
+    from lazy_harness.hooks.builtins import post_compact as hook_mod
+
+    monkeypatch.setattr(paths_mod, "config_file", lambda: cfg_file)
+    monkeypatch.chdir(cwd)
+    monkeypatch.setattr(_sys, "stdin", io.StringIO("{}"))
+    hook_mod.main()
+
+    out = capsys.readouterr().out
+    assert out.strip(), "expected injected summary from the agent-adapter dir"
+    payload = json.loads(out)
+    assert "adapter routing" in payload["hookSpecificOutput"]["additionalContext"]

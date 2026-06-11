@@ -139,3 +139,42 @@ def test_pre_compact_empty_input(tmp_path: Path) -> None:
         timeout=10,
     )
     assert result.returncode == 0
+
+
+def test_pre_compact_routes_paths_through_agent_adapter(tmp_path, monkeypatch) -> None:
+    """ADR-032 L3/L4: memory/backup dirs must come from the configured agent
+    adapter. With agent.type = "null" the summary must land under ~/.null even
+    when CLAUDE_CONFIG_DIR points elsewhere."""
+    import io
+    import json as _json
+    import sys as _sys
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "decoy-claude"))
+
+    cwd = tmp_path / "proj"
+    cwd.mkdir()
+    encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
+
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text(
+        _json.dumps({"role": "user", "content": "please refactor the auth module"}) + "\n"
+    )
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text('[harness]\nversion = "1"\n\n[agent]\ntype = "null"\n')
+    from lazy_harness.core import paths as paths_mod
+    from lazy_harness.hooks.builtins import pre_compact as hook_mod
+
+    monkeypatch.setattr(paths_mod, "config_file", lambda: cfg_file)
+    monkeypatch.chdir(cwd)
+    monkeypatch.setattr(
+        _sys, "stdin", io.StringIO(_json.dumps({"transcript_path": str(transcript)}))
+    )
+    hook_mod.main()
+
+    summary_file = home / ".null" / "projects" / encoded / "memory" / "pre-compact-summary.md"
+    assert summary_file.is_file()
+    assert "please refactor the auth module" in summary_file.read_text()

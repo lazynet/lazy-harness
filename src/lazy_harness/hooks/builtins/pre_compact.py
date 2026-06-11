@@ -109,6 +109,30 @@ def build_memory_tails(memory_dir: Path) -> str:
     return "\n".join(parts)
 
 
+def _resolve_agent_dirs() -> tuple[Path, dict[str, str]]:
+    """(runtime_dir, session_dirs) for the configured agent (ADR-032 L3/L4).
+
+    Bootstrap fallback: when lazy_harness is not importable (hook run as a
+    bare script) read the Claude Code env var directly, as before ADR-032.
+    """
+    try:
+        from lazy_harness.agents.registry import get_agent
+        from lazy_harness.core.config import ConfigError, load_config
+        from lazy_harness.core.paths import agent_runtime_dir, config_file
+    except ImportError:
+        return Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude")), {}
+
+    cfg = None
+    cf = config_file()
+    if cf.is_file():
+        try:
+            cfg = load_config(cf)
+        except ConfigError:
+            cfg = None
+    agent = get_agent(cfg.agent.type if cfg is not None else "claude-code")
+    return agent_runtime_dir(agent), agent.session_dirs()
+
+
 def main() -> None:
     try:
         input_data = json.load(sys.stdin)
@@ -116,8 +140,8 @@ def main() -> None:
         input_data = {}
 
     cwd = Path.cwd()
-    claude_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
-    log_file = claude_dir / "logs" / "hooks.log"
+    agent_dir, subdirs = _resolve_agent_dirs()
+    log_file = agent_dir / (subdirs.get("logs") or "logs") / "hooks.log"
     _log(log_file, f"fired cwd={cwd}")
 
     transcript_path_str = ""
@@ -127,7 +151,7 @@ def main() -> None:
             break
 
     encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
-    memory_dir = claude_dir / "projects" / encoded / "memory"
+    memory_dir = agent_dir / (subdirs.get("sessions") or "projects") / encoded / "memory"
     memory_dir.mkdir(parents=True, exist_ok=True)
 
     summary = ""
@@ -135,7 +159,7 @@ def main() -> None:
     if transcript_path_str:
         transcript_path = Path(transcript_path_str)
         if transcript_path.is_file():
-            backup_dir = claude_dir / "compact-backups"
+            backup_dir = agent_dir / "compact-backups"
             backup_dir.mkdir(parents=True, exist_ok=True)
             ts = datetime.now().strftime("%Y%m%d-%H%M%S")
             proj_name = cwd.name
