@@ -70,6 +70,55 @@ def test_wrapper_reads_stdin_and_invokes_engram(tmp_path: Path) -> None:
     assert " save hello " in log
 
 
+def test_wrapper_routes_paths_through_agent_adapter(tmp_path: Path, monkeypatch) -> None:
+    """ADR-032 L3/L4: memory/logs dirs must come from the configured agent
+    adapter. With agent.type = "null" they must land under ~/.null even when
+    CLAUDE_CONFIG_DIR points elsewhere."""
+    import io
+    import sys as _sys
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "decoy-claude"))
+
+    cwd = tmp_path / "proj"
+    cwd.mkdir()
+    encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        """
+[harness]
+version = "1"
+
+[agent]
+type = "null"
+"""
+    )
+    from lazy_harness.core import paths as paths_mod
+    from lazy_harness.hooks.builtins import engram_persist as hook_mod
+
+    monkeypatch.setattr(paths_mod, "config_file", lambda: cfg_file)
+
+    captured: dict[str, Path] = {}
+
+    class FakePersister:
+        def __init__(self, *, memory_dir: Path, logs_dir: Path, project_key: str) -> None:
+            captured["memory_dir"] = memory_dir
+            captured["logs_dir"] = logs_dir
+
+        def persist_new_entries(self) -> None:
+            pass
+
+    monkeypatch.setattr("lazy_harness.knowledge.engram_persist.EngramPersister", FakePersister)
+    monkeypatch.setattr(_sys, "stdin", io.StringIO(json.dumps({"cwd": str(cwd)})))
+    hook_mod.main()
+
+    assert captured["memory_dir"] == home / ".null" / "projects" / encoded / "memory"
+    assert captured["logs_dir"] == home / ".null" / "logs"
+
+
 def test_wrapper_exits_zero_when_engram_save_fails(tmp_path: Path) -> None:
     claude_dir = tmp_path / "claude"
     cwd = tmp_path / "lazy-harness"
