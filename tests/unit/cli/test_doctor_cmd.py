@@ -143,7 +143,7 @@ def test_render_llm_backend_ollama_reachable(monkeypatch: pytest.MonkeyPatch) ->
     cfg = CompoundLoopConfig(backend="ollama")
     assert _render_llm_backend(console, cfg) is True
     assert captured["url"] == "http://localhost:11434"
-    assert captured["timeout"] is not None
+    assert captured["timeout"] == 2
     assert "reachable" in buf.getvalue()
 
 
