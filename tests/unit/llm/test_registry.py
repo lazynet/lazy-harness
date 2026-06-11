@@ -79,3 +79,46 @@ def test_unknown_backend_raises_not_found_with_available_list() -> None:
     assert "bedrock" in msg
     for name in KNOWN_BACKENDS:
         assert name in msg
+
+
+def test_ollama_config_to_invoke_llm_end_to_end_without_subprocess(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ADR-033 acceptance: backend="ollama" → OpenAICompatibleBackend at
+    localhost:11434 → invoke_llm posts /v1/chat/completions and returns the
+    message content with zero subprocess involvement."""
+    from lazy_harness.knowledge.compound_loop import invoke_llm
+    from lazy_harness.llm import claude as claude_mod
+    from lazy_harness.llm import openai_compat as openai_mod
+    from lazy_harness.llm.openai_compat import OpenAICompatibleBackend
+    from lazy_harness.llm.registry import get_backend
+
+    def _no_subprocess(*a: object, **kw: object) -> object:
+        raise AssertionError("subprocess.run must not be called for the ollama backend")
+
+    monkeypatch.setattr(claude_mod.subprocess, "run", _no_subprocess)
+
+    captured: dict = {}
+
+    class _Resp:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {"choices": [{"message": {"content": "graded locally"}}]}
+
+    def fake_post(url, **kwargs):  # noqa: ANN001, ANN003
+        captured["url"] = url
+        return _Resp()
+
+    monkeypatch.setattr(openai_mod.httpx, "post", fake_post)
+
+    backend = get_backend(_cfg("ollama"))
+    assert isinstance(backend, OpenAICompatibleBackend)
+
+    result = invoke_llm("grade this session", backend, "llama3.2:3b", 30)
+
+    assert result == "graded locally"
+    assert captured["url"] == "http://localhost:11434/v1/chat/completions"
