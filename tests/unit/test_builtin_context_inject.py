@@ -724,6 +724,47 @@ def test_proposals_summary_line_counts_entries_and_oldest_date(tmp_path: Path) -
     )
 
 
+def test_proposals_summary_line_counts_rules_within_one_section(tmp_path: Path) -> None:
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    (memory / "claude-md.proposal.md").write_text(
+        "<!-- claude-md proposals (append-only). Review and merge into CLAUDE.md or discard. -->\n"
+        "\n"
+        "## 2026-05-20T10:00:00-03:00\n"
+        "\n"
+        "- **Rule:** Always use os.replace for iCloud-synced paths\n"
+        "- **Rule:** Verify changelog before reading subagent claims\n"
+    )
+
+    line = proposals_summary_line(memory)
+
+    assert line == (
+        "⚠ 2 claude-md proposal(s) pending (oldest 2026-05-20) — review: lh memory proposals"
+    )
+
+
+def test_proposals_summary_line_ignores_content_inside_html_comments(tmp_path: Path) -> None:
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    (memory / "claude-md.proposal.md").write_text(
+        "<!-- archived 2026-01-05\n"
+        "## 2026-01-01T08:00:00-03:00\n"
+        "\n"
+        "- **Rule:** Archived rule that must not count\n"
+        "-->\n"
+        "\n"
+        "## 2026-05-20T10:00:00-03:00\n"
+        "\n"
+        "- **Rule:** Always use os.replace for iCloud-synced paths\n"
+    )
+
+    line = proposals_summary_line(memory)
+
+    assert line == (
+        "⚠ 1 claude-md proposal(s) pending (oldest 2026-05-20) — review: lh memory proposals"
+    )
+
+
 def test_proposals_summary_line_empty_when_no_pending_entries(tmp_path: Path) -> None:
     memory = tmp_path / "memory"
     memory.mkdir()

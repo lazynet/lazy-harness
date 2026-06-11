@@ -342,13 +342,16 @@ def proposals_context(memory_dir: Path) -> str:
 
 
 _PROPOSAL_ENTRY_RE = re.compile(r"^## (\d{4}-\d{2}-\d{2})", re.MULTILINE)
+_PROPOSAL_RULE_RE = re.compile(r"^\s*- \*\*Rule:\*\*", re.MULTILINE)
+_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 
 
 def proposals_summary_line(memory_dir: Path) -> str:
     """One-line reminder that pending claude-md proposals exist, so the
     self-healing channel stays visible even when the full section is dropped
-    under budget pressure. Pending entries are ``## <timestamp>`` headings;
-    HTML comments and archived notes do not count. Empty string when none."""
+    under budget pressure. Counts individual ``- **Rule:**`` bullets to match
+    ``lh memory proposals list`` numbering; HTML comment blocks (archived
+    content) are stripped before counting. Empty string when none."""
     proposal_file = memory_dir / "claude-md.proposal.md"
     if not proposal_file.is_file():
         return ""
@@ -356,11 +359,13 @@ def proposals_summary_line(memory_dir: Path) -> str:
         raw = proposal_file.read_text()
     except OSError:
         return ""
-    dates = _PROPOSAL_ENTRY_RE.findall(raw)
-    if not dates:
+    visible = _HTML_COMMENT_RE.sub("", raw)
+    rules = _PROPOSAL_RULE_RE.findall(visible)
+    dates = _PROPOSAL_ENTRY_RE.findall(visible)
+    if not rules or not dates:
         return ""
     return (
-        f"⚠ {len(dates)} claude-md proposal(s) pending (oldest {min(dates)}) "
+        f"⚠ {len(rules)} claude-md proposal(s) pending (oldest {min(dates)}) "
         "— review: lh memory proposals"
     )
 
