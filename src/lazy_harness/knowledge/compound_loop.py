@@ -580,6 +580,43 @@ def collect_existing_failures(memory_dir: Path, limit: int = 10) -> str:
     return _collect_jsonl_summaries(memory_dir / "failures.jsonl", limit)
 
 
+def collect_recent_failures(memory_dir: Path, limit: int = 30) -> list[str]:
+    """Compact one-line renderings of the last `limit` failures.jsonl entries.
+
+    Feeds the failure-promotion section of the grading prompt (Phase 3b):
+    repeated root causes become [EVITAR] claude_md_proposals. Malformed or
+    summary-less lines are skipped.
+    """
+    path = memory_dir / "failures.jsonl"
+    if not path.is_file():
+        return []
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        return []
+    rendered: list[str] = []
+    for line in lines[-limit:]:
+        try:
+            d = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(d, dict):
+            continue
+        summary = d.get("summary", "")
+        if not summary:
+            continue
+        ts = d.get("ts", "")
+        date = ts[:10] if len(ts) >= 10 else "unknown"
+        details = []
+        if d.get("root_cause"):
+            details.append(f"root cause: {d['root_cause']}")
+        if d.get("prevention"):
+            details.append(f"prevention: {d['prevention']}")
+        tail = f" ({'; '.join(details)})" if details else ""
+        rendered.append(f"- {date}: {summary}{tail}")
+    return rendered
+
+
 def collect_rejected_proposals(memory_dir: Path, limit: int = 20) -> list[str]:
     """Rule lines from claude-md.rejected.md — the immunity registry (Phase 3c).
 
@@ -613,6 +650,7 @@ def build_prompt(
     summary: str,
     captured_insights: list[Insight] | None = None,
     rejected_proposals: list[str] | None = None,
+    recent_failures: list[str] | None = None,
 ) -> str:
     """Build the headless-Claude prompt. Ported verbatim from the bash worker
     to preserve the calibration of the evaluator — reword with care."""
@@ -632,6 +670,18 @@ def build_prompt(
             "equivalent to these:\n"
             f"{rejected}\n"
         )
+    failures_section = ""
+    if recent_failures:
+        rendered_failures = "\n".join(recent_failures)
+        failures_section = (
+            "\n## Recorded failures from previous sessions:\n"
+            f"{rendered_failures}\n"
+            "If this session's failures, or the recorded failures above, show "
+            "the same root cause occurring 2+ times, emit a claude_md_proposals "
+            "entry whose rule starts with `[EVITAR]` capturing the prevention. "
+            "Do not duplicate rules already proposed or listed in the rejected "
+            "section.\n"
+        )
     return f"""You are evaluating a Claude Code session for learnings. Analyze the conversation and output ONLY valid JSON.
 
 Project: {project_name}
@@ -647,7 +697,7 @@ Timestamp: {timestamp}
 
 ## Existing learnings already recorded (DO NOT repeat these or semantic equivalents):
 {existing_learnings}
-{insights_section}{rejected_section}
+{insights_section}{rejected_section}{failures_section}
 ## Session conversation:
 {summary}
 
@@ -1088,6 +1138,7 @@ def process_task(
         existing_learnings,
         summary,
         rejected_proposals=collect_rejected_proposals(memory_dir),
+        recent_failures=collect_recent_failures(memory_dir),
     )
 
     raw_output = invoke_llm(prompt, backend, cfg.model, cfg.timeout_seconds)
