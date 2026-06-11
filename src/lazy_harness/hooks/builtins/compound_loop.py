@@ -9,7 +9,6 @@ real work (LLM call, persistence) happens in the worker subprocess.
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from datetime import datetime
@@ -51,8 +50,9 @@ def main() -> None:
         pass
 
     try:
+        from lazy_harness.agents.registry import get_agent
         from lazy_harness.core.config import Config, ConfigError, load_config
-        from lazy_harness.core.paths import config_file
+        from lazy_harness.core.paths import agent_runtime_dir, config_file
         from lazy_harness.knowledge.compound_loop import (
             create_task,
             is_debounced,
@@ -62,13 +62,12 @@ def main() -> None:
     except ImportError:
         return
 
-    # Preliminary dir resolution for log file — config not yet loaded.
-    # The active agent sets its own env var before firing hooks, so reading
-    # CLAUDE_CONFIG_DIR here is correct for Claude Code; other agents will set
-    # their own env var and the log path will be re-resolved below once the
-    # agent type is known from config.
-    _pre_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
-    log_dir = _pre_dir / "logs"
+    # Preliminary dir resolution for log file — config not yet loaded, so the
+    # agent type is unknown and the Claude Code adapter is the bootstrap
+    # default (identical to the historical CLAUDE_CONFIG_DIR read). The log
+    # path is re-resolved below once the agent type is known from config.
+    boot_dir = agent_runtime_dir(get_agent("claude-code"))
+    log_dir = boot_dir / "logs"
     log_file = log_dir / "hooks.log"
 
     _log(log_file, f"fired cwd={Path.cwd()}")
@@ -86,12 +85,11 @@ def main() -> None:
         _log(log_file, "disabled in config, skipping")
         return
 
-    from lazy_harness.agents.registry import get_agent
-
     agent = get_agent(cfg.agent.type)
-    env_val = os.environ.get(agent.env_var()) if agent.env_var() else None
-    agent_dir = Path(env_val) if env_val else _pre_dir
+    agent_dir = agent_runtime_dir(agent)
     subdirs = agent.session_dirs()
+    log_dir = agent_dir / (subdirs.get("logs") or "logs")
+    log_file = log_dir / "hooks.log"
     queue_dir = agent_dir / (subdirs.get("queue") or "queue")
 
     cwd = Path.cwd()
