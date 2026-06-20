@@ -12,7 +12,7 @@ def _make_yaml(collections: dict[str, str]) -> str:
     for name, path in collections.items():
         lines.append(f"  {name}:")
         lines.append(f"    path: {path}")
-        lines.append('    context:')
+        lines.append("    context:")
         lines.append('      "": >')
         lines.append(f"        Descripción de {name}.")
     return "\n".join(lines) + "\n"
@@ -182,6 +182,38 @@ def test_regenerate_is_idempotent(tmp_path: Path) -> None:
     assert first_content == second_content
     # Delimiter appears exactly once per collection
     assert first_content.count("<!-- auto -->") == 1
+
+
+def test_regenerate_updates_literal_scalar_context(tmp_path: Path) -> None:
+    """Context blocks written with a literal scalar (`|`) must be updated in
+    place, not duplicated. A hand-edited index.yml may use `|` instead of `>`;
+    failing to recognize it appends a second `context:` key, which makes the
+    YAML unparseable (duplicate map keys)."""
+    from lazy_harness.knowledge.context_gen import DELIMITER, regenerate
+
+    coll_path = tmp_path / "coll"
+    _populate(coll_path, md_files=["a.md", "b.md", "c.md"], subdirs=["docs"])
+
+    config = tmp_path / "index.yml"
+    config.write_text(
+        "collections:\n"
+        "  coll:\n"
+        f"    path: {coll_path}\n"
+        "    context:\n"
+        '      "": |\n'
+        "        Descripción a mano.\n"
+    )
+
+    result = regenerate(config)
+
+    assert len(result.updated) == 1
+    content = config.read_text()
+    # The existing block was updated in place — no second context: key added.
+    assert content.count("context:") == 1
+    assert content.count(DELIMITER) == 1
+    assert "3 archivos .md" in content
+    assert "Contiene: docs" in content
+    assert "Descripción a mano." in content
 
 
 def test_regenerate_preserves_multiple_collections(tmp_path: Path) -> None:
