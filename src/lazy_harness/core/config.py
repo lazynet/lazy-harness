@@ -403,6 +403,9 @@ def load_config(path: Path) -> Config:
             ),
             grading_enabled=cl_raw.get("grading_enabled", CompoundLoopConfig.grading_enabled),
             lazymind_dir=cl_raw.get("lazymind_dir", CompoundLoopConfig.lazymind_dir),
+            slim_handoff_enabled=cl_raw.get(
+                "slim_handoff_enabled", CompoundLoopConfig.slim_handoff_enabled
+            ),
             backend=cl_raw.get("backend", CompoundLoopConfig.backend),
             backend_options={str(k): str(v) for k, v in cl_raw.get("backend_options", {}).items()},
         )
