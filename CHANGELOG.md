@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.1](https://github.com/lazynet/lazy-harness/compare/v0.23.0...v0.23.1) (2026-06-20)
+
+
+### Bug Fixes
+
+* recognize literal scalar context blocks in qmd context-gen ([#101](https://github.com/lazynet/lazy-harness/issues/101)) ([d5ad572](https://github.com/lazynet/lazy-harness/commit/d5ad572b7f57cc8265e8b828ebc73983d26b5084))
+
 ## [0.23.0](https://github.com/lazynet/lazy-harness/compare/v0.22.1...v0.23.0) (2026-06-11)
 
 
