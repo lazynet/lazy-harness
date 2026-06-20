@@ -23,6 +23,7 @@ from typing import Literal
 
 SLOW_SAVE_THRESHOLD_MS: int = 500
 TITLE_MAX_CHARS: int = 200
+SAVE_TIMEOUT_SECONDS: int = 30
 
 EntryKind = Literal["decision", "failure"]
 
@@ -131,7 +132,11 @@ def _save_entry(
     ]
     start = time.monotonic()
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, check=False, timeout=SAVE_TIMEOUT_SECONDS
+        )
+    except subprocess.TimeoutExpired as e:
+        return False, int((time.monotonic() - start) * 1000), str(e), -1
     except OSError as e:
         return False, int((time.monotonic() - start) * 1000), str(e), -1
     elapsed_ms = int((time.monotonic() - start) * 1000)
