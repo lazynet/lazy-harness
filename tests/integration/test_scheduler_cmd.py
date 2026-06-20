@@ -46,3 +46,23 @@ def test_scheduler_status_missing_config(home_dir: Path) -> None:
     result = runner.invoke(cli, ["scheduler", "status"])
     assert result.exit_code != 0
     assert "Error" in result.output
+
+
+def test_scheduler_install_unsupported_backend_fails_loud(home_dir: Path) -> None:
+    config_path = home_dir / ".config" / "lazy-harness" / "config.toml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text("""
+[harness]
+version = "1"
+
+[scheduler]
+backend = "cron"
+
+[scheduler.jobs.qmd-sync]
+schedule = "*/30 * * * *"
+command = "lh knowledge sync"
+""")
+    runner = CliRunner()
+    result = runner.invoke(cli, ["scheduler", "install"])
+    assert result.exit_code != 0
+    assert "Error" in result.output

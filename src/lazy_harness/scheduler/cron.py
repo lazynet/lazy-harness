@@ -7,7 +7,10 @@ from lazy_harness.scheduler.base import SchedulerJob
 
 class CronBackend:
     def install(self, jobs: list[SchedulerJob]) -> list[str]:
-        return [f"cron-{j.name}" for j in jobs]
+        raise NotImplementedError(
+            "cron scheduler backend is not implemented yet; only the launchd "
+            "(macOS) backend installs jobs. Install jobs manually until cron support lands."
+        )
 
     def uninstall(self, jobs: list[SchedulerJob]) -> list[str]:
         return []

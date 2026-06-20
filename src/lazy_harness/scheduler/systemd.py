@@ -7,7 +7,10 @@ from lazy_harness.scheduler.base import SchedulerJob
 
 class SystemdBackend:
     def install(self, jobs: list[SchedulerJob]) -> list[str]:
-        return [f"lazy-harness-{j.name}" for j in jobs]
+        raise NotImplementedError(
+            "systemd scheduler backend is not implemented yet; only the launchd "
+            "(macOS) backend installs jobs. Install jobs manually until systemd support lands."
+        )
 
     def uninstall(self, jobs: list[SchedulerJob]) -> list[str]:
         return []
