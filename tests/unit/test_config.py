@@ -321,6 +321,22 @@ enabled = true
     assert cfg.compound_loop.backend_options == {}
 
 
+def test_compound_loop_slim_handoff_parses_from_toml(config_dir: Path) -> None:
+    config_file = config_dir / "config.toml"
+    config_file.write_text("""
+[harness]
+version = "1"
+
+[compound_loop]
+enabled = true
+slim_handoff_enabled = false
+""")
+    from lazy_harness.core.config import load_config
+
+    cfg = load_config(config_file)
+    assert cfg.compound_loop.slim_handoff_enabled is False
+
+
 def test_context_inject_proposals_summary_defaults_when_missing() -> None:
     from lazy_harness.core.config import Config, ContextInjectConfig
 
