@@ -178,6 +178,38 @@ def test_persists_new_decision_entries_via_engram_save(tmp_path: Path) -> None:
     assert "--scope" in args and args[args.index("--scope") + 1] == "project"
 
 
+def test_save_timeout_is_handled_without_crashing(tmp_path: Path) -> None:
+    import subprocess
+
+    persister = _persister(tmp_path)
+    entries = [{"ts": "2026-05-04T11:00:00Z", "type": "decision", "summary": "hangs"}]
+    _seed_jsonl(persister.memory_dir, "decision", entries)
+
+    def fake_run(cmd: list[str], *a: object, **k: object) -> MagicMock:
+        if "save" in cmd:
+            raise subprocess.TimeoutExpired(cmd=cmd, timeout=30)
+        return MagicMock(returncode=0, stdout="engram 1.0.0", stderr="")
+
+    with patch("lazy_harness.knowledge.engram_persist.subprocess.run", side_effect=fake_run):
+        result = persister.persist_new_entries()
+
+    assert result.saved_ok == 0
+    assert result.saved_failed == 1
+
+
+def test_save_passes_a_timeout_to_subprocess(tmp_path: Path) -> None:
+    persister = _persister(tmp_path)
+    entries = [{"ts": "2026-05-04T11:00:00Z", "type": "decision", "summary": "x"}]
+    _seed_jsonl(persister.memory_dir, "decision", entries)
+
+    with patch("lazy_harness.knowledge.engram_persist.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        persister.persist_new_entries()
+
+    save_call = mock_run.call_args_list[0]
+    assert save_call.kwargs.get("timeout") is not None
+
+
 def test_persists_failure_entries_with_failure_type(tmp_path: Path) -> None:
     persister = _persister(tmp_path)
     entries = [
