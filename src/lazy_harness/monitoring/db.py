@@ -18,6 +18,12 @@ class MetricsDB:
             path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(path))
         self._conn.row_factory = sqlite3.Row
+        # WAL + a generous busy timeout let concurrent `lh` processes share the
+        # store without spurious "database is locked"; synchronous=NORMAL is the
+        # recommended durability/throughput tradeoff under WAL.
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA busy_timeout=30000")
+        self._conn.execute("PRAGMA synchronous=NORMAL")
         self._create_tables()
 
     def _create_tables(self) -> None:
@@ -306,6 +312,10 @@ class MetricsDB:
     ) -> list[OutboxRow]:
         now = time.time()
         lease_until = now + lease_seconds
+        # Acquire the write lock up front so the SELECT-then-UPDATE claim is
+        # atomic against other processes: a second claimer blocks here (on
+        # busy_timeout) instead of reading the same pending rows and double-sending.
+        self._conn.execute("BEGIN IMMEDIATE")
         candidates = self._conn.execute(
             """
             SELECT sink_name, event_id, payload_json, status, attempts,
