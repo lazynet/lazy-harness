@@ -58,7 +58,11 @@ def scheduler_install() -> None:
     if not jobs:
         console.print("No jobs configured. Add jobs in config.toml under [scheduler.jobs]")
         return
-    installed = backend.install(jobs)
+    try:
+        installed = backend.install(jobs)
+    except NotImplementedError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise SystemExit(1)
     for label in installed:
         console.print(f"  [green]✓[/green] {label}")
 
