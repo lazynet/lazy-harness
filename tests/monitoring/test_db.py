@@ -9,10 +9,7 @@ from lazy_harness.monitoring.db import MetricsDB
 def test_new_db_has_identity_columns(tmp_path: Path) -> None:
     db = MetricsDB(tmp_path / "m.db")
     try:
-        cols = {
-            row[1]
-            for row in db._conn.execute("PRAGMA table_info(session_stats)").fetchall()
-        }
+        cols = {row[1] for row in db._conn.execute("PRAGMA table_info(session_stats)").fetchall()}
     finally:
         db.close()
     assert "user_id" in cols
@@ -67,6 +64,36 @@ def test_migration_is_idempotent(tmp_path: Path) -> None:
     # Open a second time — should not raise on duplicate column.
     db = MetricsDB(path)
     db.close()
+
+
+def test_db_enables_wal_and_busy_timeout(tmp_path: Path) -> None:
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        journal_mode = db._conn.execute("PRAGMA journal_mode").fetchone()[0]
+        busy_timeout = db._conn.execute("PRAGMA busy_timeout").fetchone()[0]
+    finally:
+        db.close()
+    assert journal_mode.lower() == "wal"
+    assert busy_timeout == 30000
+
+
+def test_outbox_claim_acquires_write_lock_before_reading(tmp_path: Path) -> None:
+    """The claim must BEGIN IMMEDIATE before SELECTing candidates, so two
+    processes cannot both read the same pending rows before either commits."""
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.outbox_enqueue(sink_name="http_remote", event_id="e1", payload_json="{}")
+        seen: list[str] = []
+        db._conn.set_trace_callback(seen.append)
+        db.outbox_claim(sink_name="http_remote", batch_size=10, lease_seconds=60)
+    finally:
+        db._conn.set_trace_callback(None)
+        db.close()
+
+    upper = [s.upper() for s in seen]
+    begin_idx = next(i for i, s in enumerate(upper) if "BEGIN IMMEDIATE" in s)
+    select_idx = next(i for i, s in enumerate(upper) if "SELECT" in s and "SINK_OUTBOX" in s)
+    assert begin_idx < select_idx
 
 
 def test_outbox_enqueue_starts_pending(tmp_path: Path) -> None:
