@@ -111,7 +111,7 @@ def _parse_and_update(config_text: str, result: ContextGenResult) -> str:
             if re.match(r"^    context:$", curr):
                 out.append(curr)
                 i += 1
-                if i < len(lines) and re.match(r'^      ".*":\s*>', lines[i]):
+                if i < len(lines) and re.match(r'^      ".*":\s*[>|]', lines[i]):
                     out.append(lines[i])
                     i += 1
                     if i < len(lines) and lines[i].startswith("        "):
@@ -119,9 +119,7 @@ def _parse_and_update(config_text: str, result: ContextGenResult) -> str:
                         out.append(lines[i])
                         i += 1
                         while (
-                            i < len(lines)
-                            and lines[i].startswith("        ")
-                            and lines[i].strip()
+                            i < len(lines) and lines[i].startswith("        ") and lines[i].strip()
                         ):
                             out.append(lines[i])
                             i += 1
