@@ -43,6 +43,7 @@ Decisions that define the `lazy-harness` project itself.
 | [031](./031-default-hooks-merge.md) | accepted | Default hooks merge layer in `lh deploy` | Implicit default hook set merged per-event with user overrides; framework hooks deploy automatically on fresh init. |
 | [032](./032-agent-adapter-completeness.md) | accepted | Agent adapter completeness — closing Claude-specific leaks | Four new Protocol methods close seven locations where Claude-specific assumptions bypass the adapter seam. |
 | [033](./033-llm-backend-abstraction.md) | accepted | LLM backend abstraction — provider-agnostic inference | New `LLMBackend` Protocol decouples framework-internal inference from the agent CLI choice. Covers Ollama, MLX, and any OpenAI-compatible endpoint. Implemented 2026-06-11. |
+| [034](./034-okf-knowledge-producer.md) | proposed | OKF producer — export curated knowledge as an OKF bundle | New `knowledge/okf.py` + `lh knowledge export-okf` transform the `learnings/` layer into a conformant Open Knowledge Format v0.1 bundle. Export-only, non-invasive; episodic logs excluded. |
 
 ### Status values
 
@@ -52,7 +53,7 @@ Each active ADR carries one of the following statuses in its header. The column 
 |---|---|
 | `accepted` | Decision taken **and** embodied in code, config, or tests. Default state for a shipping decision. |
 | `accepted-deferred` | Decision taken and locked, but implementation is intentionally not yet scheduled. The ADR is not incomplete — its realisation is waiting for a specific trigger documented in the ADR itself. |
-| `proposed` | Written and reasoned, but not yet committed to. Open for revision. No active ADR currently holds this status. |
+| `proposed` | Written and reasoned, but not yet committed to. Open for revision. ADR-034 currently holds this status. |
 | `superseded-by: NNN` | Replaced by a later ADR. The record is kept for history; the pointer names its replacement. No active ADR currently holds this status. |
 
 New decisions default to `accepted` once they ship. A decision that turns out wrong is **superseded** by a new ADR rather than edited in place.
