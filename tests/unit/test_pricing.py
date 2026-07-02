@@ -125,3 +125,24 @@ def test_default_pricing_includes_fable_5() -> None:
         "cache_read": 1.0,
         "cache_create": 12.5,
     }
+
+
+def test_default_pricing_includes_sonnet_5() -> None:
+    """claude-sonnet-5 must carry the introductory $2/$10 per-million rates.
+
+    Sonnet 5 (released 2026-07) ships with an introductory price of $2/$10
+    per-million input/output that reverts to the standard $3/$15 on
+    2026-08-31 — bump these to 3.0/15.0 (cache 0.3/3.75) after that date.
+    Cache rates follow the table convention: read = 0.1x input, create =
+    1.25x input. Without this entry calculate_cost silently returns 0.0 for
+    all sonnet-5 sessions.
+    """
+    from lazy_harness.monitoring.pricing import default_pricing
+
+    pricing = default_pricing()
+    assert pricing["claude-sonnet-5"] == {
+        "input": 2.0,
+        "output": 10.0,
+        "cache_read": 0.2,
+        "cache_create": 2.5,
+    }
