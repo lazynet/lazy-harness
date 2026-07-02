@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.24.0](https://github.com/lazynet/lazy-harness/compare/v0.23.1...v0.24.0) (2026-07-02)
+
+
+### Features
+
+* add claude-sonnet-5 to default pricing ([#103](https://github.com/lazynet/lazy-harness/issues/103)) ([8100774](https://github.com/lazynet/lazy-harness/commit/810077471fa51f9a0c5bcb9a27b6deb30596accf))
+
 ## [0.23.1](https://github.com/lazynet/lazy-harness/compare/v0.23.0...v0.23.1) (2026-06-20)
 
 
