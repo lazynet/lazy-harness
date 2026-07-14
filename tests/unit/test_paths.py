@@ -101,3 +101,53 @@ def test_agent_runtime_dir_falls_back_to_dotted_agent_name(
 
     # NullAdapter has no env var and no global config link.
     assert agent_runtime_dir(NullAdapter()) == home_dir / ".null"
+
+
+def test_process_exec_path_creates_named_symlink_to_binary(home_dir: Path, tmp_path: Path) -> None:
+    from lazy_harness.core.paths import cache_dir, process_exec_path
+
+    binary = tmp_path / "versions" / "2.1.209"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("#!/bin/sh\n")
+
+    result = process_exec_path(binary, "claude")
+
+    assert result == cache_dir() / "bin" / "claude"
+    assert result.is_symlink()
+    assert result.resolve() == binary.resolve()
+
+
+def test_process_exec_path_relinks_when_binary_changes(home_dir: Path, tmp_path: Path) -> None:
+    from lazy_harness.core.paths import process_exec_path
+
+    old_binary = tmp_path / "versions" / "2.0.0"
+    old_binary.parent.mkdir(parents=True)
+    old_binary.write_text("old\n")
+    new_binary = tmp_path / "versions" / "2.1.0"
+    new_binary.write_text("new\n")
+
+    process_exec_path(old_binary, "claude")
+    result = process_exec_path(new_binary, "claude")
+
+    assert result.resolve() == new_binary.resolve()
+
+
+def test_process_exec_path_falls_back_to_binary_when_symlinks_unsupported(
+    home_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pathlib import Path as PathCls
+
+    from lazy_harness.core.paths import process_exec_path
+
+    binary = tmp_path / "versions" / "2.1.209"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("#!/bin/sh\n")
+
+    def raise_oserror(self: PathCls, target: object) -> None:
+        raise OSError("symlinks not supported")
+
+    monkeypatch.setattr(PathCls, "symlink_to", raise_oserror)
+
+    result = process_exec_path(binary, "claude")
+
+    assert result == binary

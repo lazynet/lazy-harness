@@ -50,6 +50,9 @@ class NullAdapter:
     def system_doc_name(self) -> str:
         return ""
 
+    def process_name(self) -> str:
+        return ""
+
 
 _AGENTS: dict[str, type] = {
     "claude-code": ClaudeCodeAdapter,

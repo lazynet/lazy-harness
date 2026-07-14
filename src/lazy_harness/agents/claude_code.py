@@ -111,6 +111,9 @@ class ClaudeCodeAdapter:
     def system_doc_name(self) -> str:
         return "CLAUDE.md"
 
+    def process_name(self) -> str:
+        return "claude"
+
     def generate_mcp_config(self, servers: dict[str, dict]) -> dict:
         normalized: dict[str, dict] = {}
         for name, entry in servers.items():

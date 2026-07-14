@@ -95,6 +95,32 @@ def contract_path(path: Path | str) -> str:
     return s
 
 
+def process_exec_path(binary: Path, name: str) -> Path:
+    """Resolve the path to exec so the OS-level process name reads `name`.
+
+    On Linux, the kernel derives a process's `comm` (what `ps -o comm=` and
+    `/proc/pid/comm` show) from the basename of the *executed file's path*,
+    not from argv[0]. To make that basename read `name` while still running
+    `binary`, this maintains a stable symlink `<cache_dir>/bin/<name>` ->
+    `binary` and returns the symlink path. Falls back to `binary` unchanged
+    if symlinks cannot be created (e.g. unsupported filesystem/platform).
+    """
+    shim_dir = cache_dir() / "bin"
+    link = shim_dir / name
+    try:
+        shim_dir.mkdir(parents=True, exist_ok=True)
+        if link.is_symlink() and link.resolve() == binary.resolve():
+            return link
+        tmp = shim_dir / f".{name}.{os.getpid()}.tmp"
+        if tmp.is_symlink() or tmp.exists():
+            tmp.unlink()
+        tmp.symlink_to(binary)
+        os.replace(tmp, link)
+    except OSError:
+        return binary
+    return link
+
+
 def agent_runtime_dir(agent: AgentAdapter) -> Path:
     """Resolve the agent's runtime config dir: adapter env var, else its global link.
 

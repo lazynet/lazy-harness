@@ -94,3 +94,12 @@ class AgentAdapter(Protocol):
         Return empty string for agents that use a different injection mechanism.
         """
         ...
+
+    def process_name(self) -> str:
+        """Process name to use as argv[0] when exec'ing the resolved binary.
+
+        Lets process-detection tools recognize the agent by name even when
+        `resolve_binary()` resolves to a versioned install path. Return empty
+        string to fall back to the resolved binary path as argv[0].
+        """
+        ...

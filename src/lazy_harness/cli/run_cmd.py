@@ -12,7 +12,7 @@ from rich.markup import escape
 
 from lazy_harness.agents.registry import AgentNotFoundError, get_agent
 from lazy_harness.core.config import ConfigError, load_config
-from lazy_harness.core.paths import config_file, expand_path
+from lazy_harness.core.paths import config_file, expand_path, process_exec_path
 from lazy_harness.core.profiles import resolve_profile
 
 
@@ -51,9 +51,7 @@ def run(
         for name, entry in cfg.profiles.items.items():
             marker = "*" if name == cfg.profiles.default else " "
             roots = ", ".join(entry.roots) if entry.roots else "—"
-            console.print(
-                f"{marker} {name:12} {escape(entry.config_dir):30} \\[{escape(roots)}]"
-            )
+            console.print(f"{marker} {name:12} {escape(entry.config_dir):30} \\[{escape(roots)}]")
         return
 
     if not cfg.profiles.items:
@@ -85,7 +83,9 @@ def run(
     env = os.environ.copy()
     env[adapter.env_var()] = str(config_dir)
 
-    exec_args = [str(binary), *args]
+    process_name = adapter.process_name()
+    argv0 = process_name or str(binary)
+    exec_args = [argv0, *args]
 
     if dry_run:
         console.print(f"profile: [bold]{escape(profile_name)}[/bold]")
@@ -100,4 +100,5 @@ def run(
         if profile_name != cfg.profiles.default:
             console.print(f"[dim]lh run: profile '{profile_name}'[/dim]")
 
-    os.execvpe(str(binary), exec_args, env)
+    exec_file = process_exec_path(binary, process_name) if process_name else binary
+    os.execvpe(str(exec_file), exec_args, env)
