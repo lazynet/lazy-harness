@@ -240,3 +240,9 @@ def test_claude_adapter_system_doc_name() -> None:
     from lazy_harness.agents.claude_code import ClaudeCodeAdapter
 
     assert ClaudeCodeAdapter().system_doc_name() == "CLAUDE.md"
+
+
+def test_claude_adapter_process_name() -> None:
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    assert ClaudeCodeAdapter().process_name() == "claude"

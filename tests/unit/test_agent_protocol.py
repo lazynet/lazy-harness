@@ -29,3 +29,4 @@ def test_null_adapter_satisfies_protocol() -> None:
     assert adapter.mcp_config_file() == ""
     assert adapter.system_doc_name() == ""
     assert adapter.session_dirs() == {"sessions": "", "logs": "", "queue": ""}
+    assert adapter.process_name() == ""
