@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.24.1](https://github.com/lazynet/lazy-harness/compare/v0.24.0...v0.24.1) (2026-07-14)
+
+
+### Bug Fixes
+
+* preserve agent process name across argv0 and Linux comm ([#107](https://github.com/lazynet/lazy-harness/issues/107)) ([9cb7d0f](https://github.com/lazynet/lazy-harness/commit/9cb7d0f11903e7c2233a1ea428cd8439be839384))
+
+
+### Documentation
+
+* **specs:** add ADR-034 OKF knowledge producer proposal ([#105](https://github.com/lazynet/lazy-harness/issues/105)) ([c812643](https://github.com/lazynet/lazy-harness/commit/c812643e35fd4fdf0e69ab93acc4cc8e84e4d2bf))
+
 ## [0.24.0](https://github.com/lazynet/lazy-harness/compare/v0.23.1...v0.24.0) (2026-07-02)
 
 
