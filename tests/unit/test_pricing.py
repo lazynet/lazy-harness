@@ -146,3 +146,37 @@ def test_default_pricing_includes_sonnet_5() -> None:
         "cache_read": 0.2,
         "cache_create": 2.5,
     }
+
+
+def test_default_pricing_includes_opus_5() -> None:
+    """claude-opus-5 must carry the standard $5/$25 Opus-tier rates.
+
+    Opus 5 (released 2026-07) is a drop-in upgrade at Opus 4.8's pricing.
+    Cache rates follow the table convention: read = 0.1x input, create =
+    1.25x input. Without this entry calculate_cost silently returns 0.0 for
+    all opus-5 sessions.
+    """
+    from lazy_harness.monitoring.pricing import default_pricing
+
+    pricing = default_pricing()
+    assert pricing["claude-opus-5"] == {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.5,
+        "cache_create": 6.25,
+    }
+
+
+def test_calculate_cost_opus_5_is_not_free() -> None:
+    """An opus-5 session must produce a non-zero cost.
+
+    Regression guard for the silent-zero path: calculate_cost returns 0.0
+    for any model missing from the pricing table, so an unpriced opus-5
+    session is indistinguishable from a free one on `lh status`.
+    """
+    from lazy_harness.monitoring.pricing import calculate_cost, default_pricing
+
+    tokens = {"input": 1000, "output": 500, "cache_read": 2000, "cache_create": 100}
+    cost = calculate_cost("claude-opus-5", tokens, default_pricing())
+    expected = (1000 * 5.0 + 500 * 25.0 + 2000 * 0.5 + 100 * 6.25) / 1_000_000
+    assert abs(cost - expected) < 0.000001
