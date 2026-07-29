@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.24.2](https://github.com/lazynet/lazy-harness/compare/v0.24.1...v0.24.2) (2026-07-29)
+
+
+### Bug Fixes
+
+* add claude-opus-5 to default pricing table ([#111](https://github.com/lazynet/lazy-harness/issues/111)) ([ba15411](https://github.com/lazynet/lazy-harness/commit/ba1541119cfa5895e6800a0521264a1803bf5a03))
+
 ## [0.24.1](https://github.com/lazynet/lazy-harness/compare/v0.24.0...v0.24.1) (2026-07-14)
 
 
