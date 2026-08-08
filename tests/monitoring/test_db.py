@@ -3,6 +3,8 @@ import sqlite3
 import time
 from pathlib import Path
 
+import pytest
+
 from lazy_harness.monitoring.db import MetricsDB
 
 
@@ -94,6 +96,33 @@ def test_outbox_claim_acquires_write_lock_before_reading(tmp_path: Path) -> None
     begin_idx = next(i for i, s in enumerate(upper) if "BEGIN IMMEDIATE" in s)
     select_idx = next(i for i, s in enumerate(upper) if "SELECT" in s and "SINK_OUTBOX" in s)
     assert begin_idx < select_idx
+
+
+def test_outbox_claim_rolls_back_when_the_claim_fails(tmp_path: Path) -> None:
+    """A failure inside the claim must not leave the connection in a transaction.
+
+    `BEGIN IMMEDIATE` takes a RESERVED lock; if the claim aborts without a
+    rollback, the lock is held until the connection dies — the next claim on
+    this connection fails with "cannot start a transaction within a
+    transaction" and other processes see "database is locked".
+    """
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.outbox_enqueue(sink_name="http_remote", event_id="e1", payload_json="{}")
+        # Make the UPDATE half of the claim fail the way a constraint or a disk
+        # error would: the statement aborts, the transaction stays open.
+        db._conn.execute(
+            "CREATE TRIGGER fail_claim BEFORE UPDATE ON sink_outbox "
+            "BEGIN SELECT RAISE(ABORT, 'injected claim failure'); END"
+        )
+        db._conn.commit()
+
+        with pytest.raises(sqlite3.DatabaseError):
+            db.outbox_claim(sink_name="http_remote", batch_size=10, lease_seconds=60)
+
+        assert db._conn.in_transaction is False
+    finally:
+        db.close()
 
 
 def test_outbox_enqueue_starts_pending(tmp_path: Path) -> None:
