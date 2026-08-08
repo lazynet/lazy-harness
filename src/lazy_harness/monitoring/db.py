@@ -316,44 +316,51 @@ class MetricsDB:
         # atomic against other processes: a second claimer blocks here (on
         # busy_timeout) instead of reading the same pending rows and double-sending.
         self._conn.execute("BEGIN IMMEDIATE")
-        candidates = self._conn.execute(
-            """
-            SELECT sink_name, event_id, payload_json, status, attempts,
-                   last_error, next_attempt_ts, lease_until
-            FROM sink_outbox
-            WHERE sink_name = ?
-              AND (
-                (status = 'pending' AND (next_attempt_ts IS NULL OR next_attempt_ts <= ?))
-                OR (status = 'sending' AND (lease_until IS NULL OR lease_until <= ?))
-              )
-            ORDER BY created_ts ASC
-            LIMIT ?
-            """,
-            (sink_name, now, now, batch_size),
-        ).fetchall()
-        claimed: list[OutboxRow] = []
-        for row in candidates:
-            self._conn.execute(
+        try:
+            candidates = self._conn.execute(
                 """
-                UPDATE sink_outbox
-                SET status = 'sending', lease_until = ?
-                WHERE sink_name = ? AND event_id = ?
+                SELECT sink_name, event_id, payload_json, status, attempts,
+                       last_error, next_attempt_ts, lease_until
+                FROM sink_outbox
+                WHERE sink_name = ?
+                  AND (
+                    (status = 'pending' AND (next_attempt_ts IS NULL OR next_attempt_ts <= ?))
+                    OR (status = 'sending' AND (lease_until IS NULL OR lease_until <= ?))
+                  )
+                ORDER BY created_ts ASC
+                LIMIT ?
                 """,
-                (lease_until, row["sink_name"], row["event_id"]),
-            )
-            claimed.append(
-                OutboxRow(
-                    sink_name=row["sink_name"],
-                    event_id=row["event_id"],
-                    payload_json=row["payload_json"],
-                    status="sending",
-                    attempts=row["attempts"],
-                    last_error=row["last_error"],
-                    next_attempt_ts=row["next_attempt_ts"],
-                    lease_until=lease_until,
+                (sink_name, now, now, batch_size),
+            ).fetchall()
+            claimed: list[OutboxRow] = []
+            for row in candidates:
+                self._conn.execute(
+                    """
+                    UPDATE sink_outbox
+                    SET status = 'sending', lease_until = ?
+                    WHERE sink_name = ? AND event_id = ?
+                    """,
+                    (lease_until, row["sink_name"], row["event_id"]),
                 )
-            )
-        self._conn.commit()
+                claimed.append(
+                    OutboxRow(
+                        sink_name=row["sink_name"],
+                        event_id=row["event_id"],
+                        payload_json=row["payload_json"],
+                        status="sending",
+                        attempts=row["attempts"],
+                        last_error=row["last_error"],
+                        next_attempt_ts=row["next_attempt_ts"],
+                        lease_until=lease_until,
+                    )
+                )
+            self._conn.commit()
+        except BaseException:
+            # Without this the RESERVED lock survives the failure: the next
+            # claim on this connection cannot BEGIN, and other processes see
+            # "database is locked".
+            self._conn.rollback()
+            raise
         return claimed
 
     def outbox_mark_sent(self, sink_name: str, event_id: str) -> None:
