@@ -21,6 +21,8 @@ from lazy_harness.core.sync_agent_md import sync_profiles
 # make these dynamic; for now the hook name intentionally stays claude-specific.
 SEGMENT_FILES = {"CLAUDE.head.md", "CLAUDE.tail.md", "CLAUDE.common.md"}
 
+DEFAULT_AGENT_TYPE = "claude-code"
+
 
 def _read_stdin_json() -> dict[str, Any]:
     try:
@@ -61,12 +63,19 @@ def main() -> None:
         sys.exit(0)
     try:
         from lazy_harness.agents.registry import get_agent
-        from lazy_harness.core.config import load_config
+        from lazy_harness.core.config import ConfigError, load_config
         from lazy_harness.core.paths import config_file
 
-        cfg = load_config(config_file())
-        agent = get_agent(cfg.agent.type)
-        sync_profiles(profiles_dir, agent)
+        # A missing or unreadable config must not silently cancel the sync:
+        # fall back to the default adapter, as context_inject does.
+        agent_type = DEFAULT_AGENT_TYPE
+        cf = config_file()
+        if cf.is_file():
+            try:
+                agent_type = load_config(cf).agent.type
+            except ConfigError:
+                pass
+        sync_profiles(profiles_dir, get_agent(agent_type))
     except Exception:
         pass
     sys.exit(0)

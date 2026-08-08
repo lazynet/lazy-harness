@@ -14,6 +14,16 @@ def _payload(tool: str, path: str) -> str:
     return json.dumps({"tool_name": tool, "tool_input": {"file_path": path}})
 
 
+@pytest.fixture(autouse=True)
+def _no_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point config resolution at an empty dir — a machine with no config.toml.
+
+    Without this the hook reads whatever config the developer happens to have,
+    so the suite only ever exercised the configured path.
+    """
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path / "config"))
+
+
 def test_triggers_on_head_edit_under_profiles(monkeypatch: pytest.MonkeyPatch) -> None:
     from lazy_harness.hooks.builtins import post_tool_use_sync_claude as mod
 
@@ -31,6 +41,8 @@ def test_triggers_on_head_edit_under_profiles(monkeypatch: pytest.MonkeyPatch) -
     fake_sync.assert_called_once()
     args = fake_sync.call_args[0]
     assert args[0] == Path("/x/.config/lazy-harness/profiles")
+    # No config.toml → fall back to the default adapter rather than skipping.
+    assert args[1].name == "claude-code"
 
 
 def test_triggers_on_tail_write_under_profiles(monkeypatch: pytest.MonkeyPatch) -> None:
