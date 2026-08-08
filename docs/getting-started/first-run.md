@@ -42,7 +42,7 @@ Run `lh doctor` to verify your setup.
 ```bash
 lh doctor     # system prerequisites
 lh selftest   # framework integrity
-lh profile ls # list configured profiles
+lh profile list # list configured profiles
 ```
 
 All three should exit 0 with green output.
@@ -68,7 +68,7 @@ Your profile lives at `~/.config/lazy-harness/profiles/personal/`. Edit:
 - `skills/` — custom skills
 - `commands/` — custom slash commands
 
-After editing, run `lh profile deploy` to refresh the symlinks into `~/.claude-personal/`.
+After editing, run `lh deploy` to refresh the symlinks into `~/.claude-personal/`.
 
 ## Versioning your profile
 
