@@ -9,6 +9,5 @@ build/
 site/
 .worktrees/
 
-# graphify regenerable cache (graph.json/html/report are committed)
-graphify-out/cache/
-graphify-out/.graphify_python
+# graphify-out artifacts: generated output, not for versioning (prevents churn from .graphify_root path changes and graph.json size)
+graphify-out/
