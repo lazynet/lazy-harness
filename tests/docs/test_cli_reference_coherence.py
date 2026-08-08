@@ -1,8 +1,14 @@
-"""Deterministic coherence check: docs/reference/cli.md vs the click command tree.
+"""Deterministic coherence check: every doc under docs/** vs the click command tree.
 
-Direction is doc ⊆ code (lax): every `lh <command> [subcommand]` named in the doc
-must resolve against `lazy_harness.cli.main.cli`. The reverse is not checked —
-plenty of subcommands are intentionally undocumented.
+Direction is doc ⊆ code (lax): every `lh <command> [subcommand]` named anywhere
+under docs/ must resolve against `lazy_harness.cli.main.cli`. The reverse is not
+checked — plenty of subcommands are intentionally undocumented.
+
+Scoped to all of docs/**, not just docs/reference/cli.md: the design spec's own
+motivating example of deterministic drift (`docs/getting-started/first-run.md`
+naming `lh profile deploy` / `lh profile ls`, neither of which exists) lives
+outside the CLI reference page. A scan limited to cli.md would ship green while
+that exemplar drift stayed uncaught.
 
 Doc anchors this test depends on (a doc restructure that breaks these should fail
 loudly, not silently extract nothing):
@@ -17,7 +23,7 @@ from pathlib import Path
 
 import click
 
-CLI_MD = Path(__file__).parent.parent.parent / "docs" / "reference" / "cli.md"
+DOCS_DIR = Path(__file__).parent.parent.parent / "docs"
 
 _FENCED_BASH_BLOCK = re.compile(r"```bash\n(.*?)```", re.DOTALL)
 _INLINE_LH_SPAN = re.compile(r"`(lh [^`\n]+)`")
@@ -82,6 +88,21 @@ def find_missing_lh_invocations(root: click.Group, doc_text: str) -> list[str]:
             missing.append(invocation)
 
     return missing
+
+
+def find_missing_lh_invocations_in_docs(root: click.Group, docs_dir: Path) -> dict[str, list[str]]:
+    """Run `find_missing_lh_invocations` over every markdown file under `docs_dir`.
+
+    Returns `{relative_path: [bad_invocation, ...]}` for files with at least
+    one unresolved invocation; files with none are omitted.
+    """
+    result: dict[str, list[str]] = {}
+    for path in sorted(docs_dir.rglob("*.md")):
+        doc_text = path.read_text(encoding="utf-8")
+        missing = find_missing_lh_invocations(root, doc_text)
+        if missing:
+            result[str(path.relative_to(docs_dir.parent))] = missing
+    return result
 
 
 def test_self_test_extractor_flags_only_the_bad_invocation() -> None:
@@ -208,13 +229,21 @@ Slash shorthand: `lh profile add/remove`.
 def test_cli_reference_commands_exist_in_the_click_tree() -> None:
     from lazy_harness.cli.main import cli
 
-    doc_text = CLI_MD.read_text(encoding="utf-8")
-    invocations = _extract_lh_invocations(doc_text)
+    doc_files = sorted(DOCS_DIR.rglob("*.md"))
+    total_invocations = sum(
+        len(_extract_lh_invocations(path.read_text(encoding="utf-8"))) for path in doc_files
+    )
 
-    # Guards the anchor: if docs/reference/cli.md is restructured so no ```bash
-    # block or inline `lh ...` span survives, this must fail loudly rather than
-    # silently pass with zero candidates checked.
-    assert len(invocations) > 10
+    # Guards the anchor set: if docs/** is restructured so fenced ```bash blocks
+    # and inline `lh ...` spans mostly stop matching, this must fail loudly
+    # rather than silently checking almost nothing. Proportionate to the doc
+    # tree's real, measured count (245 at the time of writing) — not the old
+    # arbitrary ">10" against ~100, which would have missed an anchor shape
+    # break that dropped 89 out of every 100 invocations. Some headroom is
+    # kept because normal prose edits nudge this count by a handful over time;
+    # it is not the fixed, enumerable anchor list the config test guards
+    # exactly.
+    assert total_invocations > 200
 
-    missing = find_missing_lh_invocations(cli, doc_text)
-    assert missing == []
+    missing = find_missing_lh_invocations_in_docs(cli, DOCS_DIR)
+    assert missing == {}
