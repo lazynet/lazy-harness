@@ -77,11 +77,11 @@ backend = "auto"
 schedule = "0 9 * * 1"
 command = "lh knowledge sync"
 
-[hooks.SessionStart]
-scripts = ["lh hook session-context"]
+[hooks.session_start]
+scripts = ["context-inject"]
 
-[hooks.Stop]
-scripts = ["lh hook compound-loop"]
+[hooks.session_stop]
+scripts = ["compound-loop"]
 
 [compound_loop]
 enabled = true
@@ -266,20 +266,20 @@ The job's `name` is the TOML key — there is no `name` field inside the table.
 
 ## `[hooks.<event>]`
 
-The `[hooks]` table is keyed by Claude Code hook event name (`SessionStart`, `PreCompact`, `Stop`, `UserPromptSubmit`, etc.). Each event sub-table has a single field:
+The `[hooks]` table is keyed by the `config.toml` event name (`session_start`, `pre_compact`, `session_stop`, etc. — snake_case; see the [event glossary](../how/hooks.md#event-glossary) for the full mapping to Claude Code's own `SessionStart`/`Stop`/... names). Each event sub-table has a single field:
 
-| Field     | Type            | Default | Required | Description                                                                         |
-| --------- | --------------- | ------- | -------- | ----------------------------------------------------------------------------------- |
-| `scripts` | list of strings | `[]`    | no       | Commands to run for this event, in order. Typically `lh hook <name>` for built-ins. |
+| Field     | Type            | Default | Required | Description                                                                                                                          |
+| --------- | --------------- | ------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `scripts` | list of strings | `[]`    | no       | Bare built-in hook names to run for this event, in order (e.g. `context-inject`, not `lh hook context-inject`). A name that does not resolve against the built-in registry or a user hook is silently skipped. |
 
 Example:
 
 ```toml
-[hooks.SessionStart]
-scripts = ["lh hook session-context"]
+[hooks.session_start]
+scripts = ["context-inject"]
 
-[hooks.Stop]
-scripts = ["lh hook compound-loop"]
+[hooks.session_stop]
+scripts = ["compound-loop"]
 ```
 
 ### `[hooks.pre_tool_use]` — security hook overrides
