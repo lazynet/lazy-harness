@@ -33,10 +33,29 @@ class BlockDecision:
     matched_text: str
 
 
+# A command word starts the line, follows a shell operator, or follows a wrapper
+# that execs its argument. Anchoring here keeps the rules from firing on command
+# names that merely *mention* a dangerous command inside a quoted argument.
+_COMMAND_START = (
+    r"(?:^|[;&|(`]\s*|\b(?:sudo|doas|xargs|time|env|nohup)\s+"
+    r"|\b(?:ba|z|k)?sh\s+-c\s+['\"]?)(?:\S*/)?"
+)
+# Short flags cluster (-rf, -fr, -rfv) or the long spelling, never both letters
+# assumed from a single one: recursion and force are matched independently so
+# `rm -f file` and `rm -r dir` both stay allowed.
+_RM_RECURSIVE_FLAG = r"(?:-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)\b"
+_RM_FORCE_FLAG = r"(?:-[a-zA-Z]*f[a-zA-Z]*|--force)\b"
+_RM_OPTION = r"(?:-[a-zA-Z]+|--[a-z][a-z-]*)"
+
 BLOCK_RULES: tuple[BlockRule, ...] = (
     BlockRule(
         category="filesystem",
-        pattern=re.compile(r"\brm\s+-\S*f\S*\b.+"),
+        pattern=re.compile(
+            _COMMAND_START + r"rm\s+"
+            rf"(?=(?:{_RM_OPTION}\s+)*{_RM_RECURSIVE_FLAG})"
+            rf"(?=(?:{_RM_OPTION}\s+)*{_RM_FORCE_FLAG})"
+            r"\S+.*"
+        ),
         reason="Recursive delete",
     ),
     BlockRule(

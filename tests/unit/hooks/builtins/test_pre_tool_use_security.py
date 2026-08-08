@@ -53,8 +53,28 @@ BLOCK_CASES: list[tuple[str, str | None, str]] = [
     ("rm -rf /", "filesystem", "rm -rf root"),
     ("rm -rf /tmp/foo", "filesystem", "rm -rf /tmp path"),
     ("rm -rf ./build", "filesystem", "rm -rf relative"),
+    ("rm -fr ./build", "filesystem", "rm -fr reversed cluster"),
+    ("rm -r -f ./build", "filesystem", "rm -r -f split flags"),
+    ("rm -f -r ./build", "filesystem", "rm -f -r split flags reversed"),
+    ("rm --recursive --force ./build", "filesystem", "rm long flags"),
+    ("rm -rfv ./build", "filesystem", "rm -rfv extra letter"),
     ("rm file.txt", None, "plain rm single file"),
     ("rm -r dir", None, "rm -r without -f"),
+    ("rm -f single.txt", None, "rm -f without -r"),
+    ("rm -fv single.txt", None, "rm -fv without -r"),
+    ("rm --force single.txt", None, "rm --force without recursive"),
+    ("rm -i single.txt", None, "rm interactive"),
+    ('grep -rn "rm -rf" src', None, "rm -rf quoted inside another command"),
+    ("echo 'rm -rf /tmp'", None, "rm -rf inside echo string"),
+    ("./scripts/confirm -rf x", None, "rm as suffix of another command name"),
+    ("rm -rf ./build && echo done", "filesystem", "rm -rf first in chain"),
+    ("cd /tmp && rm -rf ./build", "filesystem", "rm -rf after && operator"),
+    ("cd /tmp; rm -rf ./build", "filesystem", "rm -rf after ; operator"),
+    ("cat list | xargs rm -rf", "filesystem", "rm -rf as xargs target"),
+    ("sudo rm -rf /var/lib/foo", "filesystem", "rm -rf under sudo"),
+    ("/bin/rm -rf ./build", "filesystem", "rm -rf by absolute path"),
+    ('bash -c "rm -rf /"', "filesystem", "rm -rf wrapped in bash -c"),
+    ('git commit -m "fix: rm -rf guard pattern"', None, "rm -rf inside commit message"),
     ("truncate -s 0 log.txt", "filesystem", "truncate with size"),
     # Git
     ("git push --force origin main", "git", "force push plain"),
@@ -94,9 +114,7 @@ BLOCK_CASES: list[tuple[str, str | None, str]] = [
     BLOCK_CASES,
     ids=[c[2] for c in BLOCK_CASES],
 )
-def test_should_block_matrix(
-    command: str, expected_category: str | None, label: str
-) -> None:
+def test_should_block_matrix(command: str, expected_category: str | None, label: str) -> None:
     from lazy_harness.hooks.builtins.pre_tool_use_security import should_block
 
     decision = should_block(command, allow_patterns=[])
@@ -196,7 +214,7 @@ def test_load_allowlist_reads_patterns_from_config_toml(
 
     cfg = tmp_path / "config.toml"
     cfg.write_text(
-        '[hooks.pre_tool_use]\n'
+        "[hooks.pre_tool_use]\n"
         'scripts = ["pre-tool-use-security"]\n'
         'allow_patterns = ["\\\\.worktrees/", "/tmp/"]\n'
     )
@@ -210,7 +228,7 @@ def test_load_allowlist_returns_empty_when_section_missing(
     from lazy_harness.hooks.builtins.pre_tool_use_security import _load_allowlist
 
     cfg = tmp_path / "config.toml"
-    cfg.write_text('[monitoring]\nenabled = true\n')
+    cfg.write_text("[monitoring]\nenabled = true\n")
     monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
     assert _load_allowlist() == []
 
@@ -233,9 +251,7 @@ def test_main_exits_zero_when_tool_is_not_bash(
 
     from lazy_harness.hooks.builtins import pre_tool_use_security as mod
 
-    monkeypatch.setattr(
-        "sys.stdin", io.StringIO('{"tool_name": "Read", "tool_input": {}}')
-    )
+    monkeypatch.setattr("sys.stdin", io.StringIO('{"tool_name": "Read", "tool_input": {}}'))
     with pytest.raises(SystemExit) as exc_info:
         mod.main()
     assert exc_info.value.code == 0
@@ -268,9 +284,7 @@ def test_main_exits_two_and_writes_stderr_on_block(
     monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
     monkeypatch.setattr(
         "sys.stdin",
-        io.StringIO(
-            '{"tool_name": "Bash", "tool_input": {"command": "rm -rf /tmp/foo"}}'
-        ),
+        io.StringIO('{"tool_name": "Bash", "tool_input": {"command": "rm -rf /tmp/foo"}}'),
     )
     with pytest.raises(SystemExit) as exc_info:
         mod.main()
@@ -280,9 +294,7 @@ def test_main_exits_two_and_writes_stderr_on_block(
     assert "filesystem" in captured.err
 
 
-def test_main_exits_zero_on_empty_stdin(
-    monkeypatch: pytest.MonkeyPatch, tmp_path
-) -> None:
+def test_main_exits_zero_on_empty_stdin(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     import io
 
     from lazy_harness.hooks.builtins import pre_tool_use_security as mod
