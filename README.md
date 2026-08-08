@@ -50,7 +50,7 @@ AI coding agents ship as a chat interface and a file tool. That's enough for a d
 | **Hooks** | Cross-platform hook engine with built-ins for session-start context injection, pre-compact summaries, session export and compound-loop enforcement. Bring your own via `config.toml`. | `lh hooks list` |
 | **Monitoring** | SQLite-backed metrics on every session — duration, tokens, tools, cost. Ten built-in dashboard views. | `lh status sessions --period week` |
 | **Knowledge** | Filesystem knowledge directory for sessions and distilled learnings, optionally indexed by [QMD](https://github.com/tobi/qmd) for semantic search. | `lh knowledge sync && lh knowledge embed` |
-| **Scheduler** | One interface over launchd, systemd and cron. Declare jobs in TOML; the harness writes the native unit files. | `lh scheduler install` |
+| **Scheduler** | Declare jobs in TOML; the harness writes the native unit files. launchd (macOS) only for now — the systemd and cron backends are not implemented yet. | `lh scheduler install` |
 | **Migration** | Take an existing Claude Code setup and convert it in place — dry-run gate, full backup, one-command rollback. | `lh migrate --dry-run` |
 
 A typical `~/.config/lazy-harness/config.toml` is small:
