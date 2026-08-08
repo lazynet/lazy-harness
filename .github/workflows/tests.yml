@@ -30,10 +30,29 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --group dev
+        run: uv sync --group dev --python ${{ matrix.python-version }}
 
       - name: Run tests
-        run: uv run pytest
+        run: uv run --python ${{ matrix.python-version }} pytest
 
       - name: Run ruff
-        run: uv run ruff check src tests
+        run: uv run --python ${{ matrix.python-version }} ruff check src tests
+
+  # Third leg of the pre-commit gate. docs.yml only runs on push to main, so
+  # without this no pull request would ever build the docs.
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Install docs dependencies
+        run: uv sync --group docs --python 3.11
+
+      - name: Build site
+        run: uv run --python 3.11 mkdocs build --strict
