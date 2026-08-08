@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.25.0](https://github.com/lazynet/lazy-harness/compare/v0.24.3...v0.25.0) (2026-08-08)
+
+
+### Features
+
+* add coherence-audit slash command for semantic spec drift ([259075f](https://github.com/lazynet/lazy-harness/commit/259075fda497c430b6e67caab65851ef41623f83))
+
+
+### Bug Fixes
+
+* add timeout to engram save subprocess call ([35be7d6](https://github.com/lazynet/lazy-harness/commit/35be7d6f6dd5e35cdbe29e8568b5ee0518133ff7))
+* fail loudly on unimplemented scheduler backends ([735b19b](https://github.com/lazynet/lazy-harness/commit/735b19b8a0d88d29911d527bbd6d69e66eb3169e))
+* **hooks:** sync CLAUDE.md segments when no config.toml exists ([e3dfe0d](https://github.com/lazynet/lazy-harness/commit/e3dfe0dda2dd88dbe3db2c62c499ace18de93cdc))
+* make metrics outbox claim atomic with WAL and BEGIN IMMEDIATE ([08365e5](https://github.com/lazynet/lazy-harness/commit/08365e5bbf776353af1dc6549dbefc740fb11585))
+* parse slim_handoff_enabled from compound_loop config ([cbf884a](https://github.com/lazynet/lazy-harness/commit/cbf884ac202c6c9092075c34e58f292b42fe7d13))
+* roll back the outbox claim transaction on failure ([63accbd](https://github.com/lazynet/lazy-harness/commit/63accbd16b402344f2f05eba655d10204f80f038))
+
+
+### Documentation
+
+* correct the scheduler passage in the CLI reference ([fc6b139](https://github.com/lazynet/lazy-harness/commit/fc6b13964fab5d6073dc23c6a44814d5b04df155))
+* document compound_loop.slim_handoff_enabled ([e5db3d3](https://github.com/lazynet/lazy-harness/commit/e5db3d35d68cf3c48cfb109e0edb21605af58908))
+* **getting-started:** fix drifted lh profile/scheduler subcommands ([09e2f08](https://github.com/lazynet/lazy-harness/commit/09e2f08e4b6a346a2e7571767b553476af6bcbdf))
+* match Piece A spec to the shipped docs-wide CLI coherence scan ([e7494f1](https://github.com/lazynet/lazy-harness/commit/e7494f1bac8c7ec8af96403b4026ac5493a87a6b))
+* **reference:** fix internally-contradictory hooks example in config.md ([363f68b](https://github.com/lazynet/lazy-harness/commit/363f68b501f9b38977aa94a303b0b75d193178ea))
+* **specs:** add coherence-audit design ([913aa9f](https://github.com/lazynet/lazy-harness/commit/913aa9fbe78d677feda433ee2ba3c16dad6865e1))
+* state that only the launchd scheduler backend installs jobs ([25eb0dc](https://github.com/lazynet/lazy-harness/commit/25eb0dc8b75316065d2d8c24bb8ce5b76ade31fd))
+* use the real ADR status form in the coherence-audit command ([b6b7578](https://github.com/lazynet/lazy-harness/commit/b6b7578796bd3b368fe35efeb16cf9f9e3c3fc42))
+
 ## [0.24.3](https://github.com/lazynet/lazy-harness/compare/v0.24.2...v0.24.3) (2026-08-08)
 
 
