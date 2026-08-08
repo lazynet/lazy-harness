@@ -94,7 +94,7 @@ If any of these break, the numbers in `lh status` stop being trustworthy. They r
 
 ## Running it on a schedule
 
-The harness already has a scheduler abstraction (`lh scheduler`) that bridges `[scheduler.jobs.*]` entries in `config.toml` to launchd plists on macOS and cron on Linux. The metrics ingest is a normal job entry — no special support needed. A typical setup:
+The harness already has a scheduler abstraction (`lh scheduler`) that bridges `[scheduler.jobs.*]` entries in `config.toml` to launchd plists on macOS. The metrics ingest is a normal job entry — no special support needed. A typical setup:
 
 ```toml
 [scheduler.jobs.metrics-ingest]
@@ -102,7 +102,7 @@ schedule = "*/15 * * * *"
 command = "/Users/you/.local/bin/lh metrics ingest"
 ```
 
-Then `lh scheduler install` to register the job with the platform backend and `lh scheduler status` to confirm it is loaded. Because the pipeline re-derives each session's totals from its transcript and the file reads are cheap, a shorter cadence is only bounded by how fresh you want `lh status` to be.
+Then `lh scheduler install` to register the job with the platform backend and `lh scheduler status` to confirm it is loaded. This works on macOS only: the systemd and cron backends are not implemented yet, so on Linux `lh scheduler install` exits with an error and you add the equivalent crontab line or timer unit by hand. Because the pipeline re-derives each session's totals from its transcript and the file reads are cheap, a shorter cadence is only bounded by how fresh you want `lh status` to be.
 
 Pair this with whatever manual ingest you want: running `lh metrics ingest` at the end of a noisy day gives the same final state as letting the cron tick through the day on its own. The pipeline is deterministic.
 

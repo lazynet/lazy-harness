@@ -253,7 +253,7 @@ End-to-end mechanics — outbox, drain, backoff, idempotency: [how the metrics i
 
 | Field     | Type   | Default  | Required | Description                                                                           |
 | --------- | ------ | -------- | -------- | ------------------------------------------------------------------------------------- |
-| `backend` | string | `"auto"` | no       | Scheduler backend. `auto` picks launchd (macOS), systemd (Linux), or cron (fallback). |
+| `backend` | string | `"auto"` | no       | Scheduler backend. `auto` picks launchd (macOS), systemd (Linux), or cron (fallback). Only launchd installs jobs; systemd and cron raise `NotImplementedError`. |
 
 Each `[scheduler.jobs.<name>]` sub-table:
 
