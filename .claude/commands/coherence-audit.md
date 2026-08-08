@@ -8,7 +8,7 @@ Do not edit any ADR, design, the backlog, or any file under `docs/`. This comman
 
 ## 1. Read the specs
 
-Read every ADR under `specs/adrs/` with `status: accepted` (see `specs/adrs/README.md` for the index and status vocabulary), and read `specs/backlog.md`. For each, note its central claims: what the doc says the code does, and what state it says a piece of work is in.
+Read every ADR under `specs/adrs/` whose header line reads `**Status:** accepted` (that exact bold-Markdown form, not a YAML key — see `specs/adrs/README.md` for the index and status vocabulary), and read `specs/backlog.md`. For each, note its central claims: what the doc says the code does, and what state it says a piece of work is in.
 
 ## 2. Spot-check the seed mapping
 
