@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.24.3](https://github.com/lazynet/lazy-harness/compare/v0.24.2...v0.24.3) (2026-08-08)
+
+
+### Bug Fixes
+
+* require both recursion and force flags in rm block rule ([#113](https://github.com/lazynet/lazy-harness/issues/113)) ([dee487d](https://github.com/lazynet/lazy-harness/commit/dee487dfe8693f722311fc1199b493b975425966))
+
 ## [0.24.2](https://github.com/lazynet/lazy-harness/compare/v0.24.1...v0.24.2) (2026-07-29)
 
 
