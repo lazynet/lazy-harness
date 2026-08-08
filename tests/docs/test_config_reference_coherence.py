@@ -151,14 +151,36 @@ def _section_map() -> list[tuple[str, type]]:
     ]
 
 
+def test_anchor_guard_would_catch_a_single_renamed_heading() -> None:
+    """A loose `> N` threshold survives a single broken anchor unnoticed.
+
+    Reproduces a real regression: renaming `` ## `[compound_loop]` `` to
+    `` ## `[compound-loop]` `` drops that one anchor's table (12
+    `CompoundLoopConfig` fields) from `tables_found`, but 18 > 10 is still
+    true — the old threshold would have passed with a whole section silently
+    unchecked. Only an exact `tables_found == len(section_map)` guard fails
+    loudly on this, which is why the real test below uses exact equality.
+    """
+    doc_text = CONFIG_MD.read_text(encoding="utf-8")
+    broken_doc = doc_text.replace("## `[compound_loop]`", "## `[compound-loop]`")
+    section_map = _section_map()
+
+    tables_found = sum(1 for anchor, _ in section_map if _table_after(anchor, broken_doc))
+
+    assert tables_found == len(section_map) - 1
+    assert tables_found > 10  # the old loose threshold would have missed this
+
+
 def test_config_reference_fields_exist_on_the_dataclasses() -> None:
     doc_text = CONFIG_MD.read_text(encoding="utf-8")
     section_map = _section_map()
 
     tables_found = sum(1 for anchor, _ in section_map if _table_after(anchor, doc_text))
-    # Guards the anchor set: a doc restructure that breaks every marker must
-    # fail loudly instead of silently checking nothing.
-    assert tables_found > 10
+    # Guards the anchor set exactly, not just "found more than a handful": a
+    # single renamed/broken anchor drops its table silently under a loose
+    # `> N` threshold (see test_anchor_guard_would_catch_a_single_renamed_
+    # heading above for a reproduction). Exact equality fails loudly instead.
+    assert tables_found == len(section_map)
 
     all_missing: dict[str, list[str]] = {}
     for anchor, dataclass_type in section_map:
