@@ -118,7 +118,7 @@ class BlockDecision:
 
 
 BLOCK_RULES: tuple[BlockRule, ...] = (
-    BlockRule("filesystem",  re.compile(r"\brm\s+-[rRf]*[rRf][rRf]*\b.+"),                                            "Recursive delete"),
+    BlockRule("filesystem",  re.compile(_COMMAND_START + r"rm\s+(?=…recursive flag…)(?=…force flag…)\S+.*"),           "Recursive delete"),
     BlockRule("filesystem",  re.compile(r"\btruncate\s+(-s\s+\d+\s+)?[^\s-]"),                                        "File truncation"),
     BlockRule("git",         re.compile(r"\bgit\s+push\s+(--force\b|-f\b)(?!.*--force-with-lease)"),                  "Force-push without lease"),
     BlockRule("git",         re.compile(r"\bgit\s+reset\s+--hard\b"),                                                 "Hard reset discards work"),
@@ -139,6 +139,8 @@ Pattern authoring notes:
 
 - The `[^|;&]*` guard prevents matches where the credentials path is on the *right* side of a pipe / semicolon / ampersand (i.e., legitimate commands that only reference a sensitive path as a pipe sink, such as `some-generator | tee out.pem`). The intent is to catch direct *reads*, not all mentions.
 - `(?!--force-with-lease)` negative-lookahead on `git push --force` allows the safer lease variant through.
+- The `rm` rule matches recursion and force as two **independent** lookaheads, so a single flag letter never implies the other: `rm -rf`, `rm -fr`, `rm -r -f`, `rm --recursive --force` block; `rm -f file`, `rm -r dir` stay allowed. Matching a combined flag cluster with one `-\S*f\S*`-style expression conflates the two and blocks every forced single-file delete under a "Recursive delete" label.
+- The `rm` rule is anchored to a **command position** (`_COMMAND_START`: start of string, after `;`/`&`/`|`/`(`/backtick, or after an exec wrapper such as `sudo`/`xargs`/`sh -c`), with an optional leading path so `/bin/rm` still matches. Without that anchor the pattern also fires on commands that merely *mention* `rm -rf` inside a quoted argument — `grep -rn "rm -rf" src`, `git commit -m "fix: rm -rf guard"` — which is the dominant false-positive class in practice. The trade-off is deliberate: text passed to an interpreter through a channel the anchor cannot see (a heredoc, a generated script file) is no longer caught by this rule.
 - `re.IGNORECASE` only on the SQL patterns — SQL is case-insensitive by convention; the rest are shell tokens that are case-sensitive.
 
 **Pure logic:**
@@ -273,7 +275,7 @@ tests/integration/
 
 Roughly 30 cases via `pytest.parametrize`. Coverage plan:
 
-- **Filesystem:** `rm -rf /`, `rm -rf /tmp/foo`, `rm -rf ./build` → block. `rm file.txt`, `rm -r dir` (no `-f`) → allow. `truncate -s 0 log.txt` → block.
+- **Filesystem:** `rm -rf /`, `rm -rf /tmp/foo`, `rm -rf ./build`, `rm -fr ./build`, `rm -r -f ./build`, `rm --recursive --force ./build`, `sudo rm -rf …`, `/bin/rm -rf …`, `cat list | xargs rm -rf` → block. `rm file.txt`, `rm -r dir` (no force), `rm -f file.txt` (no recursion), `rm -fv file.txt`, `rm --force file.txt` → allow. `grep -rn "rm -rf" src` and `git commit -m "fix: rm -rf guard"` (mention, not invocation) → allow. `truncate -s 0 log.txt` → block.
 - **Git:** `git push --force origin main` → block. `git push --force-with-lease origin main` → allow. `git reset --hard HEAD~3` → block. `git reset --soft HEAD~3` → allow. `git add -f .env` → block. `git add -f README.md` → allow.
 - **SQL:** `DROP TABLE users`, `drop database prod` → block. `SELECT * FROM users` → allow.
 - **Terraform:** `terraform destroy`, `terraform destroy -auto-approve` → block. `terraform apply -auto-approve` → block. `terraform apply` → allow. `terraform apply -replace=aws_instance.web` → block. `terraform state rm aws_instance.web` → block. `terraform plan` → allow.

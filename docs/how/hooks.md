@@ -228,11 +228,13 @@ Categories shipped:
 
 | Category | Examples blocked |
 |---|---|
-| `filesystem` | `rm -rf …`, `truncate <file>` |
+| `filesystem` | `rm` with **both** recursion and force (`-rf`, `-fr`, `-r -f`, `--recursive --force`), `truncate <file>` |
 | `git` | `git push --force` (without `--force-with-lease`), `git reset --hard`, `git add -f .env`/`*.pem`/`id_rsa`/credentials |
 | `sql` | `DROP TABLE`, `DROP DATABASE`, `TRUNCATE TABLE` |
 | `terraform` | `terraform destroy`, `terraform apply -auto-approve`, `terraform apply -replace=…`, `terraform state rm`/`push` |
 | `credentials` | reads of `.env` (excluding `.env.example` / `.sample` / `.template`), `.ssh/id_*` private keys (excluding `*.pub`), `.aws/credentials` & `.aws/config`, any `.pem` / `.key` / `.p12` |
+
+The `rm` rule only fires when `rm` appears in a **command position** — at the start of the command, after a `;`, `&&`, `||`, `|` or `(`, or after an exec wrapper such as `sudo`, `xargs` or `sh -c`. A command that merely mentions the string, like `grep -rn "rm -rf" src`, is not a delete and is not blocked.
 
 When a rule matches, the hook writes a structured message to stderr —
 
