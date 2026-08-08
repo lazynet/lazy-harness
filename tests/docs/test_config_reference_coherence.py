@@ -2,8 +2,8 @@
 
 Direction is doc ⊆ code (lax): every `field` cell documented in a config table
 must exist on the dataclass that table describes. The reverse is not checked —
-several dataclass fields are intentionally undocumented (e.g. `ContextInjectConfig
-.qmd_suggest_enabled`, `CompoundLoopConfig.slim_handoff_enabled`).
+some dataclass fields are intentionally undocumented (e.g. `ContextInjectConfig
+.qmd_suggest_enabled`).
 
 Doc-section-to-dataclass mapping (see `_SECTION_MAP` below): each TOML section
 heading/anchor in the doc is mapped to the one `core.config` dataclass whose
