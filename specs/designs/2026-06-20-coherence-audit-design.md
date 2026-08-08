@@ -24,7 +24,7 @@ Three tests under `tests/docs/` that fail the existing `uv run pytest` gate when
 
 | Test file | Asserts | Source of truth |
 |---|---|---|
-| `tests/docs/test_cli_reference_coherence.py` | every `lh <command> [subcommand]` named in `docs/reference/cli.md` exists | the click command tree (`lazy_harness.cli.main.cli`) |
+| `tests/docs/test_cli_reference_coherence.py` | every `lh <command> [subcommand]` named anywhere under `docs/**`, not just in `docs/reference/cli.md`, exists | the click command tree (`lazy_harness.cli.main.cli`) |
 | `tests/docs/test_hooks_doc_coherence.py` | every built-in hook documented in `docs/how/hooks.md` is registered, and every registered built-in is documented | `_BUILTIN_HOOKS` in `hooks/loader.py` |
 | `tests/docs/test_config_reference_coherence.py` | every config field documented in `docs/reference/config.md` exists on the corresponding dataclass | the config dataclasses in `core/config.py` |
 
