@@ -57,3 +57,4 @@ High-level map: [`specs/workflow/layout.md`](specs/workflow/layout.md). Short fo
 - `/new-worktree <type>/<short-name>` — create a worktree and branch with correct naming. [`.claude/commands/new-worktree.md`](.claude/commands/new-worktree.md)
 - `/cleanup-worktree <short-name>` — remove a merged worktree and its branch after verifying it was merged. [`.claude/commands/cleanup-worktree.md`](.claude/commands/cleanup-worktree.md)
 - `/tdd-check` — run pytest + ruff + mkdocs build as the pre-commit gate. [`.claude/commands/tdd-check.md`](.claude/commands/tdd-check.md)
+- `/coherence-audit` — read-only audit of semantic drift between ADRs/backlog and the code they describe. [`.claude/commands/coherence-audit.md`](.claude/commands/coherence-audit.md)
