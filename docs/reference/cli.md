@@ -229,9 +229,9 @@ lh run --dry-run -- --resume
 
 ## `lh scheduler`
 
-Manages scheduled jobs declared in `[scheduler.jobs.<name>]`. The backend is auto-detected (launchd on macOS, systemd on Linux, cron as fallback) or pinned via `[scheduler] backend`.
+Manages scheduled jobs declared in `[scheduler.jobs.<name>]`. The backend is auto-detected (launchd on macOS, systemd on Linux, cron as fallback) or pinned via `[scheduler] backend`. Of the three, only launchd is implemented today — systemd and cron are stubs.
 
-`lh scheduler install` writes the platform-native unit files for every declared job. `lh scheduler uninstall` removes them. `lh scheduler status` shows the active backend and per-job state.
+On macOS, `lh scheduler install` writes the platform-native unit files for every declared job, `lh scheduler uninstall` removes them, and `lh scheduler status` shows the active backend and per-job state. On Linux, `install` exits with an error and the other two report nothing, so recurring jobs there stay yours to register by hand.
 
 ```bash
 lh scheduler status
