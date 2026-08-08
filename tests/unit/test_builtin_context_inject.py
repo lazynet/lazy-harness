@@ -495,6 +495,16 @@ def test_context_inject_includes_qmd_suggest_section_when_qmd_returns_hits(
     )
     fake_qmd.chmod(0o755)
 
+    # The suggest section is config-gated, so the subprocess needs a config of
+    # its own — inheriting the developer's real one made this pass by accident.
+    home = tmp_path / "home"
+    home.mkdir()
+    lh_config = tmp_path / "lh-config"
+    lh_config.mkdir()
+    (lh_config / "config.toml").write_text(
+        '[harness]\nversion = "1"\n\n[context_inject]\nqmd_suggest_enabled = true\n'
+    )
+
     hook_path = (
         Path(__file__).parent.parent.parent
         / "src"
@@ -503,7 +513,13 @@ def test_context_inject_includes_qmd_suggest_section_when_qmd_returns_hits(
         / "builtins"
         / "context_inject.py"
     )
-    env = {**_os.environ, "PATH": f"{bin_dir}:{_os.environ['PATH']}"}
+    env = {
+        **_os.environ,
+        "PATH": f"{bin_dir}:{_os.environ['PATH']}",
+        "HOME": str(home),
+        "LH_CONFIG_DIR": str(lh_config),
+        "CLAUDE_CONFIG_DIR": str(home / ".claude"),
+    }
     result = subprocess.run(
         [sys.executable, str(hook_path)],
         input="{}",
