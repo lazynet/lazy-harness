@@ -21,6 +21,7 @@ CLI_MD = Path(__file__).parent.parent.parent / "docs" / "reference" / "cli.md"
 
 _FENCED_BASH_BLOCK = re.compile(r"```bash\n(.*?)```", re.DOTALL)
 _INLINE_LH_SPAN = re.compile(r"`(lh [^`\n]+)`")
+_COMMAND_TOKEN_SHAPE = re.compile(r"^[a-z][a-z-]*$")
 
 
 def _extract_lh_invocations(doc_text: str) -> list[str]:
@@ -66,6 +67,12 @@ def find_missing_lh_invocations(root: click.Group, doc_text: str) -> list[str]:
                 # Placeholder syntax (e.g. `lh <command> --help`), not a real
                 # subcommand name — cannot confidently classify, so skip it.
                 break
+            if not _COMMAND_TOKEN_SHAPE.match(token):
+                # Catch-all conservatism for shapes the checks above don't name
+                # explicitly: entry-point syntax (`lh = "pkg:cli"`), slash
+                # shorthand (`lh profile add/remove`), and anything else that
+                # isn't a plausible lowercase-hyphenated subcommand name.
+                break
             next_node = node.commands.get(token)
             if next_node is None:
                 broken = True
@@ -108,6 +115,94 @@ Also see `lh foo baz` for the broken one.
     missing = find_missing_lh_invocations(fake_cli, doc)
 
     assert missing == ["lh foo baz"]
+
+
+def test_flag_and_comment_tokens_stop_the_walk_without_a_false_positive() -> None:
+    """A flag or a trailing comment after a real subcommand must not be treated
+    as a missing sub-subcommand — `lh foo --bar` and `lh foo # note` should both
+    resolve cleanly once `foo` itself is found."""
+
+    @click.group()
+    def fake_cli() -> None:
+        pass
+
+    @fake_cli.command("foo")
+    def foo_cmd() -> None:
+        pass
+
+    doc = """
+```bash
+lh foo --bar
+lh foo # a trailing comment
+```
+"""
+
+    assert find_missing_lh_invocations(fake_cli, doc) == []
+
+
+def test_placeholder_tokens_are_not_guessed_as_missing() -> None:
+    """`<command>`-shaped placeholders are template syntax, not real subcommand
+    names, and must not be flagged just because they don't resolve."""
+
+    @click.group()
+    def fake_cli() -> None:
+        pass
+
+    @fake_cli.command("foo")
+    def foo_cmd() -> None:
+        pass
+
+    doc = "Run `lh foo <target>` for any target."
+
+    assert find_missing_lh_invocations(fake_cli, doc) == []
+
+
+def test_leaf_command_stop_does_not_descend_into_arguments() -> None:
+    """Once a leaf Command is reached, remaining tokens are positional
+    arguments, not subcommands — even when they are shaped like a plausible
+    subcommand name. Also guards against an AttributeError: a leaf Command has
+    no `.commands` dict to walk into."""
+
+    @click.group()
+    def fake_cli() -> None:
+        pass
+
+    @fake_cli.command("leafcmd")
+    def leaf_cmd() -> None:
+        pass
+
+    doc = "See `lh leafcmd something-real-looking-but-actually-an-argument`."
+
+    assert find_missing_lh_invocations(fake_cli, doc) == []
+
+
+def test_non_command_token_shapes_are_not_guessed_as_missing() -> None:
+    """`lh = "..."` (a pyproject entry-point declaration) and slash-shorthand
+    subcommand mentions are not real invocations. Their tokens are not
+    command-shaped, so they must be skipped rather than guessed as missing.
+    """
+
+    @click.group()
+    def fake_cli() -> None:
+        pass
+
+    @fake_cli.group("profile")
+    def profile_group() -> None:
+        pass
+
+    @profile_group.command("add")
+    def add_cmd() -> None:
+        pass
+
+    doc = """
+See `lh = "lazy_harness.cli.main:cli"` in pyproject.toml.
+
+Slash shorthand: `lh profile add/remove`.
+"""
+
+    missing = find_missing_lh_invocations(fake_cli, doc)
+
+    assert missing == []
 
 
 def test_cli_reference_commands_exist_in_the_click_tree() -> None:
