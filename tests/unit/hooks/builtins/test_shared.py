@@ -55,3 +55,136 @@ def test_find_latest_session_picks_most_recent_jsonl(tmp_path: Path) -> None:
     os.utime(old, (past, past))
 
     assert find_latest_session(tmp_path) == new
+
+
+def test_transcript_from_payload_reads_snake_case_key(tmp_path: Path) -> None:
+    from lazy_harness.hooks.builtins._shared import transcript_from_payload
+
+    transcript = tmp_path / "abc123.jsonl"
+    transcript.write_text("{}\n")
+
+    assert transcript_from_payload({"transcript_path": str(transcript)}) == transcript
+
+
+def test_transcript_from_payload_reads_camel_case_key(tmp_path: Path) -> None:
+    from lazy_harness.hooks.builtins._shared import transcript_from_payload
+
+    transcript = tmp_path / "abc123.jsonl"
+    transcript.write_text("{}\n")
+
+    assert transcript_from_payload({"transcriptPath": str(transcript)}) == transcript
+
+
+def test_transcript_from_payload_returns_none_when_key_absent() -> None:
+    from lazy_harness.hooks.builtins._shared import transcript_from_payload
+
+    assert transcript_from_payload({"session_id": "abc123"}) is None
+
+
+def test_transcript_from_payload_returns_none_when_file_missing(tmp_path: Path) -> None:
+    from lazy_harness.hooks.builtins._shared import transcript_from_payload
+
+    missing = tmp_path / "gone.jsonl"
+
+    assert transcript_from_payload({"transcript_path": str(missing)}) is None
+
+
+def test_transcript_from_payload_returns_none_for_non_mapping() -> None:
+    from lazy_harness.hooks.builtins._shared import transcript_from_payload
+
+    assert transcript_from_payload(None) is None
+    assert transcript_from_payload("transcript_path") is None
+
+
+def test_project_dir_from_payload_is_the_transcript_parent(tmp_path: Path) -> None:
+    """The agent owns the project-dir naming; we read it, never recompute it."""
+    from lazy_harness.hooks.builtins._shared import project_dir_from_payload
+
+    # Encoding the agent actually uses for a path with a space and a leading dot.
+    project_dir = tmp_path / "-Users-x-Mobile-Documents-iCloud-md-obsidian-LazyMind"
+    project_dir.mkdir()
+    transcript = project_dir / "abc123.jsonl"
+    transcript.write_text("{}\n")
+
+    assert project_dir_from_payload({"transcript_path": str(transcript)}) == project_dir
+
+
+def test_project_dir_from_payload_returns_none_without_transcript() -> None:
+    from lazy_harness.hooks.builtins._shared import project_dir_from_payload
+
+    assert project_dir_from_payload({}) is None
+
+
+def test_project_dir_from_payload_resolves_before_transcript_is_written(
+    tmp_path: Path,
+) -> None:
+    """At SessionStart the transcript file does not exist yet, but its dir does."""
+    from lazy_harness.hooks.builtins import _shared
+
+    project_dir = tmp_path / "-Users-x-repos-thing"
+    project_dir.mkdir()
+    unwritten = project_dir / "0197f0de-cafe-4bad-9001-000000000003.jsonl"
+
+    assert _shared.project_dir_from_payload({"transcript_path": str(unwritten)}) == project_dir
+    # The transcript itself is still unusable — only the directory resolves.
+    assert _shared.transcript_from_payload({"transcript_path": str(unwritten)}) is None
+
+
+def test_project_dir_from_payload_returns_none_when_dir_missing(tmp_path: Path) -> None:
+    from lazy_harness.hooks.builtins._shared import project_dir_from_payload
+
+    stale = tmp_path / "gone" / "abc.jsonl"
+
+    assert project_dir_from_payload({"transcript_path": str(stale)}) is None
+
+
+def test_resolve_project_dir_prefers_the_payload(tmp_path: Path) -> None:
+    from lazy_harness.hooks.builtins._shared import resolve_project_dir
+
+    agent_dir = tmp_path / "agent"
+    declared = agent_dir / "projects" / "-encoded-by-the-agent"
+    declared.mkdir(parents=True)
+
+    resolved = resolve_project_dir(
+        {"transcript_path": str(declared / "s.jsonl")},
+        agent_dir=agent_dir,
+        sessions_subdir="projects",
+        cwd=Path("/Users/x/some where/proj"),
+    )
+
+    assert resolved == declared
+
+
+def test_resolve_project_dir_ignores_a_transcript_outside_the_sessions_root(
+    tmp_path: Path,
+) -> None:
+    """Artifacts stay under the adapter's sessions root (ADR-032), wherever the transcript is."""
+    from lazy_harness.hooks.builtins._shared import resolve_project_dir
+
+    agent_dir = tmp_path / "agent"
+    stray = tmp_path / "elsewhere"
+    stray.mkdir()
+
+    resolved = resolve_project_dir(
+        {"transcript_path": str(stray / "transcript.jsonl")},
+        agent_dir=agent_dir,
+        sessions_subdir="projects",
+        cwd=Path("/Users/x/proj"),
+    )
+
+    assert resolved == agent_dir / "projects" / "-Users-x-proj"
+
+
+def test_resolve_project_dir_falls_back_to_cwd_encoding(tmp_path: Path) -> None:
+    from lazy_harness.hooks.builtins._shared import resolve_project_dir
+
+    agent_dir = tmp_path / "agent"
+
+    resolved = resolve_project_dir(
+        {},
+        agent_dir=agent_dir,
+        sessions_subdir="projects",
+        cwd=Path("/Users/x/proj"),
+    )
+
+    assert resolved == agent_dir / "projects" / "-Users-x-proj"

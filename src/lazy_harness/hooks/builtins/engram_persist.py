@@ -52,6 +52,7 @@ def main() -> None:
         from lazy_harness.agents.registry import get_agent
         from lazy_harness.core.config import Config, ConfigError, load_config
         from lazy_harness.core.paths import agent_runtime_dir, config_file
+        from lazy_harness.hooks.builtins._shared import resolve_project_dir
         from lazy_harness.knowledge.engram_persist import EngramPersister
     except ImportError:
         return
@@ -70,8 +71,15 @@ def main() -> None:
     agent = get_agent(cfg.agent.type if cfg is not None else "claude-code")
     agent_dir = agent_runtime_dir(agent)
     subdirs = agent.session_dirs()
-    encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
-    memory_dir = agent_dir / (subdirs.get("sessions") or "projects") / encoded / "memory"
+    memory_dir = (
+        resolve_project_dir(
+            payload,
+            agent_dir=agent_dir,
+            sessions_subdir=subdirs.get("sessions") or "projects",
+            cwd=cwd,
+        )
+        / "memory"
+    )
     logs_dir = agent_dir / (subdirs.get("logs") or "logs")
 
     persister = EngramPersister(

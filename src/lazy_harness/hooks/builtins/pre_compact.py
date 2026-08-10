@@ -27,6 +27,14 @@ def _bootstrap_log(log_file: Path, msg: str) -> None:
         pass
 
 
+def _bootstrap_project_dir(
+    payload: object, *, agent_dir: Path, sessions_subdir: str, cwd: Path
+) -> Path:
+    """Stand-in for `_shared.resolve_project_dir` when lazy_harness is not importable."""
+    encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
+    return agent_dir / (sessions_subdir or "projects") / encoded
+
+
 def parse_transcript(path: Path) -> tuple[list[str], list[str]]:
     user_msgs: list[str] = []
     files_touched: set[str] = set()
@@ -141,12 +149,13 @@ def main() -> None:
         input_data = {}
 
     try:
-        from lazy_harness.hooks.builtins._shared import make_log
+        from lazy_harness.hooks.builtins._shared import make_log, resolve_project_dir
 
         _log = make_log("pre-compact")
     except ImportError:
         # Bootstrap fallback, same contract as _resolve_agent_dirs.
         _log = _bootstrap_log
+        resolve_project_dir = _bootstrap_project_dir
 
     cwd = Path.cwd()
     agent_dir, subdirs = _resolve_agent_dirs()
@@ -159,8 +168,15 @@ def main() -> None:
             transcript_path_str = input_data[key]
             break
 
-    encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
-    memory_dir = agent_dir / (subdirs.get("sessions") or "projects") / encoded / "memory"
+    memory_dir = (
+        resolve_project_dir(
+            input_data,
+            agent_dir=agent_dir,
+            sessions_subdir=subdirs.get("sessions") or "projects",
+            cwd=cwd,
+        )
+        / "memory"
+    )
     memory_dir.mkdir(parents=True, exist_ok=True)
 
     summary = ""
