@@ -83,7 +83,7 @@ Sections composed, in priority order:
 
 1. **`## Git`** — current branch, last commit, working-tree status (modified / untracked count). Computed with a short-timeout `git` subprocess; absent if the cwd is not inside a git repo.
 2. **`## LazyNorth`** — your strategic compass file (universal + per-profile), if `[lazynorth]` is enabled in config. Truncated to ~20 lines for the universal doc and ~15 for the per-profile one.
-3. **`## Last session`** — the most recent exported session matching this project's name. Displays date, message count, and the first non-empty user message of that session (truncated to 80 chars). Pulled from the knowledge directory, so it is scoped by project and spans profiles if you run multiple.
+3. **`## Last session`** — the most recent exported session matching this project's name. Displays date, message count, and the first non-empty user message of that session (truncated to 80 chars). Pulled from the knowledge store, so it is scoped by project and spans profiles if you run multiple.
 4. **`## Handoff from last session`** — contents of `memory/handoff.md` (written by `compound-loop`) plus `memory/pre-compact-summary.md` (written by `pre-compact`) from the project's per-cwd memory dir.
 5. **`## Recent history`** — the last 3 entries from `decisions.jsonl` and the last 3 from `failures.jsonl`, with failures including their prevention field.
 6. **`## Proposals to review`** — contents of `memory/claude-md.proposal.md` when present. The compound-loop worker writes this file when it has surfaced patterns worth promoting into `CLAUDE.md` (curated semantic layer). Injecting them at session start lets you review and apply them by hand; `context-inject` never edits `CLAUDE.md` or `MEMORY.md` itself.
@@ -136,7 +136,7 @@ See ADR-020 for the full rationale.
 
 Source: `src/lazy_harness/hooks/builtins/session_export.py`, backed by the pure `export_session` in `src/lazy_harness/knowledge/session_export.py`.
 
-Responsibility: convert the just-ended session's JSONL into a clean markdown file in the knowledge directory, then re-index with QMD if available.
+Responsibility: convert the just-ended session's JSONL into a clean markdown file in the knowledge store, then re-index with QMD if available.
 
 Flow:
 
@@ -144,11 +144,11 @@ Flow:
 2. Parse it into metadata + messages. Sessions without a `permission-mode` first record are treated as non-interactive and skipped.
 3. Filter sessions under `min_messages` (default 4) — scratch prompts never make it into the knowledge tree.
 4. Classify the session by cwd heuristics (see [ADR-011](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/011-session-export-and-classification.md)) to compute `profile` and `session_type`.
-5. Write to `<knowledge.path>/sessions/YYYY-MM/YYYY-MM-DD-<short-id>.md` with frontmatter (`session_id`, `cwd`, `project`, `profile`, `session_type`, `branch`, `claude_version`, `messages`) and a body of `## User` / `## Claude` sections.
+5. Write to `<store>/sessions/YYYY-MM/YYYY-MM-DD-<short-id>.md` with frontmatter (`session_id`, `cwd`, `project`, `profile`, `session_type`, `branch`, `claude_version`, `messages`) and a body of `## User` / `## Claude` sections.
 6. Atomic write via tempfile + `os.replace` (iCloud / Dropbox safe).
 7. If `qmd` is on PATH, run `qmd update` to re-index.
 
-**Where it writes:** `<knowledge.path>/sessions/YYYY-MM/*.md`. Idempotent — re-running on the same session only writes if the new message count exceeds the existing export's.
+**Where it writes:** `<store>/sessions/YYYY-MM/*.md`, where `<store>` is the knowledge store root and `sessions` is the name its `knowledge.toml` marker declares. Idempotent — re-running on the same session only writes if the new message count exceeds the existing export's.
 
 ### `compound-loop` — runs on `Stop`
 
@@ -183,7 +183,7 @@ This is the hook that does the heaviest lifting. It is split into two pieces del
 - `<learnings_dir>/YYYY-MM/YYYY-MM-DD-<slug>.md` — one markdown file per learning, atomic write.
 - `<memory_dir>/handoff.md` — overwritten with the current pending items, or deleted if empty.
 
-`<memory_dir>` is `<CLAUDE_CONFIG_DIR>/projects/<encoded-cwd>/memory/`. `<learnings_dir>` is resolved from `LCT_LEARNINGS_DIR` if set (back-compat), otherwise `<knowledge.path>/<compound_loop.learnings_subdir>`.
+`<memory_dir>` is `<CLAUDE_CONFIG_DIR>/projects/<encoded-cwd>/memory/`. `<learnings_dir>` is the knowledge store root joined with the learnings subdirectory its `knowledge.toml` marker declares.
 
 ### `session-end` — runs on `SessionEnd`
 

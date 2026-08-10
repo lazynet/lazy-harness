@@ -88,7 +88,7 @@ File: `src/lazy_harness/knowledge/compound_loop_worker.py`. Runs via `python -m 
 Steps:
 
 1. **Single-instance lock.** `fcntl.flock` on `~/.claude/queue/.worker.lock` with `LOCK_EX | LOCK_NB`. If another worker holds it (e.g. a quick back-to-back session close), exit 0 — the in-flight worker will drain the new task.
-2. **Load config, resolve learnings dir.** `_resolve_learnings_dir` honors `LCT_LEARNINGS_DIR` (back-compat env var) then falls back to `<knowledge.path>/<compound_loop.learnings_subdir>`.
+2. **Load config, resolve learnings dir.** `_resolve_learnings_dir` resolves the knowledge store root (`$LAZY_KNOWLEDGE_ROOT`, then `[knowledge].root`, then the default) and reads the learnings subdirectory name from the store's `knowledge.toml` marker. A missing or unreadable marker is logged and the worker exits non-zero without writing — it never guesses a path.
 3. **Drain loop.** `_drain_queue` scans `*.task` in the queue, processes each, moves it to `done/`. Continues until the queue is empty — tasks that arrived mid-drain are picked up on the next iteration before exit.
 4. For each task, `process_task`:
     - **Parse metadata.**
@@ -166,9 +166,11 @@ Pendiente para próxima sesión:
 
 If the LLM returns an empty handoff list, the file is **deleted** — which is why the absence of `handoff.md` at session start means "nothing left hanging", not "there was no memory".
 
-### `learnings/YYYY-MM/YYYY-MM-DD-<slug>.md` — long-term cross-project knowledge
+### `learnings/YYYY-MM/YYYY-MM-DD-<slug>-<host>.md` — long-term cross-project knowledge
 
-Each learning becomes a dedicated markdown file in the knowledge directory under `<learnings_dir>/YYYY-MM/`. The filename is date-prefixed and slugified from the title; existing files are not overwritten (learnings are write-once).
+Each learning becomes a dedicated markdown file in the knowledge store under `<learnings_dir>/YYYY-MM/`. The filename is date-prefixed, slugified from the title, and suffixed with the writing machine's hostname; existing files are not overwritten (learnings are write-once).
+
+The host suffix is what makes the store safe for more than one writer. Two machines that distil a similar title on the same day would otherwise produce the same path with different content — an add/add conflict on the next rebase. With the suffix every filename is unique by construction, so merging two clones is always a union and never a conflict. Within one machine the host is constant, so the write-once behaviour is unchanged.
 
 Frontmatter:
 
@@ -261,7 +263,8 @@ When a genuinely duplicate learning sneaks past the LLM filter, two things catch
 
 - **It does not edit `MEMORY.md` or `CLAUDE.md` directly.** Those files are maintained by Claude Code itself during normal sessions via the auto-memory system documented in the user's `CLAUDE.md`. The compound loop *proposes* additions via `claude-md.proposal.md` (above) and `context-inject` surfaces them on the next session start, but only the human decides whether to merge them. The loop owns the `.jsonl`, `learnings/`, and `*.proposal.md` layers; `MEMORY.md` and `CLAUDE.md` are orthogonal.
 - **It does not block session close.** Everything heavy happens after the producer exits. A session that closed at 18:32:45 with a busy queue behind it will still close at 18:32:45.
-- **It does not write to the knowledge directory's `sessions/` subtree.** That is `session-export`'s job. The loop only writes to `memory/*.jsonl`, `memory/handoff.md`, and `learnings/*.md`.
+- **It does not write to the knowledge store's `sessions/` subtree.** That is `session-export`'s job. The loop only writes to `memory/*.jsonl`, `memory/handoff.md`, and `learnings/*.md`.
+- **It does not touch git.** The store is a git repository, but neither the hook nor the worker commits or pushes. That is `lh knowledge push`, run on a scheduler cycle, so a broken transport can never stall a session or drop a write.
 - **It does not fail the session if the LLM backend is unreachable.** `invoke_llm` timing out or returning empty just marks the task skipped and moves on. Memory enrichment is best-effort by design.
 
 ## Tuning knobs
@@ -277,7 +280,6 @@ All in `config.toml` under `[compound_loop]`:
 | `debounce_seconds` | `60` | Debounce window for repeat Stop events on the same session. |
 | `reprocess_min_growth_seconds` | `120` | Minimum seconds of JSONL growth since the last `done/` task before a Stop event re-queues. Bounds worker cost on long sessions; the `session-end` hook and `lh knowledge handoff-now` both bypass this. |
 | `timeout_seconds` | `120` | Hard timeout on the `claude -p` subprocess. |
-| `learnings_subdir` | `learnings` | Subdirectory of `<knowledge.path>` where learning markdown files are written. |
 
 Changes take effect on the next session — the producer and worker both reload config each run.
 
