@@ -90,3 +90,29 @@ def test_run_wizard_writes_post_tool_use_hook_block(tmp_path: Path) -> None:
     parsed = tomllib.loads(cfg.read_text())
     block = parsed.get("hooks", {}).get("post_tool_use", {})
     assert block.get("scripts") == ["post-tool-use-format", "post-tool-use-sync-claude"]
+
+
+def test_wizard_writes_a_config_that_loads_and_a_marked_store(tmp_path: Path) -> None:
+    """`lh init` must produce a config the parser accepts and a store with a marker."""
+    from lazy_harness.core.config import load_config
+    from lazy_harness.init.wizard import WizardAnswers, run_wizard
+
+    store = tmp_path / "knowledge"
+    config_path = tmp_path / "config.toml"
+    run_wizard(
+        WizardAnswers(
+            profile_name="personal",
+            agent="claude-code",
+            knowledge_path=store,
+            enable_qmd=False,
+        ),
+        config_path=config_path,
+    )
+
+    assert "path =" not in config_path.read_text(encoding="utf-8")
+    cfg = load_config(config_path)
+    assert cfg.knowledge.root
+
+    assert (store / "knowledge.toml").is_file()
+    assert (store / "sessions").is_dir()
+    assert (store / "learnings").is_dir()
