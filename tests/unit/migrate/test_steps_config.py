@@ -54,3 +54,22 @@ def test_generate_config_dry_run_no_write(tmp_path: Path):
     result = step.execute(backup_dir=tmp_path / "backup", dry_run=True)
     assert result.status == StepStatus.DONE
     assert not out.exists()
+
+
+def test_generated_config_uses_knowledge_root_and_loads(tmp_path: Path) -> None:
+    """A generated config must survive the parser, not just be written."""
+    from lazy_harness.core.config import load_config
+    from lazy_harness.migrate.steps.config_step import GenerateConfigStep
+
+    target = tmp_path / "config.toml"
+    step = GenerateConfigStep(
+        target=target,
+        lazy_claudecode=None,
+        knowledge_path=tmp_path / "knowledge",
+    )
+    result = step.execute(tmp_path / "backup")
+    assert result.status.name == "DONE"
+    text = target.read_text(encoding="utf-8")
+    assert "path =" not in text
+    cfg = load_config(target)
+    assert cfg.knowledge.root

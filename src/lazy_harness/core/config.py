@@ -358,13 +358,13 @@ def load_config(path: Path) -> Config:
         raise ConfigError(
             "[knowledge].path was replaced by [knowledge].root, which points at the "
             "knowledge store repository rather than a vault subdirectory. "
-            "Run `lh migrate config` to update."
+            "Run `lh config migrate-knowledge` to update."
         )
     for legacy in ("sessions", "learnings"):
         if "subdir" in (knowledge_raw.get(legacy) or {}):
             raise ConfigError(
                 f"[knowledge.{legacy}].subdir was removed; knowledge.toml in the store "
-                "declares the layout now. Run `lh migrate config`."
+                "declares the layout now. Run `lh config migrate-knowledge`."
             )
 
     cfg.knowledge = KnowledgeConfig(
@@ -414,7 +414,7 @@ def load_config(path: Path) -> Config:
         if "learnings_subdir" in cl_raw:
             raise ConfigError(
                 "[compound_loop].learnings_subdir was removed; knowledge.toml in the store "
-                "declares the layout now. Run `lh migrate config`."
+                "declares the layout now. Run `lh config migrate-knowledge`."
             )
         cfg.compound_loop = CompoundLoopConfig(
             enabled=cl_raw.get("enabled", False),

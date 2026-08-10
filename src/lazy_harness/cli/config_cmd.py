@@ -32,3 +32,25 @@ def knowledge_cmd(init: bool) -> None:
         click.echo("Usage: lh config knowledge --init")
         return
     wizard_knowledge(config_file())
+
+
+@config.command("migrate-knowledge")
+@click.option(
+    "--root",
+    default=None,
+    help="Store root to write. Defaults to the built-in default.",
+)
+def migrate_knowledge_cmd(root: str | None) -> None:
+    """Rewrite an old [knowledge] block into the store-root shape."""
+    # Resolved through the module so tests (and profile overrides) can redirect it.
+    from lazy_harness.core import paths
+    from lazy_harness.knowledge.marker import DEFAULT_ROOT
+    from lazy_harness.migrate.config_shape import migrate_knowledge_block
+
+    target = paths.config_file()
+    try:
+        migrate_knowledge_block(target, new_root=root or DEFAULT_ROOT)
+    except (FileNotFoundError, OSError, ValueError) as e:
+        click.echo(f"Could not migrate {target}: {e}", err=True)
+        raise SystemExit(1) from e
+    click.echo(f"Migrated [knowledge] in {target}")
