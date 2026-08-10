@@ -124,13 +124,8 @@ def deploy_hooks(cfg: Config) -> None:
 
 
 def _collect_mcp_servers(cfg: Config) -> dict[str, dict]:
-    """Probe each known tool and return the MCP entries that should ship.
-
-    Graphify is intentionally excluded: per upstream (safishamsi/graphify) it's
-    a CLI/skill installed via `graphify install`, not an MCP server. The
-    `graphify mcp` subcommand does not exist.
-    """
-    from lazy_harness.knowledge import qmd
+    """Probe each known tool and return the MCP entries that should ship."""
+    from lazy_harness.knowledge import graphify, qmd
     from lazy_harness.memory import engram
 
     servers: dict[str, dict] = {}
@@ -138,6 +133,10 @@ def _collect_mcp_servers(cfg: Config) -> dict[str, dict]:
         servers["qmd"] = qmd.mcp_server_config()
     if cfg.memory.engram.enabled and engram.is_engram_available():
         servers["engram"] = engram.mcp_server_config()
+    # Graphify shipped a CLI-only entry point before 0.9; the MCP binary is
+    # probed separately so older installs keep the skill-only surface.
+    if cfg.knowledge.structure.enabled and graphify.is_graphify_mcp_available():
+        servers["graphify"] = graphify.mcp_server_config()
     return servers
 
 

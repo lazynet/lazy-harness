@@ -36,7 +36,7 @@ Interactive wizards that write a typed config block back into `~/.config/lazy-ha
 Currently shipped wizards:
 
 - **`lh config memory --init`** — writes `[memory.engram]`. Probes whether `engram` is on `PATH` first; when missing, prints the pinned version and the install hint, then asks whether to write the section anyway (so a config can be staged before the binary lands). Prompts for `enabled`, `git_sync` (commit per-repo memory chunks under `.engram/chunks/`), and `cloud` (opt-in cloud sync, off by default to preserve the local-first guarantee). The pinned version is stamped automatically.
-- **`lh config knowledge --init`** — writes `[knowledge.structure]` for Graphify. Same probe-and-stage pattern as the memory wizard: prompts for `enabled` and `auto_rebuild_on_commit` (registers a per-repo `post-commit` hook that triggers a rebuild). Pinned Graphify version is stamped automatically.
+- **`lh config knowledge --init`** — writes `[knowledge.structure]` for Graphify. Same probe-and-stage pattern as the memory wizard: prompts for `enabled`. Pinned Graphify version is stamped automatically.
 
 Both wizards stamp the pinned tool version into the resulting block so `lh doctor` can later flag drift between the install and the config.
 

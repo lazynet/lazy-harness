@@ -1,6 +1,6 @@
 """Graphify CLI wrapper — code structure index for AI coding agents.
 
-Pinned version: 0.6.9 (see ADR-023).
+Pinned version: 0.9.38 (see ADR-023).
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 
-PINNED_VERSION = "0.6.9"
+PINNED_VERSION = "0.9.38"
 
 
 @dataclass
@@ -21,6 +21,20 @@ class GraphifyResult:
 
 def is_graphify_available() -> bool:
     return shutil.which("graphify") is not None
+
+
+def is_graphify_mcp_available() -> bool:
+    """Whether the MCP server binary ships with the installed Graphify.
+
+    Separate from `is_graphify_available`: releases before 0.9 installed only
+    the CLI entry point.
+    """
+    return shutil.which("graphify-mcp") is not None
+
+
+def mcp_server_config() -> dict:
+    """Declarative MCP entry for Graphify (consumed by deploy_mcp_servers)."""
+    return {"command": "graphify-mcp", "args": []}
 
 
 def _build_command(action: str, target: str | None = None) -> list[str]:

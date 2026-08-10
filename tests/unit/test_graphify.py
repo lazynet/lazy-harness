@@ -49,7 +49,7 @@ def test_graphify_run_handles_missing_binary() -> None:
 def test_graphify_pinned_version_constant() -> None:
     from lazy_harness.knowledge import graphify
 
-    assert graphify.PINNED_VERSION == "0.6.9"
+    assert graphify.PINNED_VERSION == "0.9.38"
 
 
 def test_graphify_check_version_matches_pin() -> None:
@@ -57,11 +57,11 @@ def test_graphify_check_version_matches_pin() -> None:
 
     with patch("subprocess.run") as mock_run:
         mock_run.return_value = type(
-            "R", (), {"returncode": 0, "stdout": "graphify 0.6.9\n", "stderr": ""}
+            "R", (), {"returncode": 0, "stdout": "graphify 0.9.38\n", "stderr": ""}
         )()
         matches, current = check_version()
         assert matches is True
-        assert current == "0.6.9"
+        assert current == "0.9.38"
 
 
 def test_graphify_check_version_mismatch() -> None:

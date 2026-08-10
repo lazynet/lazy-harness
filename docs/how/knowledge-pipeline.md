@@ -267,10 +267,9 @@ Configuration lives under `[knowledge.structure]` in `config.toml`:
 [knowledge.structure]
 engine = "graphify"
 enabled = true
-auto_rebuild_on_commit = false
-version = "0.6.9"
+version = "0.9.38"
 ```
 
-`enabled = true` is what `lh deploy` reads to wire the Graphify MCP entry into each profile's `settings.json`. With `auto_rebuild_on_commit = true`, `lh deploy` also installs a `post-commit` git hook that triggers a graph rebuild on every commit — useful in actively-edited repos where stale graph data would mislead the agent.
+`enabled = true` is what `lh deploy` reads to wire the Graphify MCP entry into each profile's agent config, provided the `graphify-mcp` binary is present. Rebuilds are demand-driven: run `graphify update <path>` to refresh a graph from the AST without an LLM call, or `graphify check-update <path>` to test whether one is due.
 
 Because `graphify-out/` is checked into the repo by convention, teammates and future sessions reuse the index without rebuilding. Adding it to `.gitignore` is a deliberate (if rare) choice for repos where build cost dominates over reuse.

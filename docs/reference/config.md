@@ -162,8 +162,7 @@ Each `[profiles.<name>]` sub-table:
 | ------------------------ | ------ | ------------ | -------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | `engine`                 | string | `"graphify"` | no       | Structure backend. Only `graphify` is implemented today.                                                                                 |
 | `enabled`                | bool   | `false`      | no       | Whether `lh deploy` wires the Graphify MCP entry into each profile's `settings.json`.                                                    |
-| `auto_rebuild_on_commit` | bool   | `false`      | no       | When true, `lh deploy` installs a per-repo `post-commit` git hook that rebuilds `graphify-out/` after every commit.                      |
-| `version`                | string | `"0.6.9"`    | no       | Pinned Graphify version. `lh doctor` flags drift between this and the installed binary so upgrades are explicit. See [ADR-023](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/023-graphify-code-structure.md). |
+| `version`                | string | `"0.9.38"`    | no       | Pinned Graphify version. `lh doctor` flags drift between this and the installed binary so upgrades are explicit. See [ADR-023](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/023-graphify-code-structure.md). |
 
 `[[knowledge.classify_rules]]` (array of tables — see [ADR-028](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/028-classify-rules-configurable.md)):
 
