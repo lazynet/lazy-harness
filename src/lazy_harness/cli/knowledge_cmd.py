@@ -282,3 +282,72 @@ def knowledge_embed(collection: str | None) -> None:
     else:
         console.print(f"[red]✗[/red] Embedding failed (exit {result.exit_code})")
         raise SystemExit(1)
+
+
+def _configured_root() -> str | None:
+    """Read [knowledge].root from config, tolerating an absent or stale config file."""
+    cf = config_file()
+    if not cf.is_file():
+        return None
+    try:
+        return load_config(cf).knowledge.root or None
+    except ConfigError:
+        return None
+
+
+@knowledge.command("init")
+@click.option("--root", default=None, help="Store root (defaults to configured/env/default)")
+def knowledge_init(root: str | None) -> None:
+    """Create the knowledge store, its marker, and its subdirectories."""
+    from lazy_harness.knowledge.directory import ensure_knowledge_dir
+
+    console = Console()
+    target = resolve_root(root) if root else resolve_root(_configured_root())
+    try:
+        created = ensure_knowledge_dir(target)
+    except MarkerError as e:
+        console.print(f"[red]{e}[/red]")
+        raise SystemExit(1) from e
+    console.print(f"[green]Knowledge store ready:[/green] {contract_path(created)}")
+
+
+@knowledge.command("path")
+@click.option(
+    "--kind",
+    type=click.Choice(["root", "sessions", "learnings"]),
+    default="root",
+    help="Which path to print",
+)
+def knowledge_path(kind: str) -> None:
+    """Print an absolute path inside the knowledge store."""
+    from lazy_harness.knowledge.directory import learnings_dir
+
+    console = Console()
+    root = resolve_root(_configured_root())
+    try:
+        if kind == "root":
+            target = root
+        elif kind == "sessions":
+            target = sessions_dir(root)
+        else:
+            target = learnings_dir(root)
+    except MarkerError as e:
+        console.print(f"[red]{e}[/red]")
+        raise SystemExit(1) from e
+    click.echo(str(target))
+
+
+@knowledge.command("push")
+def knowledge_push() -> None:
+    """Commit, rebase, and push the knowledge store."""
+    from lazy_harness.knowledge.compound_loop import origin_host
+    from lazy_harness.knowledge.git_push import push_once
+
+    console = Console()
+    root = resolve_root(_configured_root())
+    result = push_once(root, host=origin_host())
+    line = f"{result.status}: {result.detail}" if result.detail else result.status
+    log_append(default_log_dir() / "knowledge-push.log", line)
+    console.print(line)
+    if result.status in {"invalid", "conflict"}:
+        raise SystemExit(1)
