@@ -495,7 +495,10 @@ def test_metrics_run_line_emitted_with_required_fields(tmp_path: Path) -> None:
     assert "hook_version" in record
 
 
-def test_metrics_not_emitted_when_engram_binary_missing(tmp_path: Path) -> None:
+def test_run_metric_not_emitted_when_engram_binary_missing(tmp_path: Path) -> None:
+    """A skipped run must not count as a run — it would dilute the failure rate."""
+    import json as _json
+
     memory_dir = tmp_path / "memory"
     logs_dir = tmp_path / "logs"
     memory_dir.mkdir()
@@ -508,7 +511,39 @@ def test_metrics_not_emitted_when_engram_binary_missing(tmp_path: Path) -> None:
     )
     persister.persist_new_entries()
 
-    assert not (logs_dir / "engram_persist_metrics.jsonl").exists()
+    records = [
+        _json.loads(line)
+        for line in (logs_dir / "engram_persist_metrics.jsonl").read_text().splitlines()
+        if line
+    ]
+    assert [r for r in records if r["event"] == "run"] == []
+
+
+def test_skip_metric_emitted_when_engram_binary_missing(tmp_path: Path) -> None:
+    """A silent no-op is indistinguishable from success; record it as its own event."""
+    import json as _json
+
+    memory_dir = tmp_path / "memory"
+    logs_dir = tmp_path / "logs"
+    memory_dir.mkdir()
+    logs_dir.mkdir()
+    persister = EngramPersister(
+        memory_dir=memory_dir,
+        logs_dir=logs_dir,
+        project_key="lazy-harness",
+        engram_bin="/nonexistent/engram-binary-xyz",
+    )
+    persister.persist_new_entries()
+
+    records = [
+        _json.loads(line)
+        for line in (logs_dir / "engram_persist_metrics.jsonl").read_text().splitlines()
+        if line
+    ]
+    skips = [r for r in records if r["event"] == "skip"]
+    assert len(skips) == 1
+    assert skips[0]["reason"] == "binary_not_found"
+    assert skips[0]["project_key"] == "lazy-harness"
 
 
 def test_slow_save_event_emitted_above_threshold(tmp_path: Path) -> None:

@@ -214,6 +214,25 @@ def should_block(command: str, allow_patterns: list[str]) -> BlockDecision | Non
     return None
 
 
+def _log_block(decision: BlockDecision, command: str) -> None:
+    """Record a block so the guardrail leaves an auditable trace.
+
+    Only blocks are logged: this hook runs on every Bash call, so logging
+    allowed commands would bury the events that matter.
+    """
+    try:
+        from lazy_harness.agents.registry import get_agent
+        from lazy_harness.core.paths import agent_runtime_dir
+        from lazy_harness.hooks.builtins._shared import make_log
+
+        agent_dir = agent_runtime_dir(get_agent("claude-code"))
+        log = make_log("pre-tool-use-security")
+        log(agent_dir / "logs" / "hooks.log", f"blocked {decision.rule.category}: {command[:200]}")
+    except Exception:
+        # Auditing must never keep the guardrail from firing.
+        pass
+
+
 def main() -> None:
     """Entry point invoked by Claude Code as a PreToolUse hook command."""
     payload = _read_stdin_json()
@@ -224,6 +243,7 @@ def main() -> None:
     decision = should_block(command, allow)
     if decision is None:
         sys.exit(0)
+    _log_block(decision, command)
     sys.stderr.write(_format_block_message(decision))
     sys.exit(2)
 

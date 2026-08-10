@@ -40,6 +40,45 @@ def _write(path: Path, events: list[dict[str, Any]]) -> None:
     path.write_text("\n".join(json.dumps(e) for e in events) + "\n")
 
 
+def _skip_event(*, when: datetime, reason: str = "binary_not_found") -> dict[str, Any]:
+    return {
+        "ts": when.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "event": "skip",
+        "reason": reason,
+        "project_key": "lazy-harness",
+        "hook_version": "0.16.0",
+    }
+
+
+def test_skips_are_counted_separately_from_runs(tmp_path: Path) -> None:
+    """A hook that no-ops on a third of its invocations must not read as healthy."""
+    metrics = tmp_path / "engram_persist_metrics.jsonl"
+    _write(
+        metrics,
+        [
+            _run_event(when=NOW - timedelta(minutes=5)),
+            _skip_event(when=NOW - timedelta(minutes=4)),
+            _skip_event(when=NOW - timedelta(minutes=3)),
+        ],
+    )
+
+    health = collect_engram_persist_health(metrics, now=NOW)
+
+    # Skips are not failures — they must not distort the failure rate.
+    assert health.failure_rate == 0.0
+    assert health.runs_considered == 1
+    assert health.skips_considered == 2
+    # ...but they are still lost writes, so the check must not read as healthy.
+    assert health.state == "warn"
+
+
+def test_no_skips_reports_zero(tmp_path: Path) -> None:
+    metrics = tmp_path / "engram_persist_metrics.jsonl"
+    _write(metrics, [_run_event(when=NOW - timedelta(minutes=5))])
+
+    assert collect_engram_persist_health(metrics, now=NOW).skips_considered == 0
+
+
 def test_missing_metrics_file_returns_missing_state(tmp_path: Path) -> None:
     metrics_path = tmp_path / "engram_persist_metrics.jsonl"
 

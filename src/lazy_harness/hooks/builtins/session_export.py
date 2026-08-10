@@ -17,8 +17,9 @@ from pathlib import Path
 
 
 def main() -> None:
+    payload: object = None
     try:
-        json.load(sys.stdin)
+        payload = json.load(sys.stdin)
     except (json.JSONDecodeError, EOFError, ValueError):
         pass
 
@@ -26,7 +27,12 @@ def main() -> None:
         from lazy_harness.agents.registry import get_agent
         from lazy_harness.core.config import ConfigError, load_config
         from lazy_harness.core.paths import agent_runtime_dir, config_file
-        from lazy_harness.hooks.builtins._shared import find_latest_session, make_log
+        from lazy_harness.hooks.builtins._shared import (
+            find_latest_session,
+            make_log,
+            resolve_project_dir,
+            transcript_from_payload,
+        )
     except ImportError:
         # Broken/uninstalled package: silently no-op, never block the agent.
         return
@@ -63,9 +69,15 @@ def main() -> None:
     knowledge_dir = Path(os.path.expanduser(cfg.knowledge.path))
     sessions_root = knowledge_dir / cfg.knowledge.sessions.subdir
 
-    encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
-    sessions_dir = agent_dir / (subdirs.get("sessions") or "projects") / encoded
-    session_file = find_latest_session(sessions_dir)
+    session_file = transcript_from_payload(payload)
+    if session_file is None:
+        sessions_dir = resolve_project_dir(
+            payload,
+            agent_dir=agent_dir,
+            sessions_subdir=subdirs.get("sessions") or "projects",
+            cwd=cwd,
+        )
+        session_file = find_latest_session(sessions_dir)
     if session_file is None:
         _log(log_file, "no session JSONL found")
         return

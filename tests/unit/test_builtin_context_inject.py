@@ -848,7 +848,9 @@ def test_truncate_body_proposals_summary_survives_extreme_truncation() -> None:
     assert summary in result
 
 
-def _run_hook_in_process(monkeypatch, capsys, cwd: Path, cfg_file: Path) -> str:
+def _run_hook_in_process(
+    monkeypatch, capsys, cwd: Path, cfg_file: Path, stdin_payload: str = "{}"
+) -> str:
     import io
     import json as _json
     import sys as _sys
@@ -858,10 +860,41 @@ def _run_hook_in_process(monkeypatch, capsys, cwd: Path, cfg_file: Path) -> str:
 
     monkeypatch.setattr(paths_mod, "config_file", lambda: cfg_file)
     monkeypatch.chdir(cwd)
-    monkeypatch.setattr(_sys, "stdin", io.StringIO("{}"))
+    monkeypatch.setattr(_sys, "stdin", io.StringIO(stdin_payload))
     hook_mod.main()
     payload = _json.loads(capsys.readouterr().out)
     return str(payload["hookSpecificOutput"]["additionalContext"])
+
+
+def test_context_inject_reads_memory_from_agent_declared_project_dir(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """A cwd the naive encoder mangles must still find its memory dir."""
+    import json as _json
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    claude_dir = tmp_path / "claude"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_dir))
+
+    # cwd holds a space and a `~`; the agent rewrites both to `-`.
+    cwd = tmp_path / "Mobile Documents" / "iCloud~md~obsidian" / "LazyMind"
+    cwd.mkdir(parents=True)
+
+    project_dir = claude_dir / "projects" / "-tmp-Mobile-Documents-iCloud-md-obsidian-LazyMind"
+    memory_dir = project_dir / "memory"
+    memory_dir.mkdir(parents=True)
+    (memory_dir / "handoff.md").write_text("Vault indexing left half-done.\n")
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text('[harness]\nversion = "1"\n')
+
+    # SessionStart: the transcript is announced but not yet written to disk.
+    payload = _json.dumps({"transcript_path": str(project_dir / "new-session.jsonl")})
+    body = _run_hook_in_process(monkeypatch, capsys, cwd, cfg_file, payload)
+
+    assert "Vault indexing left half-done." in body
 
 
 def test_context_inject_emits_proposals_summary_under_budget_pressure(

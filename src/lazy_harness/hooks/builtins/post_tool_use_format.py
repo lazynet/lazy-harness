@@ -43,9 +43,27 @@ def main() -> None:
             capture_output=True,
             timeout=RUFF_TIMEOUT_SECS,
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        # Silence here made a formatter that never ran look like one that always
+        # did; record the reason so the gap is visible in the log.
+        _log_unavailable(path, e)
     sys.exit(0)
+
+
+def _log_unavailable(path: str, error: Exception) -> None:
+    try:
+        from lazy_harness.agents.registry import get_agent
+        from lazy_harness.core.paths import agent_runtime_dir
+        from lazy_harness.hooks.builtins._shared import make_log
+
+        agent_dir = agent_runtime_dir(get_agent("claude-code"))
+        log = make_log("post-tool-use-format")
+        log(
+            agent_dir / "logs" / "hooks.log",
+            f"ruff unavailable ({type(error).__name__}), left {path} unformatted",
+        )
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

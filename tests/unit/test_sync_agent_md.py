@@ -130,3 +130,17 @@ def test_sync_profiles_noop_for_null_adapter(tmp_path: Path) -> None:
     results = sync_profiles(profiles_dir, get_agent("null"))
     assert results == []
     assert not (profiles_dir / "lazy" / "CLAUDE.md").exists()
+
+
+def test_generated_header_names_a_registered_command() -> None:
+    """The header tells the reader how to regenerate; it must name a real command."""
+    from click import Group
+
+    from lazy_harness.cli.profile_cmd import profile
+    from lazy_harness.core.sync_agent_md import GENERATED_HEADER_TMPL
+
+    assert isinstance(profile, Group)
+    named = [name for name in profile.commands if f"`lh profile {name}`" in GENERATED_HEADER_TMPL]
+    assert named, (
+        f"header references no registered subcommand; available: {sorted(profile.commands)}"
+    )

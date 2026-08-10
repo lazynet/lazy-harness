@@ -32,6 +32,14 @@ def _bootstrap_log(log_file: Path, msg: str) -> None:
         pass
 
 
+def _bootstrap_project_dir(
+    payload: object, *, agent_dir: Path, sessions_subdir: str, cwd: Path
+) -> Path:
+    """Stand-in for `_shared.resolve_project_dir` when lazy_harness is not importable."""
+    encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
+    return agent_dir / (sessions_subdir or "projects") / encoded
+
+
 def _strip_html_comments(text: str) -> str:
     return "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("<!--")).strip()
 
@@ -61,26 +69,32 @@ def _resolve_agent_dirs() -> tuple[Path, dict[str, str]]:
 
 
 def main() -> None:
+    payload: object = None
     try:
-        json.load(sys.stdin)
+        payload = json.load(sys.stdin)
     except (json.JSONDecodeError, EOFError, ValueError):
         pass
 
     try:
-        from lazy_harness.hooks.builtins._shared import make_log
+        from lazy_harness.hooks.builtins._shared import make_log, resolve_project_dir
 
         _log = make_log("post-compact")
     except ImportError:
         # Bootstrap fallback, same contract as _resolve_agent_dirs.
         _log = _bootstrap_log
+        resolve_project_dir = _bootstrap_project_dir
 
     cwd = Path.cwd()
     agent_dir, subdirs = _resolve_agent_dirs()
     log_file = agent_dir / (subdirs.get("logs") or "logs") / "hooks.log"
 
-    encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
-    sessions_subdir = subdirs.get("sessions") or "projects"
-    summary_file = agent_dir / sessions_subdir / encoded / "memory" / "pre-compact-summary.md"
+    project_dir = resolve_project_dir(
+        payload,
+        agent_dir=agent_dir,
+        sessions_subdir=subdirs.get("sessions") or "projects",
+        cwd=cwd,
+    )
+    summary_file = project_dir / "memory" / "pre-compact-summary.md"
 
     try:
         st = summary_file.stat()

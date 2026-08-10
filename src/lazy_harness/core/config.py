@@ -187,6 +187,7 @@ class EngramConfig:
     git_sync: bool = True
     cloud: bool = False
     version: str = "1.15.4"
+    binary: str = ""
 
 
 @dataclass
@@ -313,6 +314,7 @@ def _parse_memory(raw: dict[str, Any]) -> MemoryConfig:
         git_sync=bool(engram_raw.get("git_sync", True)),
         cloud=bool(engram_raw.get("cloud", False)),
         version=str(engram_raw.get("version", "1.15.4")),
+        binary=str(engram_raw.get("binary", "")),
     )
     return MemoryConfig(engram=engram)
 

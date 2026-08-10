@@ -627,8 +627,9 @@ def qmd_suggest_context(query_text: str, top_k: int = 3, timeout: int = 5) -> st
 
 
 def main() -> None:
+    payload: object = None
     try:
-        json.load(sys.stdin)
+        payload = json.load(sys.stdin)
     except (json.JSONDecodeError, EOFError, ValueError):
         pass
 
@@ -636,7 +637,7 @@ def main() -> None:
         from lazy_harness.agents.registry import get_agent
         from lazy_harness.core.config import ConfigError, load_config
         from lazy_harness.core.paths import agent_runtime_dir, config_file
-        from lazy_harness.hooks.builtins._shared import make_log
+        from lazy_harness.hooks.builtins._shared import make_log, project_dir_from_payload
     except ImportError:
         # Broken/uninstalled package: silently no-op, never block the agent.
         return
@@ -664,9 +665,13 @@ def main() -> None:
     subdirs = agent.session_dirs()
     log_file = agent_dir / (subdirs.get("logs") or "logs") / "hooks.log"
 
-    # Sections
-    encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
-    memory_dir = agent_dir / (subdirs.get("sessions") or "projects") / encoded / "memory"
+    # Sections. Prefer the project dir the agent declared over one derived from
+    # cwd — the agent's encoding of cwd has changed across releases.
+    project_dir = project_dir_from_payload(payload)
+    if project_dir is None:
+        encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
+        project_dir = agent_dir / (subdirs.get("sessions") or "projects") / encoded
+    memory_dir = project_dir / "memory"
 
     git_ctx = git_context(cwd)
 

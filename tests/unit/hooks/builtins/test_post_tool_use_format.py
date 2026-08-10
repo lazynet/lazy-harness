@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import subprocess
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -16,9 +17,7 @@ def test_runs_ruff_format_on_python_edit(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr("subprocess.run", fake_run)
     monkeypatch.setattr(
         "sys.stdin",
-        io.StringIO(
-            '{"tool_name": "Edit", "tool_input": {"file_path": "/abs/foo.py"}}'
-        ),
+        io.StringIO('{"tool_name": "Edit", "tool_input": {"file_path": "/abs/foo.py"}}'),
     )
 
     with pytest.raises(SystemExit) as exc_info:
@@ -39,9 +38,7 @@ def test_runs_ruff_format_on_python_write(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr("subprocess.run", fake_run)
     monkeypatch.setattr(
         "sys.stdin",
-        io.StringIO(
-            '{"tool_name": "Write", "tool_input": {"file_path": "/abs/bar.py"}}'
-        ),
+        io.StringIO('{"tool_name": "Write", "tool_input": {"file_path": "/abs/bar.py"}}'),
     )
     with pytest.raises(SystemExit) as exc_info:
         mod.main()
@@ -56,9 +53,7 @@ def test_skips_non_python_files(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("subprocess.run", fake_run)
     monkeypatch.setattr(
         "sys.stdin",
-        io.StringIO(
-            '{"tool_name": "Edit", "tool_input": {"file_path": "/abs/readme.md"}}'
-        ),
+        io.StringIO('{"tool_name": "Edit", "tool_input": {"file_path": "/abs/readme.md"}}'),
     )
     with pytest.raises(SystemExit) as exc_info:
         mod.main()
@@ -107,6 +102,30 @@ def test_exits_zero_when_ruff_not_installed(monkeypatch: pytest.MonkeyPatch) -> 
     with pytest.raises(SystemExit) as exc_info:
         mod.main()
     assert exc_info.value.code == 0
+
+
+def test_logs_when_ruff_is_unavailable(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Swallowing the error silently makes a formatter that never runs look identical
+    to one that runs on every edit."""
+    from lazy_harness.hooks.builtins import post_tool_use_format as mod
+
+    claude_dir = tmp_path / "claude"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_dir))
+
+    def raise_fnf(*_: object, **__: object) -> subprocess.CompletedProcess[str]:
+        raise FileNotFoundError("ruff not found")
+
+    monkeypatch.setattr("subprocess.run", raise_fnf)
+    monkeypatch.setattr(
+        "sys.stdin",
+        io.StringIO('{"tool_name": "Edit", "tool_input": {"file_path": "/a.py"}}'),
+    )
+    with pytest.raises(SystemExit):
+        mod.main()
+
+    log = (claude_dir / "logs" / "hooks.log").read_text()
+    assert "post-tool-use-format" in log
+    assert "ruff unavailable" in log
 
 
 def test_exits_zero_when_ruff_times_out(monkeypatch: pytest.MonkeyPatch) -> None:

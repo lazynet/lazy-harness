@@ -111,7 +111,14 @@ type = "null"
     captured: dict[str, Path] = {}
 
     class FakePersister:
-        def __init__(self, *, memory_dir: Path, logs_dir: Path, project_key: str) -> None:
+        def __init__(
+            self,
+            *,
+            memory_dir: Path,
+            logs_dir: Path,
+            project_key: str,
+            engram_bin: str | None = None,
+        ) -> None:
             captured["memory_dir"] = memory_dir
             captured["logs_dir"] = logs_dir
 
@@ -124,6 +131,57 @@ type = "null"
 
     assert captured["memory_dir"] == home / ".null" / "projects" / encoded / "memory"
     assert captured["logs_dir"] == home / ".null" / "logs"
+
+
+def test_wrapper_passes_configured_engram_binary(tmp_path: Path, monkeypatch) -> None:
+    """Hook subprocesses inherit a PATH that may lack the binary; config must win."""
+    import io
+    import sys as _sys
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    cwd = tmp_path / "proj"
+    cwd.mkdir()
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        """
+[harness]
+version = "1"
+
+[memory.engram]
+enabled = true
+binary = "/opt/homebrew/bin/engram"
+"""
+    )
+    from lazy_harness.core import paths as paths_mod
+    from lazy_harness.hooks.builtins import engram_persist as hook_mod
+
+    monkeypatch.setattr(paths_mod, "config_file", lambda: cfg_file)
+
+    captured: dict[str, object] = {}
+
+    class FakePersister:
+        def __init__(
+            self,
+            *,
+            memory_dir: Path,
+            logs_dir: Path,
+            project_key: str,
+            engram_bin: str | None = None,
+        ) -> None:
+            captured["engram_bin"] = engram_bin
+
+        def persist_new_entries(self) -> None:
+            pass
+
+    monkeypatch.setattr("lazy_harness.knowledge.engram_persist.EngramPersister", FakePersister)
+    monkeypatch.setattr(_sys, "stdin", io.StringIO(json.dumps({"cwd": str(cwd)})))
+    hook_mod.main()
+
+    assert captured["engram_bin"] == "/opt/homebrew/bin/engram"
 
 
 def test_wrapper_exits_zero_when_engram_save_fails(tmp_path: Path) -> None:

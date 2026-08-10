@@ -217,6 +217,29 @@ def test_config_memory_engram_defaults_when_missing() -> None:
     assert cfg.memory.engram.version == "1.15.4"
 
 
+def test_config_memory_engram_binary_defaults_to_empty() -> None:
+    from lazy_harness.core.config import Config
+
+    assert Config().memory.engram.binary == ""
+
+
+def test_config_memory_engram_parses_explicit_binary(config_dir: Path) -> None:
+    """PATH is unreliable for hook subprocesses; an explicit path must win."""
+    config_file = config_dir / "config.toml"
+    config_file.write_text("""
+[harness]
+version = "1"
+
+[memory.engram]
+enabled = true
+binary = "/opt/homebrew/bin/engram"
+""")
+    from lazy_harness.core.config import load_config
+
+    cfg = load_config(config_file)
+    assert cfg.memory.engram.binary == "/opt/homebrew/bin/engram"
+
+
 def test_config_memory_engram_parses_from_toml(config_dir: Path) -> None:
     config_file = config_dir / "config.toml"
     config_file.write_text("""

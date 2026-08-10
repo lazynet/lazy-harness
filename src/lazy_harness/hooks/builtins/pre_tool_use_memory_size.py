@@ -76,6 +76,25 @@ def _emit_warning(file_path: str, projected_lines: int) -> None:
         }
     }
     print(json.dumps(output))
+    _log_warning(file_path, projected_lines)
+
+
+def _log_warning(file_path: str, projected_lines: int) -> None:
+    """Record the warning so its frequency is auditable after the fact."""
+    try:
+        from lazy_harness.agents.registry import get_agent
+        from lazy_harness.core.paths import agent_runtime_dir
+        from lazy_harness.hooks.builtins._shared import make_log
+
+        agent_dir = agent_runtime_dir(get_agent("claude-code"))
+        log = make_log("pre-tool-use-memory-size")
+        log(
+            agent_dir / "logs" / "hooks.log",
+            f"over threshold: {file_path} would have {projected_lines} lines",
+        )
+    except Exception:
+        # Auditing must never break the warning path.
+        pass
 
 
 def main() -> None:
