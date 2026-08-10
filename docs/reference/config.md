@@ -132,23 +132,25 @@ Each `[profiles.<name>]` sub-table:
 
 ## `[knowledge]` and sub-tables
 
-| Field  | Type          | Default | Required | Description                                         |
-| ------ | ------------- | ------- | -------- | --------------------------------------------------- |
-| `path` | string (path) | `""`    | no       | Root of the knowledge directory. Empty disables it. |
+| Field  | Type          | Default | Required | Description                                                                                                          |
+| ------ | ------------- | ------- | -------- | -------------------------------------------------------------------------------------------------------------------- |
+| `root` | string (path) | `""`    | no       | Root of the knowledge store repository. Empty falls back to `$LAZY_KNOWLEDGE_ROOT`, then to the built-in default. |
+
+The store's *layout* is not configured here. A `knowledge.toml` marker at the
+store root declares its subdirectory names, and every consumer reads them from
+there. See [The knowledge store](../how/knowledge-pipeline.md).
 
 `[knowledge.sessions]`:
 
 | Field     | Type   | Default      | Required | Description                                           |
 | --------- | ------ | ------------ | -------- | ----------------------------------------------------- |
-| `enabled` | bool   | `false`      | no       | Whether session export writes into the knowledge dir. |
-| `subdir`  | string | `"sessions"` | no       | Subdirectory under `knowledge.path`.                  |
+| `enabled` | bool   | `false`      | no       | Whether session export writes into the knowledge store. |
 
 `[knowledge.learnings]`:
 
 | Field     | Type   | Default       | Required | Description                                             |
 | --------- | ------ | ------------- | -------- | ------------------------------------------------------- |
 | `enabled` | bool   | `false`       | no       | Whether the compound loop persists distilled learnings. |
-| `subdir`  | string | `"learnings"` | no       | Subdirectory under `knowledge.path`.                    |
 
 `[knowledge.search]`:
 
@@ -314,9 +316,8 @@ Rules:
 | `debounce_seconds`             | int            | `60`                          | no       | Minimum gap between two loop firings on the same session.                                                                                                                                              |
 | `reprocess_min_growth_seconds` | int            | `120`                         | no       | Minimum seconds of JSONL growth since the last `done/` task before a `Stop` event re-queues. Bypassed by the `session-end` producer and `lh knowledge handoff-now`. See [ADR-019](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/019-handoff-session-end-freshness.md). |
 | `timeout_seconds`              | int            | `120`                         | no       | Hard timeout on the loop's model call.                                                                                                                                                                 |
-| `learnings_subdir`             | string         | `"learnings"`                 | no       | Subdir under the knowledge dir where learnings are written.                                                                                                                                            |
 | `grading_enabled`              | bool           | `true`                        | no       | When true, the worker also runs the asynchronous response-grading pass alongside distillation. See [ADR-021](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/021-async-response-grading.md). |
-| `lazymind_dir`                 | string / null  | `null`                        | no       | Optional override for the LazyMind-style knowledge root used by the loop. `null` means the default derived from `[knowledge].path`.                                                                    |
+| `lazymind_dir`                 | string / null  | `null`                        | no       | Optional override for the LazyMind-style knowledge root used by the loop. `null` disables the vault lookup. It is deliberately independent of `[knowledge].root`.                                                                    |
 | `slim_handoff_enabled`         | bool           | `true`                        | no       | When true and the loop's gates block evaluation, a deterministic fast-path still writes `handoff.md` — branch, last user prompt, files touched — with no model call. See [ADR-030](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/030-memory-stack-glue-layer.md). |
 | `backend`                      | string         | `"claude"`                    | no       | LLM backend for the loop's inference calls: `claude`, `ollama`, `mlx`, or `openai-compatible`. See [ADR-033](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/033-llm-backend-abstraction.md). |
 | `backend_options`              | table          | `{}`                          | no       | Options for the backend, under `[compound_loop.backend_options]`. `base_url` (required for `openai-compatible`, preset for `ollama`/`mlx`) and `api_key` (default `"none"`).                          |

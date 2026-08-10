@@ -47,6 +47,9 @@ def test_session_export_hook_exits_zero(tmp_path: Path) -> None:
     session_file.write_text("\n".join(json.dumps(m) for m in messages) + "\n")
     knowledge_dir = tmp_path / "knowledge"
     knowledge_dir.mkdir()
+    (knowledge_dir / "knowledge.toml").write_text(
+        '[knowledge]\nversion = 1\nsessions = "sessions"\nlearnings = "learnings"\n'
+    )
     env = {
         "PATH": os.environ.get("PATH", ""),
         "HOME": str(tmp_path),
@@ -111,6 +114,9 @@ def test_session_export_routes_paths_through_agent_adapter(tmp_path: Path, monke
 
     knowledge_dir = tmp_path / "knowledge"
     knowledge_dir.mkdir()
+    (knowledge_dir / "knowledge.toml").write_text(
+        '[knowledge]\nversion = 1\nsessions = "sessions"\nlearnings = "learnings"\n'
+    )
     cfg_file = tmp_path / "config.toml"
     cfg_file.write_text(
         f"""
@@ -121,7 +127,7 @@ version = "1"
 type = "null"
 
 [knowledge]
-path = "{knowledge_dir}"
+root = "{knowledge_dir}"
 """
     )
     from lazy_harness.core import paths as paths_mod

@@ -400,3 +400,65 @@ version = "0.9.38"
     cfg = load_config(config_file)
     assert cfg.knowledge.structure.enabled is True
     assert cfg.knowledge.structure.version == "0.9.38"
+
+
+def test_knowledge_root_replaces_path(tmp_path: Path) -> None:
+    from lazy_harness.core.config import load_config
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        '[harness]\nversion = "1"\n\n[knowledge]\nroot = "~/repos/lazy/lazy-knowledge"\n',
+        encoding="utf-8",
+    )
+    cfg = load_config(cfg_file)
+    assert cfg.knowledge.root == "~/repos/lazy/lazy-knowledge"
+
+
+def test_legacy_knowledge_path_raises_naming_new_key(tmp_path: Path) -> None:
+    from lazy_harness.core.config import ConfigError, load_config
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        '[harness]\nversion = "1"\n\n[knowledge]\npath = "~/vault/Meta"\n', encoding="utf-8"
+    )
+    with pytest.raises(ConfigError, match=r"\[knowledge\]\.root"):
+        load_config(cfg_file)
+
+
+def test_legacy_knowledge_subdir_raises(tmp_path: Path) -> None:
+    from lazy_harness.core.config import ConfigError, load_config
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        '[harness]\nversion = "1"\n\n[knowledge]\nroot = "~/k"\n\n'
+        '[knowledge.learnings]\nsubdir = "Learnings"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match=r"\[knowledge\.learnings\]\.subdir"):
+        load_config(cfg_file)
+
+
+def test_legacy_learnings_subdir_raises(tmp_path: Path) -> None:
+    from lazy_harness.core.config import ConfigError, load_config
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        '[harness]\nversion = "1"\n\n[knowledge]\nroot = "~/k"\n\n'
+        '[compound_loop]\nlearnings_subdir = "Learnings"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match=r"\[compound_loop\]\.learnings_subdir"):
+        load_config(cfg_file)
+
+
+def test_compound_loop_lazymind_dir_survives(tmp_path: Path) -> None:
+    from lazy_harness.core.config import load_config
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        '[harness]\nversion = "1"\n\n[knowledge]\nroot = "~/k"\n\n'
+        '[compound_loop]\nlazymind_dir = "~/vault"\n',
+        encoding="utf-8",
+    )
+    cfg = load_config(cfg_file)
+    assert cfg.compound_loop.lazymind_dir == "~/vault"

@@ -678,10 +678,13 @@ def main() -> None:
     last_session_ctx = ""
     north_ctx = ""
     if cfg is not None:
-        knowledge_path = _expand(cfg.knowledge.path)
-        sessions_dir = (
-            knowledge_path / cfg.knowledge.sessions.subdir if cfg.knowledge.path else Path()
-        )
+        from lazy_harness.knowledge.directory import sessions_dir as knowledge_sessions_dir
+        from lazy_harness.knowledge.marker import MarkerError, resolve_root
+
+        try:
+            sessions_dir = knowledge_sessions_dir(resolve_root(cfg.knowledge.root or None))
+        except MarkerError:
+            sessions_dir = Path()
         if (
             cfg.context_inject.enabled
             and cfg.context_inject.last_session_enabled

@@ -561,7 +561,7 @@ def test_knowledge_config_loads_classify_rules_from_toml(tmp_path: Path) -> None
 version = "0"
 
 [knowledge]
-path = "/tmp/k"
+root = "/tmp/k"
 
 [[knowledge.classify_rules]]
 pattern = "/srv/clients/"
@@ -592,7 +592,7 @@ def test_knowledge_config_explicit_empty_classify_rules(tmp_path: Path) -> None:
 version = "0"
 
 [knowledge]
-path = "/tmp/k"
+root = "/tmp/k"
 classify_rules = []
 """
     )

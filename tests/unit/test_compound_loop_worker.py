@@ -19,6 +19,13 @@ def test_worker_routes_dirs_through_agent_adapter(
     decoy_dir = tmp_path / "decoy-claude"
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(decoy_dir))
 
+    store = tmp_path / "store"
+    store.mkdir()
+    (store / "knowledge.toml").write_text(
+        '[knowledge]\nversion = 1\nsessions = "sessions"\nlearnings = "learnings"\n'
+    )
+    monkeypatch.setenv("LAZY_KNOWLEDGE_ROOT", str(store))
+
     cfg_file = tmp_path / "config.toml"
     cfg_file.write_text(
         """
@@ -55,6 +62,13 @@ def test_worker_falls_back_to_claude_code_on_unknown_agent_type(
     claude_dir = tmp_path / "claude"
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_dir))
 
+    store = tmp_path / "store"
+    store.mkdir()
+    (store / "knowledge.toml").write_text(
+        '[knowledge]\nversion = 1\nsessions = "sessions"\nlearnings = "learnings"\n'
+    )
+    monkeypatch.setenv("LAZY_KNOWLEDGE_ROOT", str(store))
+
     cfg_file = tmp_path / "config.toml"
     cfg_file.write_text(
         """
@@ -87,6 +101,13 @@ def test_worker_resolves_backend_from_config_and_passes_it_to_process_task(
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
+
+    store = tmp_path / "store"
+    store.mkdir()
+    (store / "knowledge.toml").write_text(
+        '[knowledge]\nversion = 1\nsessions = "sessions"\nlearnings = "learnings"\n'
+    )
+    monkeypatch.setenv("LAZY_KNOWLEDGE_ROOT", str(store))
 
     cfg_file = tmp_path / "config.toml"
     cfg_file.write_text(
@@ -136,6 +157,13 @@ def test_worker_exits_cleanly_on_unknown_backend(
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
 
+    store = tmp_path / "store"
+    store.mkdir()
+    (store / "knowledge.toml").write_text(
+        '[knowledge]\nversion = 1\nsessions = "sessions"\nlearnings = "learnings"\n'
+    )
+    monkeypatch.setenv("LAZY_KNOWLEDGE_ROOT", str(store))
+
     cfg_file = tmp_path / "config.toml"
     cfg_file.write_text(
         """
@@ -160,3 +188,67 @@ backend = "no-such-backend"
     log = (home / ".null" / "logs" / "compound-loop.log").read_text()
     assert "backend" in log
     assert "no-such-backend" in log
+
+
+def test_resolve_learnings_dir_uses_marker(tmp_path: Path, monkeypatch) -> None:
+    from lazy_harness.core.config import Config
+    from lazy_harness.knowledge.compound_loop_worker import _resolve_learnings_dir
+
+    monkeypatch.delenv("LAZY_KNOWLEDGE_ROOT", raising=False)
+    store = tmp_path / "store"
+    store.mkdir()
+    (store / "knowledge.toml").write_text(
+        '[knowledge]\nversion = 1\nsessions = "sessions"\nlearnings = "lessons"\n',
+        encoding="utf-8",
+    )
+    cfg = Config()
+    cfg.knowledge.root = str(store)
+    assert _resolve_learnings_dir(cfg) == store / "lessons"
+
+
+def test_resolve_learnings_dir_ignores_removed_lct_env(tmp_path: Path, monkeypatch) -> None:
+    from lazy_harness.core.config import Config
+    from lazy_harness.knowledge.compound_loop_worker import _resolve_learnings_dir
+
+    monkeypatch.delenv("LAZY_KNOWLEDGE_ROOT", raising=False)
+    monkeypatch.setenv("LCT_LEARNINGS_DIR", str(tmp_path / "old-vault"))
+    store = tmp_path / "store"
+    store.mkdir()
+    (store / "knowledge.toml").write_text(
+        '[knowledge]\nversion = 1\nsessions = "sessions"\nlearnings = "learnings"\n',
+        encoding="utf-8",
+    )
+    cfg = Config()
+    cfg.knowledge.root = str(store)
+    assert _resolve_learnings_dir(cfg) == store / "learnings"
+
+
+def test_worker_exits_cleanly_when_the_store_has_no_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A missing marker is a misconfiguration, not a crash. The queue survives."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("LAZY_KNOWLEDGE_ROOT", raising=False)
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        """
+[harness]
+version = "1"
+
+[agent]
+type = "null"
+
+[compound_loop]
+enabled = true
+"""
+    )
+    from lazy_harness.knowledge import compound_loop_worker as worker_mod
+
+    monkeypatch.setattr(worker_mod, "config_file", lambda: cfg_file)
+
+    assert worker_mod.main() == 1
+    log = (home / ".null" / "logs" / "compound-loop.log").read_text()
+    assert "knowledge.toml" in log

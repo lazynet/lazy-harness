@@ -223,8 +223,8 @@ def doctor() -> None:
             console.print(f"  [red]✗[/red] {label} — {cdir} [red](missing)[/red]")
             ok = False
 
-    if cfg.knowledge.path:
-        kp = expand_path(cfg.knowledge.path)
+    if cfg.knowledge.root:
+        kp = expand_path(cfg.knowledge.root)
         if kp.is_dir():
             console.print(f"\n[green]✓[/green] Knowledge dir: {contract_path(kp)}")
         else:

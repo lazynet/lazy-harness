@@ -20,6 +20,8 @@ from lazy_harness.knowledge.compound_loop import (
     move_to_done,
     process_task,
 )
+from lazy_harness.knowledge.directory import learnings_dir as knowledge_learnings_dir
+from lazy_harness.knowledge.marker import MarkerError, resolve_root
 from lazy_harness.llm import LLMBackend, get_backend
 
 
@@ -53,17 +55,9 @@ def _load_config() -> Config | None:
 
 
 def _resolve_learnings_dir(cfg: Config) -> Path:
-    """Resolve where learnings .md files go.
-
-    Preference order:
-    1. LCT_LEARNINGS_DIR env var (back-compat with lazy-claudecode)
-    2. <knowledge.path>/<compound_loop.learnings_subdir>
-    """
-    env_override = os.environ.get("LCT_LEARNINGS_DIR")
-    if env_override:
-        return Path(os.path.expanduser(env_override))
-    knowledge_path = os.path.expanduser(cfg.knowledge.path or "")
-    return Path(knowledge_path) / cfg.compound_loop.learnings_subdir
+    """Resolve where learnings land, from the store marker."""
+    root = resolve_root(cfg.knowledge.root or None)
+    return knowledge_learnings_dir(root)
 
 
 def _drain_queue(
@@ -140,7 +134,12 @@ def main() -> int:
             _log(log_file, f"backend resolution failed: {e}")
             return 0
 
-        learnings_dir = _resolve_learnings_dir(cfg)
+        try:
+            learnings_dir = _resolve_learnings_dir(cfg)
+        except MarkerError as e:
+            _log(log_file, f"knowledge store unusable, nothing written: {e}")
+            return 1
+
         _log(log_file, "started, checking queue")
         _drain_queue(queue_dir, cfg.compound_loop, learnings_dir, log_file, backend)
         _log(log_file, "queue empty, exiting")

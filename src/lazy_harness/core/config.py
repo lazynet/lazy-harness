@@ -43,13 +43,11 @@ class HarnessConfig:
 @dataclass
 class KnowledgeSessionsConfig:
     enabled: bool = False
-    subdir: str = "sessions"
 
 
 @dataclass
 class KnowledgeLearningsConfig:
     enabled: bool = False
-    subdir: str = "learnings"
 
 
 @dataclass
@@ -89,7 +87,7 @@ def _default_classify_rules() -> list[ClassifyRule]:
 
 @dataclass
 class KnowledgeConfig:
-    path: str = ""
+    root: str = ""
     sessions: KnowledgeSessionsConfig = field(default_factory=KnowledgeSessionsConfig)
     learnings: KnowledgeLearningsConfig = field(default_factory=KnowledgeLearningsConfig)
     search: KnowledgeSearchConfig = field(default_factory=KnowledgeSearchConfig)
@@ -148,7 +146,6 @@ class CompoundLoopConfig:
     min_user_chars: int = 200
     debounce_seconds: int = 60
     timeout_seconds: int = 120
-    learnings_subdir: str = "learnings"
     reprocess_min_growth_seconds: int = 120
     grading_enabled: bool = True
     lazymind_dir: str | None = None
@@ -357,8 +354,21 @@ def load_config(path: Path) -> Config:
         ]
     else:
         classify_rules = _default_classify_rules()
+    if "path" in knowledge_raw:
+        raise ConfigError(
+            "[knowledge].path was replaced by [knowledge].root, which points at the "
+            "knowledge store repository rather than a vault subdirectory. "
+            "Run `lh migrate config` to update."
+        )
+    for legacy in ("sessions", "learnings"):
+        if "subdir" in (knowledge_raw.get(legacy) or {}):
+            raise ConfigError(
+                f"[knowledge.{legacy}].subdir was removed; knowledge.toml in the store "
+                "declares the layout now. Run `lh migrate config`."
+            )
+
     cfg.knowledge = KnowledgeConfig(
-        path=knowledge_raw.get("path", ""),
+        root=knowledge_raw.get("root", ""),
         sessions=KnowledgeSessionsConfig(**knowledge_raw.get("sessions", {})),
         learnings=KnowledgeLearningsConfig(**knowledge_raw.get("learnings", {})),
         search=KnowledgeSearchConfig(**knowledge_raw.get("search", {})),
@@ -401,6 +411,11 @@ def load_config(path: Path) -> Config:
 
     cl_raw = raw.get("compound_loop", {})
     if isinstance(cl_raw, dict):
+        if "learnings_subdir" in cl_raw:
+            raise ConfigError(
+                "[compound_loop].learnings_subdir was removed; knowledge.toml in the store "
+                "declares the layout now. Run `lh migrate config`."
+            )
         cfg.compound_loop = CompoundLoopConfig(
             enabled=cl_raw.get("enabled", False),
             model=cl_raw.get("model", CompoundLoopConfig.model),
@@ -408,7 +423,6 @@ def load_config(path: Path) -> Config:
             min_user_chars=cl_raw.get("min_user_chars", CompoundLoopConfig.min_user_chars),
             debounce_seconds=cl_raw.get("debounce_seconds", CompoundLoopConfig.debounce_seconds),
             timeout_seconds=cl_raw.get("timeout_seconds", CompoundLoopConfig.timeout_seconds),
-            learnings_subdir=cl_raw.get("learnings_subdir", CompoundLoopConfig.learnings_subdir),
             reprocess_min_growth_seconds=cl_raw.get(
                 "reprocess_min_growth_seconds",
                 CompoundLoopConfig.reprocess_min_growth_seconds,
@@ -463,14 +477,12 @@ def _config_to_dict(cfg: Config) -> dict[str, Any]:
         "agent": {"type": cfg.agent.type},
         "profiles": profiles_dict,
         "knowledge": {
-            "path": cfg.knowledge.path,
+            "root": cfg.knowledge.root,
             "sessions": {
                 "enabled": cfg.knowledge.sessions.enabled,
-                "subdir": cfg.knowledge.sessions.subdir,
             },
             "learnings": {
                 "enabled": cfg.knowledge.learnings.enabled,
-                "subdir": cfg.knowledge.learnings.subdir,
             },
             "search": {"engine": cfg.knowledge.search.engine},
         },

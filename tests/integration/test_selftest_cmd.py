@@ -14,7 +14,7 @@ def _minimal_config(home: Path) -> Path:
         '[agent]\ntype = "claude-code"\n'
         '[profiles]\ndefault = "personal"\n'
         '[profiles.personal]\nconfig_dir = "~/.claude-personal"\n'
-        '[knowledge]\npath = ""\n'
+        '[knowledge]\nroot = ""\n'
     )
     return cfg
 

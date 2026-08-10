@@ -6,7 +6,7 @@ from lazy_harness.selftest.result import CheckStatus
 _BASE_TOML = (
     '[harness]\nversion = "1"\n'
     '[agent]\ntype = "claude-code"\n'
-    '[knowledge]\npath = ""\n'
+    '[knowledge]\nroot = ""\n'
 )
 
 
