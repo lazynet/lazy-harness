@@ -1863,3 +1863,61 @@ def test_process_task_feeds_recent_failures_into_prompt(tmp_path: Path) -> None:
     assert outcome.was_processed
     assert "## Recorded failures from previous sessions" in captured["prompt"]
     assert "- 2026-06-10: stale handoff loaded" in captured["prompt"]
+
+
+def test_origin_host_is_slugified_first_label(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lazy_harness.knowledge import compound_loop
+
+    monkeypatch.setattr(compound_loop.platform, "node", lambda: "Some-Laptop.local")
+    assert compound_loop.origin_host() == "some-laptop"
+
+
+def test_origin_host_strips_unsafe_characters(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lazy_harness.knowledge import compound_loop
+
+    monkeypatch.setattr(compound_loop.platform, "node", lambda: "box_01!.lan")
+    assert compound_loop.origin_host() == "box-01"
+
+
+def test_origin_host_raises_when_unresolvable(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lazy_harness.knowledge import compound_loop
+
+    monkeypatch.setattr(compound_loop.platform, "node", lambda: "!!!")
+    with pytest.raises(ValueError, match="host"):
+        compound_loop.origin_host()
+
+
+def test_learning_filename_carries_origin_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.knowledge import compound_loop
+
+    monkeypatch.setattr(compound_loop, "origin_host", lambda: "some-laptop")
+    learnings = tmp_path / "learnings"
+    compound_loop.persist_results(
+        {"learnings": [{"title": "Use flock for locks", "tags": [], "scope": "universal"}]},
+        tmp_path / "memory",
+        learnings,
+        "lazy-harness",
+        "2026-08-10T12:00:00",
+    )
+    written = list((learnings / "2026-08").glob("*.md"))
+    assert len(written) == 1
+    assert written[0].name == "2026-08-10-use-flock-for-locks-some-laptop.md"
+
+
+def test_two_hosts_same_title_same_day_produce_distinct_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The add/add collision the host suffix exists to prevent."""
+    from lazy_harness.knowledge import compound_loop
+
+    learnings = tmp_path / "learnings"
+    payload = {"learnings": [{"title": "Same idea", "tags": [], "scope": "universal"}]}
+    for host in ("laptop", "server"):
+        monkeypatch.setattr(compound_loop, "origin_host", lambda h=host: h)
+        compound_loop.persist_results(
+            payload, tmp_path / "memory", learnings, "lazy-harness", "2026-08-10T12:00:00"
+        )
+    names = sorted(p.name for p in (learnings / "2026-08").glob("*.md"))
+    assert names == ["2026-08-10-same-idea-laptop.md", "2026-08-10-same-idea-server.md"]
