@@ -4,17 +4,18 @@ The knowledge pipeline is the path from "a session just happened" to "six months
 
 Four moving parts feed it:
 
-- **`session-export`** — writes clean markdown sessions into `<knowledge.path>/sessions/`.
-- **`compound-loop`** — writes distilled learnings into `<knowledge.path>/<compound_loop.learnings_subdir>/`.
+- **`session-export`** — writes clean markdown sessions into the store's `sessions/`.
+- **`compound-loop`** — writes distilled learnings into the store's `learnings/`.
 - **QMD** (optional external tool) — indexes the knowledge tree semantically and exposes a `qmd query` interface.
-- **The knowledge directory itself** — a plain filesystem tree the user can backup, grep, and open in any editor.
+- **The knowledge store itself** — a plain filesystem tree, and a git repository, that the user can backup, grep, and open in any editor.
 
 See [ADR-011](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/011-session-export-and-classification.md), [ADR-016](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/016-knowledge-dir-qmd-optional.md) for the design decisions. This page explains the mechanics.
 
-## Directory shape
+## Store shape
 
 ```
-<knowledge.path>/               # from config.toml [knowledge].path
+<store root>/                   # $LAZY_KNOWLEDGE_ROOT, [knowledge].root, or the default
+├── knowledge.toml              # the marker: declares the two subdirectory names
 ├── sessions/                   # written by session-export hook
 │   ├── 2026-03/
 │   │   ├── 2026-03-01-a1b2c3d4.md
@@ -26,8 +27,28 @@ See [ADR-011](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/011-s
     ├── 2026-03/
     │   └── 2026-03-15-file-based-queue-is-enough.md
     └── 2026-04/
-        └── 2026-04-13-symlinks-vs-copies-for-profile-deploy.md
+        └── 2026-04-13-symlinks-vs-copies-for-profile-deploy-laptop.md
 ```
+
+### The marker is the only declaration of the layout
+
+```toml
+[knowledge]
+version   = 1
+sessions  = "sessions"
+learnings = "learnings"
+```
+
+Configuration resolves exactly one thing: *where* the store root is. *How* it is
+laid out inside comes from `knowledge.toml`, and from nowhere else. The split is
+deliberate — a root is environmental and differs per machine, while a layout is
+global and must be identical everywhere. Two independent declarations of the
+same layout is precisely how a directory named `learnings` ends up configured as
+`Learnings`, which works on a case-insensitive filesystem and breaks on Linux.
+
+Validation is loud on every failure: a missing file, an unknown `version`, an
+absolute or escaping subdirectory name, or a missing field all raise rather than
+fall back. A field read as `""` would silently land files at the repository root.
 
 Every file is plain markdown with YAML frontmatter. No database, no lock files, no hidden index. You can `rsync -a` the whole directory to backup, and `rg` it directly if you do not have QMD.
 
@@ -109,7 +130,7 @@ There is a separate decoder, `_decode_project_dir`, that reverses Claude Code's 
 
 ### The written file
 
-Output path: `<knowledge.path>/sessions/YYYY-MM/YYYY-MM-DD-<short_id>.md` (`short_id` = first 8 chars of `session_id`).
+Output path: `<store>/sessions/YYYY-MM/YYYY-MM-DD-<short_id>.md` (`short_id` = first 8 chars of `session_id`).
 
 Frontmatter:
 
@@ -136,11 +157,11 @@ Body: a sequence of `## User` and `## Claude` blocks with the extracted text, se
 
 ### Atomic writes
 
-Every write goes through `_atomic_write`: write to `<dir>/.filename.tmp`, then `os.replace` to the target. A sync observer (iCloud, Dropbox) sees a single rename event rather than a window during which the file is partially written. Required whenever the knowledge directory lives under a synced folder — and it usually does.
+Every write goes through `_atomic_write`: write to `<dir>/.filename.tmp`, then `os.replace` to the target. A sync observer (iCloud, Dropbox) sees a single rename event rather than a window during which the file is partially written. Required whenever the store lives under a synced folder.
 
 ## Learnings via compound loop
 
-The compound-loop worker writes one markdown file per learning into `<knowledge.path>/<compound_loop.learnings_subdir>/` (default `<knowledge.path>/learnings/`). The structure is identical in spirit to session exports: year-month subdirectories, dated filenames, YAML frontmatter.
+The compound-loop worker writes one markdown file per learning into the store's learnings subdirectory. The structure is identical in spirit to session exports: year-month subdirectories, dated filenames, YAML frontmatter. Learning filenames carry a trailing `-<host>` slug so that two machines distilling the same title on the same day produce two files rather than one conflict.
 
 For the full flow, see [how the memory compound loop works](memory-compound.md). The key points for the pipeline:
 
@@ -148,6 +169,39 @@ For the full flow, see [how the memory compound loop works](memory-compound.md).
 - Deduplication happens in the LLM prompt, not in the filesystem. The worker passes the titles of the last 50 learnings into the prompt with explicit "do not generate semantic duplicates" instructions.
 - Learnings carry a `scope` field (`universal | backend | infra | consulting`) that lets future queries slice by applicability.
 - Weekly learnings review is a separate scheduled job that reads the learnings directory, surfaces near-duplicates, and prompts a human (or agent) to merge them. It is not part of the session-close pipeline.
+
+## Transport: the store is a git repository
+
+The store is checked out on every machine that writes to it, and a scheduler job
+runs `lh knowledge push` on each of them. One cycle is:
+
+1. Take an exclusive `flock`. A held lock means another cycle is running, so this
+   one exits 0 silently.
+2. Validate `knowledge.toml`. An unusable marker stops here, before git is
+   touched at all.
+3. Nothing staged and nothing unpushed → exit 0.
+4. `add -A`, then commit with a subject counting what changed and naming the host.
+5. `pull --rebase`. **A conflict aborts the rebase and exits non-zero. It is never
+   auto-resolved.**
+6. `push`. On failure the commits stay local and the next cycle retries.
+
+No producer ever calls this. The `session-export` hook and the compound-loop
+worker only write files, which is what makes the transport failure-tolerant: with
+no network, no credentials, or a dead remote, the writes still land on disk and
+the next cycle picks them up. No session ever blocks on a network syscall.
+
+Concurrency converges without coordination because every write creates a new file
+and nothing is ever modified. A rebase over commits that only add files at
+distinct paths cannot conflict — the store is a set of immutable files with
+unique keys, so the union of two clones is well-defined and order-independent.
+The host suffix on learning filenames is what guarantees those keys stay unique.
+
+| Failure | Consequence | Data lost |
+|---|---|---|
+| No network at push | local commits accumulate | no |
+| Rebase conflict | cycle stops, logged, stays pending | no |
+| Lock held | cycle skipped | no |
+| Invalid marker | loud failure, nothing written | no |
 
 ## QMD integration
 
@@ -171,7 +225,7 @@ QMD can be installed later without re-running any framework command. The next `s
 
 ### Collection configuration
 
-QMD treats each indexed directory as a named collection. The framework's convention is that the knowledge directory is one collection, and the collection name is configured externally in QMD itself (not in `lazy-harness`). This keeps the framework unopinionated about QMD's config model — we call `qmd` the same way you would call it by hand.
+QMD treats each indexed directory as a named collection. The framework's convention is that each store subdirectory is its own collection — raw transcripts and distilled learnings are corpora of very different value, and a single collection makes the distilled one unreachable behind the raw one — and the collection name is configured externally in QMD itself (not in `lazy-harness`). This keeps the framework unopinionated about QMD's config model — we call `qmd` the same way you would call it by hand.
 
 ## Querying the knowledge tree
 
@@ -253,7 +307,7 @@ If `engram` is not on `PATH`, the loop logs a no-op and exits cleanly. Like ever
 
 Module: `src/lazy_harness/knowledge/graphify.py`. Pinned to a specific Graphify version (see [ADR-023](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/023-graphify-code-structure.md)) so that an upgrade is an explicit decision rather than a transparent behaviour change.
 
-[Graphify](https://github.com/safishamsi/graphify) is a tree-sitter–based code-structure indexer covering 25 languages. Where QMD answers "where did we discuss X across all my notes?", Graphify answers "what calls this function?", "explain this module", or "show me the dependency neighbourhood of this symbol". Its output is a JSON graph plus an interactive HTML report under `graphify-out/` **inside each repo**, not in the knowledge directory.
+[Graphify](https://github.com/safishamsi/graphify) is a tree-sitter–based code-structure indexer covering 25 languages. Where QMD answers "where did we discuss X across all my notes?", Graphify answers "what calls this function?", "explain this module", or "show me the dependency neighbourhood of this symbol". Its output is a JSON graph plus an interactive HTML report under `graphify-out/` **inside each repo**, not in the knowledge store.
 
 The harness's job is integration, not re-implementation:
 

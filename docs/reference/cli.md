@@ -38,11 +38,14 @@ Currently shipped wizards:
 - **`lh config memory --init`** — writes `[memory.engram]`. Probes whether `engram` is on `PATH` first; when missing, prints the pinned version and the install hint, then asks whether to write the section anyway (so a config can be staged before the binary lands). Prompts for `enabled`, `git_sync` (commit per-repo memory chunks under `.engram/chunks/`), and `cloud` (opt-in cloud sync, off by default to preserve the local-first guarantee). The pinned version is stamped automatically.
 - **`lh config knowledge --init`** — writes `[knowledge.structure]` for Graphify. Same probe-and-stage pattern as the memory wizard: prompts for `enabled`. Pinned Graphify version is stamped automatically.
 
+`lh config migrate-knowledge` is not a wizard. It rewrites an old `[knowledge]` block — `path`, `sessions.subdir`, `learnings.subdir`, and `compound_loop.learnings_subdir` — into the store-root shape, and is what the loader's error message points you at when it refuses a stale config. `--root <path>` sets the new `[knowledge].root`; a root you already set is never overwritten, and `[compound_loop].lazymind_dir` is left alone because it points at a vault rather than at the store.
+
 Both wizards stamp the pinned tool version into the resulting block so `lh doctor` can later flag drift between the install and the config.
 
 ```bash
 lh config memory --init
 lh config knowledge --init
+lh config migrate-knowledge --root ~/repos/lazy-knowledge
 ```
 
 ## `lh hook`
@@ -81,9 +84,15 @@ lh init --force
 
 ## `lh knowledge`
 
-Manages the knowledge directory and its QMD index.
+Manages the knowledge store and its QMD index.
 
-`lh knowledge status` shows where the knowledge dir lives, how many sessions and learnings are inside, and whether QMD is reachable.
+`lh knowledge init` creates the store, writes its `knowledge.toml` marker, and creates the subdirectories the marker declares. `--root <path>` overrides where; without it the store root is resolved from `$LAZY_KNOWLEDGE_ROOT`, then `[knowledge].root` in `config.toml`, then the built-in default. Re-running it is safe: an existing marker is never overwritten.
+
+`lh knowledge path` prints an absolute path inside the store. `--kind root` (the default), `--kind sessions`, or `--kind learnings`; the two subdirectory names come from the marker, never from configuration. It exits non-zero when the store has no readable marker, which makes it usable as a guard in shell scripts.
+
+`lh knowledge push` runs one commit / `pull --rebase` / push cycle over the store and appends the outcome to `knowledge-push.log`. It is the command the scheduler job runs, and it is also safe to run by hand before switching machines. A concurrent cycle is skipped silently (exit 0); a rebase conflict aborts the rebase and exits 1 without ever auto-resolving. Producers — the `session-export` hook and the compound-loop worker — never invoke git themselves, so a dead remote or missing network delays a push but cannot lose a write.
+
+`lh knowledge status` shows where the store lives, how many sessions are inside, and whether QMD is reachable.
 
 `lh knowledge sync` rebuilds the BM25 lexical index. `lh knowledge embed` runs vector embedding for semantic search. Both accept `--collection <name>` to scope to one collection instead of all of them.
 
@@ -94,6 +103,9 @@ Manages the knowledge directory and its QMD index.
 `lh knowledge export-session <session-file>` is the escape hatch for sessions the `Stop` / `session-export` hook skipped — for example, a real session the non-interactive heuristic mis-classified. `--force` bypasses the interactive-session filter and the unchanged-file guard.
 
 ```bash
+lh knowledge init
+lh knowledge path --kind learnings
+lh knowledge push
 lh knowledge status
 lh knowledge sync --collection my-project
 lh knowledge embed

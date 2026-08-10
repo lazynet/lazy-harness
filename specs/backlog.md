@@ -12,7 +12,7 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 - [x] **CLAUDE.md como router IF-ELSE** — carga condicional de docs/ on-demand (ADR-004)
 - [x] **Compound loop async** — `claude -p` headless, 100% de evaluaciones (ADR-005 v2)
 - [x] **Episodic memory** — decisions.jsonl + failures.jsonl append-only (ADR-006)
-- [x] **Cross-project learnings** — auto-generados en Meta/Learnings/ (ADR-007)
+- [x] **Cross-project learnings** — auto-generados en el knowledge store, bajo `learnings/` (ADR-007)
 - [x] **SessionStart context injection** — git state, LazyNorth, última sesión, decisiones recientes (ADR-008)
 - [x] **QMD knowledge search** — 7 colecciones, BM25 + vectores, sync cada 30min, embed diario
 - [x] **Session export** — Stop hook exporta a markdown + QMD indexa (incluyendo repos con guiones)

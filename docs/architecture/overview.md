@@ -117,14 +117,16 @@ Built-in hooks:
 
 - `compound_loop.py` — Stop producer, enqueues async worker. See [how hooks work](../how/hooks.md#compound-loop-runs-on-stop).
 - `context_inject.py` — SessionStart, composes and injects context.
-- `session_export.py` — Stop, exports session to knowledge directory.
+- `session_export.py` — Stop, exports session to the knowledge store.
 - `pre_compact.py` — PreCompact, preserves working state before compaction.
 
 Design: [ADR-006](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/006-hooks-subprocess-json.md). End-to-end mechanics: [how hooks work](../how/hooks.md).
 
 ## Knowledge layer — `knowledge/`
 
-- `directory.py` — knowledge directory management, subdirs creation, path resolution.
+- `marker.py` — reads, writes and validates the store's `knowledge.toml`; resolves the store root.
+- `directory.py` — store layout: creates the store and resolves paths from its marker.
+- `git_push.py` — one commit/rebase/push cycle over the store, under `flock`.
 - `session_export.py` — JSONL → markdown export with classification and atomic writes.
 - `compound_loop.py` — pure functions for the compound loop (parse, filter, build prompt, parse response, persist). Flat module so each step is independently testable.
 - `compound_loop_worker.py` — runnable via `python -m`, drains the file-based queue under `fcntl.flock`.
@@ -235,7 +237,7 @@ One file per top-level `lh` command, all based on `click`:
 - `doctor_cmd.py` — prerequisite check (uv, python, claude, git).
 - `run_cmd.py` — `lh run`, sets `CLAUDE_CONFIG_DIR` and execs `claude`.
 - `scheduler_cmd.py` — install / uninstall / status against the scheduler backend.
-- `knowledge_cmd.py` — knowledge directory operations (sync, status, grep helpers).
+- `knowledge_cmd.py` — knowledge store operations (init, path, push, sync, status).
 
 Commands never contain business logic. They parse flags, load config, and delegate to the subsystem modules.
 
@@ -247,7 +249,7 @@ Every piece of state the framework persists lives in one of three places. All th
 |---|---|---|---|---|
 | Config | `~/.config/lazy-harness/config.toml` | TOML (human-edited) | `lh init`, `lh migrate`, `lh profile` | Every subsystem |
 | Metrics | `~/.config/lazy-harness/metrics.db` | SQLite | `monitoring/collector.py` | `monitoring/views/*`, `lh status` |
-| Knowledge | `<knowledge.path>` (user-configured) | Markdown files | `session-export`, `compound-loop` worker | `context-inject`, QMD, users directly |
+| Knowledge | knowledge store root (env, `[knowledge].root`, or default) | Markdown files, layout declared by `knowledge.toml` | `session-export`, `compound-loop` worker | `context-inject`, QMD, users directly |
 
 There is a fourth semi-persistent store scoped to each deployed profile — `<CLAUDE_CONFIG_DIR>/projects/<encoded-cwd>/memory/` — which holds `decisions.jsonl`, `failures.jsonl`, `handoff.md`, `pre-compact-summary.md`, and `MEMORY.md`. This is written both by the framework's hooks and by Claude Code itself. It lives in the deployed target dir rather than the source, so version-controlled dotfiles do not accumulate ephemeral session state.
 
