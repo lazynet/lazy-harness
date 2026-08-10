@@ -37,21 +37,12 @@ def wizard_knowledge(
         echo("")
 
     enabled = prompt_confirm("Enable Graphify MCP server in profiles?", True)
-    auto_rebuild = (
-        prompt_confirm(
-            "Auto-rebuild graph on each git commit (post-commit hook)?",
-            False,
-        )
-        if enabled
-        else False
-    )
 
     new_block = {
         "knowledge": {
             "structure": {
                 "engine": "graphify",
                 "enabled": enabled,
-                "auto_rebuild_on_commit": auto_rebuild,
                 "version": graphify.PINNED_VERSION,
             }
         }

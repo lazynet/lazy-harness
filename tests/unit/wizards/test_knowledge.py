@@ -29,7 +29,7 @@ def test_knowledge_wizard_writes_structure_block_when_graphify_installed_and_use
     cfg_path = tmp_path / "config.toml"
     output: list[str] = []
 
-    confirm = _scripted_confirm([True, False, True])
+    confirm = _scripted_confirm([True, True])
 
     wrote = wizard_knowledge(cfg_path, prompt_confirm=confirm, echo=output.append)
 
@@ -37,7 +37,9 @@ def test_knowledge_wizard_writes_structure_block_when_graphify_installed_and_use
     content = cfg_path.read_text()
     assert "[knowledge.structure]" in content
     assert "enabled = true" in content
-    assert "auto_rebuild_on_commit = false" in content
+    # The key promised a post-commit hook the harness never installed; rebuilds
+    # are demand-driven through the Graphify CLI instead.
+    assert "auto_rebuild_on_commit" not in content
 
 
 def test_knowledge_wizard_cancels_when_user_declines_final_write(
@@ -73,4 +75,4 @@ def test_knowledge_wizard_when_graphify_missing_prints_install_hint(
     joined = "\n".join(output)
     assert "Graphify is not installed" in joined
     assert "pip install graphify" in joined
-    assert "0.6.9" in joined
+    assert "0.9.38" in joined

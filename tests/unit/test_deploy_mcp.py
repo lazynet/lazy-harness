@@ -187,22 +187,76 @@ def test_collect_mcp_servers_skips_engram_when_binary_missing(
     assert "engram" not in result
 
 
-def test_collect_mcp_servers_never_includes_graphify(
+def test_collect_mcp_servers_omits_graphify_on_cli_only_installs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Graphify is a CLI/skill (see safishamsi/graphify upstream), not an MCP server.
+    """Graphify was CLI/skill-only before 0.9, which shipped a graphify-mcp binary.
 
-    The harness installs it via `graphify install`; it must never be wired
-    as an MCP entry, regardless of cfg.knowledge.structure.enabled.
+    Presence of the binary — not the config flag alone — decides whether the
+    entry ships, so installs pinned to an older release keep working.
     """
     from lazy_harness.core.config import Config
     from lazy_harness.deploy import engine
+    from lazy_harness.knowledge import graphify as graphify_mod
     from lazy_harness.knowledge import qmd as qmd_mod
 
     monkeypatch.setattr(qmd_mod, "is_qmd_available", lambda: False)
+    monkeypatch.setattr(graphify_mod, "is_graphify_mcp_available", lambda: False)
 
     cfg = Config()
     cfg.knowledge.structure.enabled = True
 
     result = engine._collect_mcp_servers(cfg)
     assert "graphify" not in result
+
+
+def test_collect_mcp_servers_includes_graphify_when_enabled_and_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Upstream ships a graphify-mcp binary; structure queries should not need the skill."""
+    from lazy_harness.core.config import Config
+    from lazy_harness.deploy import engine
+    from lazy_harness.knowledge import graphify as graphify_mod
+    from lazy_harness.knowledge import qmd as qmd_mod
+
+    monkeypatch.setattr(qmd_mod, "is_qmd_available", lambda: False)
+    monkeypatch.setattr(graphify_mod, "is_graphify_mcp_available", lambda: True)
+
+    cfg = Config()
+    cfg.knowledge.structure.enabled = True
+    result = engine._collect_mcp_servers(cfg)
+
+    assert result["graphify"] == {"command": "graphify-mcp", "args": []}
+
+
+def test_collect_mcp_servers_skips_graphify_when_structure_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from lazy_harness.core.config import Config
+    from lazy_harness.deploy import engine
+    from lazy_harness.knowledge import graphify as graphify_mod
+    from lazy_harness.knowledge import qmd as qmd_mod
+
+    monkeypatch.setattr(qmd_mod, "is_qmd_available", lambda: False)
+    monkeypatch.setattr(graphify_mod, "is_graphify_mcp_available", lambda: True)
+
+    cfg = Config()
+    cfg.knowledge.structure.enabled = False
+    assert "graphify" not in engine._collect_mcp_servers(cfg)
+
+
+def test_collect_mcp_servers_skips_graphify_when_binary_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The CLI can be installed without the MCP binary on older releases."""
+    from lazy_harness.core.config import Config
+    from lazy_harness.deploy import engine
+    from lazy_harness.knowledge import graphify as graphify_mod
+    from lazy_harness.knowledge import qmd as qmd_mod
+
+    monkeypatch.setattr(qmd_mod, "is_qmd_available", lambda: False)
+    monkeypatch.setattr(graphify_mod, "is_graphify_mcp_available", lambda: False)
+
+    cfg = Config()
+    cfg.knowledge.structure.enabled = True
+    assert "graphify" not in engine._collect_mcp_servers(cfg)

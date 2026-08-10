@@ -243,8 +243,7 @@ def test_config_knowledge_structure_defaults_when_missing() -> None:
     cfg = Config()
     assert cfg.knowledge.structure.engine == "graphify"
     assert cfg.knowledge.structure.enabled is False
-    assert cfg.knowledge.structure.auto_rebuild_on_commit is False
-    assert cfg.knowledge.structure.version == "0.6.9"
+    assert cfg.knowledge.structure.version == "0.9.38"
 
 
 def test_config_knowledge_structure_parses_from_toml(config_dir: Path) -> None:
@@ -255,16 +254,14 @@ version = "1"
 
 [knowledge.structure]
 enabled = true
-auto_rebuild_on_commit = true
-version = "0.6.9"
+version = "0.9.38"
 """)
     from lazy_harness.core.config import load_config
 
     cfg = load_config(config_file)
     assert cfg.knowledge.structure.enabled is True
-    assert cfg.knowledge.structure.auto_rebuild_on_commit is True
     assert cfg.knowledge.structure.engine == "graphify"
-    assert cfg.knowledge.structure.version == "0.6.9"
+    assert cfg.knowledge.structure.version == "0.9.38"
 
 
 def test_compound_loop_backend_defaults_when_missing() -> None:
@@ -360,3 +357,23 @@ proposals_summary = false
     cfg = load_config(config_file)
     assert cfg.context_inject.max_body_chars == 1500
     assert cfg.context_inject.proposals_summary is False
+
+
+def test_config_ignores_retired_auto_rebuild_key(config_dir: Path) -> None:
+    """Configs written by older wizards must keep loading after the key is retired."""
+    config_file = config_dir / "config.toml"
+    config_file.write_text("""
+[harness]
+version = "1"
+
+[knowledge.structure]
+engine = "graphify"
+enabled = true
+auto_rebuild_on_commit = true
+version = "0.9.38"
+""")
+    from lazy_harness.core.config import load_config
+
+    cfg = load_config(config_file)
+    assert cfg.knowledge.structure.enabled is True
+    assert cfg.knowledge.structure.version == "0.9.38"

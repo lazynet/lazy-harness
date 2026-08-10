@@ -6,7 +6,7 @@ Config lives at ~/.config/lazy-harness/config.toml (or LH_CONFIG_DIR override).
 from __future__ import annotations
 
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -61,8 +61,7 @@ class KnowledgeSearchConfig:
 class KnowledgeStructureConfig:
     engine: str = "graphify"
     enabled: bool = False
-    auto_rebuild_on_commit: bool = False
-    version: str = "0.6.9"
+    version: str = "0.9.38"
 
 
 @dataclass(frozen=True)
@@ -292,6 +291,17 @@ def _parse_metrics(raw: dict[str, Any]) -> MetricsConfig:
     )
 
 
+def _parse_structure(raw: dict[str, Any]) -> KnowledgeStructureConfig:
+    """Build the structure config, dropping keys this version no longer knows.
+
+    `auto_rebuild_on_commit` shipped for months and is still present in configs
+    written by older wizards; unpacking it into the dataclass would abort the
+    load with a TypeError.
+    """
+    known = {f.name for f in fields(KnowledgeStructureConfig)}
+    return KnowledgeStructureConfig(**{k: v for k, v in raw.items() if k in known})
+
+
 def _parse_memory(raw: dict[str, Any]) -> MemoryConfig:
     if not raw:
         return MemoryConfig()
@@ -350,7 +360,7 @@ def load_config(path: Path) -> Config:
         sessions=KnowledgeSessionsConfig(**knowledge_raw.get("sessions", {})),
         learnings=KnowledgeLearningsConfig(**knowledge_raw.get("learnings", {})),
         search=KnowledgeSearchConfig(**knowledge_raw.get("search", {})),
-        structure=KnowledgeStructureConfig(**knowledge_raw.get("structure", {})),
+        structure=_parse_structure(knowledge_raw.get("structure", {})),
         classify_rules=classify_rules,
     )
 
