@@ -82,10 +82,15 @@ def main() -> None:
     )
     logs_dir = agent_dir / (subdirs.get("logs") or "logs")
 
+    # A hook subprocess does not inherit the interactive shell's PATH, so an
+    # explicitly configured path is the only reliable way to find the binary.
+    configured_bin = cfg.memory.engram.binary if cfg is not None else ""
+
     persister = EngramPersister(
         memory_dir=memory_dir,
         logs_dir=logs_dir,
         project_key=_resolve_project_key(cwd),
+        engram_bin=configured_bin or None,
     )
     try:
         persister.persist_new_entries()

@@ -168,6 +168,9 @@ class EngramPersister:
                 "engram binary not on PATH; skipping run (no-op)",
             )
             result.duration_ms = int((time.monotonic() - run_start) * 1000)
+            # Emitted as its own event, never as a run: a skip that counted as a
+            # successful run is why a 35%-no-op hook still reported 0% failures.
+            _emit_skip_metric(self.logs_dir, self.project_key, "binary_not_found")
             return result
 
         cursor_path = self.memory_dir / _CURSOR_FILENAME
@@ -281,6 +284,23 @@ def _emit_slow_save(logs_dir: Path, kind: EntryKind, ms: int, title: str) -> Non
         "ms": ms,
         "type": kind,
         "title_prefix": title[:60],
+    }
+    try:
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        with (logs_dir / _METRICS_FILENAME).open("a") as f:
+            f.write(json.dumps(record) + "\n")
+    except OSError:
+        pass
+
+
+def _emit_skip_metric(logs_dir: Path, project_key: str, reason: str) -> None:
+    """Record a run that never happened, so health checks can see the gap."""
+    record = {
+        "ts": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "event": "skip",
+        "reason": reason,
+        "project_key": project_key,
+        "hook_version": _hook_version(),
     }
     try:
         logs_dir.mkdir(parents=True, exist_ok=True)

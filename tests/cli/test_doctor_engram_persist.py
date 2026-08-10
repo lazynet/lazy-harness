@@ -78,6 +78,32 @@ def test_doctor_reports_ok_for_fresh_clean_run(lh_env: Path) -> None:
     assert result.exit_code == 0
 
 
+def test_doctor_surfaces_skipped_runs(lh_env: Path) -> None:
+    """Skips used to be invisible here, so a hook no-opping 35% still read 0% failures."""
+    now = datetime.now(UTC)
+    logs_dir = lh_env / "logs"
+    _write_run(logs_dir, when=now - timedelta(minutes=5))
+    with (logs_dir / "engram_persist_metrics.jsonl").open("a") as f:
+        f.write(
+            json.dumps(
+                {
+                    "ts": (now - timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "event": "skip",
+                    "reason": "binary_not_found",
+                    "project_key": "lazy-harness",
+                    "hook_version": "0.16.0",
+                }
+            )
+            + "\n"
+        )
+
+    runner = CliRunner()
+    result = runner.invoke(doctor)
+
+    assert "1 skipped" in result.output
+    assert "binary" in result.output.lower()
+
+
 def test_doctor_fails_when_engram_persist_block_fails(lh_env: Path) -> None:
     stale = datetime.now(UTC) - timedelta(days=10)
     _write_run(lh_env / "logs", when=stale)

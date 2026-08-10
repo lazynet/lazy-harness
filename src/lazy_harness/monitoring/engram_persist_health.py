@@ -30,6 +30,7 @@ class EngramPersistHealth:
     failure_rate: float | None
     cursor_lag_bytes: int | None
     runs_considered: int
+    skips_considered: int = 0
 
 
 def _missing() -> EngramPersistHealth:
@@ -39,10 +40,11 @@ def _missing() -> EngramPersistHealth:
         failure_rate=None,
         cursor_lag_bytes=None,
         runs_considered=0,
+        skips_considered=0,
     )
 
 
-def _read_run_events(metrics_path: Path) -> list[dict[str, Any]]:
+def _read_events(metrics_path: Path, event: str) -> list[dict[str, Any]]:
     runs: list[dict[str, Any]] = []
     with metrics_path.open() as f:
         for line in f:
@@ -53,7 +55,7 @@ def _read_run_events(metrics_path: Path) -> list[dict[str, Any]]:
                 obj = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if isinstance(obj, dict) and obj.get("event") == "run":
+            if isinstance(obj, dict) and obj.get("event") == event:
                 runs.append(obj)
     return runs
 
@@ -106,7 +108,7 @@ def collect_engram_persist_health(
     if not metrics_path.is_file():
         return _missing()
 
-    runs = _read_run_events(metrics_path)
+    runs = _read_events(metrics_path, "run")
     if not runs:
         return _missing()
 
@@ -131,11 +133,16 @@ def collect_engram_persist_health(
     else:
         cursor_lag = 0
 
+    # A skip writes nothing to Engram, so it is a silent data loss rather than a
+    # failure: kept out of the failure rate, but never reported as healthy.
+    skips = _read_events(metrics_path, "skip")[-window:]
+
     state = _worst(
         [
             _age_state(age),
             _failure_rate_state(failure_rate),
             _cursor_lag_state(cursor_lag),
+            "warn" if skips else "ok",
         ]
     )
 
@@ -145,4 +152,5 @@ def collect_engram_persist_health(
         failure_rate=failure_rate,
         cursor_lag_bytes=cursor_lag,
         runs_considered=len(recent),
+        skips_considered=len(skips),
     )
