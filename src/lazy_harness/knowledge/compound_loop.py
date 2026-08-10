@@ -886,11 +886,11 @@ def persist_results(
 
     date_str = timestamp[:10] if len(timestamp) >= 10 else "unknown"
     year_month = date_str[:7]
-    learnings_subdir = learnings_dir / year_month
+    month_bucket = learnings_dir / year_month
 
     for learning in data.get("learnings", []):
         title = learning.get("title", "untitled")
-        filepath = learnings_subdir / f"{date_str}-{_slugify(title)}-{origin_host()}.md"
+        filepath = month_bucket / f"{date_str}-{_slugify(title)}-{origin_host()}.md"
         if filepath.exists():
             continue
         tags_json = json.dumps(learning.get("tags", []))
