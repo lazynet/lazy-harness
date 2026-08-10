@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.26.0](https://github.com/lazynet/lazy-harness/compare/v0.25.0...v0.26.0) (2026-08-10)
+
+
+### Features
+
+* wire the Graphify MCP server and drop the phantom rebuild flag ([#121](https://github.com/lazynet/lazy-harness/issues/121)) ([038317d](https://github.com/lazynet/lazy-harness/commit/038317d564b8d73c09cadf9b42d700f41922e292))
+
+
+### Bug Fixes
+
+* repair three harness failures that reported success ([#120](https://github.com/lazynet/lazy-harness/issues/120)) ([e439167](https://github.com/lazynet/lazy-harness/commit/e439167c59787c85753c583f732b722bc75f1382))
+
+
+### Documentation
+
+* **adrs:** annotate ADR-013 with its partial implementation state ([62f150f](https://github.com/lazynet/lazy-harness/commit/62f150f9631c3b202e8f51c57bd5c1ab00a4d92b))
+
 ## [0.25.0](https://github.com/lazynet/lazy-harness/compare/v0.24.3...v0.25.0) (2026-08-08)
 
 
