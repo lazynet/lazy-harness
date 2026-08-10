@@ -24,8 +24,9 @@ def _rotate_log(log_file: Path, max_bytes: int = 102400, keep_lines: int = 500) 
 
 
 def main() -> None:
+    payload: object = None
     try:
-        json.load(sys.stdin)
+        payload = json.load(sys.stdin)
     except (json.JSONDecodeError, EOFError, ValueError):
         pass
 
@@ -33,7 +34,12 @@ def main() -> None:
         from lazy_harness.agents.registry import get_agent
         from lazy_harness.core.config import Config, ConfigError, load_config
         from lazy_harness.core.paths import agent_runtime_dir, config_file
-        from lazy_harness.hooks.builtins._shared import find_latest_session, make_log
+        from lazy_harness.hooks.builtins._shared import (
+            find_latest_session,
+            make_log,
+            resolve_project_dir,
+            transcript_from_payload,
+        )
         from lazy_harness.knowledge.compound_loop import (
             create_task,
             is_debounced,
@@ -77,10 +83,15 @@ def main() -> None:
     queue_dir = agent_dir / (subdirs.get("queue") or "queue")
 
     cwd = Path.cwd()
-    encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
-    sessions_dir = agent_dir / (subdirs.get("sessions") or "projects") / encoded
 
-    session_jsonl = find_latest_session(sessions_dir)
+    # The agent names its project dirs with an encoding that has changed across
+    # releases, so prefer the transcript it hands us and only derive a path when
+    # the payload omits it.
+    session_jsonl = transcript_from_payload(payload)
+    if session_jsonl is None:
+        encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
+        sessions_dir = agent_dir / (subdirs.get("sessions") or "projects") / encoded
+        session_jsonl = find_latest_session(sessions_dir)
     if session_jsonl is None:
         _log(log_file, "no session JSONL found")
         return
@@ -99,7 +110,15 @@ def main() -> None:
         _log(log_file, f"no new activity since last process for {short_id}")
         return
 
-    memory_dir = sessions_dir / "memory"
+    memory_dir = (
+        resolve_project_dir(
+            payload,
+            agent_dir=agent_dir,
+            sessions_subdir=subdirs.get("sessions") or "projects",
+            cwd=cwd,
+        )
+        / "memory"
+    )
     task_file = create_task(
         queue_dir=queue_dir,
         cwd=cwd,

@@ -69,6 +69,12 @@ def _render_engram_persist(console: Console, health: EngramPersistHealth) -> boo
         f"  {icons[rate_state]} Failure rate {rate * 100:.1f}% (last {health.runs_considered} runs)"
     )
 
+    if health.skips_considered:
+        console.print(
+            f"  {icons['warn']} {health.skips_considered} skipped "
+            "(engram binary not found — set [memory.engram] binary in config.toml)"
+        )
+
     lag = health.cursor_lag_bytes or 0
     lag_state = "fail" if lag >= 64 * 1024 else ("warn" if lag > 0 else "ok")
     console.print(f"  {icons[lag_state]} Cursor lag {_fmt_bytes(lag)}")
