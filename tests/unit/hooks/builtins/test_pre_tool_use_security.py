@@ -294,6 +294,47 @@ def test_main_exits_two_and_writes_stderr_on_block(
     assert "filesystem" in captured.err
 
 
+def test_main_logs_the_block_to_hooks_log(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """An unlogged guardrail cannot be audited — blocks must leave a trace."""
+    import io
+
+    from lazy_harness.hooks.builtins import pre_tool_use_security as mod
+
+    claude_dir = tmp_path / "claude"
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_dir))
+    monkeypatch.setattr(
+        "sys.stdin",
+        io.StringIO('{"tool_name": "Bash", "tool_input": {"command": "rm -rf /tmp/foo"}}'),
+    )
+    with pytest.raises(SystemExit):
+        mod.main()
+
+    log = (claude_dir / "logs" / "hooks.log").read_text()
+    assert "pre-tool-use-security" in log
+    assert "blocked" in log
+    assert "filesystem" in log
+
+
+def test_main_does_not_log_allowed_commands(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """Every Bash call passes through here; logging them all would drown the log."""
+    import io
+
+    from lazy_harness.hooks.builtins import pre_tool_use_security as mod
+
+    claude_dir = tmp_path / "claude"
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_dir))
+    monkeypatch.setattr(
+        "sys.stdin",
+        io.StringIO('{"tool_name": "Bash", "tool_input": {"command": "ls -la"}}'),
+    )
+    with pytest.raises(SystemExit):
+        mod.main()
+
+    assert not (claude_dir / "logs" / "hooks.log").exists()
+
+
 def test_main_exits_zero_on_empty_stdin(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     import io
 

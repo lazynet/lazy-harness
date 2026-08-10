@@ -9,6 +9,41 @@ from pathlib import Path
 import pytest
 
 
+def test_main_logs_the_warning_to_hooks_log(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The warning goes to the model; the log is what makes it auditable later."""
+    import io
+
+    from lazy_harness.hooks.builtins import pre_tool_use_memory_size as mod
+
+    claude_dir = tmp_path / "claude"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_dir))
+    monkeypatch.delenv("LH_MEMORY_SIZE_BYPASS", raising=False)
+
+    memory_md = tmp_path / "memory" / "MEMORY.md"
+    memory_md.parent.mkdir(parents=True)
+    memory_md.write_text("x\n")
+
+    payload = json.dumps(
+        {
+            "tool_name": "Write",
+            "tool_input": {
+                "file_path": str(memory_md),
+                "content": "\n".join(f"line {i}" for i in range(300)),
+            },
+        }
+    )
+    monkeypatch.setattr("sys.stdin", io.StringIO(payload))
+
+    with pytest.raises(SystemExit):
+        mod.main()
+
+    log = (claude_dir / "logs" / "hooks.log").read_text()
+    assert "pre-tool-use-memory-size" in log
+    assert "over threshold" in log
+
+
 def test_main_exits_zero_for_non_edit_write_tool(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
