@@ -6,6 +6,7 @@ from pathlib import Path
 import tomli_w
 
 from lazy_harness.core.paths import contract_path
+from lazy_harness.knowledge.directory import ensure_knowledge_dir
 from lazy_harness.migrate.detector import detect_claude_code, detect_lazy_claudecode
 
 
@@ -59,7 +60,7 @@ def run_wizard(answers: WizardAnswers, *, config_path: Path) -> None:
                 "config_dir": f"~/.claude-{answers.profile_name}",
             },
         },
-        "knowledge": {"path": contract_path(answers.knowledge_path)},
+        "knowledge": {"root": contract_path(answers.knowledge_path)},
         "monitoring": {"enabled": True},
         "scheduler": {"backend": "auto"},
         "hooks": {
@@ -74,6 +75,4 @@ def run_wizard(answers: WizardAnswers, *, config_path: Path) -> None:
     }
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_bytes(tomli_w.dumps(data).encode())
-    answers.knowledge_path.mkdir(parents=True, exist_ok=True)
-    (answers.knowledge_path / "sessions").mkdir(exist_ok=True)
-    (answers.knowledge_path / "learnings").mkdir(exist_ok=True)
+    ensure_knowledge_dir(answers.knowledge_path)
