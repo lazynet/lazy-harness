@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -824,6 +825,20 @@ def _slugify(title: str, max_len: int = 50) -> str:
     return slug[:max_len] or "untitled"
 
 
+def origin_host() -> str:
+    """Slugified first label of the machine's hostname.
+
+    Used to make learning filenames unique per writer. An empty result is a hard
+    error: an unsuffixed name is precisely the cross-machine collision this
+    prevents.
+    """
+    label = platform.node().split(".")[0]
+    slug = re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")
+    if not slug:
+        raise ValueError(f"cannot derive an origin host slug from {platform.node()!r}")
+    return slug
+
+
 def persist_results(
     data: dict,
     memory_dir: Path,
@@ -875,7 +890,7 @@ def persist_results(
 
     for learning in data.get("learnings", []):
         title = learning.get("title", "untitled")
-        filepath = learnings_subdir / f"{date_str}-{_slugify(title)}.md"
+        filepath = learnings_subdir / f"{date_str}-{_slugify(title)}-{origin_host()}.md"
         if filepath.exists():
             continue
         tags_json = json.dumps(learning.get("tags", []))
