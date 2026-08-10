@@ -34,7 +34,7 @@ class GenerateConfigStep:
             "harness": {"version": "1"},
             "agent": {"type": "claude-code"},
             "profiles": {"default": "personal"},
-            "knowledge": {"path": contract_path(self.knowledge_path)},
+            "knowledge": {"root": contract_path(self.knowledge_path)},
             "monitoring": {"enabled": True},
             "scheduler": {"backend": "auto"},
         }

@@ -64,3 +64,36 @@ def test_config_memory_without_init_prints_usage(
 
     assert result.exit_code == 0
     assert "--init" in result.output
+
+
+def test_config_migrate_knowledge_rewrites_the_block(tmp_path: Path, monkeypatch) -> None:
+    from click.testing import CliRunner
+
+    from lazy_harness.cli.config_cmd import config
+    from lazy_harness.core import paths as paths_mod
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        '[harness]\nversion = "1"\n\n[knowledge]\npath = "~/vault/Meta"\n\n'
+        '[compound_loop]\nlearnings_subdir = "Learnings"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(paths_mod, "config_file", lambda: cfg_file)
+
+    result = CliRunner().invoke(config, ["migrate-knowledge", "--root", "~/repos/lazy/k"])
+    assert result.exit_code == 0
+    text = cfg_file.read_text(encoding="utf-8")
+    assert 'root = "~/repos/lazy/k"' in text
+    assert "path =" not in text
+    assert "learnings_subdir" not in text
+
+
+def test_config_migrate_knowledge_missing_file_exits_nonzero(tmp_path: Path, monkeypatch) -> None:
+    from click.testing import CliRunner
+
+    from lazy_harness.cli.config_cmd import config
+    from lazy_harness.core import paths as paths_mod
+
+    monkeypatch.setattr(paths_mod, "config_file", lambda: tmp_path / "nope.toml")
+    result = CliRunner().invoke(config, ["migrate-knowledge"])
+    assert result.exit_code == 1
