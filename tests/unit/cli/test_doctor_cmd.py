@@ -12,7 +12,7 @@ _BASE_TOML = (
     '[harness]\nversion = "1"\n'
     '[agent]\ntype = "claude-code"\n'
     '[profiles]\ndefault = "p1"\n\n[profiles.p1]\nconfig_dir = "~/.claude-p1"\n'
-    '[knowledge]\npath = ""\n'
+    '[knowledge]\nroot = ""\n'
 )
 
 

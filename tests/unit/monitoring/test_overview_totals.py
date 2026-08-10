@@ -159,3 +159,20 @@ def test_overview_splits_sessions_and_tokens_per_profile(tmp_path: Path) -> None
     assert "$3.0" in tok_flex
     tok_all = next(line for line in lines if "all" in line and "$" in line)
     assert "$6.0" in tok_all
+
+
+def test_status_context_learnings_dir_follows_the_marker(tmp_path, monkeypatch) -> None:
+    from lazy_harness.core.config import Config
+    from lazy_harness.monitoring.views._helpers import StatusContext
+
+    monkeypatch.delenv("LAZY_KNOWLEDGE_ROOT", raising=False)
+    store = tmp_path / "store"
+    store.mkdir()
+    (store / "knowledge.toml").write_text(
+        '[knowledge]\nversion = 1\nsessions = "sessions"\nlearnings = "lessons"\n',
+        encoding="utf-8",
+    )
+    cfg = Config()
+    cfg.knowledge.root = str(store)
+    ctx = StatusContext.build(cfg)
+    assert ctx.learnings_dir == store / "lessons"

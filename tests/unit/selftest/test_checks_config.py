@@ -16,7 +16,7 @@ def test_check_config_valid(tmp_path: Path):
         '[agent]\ntype = "claude-code"\n'
         '[profiles]\ndefault = "personal"\n'
         '[profiles.personal]\nconfig_dir = "~/.claude-personal"\n'
-        '[knowledge]\npath = ""\n'
+        '[knowledge]\nroot = ""\n'
     )
     results = check_config(config_path=cfg)
     assert all(r.status == CheckStatus.PASSED for r in results)
@@ -29,7 +29,7 @@ def test_check_config_unknown_agent(tmp_path: Path):
         '[agent]\ntype = "unknown-agent"\n'
         '[profiles]\ndefault = "personal"\n'
         '[profiles.personal]\nconfig_dir = "~/.claude-personal"\n'
-        '[knowledge]\npath = ""\n'
+        '[knowledge]\nroot = ""\n'
     )
     results = check_config(config_path=cfg)
     assert any(

@@ -9,7 +9,6 @@ scoped to the configured collection. Always exits 0.
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -62,12 +61,15 @@ def main() -> None:
     subdirs = agent.session_dirs()
     log_file = agent_dir / (subdirs.get("logs") or "logs") / "hooks.log"
 
-    if not cfg.knowledge.path:
-        _log(log_file, "knowledge.path not set, skipping")
-        return
+    from lazy_harness.knowledge.directory import sessions_dir as knowledge_sessions_dir
+    from lazy_harness.knowledge.marker import MarkerError, resolve_root
 
-    knowledge_dir = Path(os.path.expanduser(cfg.knowledge.path))
-    sessions_root = knowledge_dir / cfg.knowledge.sessions.subdir
+    knowledge_dir = resolve_root(cfg.knowledge.root or None)
+    try:
+        sessions_root = knowledge_sessions_dir(knowledge_dir)
+    except MarkerError as e:
+        _log(log_file, f"knowledge store unusable, skipping: {e}")
+        return
 
     session_file = transcript_from_payload(payload)
     if session_file is None:

@@ -16,8 +16,9 @@ from datetime import datetime
 from pathlib import Path
 
 from lazy_harness.core.config import Config
-from lazy_harness.core.paths import expand_path
 from lazy_harness.core.profiles import ProfileInfo, list_profiles
+from lazy_harness.knowledge.directory import learnings_dir as knowledge_learnings_dir
+from lazy_harness.knowledge.marker import MarkerError, resolve_root
 
 HOOK_NAMES_DEFAULT = (
     "context-inject",
@@ -40,11 +41,12 @@ class StatusContext:
 
     @classmethod
     def build(cls, cfg: Config) -> StatusContext:
-        knowledge_path: Path | None = None
-        learnings_dir: Path | None = None
-        if cfg.knowledge.path:
-            knowledge_path = expand_path(cfg.knowledge.path)
-            learnings_dir = knowledge_path / cfg.compound_loop.learnings_subdir
+        knowledge_path = resolve_root(cfg.knowledge.root or None)
+        learnings_dir: Path | None
+        try:
+            learnings_dir = knowledge_learnings_dir(knowledge_path)
+        except MarkerError:
+            learnings_dir = None
         return cls(
             cfg=cfg,
             profiles=list_profiles(cfg),

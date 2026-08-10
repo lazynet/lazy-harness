@@ -15,11 +15,14 @@ def _setup_config(home_dir: Path, compound_loop_enabled: bool = False) -> Path:
     config_path = home_dir / ".config" / "lazy-harness" / "config.toml"
     knowledge_dir = home_dir / "knowledge"
     knowledge_dir.mkdir()
+    (knowledge_dir / "knowledge.toml").write_text(
+        '[knowledge]\nversion = 1\nsessions = "sessions"\nlearnings = "learnings"\n'
+    )
     from lazy_harness.core.config import CompoundLoopConfig
 
     cfg = Config(
         harness=HarnessConfig(version="1"),
-        knowledge=KnowledgeConfig(path=str(knowledge_dir)),
+        knowledge=KnowledgeConfig(root=str(knowledge_dir)),
         compound_loop=CompoundLoopConfig(enabled=compound_loop_enabled),
     )
     save_config(cfg, config_path)
@@ -156,13 +159,16 @@ def test_knowledge_export_session_missing_file(home_dir: Path) -> None:
     assert "does not exist" in result.output.lower()
 
 
-def test_knowledge_no_path(home_dir: Path) -> None:
+def test_knowledge_status_reports_a_store_without_a_marker(home_dir: Path, monkeypatch) -> None:
     config_path = home_dir / ".config" / "lazy-harness" / "config.toml"
-    cfg = Config(harness=HarnessConfig(version="1"))
+    store = home_dir / "unmarked"
+    store.mkdir()
+    cfg = Config(harness=HarnessConfig(version="1"), knowledge=KnowledgeConfig(root=str(store)))
     save_config(cfg, config_path)
+    monkeypatch.delenv("LAZY_KNOWLEDGE_ROOT", raising=False)
     runner = CliRunner()
     result = runner.invoke(cli, ["knowledge", "status"])
-    assert "not configured" in result.output.lower() or result.exit_code != 0
+    assert "knowledge.toml" in result.output
 
 
 def test_knowledge_handoff_now_routes_paths_through_agent_adapter(

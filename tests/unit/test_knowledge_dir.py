@@ -5,43 +5,64 @@ from __future__ import annotations
 from pathlib import Path
 
 
-def test_ensure_knowledge_dir(tmp_path: Path) -> None:
+def test_ensure_knowledge_dir_creates_marker_and_subdirs(tmp_path: Path) -> None:
     from lazy_harness.knowledge.directory import ensure_knowledge_dir
 
-    kdir = tmp_path / "knowledge"
-    result = ensure_knowledge_dir(str(kdir))
-    assert result.is_dir()
-    assert (result / "sessions").is_dir()
-    assert (result / "learnings").is_dir()
+    root = ensure_knowledge_dir(tmp_path / "store")
+    assert (root / "knowledge.toml").is_file()
+    assert (root / "sessions").is_dir()
+    assert (root / "learnings").is_dir()
 
 
-def test_ensure_knowledge_dir_existing(tmp_path: Path) -> None:
+def test_ensure_knowledge_dir_is_idempotent(tmp_path: Path) -> None:
     from lazy_harness.knowledge.directory import ensure_knowledge_dir
 
-    kdir = tmp_path / "knowledge"
-    kdir.mkdir()
-    (kdir / "sessions").mkdir()
-    result = ensure_knowledge_dir(str(kdir))
-    assert result.is_dir()
-    assert (result / "learnings").is_dir()
+    first = ensure_knowledge_dir(tmp_path / "store")
+    (first / "knowledge.toml").write_text(
+        '[knowledge]\nversion = 1\nsessions = "s"\nlearnings = "l"\n', encoding="utf-8"
+    )
+    second = ensure_knowledge_dir(tmp_path / "store")
+    assert second == first
+    assert (second / "s").is_dir()
 
 
-def test_session_export_path(tmp_path: Path) -> None:
-    from lazy_harness.knowledge.directory import session_export_path
+def test_subdir_names_come_from_the_marker(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.directory import learnings_dir, sessions_dir
 
-    kdir = tmp_path / "knowledge"
-    kdir.mkdir()
-    result = session_export_path(kdir, "sessions", "2026-04-12", "abc12345")
-    assert str(result).endswith("2026-04-12-abc12345.md")
-    assert "2026-04" in str(result)
+    root = tmp_path / "store"
+    root.mkdir()
+    (root / "knowledge.toml").write_text(
+        '[knowledge]\nversion = 1\nsessions = "logs"\nlearnings = "lessons"\n',
+        encoding="utf-8",
+    )
+    assert sessions_dir(root).name == "logs"
+    assert learnings_dir(root).name == "lessons"
 
 
-def test_list_sessions(tmp_path: Path) -> None:
-    from lazy_harness.knowledge.directory import list_sessions
+def test_session_export_path_buckets_by_year_month(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.directory import ensure_knowledge_dir, session_export_path
 
-    sessions_dir = tmp_path / "knowledge" / "sessions" / "2026-04"
-    sessions_dir.mkdir(parents=True)
-    (sessions_dir / "2026-04-12-abc12345.md").write_text("# test\n")
-    (sessions_dir / "2026-04-11-def67890.md").write_text("# test\n")
-    result = list_sessions(tmp_path / "knowledge", "sessions")
-    assert len(result) == 2
+    root = ensure_knowledge_dir(tmp_path / "store")
+    path = session_export_path(root, "2026-08-10", "abcdef1234567890")
+    assert path == root / "sessions" / "2026-08" / "2026-08-10-abcdef12.md"
+    assert path.parent.is_dir()
+
+
+def test_list_sessions_newest_first(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.directory import ensure_knowledge_dir, list_sessions
+
+    root = ensure_knowledge_dir(tmp_path / "store")
+    bucket = root / "sessions" / "2026-08"
+    bucket.mkdir(parents=True)
+    (bucket / "2026-08-01-aaaaaaaa.md").write_text("a", encoding="utf-8")
+    (bucket / "2026-08-09-bbbbbbbb.md").write_text("b", encoding="utf-8")
+    names = [p.name for p in list_sessions(root)]
+    assert names == ["2026-08-09-bbbbbbbb.md", "2026-08-01-aaaaaaaa.md"]
+
+
+def test_list_sessions_empty_when_absent(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.directory import ensure_knowledge_dir, list_sessions
+
+    root = ensure_knowledge_dir(tmp_path / "store")
+    (root / "sessions").rmdir()
+    assert list_sessions(root) == []

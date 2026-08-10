@@ -17,7 +17,8 @@ from lazy_harness.core.paths import config_file, contract_path, expand_path
 from lazy_harness.knowledge.compound_loop import create_task, should_queue_task
 from lazy_harness.knowledge.context_gen import DEFAULT_CONFIG as CONTEXT_GEN_DEFAULT_CONFIG
 from lazy_harness.knowledge.context_gen import regenerate as regenerate_contexts
-from lazy_harness.knowledge.directory import list_sessions
+from lazy_harness.knowledge.directory import list_sessions, sessions_dir
+from lazy_harness.knowledge.marker import MarkerError, resolve_root
 from lazy_harness.knowledge.qmd import QmdResult, embed, is_qmd_available, sync
 from lazy_harness.knowledge.qmd import status as qmd_status
 from lazy_harness.knowledge.session_export import export_session
@@ -60,16 +61,16 @@ def knowledge_status() -> None:
     except ConfigError as e:
         console.print(f"[red]Error: {e}[/red]")
         raise SystemExit(1)
-    if not cfg.knowledge.path:
-        console.print("[red]Knowledge path not configured.[/red]")
-        console.print("Set [knowledge].path in config.toml")
-        return
-    kdir = expand_path(cfg.knowledge.path)
+    kdir = resolve_root(cfg.knowledge.root or None)
     console.print(f"[bold]Knowledge directory:[/bold] {contract_path(kdir)}")
     if kdir.is_dir():
         console.print("[green]✓[/green] Directory exists")
-        sessions = list_sessions(kdir, cfg.knowledge.sessions.subdir)
-        console.print(f"  Sessions: {len(sessions)} exported")
+        try:
+            sessions = list_sessions(kdir)
+        except MarkerError as e:
+            console.print(f"[red]✗[/red] {e}")
+        else:
+            console.print(f"  Sessions: {len(sessions)} exported")
     else:
         console.print("[red]✗[/red] Directory missing")
     console.print()
@@ -159,11 +160,12 @@ def knowledge_export_session(session_file: Path, force: bool) -> None:
     except ConfigError as e:
         console.print(f"[red]Error: {e}[/red]")
         raise SystemExit(1)
-    if not cfg.knowledge.path:
-        console.print("[red]Knowledge path not configured.[/red]")
-        raise SystemExit(1)
-    knowledge_dir = expand_path(cfg.knowledge.path)
-    sessions_root = knowledge_dir / cfg.knowledge.sessions.subdir
+    knowledge_dir = resolve_root(cfg.knowledge.root or None)
+    try:
+        sessions_root = sessions_dir(knowledge_dir)
+    except MarkerError as e:
+        console.print(f"[red]{e}[/red]")
+        raise SystemExit(1) from e
     sessions_root.mkdir(parents=True, exist_ok=True)
 
     result, skip_reason = export_session(session_file, sessions_root, force=force)
