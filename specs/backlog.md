@@ -59,6 +59,10 @@ _(empty — insight capture + delta-by-index shipped 2026-05-20)_
 
 ## Open — Prioridad MEDIA
 
+### Implementar los backends systemd y cron del scheduler (ADR-013)
+
+`SystemdBackend.install` y `CronBackend.install` levantan `NotImplementedError` desde 0.25.0 — antes devolvían labels fabricados y reportaban éxito sin instalar nada. ADR-013 decidió los tres backends; solo launchd existe. Trigger: un target real de deployment en Linux. Incluye la asimetría pendiente — `uninstall` y `status` devuelven listas vacías en vez de levantar, así que `uninstall` queda mudo donde `install` es ruidoso.
+
 ### Audit CLAUDE.md triple por context clash
 
 **Por qué:** el harness carga 3 capas de CLAUDE.md (global `~/.claude-lazy/CLAUDE.md` + workspace `~/repos/lazy/.claude/CLAUDE.md` + repo `CLAUDE.md`) más plugins + MCP instructions + deferred tools. Session del 2026-04-13 detectó "context injection bastante pesado (~varias miles de tokens)".

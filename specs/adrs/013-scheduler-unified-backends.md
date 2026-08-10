@@ -2,6 +2,7 @@
 
 **Status:** accepted
 **Date:** 2026-04-13
+**Implementation:** partial as of 2026-08-09 — the protocol, the auto-detector and `LaunchdBackend` ship; `SystemdBackend.install` and `CronBackend.install` raise `NotImplementedError`. See [Implementation status](#implementation-status).
 
 ## Context
 
@@ -52,3 +53,21 @@ Plugin pattern over a small protocol. One `SchedulerBackend` protocol, three imp
 - `lh scheduler status` queries the live backend — it reports what the OS actually has scheduled, not what `config.toml` claims. This distinction matters when a user hand-edits their plists and the framework has to notice the drift.
 - Cron schedule syntax is the lingua franca in `config.toml`. launchd and systemd backends translate it into their native formats on install. The translation is lossy for edge cases (e.g. launchd has no native second-level scheduling), documented in each backend module.
 - The selftest has a `scheduler_check` that confirms the detected backend is reachable and every declared job is present. This is how we catch "you ran `lh scheduler install` on launchd but then switched to systemd" drift.
+
+## Implementation status
+
+Annotated 2026-08-09. The Decision above is the decision as taken and is left as written; this section records how much of it exists in code, because until 2026-08-08 the gap was invisible and actively misleading.
+
+| Component | State |
+|---|---|
+| `SchedulerBackend` protocol (`scheduler/base.py`) | shipped |
+| `detect_backend` (`scheduler/manager.py`) | shipped |
+| `LaunchdBackend` (`scheduler/launchd.py`) | shipped — writes and loads `.plist` files |
+| `SystemdBackend` (`scheduler/systemd.py`) | **`install` raises `NotImplementedError`.** No `.timer` / `.service` files are written. |
+| `CronBackend` (`scheduler/cron.py`) | **`install` raises `NotImplementedError`.** The crontab is not edited. |
+
+Both stubs previously returned fabricated artefact labels — `[f"cron-{j.name}" for j in jobs]` — so `lh scheduler install` reported success on Linux while installing nothing, and `scheduler_check` had no way to notice. They were changed to raise in the fix released as 0.25.0.
+
+`uninstall` and `status` on those two backends still return empty lists rather than raising. That asymmetry is deliberate for now and harmless in practice, since neither backend can have installed anything, but it means `lh scheduler uninstall` stays quiet on Linux where `install` is loud.
+
+**What this does not change.** The plugin-over-protocol decision holds, and the Alternatives above were argued on their merits, not on implementation cost. Adding the two missing backends is filling in the pattern this ADR chose, not revisiting it — so this is an annotation, not a superseding ADR. The trigger for completing it is a real Linux deployment target; tracked in `specs/backlog.md`.
