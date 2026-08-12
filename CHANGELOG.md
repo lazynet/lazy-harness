@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.32.0](https://github.com/lazynet/lazy-harness/compare/v0.31.0...v0.32.0) (2026-08-12)
+
+
+### Features
+
+* add lh knowledge graph to keep code graphs fresh ([#132](https://github.com/lazynet/lazy-harness/issues/132)) ([987da98](https://github.com/lazynet/lazy-harness/commit/987da987c8c36ac6c1df07f26dbc48a7636f8f2a))
+
 ## [0.31.0](https://github.com/lazynet/lazy-harness/compare/v0.30.0...v0.31.0) (2026-08-12)
 
 
