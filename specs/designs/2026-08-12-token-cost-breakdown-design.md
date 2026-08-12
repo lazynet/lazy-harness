@@ -77,9 +77,9 @@ The `LIKE '<period>%'` query already supports arbitrary date prefixes; only the
 
 **Filters** (`profile`, `project`, `model`) are case-insensitive substring
 matches applied to rows before grouping. `--model opus` matches both
-`claude-opus-5` and `claude-opus-4-8`; `--project lazy` matches `lazy-harness`
-and `lazy-knowledge`. This trades away exact matching deliberately: the model
-strings are long enough that requiring them in full defeats the purpose.
+`claude-opus-5` and `claude-opus-4-8`, and a project prefix matches every repo
+sharing it. This trades away exact matching deliberately: the model strings are
+long enough that requiring them in full defeats the purpose.
 
 **Grouping** walks `dimensions` in the order given, so the flag order is the
 column order. Each group accumulates the four token buckets, `cost`, and a
@@ -94,9 +94,10 @@ would restate the rows.
 
 **Rounding happens once, at presentation.** Today `_aggregate` rounds each
 group's cost to 2 decimals and `render` sums the rounded values, so the printed
-total drifts from `db.aggregate_costs()` — $7929.57 against $7904.31 on a real
-database with 16 groups. Accumulating in full precision and rounding only the
-emitted figure removes the drift.
+total drifts from `db.aggregate_costs()`. Sixteen groups of $0.005 print as
+$0.16 against a true $0.08 — a 2x error, because each group rounds up before
+summing. Accumulating in full precision and rounding only the emitted figure
+removes the drift.
 
 ### `lazy_harness.monitoring.views.tokens` (now render-only)
 
@@ -121,17 +122,23 @@ An unknown `--by` value fails via `click.Choice` with the valid list, exit 2.
 ```
 lh status tokens --by profile --by model --period month
 
-By: profile › model | Period: August 2026 | 412 sessions
+By: profile › model | Period: August 2026 | 891 sessions
 
- Profile  Model              In      Out   Cache%      Cost
- flex     claude-opus-4-8  3.3G    23.1M     96%   $2871.14
- flex     claude-sonnet-5  264M     495K     95%     $84.48
- ─ flex                    3.6G    23.6M     96%   $2955.62
- lazy     claude-opus-5    1.9G     7.2M     98%   $1350.81
- lazy     claude-sonnet-5  658M     3.6M     93%    $265.66
- ─ lazy                    2.6G    10.8M     97%   $1616.47
- ═ Total                   6.2G    34.4M     96%   $4572.09
+ Profile   Model            In      Out   Cache%      Cost
+ personal  claude-opus-5   1.9G     7.2M     98%   $1350.81
+ personal  claude-sonnet-5 658M     3.6M     93%    $265.66
+ personal  subtotal        2.6G    10.8M     97%   $1616.47
+ work      claude-opus-4-8 3.3G    23.1M     96%   $2871.14
+ work      subtotal        3.3G    23.1M     96%   $2871.14
+ Total                     5.9G    33.9M     96%   $4487.61
 ```
+
+The subtotal row reuses the second column for the literal label `subtotal`,
+which is what the integration test anchors on.
+
+Cross-profile input totals run to ten figures, where `format_tokens` stopped at
+`M` and printed `10310.6M`. It gains a `G` threshold in the same change, covered
+by the existing threshold test in `tests/unit/test_status_views_helpers.py`.
 
 JSON shape:
 
@@ -139,16 +146,16 @@ JSON shape:
 {
   "period": {"spec": "month", "label": "August 2026", "since": null},
   "dimensions": ["profile", "model"],
-  "filters": {"profile": "lazy"},
+  "filters": {"profile": "personal"},
   "groups": [
     {
-      "key": {"profile": "lazy", "model": "claude-opus-5"},
+      "key": {"profile": "personal", "model": "claude-opus-5"},
       "input": 1934500000, "output": 7200000,
       "cache_read": 1800000000, "cache_create": 90000000,
       "cache_pct": 98, "cost": 1350.81, "sessions": 412
     }
   ],
-  "subtotals": [{"key": {"profile": "lazy"}, "...": "same fields"}],
+  "subtotals": [{"key": {"profile": "personal"}, "...": "same fields"}],
   "total": {"...": "same fields, no key"}
 }
 ```

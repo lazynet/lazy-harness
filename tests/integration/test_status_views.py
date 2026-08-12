@@ -24,6 +24,7 @@ from lazy_harness.core.config import (
     ProfilesConfig,
     save_config,
 )
+from lazy_harness.monitoring.db import MetricsDB
 
 
 def _setup(home_dir: Path, with_profile_data: bool = False) -> Path:
@@ -143,8 +144,10 @@ def test_status_memory_aggregates_jsonl(home_dir: Path) -> None:
     memory_dir.mkdir(parents=True)
     today = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
     (memory_dir / "decisions.jsonl").write_text(
-        json.dumps({"ts": today, "summary": "chose pattern X"}) + "\n"
-        + json.dumps({"ts": today, "summary": "chose pattern Y"}) + "\n"
+        json.dumps({"ts": today, "summary": "chose pattern X"})
+        + "\n"
+        + json.dumps({"ts": today, "summary": "chose pattern Y"})
+        + "\n"
     )
     (memory_dir / "failures.jsonl").write_text(
         json.dumps({"ts": today, "summary": "broke build"}) + "\n"
@@ -193,9 +196,7 @@ def test_status_overview_runs_without_db(home_dir: Path) -> None:
     assert "Profiles" in result.output
 
 
-def test_status_cron_no_managed_jobs(
-    home_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_status_cron_no_managed_jobs(home_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _setup(home_dir, with_profile_data=True)
     fake_la = home_dir / "Library" / "LaunchAgents"
     fake_la.mkdir(parents=True)
@@ -204,3 +205,147 @@ def test_status_cron_no_managed_jobs(
     result = runner.invoke(cli, ["status", "cron"])
     assert result.exit_code == 0
     assert "No managed jobs" in result.output
+
+
+def _seed_db(home_dir: Path, entries: list[dict[str, object]]) -> Path:
+    """Write session_stats rows into the DB the config points at."""
+    db_path = home_dir / ".local/share/lazy-harness/metrics.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    db = MetricsDB(db_path)
+    try:
+        db.upsert_stats(entries)  # type: ignore[arg-type]
+    finally:
+        db.close()
+    return db_path
+
+
+def _entry(**overrides: object) -> dict[str, object]:
+    base: dict[str, object] = {
+        "session": "s1",
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "model": "claude-opus-5",
+        "profile": "lazy",
+        "project": "lazy-harness",
+        "input": 100,
+        "output": 10,
+        "cache_read": 800,
+        "cache_create": 100,
+        "cost": 1.0,
+    }
+    base.update(overrides)
+    return base
+
+
+def test_status_tokens_total_is_not_degraded_by_per_group_rounding(home_dir: Path) -> None:
+    """The printed total must match the DB sum, not a sum of rounded groups."""
+    _setup(home_dir)
+    _seed_db(
+        home_dir,
+        [_entry(session=f"s{i}", model=f"m{i}", cost=0.005) for i in range(16)],
+    )
+    result = CliRunner().invoke(cli, ["status", "tokens", "--by", "model", "--period", "all"])
+    assert result.exit_code == 0, result.output
+    assert "$0.08" in result.output
+
+
+def test_status_tokens_groups_by_each_requested_dimension(home_dir: Path) -> None:
+    _setup(home_dir)
+    _seed_db(
+        home_dir,
+        [
+            _entry(session="s1", profile="lazy", model="claude-opus-5", cost=1.0),
+            _entry(session="s2", profile="flex", model="claude-opus-5", cost=2.0),
+        ],
+    )
+    result = CliRunner().invoke(cli, ["status", "tokens", "--by", "profile", "--period", "all"])
+    assert result.exit_code == 0, result.output
+    assert "lazy" in result.output
+    assert "flex" in result.output
+
+
+def test_status_tokens_supports_temporal_dimensions(home_dir: Path) -> None:
+    _setup(home_dir)
+    _seed_db(home_dir, [_entry(session="s1", date="2026-04-15", cost=3.0)])
+    result = CliRunner().invoke(cli, ["status", "tokens", "--by", "month", "--period", "all"])
+    assert result.exit_code == 0, result.output
+    assert "2026-04" in result.output
+
+
+def test_status_tokens_emits_subtotals_for_two_dimensions(home_dir: Path) -> None:
+    _setup(home_dir)
+    _seed_db(
+        home_dir,
+        [
+            _entry(session="s1", profile="lazy", model="claude-opus-5", cost=1.0),
+            _entry(session="s2", profile="lazy", model="claude-sonnet-5", cost=2.0),
+        ],
+    )
+    result = CliRunner().invoke(
+        cli,
+        ["status", "tokens", "--by", "profile", "--by", "model", "--period", "all"],
+    )
+    assert result.exit_code == 0, result.output
+    assert "subtotal" in result.output
+    assert "$3.0" in result.output
+
+
+def test_status_tokens_omits_subtotals_for_a_single_dimension(home_dir: Path) -> None:
+    _setup(home_dir)
+    _seed_db(home_dir, [_entry(session="s1", profile="lazy", cost=1.0)])
+    result = CliRunner().invoke(cli, ["status", "tokens", "--by", "profile", "--period", "all"])
+    assert result.exit_code == 0, result.output
+    assert "subtotal" not in result.output
+
+
+def test_status_tokens_filters_by_profile(home_dir: Path) -> None:
+    _setup(home_dir)
+    _seed_db(
+        home_dir,
+        [
+            _entry(session="s1", profile="lazy", cost=1.0),
+            _entry(session="s2", profile="flex", cost=99.0),
+        ],
+    )
+    result = CliRunner().invoke(
+        cli,
+        ["status", "tokens", "--by", "profile", "--profile", "lazy", "--period", "all"],
+    )
+    assert result.exit_code == 0, result.output
+    assert "flex" not in result.output
+    assert "$99" not in result.output
+
+
+def test_status_tokens_accepts_an_explicit_year_month_period(home_dir: Path) -> None:
+    _setup(home_dir)
+    _seed_db(
+        home_dir,
+        [
+            _entry(session="s1", date="2026-04-15", cost=1.0),
+            _entry(session="s2", date="2026-05-15", cost=99.0),
+        ],
+    )
+    result = CliRunner().invoke(cli, ["status", "tokens", "--period", "2026-04"])
+    assert result.exit_code == 0, result.output
+    assert "$99" not in result.output
+
+
+def test_status_tokens_json_output_is_parseable(home_dir: Path) -> None:
+    _setup(home_dir)
+    _seed_db(home_dir, [_entry(session="s1", profile="lazy", cost=1.5)])
+    result = CliRunner().invoke(
+        cli, ["status", "tokens", "--by", "profile", "--period", "all", "--json"]
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["dimensions"] == ["profile"]
+    assert payload["groups"][0]["key"] == {"profile": "lazy"}
+    assert payload["groups"][0]["cost"] == 1.5
+    assert payload["total"]["cost"] == 1.5
+    assert payload["period"]["label"] == "All time"
+
+
+def test_status_tokens_rejects_an_unknown_dimension(home_dir: Path) -> None:
+    _setup(home_dir)
+    _seed_db(home_dir, [_entry()])
+    result = CliRunner().invoke(cli, ["status", "tokens", "--by", "quarter"])
+    assert result.exit_code != 0

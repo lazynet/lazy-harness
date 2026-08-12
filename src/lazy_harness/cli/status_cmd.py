@@ -9,6 +9,7 @@ from rich.console import Console
 
 from lazy_harness.core.config import Config, ConfigError, load_config
 from lazy_harness.core.paths import config_file, data_dir, expand_path
+from lazy_harness.monitoring.aggregate import DIMENSIONS, aggregate, resolve_period
 from lazy_harness.monitoring.dashboard import render_costs
 from lazy_harness.monitoring.db import MetricsDB
 from lazy_harness.monitoring.views import (
@@ -127,25 +128,51 @@ def status_sessions(period: str) -> None:
 @click.option(
     "--period",
     default="month",
-    type=click.Choice(["today", "week", "month", "all"]),
+    help="today | week | month | all | <N>d | YYYY-MM | YYYY-MM-DD",
 )
 @click.option(
     "--by",
-    "group_by",
-    default="project",
-    type=click.Choice(["project", "model", "profile"]),
+    "dimensions",
+    multiple=True,
+    type=click.Choice(DIMENSIONS),
+    help="Group by this dimension; repeatable, flag order is column order.",
 )
-def status_tokens(period: str, group_by: str) -> None:
-    """Token / cost breakdown grouped by project, model, or profile."""
+@click.option("--profile", default="", help="Only rows whose profile contains this.")
+@click.option("--model", default="", help="Only rows whose model contains this.")
+@click.option("--project", default="", help="Only rows whose project contains this.")
+@click.option("--json", "as_json", is_flag=True, help="Emit JSON instead of a table.")
+def status_tokens(
+    period: str,
+    dimensions: tuple[str, ...],
+    profile: str,
+    model: str,
+    project: str,
+    as_json: bool,
+) -> None:
+    """Token / cost breakdown across any combination of dimensions."""
     cfg = _load()
     db = _open_db(cfg)
     if db is None:
         Console().print("[dim]Monitoring DB not available.[/dim]")
         return
+
+    dims = list(dimensions) or ["project", "model"]
+    resolved = resolve_period(period)
     try:
-        tokens_view.render(db, Console(), period, group_by)
+        rows = db.query_stats(period=resolved.period, since=resolved.since)
     finally:
         db.close()
+
+    agg = aggregate(
+        rows,
+        dims,
+        {"profile": profile, "model": model, "project": project},
+    )
+    console = Console()
+    if as_json:
+        tokens_view.render_json(agg, resolved, console)
+    else:
+        tokens_view.render_table(agg, resolved, console)
 
 
 @status.command("hooks")

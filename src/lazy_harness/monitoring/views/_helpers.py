@@ -63,6 +63,8 @@ class StatusContext:
 
 def format_tokens(n: int | float) -> str:
     n = int(n)
+    if n >= 1_000_000_000:
+        return f"{n / 1_000_000_000:.1f}G"
     if n >= 1_000_000:
         return f"{n / 1_000_000:.1f}M"
     if n >= 1_000:
