@@ -1024,3 +1024,46 @@ def test_context_inject_routes_memory_dir_through_agent_adapter(
     payload = _json.loads(capsys.readouterr().out)
     body = payload["hookSpecificOutput"]["additionalContext"]
     assert "resume the adapter-routing work" in body
+
+
+def test_truncate_body_keeps_code_structure_under_budget_pressure() -> None:
+    """The repo's structural map is the point of surfacing graphify at all."""
+    git = "## Git\nbranch"
+    north = "## LazyNorth\n" + "n" * 500
+    session = "## Last session\nshort"
+    handoff = "## Handoff from last session\nh"
+    episodic = "## Recent history\n" + "e" * 500
+    graphify = "## Code structure\n" + "g" * 200
+    vault = "## Relevant vault notes\n" + "v" * 500
+
+    trimmed = _truncate_body(
+        700,
+        git,
+        north,
+        session,
+        handoff,
+        episodic,
+        suggest_section=vault,
+        graphify_section_text=graphify,
+    )
+
+    assert "## Code structure" in trimmed
+    assert "## Relevant vault notes" not in trimmed
+
+
+def test_truncate_body_names_code_structure_when_it_is_finally_dropped() -> None:
+    """The banner must not report a graphify drop as a vault-notes drop."""
+    git = "## Git\nbranch"
+    graphify = "## Code structure\n" + "g" * 900
+
+    trimmed = _truncate_body(
+        60,
+        git,
+        "",
+        "## Last session\ns",
+        "## Handoff from last session\nh",
+        "",
+        graphify_section_text=graphify,
+    )
+
+    assert "Code structure" in trimmed, "dropping graphify must be named in the banner"

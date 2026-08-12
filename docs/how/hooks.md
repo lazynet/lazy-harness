@@ -88,7 +88,12 @@ Sections composed, in priority order:
 5. **`## Recent history`** — the last 3 entries from `decisions.jsonl` and the last 3 from `failures.jsonl`, with failures including their prevention field.
 6. **`## Proposals to review`** — contents of `memory/claude-md.proposal.md` when present. The compound-loop worker writes this file when it has surfaced patterns worth promoting into `CLAUDE.md` (curated semantic layer). Injecting them at session start lets you review and apply them by hand; `context-inject` never edits `CLAUDE.md` or `MEMORY.md` itself.
 
-The body is truncated to `cfg.context_inject.max_body_chars` (default 3000) by dropping sections in the order `episodic → lazynorth → handoff`. A compact banner is also emitted as `systemMessage` so the agent can surface "Session context loaded: on main | Last session: 2026-04-12 18:32 | has handoff notes" without printing the full body.
+7. **`## Code structure`** — a summary of `graphify-out/graph.json` (node, edge and community counts) when the graph is fresh, or a `## Notice` pointing at regeneration when the graph is older than `HEAD`. Absent when the repo has no graph.
+8. **`## Relevant vault notes`** — QMD hits for the current branch name, when `qmd_suggest_enabled` is set.
+
+The body is truncated to `cfg.context_inject.max_body_chars` (default 3000) by dropping sections in the order `episodic → vault notes → proposals → lazynorth → code structure → handoff`. A compact banner is also emitted as `systemMessage` so the agent can surface "Session context loaded: on main | Last session: 2026-04-12 18:32 | has handoff notes" without printing the full body.
+
+**Why code structure outranks vault notes.** Both are discovery aids, but the graph summary is a compact map of the repo the session is about to edit, while vault notes are speculative matches on a branch name. Under a tight budget the map is worth more, and it is the only reason to generate the graph at all. If both keep getting dropped, raise `max_body_chars` — the default is deliberately conservative and costs well under a thousand tokens even when doubled.
 
 **Where it writes:** nowhere on disk. It only prints to stdout. Its job is read-only composition.
 
