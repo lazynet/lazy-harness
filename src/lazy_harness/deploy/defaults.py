@@ -18,7 +18,11 @@ DEFAULT_HOOKS: dict[str, list[str]] = {
     "session_end": ["session-end"],
     "pre_compact": ["pre-compact"],
     "post_compact": ["post-compact"],
-    "pre_tool_use": ["pre-tool-use-security", "pre-tool-use-memory-size"],
+    "pre_tool_use": [
+        "pre-tool-use-security",
+        "pre-tool-use-memory-size",
+        "pre-tool-use-read-size",
+    ],
     "post_tool_use": ["post-tool-use-format", "post-tool-use-sync-claude"],
 }
 

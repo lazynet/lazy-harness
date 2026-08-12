@@ -47,6 +47,10 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
         module="lazy_harness.hooks.builtins.pre_tool_use_memory_size",
         matcher="Edit|Write",
     ),
+    "pre-tool-use-read-size": BuiltinHookSpec(
+        module="lazy_harness.hooks.builtins.pre_tool_use_read_size",
+        matcher="Read",
+    ),
     "pre-tool-use-security": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.pre_tool_use_security"
     ),
