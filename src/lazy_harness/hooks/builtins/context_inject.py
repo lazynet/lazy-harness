@@ -461,56 +461,74 @@ def _truncate_body(
     suggest_section: str = "",
     proposals_section: str = "",
     proposals_summary: str = "",
+    graphify_section_text: str = "",
 ) -> str:
     """Drop sections in priority order until body fits: episodic → suggest →
-    proposals → north → handoff. Proposals (compound-loop suggestions to merge
-    into CLAUDE.md) sit between handoff and vault notes in document order, and
-    are dropped after vault notes since they describe past work rather than
-    pending action. When the proposals section is dropped and
-    ``proposals_summary`` is non-empty, that one-liner is emitted alongside the
-    truncation banner so pending proposals are never silently hidden."""
-    body = _join_sections(
-        git_section,
-        north_section,
-        session_section,
-        handoff_section,
-        proposals_section,
-        suggest_section,
-        episodic_section,
-    )
+    proposals → north → code structure → handoff. Proposals (compound-loop
+    suggestions to merge into CLAUDE.md) sit between handoff and vault notes in
+    document order, and are dropped after vault notes since they describe past
+    work rather than pending action. The code-structure summary outranks all of
+    them: it is a compact map of the repo the session is about to edit, and it
+    is the whole reason the graph is generated. When the proposals section is
+    dropped and ``proposals_summary`` is non-empty, that one-liner is emitted
+    alongside the truncation banner so pending proposals are never silently
+    hidden."""
+
+    def assemble(
+        *,
+        north: bool,
+        handoff: bool,
+        proposals: bool,
+        suggest: bool,
+        episodic: bool,
+        graphify: bool,
+    ) -> str:
+        return _join_sections(
+            git_section,
+            north_section if north else "",
+            session_section,
+            handoff_section if handoff else "",
+            graphify_section_text if graphify else "",
+            proposals_section if proposals else "",
+            suggest_section if suggest else "",
+            episodic_section if episodic else "",
+        )
+
+    keep = {
+        "north": True,
+        "handoff": True,
+        "proposals": True,
+        "suggest": True,
+        "episodic": True,
+        "graphify": True,
+    }
+    body = assemble(**keep)
     if len(body) <= max_chars:
         return body
-    dropped = ["Recent history"]
-    body = _join_sections(
-        git_section,
-        north_section,
-        session_section,
-        handoff_section,
-        proposals_section,
-        suggest_section,
-    )
-    if len(body) <= max_chars:
-        return _prepend_truncation_banner(body, dropped, max_chars)
-    if suggest_section:
-        dropped.append("Relevant vault notes")
-    body = _join_sections(
-        git_section, north_section, session_section, handoff_section, proposals_section
-    )
-    if len(body) <= max_chars:
-        return _prepend_truncation_banner(body, dropped, max_chars)
+
+    dropped: list[str] = []
     summary_line = ""
-    if proposals_section:
-        dropped.append("Proposals to review")
-        summary_line = proposals_summary
-    body = _join_sections(git_section, north_section, session_section, handoff_section)
-    if len(body) <= max_chars:
-        return _prepend_truncation_banner(body, dropped, max_chars, summary_line)
-    dropped.append("LazyNorth")
-    body = _join_sections(git_section, session_section, handoff_section)
-    if len(body) <= max_chars:
-        return _prepend_truncation_banner(body, dropped, max_chars, summary_line)
-    dropped.append("Handoff from last session")
-    body = _join_sections(git_section, session_section)
+    # (flag, banner label, section text) in drop order.
+    order = [
+        ("episodic", "Recent history", episodic_section),
+        ("suggest", "Relevant vault notes", suggest_section),
+        ("proposals", "Proposals to review", proposals_section),
+        ("north", "LazyNorth", north_section),
+        ("graphify", "Code structure", graphify_section_text),
+        ("handoff", "Handoff from last session", handoff_section),
+    ]
+    for flag, label, text in order:
+        # "Recent history" is always named, matching the historical banner even
+        # when the section was empty to begin with.
+        if text or flag == "episodic":
+            dropped.append(label)
+        if flag == "proposals" and proposals_section:
+            summary_line = proposals_summary
+        keep[flag] = False
+        body = assemble(**keep)
+        if len(body) <= max_chars:
+            return _prepend_truncation_banner(body, dropped, max_chars, summary_line)
+
     return _prepend_truncation_banner(body, dropped, max_chars, summary_line)
 
 
@@ -734,8 +752,7 @@ def main() -> None:
     proposals_section = f"## Proposals to review\n{proposals_ctx}" if proposals_ctx else ""
     episodic_section = f"## Recent history\n{episodic_ctx}" if episodic_ctx else ""
     north_section = f"## LazyNorth\n{north_ctx}" if north_ctx else ""
-    suggest_only = f"## Relevant vault notes\n{suggest_ctx}" if suggest_ctx else ""
-    suggest_section = "\n\n".join(s for s in [graphify_ctx, suggest_only] if s)
+    suggest_section = f"## Relevant vault notes\n{suggest_ctx}" if suggest_ctx else ""
 
     max_chars = cfg.context_inject.max_body_chars if cfg is not None else 3000
     body = _truncate_body(
@@ -748,6 +765,7 @@ def main() -> None:
         suggest_section=suggest_section,
         proposals_section=proposals_section,
         proposals_summary=proposals_summary,
+        graphify_section_text=graphify_ctx,
     )
     if not body:
         body = "New project, no prior context."
