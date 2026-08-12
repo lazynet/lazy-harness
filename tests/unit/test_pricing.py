@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 
 def test_default_pricing_matches_litellm() -> None:
     """Defaults must mirror LiteLLM's model_prices_and_context_window.json.
@@ -127,25 +129,105 @@ def test_default_pricing_includes_fable_5() -> None:
     }
 
 
-def test_default_pricing_includes_sonnet_5() -> None:
-    """claude-sonnet-5 must carry the introductory $2/$10 per-million rates.
+def test_default_pricing_carries_the_standing_sonnet_5_rate() -> None:
+    """claude-sonnet-5's default entry is the standing $3/$15 rate.
 
-    Sonnet 5 (released 2026-07) ships with an introductory price of $2/$10
-    per-million input/output that reverts to the standard $3/$15 on
-    2026-08-31 — bump these to 3.0/15.0 (cache 0.3/3.75) after that date.
-    Cache rates follow the table convention: read = 0.1x input, create =
-    1.25x input. Without this entry calculate_cost silently returns 0.0 for
-    all sonnet-5 sessions.
+    The $2/$10 introductory rate is not the default — it lives in
+    INTRODUCTORY_PRICING with an end date and is applied per session date.
+    Keeping the standing rate as the default means the day the window
+    closes, nothing has to be remembered.
     """
     from lazy_harness.monitoring.pricing import default_pricing
 
     pricing = default_pricing()
     assert pricing["claude-sonnet-5"] == {
+        "input": 3.0,
+        "output": 15.0,
+        "cache_read": 0.3,
+        "cache_create": 3.75,
+    }
+
+
+def test_sonnet_5_introductory_window_ends_2026_08_31() -> None:
+    from lazy_harness.monitoring.pricing import INTRODUCTORY_PRICING
+
+    window = INTRODUCTORY_PRICING["claude-sonnet-5"]
+    assert window.through == "2026-08-31"
+    assert window.rates == {
         "input": 2.0,
         "output": 10.0,
         "cache_read": 0.2,
         "cache_create": 2.5,
     }
+
+
+def _sonnet_cost(on: str | None) -> float:
+    from lazy_harness.monitoring.pricing import calculate_cost, default_pricing
+
+    return calculate_cost(
+        "claude-sonnet-5",
+        {"input": 1_000_000, "output": 0, "cache_read": 0, "cache_create": 0},
+        default_pricing(),
+        on=on,
+    )
+
+
+def test_a_session_inside_the_window_bills_at_the_introductory_rate() -> None:
+    assert _sonnet_cost("2026-08-12") == pytest.approx(2.0)
+
+
+def test_the_last_day_of_the_window_is_inclusive() -> None:
+    assert _sonnet_cost("2026-08-31") == pytest.approx(2.0)
+
+
+def test_the_day_after_the_window_bills_at_the_standing_rate() -> None:
+    """This is the regression the window exists for.
+
+    Before, the introductory rate was the hardcoded default and a comment
+    asked a human to remember 2026-08-31. Nothing enforced it.
+    """
+    assert _sonnet_cost("2026-09-01") == pytest.approx(3.0)
+
+
+def test_a_session_before_the_window_bills_at_the_standing_rate() -> None:
+    assert _sonnet_cost("2026-06-01") == pytest.approx(3.0)
+
+
+def test_an_undated_session_bills_at_the_standing_rate() -> None:
+    """With no date, bill at the standing rate rather than under-charging."""
+    assert _sonnet_cost(None) == pytest.approx(3.0)
+
+
+def test_a_config_override_beats_the_introductory_window() -> None:
+    """A user-supplied rate is the last word, even inside the window."""
+    from lazy_harness.monitoring.pricing import calculate_cost, load_pricing
+
+    pricing = load_pricing(
+        overrides={
+            "claude-sonnet-5": {
+                "input": 99.0,
+                "output": 0.0,
+                "cache_read": 0.0,
+                "cache_create": 0.0,
+            }
+        }
+    )
+    cost = calculate_cost(
+        "claude-sonnet-5",
+        {"input": 1_000_000, "output": 0, "cache_read": 0, "cache_create": 0},
+        pricing,
+        on="2026-08-12",
+    )
+    assert cost == pytest.approx(99.0)
+
+
+def test_a_model_without_a_window_ignores_the_date() -> None:
+    from lazy_harness.monitoring.pricing import calculate_cost, default_pricing
+
+    tokens = {"input": 1_000_000, "output": 0, "cache_read": 0, "cache_create": 0}
+    pricing = default_pricing()
+    assert calculate_cost("claude-opus-5", tokens, pricing, on="2026-08-12") == pytest.approx(5.0)
+    assert calculate_cost("claude-opus-5", tokens, pricing, on="2026-09-01") == pytest.approx(5.0)
 
 
 def test_default_pricing_includes_opus_5() -> None:
@@ -180,3 +262,30 @@ def test_calculate_cost_opus_5_is_not_free() -> None:
     cost = calculate_cost("claude-opus-5", tokens, default_pricing())
     expected = (1000 * 5.0 + 500 * 25.0 + 2000 * 0.5 + 100 * 6.25) / 1_000_000
     assert abs(cost - expected) < 0.000001
+
+
+def test_default_pricing_includes_the_haiku_alias() -> None:
+    """The dated Haiku id and its bare alias must both be priced.
+
+    Every other model is keyed by its bare alias; Haiku is keyed only by
+    `claude-haiku-4-5-20251001`. A session reported under the alias would
+    price at 0.0 — and Haiku carries more sessions than any other model.
+    """
+    from lazy_harness.monitoring.pricing import default_pricing
+
+    pricing = default_pricing()
+    assert pricing["claude-haiku-4-5"] == pricing["claude-haiku-4-5-20251001"]
+
+
+def test_default_pricing_includes_mythos_5() -> None:
+    """claude-mythos-5 carries the same rates as claude-fable-5."""
+    from lazy_harness.monitoring.pricing import default_pricing
+
+    pricing = default_pricing()
+    assert pricing["claude-mythos-5"] == pricing["claude-fable-5"]
+
+
+def test_sonnet_5_introductory_window_opens_at_launch() -> None:
+    from lazy_harness.monitoring.pricing import INTRODUCTORY_PRICING
+
+    assert INTRODUCTORY_PRICING["claude-sonnet-5"].since == "2026-07-01"
