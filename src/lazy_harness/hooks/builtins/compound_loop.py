@@ -37,7 +37,7 @@ def main() -> None:
         from lazy_harness.hooks.builtins._shared import (
             find_latest_session,
             make_log,
-            resolve_project_dir,
+            resolve_memory_dir,
             transcript_from_payload,
         )
         from lazy_harness.knowledge.compound_loop import (
@@ -111,7 +111,7 @@ def main() -> None:
         return
 
     memory_dir = (
-        resolve_project_dir(
+        resolve_memory_dir(
             payload,
             agent_dir=agent_dir,
             sessions_subdir=subdirs.get("sessions") or "projects",

@@ -88,3 +88,60 @@ def test_falls_back_to_newest_session_when_payload_has_no_transcript(
 
     fake_create_task.assert_called_once()
     assert fake_create_task.call_args.kwargs["session_jsonl"] == legacy_transcript
+
+
+def test_memory_dir_points_at_the_main_repo_when_running_in_a_worktree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Distilled memory survives the worktree it was learned in."""
+    import subprocess as sp
+
+    from lazy_harness.hooks.builtins import compound_loop as mod
+    from lazy_harness.knowledge import compound_loop as knowledge
+
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "config.toml").write_text(
+        "[harness]\nversion = 1\n"
+        '[agent]\ntype = "claude-code"\n'
+        "[compound_loop]\nenabled = true\ndebounce_seconds = 0\n"
+    )
+    monkeypatch.setenv("LH_CONFIG_DIR", str(config_dir))
+    agent_dir = tmp_path / "agent"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(agent_dir))
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    base = ["git", "-c", "user.email=t@t", "-c", "user.name=t"]
+    sp.run([*base, "init", "-q"], cwd=repo, check=True, capture_output=True)
+    sp.run(
+        [*base, "commit", "-q", "--allow-empty", "-m", "i"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    worktree = repo / ".worktrees" / "feat"
+    sp.run(
+        [*base, "worktree", "add", "-q", str(worktree), "-b", "feat"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    monkeypatch.chdir(worktree)
+
+    wt_project = agent_dir / "projects" / ("-" + str(worktree).replace("/", "-").lstrip("-"))
+    wt_project.mkdir(parents=True)
+    transcript = wt_project / "0197f0de-cafe-4bad-9001-000000000002.jsonl"
+    transcript.write_text('{"type":"user"}\n')
+
+    fake_create_task = MagicMock(return_value=Path("task-1.task"))
+    monkeypatch.setattr(knowledge, "create_task", fake_create_task)
+    monkeypatch.setattr(mod.subprocess, "Popen", MagicMock())
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"transcript_path": str(transcript)})))
+
+    mod.main()
+
+    kwargs = fake_create_task.call_args.kwargs
+    assert kwargs["session_jsonl"] == transcript, "sessions still belong to the worktree"
+    expected = agent_dir / "projects" / ("-" + str(repo.resolve()).replace("/", "-").lstrip("-"))
+    assert kwargs["memory_dir"] == expected / "memory"

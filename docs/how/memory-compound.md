@@ -70,6 +70,7 @@ Steps, in order:
    memory_dir=/Users/x/.claude/projects/.../memory
    timestamp=2026-04-13T18:32:45-03:00
    ```
+   `session_jsonl` points at the checkout the session actually ran in, but `memory_dir` is resolved against the **main** working tree. Distilled memory outlives any one branch, so a session run inside `repo/.worktrees/feat` still appends to `repo`'s `decisions.jsonl` rather than stranding it in a project dir that disappears with the worktree.
 8. **Spawn the worker.** `subprocess.Popen` with `start_new_session=True`, stdin `/dev/null`, stdout/stderr redirected to `~/.claude/logs/compound-loop.log`. The producer does not wait for it.
 9. **Exit 0.** The whole producer phase is tens of milliseconds. Claude Code sees a clean session close.
 
