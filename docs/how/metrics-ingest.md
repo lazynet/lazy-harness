@@ -189,12 +189,15 @@ The legacy `[monitoring]` block (`db`, `pricing`) is independent of `[metrics]`.
 
 ### Health
 
-`lh metrics status` prints per-sink counts (`pending` / `sending` / `sent`) so a stuck `http_remote` is visible without inspecting the DB:
+`lh metrics status` always reports the local database first — session count and accumulated cost — then per-sink counts (`pending` / `sending` / `sent`) so a stuck `http_remote` is visible without inspecting the DB:
 
 ```bash
 $ lh metrics status
+sqlite_local  8431 sessions  $412.87  ~/.config/lazy-harness/metrics.db
 http_remote  pending: 12  sending: 0  sent: 8431
 ```
+
+With the default sink set (`sqlite_local` only), the local line is still printed and the command says no remote sinks are configured, rather than exiting silently.
 
 For deeper inspection:
 

@@ -34,6 +34,43 @@ def _seed(tmp_path: Path) -> Path:
     return db_path
 
 
+def test_status_reports_local_sink_when_no_remote_sinks(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "m.db"
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        f'[harness]\nversion = "1"\n[monitoring]\nenabled = true\ndb = "{db_path.as_posix()}"\n'
+    )
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+
+    runner = CliRunner()
+    result = runner.invoke(metrics, ["status"])
+    assert result.exit_code == 0
+    assert result.output.strip() != "", "status printed nothing for the default sink set"
+    assert "sqlite_local" in result.output
+
+
+def test_status_reports_local_session_count(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "m.db"
+    db = MetricsDB(db_path)
+    db.insert_stats(
+        [
+            {"session": "s1", "date": "2026-04-14", "model": "sonnet", "cost": 1.5},
+            {"session": "s2", "date": "2026-04-15", "model": "sonnet", "cost": 2.0},
+        ]
+    )
+    db.close()
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        f'[harness]\nversion = "1"\n[monitoring]\nenabled = true\ndb = "{db_path.as_posix()}"\n'
+    )
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+
+    runner = CliRunner()
+    result = runner.invoke(metrics, ["status"])
+    assert result.exit_code == 0
+    assert "2 sessions" in result.output
+
+
 def test_status_reports_pending_count(tmp_path: Path, monkeypatch) -> None:
     db_path = _seed(tmp_path)
     cfg_path = tmp_path / "config.toml"
