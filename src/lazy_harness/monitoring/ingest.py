@@ -166,6 +166,7 @@ def ingest_profile(
                 "cache_create": agg["cache_create"],
             },
             pricing,
+            on=agg["date"],
         )
         entries.append(
             {

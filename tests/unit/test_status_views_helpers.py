@@ -15,6 +15,15 @@ def test_format_tokens_thresholds() -> None:
     assert format_tokens(2_500_000) == "2.5M"
 
 
+def test_format_tokens_switches_to_billions() -> None:
+    """Cross-profile totals run to ten figures; 10310.6M is unreadable."""
+    from lazy_harness.monitoring.views._helpers import format_tokens
+
+    assert format_tokens(999_999_999) == "1000.0M"
+    assert format_tokens(1_500_000_000) == "1.5G"
+    assert format_tokens(10_310_600_000) == "10.3G"
+
+
 def test_format_size_returns_question_for_missing(tmp_path: Path) -> None:
     from lazy_harness.monitoring.views._helpers import format_size
 
@@ -107,10 +116,7 @@ def test_last_log_timestamp_finds_bracket(tmp_path: Path) -> None:
     from lazy_harness.monitoring.views._helpers import last_log_timestamp
 
     log = tmp_path / "x.log"
-    log.write_text(
-        "[2026-04-01 10:00:00] starting\n"
-        "[2026-04-01 10:05:30] sync OK\n"
-    )
+    log.write_text("[2026-04-01 10:00:00] starting\n[2026-04-01 10:05:30] sync OK\n")
     ts = last_log_timestamp(log)
     assert "2026-04-01T10:05:30" == ts
 

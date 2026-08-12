@@ -6,6 +6,8 @@ import json
 import os
 from pathlib import Path
 
+import pytest
+
 
 def _write_session(
     projects_dir: Path,
@@ -425,3 +427,42 @@ def test_ingest_skips_memory_jsonls(tmp_path: Path) -> None:
     total_input = sum(r["input"] for r in rows)
     assert total_input == 100
     db.close()
+
+
+def _ingest_sonnet_5_on(tmp_path: Path, session_date: str) -> float:
+    """Ingest one 1M-input-token sonnet-5 session dated `session_date`."""
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.ingest import ingest_profile
+    from lazy_harness.monitoring.pricing import load_pricing
+
+    prof = _profile(tmp_path, "lazy")
+    _write_session(
+        prof.config_dir / "projects",
+        "-Users-foo-repos-demo",
+        "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        [
+            _assistant_msg(
+                model="claude-sonnet-5",
+                inp=1_000_000,
+                out=0,
+                ts=f"{session_date}T10:00:00",
+            )
+        ],
+    )
+    db = MetricsDB(tmp_path / "metrics.db")
+    try:
+        ingest_profile(prof, db, load_pricing())
+        rows = db.query_stats(period="all")
+    finally:
+        db.close()
+    return rows[0]["cost"]
+
+
+def test_ingest_prices_a_session_inside_the_introductory_window(tmp_path: Path) -> None:
+    """The session date, not today's date, selects the rate."""
+    assert _ingest_sonnet_5_on(tmp_path, "2026-08-12") == pytest.approx(2.0)
+
+
+def test_ingest_prices_a_session_after_the_introductory_window(tmp_path: Path) -> None:
+    """Regression: re-ingesting must not keep applying an expired discount."""
+    assert _ingest_sonnet_5_on(tmp_path, "2026-09-15") == pytest.approx(3.0)

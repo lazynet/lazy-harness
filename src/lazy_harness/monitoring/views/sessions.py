@@ -3,41 +3,23 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timedelta
 from typing import Any
 
 from rich.console import Console
 from rich.table import Table
 
+from lazy_harness.monitoring.aggregate import resolve_period
 from lazy_harness.monitoring.db import MetricsDB
 from lazy_harness.monitoring.views._helpers import format_tokens
 
 
 def _period_label(period: str) -> str:
-    today = datetime.now()
-    if period == "today":
-        return "Today"
-    if period == "week":
-        return "Last 7 days"
-    if period == "month":
-        return today.strftime("%B %Y")
-    if period == "all":
-        return "All time"
-    return period
+    return resolve_period(period).label
 
 
 def _query_for_period(db: MetricsDB, period: str) -> list[dict[str, Any]]:
-    today = datetime.now()
-    if period == "today":
-        return db.query_stats(period=today.strftime("%Y-%m-%d"))
-    if period == "week":
-        since = (today - timedelta(days=7)).strftime("%Y-%m-%d")
-        return db.query_stats(since=since)
-    if period == "month":
-        return db.query_stats(period=today.strftime("%Y-%m"))
-    if period == "all":
-        return db.query_stats(period="all")
-    return db.query_stats(period=period)
+    resolved = resolve_period(period)
+    return db.query_stats(period=resolved.period, since=resolved.since)
 
 
 def render(db: MetricsDB, console: Console, period: str) -> None:

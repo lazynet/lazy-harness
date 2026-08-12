@@ -236,7 +236,7 @@ Manages agent profiles.
 lh profile list
 lh profile add work --config-dir ~/.claude-work --roots ~/repos/work
 lh profile envrc
-lh profile move --from lazy --to flex --projects my-repo --yes
+lh profile move --from personal --to work --projects my-repo --yes
 ```
 
 ## `lh run`
@@ -281,7 +281,7 @@ Monitoring dashboard. With no subcommand, prints the overview panel. There are t
 
 - `overview` — at-a-glance summary panel.
 - `sessions` — daily breakdown of sessions, tokens, cost. `--period today|week|month|all`.
-- `tokens` — token / cost breakdown grouped by `--by project|model|profile`. `--period today|week|month|all`.
+- `tokens` — token / cost breakdown across any combination of dimensions. See below.
 - `costs` — legacy cost view, kept for back-compat. `--period 7d|30d|month|all`.
 - `projects` — per-project session counts and last activity.
 - `profiles` — per-profile config, hooks count, MCPs, auth state.
@@ -295,6 +295,34 @@ lh status
 lh status sessions --period week
 lh status tokens --by model --period month
 ```
+
+### `lh status tokens`
+
+| Flag | Values | Default | Notes |
+| --- | --- | --- | --- |
+| `--by` | `profile` `project` `model` `day` `week` `month` | `project` + `model` | Repeatable. Flag order is column order. |
+| `--period` | `today` `week` `month` `all`, `<N>d`, `YYYY-MM`, `YYYY-MM-DD` | `month` | `week` and `<N>d` are rolling windows ending today. |
+| `--profile` | any string | — | Case-insensitive substring filter. |
+| `--model` | any string | — | Case-insensitive substring filter. |
+| `--project` | any string | — | Case-insensitive substring filter. |
+| `--json` | flag | off | Emits the aggregation instead of the table. |
+
+Each `--by` adds a grouping column, so `--by month --by profile` gives one row
+per month per profile. With two or more dimensions the table also carries a
+subtotal row per value of the first dimension. Filters narrow the rows without
+adding a column: `--profile work --by month` is one row per month, work only.
+
+`--period` accepts more than the four keywords — `30d` for a rolling month,
+`2026-04` for one calendar month, `2026-04-15` for a single day.
+
+```bash
+lh status tokens --by profile --period all
+lh status tokens --by month --by profile
+lh status tokens --by model --profile work --period 30d
+lh status tokens --by day --period 2026-04 --json
+```
+
+Full walkthrough with worked examples: [Cost reporting](../how/cost-reporting.md).
 
 ## `lh statusline`
 

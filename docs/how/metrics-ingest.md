@@ -63,7 +63,40 @@ Claude Code only ever appends to an existing session JSONL, never rewrites past 
 
 ## Pricing
 
-`DEFAULT_PRICING` in `monitoring/pricing.py` holds per-million-token rates for the Claude models currently observed in the wild (`claude-opus-4-6`, `claude-opus-4-7`, `claude-opus-4-8`, `claude-opus-5`, `claude-fable-5`, `claude-sonnet-5`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`). The rates mirror what LiteLLM publishes in `model_prices_and_context_window.json`, which is also what `ccusage` consumes — keeping the two aligned is the only way the cost numbers on `lh status` reconcile with `npx ccusage`.
+`DEFAULT_PRICING` in `monitoring/pricing.py` holds per-million-token rates for the Claude models currently observed in the wild. The rates mirror what LiteLLM publishes in `model_prices_and_context_window.json`, which is also what `ccusage` consumes — keeping the two aligned is the only way the cost numbers on `lh status` reconcile with `npx ccusage`.
+
+Cache rates follow the published convention: `cache_read` is 0.1× the input rate, `cache_create` is 1.25× it (the 5-minute TTL write premium).
+
+### Launch discounts expire on their own
+
+A model that ships with an introductory rate gets a second entry in `INTRODUCTORY_PRICING`, carrying the discounted rates and the window they apply to:
+
+```python
+INTRODUCTORY_PRICING = {
+    "claude-sonnet-5": IntroductoryRate(
+        since="2026-07-01",
+        through="2026-08-31",
+        rates={"input": 2.0, "output": 10.0, "cache_read": 0.2, "cache_create": 2.5},
+    ),
+}
+```
+
+`DEFAULT_PRICING` always holds the **standing** rate, so the discount is the exception and reverting is the default. `calculate_cost()` takes the session's date and picks the discounted rate only for sessions inside the window — which means a session from the discount period keeps its discounted cost forever, even when re-ingested years later, and a session after it never gets one.
+
+Encoding the end date is what makes this automatic. A comment saying "bump this after 2026-08-31" is not a mechanism: nothing reads it, and the day it lapses every cost figure silently drifts.
+
+### Unpriced models
+
+`calculate_cost()` returns `0.0` for any model absent from the table. Since a genuinely free session also costs `0.0`, `ingest_profile()` collects every such model into `IngestReport.unknown_models`, and `lh metrics ingest` prints them:
+
+```
+! no pricing for claude-future-model-99 — those sessions were priced at $0.
+  Add rates under [monitoring.pricing] in config.toml.
+```
+
+This is not gated behind `--verbose`: an unpriced model means the cost column is wrong, and that should be impossible to miss.
+
+### Overrides
 
 You can override any model's rates per-install under `[monitoring.pricing]` in `config.toml`:
 
@@ -75,7 +108,7 @@ cache_read = 0.5
 cache_create = 6.25
 ```
 
-Overrides are merged over `DEFAULT_PRICING` at ingest time via `load_pricing()`.
+Overrides are merged over `DEFAULT_PRICING` at ingest time via `load_pricing()`, and they win over an introductory window — once you set a model's rate yourself, that rate is what gets used on every date.
 
 ## Precision tests
 
