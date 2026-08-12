@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.31.0](https://github.com/lazynet/lazy-harness/compare/v0.30.0...v0.31.0) (2026-08-12)
+
+
+### Features
+
+* warn before an unbounded read of a large file ([#129](https://github.com/lazynet/lazy-harness/issues/129)) ([c256666](https://github.com/lazynet/lazy-harness/commit/c256666d28379d1292d2551efe2b84d38fc481c7))
+
+
+### Bug Fixes
+
+* anchor distilled memory to the main working tree ([#128](https://github.com/lazynet/lazy-harness/issues/128)) ([96b485f](https://github.com/lazynet/lazy-harness/commit/96b485f414b3279e12fd319086ac2164267e1b67))
+* keep the code-structure summary out of the truncation cliff ([#130](https://github.com/lazynet/lazy-harness/issues/130)) ([7e36f72](https://github.com/lazynet/lazy-harness/commit/7e36f7262f914a5d81a399a4e763006d0ccf12ba))
+* make lh metrics status report the local sink ([#125](https://github.com/lazynet/lazy-harness/issues/125)) ([12ea676](https://github.com/lazynet/lazy-harness/commit/12ea676ea3de97b6f9a8cec0dcffa9edc2e64216))
+
+
+### Documentation
+
+* merge accepted compound-loop proposals into the governance surface ([#131](https://github.com/lazynet/lazy-harness/issues/131)) ([5e23b60](https://github.com/lazynet/lazy-harness/commit/5e23b60c1a29b2e4f619dccbc915a7e7f65cdc63))
+
 ## [0.30.0](https://github.com/lazynet/lazy-harness/compare/v0.26.0...v0.30.0) (2026-08-12)
 
 
