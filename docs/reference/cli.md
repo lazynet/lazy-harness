@@ -236,7 +236,7 @@ Manages agent profiles.
 lh profile list
 lh profile add work --config-dir ~/.claude-work --roots ~/repos/work
 lh profile envrc
-lh profile move --from lazy --to flex --projects my-repo --yes
+lh profile move --from personal --to work --projects my-repo --yes
 ```
 
 ## `lh run`
