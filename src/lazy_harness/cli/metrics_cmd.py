@@ -129,9 +129,16 @@ def metrics_status() -> None:
     db_path = expand_path(cfg.monitoring.db) if cfg.monitoring.db else data_dir() / "metrics.db"
     db = MetricsDB(Path(db_path))
     try:
-        for name in cfg.metrics.sinks:
-            if name == "sqlite_local":
-                continue
+        totals = db.aggregate_costs(period="all")
+        console.print(
+            f"[bold]sqlite_local[/bold]  {totals['session_count']} sessions  "
+            f"${totals['total_cost']}  {db_path}"
+        )
+
+        remote_sinks = [name for name in cfg.metrics.sinks if name != "sqlite_local"]
+        if not remote_sinks:
+            console.print("No remote sinks configured; nothing is queued for delivery.")
+        for name in remote_sinks:
             stats = db.outbox_stats(name)
             console.print(
                 f"[bold]{name}[/bold]  pending: {stats['pending']}  "

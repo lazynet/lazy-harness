@@ -199,12 +199,15 @@ Output is one summary line: `drain complete: <sent> sent, <failed> failed`.
 
 ### `lh metrics status`
 
-Prints per-sink outbox counters (`pending`, `sending`, `sent`) for every non-`sqlite_local` sink. Use it to spot a stuck `http_remote` without `sqlite3`-ing the DB.
+Prints the local database summary (session count, accumulated cost, path), then per-sink outbox counters (`pending`, `sending`, `sent`) for every non-`sqlite_local` sink. Use it to spot a stuck `http_remote` without `sqlite3`-ing the DB.
 
 ```bash
 lh metrics status
+# sqlite_local  8431 sessions  $412.87  ~/.config/lazy-harness/metrics.db
 # http_remote  pending: 12  sending: 0  sent: 8431
 ```
+
+When `sqlite_local` is the only configured sink — the default — the command reports that no remote sinks are configured instead of printing nothing.
 
 Mechanics — sinks, outbox, drain policy, idempotency: [how the metrics ingest pipeline works](../how/metrics-ingest.md#the-sink-layer).
 
