@@ -40,6 +40,20 @@ This is a **public repository**. Public surface (README, `docs/` pages, commit m
 - Do not claim a persistence operation (file write, sync, deletion) happened without verifying it with explicit file or git output.
 - Do not commit secrets, credentials, or personal identifying information.
 
+## Verification gates
+
+Each of these comes from a failure the compound loop recorded more than once. They are checks to run, not principles to agree with.
+
+- **A tool's exit code is not proof of its effect.** `uv tool install --force` reused a cached wheel; a config generator wrote valid TOML that the loader then rejected. Verify the effect — read the file back, re-run the loader, invoke the CLI — before reporting success.
+- **Config schema changes are tested through a full load cycle**, not just a successful write. A test asserting the file was written passes happily while the generated config is unloadable.
+- **Hooks handle every exception explicitly and exit 0.** The framework does not suppress them for you: an unhandled error escapes to the subprocess and crashes the chain instead of degrading.
+- **Anchor `pytest.raises(match=...)` on literal config keys or enum names**, never a substring that could also appear in a `tmp_path` or a traceback.
+- **A config field that promises automatic behaviour must have that behaviour implemented.** Grep for it at review time. `auto_rebuild_on_commit` shipped for months doing nothing while looking like a fulfilled contract.
+- **Every path deriving a project key for memory uses `git rev-parse --path-format=absolute --git-common-dir` and takes `.parent`**, never `--show-toplevel`. Worktrees otherwise fragment `decisions.jsonl` into directories nothing ever reads.
+- **Fixing a safeguard updates its documented examples in the same commit.** Spec examples that outlive the behaviour they describe become a false source of truth.
+- **Verify subagent scope before cleanup.** Inspect the diff to confirm edits stayed inside the intended worktree — isolation is not implicit.
+- **ADR numbers are coordinated, never written in parallel.** Two worktrees creating ADRs at once collide on the sequence.
+
 ## Where things live
 
 High-level map: [`specs/workflow/layout.md`](specs/workflow/layout.md). Short form:
