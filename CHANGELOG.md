@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.30.0](https://github.com/lazynet/lazy-harness/compare/v0.26.0...v0.30.0) (2026-08-12)
+
+
+### ⚠ BREAKING CHANGES
+
+* replace knowledge.path with a marker-described knowledge store root
+
+### Features
+
+* add knowledge store marker with strict validation ([8c99c21](https://github.com/lazynet/lazy-harness/commit/8c99c21c45396b51b7efe995e5c46fd9cbcedad1))
+* add knowledge store push cycle ([1a8cf8a](https://github.com/lazynet/lazy-harness/commit/1a8cf8afff6f212f2b1520f28e5e7306820def2f))
+* add lh knowledge init, path and push ([5aee648](https://github.com/lazynet/lazy-harness/commit/5aee6481f6a44faa15521c330c55ac6a22abd646))
+* migrate knowledge config to the root shape ([c260531](https://github.com/lazynet/lazy-harness/commit/c2605311f17753b34b57b44beea6a28fb3067959))
+* replace knowledge.path with a marker-described knowledge store root ([811354f](https://github.com/lazynet/lazy-harness/commit/811354f10f46be896a6a824545c58775cec5c8d6))
+* suffix learning filenames with the origin host ([652705f](https://github.com/lazynet/lazy-harness/commit/652705fd65dee5a11852cc036ec7fee771ea7311))
+
+
+### Bug Fixes
+
+* make lh init write a loadable config and a marked store ([ace4c4a](https://github.com/lazynet/lazy-harness/commit/ace4c4aececdc1edfc89aedec6c857b7d766b210))
+
+
+### Refactors
+
+* name the learning month bucket for what it is ([957fef8](https://github.com/lazynet/lazy-harness/commit/957fef88ea7d677b636eb1ce8286ecd586da840b))
+
+
+### Documentation
+
+* describe the knowledge store and its CLI ([76fcb97](https://github.com/lazynet/lazy-harness/commit/76fcb97bdf9f77c26f5076c8278b7f94501f1441))
+* **specs:** add knowledge store extraction design ([a99514a](https://github.com/lazynet/lazy-harness/commit/a99514a013901665e8fd345a1fe0b05245c9e2a2))
+* **specs:** add knowledge store extraction implementation plan ([8f155a6](https://github.com/lazynet/lazy-harness/commit/8f155a6f4ae3ac028cedb2c4fe7b65748c0f55e8))
+
+
+### CI
+
+* keep release-please on 0.x until 1.0 is declared ([#124](https://github.com/lazynet/lazy-harness/issues/124)) ([5f6322f](https://github.com/lazynet/lazy-harness/commit/5f6322f81d8ca466f7c95060323b112f0bc52da4))
+
 ## [0.26.0](https://github.com/lazynet/lazy-harness/compare/v0.25.0...v0.26.0) (2026-08-10)
 
 
