@@ -289,3 +289,30 @@ def test_sonnet_5_introductory_window_opens_at_launch() -> None:
     from lazy_harness.monitoring.pricing import INTRODUCTORY_PRICING
 
     assert INTRODUCTORY_PRICING["claude-sonnet-5"].since == "2026-07-01"
+
+
+def test_synthetic_is_recognised_as_a_pseudo_model() -> None:
+    """Claude Code emits `<synthetic>` for messages that consumed nothing.
+
+    It has no rate and never will, so $0 is the right answer rather than a
+    gap in the table — flagging it as unpriced turns the warning into noise
+    on every single ingest.
+    """
+    from lazy_harness.monitoring.pricing import is_pseudo_model
+
+    assert is_pseudo_model("<synthetic>")
+
+
+def test_angle_bracketed_names_are_pseudo_models() -> None:
+    """Claude Code marks non-model placeholders with angle brackets."""
+    from lazy_harness.monitoring.pricing import is_pseudo_model
+
+    assert is_pseudo_model("<none>")
+
+
+def test_real_models_are_not_pseudo_models() -> None:
+    from lazy_harness.monitoring.pricing import is_pseudo_model
+
+    assert not is_pseudo_model("claude-opus-5")
+    assert not is_pseudo_model("claude-future-model-99")
+    assert not is_pseudo_model("")
