@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.33.0](https://github.com/lazynet/lazy-harness/compare/v0.32.0...v0.33.0) (2026-08-12)
+
+
+### Features
+
+* compose token/cost breakdowns by profile, period and model ([#134](https://github.com/lazynet/lazy-harness/issues/134)) ([fe74c52](https://github.com/lazynet/lazy-harness/commit/fe74c524196fafe01c2a6399be67fb688abaa152))
+
 ## [0.32.0](https://github.com/lazynet/lazy-harness/compare/v0.31.0...v0.32.0) (2026-08-12)
 
 
