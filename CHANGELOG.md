@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.33.1](https://github.com/lazynet/lazy-harness/compare/v0.33.0...v0.33.1) (2026-08-12)
+
+
+### Bug Fixes
+
+* stop warning about the &lt;synthetic&gt; model placeholder ([#136](https://github.com/lazynet/lazy-harness/issues/136)) ([0ce1b48](https://github.com/lazynet/lazy-harness/commit/0ce1b48785ab5dd01f13e64c8c3044915e4123e6))
+
 ## [0.33.0](https://github.com/lazynet/lazy-harness/compare/v0.32.0...v0.33.0) (2026-08-12)
 
 
