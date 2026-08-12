@@ -60,6 +60,7 @@ class KnowledgeStructureConfig:
     engine: str = "graphify"
     enabled: bool = False
     version: str = "0.9.38"
+    repos: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

@@ -351,3 +351,139 @@ def knowledge_push() -> None:
     console.print(line)
     if result.status in {"invalid", "conflict"}:
         raise SystemExit(1)
+
+
+@knowledge.group("graph")
+def knowledge_graph() -> None:
+    """Manage the repos whose code graph is kept fresh."""
+
+
+def _structure_repos(cfg_path: Path) -> tuple[object, list[str]]:
+    cfg = load_config(cfg_path)
+    return cfg, list(cfg.knowledge.structure.repos)
+
+
+def _write_repo_list(cfg_path: Path, repos: list[str]) -> None:
+    """Rewrite only the `repos =` line under [knowledge.structure].
+
+    The config is hand-edited and version-controlled, so a full
+    `save_config` round-trip is the wrong tool: it drops every comment and any
+    key this version does not model.
+    """
+    rendered = "repos = [" + ", ".join(f'"{r}"' for r in repos) + "]"
+    lines = cfg_path.read_text().splitlines()
+    out: list[str] = []
+    in_section = False
+    replaced = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("["):
+            # Leaving the section without having seen a `repos =` key: add one.
+            if in_section and not replaced:
+                out.append(rendered)
+                replaced = True
+            in_section = stripped == "[knowledge.structure]"
+        if in_section and stripped.startswith("repos"):
+            out.append(rendered)
+            replaced = True
+            continue
+        out.append(line)
+    if not replaced:
+        if not in_section:
+            out.append("")
+            out.append("[knowledge.structure]")
+        out.append(rendered)
+    cfg_path.write_text("\n".join(out) + "\n")
+
+
+@knowledge_graph.command("add")
+@click.argument("repo", type=click.Path(exists=True, file_okay=False, path_type=Path))
+def knowledge_graph_add(repo: Path) -> None:
+    """Register REPO so its code graph is refreshed on schedule."""
+    console = Console()
+    resolved = repo.resolve()
+    if not (resolved / ".git").exists():
+        console.print(f"[red]Error:[/red] {contract_path(resolved)} is not a git repo.")
+        raise SystemExit(1)
+
+    cfg_path = config_file()
+    try:
+        _, repos = _structure_repos(cfg_path)
+    except ConfigError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(1)
+
+    if str(resolved) in repos:
+        console.print(f"[dim]already registered:[/dim] {contract_path(resolved)}")
+        return
+
+    repos.append(str(resolved))
+    _write_repo_list(cfg_path, repos)
+    console.print(f"[green]registered:[/green] {contract_path(resolved)}")
+
+
+@knowledge_graph.command("list")
+def knowledge_graph_list() -> None:
+    """List the repos whose code graph is refreshed on schedule."""
+    console = Console()
+    try:
+        _, repos = _structure_repos(config_file())
+    except ConfigError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(1)
+
+    if not repos:
+        console.print("No repos registered. Add one with `lh knowledge graph add <path>`.")
+        return
+    for entry in repos:
+        path = expand_path(entry)
+        graph = path / "graphify-out" / "graph.json"
+        state = "graph" if graph.is_file() else "[yellow]no graph yet[/yellow]"
+        console.print(f"  {contract_path(path)}  {state}")
+
+
+@knowledge_graph.command("update")
+def knowledge_graph_update() -> None:
+    """Rebuild the code graph for every registered repo.
+
+    A worktree commit never rebuilds the graph (graphify's own post-commit hook
+    exits early outside the main checkout), so nothing refreshes it in a
+    worktree-first workflow. This is what the scheduler calls instead.
+    """
+    from lazy_harness.knowledge import graphify
+
+    console = Console()
+    try:
+        _, repos = _structure_repos(config_file())
+    except ConfigError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(1)
+
+    if not repos:
+        console.print("No repos registered. Add one with `lh knowledge graph add <path>`.")
+        return
+    if not graphify.is_graphify_available():
+        console.print("[red]Error:[/red] graphify is not on PATH.")
+        raise SystemExit(1)
+
+    log_path = default_log_dir() / "graphify-update.log"
+    failures = 0
+    for entry in repos:
+        path = expand_path(entry)
+        if not path.is_dir():
+            console.print(f"[yellow]skipped[/yellow]  {contract_path(path)} (missing)")
+            log_append(log_path, f"skipped: {path} (missing)")
+            continue
+        result = graphify.run_graphify("update", str(path))
+        if result.exit_code == 0:
+            console.print(f"[green]updated[/green]  {contract_path(path)}")
+            log_append(log_path, f"updated: {path}")
+        else:
+            failures += 1
+            detail = (result.stderr or result.stdout).strip().splitlines()
+            last = detail[-1] if detail else ""
+            console.print(f"[red]failed [/red]  {contract_path(path)}: {last}")
+            log_append(log_path, f"failed: {path}: {last}")
+
+    if failures:
+        raise SystemExit(1)

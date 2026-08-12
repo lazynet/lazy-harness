@@ -102,6 +102,12 @@ Manages the knowledge store and its QMD index.
 
 `lh knowledge export-session <session-file>` is the escape hatch for sessions the `Stop` / `session-export` hook skipped — for example, a real session the non-interactive heuristic mis-classified. `--force` bypasses the interactive-session filter and the unchanged-file guard.
 
+`lh knowledge graph add|list|update` manages the repos whose code graph is kept fresh.
+
+Nothing rebuilds a code graph on its own in a worktree-first workflow: graphify's `post-commit` hook exits early when the git dir differs from the common dir, so a commit made inside a worktree never triggers a rebuild — and a squash merge landing on the remote produces no local commit at all. `graph update` is the scheduled sweep that closes that gap. Point a `[scheduler.jobs.*]` entry at it.
+
+`add` registers a repo after checking it really is one, and is idempotent. It rewrites only the `repos =` line under `[knowledge.structure]`, leaving comments and unrelated keys untouched — the config is hand-maintained, so a full round-trip through the loader would strip both. `update` walks every registered repo, skips ones that have gone missing, keeps going past a repo that fails, and exits non-zero if any did. Outcomes append to `graphify-update.log`.
+
 ```bash
 lh knowledge init
 lh knowledge path --kind learnings
@@ -112,6 +118,9 @@ lh knowledge embed
 lh knowledge context-gen --dry-run
 lh knowledge handoff-now
 lh knowledge export-session ~/.claude/projects/-Users-me-repo/abc123.jsonl --force
+lh knowledge graph add ~/repos/my-project
+lh knowledge graph list
+lh knowledge graph update
 ```
 
 ## `lh memory`
