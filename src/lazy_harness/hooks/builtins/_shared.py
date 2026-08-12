@@ -89,3 +89,50 @@ def resolve_project_dir(
         return declared
     encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
     return sessions_root / encoded
+
+
+def _main_repo_root(cwd: Path) -> Path | None:
+    """Main working tree for `cwd`, or None outside a repo.
+
+    Read from `.git` rather than shelling out to git: a linked worktree's
+    `.git` is a file pointing at `<repo>/.git/worktrees/<name>`, so the main
+    checkout is recoverable without a subprocess on the Stop path.
+    """
+    for directory in (cwd, *cwd.parents):
+        dot_git = directory / ".git"
+        if dot_git.is_dir():
+            return directory
+        if not dot_git.is_file():
+            continue
+        try:
+            pointer = dot_git.read_text(encoding="utf-8").strip()
+        except OSError:
+            return None
+        if not pointer.startswith("gitdir:"):
+            return None
+        gitdir = Path(pointer.split(":", 1)[1].strip())
+        if not gitdir.is_absolute():
+            gitdir = (directory / gitdir).resolve()
+        for parent in gitdir.parents:
+            if parent.name == ".git":
+                return parent.parent
+        return directory
+    return None
+
+
+def resolve_memory_dir(
+    payload: object, *, agent_dir: Path, sessions_subdir: str, cwd: Path
+) -> Path:
+    """Project dir that owns distilled memory, canonicalised across worktrees.
+
+    Sessions belong to the checkout they ran in, but `decisions.jsonl` and
+    `failures.jsonl` outlive any one worktree — writing them under a
+    worktree's project dir strands them when the worktree is removed.
+    """
+    root = _main_repo_root(cwd)
+    if root is None or root == cwd:
+        return resolve_project_dir(
+            payload, agent_dir=agent_dir, sessions_subdir=sessions_subdir, cwd=cwd
+        )
+    sessions_root = agent_dir / (sessions_subdir or "projects")
+    return sessions_root / ("-" + str(root).replace("/", "-").lstrip("-"))

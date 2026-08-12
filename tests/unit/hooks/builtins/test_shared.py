@@ -188,3 +188,59 @@ def test_resolve_project_dir_falls_back_to_cwd_encoding(tmp_path: Path) -> None:
     )
 
     assert resolved == agent_dir / "projects" / "-Users-x-proj"
+
+
+def _init_repo_with_worktree(root: Path) -> tuple[Path, Path]:
+    """Create a git repo plus a linked worktree; return (repo, worktree)."""
+    import subprocess
+
+    repo = root / "myrepo"
+    repo.mkdir()
+    base = ["git", "-c", "user.email=t@t", "-c", "user.name=t"]
+    subprocess.run([*base, "init", "-q"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        [*base, "commit", "-q", "--allow-empty", "-m", "init"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    worktree = repo / ".worktrees" / "feat"
+    subprocess.run(
+        [*base, "worktree", "add", "-q", str(worktree), "-b", "feat"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    return repo, worktree
+
+
+def test_resolve_memory_dir_uses_the_main_repo_from_inside_a_worktree(tmp_path: Path) -> None:
+    """Distilled memory belongs to the repo, not to a worktree that gets deleted."""
+    from lazy_harness.hooks.builtins._shared import resolve_memory_dir
+
+    repo, worktree = _init_repo_with_worktree(tmp_path)
+    agent_dir = tmp_path / "agent"
+    declared = agent_dir / "projects" / ("-" + str(worktree).replace("/", "-").lstrip("-"))
+    declared.mkdir(parents=True)
+
+    resolved = resolve_memory_dir(
+        {"transcript_path": str(declared / "s.jsonl")},
+        agent_dir=agent_dir,
+        sessions_subdir="projects",
+        cwd=worktree,
+    )
+
+    expected = agent_dir / "projects" / ("-" + str(repo.resolve()).replace("/", "-").lstrip("-"))
+    assert resolved == expected
+
+
+def test_resolve_memory_dir_matches_the_project_dir_outside_a_worktree(tmp_path: Path) -> None:
+    from lazy_harness.hooks.builtins._shared import resolve_memory_dir, resolve_project_dir
+
+    agent_dir = tmp_path / "agent"
+    plain = tmp_path / "plain"
+    plain.mkdir()
+
+    assert resolve_memory_dir(
+        {}, agent_dir=agent_dir, sessions_subdir="projects", cwd=plain
+    ) == resolve_project_dir({}, agent_dir=agent_dir, sessions_subdir="projects", cwd=plain)
