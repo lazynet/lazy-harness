@@ -462,3 +462,32 @@ def test_compound_loop_lazymind_dir_survives(tmp_path: Path) -> None:
     )
     cfg = load_config(cfg_file)
     assert cfg.compound_loop.lazymind_dir == "~/vault"
+
+
+def test_structure_config_parses_the_repo_list(tmp_path) -> None:
+    """Graph rebuilds need to know which repos to walk."""
+    from lazy_harness.core.config import load_config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        '[harness]\nversion = "1"\n'
+        "[knowledge.structure]\n"
+        "enabled = true\n"
+        'repos = ["~/repos/lazy/lazy-harness", "~/repos/flex/ydi-data-layer"]\n'
+    )
+
+    cfg = load_config(cfg_path)
+
+    assert cfg.knowledge.structure.repos == [
+        "~/repos/lazy/lazy-harness",
+        "~/repos/flex/ydi-data-layer",
+    ]
+
+
+def test_structure_config_repo_list_defaults_to_empty(tmp_path) -> None:
+    from lazy_harness.core.config import load_config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text('[harness]\nversion = "1"\n[knowledge.structure]\nenabled = true\n')
+
+    assert load_config(cfg_path).knowledge.structure.repos == []
