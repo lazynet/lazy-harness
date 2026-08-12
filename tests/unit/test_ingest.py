@@ -466,3 +466,50 @@ def test_ingest_prices_a_session_inside_the_introductory_window(tmp_path: Path) 
 def test_ingest_prices_a_session_after_the_introductory_window(tmp_path: Path) -> None:
     """Regression: re-ingesting must not keep applying an expired discount."""
     assert _ingest_sonnet_5_on(tmp_path, "2026-09-15") == pytest.approx(3.0)
+
+
+def test_ingest_does_not_flag_a_pseudo_model_as_unpriced(tmp_path: Path) -> None:
+    """`<synthetic>` costs $0 by nature, not for want of a rate."""
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.ingest import ingest_profile
+    from lazy_harness.monitoring.pricing import load_pricing
+
+    prof = _profile(tmp_path, "lazy")
+    _write_session(
+        prof.config_dir / "projects",
+        "-Users-foo-repos-demo",
+        "cccccccc-cccc-cccc-cccc-cccccccccccc",
+        [_assistant_msg(model="<synthetic>", inp=0, out=0)],
+    )
+
+    db = MetricsDB(tmp_path / "metrics.db")
+    try:
+        report = ingest_profile(prof, db, load_pricing())
+    finally:
+        db.close()
+    assert report.unknown_models == set()
+
+
+def test_ingest_still_flags_a_real_unpriced_model(tmp_path: Path) -> None:
+    """The pseudo-model carve-out must not swallow genuine gaps."""
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.ingest import ingest_profile
+    from lazy_harness.monitoring.pricing import load_pricing
+
+    prof = _profile(tmp_path, "lazy")
+    _write_session(
+        prof.config_dir / "projects",
+        "-Users-foo-repos-demo",
+        "dddddddd-dddd-dddd-dddd-dddddddddddd",
+        [
+            _assistant_msg(model="<synthetic>", inp=0, out=0, msg_id="a"),
+            _assistant_msg(model="claude-future-model-99", inp=100, out=50, msg_id="b"),
+        ],
+    )
+
+    db = MetricsDB(tmp_path / "metrics.db")
+    try:
+        report = ingest_profile(prof, db, load_pricing())
+    finally:
+        db.close()
+    assert report.unknown_models == {"claude-future-model-99"}

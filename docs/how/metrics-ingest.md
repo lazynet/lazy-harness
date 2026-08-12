@@ -87,7 +87,11 @@ Encoding the end date is what makes this automatic. A comment saying "bump this 
 
 ### Unpriced models
 
-`calculate_cost()` returns `0.0` for any model absent from the table. Since a genuinely free session also costs `0.0`, `ingest_profile()` collects every such model into `IngestReport.unknown_models`, and `lh metrics ingest` prints them:
+`calculate_cost()` returns `0.0` for any model absent from the table. Since a genuinely free session also costs `0.0`, `ingest_profile()` collects every such model into `IngestReport.unknown_models`, and `lh metrics ingest` prints them.
+
+Placeholders are exempt. Claude Code writes `<synthetic>` in the model field of messages that consumed no tokens; `is_pseudo_model()` treats any angle-bracketed name as one of these, and they never reach the warning. Without that carve-out the warning fires on every ingest of every real session tree — which is how a warning stops being read.
+
+What you do see is a genuine gap:
 
 ```
 ! no pricing for claude-future-model-99 — those sessions were priced at $0.

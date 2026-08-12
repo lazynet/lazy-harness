@@ -59,6 +59,18 @@ INTRODUCTORY_PRICING: dict[str, IntroductoryRate] = {
 }
 
 
+def is_pseudo_model(model: str) -> bool:
+    """True for placeholders that stand in for a model without being one.
+
+    Claude Code writes `<synthetic>` in the model field of messages that
+    consumed no tokens. These will never have a rate, so `$0` is the correct
+    answer rather than a hole in the pricing table — reporting them as
+    unpriced fires the ingest warning on every run and trains the eye to
+    skip it. Angle brackets are the marker; no real model id uses them.
+    """
+    return model.startswith("<") and model.endswith(">")
+
+
 def default_pricing() -> dict[str, dict[str, float]]:
     return {k: dict(v) for k, v in DEFAULT_PRICING.items()}
 

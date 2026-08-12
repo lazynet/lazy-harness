@@ -74,3 +74,20 @@ def test_ingest_stays_quiet_when_every_model_is_priced(
 
     assert result.exit_code == 0, result.output
     assert "priced at $0" not in result.output
+
+
+def test_ingest_stays_quiet_about_the_synthetic_placeholder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every real session tree contains `<synthetic>` rows.
+
+    Warning about them would fire on every single ingest, which is how a
+    warning stops being read.
+    """
+    _setup(tmp_path, "<synthetic>")
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+
+    result = CliRunner().invoke(metrics, ["ingest"])
+
+    assert result.exit_code == 0, result.output
+    assert "priced at $0" not in result.output

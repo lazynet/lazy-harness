@@ -34,7 +34,7 @@ from lazy_harness.monitoring.collector import (
 )
 from lazy_harness.monitoring.db import MetricsDB
 from lazy_harness.monitoring.event_id import derive_event_id
-from lazy_harness.monitoring.pricing import calculate_cost
+from lazy_harness.monitoring.pricing import calculate_cost, is_pseudo_model
 from lazy_harness.plugins.contracts import (
     METRIC_EVENT_SCHEMA_VERSION,
     MetricEvent,
@@ -155,7 +155,7 @@ def ingest_profile(
     entries: list[dict] = []
     events: list[MetricEvent] = []
     for (session_id, model), agg in aggregated.items():
-        if model not in pricing:
+        if model not in pricing and not is_pseudo_model(model):
             report.unknown_models.add(model)
         cost = calculate_cost(
             model,
