@@ -45,7 +45,7 @@ scripts = ["post-compact"]
 | `session_end` | `SessionEnd` | Exactly once at real session termination (`/exit`, `/clear`, logout) | `session-end` | Force final end-of-session work |
 | `pre_compact` | `PreCompact` | Immediately before Claude Code compacts conversation history | `pre-compact` | Preserve working state |
 | `post_compact` | `PostCompact` | Immediately after Claude Code compacts conversation history | `post-compact` | Re-inject preserved working state |
-| `pre_tool_use` | `PreToolUse` | Before each tool call | `pre-tool-use-security`, `pre-tool-use-memory-size` | Block destructive / exfiltration commands, warn before MEMORY.md exceeds the 200-line ceiling |
+| `pre_tool_use` | `PreToolUse` | Before each tool call | `pre-tool-use-security`, `pre-tool-use-memory-size`, `pre-tool-use-read-size` | Block destructive / exfiltration commands, warn before MEMORY.md exceeds the 200-line ceiling, warn before an unbounded read of a large file |
 | `post_tool_use` | `PostToolUse` | After each tool call | `post-tool-use-format`, `post-tool-use-sync-claude` | Auto-format edited files, regenerate segmented `CLAUDE.md` after profile edits |
 | `notification` | `Notification` | Ad-hoc agent notifications | — | Desktop notifications, integrations |
 
@@ -62,7 +62,7 @@ The mapping lives in `ClaudeCodeAdapter.generate_hook_config` — other agents m
 | `session_end` | `session-end` |
 | `pre_compact` | `pre-compact` |
 | `post_compact` | `post-compact` |
-| `pre_tool_use` | `pre-tool-use-security`, `pre-tool-use-memory-size` |
+| `pre_tool_use` | `pre-tool-use-security`, `pre-tool-use-memory-size`, `pre-tool-use-read-size` |
 | `post_tool_use` | `post-tool-use-format`, `post-tool-use-sync-claude` |
 
 **Overriding.** Declaring `[hooks.<event>]` with `scripts = [...]` in `config.toml` replaces the default for that event. The smallest override unit is one event — there is no per-script disable. To opt out of a single event entirely, declare it with `scripts = []`. Events declared in `config.toml` that the framework does not know about (e.g. `notification`) pass through verbatim.
@@ -285,6 +285,24 @@ Mechanics:
 4. Always exit 0. This is a warning hook, not a guard.
 
 Bypass for tooling that legitimately rewrites `MEMORY.md` (the consolidator pathway): set `LH_MEMORY_SIZE_BYPASS=1` in the subprocess environment.
+
+### `pre-tool-use-read-size` — runs on `PreToolUse`
+
+Source: `src/lazy_harness/hooks/builtins/pre_tool_use_read_size.py`.
+
+Responsibility: warn — never block — when a `Read` without `offset` or `limit` targets a file large enough that pulling it in whole is the session's biggest single context expense. Reading a 3000-line file costs more context than hundreds of shell commands, and unlike shell output there is no way to trim it after the fact.
+
+Mechanics:
+
+1. Scope check — only `Read` tool calls. Every other tool: instant exit 0.
+2. If the call already carries `offset` or `limit`, the caller has bounded the read; exit 0.
+3. Size the target file. Missing, unreadable, or empty files exit 0 — this hook never speaks about a read that is going to fail anyway.
+4. Above 500 lines, emit a `hookSpecificOutput.systemMessage` reporting the line count and an estimated token cost, and suggesting `offset`/`limit` or `Grep` to locate the region first.
+5. Always exit 0. This is a warning hook, not a guard.
+
+Every warning is also appended to `hooks.log`, so the rate of unbounded large reads is measurable over time rather than a matter of impression.
+
+Bypass: set `LH_READ_SIZE_BYPASS=1` in the subprocess environment.
 
 **Where it writes:** nowhere on disk. Only stdout (the warning) and the standard hook log.
 

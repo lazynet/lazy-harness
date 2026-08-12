@@ -215,3 +215,18 @@ def test_resolve_script_names_skips_unresolvable() -> None:
     result = resolve_script_names(["context-inject", "no-such-hook-xyz"])
 
     assert [h.name for h in result] == ["context-inject"]
+
+
+def test_pre_tool_use_read_size_is_registered_with_read_matcher() -> None:
+    from lazy_harness.hooks.loader import _BUILTIN_HOOKS, resolve_hook
+
+    assert "pre-tool-use-read-size" in _BUILTIN_HOOKS
+    spec = _BUILTIN_HOOKS["pre-tool-use-read-size"]
+    assert spec.module == "lazy_harness.hooks.builtins.pre_tool_use_read_size"
+    assert spec.matcher == "Read"
+
+    info = resolve_hook("pre-tool-use-read-size")
+    assert info is not None
+    assert info.matcher == "Read"
+    assert info.path.name == "pre_tool_use_read_size.py"
+    assert info.path.is_file()

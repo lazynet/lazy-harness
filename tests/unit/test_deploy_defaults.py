@@ -44,7 +44,11 @@ def test_merge_user_overrides_one_event() -> None:
 
     assert result["session_stop"] == ["my-hook"]
     assert result["session_start"] == ["context-inject"]
-    assert result["pre_tool_use"] == ["pre-tool-use-security", "pre-tool-use-memory-size"]
+    assert result["pre_tool_use"] == [
+        "pre-tool-use-security",
+        "pre-tool-use-memory-size",
+        "pre-tool-use-read-size",
+    ]
 
 
 def test_merge_user_empty_list_is_explicit_opt_out() -> None:
