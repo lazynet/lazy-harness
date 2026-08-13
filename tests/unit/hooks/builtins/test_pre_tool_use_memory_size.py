@@ -190,3 +190,66 @@ def test_main_silent_when_edit_target_does_not_exist(
         mod.main()
     assert exc_info.value.code == 0
     assert capsys.readouterr().out == ""
+
+
+def test_warns_on_a_file_that_is_small_in_lines_but_large_in_bytes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The real backstage-poc index was 67 lines and 20KB — it slipped the
+    line-count check while being the biggest controllable slice of session
+    boot context. Bytes are what the context window pays for."""
+    import io
+
+    from lazy_harness.hooks.builtins import pre_tool_use_memory_size as mod
+
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
+    monkeypatch.delenv("LH_MEMORY_SIZE_BYPASS", raising=False)
+
+    memory_md = tmp_path / "memory" / "MEMORY.md"
+    memory_md.parent.mkdir(parents=True)
+    memory_md.write_text("x\n")
+
+    # 67 lines of ~300 bytes: well under 200 lines, well over the byte ceiling.
+    fat_index = "\n".join(f"- [note {i}]({i}.md) — {'detail ' * 40}" for i in range(67))
+    payload = json.dumps(
+        {"tool_name": "Write", "tool_input": {"file_path": str(memory_md), "content": fat_index}}
+    )
+    monkeypatch.setattr("sys.stdin", io.StringIO(payload))
+    out = io.StringIO()
+    monkeypatch.setattr("sys.stdout", out)
+
+    with pytest.raises(SystemExit):
+        mod.main()
+
+    warning = out.getvalue()
+    assert warning, "a 20KB index must produce a warning even at 67 lines"
+    assert "KB" in warning or "bytes" in warning
+
+
+def test_stays_quiet_for_an_index_that_is_dense_but_within_budget(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The mgmt index — 37 entries, ~6KB — is the shape we want, not a problem."""
+    import io
+
+    from lazy_harness.hooks.builtins import pre_tool_use_memory_size as mod
+
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
+    monkeypatch.delenv("LH_MEMORY_SIZE_BYPASS", raising=False)
+
+    memory_md = tmp_path / "memory" / "MEMORY.md"
+    memory_md.parent.mkdir(parents=True)
+    memory_md.write_text("x\n")
+
+    lean_index = "\n".join(f"- [note {i}]({i}.md) — {'w' * 120}" for i in range(37))
+    payload = json.dumps(
+        {"tool_name": "Write", "tool_input": {"file_path": str(memory_md), "content": lean_index}}
+    )
+    monkeypatch.setattr("sys.stdin", io.StringIO(payload))
+    out = io.StringIO()
+    monkeypatch.setattr("sys.stdout", out)
+
+    with pytest.raises(SystemExit):
+        mod.main()
+
+    assert out.getvalue() == ""

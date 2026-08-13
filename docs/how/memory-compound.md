@@ -235,7 +235,7 @@ User messages with the same Unicode markers are ignored deliberately — only th
 
 ### `claude-md.proposal.md` — staged additions to the curated semantic layer
 
-`MEMORY.md` (the project's curated semantic layer) has a hard ceiling of ~200 lines and is owned by the human — the worker is not allowed to edit it directly (see "What the loop does NOT do" below). Instead, when the LLM identifies a workflow rule or convention that emerged during the session and would belong as a bullet in *that project's* `CLAUDE.md` or `MEMORY.md`, it returns a `claude_md_proposals` entry. The worker appends these to `<memory_dir>/claude-md.proposal.md`:
+`MEMORY.md` (the project's curated semantic layer) has a hard ceiling of ~200 lines and 12KB and is owned by the human — the worker is not allowed to edit it directly (see "What the loop does NOT do" below). Instead, when the LLM identifies a workflow rule or convention that emerged during the session and would belong as a bullet in *that project's* `CLAUDE.md` or `MEMORY.md`, it returns a `claude_md_proposals` entry. The worker appends these to `<memory_dir>/claude-md.proposal.md`:
 
 ```markdown
 <!-- claude-md proposals (append-only). Review and merge into CLAUDE.md or discard. -->

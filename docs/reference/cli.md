@@ -129,7 +129,7 @@ Diagnostic commands for the memory stack. Read-only inspection plus a propose-on
 
 ### `lh memory consolidate`
 
-Proposes additions to `MEMORY.md` distilled from the most recent decisions and failures in the per-project memory dir. The command is read-only: it prints a proposal to stdout (typically a few bullet points fit for the curated semantic layer) and never edits `MEMORY.md` itself. Pair it with the warning emitted by `pre-tool-use-memory-size` when the file is near the 200-line ceiling ([ADR-030](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/030-memory-stack-glue-layer.md) G2).
+Proposes additions to `MEMORY.md` distilled from the most recent decisions and failures in the per-project memory dir. The command is read-only: it prints a proposal to stdout (typically a few bullet points fit for the curated semantic layer) and never edits `MEMORY.md` itself. Pair it with the warning emitted by `pre-tool-use-memory-size` when the file is near the 200-line or 12KB ceiling ([ADR-030](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/030-memory-stack-glue-layer.md) G2).
 
 Flags:
 

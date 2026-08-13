@@ -45,7 +45,7 @@ scripts = ["post-compact"]
 | `session_end` | `SessionEnd` | Exactly once at real session termination (`/exit`, `/clear`, logout) | `session-end` | Force final end-of-session work |
 | `pre_compact` | `PreCompact` | Immediately before Claude Code compacts conversation history | `pre-compact` | Preserve working state |
 | `post_compact` | `PostCompact` | Immediately after Claude Code compacts conversation history | `post-compact` | Re-inject preserved working state |
-| `pre_tool_use` | `PreToolUse` | Before each tool call | `pre-tool-use-security`, `pre-tool-use-memory-size`, `pre-tool-use-read-size` | Block destructive / exfiltration commands, warn before MEMORY.md exceeds the 200-line ceiling, warn before an unbounded read of a large file |
+| `pre_tool_use` | `PreToolUse` | Before each tool call | `pre-tool-use-security`, `pre-tool-use-memory-size`, `pre-tool-use-read-size` | Block destructive / exfiltration commands, warn before MEMORY.md exceeds the 200-line or 12KB ceiling, warn before an unbounded read of a large file |
 | `post_tool_use` | `PostToolUse` | After each tool call | `post-tool-use-format`, `post-tool-use-sync-claude` | Auto-format edited files, regenerate segmented `CLAUDE.md` after profile edits |
 | `notification` | `Notification` | Ad-hoc agent notifications | — | Desktop notifications, integrations |
 
@@ -282,14 +282,17 @@ The full rule list and the rationale behind each category live in [`specs/design
 
 Source: `src/lazy_harness/hooks/builtins/pre_tool_use_memory_size.py`.
 
-Responsibility: warn — never block — when an `Edit` or `Write` would push the per-project `MEMORY.md` past the curated 200-line ceiling ([ADR-030](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/030-memory-stack-glue-layer.md) G2). The ceiling is a soft contract for the curated semantic layer: Claude Code itself truncates `MEMORY.md` if it overflows, so the file is worthless past that bound.
+Responsibility: warn — never block — when an `Edit` or `Write` would push the per-project `MEMORY.md` past either of two ceilings ([ADR-030](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/030-memory-stack-glue-layer.md) G2): **200 lines** or **12KB**. Both are soft contracts for the curated semantic layer. The line ceiling exists because Claude Code truncates `MEMORY.md` if it overflows; the byte ceiling exists because the file is re-sent on every session start, so its size is a recurring cost regardless of how few lines carry it.
+
+The byte ceiling is not redundant with the line one. An index written as one long line per note — the shape these files naturally take — stays far under 200 lines while dominating the prompt prefix: a real 67-line index measured 20KB and cost roughly 3.6k tokens on every session start, invisible to a line-count check.
 
 Mechanics:
 
 1. Scope check — the hook only acts on `Edit` / `Write` tool calls whose `file_path` ends in `/memory/MEMORY.md`. Every other tool / path: instant exit 0.
-2. Project the post-operation line count from the tool input: `Write` uses `content` directly; `Edit` reads the current file, applies `old_string` → `new_string` (honouring `replace_all`) in memory, and counts the result.
-3. If the projected line count exceeds 200, emit a `hookSpecificOutput.systemMessage` warning suggesting `lh memory consolidate` to distill recent JSONL entries before adding more.
-4. Always exit 0. This is a warning hook, not a guard.
+2. Project the post-operation content from the tool input: `Write` uses `content` directly; `Edit` reads the current file and applies `old_string` → `new_string` (honouring `replace_all`) in memory.
+3. Measure both the line count and the UTF-8 byte size of that projection.
+4. If either ceiling is breached, emit a `hookSpecificOutput.systemMessage` naming the breach — both, when both apply — and suggesting `lh memory consolidate`, or moving detail out of the index into the linked note.
+5. Always exit 0. This is a warning hook, not a guard.
 
 Bypass for tooling that legitimately rewrites `MEMORY.md` (the consolidator pathway): set `LH_MEMORY_SIZE_BYPASS=1` in the subprocess environment.
 
