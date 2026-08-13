@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.33.4](https://github.com/lazynet/lazy-harness/compare/v0.33.3...v0.33.4) (2026-08-13)
+
+
+### Bug Fixes
+
+* **cli:** resolve project memory dir from the main checkout ([#144](https://github.com/lazynet/lazy-harness/issues/144)) ([c5aa954](https://github.com/lazynet/lazy-harness/commit/c5aa9542a817f5006aad50788cb9cc7163c616c6))
+* **doctor:** report MEMORY.md byte size alongside line count ([#142](https://github.com/lazynet/lazy-harness/issues/142)) ([f32ed74](https://github.com/lazynet/lazy-harness/commit/f32ed74912ef2a5ff7b4b7046b08ecd5cecd4dca))
+
 ## [0.33.3](https://github.com/lazynet/lazy-harness/compare/v0.33.2...v0.33.3) (2026-08-13)
 
 
