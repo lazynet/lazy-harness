@@ -44,7 +44,10 @@ def main() -> None:
     payload = _read_stdin_json()
     if payload.get("tool_name") not in ("Edit", "Write"):
         sys.exit(0)
-    raw = str(payload.get("tool_input", {}).get("file_path", ""))
+    tool_input = payload.get("tool_input", {})
+    if not isinstance(tool_input, dict):
+        tool_input = {}
+    raw = str(tool_input.get("file_path", ""))
     if not raw.endswith((".yml", ".yaml")):
         sys.exit(0)
 

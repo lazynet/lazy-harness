@@ -148,3 +148,29 @@ def test_exits_zero_on_malformed_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
         mod.main()
 
     assert exc_info.value.code == 0
+
+
+def test_exits_zero_when_tool_input_is_null(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lazy_harness.hooks.builtins import post_tool_use_ansible_lint as mod
+
+    monkeypatch.setattr(
+        "sys.stdin", io.StringIO(json.dumps({"tool_name": "Edit", "tool_input": None}))
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        mod.main()
+
+    assert exc_info.value.code == 0
+
+
+def test_exits_zero_when_tool_input_is_not_a_dict(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lazy_harness.hooks.builtins import post_tool_use_ansible_lint as mod
+
+    monkeypatch.setattr(
+        "sys.stdin", io.StringIO(json.dumps({"tool_name": "Edit", "tool_input": "oops"}))
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        mod.main()
+
+    assert exc_info.value.code == 0
