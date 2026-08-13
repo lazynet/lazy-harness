@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import json
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -141,4 +142,33 @@ def test_exits_zero_when_ruff_times_out(monkeypatch: pytest.MonkeyPatch) -> None
     )
     with pytest.raises(SystemExit) as exc_info:
         mod.main()
+    assert exc_info.value.code == 0
+
+
+def test_exits_zero_when_tool_input_is_null(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lazy_harness.hooks.builtins import post_tool_use_format as mod
+
+    monkeypatch.setattr(
+        "sys.stdin", io.StringIO(json.dumps({"tool_name": "Edit", "tool_input": None}))
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        mod.main()
+
+    assert exc_info.value.code == 0
+
+
+def test_exits_zero_on_permission_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A non-executable ruff on PATH must degrade, not crash the hook chain."""
+    from lazy_harness.hooks.builtins import post_tool_use_format as mod
+
+    monkeypatch.setattr("subprocess.run", MagicMock(side_effect=PermissionError))
+    monkeypatch.setattr(
+        "sys.stdin",
+        io.StringIO('{"tool_name": "Edit", "tool_input": {"file_path": "/a.py"}}'),
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        mod.main()
+
     assert exc_info.value.code == 0

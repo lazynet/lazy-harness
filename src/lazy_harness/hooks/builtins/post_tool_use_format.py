@@ -33,7 +33,10 @@ def main() -> None:
     payload = _read_stdin_json()
     if payload.get("tool_name") not in ("Edit", "Write"):
         sys.exit(0)
-    path = str(payload.get("tool_input", {}).get("file_path", ""))
+    tool_input = payload.get("tool_input", {})
+    if not isinstance(tool_input, dict):
+        tool_input = {}
+    path = str(tool_input.get("file_path", ""))
     if not path.endswith(".py"):
         sys.exit(0)
     try:
@@ -43,7 +46,7 @@ def main() -> None:
             capture_output=True,
             timeout=RUFF_TIMEOUT_SECS,
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+    except (OSError, subprocess.TimeoutExpired) as e:
         # Silence here made a formatter that never ran look like one that always
         # did; record the reason so the gap is visible in the log.
         _log_unavailable(path, e)
