@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.34.0](https://github.com/lazynet/lazy-harness/compare/v0.33.4...v0.34.0) (2026-08-13)
+
+
+### Features
+
+* add post-tool-use-ansible-lint hook ([#146](https://github.com/lazynet/lazy-harness/issues/146)) ([64db18c](https://github.com/lazynet/lazy-harness/commit/64db18c3d989e3d83cebf931760247381927c491))
+
+
+### Bug Fixes
+
+* harden post_tool_use_format hook against non-dict tool_input and OSError ([#147](https://github.com/lazynet/lazy-harness/issues/147)) ([f10e5b3](https://github.com/lazynet/lazy-harness/commit/f10e5b39e1c5afc076f346f77a34251670ba5f9d))
+
+
+### Documentation
+
+* **specs:** add agent surface adoption design ([433dbaa](https://github.com/lazynet/lazy-harness/commit/433dbaa5304c3e7ccd941124af347f03c873fc11))
+* **specs:** add agent surface adoption implementation plan ([3b87be7](https://github.com/lazynet/lazy-harness/commit/3b87be7162e4bbc11d030aec4937cb2940eb2276))
+* **specs:** correct session counts for compound-loop sidecars ([fbc366b](https://github.com/lazynet/lazy-harness/commit/fbc366b091b7b9ea2e55c79baefe89860c61fc9c))
+* **specs:** triage the 49 unused skills across the estate ([0ded7e0](https://github.com/lazynet/lazy-harness/commit/0ded7e098c9214047d11202c6e310ae6f5fa22c8))
+* **specs:** widen agent surface audit to 18 repos ([19f1b70](https://github.com/lazynet/lazy-harness/commit/19f1b70db447c9a09df4dc9baf464216e6d51866))
+
 ## [0.33.4](https://github.com/lazynet/lazy-harness/compare/v0.33.3...v0.33.4) (2026-08-13)
 
 
