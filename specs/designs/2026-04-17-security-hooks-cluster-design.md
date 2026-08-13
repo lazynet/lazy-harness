@@ -128,7 +128,7 @@ BLOCK_RULES: tuple[BlockRule, ...] = (
     BlockRule("terraform",   re.compile(r"\bterraform\s+apply\s+[^|;&]*-auto-approve\b"),                             "Skips plan review"),
     BlockRule("terraform",   re.compile(r"\bterraform\s+apply\s+[^|;&]*-replace=\S+"),                                "Forces resource recreation"),
     BlockRule("terraform",   re.compile(r"\bterraform\s+state\s+(rm|push)\b"),                                        "State mutation"),
-    BlockRule("credentials", re.compile(r"\b(cat|bat|less|more|head|tail|grep|rg|awk|sed)\b[^|;&]*\.env\b(?!\.(example|sample|template))"), "Read of .env"),
+    BlockRule("credentials", re.compile(r"\b(cat|bat|less|more|head|tail|grep|rg|awk|sed)\b[^|;&]*(?<!\w)(?<!\w\\)\\?\.env\b(?!\.(example|sample|template))"), "Read of .env"),
     BlockRule("credentials", re.compile(r"\b(cat|bat|less|more|head|tail)\b[^|;&]*\.ssh/id_\S+"),                     "Read of SSH private key"),
     BlockRule("credentials", re.compile(r"\b(cat|bat|less|more|head|tail)\b[^|;&]*\.aws/(credentials|config)\b"),     "Read of AWS credentials"),
     BlockRule("credentials", re.compile(r"\b(cat|bat|less|more|head|tail)\b[^|;&]*\.(pem|key|p12)\b"),                "Read of cert/key file"),
@@ -279,7 +279,7 @@ Roughly 30 cases via `pytest.parametrize`. Coverage plan:
 - **Git:** `git push --force origin main` → block. `git push --force-with-lease origin main` → allow. `git reset --hard HEAD~3` → block. `git reset --soft HEAD~3` → allow. `git add -f .env` → block. `git add -f README.md` → allow.
 - **SQL:** `DROP TABLE users`, `drop database prod` → block. `SELECT * FROM users` → allow.
 - **Terraform:** `terraform destroy`, `terraform destroy -auto-approve` → block. `terraform apply -auto-approve` → block. `terraform apply` → allow. `terraform apply -replace=aws_instance.web` → block. `terraform state rm aws_instance.web` → block. `terraform plan` → allow.
-- **Credentials:** `cat .env` → block. `cat .env.example` → allow. `cat .env.local` → block. `less ~/.ssh/id_rsa` → block. `cat ~/.ssh/id_rsa.pub` → allow (public key). `grep AWS_KEY ~/.aws/credentials` → block.
+- **Credentials:** `cat .env` → block. `cat .env.example` → allow. `cat .env.local` → block. `grep -rn "process\.env" src/` → allow (an identifier ending in `.env` is an API, not the dotenv file; the escaped dot is how such a grep is usually written). `less ~/.ssh/id_rsa` → block. `cat ~/.ssh/id_rsa.pub` → allow (public key). `grep AWS_KEY ~/.aws/credentials` → block.
 - **Allowlist rescue:** `rm -rf .worktrees/foo` with `allow_patterns=[r"\.worktrees/"]` → allow.
 - **Invalid allow_pattern:** `allow_patterns=["(["]` + `rm -rf /tmp` → still block (broken regex skipped, real rules still apply).
 

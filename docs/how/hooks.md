@@ -241,6 +241,8 @@ Categories shipped:
 
 The `rm` rule only fires when `rm` appears in a **command position** — at the start of the command, after a `;`, `&&`, `||`, `|` or `(`, or after an exec wrapper such as `sudo`, `xargs` or `sh -c`. A command that merely mentions the string, like `grep -rn "rm -rf" src`, is not a delete and is not blocked.
 
+The `.env` rule follows the same principle: it matches the dotenv **file**, not any identifier that happens to end in `.env`. Searching source for the Node or Vite environment APIs — `grep -rn "process\.env" src/`, `rg 'import.meta.env' app/` — reads code, not credentials, and is not blocked.
+
 When a rule matches, the hook writes a structured message to stderr —
 
 ```

@@ -110,7 +110,12 @@ BLOCK_RULES: tuple[BlockRule, ...] = (
         category="credentials",
         pattern=re.compile(
             r"\b(cat|bat|less|more|head|tail|grep|rg|awk|sed)\b[^|;&]*"
-            r"\.env\b(?!\.(example|sample|template))"
+            # Keep the dotenv file distinct from an identifier ending in `.env`:
+            # `process.env` and `import.meta.env` are APIs, and grepping for them
+            # reads source, not credentials. The second lookbehind sees through a
+            # regex-escaped dot, since that is how such a grep is usually written
+            # (`grep -rn "process\.env"`).
+            r"(?<!\w)(?<!\w\\)\\?\.env\b(?!\.(example|sample|template))"
         ),
         reason="Read of .env",
     ),

@@ -102,6 +102,11 @@ BLOCK_CASES: list[tuple[str, str | None, str]] = [
     ("cat .env", "credentials", "cat .env"),
     ("cat .env.example", None, "example allowed"),
     ("cat .env.local", "credentials", "cat env local"),
+    ("cat ./.env", "credentials", "dotenv relative path"),
+    ("cat config/.env", "credentials", "dotenv in subdirectory"),
+    # `.env` as a suffix of an identifier is an API, not the dotenv file.
+    (r'grep -rn "process\.env" src/', None, "process.env is a node api"),
+    ("rg 'import.meta.env' src/", None, "import.meta.env is a vite api"),
     ("less /home/user/.ssh/id_rsa", "credentials", "less private ssh"),
     ("cat /home/user/.ssh/id_rsa.pub", None, "public ssh key ok"),
     ("grep AWS_KEY /home/user/.aws/credentials", "credentials", "grep aws creds"),
