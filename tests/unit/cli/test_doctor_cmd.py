@@ -208,9 +208,7 @@ def test_render_memory_hygiene_reports_healthy_state(tmp_path: Path) -> None:
     memory.mkdir()
     (memory / "MEMORY.md").write_text("\n".join(f"- line {i}" for i in range(10)) + "\n")
     (memory / "claude-md.proposal.md").write_text(
-        "## 2026-06-10T09:00:00-03:00\n\n"
-        "- **Rule:** keep it simple\n"
-        "  - **Rationale:** because\n"
+        "## 2026-06-10T09:00:00-03:00\n\n- **Rule:** keep it simple\n  - **Rationale:** because\n"
     )
     (memory / "claude-md.accepted.md").write_text("- **Rule:** old accepted rule\n")
     (memory / "claude-md.rejected.md").write_text("- **Rule:** old rejected rule\n")
@@ -221,6 +219,7 @@ def test_render_memory_hygiene_reports_healthy_state(tmp_path: Path) -> None:
     out = buf.getvalue()
     assert "Memory hygiene" in out
     assert "10/200" in out
+    assert "/12KB" in out
     assert "1 pending" in out
     assert "1 accepted" in out
     assert "1 rejected" in out
@@ -251,6 +250,39 @@ def test_render_memory_hygiene_fails_over_memory_cap(tmp_path: Path) -> None:
     assert "205/200" in buf.getvalue()
 
 
+def test_render_memory_hygiene_warns_near_byte_cap(tmp_path: Path) -> None:
+    from lazy_harness.cli.doctor_cmd import _render_memory_hygiene
+    from lazy_harness.hooks.builtins.pre_tool_use_memory_size import MAX_BYTES
+
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    dense = "\n".join("- " + "x" * 368 for _ in range(30)) + "\n"
+    assert MAX_BYTES * 0.9 <= len(dense.encode("utf-8")) <= MAX_BYTES
+    (memory / "MEMORY.md").write_text(dense)
+
+    console, buf = _recording_console()
+    assert _render_memory_hygiene(console, memory) is True
+    assert "!" in buf.getvalue()
+    assert "11.1/12KB" in buf.getvalue()
+
+
+def test_render_memory_hygiene_fails_over_byte_cap(tmp_path: Path) -> None:
+    """A dense index breaches the byte ceiling long before the line ceiling."""
+    from lazy_harness.cli.doctor_cmd import _render_memory_hygiene
+    from lazy_harness.hooks.builtins.pre_tool_use_memory_size import MAX_BYTES
+
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    dense = "\n".join("- " + "x" * 400 for _ in range(60)) + "\n"
+    assert len(dense.encode("utf-8")) > MAX_BYTES
+    assert len(dense.splitlines()) < 200
+    (memory / "MEMORY.md").write_text(dense)
+
+    console, buf = _recording_console()
+    assert _render_memory_hygiene(console, memory) is False
+    assert "24.2/12KB" in buf.getvalue()
+
+
 def test_render_memory_hygiene_warns_on_stale_pending_proposals(tmp_path: Path) -> None:
     from datetime import datetime
 
@@ -259,9 +291,7 @@ def test_render_memory_hygiene_warns_on_stale_pending_proposals(tmp_path: Path) 
     memory = tmp_path / "memory"
     memory.mkdir()
     (memory / "claude-md.proposal.md").write_text(
-        "## 2026-05-01T10:00:00-03:00\n\n"
-        "- **Rule:** stale rule\n"
-        "  - **Rationale:** old\n"
+        "## 2026-05-01T10:00:00-03:00\n\n- **Rule:** stale rule\n  - **Rationale:** old\n"
     )
 
     console, buf = _recording_console()

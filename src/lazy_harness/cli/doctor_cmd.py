@@ -133,16 +133,22 @@ def _render_memory_hygiene(console: Console, memory_dir: Path, now: datetime | N
 
     memory_md = memory_dir / "MEMORY.md"
     if memory_md.is_file():
-        line_count = len(memory_md.read_text().splitlines())
-        if line_count > 200:
-            console.print(f"  [red]✗[/red] MEMORY.md {line_count}/200 lines — over the hard cap")
+        from lazy_harness.hooks.builtins.pre_tool_use_memory_size import MAX_BYTES, MAX_LINES
+
+        text = memory_md.read_text()
+        line_count = len(text.splitlines())
+        byte_count = len(text.encode("utf-8"))
+        sizes = (
+            f"MEMORY.md {line_count}/{MAX_LINES} lines · "
+            f"{byte_count / 1000:.1f}/{MAX_BYTES / 1000:.0f}KB"
+        )
+        if line_count > MAX_LINES or byte_count > MAX_BYTES:
+            console.print(f"  [red]✗[/red] {sizes} — over the hard cap")
             ok = False
-        elif line_count >= 180:
-            console.print(
-                f"  [yellow]![/yellow] MEMORY.md {line_count}/200 lines — consolidate soon"
-            )
+        elif line_count >= MAX_LINES * 0.9 or byte_count >= MAX_BYTES * 0.9:
+            console.print(f"  [yellow]![/yellow] {sizes} — consolidate soon")
         else:
-            console.print(f"  [green]✓[/green] MEMORY.md {line_count}/200 lines")
+            console.print(f"  [green]✓[/green] {sizes}")
     else:
         console.print("  [grey50]·[/grey50] No MEMORY.md")
 
