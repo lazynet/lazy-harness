@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.33.2](https://github.com/lazynet/lazy-harness/compare/v0.33.1...v0.33.2) (2026-08-13)
+
+
+### Bug Fixes
+
+* stop the .env rule from blocking greps for process.env ([#138](https://github.com/lazynet/lazy-harness/issues/138)) ([6ebb2f8](https://github.com/lazynet/lazy-harness/commit/6ebb2f8fb6d5ec0a63d149575c3dcfbd6abe5551))
+
 ## [0.33.1](https://github.com/lazynet/lazy-harness/compare/v0.33.0...v0.33.1) (2026-08-12)
 
 
