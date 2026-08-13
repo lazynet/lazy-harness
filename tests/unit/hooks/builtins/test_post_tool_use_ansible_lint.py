@@ -199,13 +199,38 @@ def test_skips_files_outside_roles_or_playbooks_scope(
 
 def test_skips_vault_encrypted_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """ansible-vault-encrypted files are unlintable ciphertext; feeding them to
-    ansible-lint produces load-failure noise, not a real finding."""
+    ansible-lint produces load-failure noise, not a real finding. The target sits
+    inside roles/, so it is in lint scope — only the vault guard can skip it here,
+    proving the guard itself works rather than riding on the scope predicate."""
     from lazy_harness.hooks.builtins import post_tool_use_ansible_lint as mod
 
     (tmp_path / "ansible.cfg").write_text("[defaults]\n")
-    target = tmp_path / "group_vars" / "all" / "vault.yaml"
+    target = tmp_path / "roles" / "web" / "vars" / "vault.yml"
     target.parent.mkdir(parents=True)
     target.write_text("$ANSIBLE_VAULT;1.1;AES256\n66386439653236336462626566\n")
+
+    fake_run = MagicMock()
+    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr("sys.stdin", io.StringIO(_payload(str(target))))
+
+    with pytest.raises(SystemExit) as exc_info:
+        mod.main()
+
+    assert exc_info.value.code == 0
+    fake_run.assert_not_called()
+
+
+def test_skips_group_vars_outside_lint_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """group_vars/ sits outside roles/, playbooks/, and the Ansible root, so it is
+    excluded by the scope predicate even for ordinary, unencrypted content."""
+    from lazy_harness.hooks.builtins import post_tool_use_ansible_lint as mod
+
+    (tmp_path / "ansible.cfg").write_text("[defaults]\n")
+    target = tmp_path / "group_vars" / "all" / "vars.yaml"
+    target.parent.mkdir(parents=True)
+    target.write_text("some_var: 1\n")
 
     fake_run = MagicMock()
     monkeypatch.setattr("subprocess.run", fake_run)
