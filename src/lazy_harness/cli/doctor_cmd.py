@@ -182,9 +182,18 @@ def _render_memory_hygiene(console: Console, memory_dir: Path, now: datetime | N
 
 
 def _project_memory_dir(agent: AgentAdapter) -> Path:
-    encoded = "-" + str(Path.cwd()).replace("/", "-").lstrip("-")
-    sessions_subdir = agent.session_dirs().get("sessions") or "projects"
-    return agent_runtime_dir(agent) / sessions_subdir / encoded / "memory"
+    """Memory dir for the current project, canonicalised across worktrees."""
+    from lazy_harness.hooks.builtins._shared import resolve_memory_dir
+
+    return (
+        resolve_memory_dir(
+            None,
+            agent_dir=agent_runtime_dir(agent),
+            sessions_subdir=agent.session_dirs().get("sessions") or "projects",
+            cwd=Path.cwd(),
+        )
+        / "memory"
+    )
 
 
 @click.command("doctor")

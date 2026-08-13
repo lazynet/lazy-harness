@@ -363,9 +363,14 @@ def _format_entry_block(proposal: PendingProposal, status_lines: list[str]) -> s
 
 
 def _project_memory_dir() -> Path:
-    """Resolve `<agent_dir>/<sessions>/<encoded cwd>/memory` (ADR-032 pattern)."""
+    """Resolve `<agent_dir>/<sessions>/<encoded repo root>/memory` (ADR-032 pattern).
+
+    The key comes from the main checkout, so proposals accepted from a
+    worktree land on the same file the loop writes to.
+    """
     from lazy_harness.agents.registry import get_agent
     from lazy_harness.core.paths import agent_runtime_dir
+    from lazy_harness.hooks.builtins._shared import resolve_memory_dir
 
     agent_type = "claude-code"
     cf = config_file()
@@ -375,10 +380,15 @@ def _project_memory_dir() -> Path:
         except ConfigError:
             pass
     agent = get_agent(agent_type)
-    agent_dir = agent_runtime_dir(agent)
-    subdirs = agent.session_dirs()
-    encoded = "-" + str(Path.cwd()).replace("/", "-").lstrip("-")
-    return agent_dir / (subdirs.get("sessions") or "projects") / encoded / "memory"
+    return (
+        resolve_memory_dir(
+            None,
+            agent_dir=agent_runtime_dir(agent),
+            sessions_subdir=agent.session_dirs().get("sessions") or "projects",
+            cwd=Path.cwd(),
+        )
+        / "memory"
+    )
 
 
 def _load_pending(memory_dir: Path | None) -> tuple[Path, str, list[PendingProposal]]:
@@ -391,8 +401,7 @@ def _load_pending(memory_dir: Path | None) -> tuple[Path, str, list[PendingPropo
 def _get_proposal_or_fail(proposals: list[PendingProposal], index: int) -> PendingProposal:
     if index < 1 or index > len(proposals):
         raise click.ClickException(
-            f"No proposal #{index} — {len(proposals)} pending. "
-            "Run `lh memory proposals list`."
+            f"No proposal #{index} — {len(proposals)} pending. Run `lh memory proposals list`."
         )
     return proposals[index - 1]
 
@@ -422,8 +431,10 @@ def proposals_list(memory_dir: Path | None) -> None:
     for i, p in enumerate(pending, start=1):
         excerpt = p.rule if len(p.rule) <= 72 else p.rule[:69] + "..."
         click.echo(f"  {i:>3}  {p.timestamp[:10] or '????-??-??'}  {excerpt}")
-    click.echo("\nAccept: lh memory proposals accept <N> — reject: "
-               "lh memory proposals reject <N> --reason \"...\"")
+    click.echo(
+        "\nAccept: lh memory proposals accept <N> — reject: "
+        'lh memory proposals reject <N> --reason "..."'
+    )
 
 
 @proposals.command("accept")
