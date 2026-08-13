@@ -42,6 +42,7 @@ def test_runs_ansible_lint_on_yaml_in_ansible_repo(
     assert args[0] == ["ansible-lint", str(target)]
     assert kwargs.get("check") is False
     assert kwargs.get("timeout") == 30
+    assert kwargs.get("cwd") == tmp_path
 
     out = json.loads(capsys.readouterr().out)
     assert out["hookSpecificOutput"]["hookEventName"] == "PostToolUse"
@@ -102,9 +103,10 @@ def test_emits_nothing_when_lint_is_clean(
 
 
 def test_exits_zero_when_ansible_lint_is_missing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The binary being absent must degrade, not crash the hook chain."""
+    """The binary being absent must degrade, not crash the hook chain — and must be
+    visible to the agent, not just to the log, since the log doesn't change behaviour."""
     from lazy_harness.hooks.builtins import post_tool_use_ansible_lint as mod
 
     (tmp_path / "ansible.cfg").write_text("[defaults]\n")
@@ -112,6 +114,28 @@ def test_exits_zero_when_ansible_lint_is_missing(
     target.write_text("- hosts: all\n")
 
     monkeypatch.setattr("subprocess.run", MagicMock(side_effect=FileNotFoundError))
+    monkeypatch.setattr("sys.stdin", io.StringIO(_payload(str(target))))
+
+    with pytest.raises(SystemExit) as exc_info:
+        mod.main()
+
+    assert exc_info.value.code == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["hookSpecificOutput"]["hookEventName"] == "PostToolUse"
+    assert "unavailable" in out["hookSpecificOutput"]["additionalContext"].lower()
+
+
+def test_exits_zero_on_permission_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A non-executable ansible-lint on PATH must degrade, not crash the hook chain."""
+    from lazy_harness.hooks.builtins import post_tool_use_ansible_lint as mod
+
+    (tmp_path / "ansible.cfg").write_text("[defaults]\n")
+    role = tmp_path / "roles" / "web" / "tasks"
+    role.mkdir(parents=True)
+    target = role / "main.yml"
+    target.write_text("- name: noop\n")
+
+    monkeypatch.setattr("subprocess.run", MagicMock(side_effect=PermissionError))
     monkeypatch.setattr("sys.stdin", io.StringIO(_payload(str(target))))
 
     with pytest.raises(SystemExit) as exc_info:
@@ -148,6 +172,50 @@ def test_exits_zero_on_malformed_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
         mod.main()
 
     assert exc_info.value.code == 0
+
+
+def test_skips_files_outside_roles_or_playbooks_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Non-Ansible YAML that merely happens to live under an ansible.cfg (e.g. a
+    Traefik or Homepage config committed alongside a playbooks repo) must not lint."""
+    from lazy_harness.hooks.builtins import post_tool_use_ansible_lint as mod
+
+    (tmp_path / "ansible.cfg").write_text("[defaults]\n")
+    target = tmp_path / "docker" / "traefik" / "foo.yml"
+    target.parent.mkdir(parents=True)
+    target.write_text("http: {}\n")
+
+    fake_run = MagicMock()
+    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr("sys.stdin", io.StringIO(_payload(str(target))))
+
+    with pytest.raises(SystemExit) as exc_info:
+        mod.main()
+
+    assert exc_info.value.code == 0
+    fake_run.assert_not_called()
+
+
+def test_skips_vault_encrypted_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """ansible-vault-encrypted files are unlintable ciphertext; feeding them to
+    ansible-lint produces load-failure noise, not a real finding."""
+    from lazy_harness.hooks.builtins import post_tool_use_ansible_lint as mod
+
+    (tmp_path / "ansible.cfg").write_text("[defaults]\n")
+    target = tmp_path / "group_vars" / "all" / "vault.yaml"
+    target.parent.mkdir(parents=True)
+    target.write_text("$ANSIBLE_VAULT;1.1;AES256\n66386439653236336462626566\n")
+
+    fake_run = MagicMock()
+    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr("sys.stdin", io.StringIO(_payload(str(target))))
+
+    with pytest.raises(SystemExit) as exc_info:
+        mod.main()
+
+    assert exc_info.value.code == 0
+    fake_run.assert_not_called()
 
 
 def test_exits_zero_when_tool_input_is_null(monkeypatch: pytest.MonkeyPatch) -> None:
