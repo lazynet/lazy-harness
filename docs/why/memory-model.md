@@ -8,7 +8,7 @@ The canonical model is described in [ADR-027](https://github.com/lazynet/lazy-ha
 
 | Layer | Backend | Provided by | What it answers |
 |---|---|---|---|
-| **Curated semantic** | `MEMORY.md` (file, ≤ 200 lines) | shipped — `<config_dir>/projects/<slug>/memory/` | "What rules and patterns govern this project?" |
+| **Curated semantic** | `MEMORY.md` (file, ≤ 200 lines and ≤ 12KB) | shipped — `<config_dir>/projects/<slug>/memory/` | "What rules and patterns govern this project?" |
 | **Distilled episodic** | `decisions.jsonl` / `failures.jsonl` (append-only) | shipped — written by the compound-loop worker | "What did we decide? What broke and why?" |
 | **Raw episodic** | [Engram](https://github.com/Gentleman-Programming/engram) — SQLite + FTS5, MCP server | external CLI, auto-wired when installed | "What did we do in this project last week, and when?" |
 | **Searchable semantic** | [QMD](https://github.com/tobi/qmd) — BM25 + vectors, MCP server | external CLI, auto-wired when installed | "Where did I see this pattern across all my notes and repos?" |
@@ -47,7 +47,7 @@ Two layers again: curated content the user authors deliberately, and searchable 
 
 Every project gets a `MEMORY.md` file at `<config_dir>/projects/<project-slug>/memory/MEMORY.md`. It is an index: one line per persistent fact, each line linking to a memory file with frontmatter and a body. Facts are typed (`user`, `feedback`, `project`, `reference`) and updated as Claude learns them during sessions.
 
-Unlike `CLAUDE.md` (static, human-authored), `MEMORY.md` is written by the agent. It is the agent's own notepad about what it has learned about you and the project. The file is capped at 200 lines because it is loaded into every session-start context — anything larger gets truncated, so consolidation is part of the contract.
+Unlike `CLAUDE.md` (static, human-authored), `MEMORY.md` is written by the agent. It is the agent's own notepad about what it has learned about you and the project. The file is capped at 200 lines *and* 12KB because it is loaded into every session-start context: past the line cap it gets truncated, and past the byte cap it quietly becomes one of the largest recurring slices of the prompt prefix. Consolidation is part of the contract.
 
 ### Searchable semantic — knowledge directory + QMD
 
