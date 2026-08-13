@@ -230,3 +230,13 @@ def test_pre_tool_use_read_size_is_registered_with_read_matcher() -> None:
     assert info.matcher == "Read"
     assert info.path.name == "pre_tool_use_read_size.py"
     assert info.path.is_file()
+
+
+def test_ansible_lint_hook_is_registered_with_edit_write_matcher() -> None:
+    from lazy_harness.hooks.loader import list_builtin_hooks, resolve_hook
+
+    assert "post-tool-use-ansible-lint" in list_builtin_hooks()
+    info = resolve_hook("post-tool-use-ansible-lint")
+    assert info is not None
+    assert info.is_builtin is True
+    assert info.matcher == "Edit|Write"

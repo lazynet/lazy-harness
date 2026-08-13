@@ -332,6 +332,28 @@ This is the simplest built-in and the easiest extension point — a project that
 
 **Where it writes:** the file the agent just edited (in place, via `ruff format`). Nothing else.
 
+### `post-tool-use-ansible-lint` — runs on `PostToolUse`
+
+Runs `ansible-lint` after any `Edit` or `Write` to a `.yml` or `.yaml` file that sits
+inside a repository containing an `ansible.cfg`, and is either directly in that Ansible
+root or under a `roles/` or `playbooks/` directory. This excludes YAML that merely lives
+alongside Ansible content — a Traefik or Homepage config committed in the same repo, for
+example — as well as any file whose first line starts with `$ANSIBLE_VAULT`, since
+encrypted vars are ciphertext, not lintable YAML. `ansible-lint` runs with the Ansible
+root as its working directory, so it resolves `.ansible-lint` and role paths the same way
+a manual run from that root would.
+
+Findings are returned to the agent as additional context rather than written to a log, so
+a lint failure is visible in the session that caused it. Clean runs emit nothing.
+
+The hook is fail-soft: a missing or non-executable `ansible-lint` binary, a timeout, or
+malformed input all exit 0 and leave the file unchecked. When the binary is unavailable,
+that fact is surfaced to the agent as additional context — not just logged — because a
+hook whose entire premise is "the model shouldn't have to remember to lint" must not
+report its own absence somewhere the model won't see. A note is also written to
+`logs/hooks.log` for every unavailable run, so the rate of skipped lints is measurable
+over time.
+
 ### `post-tool-use-sync-claude` — runs on `PostToolUse`
 
 Source: `src/lazy_harness/hooks/builtins/post_tool_use_sync_claude.py`.
