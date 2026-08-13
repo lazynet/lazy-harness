@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.33.3](https://github.com/lazynet/lazy-harness/compare/v0.33.2...v0.33.3) (2026-08-13)
+
+
+### Bug Fixes
+
+* **hooks:** warn on MEMORY.md byte size, not just line count ([#140](https://github.com/lazynet/lazy-harness/issues/140)) ([b1e604a](https://github.com/lazynet/lazy-harness/commit/b1e604af4f94d0dd7d353a6534c7255e27e3914b))
+
 ## [0.33.2](https://github.com/lazynet/lazy-harness/compare/v0.33.1...v0.33.2) (2026-08-13)
 
 
