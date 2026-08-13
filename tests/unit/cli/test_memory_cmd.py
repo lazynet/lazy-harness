@@ -578,3 +578,45 @@ def test_proposals_default_memory_dir_follows_agent_runtime_dir(
     result = runner.invoke(memory, ["proposals", "list"])
     assert result.exit_code == 0, result.output
     assert "Run a docs coherence pass" in result.output
+
+
+def _linked_worktree(tmp_path: Path) -> tuple[Path, Path]:
+    """Build a main checkout plus a linked worktree; return (repo_root, worktree)."""
+    repo = tmp_path / "repo"
+    (repo / ".git" / "worktrees" / "wt").mkdir(parents=True)
+    worktree = repo / ".worktrees" / "wt"
+    worktree.mkdir(parents=True)
+    (worktree / ".git").write_text(f"gitdir: {repo / '.git' / 'worktrees' / 'wt'}\n")
+    return repo, worktree
+
+
+def test_project_memory_dir_resolves_worktree_to_main_checkout(tmp_path: Path, monkeypatch) -> None:
+    """Proposals accepted from a worktree must land on the main checkout's file."""
+    from lazy_harness.cli.memory_cmd import _project_memory_dir
+
+    runtime = tmp_path / "runtime"
+    monkeypatch.setattr("lazy_harness.core.paths.agent_runtime_dir", lambda _agent: runtime)
+    monkeypatch.setattr(
+        "lazy_harness.cli.memory_cmd.config_file", lambda: tmp_path / "missing.toml"
+    )
+    repo, worktree = _linked_worktree(tmp_path)
+    monkeypatch.chdir(worktree)
+
+    encoded = "-" + str(repo).replace("/", "-").lstrip("-")
+    assert _project_memory_dir() == runtime / "projects" / encoded / "memory"
+
+
+def test_project_memory_dir_uses_cwd_outside_a_worktree(tmp_path: Path, monkeypatch) -> None:
+    from lazy_harness.cli.memory_cmd import _project_memory_dir
+
+    runtime = tmp_path / "runtime"
+    monkeypatch.setattr("lazy_harness.core.paths.agent_runtime_dir", lambda _agent: runtime)
+    monkeypatch.setattr(
+        "lazy_harness.cli.memory_cmd.config_file", lambda: tmp_path / "missing.toml"
+    )
+    repo = tmp_path / "plain"
+    (repo / ".git").mkdir(parents=True)
+    monkeypatch.chdir(repo)
+
+    encoded = "-" + str(repo).replace("/", "-").lstrip("-")
+    assert _project_memory_dir() == runtime / "projects" / encoded / "memory"

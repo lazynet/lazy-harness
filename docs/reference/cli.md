@@ -153,7 +153,7 @@ lh memory cross-profile-check
 
 ### `lh memory proposals`
 
-Lifecycle for the `claude-md.proposal.md` entries the compound loop appends (see [Memory: the compound loop](../how/memory-compound.md)). All three subcommands take `--memory-dir <path>`; by default the per-project memory dir is resolved from the agent runtime dir and the current working directory.
+Lifecycle for the `claude-md.proposal.md` entries the compound loop appends (see [Memory: the compound loop](../how/memory-compound.md)). All three subcommands take `--memory-dir <path>`; by default the per-project memory dir is resolved from the agent runtime dir and the repository the working directory belongs to. Inside a linked git worktree the key comes from the main checkout, so proposals stay on the file the loop writes to instead of following each worktree.
 
 - `lh memory proposals list` — numbered table of pending proposals (index, date, rule excerpt).
 - `lh memory proposals accept <N>` — removes entry N from the pending file, archives it to `claude-md.accepted.md` with the acceptance date, and prints the full rule. It never edits `MEMORY.md` or `CLAUDE.md` itself — pasting the rule is the human's call.

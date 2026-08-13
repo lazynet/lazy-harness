@@ -191,6 +191,52 @@ def test_doctor_output_includes_llm_backend_section(
     assert "LLM backend" in result.output
 
 
+def _linked_worktree(tmp_path: Path) -> tuple[Path, Path]:
+    """Build a main checkout plus a linked worktree; return (repo_root, worktree)."""
+    repo = tmp_path / "repo"
+    (repo / ".git" / "worktrees" / "wt").mkdir(parents=True)
+    worktree = repo / ".worktrees" / "wt"
+    worktree.mkdir(parents=True)
+    (worktree / ".git").write_text(f"gitdir: {repo / '.git' / 'worktrees' / 'wt'}\n")
+    return repo, worktree
+
+
+def test_project_memory_dir_resolves_worktree_to_main_checkout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Memory lives under the main checkout's key, not the worktree's."""
+    from lazy_harness.agents.registry import get_agent
+    from lazy_harness.cli.doctor_cmd import _project_memory_dir
+
+    runtime = tmp_path / "runtime"
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.agent_runtime_dir", lambda _agent: runtime)
+    repo, worktree = _linked_worktree(tmp_path)
+    monkeypatch.chdir(worktree)
+
+    encoded = "-" + str(repo).replace("/", "-").lstrip("-")
+    assert (
+        _project_memory_dir(get_agent("claude-code")) == runtime / "projects" / encoded / "memory"
+    )
+
+
+def test_project_memory_dir_uses_cwd_outside_a_worktree(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from lazy_harness.agents.registry import get_agent
+    from lazy_harness.cli.doctor_cmd import _project_memory_dir
+
+    runtime = tmp_path / "runtime"
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.agent_runtime_dir", lambda _agent: runtime)
+    repo = tmp_path / "plain"
+    (repo / ".git").mkdir(parents=True)
+    monkeypatch.chdir(repo)
+
+    encoded = "-" + str(repo).replace("/", "-").lstrip("-")
+    assert (
+        _project_memory_dir(get_agent("claude-code")) == runtime / "projects" / encoded / "memory"
+    )
+
+
 def test_render_memory_hygiene_skips_when_no_memory_dir(tmp_path: Path) -> None:
     from lazy_harness.cli.doctor_cmd import _render_memory_hygiene
 
