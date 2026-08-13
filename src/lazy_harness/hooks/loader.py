@@ -35,6 +35,10 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
     "context-inject": BuiltinHookSpec(module="lazy_harness.hooks.builtins.context_inject"),
     "engram-persist": BuiltinHookSpec(module="lazy_harness.hooks.builtins.engram_persist"),
     "post-compact": BuiltinHookSpec(module="lazy_harness.hooks.builtins.post_compact"),
+    "post-tool-use-ansible-lint": BuiltinHookSpec(
+        module="lazy_harness.hooks.builtins.post_tool_use_ansible_lint",
+        matcher="Edit|Write",
+    ),
     "post-tool-use-format": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.post_tool_use_format"
     ),

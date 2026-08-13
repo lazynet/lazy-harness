@@ -332,6 +332,18 @@ This is the simplest built-in and the easiest extension point — a project that
 
 **Where it writes:** the file the agent just edited (in place, via `ruff format`). Nothing else.
 
+### `post-tool-use-ansible-lint` — runs on `PostToolUse`
+
+Runs `ansible-lint` after any `Edit` or `Write` to a `.yml` or `.yaml` file that sits
+inside a repository containing an `ansible.cfg`.
+
+Findings are returned to the agent as additional context rather than written to a log, so
+a lint failure is visible in the session that caused it. Clean runs emit nothing.
+
+The hook is fail-soft: a missing `ansible-lint` binary, a timeout, or malformed input all
+exit 0 and leave the file unchecked. A note is written to `logs/hooks.log` when the binary
+is unavailable, so a linter that never ran is distinguishable from one that always passed.
+
 ### `post-tool-use-sync-claude` — runs on `PostToolUse`
 
 Source: `src/lazy_harness/hooks/builtins/post_tool_use_sync_claude.py`.
