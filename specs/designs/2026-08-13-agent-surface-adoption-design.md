@@ -2,7 +2,8 @@
 
 **Date:** 2026-08-13
 **Status:** Proposed
-**Scope:** `~/.claude-lazy/skills`, `~/.claude-flex/skills`, `lazy-ansible`, `ydi-data-layer`, graphify MCP
+**Scope:** `~/.claude-lazy/skills`, `~/.claude-flex/skills`, graphify MCP, and 18 repositories
+(`lazy-*`, `flex/mngt/*`, the supervielle repos, `ydi-data-layer`)
 
 ## Problem
 
@@ -15,23 +16,88 @@ Evidence gathered from 2,624 session transcripts across both profiles (2026-07-2
 
 | Surface | Declared | Invocations in window |
 |---------|----------|-----------------------|
-| `ydi-data-layer` domain skills (8, incl. `data-lake-monitoring`) | versioned in repo | 0 across 65 sessions |
-| `ansible-lint`, `ansible-security-audit` | `lazy-ansible/.claude/skills/` | 0 across 395 sessions |
+| `ydi-data-layer` domain skills (8, incl. `data-lake-monitoring`) | versioned in repo | 0 across 81 sessions |
+| `ansible-lint`, `ansible-security-audit` | `lazy-ansible/.claude/skills/` | 0 across 396 sessions |
 | `graphify` MCP | both profiles | 0 |
 | `grafana` MCP | flex profile | 0 across 1,217 sessions |
 | `gws-*`, `persona-*`, `recipe-*` skills (36) | symlinked into lazy profile | 0 |
+
+Widening the audit to 18 repositories confirms the pattern is systemic, not local to
+three repos:
+
+| Repo | Skills | MCPs | Sessions | Never invoked |
+|------|--------|------|----------|---------------|
+| supervielle-backstage-poc | 19 | 0 | 587 | 8 |
+| supervielle-mgmt | 14 | 0 | 331 | 8 |
+| flex-mgmt | 9 | 0 | 63 | 8 |
+| ydi-mgmt | 7 | 3 | 22 | 7 |
+| ydi-data-layer | 8 | 3 | 81 | 8 |
+| lazy-ansible | 6 | 0 | 396 | 2 |
+| tb-ydi-delivery | 6 | 3 | 0 | 6 (never opened) |
+| ai-adoption-mgmt | 2 | 0 | 3 | 2 (sample too small) |
+| lazy-desktop-manager, lazy-hermes | 1 each | 0 | 252 / 74 | 0 |
+
+**73 local skills declared across the estate; 49 have never been invoked once.**
+Restricting to repos with a sample large enough to conclude from (≥20 sessions), 41 are
+dead with solid evidence.
 
 The defect is uniform: **declaring a capability is not the same as adopting it.**
 Availability is passive; invocation requires a trigger — a hook, a slash command, or a
 description that matches the vocabulary actually used in prompts.
 
+### The dominant cause: a CLI already won
+
+The largest single cluster of dead skills is Google Workspace wrappers — the 36 global
+`gws-*`/`persona-*`/`recipe-*` skills, plus `ctoflex-sheets`, `ydi-sheets`,
+`supervielle-slides`, `gws-shared`, `gws-admin-reports` and their siblings in the mgmt
+repos. Every one sits at zero.
+
+They are not unwanted. The work happens — via 40 direct `gws` CLI calls through Bash. The
+global `CLAUDE.md` instructs exactly that:
+
+> Para acceder a artefactos de Google (Drive, Gmail, Calendar, Docs, Sheets, etc.) usá
+> `gws` vía Bash
+
+An always-loaded instruction competes with a router-matched skill, and the instruction
+wins every time. These skills are redundant against a mechanism that already works —
+which makes them the clearest prune candidates in the estate.
+
+The same shape appears once more: `qmd-knowledge` (declared in both `supervielle-mgmt`
+and `ydi-mgmt`) sits at zero while the `qmd` MCP records 38 direct calls. Superseded by
+a competing surface, not unused for lack of need.
+
 This restates a failure already recorded in project memory (`tool_adoption_gate`): a
 rule written in `CLAUDE.md` is not an adoption mechanism. The ydi numbers are the
-empirical confirmation — 65 sessions, 8 skills, 0% adoption.
+empirical confirmation — 81 sessions, 8 skills, 0% adoption.
+
+## Measurement method
+
+The audit script lives at `specs/analyses/` alongside its output. Four traps were
+checked and cleared before trusting the numbers; anyone re-running this must clear them
+again.
+
+**Slash commands are logged as skill invocations.** A command in `.claude/commands/`
+appears in transcripts as `"skill":"<name>"`, identical to a skill. Verified against
+`new-worktree` (6), `tdd-check` (1), `cleanup-worktree` (1) — all commands, all counted.
+A metric that greps only for skills is therefore complete, not half-blind.
+
+**Transcript directories must include worktrees.** The project key encodes the absolute
+path with `/` replaced by `-`, and each worktree gets its own sibling directory. Matching
+the exact encoded name alone silently drops every worktree session — the same class of
+defect that lost 22% of the corpus in the 2026-08-10 audit. Match the encoded prefix plus
+`-*`.
+
+**`.claude/skills` may be a symlink to the real tree.** In `supervielle-backstage-poc` it
+points at `../.agents/skills`. Counting the link target is correct; assuming duplication
+between `.claude/` and `.agents/` is not.
+
+**Not every directory under `skills/` is a skill.** `_shared/` in `supervielle-backstage-poc`
+holds convention documents and has no `SKILL.md`. It was counted as a dead skill on the
+first pass and removed on verification — hence 19 skills there, not 20.
 
 ## Non-goals
 
-- Adding new MCP servers or skills to any of the three repos.
+- Adding new MCP servers or skills to any repo in scope.
 - Deleting anything from the skill source tree at `~/.agents/skills/`.
 - Modifying versioned team configuration in `FlexibilitySRL/ydi-data-layer`.
 - Standing up monitoring infrastructure. `PRJ-HomeLab` Phase 6 has phase 2 (OPNsense)
@@ -99,7 +165,7 @@ No `.mcp.json` is added to `lazy-ansible`.
 Work happens in a dedicated Herdr **tab**, not a split pane.
 
 Hypothesis to test: the 8 skills' `description` fields do not match the vocabulary used
-in the 65 recorded sessions, so the router never selects them.
+in the 81 recorded sessions, so the router never selects them.
 
 Method: extract each skill's description, extract the opening user prompt of each
 session, and check for lexical overlap. A skill whose description describes the
@@ -122,6 +188,35 @@ recall.
 
 Note that zero MCP calls does not rule out CLI usage (`graphify query`). The hook design
 does not depend on which surface wins — it makes the graph's freshness visible either way.
+
+### W5 — Estate-wide triage of the 49 unused skills
+
+A single verdict for all 41 would be wrong. Each falls into one of four buckets, and only
+the first is a prune candidate.
+
+**1. Superseded by a competing surface — prune.** Workspace wrappers beaten by the `gws`
+CLI, and `qmd-knowledge` beaten by the `qmd` MCP. The need is real and already met; the
+skill only costs listing budget. This is the largest bucket.
+
+**2. Repo never opened — no verdict.** `tb-ydi-delivery` has 6 skills and 3 MCP servers
+across 0 sessions. Zero invocations here measures the repo, not the skills. Leave intact;
+re-measure if it ever gets used.
+
+**3. Sample too small — no verdict.** `ai-adoption-mgmt` at 3 sessions cannot support a
+conclusion either way. Same treatment as bucket 2.
+
+**4. Wanted but untriggered — attach a mechanism.** `ansible-lint` and
+`ansible-security-audit` (W2), and the unreached stages of the `sdd-*` flow in
+`supervielle-backstage-poc`, where `sdd-spec`, `sdd-tasks`, `sdd-propose`, `sdd-explore`,
+`sdd-design` and `sdd-verify` all fire while `sdd-apply`, `sdd-init` and `sdd-archive`
+never do. That is a workflow whose later stages are never reached — a process question,
+not a dead-skill question, and it should be raised with whoever owns that flow rather
+than resolved by deletion.
+
+**Write boundary.** Every repo in buckets 1–4 outside `~/repos/lazy/` belongs to
+FlexibilitySRL and carries versioned `.claude/` configuration. The same rule as W3
+applies: measurement and written recommendations only; no commits to team repos from this
+work. Only `lazy-*` repos are edited directly.
 
 ## Testing
 
@@ -148,6 +243,11 @@ W2 and W4 both add hooks and both require worktrees per the repo's non-negotiabl
 They are independent of each other and may proceed in either order.
 
 W3 is read-mostly and independent of all three.
+
+W5 subsumes W3: the ydi diagnosis is one instance of the estate-wide triage. Run W5's
+bucket assignment first, then apply W3's lexical-overlap method to whichever skills land
+in bucket 4. Buckets 2 and 3 produce no work at all — recording "no verdict, and why" is
+the deliverable for those.
 
 ## Open risks
 
