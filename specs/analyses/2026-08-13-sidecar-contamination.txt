@@ -1,0 +1,12 @@
+REPO                               RAW SIDECAR ORGANIC ORGANIC%
+ai-adoption-mgmt                     3       0       3 100%
+lazy-desktop-manager               252     123     129 51%
+lazy-hermes                         74      59      15 20%
+lazy-ansible                       407     203     204 50%
+lazy-harness                       144     101      43 29%
+lazy-ai-tools                      108      65      43 39%
+flex-mgmt                           67      11      56 83%
+supervielle-mgmt                   341     222     119 34%
+ydi-mgmt                            22      13       9 40%
+supervielle-backstage-poc          594     248     346 58%
+ydi-data-layer                      82      69      13 15%

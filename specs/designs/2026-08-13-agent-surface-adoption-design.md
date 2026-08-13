@@ -16,8 +16,8 @@ Evidence gathered from 2,624 session transcripts across both profiles (2026-07-2
 
 | Surface | Declared | Invocations in window |
 |---------|----------|-----------------------|
-| `ydi-data-layer` domain skills (8, incl. `data-lake-monitoring`) | versioned in repo | 0 across 81 sessions |
-| `ansible-lint`, `ansible-security-audit` | `lazy-ansible/.claude/skills/` | 0 across 396 sessions |
+| `ydi-data-layer` domain skills (8, incl. `data-lake-monitoring`) | versioned in repo | 0 across 13 organic sessions (82 raw) |
+| `ansible-lint`, `ansible-security-audit` | `lazy-ansible/.claude/skills/` | 0 across 204 organic sessions (407 raw) |
 | `graphify` MCP | both profiles | 0 |
 | `grafana` MCP | flex profile | 0 across 1,217 sessions |
 | `gws-*`, `persona-*`, `recipe-*` skills (36) | symlinked into lazy profile | 0 |
@@ -25,21 +25,32 @@ Evidence gathered from 2,624 session transcripts across both profiles (2026-07-2
 Widening the audit to 18 repositories confirms the pattern is systemic, not local to
 three repos:
 
-| Repo | Skills | MCPs | Sessions | Never invoked |
-|------|--------|------|----------|---------------|
-| supervielle-backstage-poc | 19 | 0 | 587 | 8 |
-| supervielle-mgmt | 14 | 0 | 331 | 8 |
-| flex-mgmt | 9 | 0 | 63 | 8 |
-| ydi-mgmt | 7 | 3 | 22 | 7 |
-| ydi-data-layer | 8 | 3 | 81 | 8 |
-| lazy-ansible | 6 | 0 | 396 | 2 |
-| tb-ydi-delivery | 6 | 3 | 0 | 6 (never opened) |
-| ai-adoption-mgmt | 2 | 0 | 3 | 2 (sample too small) |
-| lazy-desktop-manager, lazy-hermes | 1 each | 0 | 252 / 74 | 0 |
+Session counts below are **organic sessions** — raw transcript counts minus compound-loop
+sidecars. See "Sidecars are not sessions" under Measurement method; the raw figures
+overstate the sample by up to 6×.
 
-**73 local skills declared across the estate; 49 have never been invoked once.**
-Restricting to repos with a sample large enough to conclude from (≥20 sessions), 41 are
-dead with solid evidence.
+| Repo | Skills | MCPs | Sessions (organic / raw) | Never invoked |
+|------|--------|------|--------------------------|---------------|
+| supervielle-backstage-poc | 19 | 0 | 346 / 594 | 8 |
+| supervielle-mgmt | 14 | 0 | 119 / 341 | 8 |
+| flex-mgmt | 9 | 0 | 56 / 67 | 8 |
+| lazy-ansible | 6 | 0 | 204 / 407 | 2 |
+| ydi-data-layer | 8 | 3 | **13** / 82 | 8 (sample too small) |
+| ydi-mgmt | 7 | 3 | **9** / 22 | 7 (sample too small) |
+| tb-ydi-delivery | 6 | 3 | 0 / 0 | 6 (never opened) |
+| ai-adoption-mgmt | 2 | 0 | 3 / 3 | 2 (sample too small) |
+| lazy-desktop-manager, lazy-hermes | 1 each | 0 | 129 / 252, 15 / 74 | 0 |
+
+**73 local skills declared across the estate; 49 have never been invoked once** (the
+triage report resolves this to 48 — see its "Count discrepancy" section).
+
+Restricting to repos whose *organic* sample supports a conclusion (≥20 sessions), **26**
+are dead with solid evidence — not the 41 an uncorrected count suggests. The 15 skills in
+`ydi-data-layer` and `ydi-mgmt` drop out of the evidence base entirely: at 13 and 9
+organic sessions, neither repo can support a verdict either way.
+
+Per-skill bucketing lives in
+[`specs/analyses/2026-08-13-unused-skill-triage.md`](../analyses/2026-08-13-unused-skill-triage.md).
 
 The defect is uniform: **declaring a capability is not the same as adopting it.**
 Availability is passive; invocation requires a trigger — a hook, a slash command, or a
@@ -67,12 +78,16 @@ and `ydi-mgmt`) sits at zero while the `qmd` MCP records 38 direct calls. Supers
 a competing surface, not unused for lack of need.
 
 This restates a failure already recorded in project memory (`tool_adoption_gate`): a
-rule written in `CLAUDE.md` is not an adoption mechanism. The ydi numbers are the
-empirical confirmation — 81 sessions, 8 skills, 0% adoption.
+rule written in `CLAUDE.md` is not an adoption mechanism.
+
+The empirical weight sits in `lazy-ansible` (204 organic sessions), `supervielle-backstage-poc`
+(346) and `supervielle-mgmt` (119), not in ydi. The ydi repos looked like the strongest
+evidence in the first pass and turned out to be the weakest — 13 and 9 organic sessions
+once sidecars are excluded. They are consistent with the thesis; they do not establish it.
 
 ## Measurement method
 
-The audit script lives at `specs/analyses/` alongside its output. Four traps were
+The audit script lives at `specs/analyses/` alongside its output. Five traps were
 checked and cleared before trusting the numbers; anyone re-running this must clear them
 again.
 
@@ -94,6 +109,32 @@ between `.claude/` and `.agents/` is not.
 **Not every directory under `skills/` is a skill.** `_shared/` in `supervielle-backstage-poc`
 holds convention documents and has no `SKILL.md`. It was counted as a dead skill on the
 first pass and removed on verification — hence 19 skills there, not 20.
+
+**Sidecars are not sessions.** This one invalidated the first pass of the analysis. The
+compound loop writes its own transcripts — learning evaluations and similar automated
+runs — into the same `projects/` directories as human work. Counting `*.jsonl` files
+therefore counts machinery, not usage, and inflates the denominator badly:
+
+| Repo | Raw | Sidecars | Organic |
+|------|-----|----------|---------|
+| ydi-data-layer | 82 | 69 | **13** (15%) |
+| lazy-hermes | 74 | 59 | 15 (20%) |
+| lazy-harness | 144 | 101 | 43 (29%) |
+| supervielle-mgmt | 341 | 222 | 119 (34%) |
+| ydi-mgmt | 22 | 13 | 9 (40%) |
+| lazy-ansible | 407 | 203 | 204 (50%) |
+| supervielle-backstage-poc | 594 | 248 | 346 (58%) |
+| flex-mgmt | 67 | 11 | 56 (83%) |
+
+A denominator inflated 6× turns a weak signal into an apparently overwhelming one: "0
+invocations across 82 sessions" reads as conclusive, while the true "0 across 13" is
+merely suggestive. Classify each transcript by its first user message before counting.
+
+The classifier used here is a heuristic (it matches `learning`, `compound`, `eval`, and
+`security-review` in the opening user message), so treat the organic figures as close
+estimates rather than exact counts. The direction is not in doubt — 62 of 66 in
+`ydi-data-layer` — but a borderline repo deserves a manual look before a verdict rests
+on it.
 
 ## Non-goals
 
@@ -146,7 +187,7 @@ not proof the listing changed.
 
 ### W2 — lazy-ansible: triggers, not new skills
 
-`ansible-lint` and `ansible-security-audit` are the only two local skills at zero. The
+`ansible-lint` and `ansible-security-audit` are the only two local skills at zero across 204 organic sessions. The
 four that carry domain knowledge (`opnsense-admin` 7, `tailscale-admin` 2,
 `ansible-role-scaffold` 1, `ansible-automation` 1) all fire. The pattern is not that
 lint and audit are unwanted — it is that nothing calls them.
@@ -165,7 +206,7 @@ No `.mcp.json` is added to `lazy-ansible`.
 Work happens in a dedicated Herdr **tab**, not a split pane.
 
 Hypothesis to test: the 8 skills' `description` fields do not match the vocabulary used
-in the 81 recorded sessions, so the router never selects them.
+in the 13 organic sessions, so the router never selects them.
 
 Method: extract each skill's description, extract the opening user prompt of each
 session, and check for lexical overlap. A skill whose description describes the
@@ -189,7 +230,7 @@ recall.
 Note that zero MCP calls does not rule out CLI usage (`graphify query`). The hook design
 does not depend on which surface wins — it makes the graph's freshness visible either way.
 
-### W5 — Estate-wide triage of the 49 unused skills
+### W5 — Estate-wide triage of the unused skills
 
 A single verdict for all 41 would be wrong. Each falls into one of four buckets, and only
 the first is a prune candidate.
