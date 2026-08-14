@@ -9,6 +9,7 @@ import pytest
 
 from lazy_harness.core.config import (
     Config,
+    ExternalHookConfig,
     HarnessConfig,
     HookEventConfig,
     ProfileEntry,
@@ -63,9 +64,11 @@ def test_deploy_hooks_idempotent_on_clean_managed_state(tmp_path: Path) -> None:
     assert not (profile_dir / "settings.json.bak").exists()
 
 
-def test_deploy_hooks_backs_up_and_removes_unknown_entries(
+def test_deploy_hooks_preserves_foreign_entries(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """A hook the harness did not generate belongs to some other tool. Deploying
+    a harness hook must not uninstall it."""
     profile_dir = tmp_path / "profile"
     profile_dir.mkdir(parents=True)
     pre = {
@@ -83,17 +86,141 @@ def test_deploy_hooks_backs_up_and_removes_unknown_entries(
 
     deploy_hooks(cfg)
 
-    backup = profile_dir / "settings.json.bak"
-    assert backup.is_file(), "expected backup of pre-existing settings.json"
-    assert "my-manual-hook" in backup.read_text()
-
     new = json.loads((profile_dir / "settings.json").read_text())
-    serialized = json.dumps(new["hooks"])
-    assert "my-manual-hook" not in serialized
+    assert "my-manual-hook" in json.dumps(new["hooks"]["Stop"])
+    assert any(
+        "session_stop" in json.dumps(e) or "compound_loop" in json.dumps(e)
+        for e in new["hooks"]["Stop"]
+    ), "harness hooks should still deploy alongside"
 
     out = capsys.readouterr().out
-    assert "unknown" in out.lower()
-    assert "my-manual-hook" in out
+    assert "my-manual-hook" in out, "preserving silently is still a surprise; say it"
+
+
+def test_deploy_hooks_preserves_foreign_entries_on_unmodelled_events(tmp_path: Path) -> None:
+    """The harness has no concept of some events. It must pass them through
+    rather than delete what it cannot model."""
+    profile_dir = tmp_path / "profile"
+    profile_dir.mkdir(parents=True)
+    pre = {
+        "hooks": {
+            "SomeFutureEvent": [
+                {"matcher": "", "hooks": [{"type": "command", "command": "/bin/other-tool"}]}
+            ]
+        }
+    }
+    (profile_dir / "settings.json").write_text(json.dumps(pre, indent=2) + "\n")
+    cfg = _cfg_with_profile(profile_dir, hooks={})
+
+    deploy_hooks(cfg)
+
+    new = json.loads((profile_dir / "settings.json").read_text())
+    assert "/bin/other-tool" in json.dumps(new["hooks"].get("SomeFutureEvent", []))
+
+
+def test_deploy_hooks_counts_every_preserved_entry_not_unique_commands(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Regression for the 9x undercount: one command registered on three events
+    is three entries, not one."""
+    profile_dir = tmp_path / "profile"
+    profile_dir.mkdir(parents=True)
+    entry = {"matcher": "", "hooks": [{"type": "command", "command": "/bin/notifier hook"}]}
+    pre = {"hooks": {"Stop": [entry], "SessionEnd": [entry], "SomeFutureEvent": [entry]}}
+    (profile_dir / "settings.json").write_text(json.dumps(pre, indent=2) + "\n")
+    cfg = _cfg_with_profile(profile_dir, hooks={})
+
+    deploy_hooks(cfg)
+
+    out = capsys.readouterr().out
+    assert "3" in out, f"expected a count of 3 preserved entries, got: {out}"
+    assert out.count("/bin/notifier hook") == 3, "each entry reported with its event"
+
+
+def test_deploy_hooks_normalizes_null_matcher_and_reports_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A null matcher makes Claude Code discard the entire settings file. Fix it
+    on sight, and say so — never silently."""
+    profile_dir = tmp_path / "profile"
+    profile_dir.mkdir(parents=True)
+    pre = {
+        "hooks": {
+            "SomeFutureEvent": [
+                {"matcher": None, "hooks": [{"type": "command", "command": "/bin/other-tool"}]}
+            ]
+        }
+    }
+    (profile_dir / "settings.json").write_text(json.dumps(pre, indent=2) + "\n")
+    cfg = _cfg_with_profile(profile_dir, hooks={})
+
+    deploy_hooks(cfg)
+
+    new = json.loads((profile_dir / "settings.json").read_text())
+    assert new["hooks"]["SomeFutureEvent"][0]["matcher"] == ""
+
+    out = capsys.readouterr().out.lower()
+    assert "normal" in out or "repair" in out or "fixed" in out, "the repair must be announced"
+
+
+def test_deploy_hooks_emits_declared_external_commands(tmp_path: Path) -> None:
+    """External hooks declared in config reach the profile with a valid matcher."""
+    profile_dir = tmp_path / "profile"
+    cfg = _cfg_with_profile(
+        profile_dir,
+        hooks={
+            "user_prompt_submit": HookEventConfig(
+                scripts=[], external=[ExternalHookConfig(command="/bin/notifier hook")]
+            ),
+            "pre_tool_use": HookEventConfig(
+                scripts=["pre-tool-use-security"],
+                external=[
+                    ExternalHookConfig(command="/bin/notifier hook", matcher="AskUserQuestion")
+                ],
+            ),
+        },
+    )
+
+    deploy_hooks(cfg)
+
+    cc_hooks = json.loads((profile_dir / "settings.json").read_text())["hooks"]
+    ups = cc_hooks["UserPromptSubmit"]
+    assert ups[0]["hooks"][0]["command"] == "/bin/notifier hook"
+    assert ups[0]["matcher"] == ""
+    pinned = [e for e in cc_hooks["PreToolUse"] if e["matcher"] == "AskUserQuestion"]
+    assert len(pinned) == 1
+    assert pinned[0]["hooks"][0]["command"] == "/bin/notifier hook"
+
+
+def test_deploy_hooks_does_not_duplicate_a_declared_external_already_installed(
+    tmp_path: Path,
+) -> None:
+    """The third-party installer may have written the same hook itself. Declaring
+    it in config must not make it run twice."""
+    profile_dir = tmp_path / "profile"
+    profile_dir.mkdir(parents=True)
+    pre = {
+        "hooks": {
+            "UserPromptSubmit": [
+                {"matcher": None, "hooks": [{"type": "command", "command": "/bin/notifier hook"}]}
+            ]
+        }
+    }
+    (profile_dir / "settings.json").write_text(json.dumps(pre, indent=2) + "\n")
+    cfg = _cfg_with_profile(
+        profile_dir,
+        hooks={
+            "user_prompt_submit": HookEventConfig(
+                scripts=[], external=[ExternalHookConfig(command="/bin/notifier hook")]
+            )
+        },
+    )
+
+    deploy_hooks(cfg)
+
+    cc_hooks = json.loads((profile_dir / "settings.json").read_text())["hooks"]
+    commands = json.dumps(cc_hooks["UserPromptSubmit"])
+    assert commands.count("/bin/notifier hook") == 1
 
 
 def test_deploy_hooks_empty_existing_hooks_block(tmp_path: Path) -> None:

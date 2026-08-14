@@ -491,3 +491,62 @@ def test_structure_config_repo_list_defaults_to_empty(tmp_path) -> None:
     cfg_path.write_text('[harness]\nversion = "1"\n[knowledge.structure]\nenabled = true\n')
 
     assert load_config(cfg_path).knowledge.structure.repos == []
+
+
+def test_hook_event_external_command_string_parses(tmp_path) -> None:
+    """A bare string under `external` is a command using the event's default matcher."""
+    from lazy_harness.core.config import load_config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        '[harness]\nversion = "1"\n'
+        "[hooks.session_start]\n"
+        'scripts = ["context-inject"]\n'
+        'external = ["/opt/homebrew/bin/moshi claude-hook"]\n'
+    )
+
+    event = load_config(cfg_path).hooks["session_start"]
+
+    assert event.scripts == ["context-inject"]
+    assert len(event.external) == 1
+    assert event.external[0].command == "/opt/homebrew/bin/moshi claude-hook"
+    assert event.external[0].matcher is None
+
+
+def test_hook_event_external_table_carries_matcher(tmp_path) -> None:
+    """An external entry may pin its own matcher instead of the event default."""
+    from lazy_harness.core.config import load_config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        '[harness]\nversion = "1"\n'
+        "[[hooks.pre_tool_use.external]]\n"
+        'command = "/opt/homebrew/bin/moshi claude-hook"\n'
+        'matcher = "AskUserQuestion"\n'
+    )
+
+    external = load_config(cfg_path).hooks["pre_tool_use"].external
+
+    assert [(e.command, e.matcher) for e in external] == [
+        ("/opt/homebrew/bin/moshi claude-hook", "AskUserQuestion")
+    ]
+
+
+def test_external_hooks_survive_a_full_save_load_cycle(tmp_path) -> None:
+    """Round-trip, not just write: a field save_config drops is a silent data loss."""
+    from lazy_harness.core.config import load_config, save_config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        '[harness]\nversion = "1"\n'
+        "[[hooks.post_tool_use.external]]\n"
+        'command = "/opt/homebrew/bin/moshi claude-hook"\n'
+        'matcher = "ExitPlanMode"\n'
+    )
+
+    save_config(load_config(cfg_path), cfg_path)
+    external = load_config(cfg_path).hooks["post_tool_use"].external
+
+    assert [(e.command, e.matcher) for e in external] == [
+        ("/opt/homebrew/bin/moshi claude-hook", "ExitPlanMode")
+    ]

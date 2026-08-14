@@ -246,3 +246,42 @@ def test_claude_adapter_process_name() -> None:
     from lazy_harness.agents.claude_code import ClaudeCodeAdapter
 
     assert ClaudeCodeAdapter().process_name() == "claude"
+
+
+def test_claude_adapter_supports_user_prompt_submit_and_permission_request() -> None:
+    """Events a third-party tool registers on must be modelled, or deploy has
+    nowhere to put them and silently drops the entries."""
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    hooks = ClaudeCodeAdapter().supported_hooks()
+    assert "user_prompt_submit" in hooks
+    assert "permission_request" in hooks
+
+
+def test_generate_hook_config_maps_user_prompt_submit_and_permission_request() -> None:
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    result = ClaudeCodeAdapter().generate_hook_config(
+        {"user_prompt_submit": ["cmd-a"], "permission_request": ["cmd-b"]}
+    )
+
+    assert result["UserPromptSubmit"][0]["hooks"][0]["command"] == "cmd-a"
+    assert result["PermissionRequest"][0]["hooks"][0]["command"] == "cmd-b"
+
+
+def test_generate_hook_config_never_emits_a_null_matcher() -> None:
+    """Claude Code validates matcher as a string and discards the whole settings
+    file on a null, taking every unrelated hook down with it."""
+    from lazy_harness.agents.base import HookEntry
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    result = ClaudeCodeAdapter().generate_hook_config(
+        {
+            "user_prompt_submit": [HookEntry(command="cmd", matcher=None)],
+            "session_start": ["cmd"],
+        }
+    )
+
+    for entries in result.values():
+        for entry in entries:
+            assert isinstance(entry["matcher"], str)

@@ -70,3 +70,46 @@ def test_check_profiles_invalid_settings_json(tmp_path: Path):
     )
     results = check_profiles(config_path=cfg)
     assert any(r.name == "p1:settings-json" and r.status == CheckStatus.FAILED for r in results)
+
+
+def test_check_profiles_flags_null_matcher_that_json_accepts(tmp_path: Path):
+    """The real incident: valid JSON, invalid schema. Claude Code discards the
+    whole file, so every hook in the profile stops running while a json.loads
+    check reports the profile healthy."""
+    profile_dir = tmp_path / "claude-p1"
+    profile_dir.mkdir()
+    (profile_dir / "CLAUDE.md").write_text("# Profile")
+    (profile_dir / "settings.json").write_text(
+        '{"hooks": {"UserPromptSubmit": [{"matcher": null, '
+        '"hooks": [{"type": "command", "command": "/bin/tool"}]}]}}'
+    )
+
+    cfg = _make_cfg(
+        tmp_path,
+        f'[profiles]\ndefault = "p1"\n\n[profiles.p1]\nconfig_dir = "{profile_dir}"\n',
+    )
+    results = check_profiles(config_path=cfg)
+
+    schema = [r for r in results if r.name == "p1:settings-schema"]
+    assert schema, "expected a settings-schema check distinct from settings-json"
+    assert schema[0].status == CheckStatus.FAILED
+    assert "UserPromptSubmit" in schema[0].message
+
+
+def test_check_profiles_settings_schema_passes_on_valid_hooks(tmp_path: Path):
+    profile_dir = tmp_path / "claude-p1"
+    profile_dir.mkdir()
+    (profile_dir / "CLAUDE.md").write_text("# Profile")
+    (profile_dir / "settings.json").write_text(
+        '{"hooks": {"Stop": [{"matcher": "", '
+        '"hooks": [{"type": "command", "command": "/bin/tool"}]}]}}'
+    )
+
+    cfg = _make_cfg(
+        tmp_path,
+        f'[profiles]\ndefault = "p1"\n\n[profiles.p1]\nconfig_dir = "{profile_dir}"\n',
+    )
+    results = check_profiles(config_path=cfg)
+
+    schema = [r for r in results if r.name == "p1:settings-schema"]
+    assert schema and schema[0].status == CheckStatus.PASSED

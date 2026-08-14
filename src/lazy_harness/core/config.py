@@ -117,8 +117,22 @@ class SchedulerConfig:
 
 
 @dataclass
+class ExternalHookConfig:
+    """A hook command owned by a third-party tool, not by the harness.
+
+    Declared so `lh deploy` emits it to every profile with a schema Claude Code
+    accepts, instead of leaving each profile at the mercy of whichever installer
+    ran there last.
+    """
+
+    command: str
+    matcher: str | None = None
+
+
+@dataclass
 class HookEventConfig:
     scripts: list[str] = field(default_factory=list)
+    external: list[ExternalHookConfig] = field(default_factory=list)
 
 
 @dataclass
@@ -317,6 +331,34 @@ def _parse_memory(raw: dict[str, Any]) -> MemoryConfig:
     return MemoryConfig(engram=engram)
 
 
+def _parse_external_hooks(event_name: str, raw: Any) -> list[ExternalHookConfig]:
+    """Parse `[hooks.<event>].external` entries.
+
+    Accepts a bare command string (inheriting the event's default matcher) or a
+    table pinning its own matcher, since a tool like a notifier registers on
+    specific tools rather than the event-wide default.
+    """
+    if not isinstance(raw, list):
+        raise ConfigError(f"[hooks.{event_name}].external must be a list")
+    entries: list[ExternalHookConfig] = []
+    for item in raw:
+        if isinstance(item, str):
+            entries.append(ExternalHookConfig(command=item))
+        elif isinstance(item, dict):
+            command = item.get("command")
+            if not isinstance(command, str) or not command:
+                raise ConfigError(
+                    f"[hooks.{event_name}].external entries require a non-empty 'command'"
+                )
+            matcher = item.get("matcher")
+            if matcher is not None and not isinstance(matcher, str):
+                raise ConfigError(f"[hooks.{event_name}].external 'matcher' must be a string")
+            entries.append(ExternalHookConfig(command=command, matcher=matcher))
+        else:
+            raise ConfigError(f"[hooks.{event_name}].external entries must be a string or a table")
+    return entries
+
+
 def load_config(path: Path) -> Config:
     """Load and validate config from a TOML file."""
     if not path.is_file():
@@ -408,6 +450,7 @@ def load_config(path: Path) -> Config:
         if isinstance(event_cfg, dict):
             cfg.hooks[event_name] = HookEventConfig(
                 scripts=event_cfg.get("scripts", []),
+                external=_parse_external_hooks(event_name, event_cfg.get("external", [])),
             )
 
     cl_raw = raw.get("compound_loop", {})
@@ -501,7 +544,15 @@ def _config_to_dict(cfg: Config) -> dict[str, Any]:
     if cfg.hooks:
         hooks_dict: dict[str, Any] = {}
         for event_name, event_cfg in cfg.hooks.items():
-            hooks_dict[event_name] = {"scripts": event_cfg.scripts}
+            event_dict: dict[str, Any] = {"scripts": event_cfg.scripts}
+            if event_cfg.external:
+                event_dict["external"] = [
+                    {"command": e.command}
+                    if e.matcher is None
+                    else {"command": e.command, "matcher": e.matcher}
+                    for e in event_cfg.external
+                ]
+            hooks_dict[event_name] = event_dict
         result["hooks"] = hooks_dict
 
     if (

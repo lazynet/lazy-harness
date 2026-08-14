@@ -54,6 +54,8 @@ class ClaudeCodeAdapter:
             "pre_tool_use",
             "post_tool_use",
             "notification",
+            "user_prompt_submit",
+            "permission_request",
         ]
 
     def generate_hook_config(self, hooks: dict[str, list[str | HookEntry]]) -> dict:
@@ -71,6 +73,8 @@ class ClaudeCodeAdapter:
             "pre_tool_use": "PreToolUse",
             "post_tool_use": "PostToolUse",
             "notification": "Notification",
+            "user_prompt_submit": "UserPromptSubmit",
+            "permission_request": "PermissionRequest",
         }
         matcher_map = {
             "pre_tool_use": "Bash",
