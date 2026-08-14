@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.35.0](https://github.com/lazynet/lazy-harness/compare/v0.34.0...v0.35.0) (2026-08-14)
+
+
+### Features
+
+* add herdr-context-gauge hook to surface worker context size ([#148](https://github.com/lazynet/lazy-harness/issues/148)) ([aa00b99](https://github.com/lazynet/lazy-harness/commit/aa00b99aaae1a9940f1f657488eb7b641fb074af))
+
 ## [0.34.0](https://github.com/lazynet/lazy-harness/compare/v0.33.4...v0.34.0) (2026-08-13)
 
 
