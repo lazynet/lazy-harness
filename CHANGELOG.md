@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.36.0](https://github.com/lazynet/lazy-harness/compare/v0.35.0...v0.36.0) (2026-08-14)
+
+
+### Features
+
+* own third-party hooks in config instead of overwriting them ([#152](https://github.com/lazynet/lazy-harness/issues/152)) ([d0f8289](https://github.com/lazynet/lazy-harness/commit/d0f8289dd96cda510a37697d43c48bfb5590d796)), closes [#150](https://github.com/lazynet/lazy-harness/issues/150) [#151](https://github.com/lazynet/lazy-harness/issues/151)
+
 ## [0.35.0](https://github.com/lazynet/lazy-harness/compare/v0.34.0...v0.35.0) (2026-08-14)
 
 
