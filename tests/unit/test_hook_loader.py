@@ -240,3 +240,17 @@ def test_ansible_lint_hook_is_registered_with_edit_write_matcher() -> None:
     assert info is not None
     assert info.is_builtin is True
     assert info.matcher == "Edit|Write"
+
+
+def test_herdr_context_gauge_hook_is_registered_without_a_matcher() -> None:
+    """Stop carries no tool matcher — an inherited Edit|Write default would
+    silence the gauge on every turn that ended without a file edit."""
+    from lazy_harness.hooks.loader import list_builtin_hooks, resolve_hook
+
+    assert "herdr-context-gauge" in list_builtin_hooks()
+    info = resolve_hook("herdr-context-gauge")
+    assert info is not None
+    assert info.is_builtin is True
+    assert info.matcher is None
+    assert info.path.name == "herdr_context_gauge.py"
+    assert info.path.is_file()

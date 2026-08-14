@@ -34,6 +34,9 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
     "compound-loop": BuiltinHookSpec(module="lazy_harness.hooks.builtins.compound_loop"),
     "context-inject": BuiltinHookSpec(module="lazy_harness.hooks.builtins.context_inject"),
     "engram-persist": BuiltinHookSpec(module="lazy_harness.hooks.builtins.engram_persist"),
+    "herdr-context-gauge": BuiltinHookSpec(
+        module="lazy_harness.hooks.builtins.herdr_context_gauge"
+    ),
     "post-compact": BuiltinHookSpec(module="lazy_harness.hooks.builtins.post_compact"),
     "post-tool-use-ansible-lint": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.post_tool_use_ansible_lint",

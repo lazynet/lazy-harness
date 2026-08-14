@@ -405,6 +405,41 @@ If `engram` is not on `PATH`, the run logs `engram binary not on PATH; skipping 
 - `~/.claude/logs/engram_persist.log` — append-only error log (subprocess failures, missing binary).
 - `~/.claude/logs/engram_persist_metrics.jsonl` — one JSONL record per run (run summary) plus one record per slow `engram save` (≥ 500 ms). The `lh doctor` "engram-persist" feature row reads this file via `monitoring/engram_persist_health.py` to classify state as `ok` / `warn` / `fail` based on last-run age, recent failure rate, and cursor lag.
 
+### `herdr-context-gauge` — runs on `Stop`
+
+Publishes the session's live context size onto its [Herdr](https://herdr.dev) pane, so an
+orchestrator driving that pane can see how large the window has grown.
+
+The problem it solves is specific to multiplexed work. When one agent is kept alive and
+fed task after task through `herdr agent prompt`, its window grows monotonically, and
+every subsequent turn re-reads the whole thing. Herdr's own agent surface reports
+lifecycle state — `idle`, `working`, `blocked` — but never context size, so the
+orchestrator has no signal that the worker is due for a reset and keeps prompting it.
+
+After each turn the hook reads the last assistant entry in the transcript and sums its
+three input channels (`input_tokens`, `cache_read_input_tokens`,
+`cache_creation_input_tokens`). That is the live window, not the session's cumulative
+spend — summing every turn instead would report a number orders of magnitude too large.
+The result becomes a traffic light published as pane metadata:
+
+| Context | Label |
+|---|---|
+| below 200k | `🟢 94k` |
+| 200k–400k | `🟡 340k` |
+| 400k and above | `🔴 673k rotar` |
+
+The action rides inline on the red label rather than living in a separate rule, because
+the orchestrator already reads this field in `herdr agent list` output when it harvests a
+worker. A rule in a prompt has to be recalled; a verb attached to the datum does not.
+
+Publishing uses a dedicated `lh:ctx` metadata source, so it never collides with the
+`herdr:claude` integration that owns lifecycle reporting. The metadata is display-only and
+is cleared with `herdr pane report-metadata <pane> --source lh:ctx --clear-display-agent`.
+
+The hook is fail-soft and a no-op outside Herdr: a missing `HERDR_ENV=1`, an absent
+`HERDR_PANE_ID`, an unreadable transcript, a `herdr` binary that is not installed, or a
+publish that times out all exit 0.
+
 ## How the hooks complement each other
 
 The magic is the composition, not any single hook. A full session lifecycle:
