@@ -267,11 +267,12 @@ The job's `name` is the TOML key — there is no `name` field inside the table.
 
 ## `[hooks.<event>]`
 
-The `[hooks]` table is keyed by the `config.toml` event name (`session_start`, `pre_compact`, `session_stop`, etc. — snake_case; see the [event glossary](../how/hooks.md#event-glossary) for the full mapping to Claude Code's own `SessionStart`/`Stop`/... names). Each event sub-table has a single field:
+The `[hooks]` table is keyed by the `config.toml` event name (`session_start`, `pre_compact`, `session_stop`, etc. — snake_case; see the [event glossary](../how/hooks.md#event-glossary) for the full mapping to Claude Code's own `SessionStart`/`Stop`/... names). Each event sub-table takes:
 
-| Field     | Type            | Default | Required | Description                                                                                                                          |
-| --------- | --------------- | ------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `scripts` | list of strings | `[]`    | no       | Bare built-in hook names to run for this event, in order (e.g. `context-inject`, not `lh hook context-inject`). A name that does not resolve against the built-in registry or a user hook is silently skipped. |
+| Field      | Type                     | Default | Required | Description                                                                                                                          |
+| ---------- | ------------------------ | ------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `scripts`  | list of strings          | `[]`    | no       | Bare built-in hook names to run for this event, in order (e.g. `context-inject`, not `lh hook context-inject`). A name that does not resolve against the built-in registry or a user hook is silently skipped. |
+| `external` | list of strings / tables | `[]`    | no       | Commands owned by a third-party tool, emitted to **every** profile after the built-ins. A bare string inherits the event's default matcher; a table pins its own (`{ command = "...", matcher = "..." }`). |
 
 Example:
 
@@ -282,6 +283,21 @@ scripts = ["context-inject"]
 [hooks.session_stop]
 scripts = ["compound-loop"]
 ```
+
+### `external` — hooks owned by another tool
+
+A third-party tool that installs its own Claude Code hooks writes them into whichever profile its installer happened to run against, and rewrites them on every upgrade. Declaring them here makes the harness the source of truth: they deploy to every profile, in a schema Claude Code accepts.
+
+```toml
+[hooks.user_prompt_submit]
+external = ["/usr/local/bin/some-tool hook"]
+
+[[hooks.pre_tool_use.external]]
+command = "/usr/local/bin/some-tool hook"
+matcher = "AskUserQuestion"
+```
+
+`lh deploy` also preserves hook entries it finds in a profile but does not manage, on every event — including events the harness has no concept of — and reports each one. If such an entry carries a field Claude Code's schema rejects (a `null` matcher, say), deploy repairs it and says so: the agent skips an invalid settings file **in its entirety**, so one bad field silently disables every hook in that profile. `lh selftest` checks the same schema, since a failure that stops hooks from running cannot be detected by a hook.
 
 ### `[hooks.pre_tool_use]` — security hook overrides
 

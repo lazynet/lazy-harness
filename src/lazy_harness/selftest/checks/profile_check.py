@@ -7,6 +7,38 @@ from lazy_harness.core.config import ConfigError, load_config
 from lazy_harness.selftest.result import CheckResult, CheckStatus
 
 
+def _hook_schema_violations(settings: object) -> list[str]:
+    """Report hook entries Claude Code's settings schema rejects.
+
+    Parsing as JSON is not enough: the agent validates `matcher` as a string and
+    skips the entire file when one entry fails, so a single bad field silently
+    disables every hook in the profile. This cannot be detected from a hook —
+    the failure is exactly what stops hooks from running — so it lives here.
+    """
+    if not isinstance(settings, dict):
+        return []
+    hooks = settings.get("hooks")
+    if not isinstance(hooks, dict):
+        return []
+    violations: list[str] = []
+    for event, entries in hooks.items():
+        if not isinstance(entries, list):
+            violations.append(f"{event}: expected a list of hook entries")
+            continue
+        for index, entry in enumerate(entries):
+            if not isinstance(entry, dict):
+                violations.append(f"{event}[{index}]: expected a table")
+                continue
+            matcher = entry.get("matcher")
+            if matcher is not None and not isinstance(matcher, str):
+                violations.append(
+                    f"{event}[{index}].matcher: expected a string, got {type(matcher).__name__}"
+                )
+            elif matcher is None and "matcher" in entry:
+                violations.append(f"{event}[{index}].matcher: expected a string, got null")
+    return violations
+
+
 def check_profiles(*, config_path: Path) -> list[CheckResult]:
     """Verify each declared profile dir exists, has CLAUDE.md, and valid settings.json."""
     results: list[CheckResult] = []
@@ -57,12 +89,21 @@ def check_profiles(*, config_path: Path) -> list[CheckResult]:
         settings = expanded / "settings.json"
         if settings.is_file():
             try:
-                json.loads(settings.read_text())
+                parsed = json.loads(settings.read_text())
                 results.append(
                     CheckResult(
                         group=group,
                         name=f"{name}:settings-json",
                         status=CheckStatus.PASSED,
+                    )
+                )
+                violations = _hook_schema_violations(parsed)
+                results.append(
+                    CheckResult(
+                        group=group,
+                        name=f"{name}:settings-schema",
+                        status=CheckStatus.FAILED if violations else CheckStatus.PASSED,
+                        message="; ".join(violations),
                     )
                 )
             except json.JSONDecodeError as e:

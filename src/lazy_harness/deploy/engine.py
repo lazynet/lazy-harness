@@ -37,28 +37,103 @@ def deploy_profiles(cfg: Config) -> None:
                 click.echo(f"  ✓ {name}/{item.name}")
 
 
-def _hook_commands(hook_block: dict) -> set[str]:
-    """Collect every command string from an agent hooks block."""
-    commands: set[str] = set()
-    if not isinstance(hook_block, dict):
-        return commands
-    for entries in hook_block.values():
+def _plural(count: int, singular: str, plural: str) -> str:
+    return singular if count == 1 else plural
+
+
+def _entry_commands(entry: dict) -> list[str]:
+    """Command strings carried by a single settings.json hook entry."""
+    hooks = entry.get("hooks")
+    if not isinstance(hooks, list):
+        return []
+    commands: list[str] = []
+    for h in hooks:
+        if isinstance(h, dict):
+            cmd = h.get("command")
+            if isinstance(cmd, str):
+                commands.append(cmd)
+    return commands
+
+
+def _is_harness_owned(command: str) -> bool:
+    """Whether the harness generated this command.
+
+    Every generated command points at a builtin under
+    `lazy_harness/hooks/builtins/`, so the marker survives a change of install
+    prefix or interpreter — matching on the current `sys.executable` would not.
+    """
+    return "lazy_harness/hooks/builtins/" in command.replace("\\", "/")
+
+
+def _normalize_entry(entry: dict) -> tuple[dict, list[str]]:
+    """Coerce a foreign hook entry into the schema Claude Code accepts.
+
+    Returns the repaired entry and a description of each repair. A non-string
+    matcher is the one seen in the wild: an installer writing `null` for "no
+    matcher" makes Claude Code reject the entire settings file, which silently
+    disables every unrelated hook in the profile.
+    """
+    repairs: list[str] = []
+    fixed = dict(entry)
+    matcher = fixed.get("matcher")
+    if matcher is None:
+        fixed["matcher"] = ""
+        repairs.append('matcher: null -> ""')
+    elif not isinstance(matcher, str):
+        fixed["matcher"] = ""
+        repairs.append(f'matcher: {type(matcher).__name__} -> ""')
+    return fixed, repairs
+
+
+def _merge_hook_blocks(
+    existing: object, generated: dict
+) -> tuple[dict, list[tuple[str, str]], list[tuple[str, str, str]]]:
+    """Merge harness-generated hooks over an existing settings.json hooks block.
+
+    Harness-owned entries are replaced by the freshly generated ones; everything
+    else belongs to another tool and is carried through, repaired if its schema
+    would make Claude Code reject the file. Events the harness does not model are
+    passed through untouched rather than dropped.
+
+    Returns the merged block, the preserved entries as `(event, command)`, and
+    the repairs as `(event, description, command)`.
+    """
+    merged: dict = {event: list(entries) for event, entries in generated.items()}
+    preserved: list[tuple[str, str]] = []
+    repaired: list[tuple[str, str, str]] = []
+    if not isinstance(existing, dict):
+        return merged, preserved, repaired
+
+    generated_commands = {
+        cmd
+        for entries in generated.values()
+        for entry in entries
+        if isinstance(entry, dict)
+        for cmd in _entry_commands(entry)
+    }
+
+    for event, entries in existing.items():
         if not isinstance(entries, list):
             continue
         for entry in entries:
             if not isinstance(entry, dict):
                 continue
-            for h in entry.get("hooks", []):
-                if isinstance(h, dict):
-                    cmd = h.get("command")
-                    if isinstance(cmd, str):
-                        commands.add(cmd)
-    return commands
+            commands = _entry_commands(entry)
+            if not commands:
+                continue
+            if all(_is_harness_owned(cmd) for cmd in commands):
+                continue
+            # Already emitted this run — the tool's own installer wrote it and
+            # config declares it too. Keeping both would run the hook twice.
+            if all(cmd in generated_commands for cmd in commands):
+                continue
+            fixed, fixes = _normalize_entry(entry)
+            for fix in fixes:
+                repaired.append((event, fix, commands[0]))
+            merged.setdefault(event, []).append(fixed)
+            preserved.append((event, commands[0]))
 
-
-def _unknown_hook_commands(existing: dict, new: dict) -> list[str]:
-    """Commands present in `existing` but absent from `new`, sorted for stable output."""
-    return sorted(_hook_commands(existing) - _hook_commands(new))
+    return merged, preserved, repaired
 
 
 def deploy_hooks(cfg: Config) -> None:
@@ -86,6 +161,16 @@ def deploy_hooks(cfg: Config) -> None:
                     entries.append(command)
             hook_entries[event_name] = entries
 
+    # Third-party commands declared in config are emitted to every profile, so a
+    # tool's hooks stop depending on which profile its installer happened to run
+    # against. Appended after the harness scripts, including on events whose
+    # scripts list is empty.
+    for event_name, event_cfg in cfg.hooks.items():
+        for ext in event_cfg.external:
+            hook_entries.setdefault(event_name, []).append(
+                HookEntry(command=ext.command, matcher=ext.matcher)
+            )
+
     if not hook_entries:
         click.echo("  No hooks to deploy.")
         return
@@ -106,19 +191,32 @@ def deploy_hooks(cfg: Config) -> None:
             except json.JSONDecodeError:
                 settings = {}
 
-        existing_hooks = settings.get("hooks", {}) if isinstance(settings, dict) else {}
-        unknowns = _unknown_hook_commands(existing_hooks, agent_hooks)
-        if unknowns:
+        if not isinstance(settings, dict):
+            settings = {}
+        existing_hooks = settings.get("hooks", {})
+        merged, preserved, repaired = _merge_hook_blocks(existing_hooks, agent_hooks)
+
+        if repaired:
             backup = settings_file.with_suffix(".json.bak")
             backup.write_text(existing_raw)
             click.echo(
-                f"  ⚠  {name}/settings.json had {len(unknowns)} unknown hook "
-                f"entries; backup saved to {backup.name}."
+                f"  ⚠  {name}/settings.json: repaired {len(repaired)} hook "
+                f"{_plural(len(repaired), 'entry', 'entries')} Claude Code would reject "
+                f"(the whole file is discarded on one bad field); "
+                f"backup saved to {backup.name}."
             )
-            for cmd in unknowns:
-                click.echo(f"      removed: {cmd[:80]}")
+            for event, fix, cmd in repaired:
+                click.echo(f"      {event:<20} {fix}   {cmd[:60]}")
 
-        settings["hooks"] = agent_hooks
+        if preserved:
+            click.echo(
+                f"  ·  {name}/settings.json: preserved {len(preserved)} hook "
+                f"{_plural(len(preserved), 'entry', 'entries')} not managed by the harness."
+            )
+            for event, cmd in preserved:
+                click.echo(f"      {event:<20} {cmd[:60]}")
+
+        settings["hooks"] = merged
         settings_file.write_text(json.dumps(settings, indent=2) + "\n")
         click.echo(f"  ✓ {name}/settings.json (hooks updated)")
 

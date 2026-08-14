@@ -48,6 +48,8 @@ scripts = ["post-compact"]
 | `pre_tool_use` | `PreToolUse` | Before each tool call | `pre-tool-use-security`, `pre-tool-use-memory-size`, `pre-tool-use-read-size` | Block destructive / exfiltration commands, warn before MEMORY.md exceeds the 200-line or 12KB ceiling, warn before an unbounded read of a large file |
 | `post_tool_use` | `PostToolUse` | After each tool call | `post-tool-use-format`, `post-tool-use-sync-claude` | Auto-format edited files, regenerate segmented `CLAUDE.md` after profile edits |
 | `notification` | `Notification` | Ad-hoc agent notifications | — | Desktop notifications, integrations |
+| `user_prompt_submit` | `UserPromptSubmit` | When the user submits a prompt | — | Third-party integrations |
+| `permission_request` | `PermissionRequest` | When the agent asks for a permission decision | — | Third-party integrations, approval routing |
 
 The mapping lives in `ClaudeCodeAdapter.generate_hook_config` — other agents may expose different event names, but the `config.toml` side is stable.
 
