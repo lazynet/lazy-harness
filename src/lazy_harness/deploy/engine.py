@@ -150,7 +150,7 @@ def deploy_hooks(cfg: Config) -> None:
     for event_name, script_names in effective.items():
         if not script_names:
             continue
-        hooks = resolve_script_names(script_names)
+        hooks = resolve_script_names(script_names, event=event_name)
         if hooks:
             entries: list[str | HookEntry] = []
             for hook in hooks:

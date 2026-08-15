@@ -407,7 +407,7 @@ If `engram` is not on `PATH`, the run logs `engram binary not on PATH; skipping 
 - `~/.claude/logs/engram_persist.log` — append-only error log (subprocess failures, missing binary).
 - `~/.claude/logs/engram_persist_metrics.jsonl` — one JSONL record per run (run summary) plus one record per slow `engram save` (≥ 500 ms). The `lh doctor` "engram-persist" feature row reads this file via `monitoring/engram_persist_health.py` to classify state as `ok` / `warn` / `fail` based on last-run age, recent failure rate, and cursor lag.
 
-### `herdr-context-gauge` — runs on `Stop`
+### `herdr-context-gauge` — runs on `Stop`, `SessionStart`, `SessionEnd`, `PostToolUse`
 
 Publishes the session's live context size onto its [Herdr](https://herdr.dev) pane, so an
 orchestrator driving that pane can see how large the window has grown.
@@ -435,12 +435,56 @@ the orchestrator already reads this field in `herdr agent list` output when it h
 worker. A rule in a prompt has to be recalled; a verb attached to the datum does not.
 
 Publishing uses a dedicated `lh:ctx` metadata source, so it never collides with the
-`herdr:claude` integration that owns lifecycle reporting. The metadata is display-only and
-is cleared with `herdr pane report-metadata <pane> --source lh:ctx --clear-display-agent`.
+`herdr:claude` integration that owns lifecycle reporting.
+
+Pane metadata is persistent and panes outlive the sessions inside them, so publishing
+alone is not enough: a dead session's window would stay on display until something else
+overwrote it, and the next session started in that pane would inherit a number that
+describes its predecessor. The hook therefore retracts as well as publishes:
+
+| Event | Behaviour |
+|---|---|
+| `Stop` | publish the current window |
+| `SessionStart` | publish if the transcript already holds a window (a `resume`), otherwise clear |
+| `SessionEnd` | clear, whatever the transcript says |
+| `PostToolUse` | publish, at most once per `THROTTLE_SECS` (60s) |
+
+Retraction issues `herdr pane report-metadata <pane> --source lh:ctx
+--clear-display-agent`, naming the same source that published. A pane killed outright
+never fires `SessionEnd`, so its label survives until the next session starts there and
+clears it.
+
+`Stop` alone gives the gauge a resolution of one turn, which is the wrong resolution for
+what it measures: a turn that spends half an hour on hundreds of tool calls grows the
+window the whole time and reports nothing until it ends. A worker can cross the rotate
+threshold mid-turn and the orchestrator only learns once the cost is already paid.
+
+`PostToolUse` closes that gap by sampling inside the turn. Because it fires on *every*
+tool call, two things keep it cheap:
+
+- **A time throttle.** At most one publish per `THROTTLE_SECS` (60s) per pane, recorded
+  in a stamp file under the system temp dir keyed by pane id. Panes throttle
+  independently. A stamp that is unreadable, corrupt, or dated in the future fails
+  *open* — publishing once too often costs a subprocess, while failing closed would
+  freeze the pane for the rest of the session.
+- **The throttle precedes the transcript read.** The skipped path does no I/O beyond
+  stat-ing the stamp, which matters when the alternative is parsing a multi-megabyte
+  JSONL on every tool call.
+
+`Stop`, `SessionStart` and `SessionEnd` ignore the throttle: end-of-turn is the
+authoritative reading and the lifecycle events must never be suppressed by a mid-turn
+sample. Each of them also refreshes the stamp, so a publish never immediately follows
+another.
+
+The hook is registered with a per-event matcher — `*` on `PostToolUse`, the event default
+elsewhere. The `Edit|Write` default that `PostToolUse` applies to other built-ins would be
+wrong here: the tools that actually grow a context window are `Read`, `Bash`, `Grep` and
+`Task`.
 
 The hook is fail-soft and a no-op outside Herdr: a missing `HERDR_ENV=1`, an absent
-`HERDR_PANE_ID`, an unreadable transcript, a `herdr` binary that is not installed, or a
-publish that times out all exit 0.
+`HERDR_PANE_ID`, a `herdr` binary that is not installed, or a publish that times out all
+exit 0. An unreadable transcript is not an error — it is the ordinary state at startup,
+and it clears the gauge.
 
 ## How the hooks complement each other
 

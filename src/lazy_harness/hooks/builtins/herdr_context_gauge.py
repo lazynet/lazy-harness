@@ -1,4 +1,4 @@
-"""Stop hook — publish this session's context usage onto its Herdr pane.
+"""Publish this session's context usage onto its Herdr pane.
 
 An orchestrator driving workers through `herdr agent prompt` has no way to see
 that a reused worker's window has grown: `herdr agent get` reports lifecycle
@@ -6,6 +6,11 @@ state, never context. Without that signal it keeps prompting the same agent and
 every turn re-reads a larger window. This hook supplies the missing datum as
 pane metadata, so it surfaces in the `herdr agent list` output the orchestrator
 already reads at harvest time.
+
+Panes outlive the sessions inside them and pane metadata is persistent, so
+publishing alone leaves a dead session's window on display indefinitely. The
+hook therefore runs on three events: `Stop` publishes, `SessionEnd` retracts,
+and `SessionStart` retracts unless the session resumed a real window.
 
 Fail-soft: every error path exits 0, because a gauge must never take down the
 turn it is measuring.
@@ -15,8 +20,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
+import tempfile
+import time
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -26,6 +34,7 @@ WARN_TOKENS = 200_000
 ROTATE_TOKENS = 400_000
 PUBLISH_TIMEOUT_SECS = 5
 METADATA_SOURCE = "lh:ctx"
+THROTTLE_SECS = 60.0
 
 _USAGE_INPUT_KEYS = (
     "input_tokens",
@@ -88,17 +97,43 @@ def gauge_label(tokens: int) -> str:
     return f"🟢 {size}"
 
 
+def _metadata_command(pane_id: str, *tail: str) -> list[str]:
+    return ["herdr", "pane", "report-metadata", pane_id, "--source", METADATA_SOURCE, *tail]
+
+
 def publish_command(pane_id: str, label: str) -> list[str]:
-    return [
-        "herdr",
-        "pane",
-        "report-metadata",
-        pane_id,
-        "--source",
-        METADATA_SOURCE,
-        "--display-agent",
-        label,
-    ]
+    return _metadata_command(pane_id, "--display-agent", label)
+
+
+def clear_command(pane_id: str) -> list[str]:
+    """Retract the gauge, naming the source that published it."""
+    return _metadata_command(pane_id, "--clear-display-agent")
+
+
+def stamp_path(pane_id: str) -> Path:
+    """Where this pane records when it last published."""
+    safe = re.sub(r"[^A-Za-z0-9_-]", "_", pane_id)
+    return Path(tempfile.gettempdir()) / f"lh-ctx-gauge-{safe}.stamp"
+
+
+def throttled(stamp: Path, now: float) -> bool:
+    """True when a publish already happened inside the current window.
+
+    Fails open on anything unreadable: publishing once too often costs a
+    subprocess, while failing closed would freeze the pane for the session.
+    """
+    try:
+        last = float(stamp.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return 0 <= now - last < THROTTLE_SECS
+
+
+def _record_publish(stamp: Path, now: float) -> None:
+    try:
+        stamp.write_text(str(now), encoding="utf-8")
+    except OSError:
+        pass
 
 
 def _read_stdin_json() -> dict[str, object]:
@@ -115,6 +150,11 @@ def _read_stdin_json() -> dict[str, object]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _tokens_of(payload: dict[str, object]) -> int | None:
+    transcript = transcript_from_payload(payload)
+    return None if transcript is None else context_tokens(transcript)
+
+
 def main() -> None:
     if os.environ.get("HERDR_ENV") != "1":
         sys.exit(0)
@@ -122,16 +162,25 @@ def main() -> None:
     if not pane_id:
         sys.exit(0)
 
-    transcript = transcript_from_payload(_read_stdin_json())
-    if transcript is None:
+    payload = _read_stdin_json()
+    event = payload.get("hook_event_name")
+    now = time.time()
+    stamp = stamp_path(pane_id)
+
+    # Mid-turn samples are throttled; the lifecycle events are not. Bail before
+    # reading the transcript — this path runs on every single tool call.
+    if event == "PostToolUse" and throttled(stamp, now):
         sys.exit(0)
-    tokens = context_tokens(transcript)
-    if tokens is None:
-        sys.exit(0)
+
+    tokens = None if event == "SessionEnd" else _tokens_of(payload)
+    command = (
+        clear_command(pane_id) if tokens is None else publish_command(pane_id, gauge_label(tokens))
+    )
+    _record_publish(stamp, now)
 
     try:
         subprocess.run(
-            publish_command(pane_id, gauge_label(tokens)),
+            command,
             check=False,
             capture_output=True,
             text=True,
