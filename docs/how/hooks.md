@@ -453,6 +453,11 @@ Retraction issues `herdr pane report-metadata <pane> --source lh:ctx
 never fires `SessionEnd`, so its label survives until the next session starts there and
 clears it.
 
+The gauge's resolution is one turn, not one tool call: `Stop` fires when a turn ends, so
+a turn that spends half an hour on hundreds of tool calls publishes nothing until it
+finishes. That is the interval the `SessionStart` clear exists to cover — during a long
+opening turn the pane shows no gauge, rather than the previous session's.
+
 The hook is fail-soft and a no-op outside Herdr: a missing `HERDR_ENV=1`, an absent
 `HERDR_PANE_ID`, a `herdr` binary that is not installed, or a publish that times out all
 exit 0. An unreadable transcript is not an error — it is the ordinary state at startup,
