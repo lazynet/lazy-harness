@@ -20,8 +20,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
+import tempfile
+import time
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -31,6 +34,7 @@ WARN_TOKENS = 200_000
 ROTATE_TOKENS = 400_000
 PUBLISH_TIMEOUT_SECS = 5
 METADATA_SOURCE = "lh:ctx"
+THROTTLE_SECS = 60.0
 
 _USAGE_INPUT_KEYS = (
     "input_tokens",
@@ -106,6 +110,32 @@ def clear_command(pane_id: str) -> list[str]:
     return _metadata_command(pane_id, "--clear-display-agent")
 
 
+def stamp_path(pane_id: str) -> Path:
+    """Where this pane records when it last published."""
+    safe = re.sub(r"[^A-Za-z0-9_-]", "_", pane_id)
+    return Path(tempfile.gettempdir()) / f"lh-ctx-gauge-{safe}.stamp"
+
+
+def throttled(stamp: Path, now: float) -> bool:
+    """True when a publish already happened inside the current window.
+
+    Fails open on anything unreadable: publishing once too often costs a
+    subprocess, while failing closed would freeze the pane for the session.
+    """
+    try:
+        last = float(stamp.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return 0 <= now - last < THROTTLE_SECS
+
+
+def _record_publish(stamp: Path, now: float) -> None:
+    try:
+        stamp.write_text(str(now), encoding="utf-8")
+    except OSError:
+        pass
+
+
 def _read_stdin_json() -> dict[str, object]:
     try:
         data = sys.stdin.read()
@@ -133,10 +163,20 @@ def main() -> None:
         sys.exit(0)
 
     payload = _read_stdin_json()
-    tokens = None if payload.get("hook_event_name") == "SessionEnd" else _tokens_of(payload)
+    event = payload.get("hook_event_name")
+    now = time.time()
+    stamp = stamp_path(pane_id)
+
+    # Mid-turn samples are throttled; the lifecycle events are not. Bail before
+    # reading the transcript — this path runs on every single tool call.
+    if event == "PostToolUse" and throttled(stamp, now):
+        sys.exit(0)
+
+    tokens = None if event == "SessionEnd" else _tokens_of(payload)
     command = (
         clear_command(pane_id) if tokens is None else publish_command(pane_id, gauge_label(tokens))
     )
+    _record_publish(stamp, now)
 
     try:
         subprocess.run(

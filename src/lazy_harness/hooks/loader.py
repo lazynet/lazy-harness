@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -16,10 +17,20 @@ class BuiltinHookSpec:
     `matcher` is an optional per-hook matcher override consumed by the agent
     adapter when generating native hook config (e.g. settings.json). Unset =
     the agent's event-level default applies.
+
+    A plain string applies to every event the hook is wired to. A mapping keyed
+    by `config.toml` event name lets one hook carry different matchers per
+    event, which a hook wired to both tool and lifecycle events needs: `*` is
+    correct for PostToolUse and meaningless on Stop.
     """
 
     module: str
-    matcher: str | None = None
+    matcher: str | Mapping[str, str] | None = None
+
+    def matcher_for(self, event: str | None) -> str | None:
+        if isinstance(self.matcher, Mapping):
+            return self.matcher.get(event) if event else None
+        return self.matcher
 
 
 @dataclass
@@ -35,7 +46,8 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
     "context-inject": BuiltinHookSpec(module="lazy_harness.hooks.builtins.context_inject"),
     "engram-persist": BuiltinHookSpec(module="lazy_harness.hooks.builtins.engram_persist"),
     "herdr-context-gauge": BuiltinHookSpec(
-        module="lazy_harness.hooks.builtins.herdr_context_gauge"
+        module="lazy_harness.hooks.builtins.herdr_context_gauge",
+        matcher={"post_tool_use": "*"},
     ),
     "post-compact": BuiltinHookSpec(module="lazy_harness.hooks.builtins.post_compact"),
     "post-tool-use-ansible-lint": BuiltinHookSpec(
@@ -70,7 +82,7 @@ def list_builtin_hooks() -> list[str]:
     return list(_BUILTIN_HOOKS.keys())
 
 
-def _find_builtin(name: str) -> HookInfo | None:
+def _find_builtin(name: str, event: str | None = None) -> HookInfo | None:
     spec = _BUILTIN_HOOKS.get(name)
     if spec is None:
         return None
@@ -80,7 +92,7 @@ def _find_builtin(name: str) -> HookInfo | None:
         name=name,
         path=base,
         is_builtin=True,
-        matcher=spec.matcher,
+        matcher=spec.matcher_for(event),
     )
 
 
@@ -94,15 +106,19 @@ def _find_user_hook(name: str, user_hooks_dir: Path | None = None) -> HookInfo |
     return None
 
 
-def resolve_hook(name: str, user_hooks_dir: Path | None = None) -> HookInfo | None:
-    return _find_builtin(name) or _find_user_hook(name, user_hooks_dir)
+def resolve_hook(
+    name: str, user_hooks_dir: Path | None = None, event: str | None = None
+) -> HookInfo | None:
+    return _find_builtin(name, event) or _find_user_hook(name, user_hooks_dir)
 
 
-def resolve_script_names(names: list[str], user_hooks_dir: Path | None = None) -> list[HookInfo]:
+def resolve_script_names(
+    names: list[str], user_hooks_dir: Path | None = None, event: str | None = None
+) -> list[HookInfo]:
     """Resolve a list of hook names to HookInfo records, skipping unresolvable."""
     hooks: list[HookInfo] = []
     for script_name in names:
-        hook = resolve_hook(script_name, user_hooks_dir)
+        hook = resolve_hook(script_name, user_hooks_dir, event)
         if hook:
             hooks.append(hook)
     return hooks
@@ -114,4 +130,4 @@ def resolve_hooks_for_event(
     event_cfg = cfg.hooks.get(event)
     if not event_cfg:
         return []
-    return resolve_script_names(event_cfg.scripts, user_hooks_dir)
+    return resolve_script_names(event_cfg.scripts, user_hooks_dir, event)

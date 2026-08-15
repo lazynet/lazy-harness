@@ -12,6 +12,15 @@ import pytest
 from lazy_harness.hooks.builtins import herdr_context_gauge as gauge
 
 
+@pytest.fixture(autouse=True)
+def _isolated_stamp_dir(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep throttle stamps out of the real temp dir and out of each other's way."""
+    stamps = tmp_path_factory.mktemp("gauge-stamps")
+    monkeypatch.setattr(gauge.tempfile, "gettempdir", lambda: str(stamps))
+
+
 def _assistant(
     *, input_tokens: int = 0, cache_read: int = 0, cache_creation: int = 0
 ) -> dict[str, object]:
@@ -148,12 +157,61 @@ def test_clear_command_wipes_the_display_agent_under_the_same_source() -> None:
     ]
 
 
+def test_stamp_path_is_scoped_to_the_pane() -> None:
+    """Two panes throttle independently, so the stamp cannot be shared."""
+    assert gauge.stamp_path("wN:p1") != gauge.stamp_path("wP:p1")
+
+
+def test_stamp_path_sanitises_the_pane_id_into_a_filename() -> None:
+    """Herdr pane ids carry a colon, which has no business in a path segment."""
+    stamp = gauge.stamp_path("wN:p1")
+
+    assert ":" not in stamp.name
+    assert "wN" in stamp.name and "p1" in stamp.name
+
+
+def test_throttled_is_false_when_nothing_was_ever_published(tmp_path: Path) -> None:
+    assert gauge.throttled(tmp_path / "absent.stamp", now=1_000.0) is False
+
+
+def test_throttled_is_true_inside_the_window(tmp_path: Path) -> None:
+    stamp = tmp_path / "s.stamp"
+    stamp.write_text("1000.0", encoding="utf-8")
+
+    assert gauge.throttled(stamp, now=1_000.0 + gauge.THROTTLE_SECS - 1) is True
+
+
+def test_throttled_is_false_once_the_window_elapses(tmp_path: Path) -> None:
+    stamp = tmp_path / "s.stamp"
+    stamp.write_text("1000.0", encoding="utf-8")
+
+    assert gauge.throttled(stamp, now=1_000.0 + gauge.THROTTLE_SECS) is False
+
+
+def test_throttled_is_false_when_the_stamp_is_unreadable(tmp_path: Path) -> None:
+    """A corrupt stamp must fail open — publishing once too often beats a pane
+    that silently stops updating for the rest of the session."""
+    stamp = tmp_path / "s.stamp"
+    stamp.write_text("not a float", encoding="utf-8")
+
+    assert gauge.throttled(stamp, now=1_000.0) is False
+
+
+def test_throttled_ignores_a_stamp_dated_in_the_future(tmp_path: Path) -> None:
+    """A clock change must not wedge the gauge shut until the future catches up."""
+    stamp = tmp_path / "s.stamp"
+    stamp.write_text("9000.0", encoding="utf-8")
+
+    assert gauge.throttled(stamp, now=1_000.0) is False
+
+
 def _run_main(
     monkeypatch: pytest.MonkeyPatch,
     payload: dict[str, object],
     *,
     env: dict[str, str],
     runner: object,
+    now: float = 1_000.0,
 ) -> None:
     monkeypatch.delenv("HERDR_ENV", raising=False)
     monkeypatch.delenv("HERDR_PANE_ID", raising=False)
@@ -161,6 +219,7 @@ def _run_main(
         monkeypatch.setenv(key, value)
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
     monkeypatch.setattr(gauge.subprocess, "run", runner)
+    monkeypatch.setattr(gauge.time, "time", lambda: now)
     with pytest.raises(SystemExit) as exc:
         gauge.main()
     assert exc.value.code == 0
@@ -315,6 +374,150 @@ def test_main_clears_the_gauge_when_the_session_ends(
     )
 
     assert calls == [gauge.clear_command("wS:p16")]
+
+
+def test_main_publishes_on_post_tool_use_when_nothing_was_published_yet(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Context grows inside a turn, and Stop only fires between turns. Without a
+    mid-turn source a long turn publishes nothing at all."""
+    transcript = _write_transcript(tmp_path / "s.jsonl", [_assistant(cache_read=340_000)])
+    calls, runner = _recorder()
+
+    _run_main(
+        monkeypatch,
+        {"hook_event_name": "PostToolUse", "transcript_path": str(transcript)},
+        env={"HERDR_ENV": "1", "HERDR_PANE_ID": "wS:p16"},
+        runner=runner,
+    )
+
+    assert calls == [gauge.publish_command("wS:p16", "🟡 340k")]
+
+
+def test_main_skips_post_tool_use_inside_the_throttle_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transcript = _write_transcript(tmp_path / "s.jsonl", [_assistant(cache_read=340_000)])
+    calls, runner = _recorder()
+    payload = {"hook_event_name": "PostToolUse", "transcript_path": str(transcript)}
+    env = {"HERDR_ENV": "1", "HERDR_PANE_ID": "wS:p16"}
+
+    _run_main(monkeypatch, payload, env=env, runner=runner, now=1_000.0)
+    _run_main(monkeypatch, payload, env=env, runner=runner, now=1_000.0 + 1)
+
+    assert calls == [gauge.publish_command("wS:p16", "🟡 340k")]
+
+
+def test_main_publishes_again_on_post_tool_use_once_the_window_elapses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transcript = _write_transcript(tmp_path / "s.jsonl", [_assistant(cache_read=340_000)])
+    calls, runner = _recorder()
+    payload = {"hook_event_name": "PostToolUse", "transcript_path": str(transcript)}
+    env = {"HERDR_ENV": "1", "HERDR_PANE_ID": "wS:p16"}
+
+    _run_main(monkeypatch, payload, env=env, runner=runner, now=1_000.0)
+    _run_main(monkeypatch, payload, env=env, runner=runner, now=1_000.0 + gauge.THROTTLE_SECS)
+
+    assert len(calls) == 2
+
+
+def test_main_does_not_read_the_transcript_when_throttled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The throttle has to precede the transcript read, not follow it. This hook
+    runs on every tool call, so the skipped path must do no work at all."""
+    transcript = _write_transcript(tmp_path / "s.jsonl", [_assistant(cache_read=340_000)])
+    calls, runner = _recorder()
+    payload = {"hook_event_name": "PostToolUse", "transcript_path": str(transcript)}
+    env = {"HERDR_ENV": "1", "HERDR_PANE_ID": "wS:p16"}
+
+    _run_main(monkeypatch, payload, env=env, runner=runner, now=1_000.0)
+
+    def explode(path: Path) -> None:
+        raise AssertionError("transcript read on the throttled path")
+
+    monkeypatch.setattr(gauge, "context_tokens", explode)
+    _run_main(monkeypatch, payload, env=env, runner=runner, now=1_000.0 + 1)
+
+    assert len(calls) == 1
+
+
+def test_main_publishes_on_stop_even_inside_the_throttle_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End of turn is the authoritative reading; a mid-turn sample must never
+    suppress it, or the pane keeps a stale number until the next turn."""
+    transcript = _write_transcript(tmp_path / "s.jsonl", [_assistant(cache_read=340_000)])
+    calls, runner = _recorder()
+    env = {"HERDR_ENV": "1", "HERDR_PANE_ID": "wS:p16"}
+
+    _run_main(
+        monkeypatch,
+        {"hook_event_name": "PostToolUse", "transcript_path": str(transcript)},
+        env=env,
+        runner=runner,
+        now=1_000.0,
+    )
+    _run_main(
+        monkeypatch,
+        {"hook_event_name": "Stop", "transcript_path": str(transcript)},
+        env=env,
+        runner=runner,
+        now=1_000.0 + 1,
+    )
+
+    assert len(calls) == 2
+
+
+def test_main_clears_on_session_end_even_inside_the_throttle_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transcript = _write_transcript(tmp_path / "s.jsonl", [_assistant(cache_read=340_000)])
+    calls, runner = _recorder()
+    env = {"HERDR_ENV": "1", "HERDR_PANE_ID": "wS:p16"}
+
+    _run_main(
+        monkeypatch,
+        {"hook_event_name": "PostToolUse", "transcript_path": str(transcript)},
+        env=env,
+        runner=runner,
+        now=1_000.0,
+    )
+    _run_main(
+        monkeypatch,
+        {"hook_event_name": "SessionEnd", "transcript_path": str(transcript)},
+        env=env,
+        runner=runner,
+        now=1_000.0 + 1,
+    )
+
+    assert calls[-1] == gauge.clear_command("wS:p16")
+
+
+def test_main_throttles_each_pane_independently(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transcript = _write_transcript(tmp_path / "s.jsonl", [_assistant(cache_read=340_000)])
+    calls, runner = _recorder()
+    payload = {"hook_event_name": "PostToolUse", "transcript_path": str(transcript)}
+
+    _run_main(
+        monkeypatch,
+        payload,
+        env={"HERDR_ENV": "1", "HERDR_PANE_ID": "wS:p16"},
+        runner=runner,
+        now=1_000.0,
+    )
+    _run_main(
+        monkeypatch,
+        payload,
+        env={"HERDR_ENV": "1", "HERDR_PANE_ID": "wS:p17"},
+        runner=runner,
+        now=1_000.0 + 1,
+    )
+
+    assert len(calls) == 2
 
 
 def test_main_is_a_no_op_on_session_end_outside_herdr(

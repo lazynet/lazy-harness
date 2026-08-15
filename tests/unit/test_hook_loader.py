@@ -254,3 +254,120 @@ def test_herdr_context_gauge_hook_is_registered_without_a_matcher() -> None:
     assert info.matcher is None
     assert info.path.name == "herdr_context_gauge.py"
     assert info.path.is_file()
+
+
+def test_resolve_hook_picks_the_matcher_for_the_requested_event(monkeypatch) -> None:
+    """A hook wired to several events needs a matcher per event: `*` is right
+    for PostToolUse and meaningless on Stop."""
+    from lazy_harness.hooks import loader
+    from lazy_harness.hooks.loader import BuiltinHookSpec, resolve_hook
+
+    monkeypatch.setitem(
+        loader._BUILTIN_HOOKS,
+        "test-hook-per-event",
+        BuiltinHookSpec(
+            module="lazy_harness.hooks.builtins.pre_tool_use_security",
+            matcher={"post_tool_use": "*"},
+        ),
+    )
+
+    info = resolve_hook("test-hook-per-event", event="post_tool_use")
+    assert info is not None
+    assert info.matcher == "*"
+
+
+def test_resolve_hook_falls_back_to_no_matcher_for_unlisted_events(monkeypatch) -> None:
+    """An event the mapping does not name takes the event's own default."""
+    from lazy_harness.hooks import loader
+    from lazy_harness.hooks.loader import BuiltinHookSpec, resolve_hook
+
+    monkeypatch.setitem(
+        loader._BUILTIN_HOOKS,
+        "test-hook-per-event",
+        BuiltinHookSpec(
+            module="lazy_harness.hooks.builtins.pre_tool_use_security",
+            matcher={"post_tool_use": "*"},
+        ),
+    )
+
+    info = resolve_hook("test-hook-per-event", event="session_stop")
+    assert info is not None
+    assert info.matcher is None
+
+
+def test_a_plain_string_matcher_still_applies_to_every_event() -> None:
+    from lazy_harness.hooks.loader import resolve_hook
+
+    info = resolve_hook("pre-tool-use-memory-size", event="pre_tool_use")
+    assert info is not None
+    assert info.matcher == "Edit|Write"
+
+
+def test_herdr_context_gauge_matches_every_tool_on_post_tool_use() -> None:
+    """The tools that grow a context window are Read, Bash, Grep and Task — the
+    `Edit|Write` default for PostToolUse would sample almost none of them."""
+    from lazy_harness.hooks.loader import resolve_hook
+
+    info = resolve_hook("herdr-context-gauge", event="post_tool_use")
+    assert info is not None
+    assert info.matcher == "*"
+
+
+def test_herdr_context_gauge_carries_no_matcher_on_lifecycle_events() -> None:
+    from lazy_harness.hooks.loader import resolve_hook
+
+    for event in ("session_stop", "session_start", "session_end"):
+        info = resolve_hook("herdr-context-gauge", event=event)
+        assert info is not None
+        assert info.matcher is None, event
+
+
+def test_generated_settings_carry_the_per_event_matcher_end_to_end() -> None:
+    """Resolution and generation are separate steps; a matcher that survives one
+    and not the other still ships a broken settings.json."""
+    from lazy_harness.agents.base import HookEntry
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+    from lazy_harness.hooks.loader import resolve_script_names
+
+    entries: dict[str, list[str | HookEntry]] = {}
+    for event in ("session_stop", "post_tool_use"):
+        resolved = []
+        for hook in resolve_script_names(["herdr-context-gauge"], event=event):
+            command = f"python {hook.path}"
+            resolved.append(
+                HookEntry(command=command, matcher=hook.matcher)
+                if hook.matcher is not None
+                else command
+            )
+        entries[event] = resolved
+
+    generated = ClaudeCodeAdapter().generate_hook_config(entries)
+
+    assert generated["PostToolUse"][0]["matcher"] == "*"
+    assert generated["Stop"][0]["matcher"] == ""
+
+
+def test_generated_settings_never_carry_a_null_matcher() -> None:
+    """A null matcher makes Claude Code reject the whole settings file, taking
+    every other hook down with it."""
+    from lazy_harness.agents.base import HookEntry
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+    from lazy_harness.hooks.loader import list_builtin_hooks, resolve_script_names
+
+    entries: dict[str, list[str | HookEntry]] = {}
+    for event in ("session_start", "session_stop", "session_end", "post_tool_use"):
+        resolved = []
+        for hook in resolve_script_names(list_builtin_hooks(), event=event):
+            command = f"python {hook.path}"
+            resolved.append(
+                HookEntry(command=command, matcher=hook.matcher)
+                if hook.matcher is not None
+                else command
+            )
+        entries[event] = resolved
+
+    generated = ClaudeCodeAdapter().generate_hook_config(entries)
+
+    for cc_event, groups in generated.items():
+        for group in groups:
+            assert isinstance(group["matcher"], str), f"{cc_event} carries a non-string matcher"
