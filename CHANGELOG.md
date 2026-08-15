@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.37.0](https://github.com/lazynet/lazy-harness/compare/v0.36.1...v0.37.0) (2026-08-15)
+
+
+### Documentation
+
+* restore the features omitted from the 0.36.1 changelog ([#156](https://github.com/lazynet/lazy-harness/issues/156)) ([b243aaa](https://github.com/lazynet/lazy-harness/commit/b243aaac6f49cde5491d76c1e11f3f41ec888c15))
+
 ## [0.36.1](https://github.com/lazynet/lazy-harness/compare/v0.36.0...v0.36.1) (2026-08-15)
 
 
