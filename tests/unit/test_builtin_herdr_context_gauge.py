@@ -1,4 +1,4 @@
-"""Unit tests for the `herdr-context-gauge` Stop hook."""
+"""Unit tests for the `herdr-context-gauge` hook."""
 
 from __future__ import annotations
 
@@ -132,6 +132,22 @@ def test_publish_command_targets_the_pane_under_a_dedicated_source() -> None:
     ]
 
 
+def test_clear_command_wipes_the_display_agent_under_the_same_source() -> None:
+    """Clearing has to name the same --source that published, or Herdr keeps
+    the stale label under the original owner."""
+    cmd = gauge.clear_command("wS:p16")
+
+    assert cmd == [
+        "herdr",
+        "pane",
+        "report-metadata",
+        "wS:p16",
+        "--source",
+        "lh:ctx",
+        "--clear-display-agent",
+    ]
+
+
 def _run_main(
     monkeypatch: pytest.MonkeyPatch,
     payload: dict[str, object],
@@ -176,9 +192,7 @@ def test_main_publishes_the_gauge_for_a_pane_inside_herdr(
     assert calls == [gauge.publish_command("wS:p16", "🔴 673k rotar")]
 
 
-def test_main_is_a_no_op_outside_herdr(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_main_is_a_no_op_outside_herdr(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     transcript = _write_transcript(tmp_path / "s.jsonl", [_assistant(cache_read=673_400)])
     calls, runner = _recorder()
 
@@ -208,9 +222,11 @@ def test_main_is_a_no_op_without_a_pane_to_publish_onto(
     assert calls == []
 
 
-def test_main_is_a_no_op_when_the_transcript_records_no_usage(
+def test_main_clears_the_gauge_when_the_transcript_records_no_usage(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """No datum means no gauge. Leaving the previous label up would attribute
+    another session's window to this one."""
     transcript = _write_transcript(tmp_path / "s.jsonl", [{"type": "user"}])
     calls, runner = _recorder()
 
@@ -218,6 +234,101 @@ def test_main_is_a_no_op_when_the_transcript_records_no_usage(
         monkeypatch,
         {"transcript_path": str(transcript)},
         env={"HERDR_ENV": "1", "HERDR_PANE_ID": "wS:p16"},
+        runner=runner,
+    )
+
+    assert calls == [gauge.clear_command("wS:p16")]
+
+
+def test_main_clears_the_gauge_when_the_payload_carries_no_transcript(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls, runner = _recorder()
+
+    _run_main(
+        monkeypatch,
+        {},
+        env={"HERDR_ENV": "1", "HERDR_PANE_ID": "wS:p16"},
+        runner=runner,
+    )
+
+    assert calls == [gauge.clear_command("wS:p16")]
+
+
+def test_main_clears_the_gauge_when_a_fresh_session_starts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Panes outlive the sessions inside them. A startup whose transcript does
+    not exist yet must wipe the label the previous session left behind, rather
+    than let it stand until the first Stop."""
+    calls, runner = _recorder()
+
+    _run_main(
+        monkeypatch,
+        {
+            "hook_event_name": "SessionStart",
+            "source": "startup",
+            "transcript_path": str(tmp_path / "not-written-yet.jsonl"),
+        },
+        env={"HERDR_ENV": "1", "HERDR_PANE_ID": "wS:p16"},
+        runner=runner,
+    )
+
+    assert calls == [gauge.clear_command("wS:p16")]
+
+
+def test_main_republishes_the_window_when_a_session_resumes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A resume inherits a real window, so the gauge is known before the first
+    Stop and there is no reason to blank it."""
+    transcript = _write_transcript(tmp_path / "s.jsonl", [_assistant(cache_read=229_000)])
+    calls, runner = _recorder()
+
+    _run_main(
+        monkeypatch,
+        {
+            "hook_event_name": "SessionStart",
+            "source": "resume",
+            "transcript_path": str(transcript),
+        },
+        env={"HERDR_ENV": "1", "HERDR_PANE_ID": "wS:p16"},
+        runner=runner,
+    )
+
+    assert calls == [gauge.publish_command("wS:p16", "🟡 229k")]
+
+
+def test_main_clears_the_gauge_when_the_session_ends(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The window dies with the session; the pane does not. Without this the
+    label survives into whatever runs in the pane next."""
+    transcript = _write_transcript(tmp_path / "s.jsonl", [_assistant(cache_read=673_400)])
+    calls, runner = _recorder()
+
+    _run_main(
+        monkeypatch,
+        {"hook_event_name": "SessionEnd", "transcript_path": str(transcript)},
+        env={"HERDR_ENV": "1", "HERDR_PANE_ID": "wS:p16"},
+        runner=runner,
+    )
+
+    assert calls == [gauge.clear_command("wS:p16")]
+
+
+def test_main_is_a_no_op_on_session_end_outside_herdr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The environment guards precede the event dispatch, so a teardown outside
+    Herdr still shells out to nothing."""
+    transcript = _write_transcript(tmp_path / "s.jsonl", [_assistant(cache_read=673_400)])
+    calls, runner = _recorder()
+
+    _run_main(
+        monkeypatch,
+        {"hook_event_name": "SessionEnd", "transcript_path": str(transcript)},
+        env={"HERDR_PANE_ID": "wS:p16"},
         runner=runner,
     )
 
@@ -242,9 +353,7 @@ def test_main_exits_zero_when_the_herdr_binary_is_absent(
     )
 
 
-def test_main_exits_zero_when_herdr_hangs(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_main_exits_zero_when_herdr_hangs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     transcript = _write_transcript(tmp_path / "s.jsonl", [_assistant(cache_read=673_400)])
 
     def stall(cmd: list[str], **kwargs: object) -> None:

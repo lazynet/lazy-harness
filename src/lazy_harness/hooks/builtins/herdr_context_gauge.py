@@ -1,4 +1,4 @@
-"""Stop hook — publish this session's context usage onto its Herdr pane.
+"""Publish this session's context usage onto its Herdr pane.
 
 An orchestrator driving workers through `herdr agent prompt` has no way to see
 that a reused worker's window has grown: `herdr agent get` reports lifecycle
@@ -6,6 +6,11 @@ state, never context. Without that signal it keeps prompting the same agent and
 every turn re-reads a larger window. This hook supplies the missing datum as
 pane metadata, so it surfaces in the `herdr agent list` output the orchestrator
 already reads at harvest time.
+
+Panes outlive the sessions inside them and pane metadata is persistent, so
+publishing alone leaves a dead session's window on display indefinitely. The
+hook therefore runs on three events: `Stop` publishes, `SessionEnd` retracts,
+and `SessionStart` retracts unless the session resumed a real window.
 
 Fail-soft: every error path exits 0, because a gauge must never take down the
 turn it is measuring.
@@ -88,17 +93,17 @@ def gauge_label(tokens: int) -> str:
     return f"🟢 {size}"
 
 
+def _metadata_command(pane_id: str, *tail: str) -> list[str]:
+    return ["herdr", "pane", "report-metadata", pane_id, "--source", METADATA_SOURCE, *tail]
+
+
 def publish_command(pane_id: str, label: str) -> list[str]:
-    return [
-        "herdr",
-        "pane",
-        "report-metadata",
-        pane_id,
-        "--source",
-        METADATA_SOURCE,
-        "--display-agent",
-        label,
-    ]
+    return _metadata_command(pane_id, "--display-agent", label)
+
+
+def clear_command(pane_id: str) -> list[str]:
+    """Retract the gauge, naming the source that published it."""
+    return _metadata_command(pane_id, "--clear-display-agent")
 
 
 def _read_stdin_json() -> dict[str, object]:
@@ -115,6 +120,11 @@ def _read_stdin_json() -> dict[str, object]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _tokens_of(payload: dict[str, object]) -> int | None:
+    transcript = transcript_from_payload(payload)
+    return None if transcript is None else context_tokens(transcript)
+
+
 def main() -> None:
     if os.environ.get("HERDR_ENV") != "1":
         sys.exit(0)
@@ -122,16 +132,15 @@ def main() -> None:
     if not pane_id:
         sys.exit(0)
 
-    transcript = transcript_from_payload(_read_stdin_json())
-    if transcript is None:
-        sys.exit(0)
-    tokens = context_tokens(transcript)
-    if tokens is None:
-        sys.exit(0)
+    payload = _read_stdin_json()
+    tokens = None if payload.get("hook_event_name") == "SessionEnd" else _tokens_of(payload)
+    command = (
+        clear_command(pane_id) if tokens is None else publish_command(pane_id, gauge_label(tokens))
+    )
 
     try:
         subprocess.run(
-            publish_command(pane_id, gauge_label(tokens)),
+            command,
             check=False,
             capture_output=True,
             text=True,

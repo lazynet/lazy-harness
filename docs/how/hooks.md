@@ -407,7 +407,7 @@ If `engram` is not on `PATH`, the run logs `engram binary not on PATH; skipping 
 - `~/.claude/logs/engram_persist.log` — append-only error log (subprocess failures, missing binary).
 - `~/.claude/logs/engram_persist_metrics.jsonl` — one JSONL record per run (run summary) plus one record per slow `engram save` (≥ 500 ms). The `lh doctor` "engram-persist" feature row reads this file via `monitoring/engram_persist_health.py` to classify state as `ok` / `warn` / `fail` based on last-run age, recent failure rate, and cursor lag.
 
-### `herdr-context-gauge` — runs on `Stop`
+### `herdr-context-gauge` — runs on `Stop`, `SessionStart`, `SessionEnd`
 
 Publishes the session's live context size onto its [Herdr](https://herdr.dev) pane, so an
 orchestrator driving that pane can see how large the window has grown.
@@ -435,12 +435,28 @@ the orchestrator already reads this field in `herdr agent list` output when it h
 worker. A rule in a prompt has to be recalled; a verb attached to the datum does not.
 
 Publishing uses a dedicated `lh:ctx` metadata source, so it never collides with the
-`herdr:claude` integration that owns lifecycle reporting. The metadata is display-only and
-is cleared with `herdr pane report-metadata <pane> --source lh:ctx --clear-display-agent`.
+`herdr:claude` integration that owns lifecycle reporting.
+
+Pane metadata is persistent and panes outlive the sessions inside them, so publishing
+alone is not enough: a dead session's window would stay on display until something else
+overwrote it, and the next session started in that pane would inherit a number that
+describes its predecessor. The hook therefore retracts as well as publishes:
+
+| Event | Behaviour |
+|---|---|
+| `Stop` | publish the current window |
+| `SessionStart` | publish if the transcript already holds a window (a `resume`), otherwise clear |
+| `SessionEnd` | clear, whatever the transcript says |
+
+Retraction issues `herdr pane report-metadata <pane> --source lh:ctx
+--clear-display-agent`, naming the same source that published. A pane killed outright
+never fires `SessionEnd`, so its label survives until the next session starts there and
+clears it.
 
 The hook is fail-soft and a no-op outside Herdr: a missing `HERDR_ENV=1`, an absent
-`HERDR_PANE_ID`, an unreadable transcript, a `herdr` binary that is not installed, or a
-publish that times out all exit 0.
+`HERDR_PANE_ID`, a `herdr` binary that is not installed, or a publish that times out all
+exit 0. An unreadable transcript is not an error — it is the ordinary state at startup,
+and it clears the gauge.
 
 ## How the hooks complement each other
 
