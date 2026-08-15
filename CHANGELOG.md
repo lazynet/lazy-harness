@@ -3,6 +3,12 @@
 ## [0.36.1](https://github.com/lazynet/lazy-harness/compare/v0.36.0...v0.36.1) (2026-08-15)
 
 
+### Features
+
+* sample the herdr context gauge mid-turn on `PostToolUse`, throttled per pane ([#154](https://github.com/lazynet/lazy-harness/issues/154)) ([6d9d662](https://github.com/lazynet/lazy-harness/commit/6d9d6626f9496cb5375f054ebbc554d3031b69b3))
+* accept per-event matchers in the builtin hook registry ([#154](https://github.com/lazynet/lazy-harness/issues/154)) ([6d9d662](https://github.com/lazynet/lazy-harness/commit/6d9d6626f9496cb5375f054ebbc554d3031b69b3))
+
+
 ### Bug Fixes
 
 * give the herdr context gauge a lifecycle and a mid-turn sample ([#154](https://github.com/lazynet/lazy-harness/issues/154)) ([6d9d662](https://github.com/lazynet/lazy-harness/commit/6d9d6626f9496cb5375f054ebbc554d3031b69b3))
