@@ -511,7 +511,7 @@ Mechanics:
 
 **Output:** none. The hook only records to the store, it does not emit `hookSpecificOutput`.
 
-**Where it writes:** `<CLAUDE_DATA_DIR>/metrics.db` (SQLite database) — specifically the `loop_events` table. Nothing is written for trivial prompts.
+**Where it writes:** the `loop_events` table in `metrics.db`, stored at the path returned by `data_dir()` — which resolves `LH_DATA_DIR` environment variable, falls back to `$XDG_DATA_HOME/lazy-harness`, and defaults to `~/.local/share/lazy-harness`. Nothing is written for trivial prompts.
 
 ## How the hooks complement each other
 
