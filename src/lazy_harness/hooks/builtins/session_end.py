@@ -19,6 +19,26 @@ import sys
 from pathlib import Path
 
 
+def _loop_db_path() -> Path:
+    from lazy_harness.core.paths import data_dir
+
+    return data_dir() / "metrics.db"
+
+
+def _record_session_closed(payload: object) -> None:
+    """Never raises: the compound-loop enqueue below must run regardless."""
+    try:
+        session = payload.get("session_id") if isinstance(payload, dict) else None
+        from lazy_harness.monitoring.db import MetricsDB
+
+        MetricsDB(_loop_db_path()).record_loop_event(
+            session=session if isinstance(session, str) else "",
+            kind="session_closed",
+        )
+    except Exception:
+        pass
+
+
 def main() -> None:
     payload: object = None
     try:
@@ -26,6 +46,13 @@ def main() -> None:
     except (json.JSONDecodeError, EOFError, ValueError):
         pass
 
+    _record_session_closed(payload)
+
+    _enqueue_compound_loop(payload)
+    sys.exit(0)
+
+
+def _enqueue_compound_loop(payload: object) -> None:
     try:
         from lazy_harness.agents.registry import get_agent
         from lazy_harness.core.config import Config, ConfigError, load_config
