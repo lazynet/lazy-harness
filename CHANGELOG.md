@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.38.1](https://github.com/lazynet/lazy-harness/compare/v0.38.0...v0.38.1) (2026-08-16)
+
+
+### Bug Fixes
+
+* canonicalise loop-event attribution and verify it against the shipped hooks ([#163](https://github.com/lazynet/lazy-harness/issues/163)) ([5157a87](https://github.com/lazynet/lazy-harness/commit/5157a8703b4fb40084110392013b89228b1487b6))
+
+
+### Documentation
+
+* add verification gates drained from the loop-engineering session ([#161](https://github.com/lazynet/lazy-harness/issues/161)) ([de3c518](https://github.com/lazynet/lazy-harness/commit/de3c51829bbc48da9977ff3d71cf0c645624221b))
+
 ## [0.38.0](https://github.com/lazynet/lazy-harness/compare/v0.37.0...v0.38.0) (2026-08-16)
 
 
