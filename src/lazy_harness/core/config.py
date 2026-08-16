@@ -511,9 +511,10 @@ def load_config(path: Path) -> Config:
         )
 
     loops_raw = raw.get("loops", {})
-    cfg.loops = LoopsConfig(
-        inject_goal_prompt=loops_raw.get("inject_goal_prompt", False),
-    )
+    if isinstance(loops_raw, dict):
+        cfg.loops = LoopsConfig(
+            inject_goal_prompt=loops_raw.get("inject_goal_prompt", False),
+        )
 
     return cfg
 
