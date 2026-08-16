@@ -9,7 +9,10 @@ Fail-soft: every path exits 0. A hook that raises takes down the chain.
 
 from __future__ import annotations
 
+import json
 import re
+import sys
+from pathlib import Path
 
 _ACTION_VERBS = frozenset(
     {
@@ -65,3 +68,51 @@ def is_non_trivial(prompt: str) -> bool:
         return False
     words = {word.strip(".,;:!?¿¡\"'()").lower() for word in text.split()}
     return bool(words & _ACTION_VERBS)
+
+
+def _read_stdin_json() -> dict[str, object]:
+    try:
+        data = sys.stdin.read()
+    except (OSError, ValueError):
+        return {}
+    if not data.strip():
+        return {}
+    try:
+        parsed = json.loads(data)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _db_path() -> Path:
+    from lazy_harness.core.paths import data_dir
+
+    return data_dir() / "metrics.db"
+
+
+def main() -> None:
+    try:
+        payload = _read_stdin_json()
+        prompt = payload.get("prompt")
+        if not isinstance(prompt, str) or not is_non_trivial(prompt):
+            sys.exit(0)
+
+        session = payload.get("session_id")
+        cwd = payload.get("cwd")
+        from lazy_harness.monitoring.db import MetricsDB
+
+        MetricsDB(_db_path()).record_loop_event(
+            session=session if isinstance(session, str) else "",
+            kind="goal_absent",
+            project=cwd if isinstance(cwd, str) else "",
+        )
+    except Exception:
+        # A hook must degrade, never crash the chain: any failure here (bad
+        # payload shape, an unwritable metrics store) is swallowed so the
+        # session continues uninterrupted.
+        pass
+    sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()
