@@ -80,6 +80,80 @@ def test_records_nontrivial_prompt_for_non_trivial_work(
     assert MetricsDB(db_path).loop_event_counts() == {"nontrivial_prompt": 1}
 
 
+def _recorded(db_path: Path) -> list[tuple[str, str]]:
+    """(kind, project) per row — `loop_event_counts` groups the column away."""
+    import sqlite3
+
+    with sqlite3.connect(db_path) as conn:
+        return conn.execute("SELECT kind, project FROM loop_events").fetchall()
+
+
+def test_records_the_repo_root_when_launched_from_an_artifact_subdirectory(
+    monkeypatch, tmp_path: Path, capsys, git_checkout
+) -> None:
+    """The cwd is not the project: `<repo>/graphify-out` is still `<repo>`.
+
+    Recording the raw cwd split one repo's events across two keys, and no
+    test saw it because every assertion went through `loop_event_counts`,
+    which groups by kind and discards `project` entirely.
+    """
+    from lazy_harness.hooks.builtins import user_prompt_goal as mod
+
+    db_path = tmp_path / "m.db"
+    monkeypatch.setattr(mod, "_db_path", lambda: db_path)
+
+    _run(
+        monkeypatch,
+        {
+            "session_id": "s1",
+            "prompt": "implementá el hook y agregá el test",
+            "cwd": str(git_checkout.subdir),
+        },
+        capsys,
+    )
+
+    assert _recorded(db_path) == [("nontrivial_prompt", str(git_checkout.repo))]
+
+
+def test_records_the_main_repo_when_launched_from_a_worktree(
+    monkeypatch, tmp_path: Path, capsys, git_checkout
+) -> None:
+    from lazy_harness.hooks.builtins import user_prompt_goal as mod
+
+    db_path = tmp_path / "m.db"
+    monkeypatch.setattr(mod, "_db_path", lambda: db_path)
+
+    _run(
+        monkeypatch,
+        {
+            "session_id": "s1",
+            "prompt": "implementá el hook y agregá el test",
+            "cwd": str(git_checkout.worktree),
+        },
+        capsys,
+    )
+
+    assert _recorded(db_path) == [("nontrivial_prompt", str(git_checkout.repo.resolve()))]
+
+
+def test_records_an_empty_project_when_the_payload_omits_cwd(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    """A missing cwd must not resolve against the hook's own process cwd."""
+    from lazy_harness.hooks.builtins import user_prompt_goal as mod
+
+    db_path = tmp_path / "m.db"
+    monkeypatch.setattr(mod, "_db_path", lambda: db_path)
+
+    _run(
+        monkeypatch,
+        {"session_id": "s1", "prompt": "implementá el hook y agregá el test"},
+        capsys,
+    )
+
+    assert _recorded(db_path) == [("nontrivial_prompt", "")]
+
+
 def test_records_nothing_for_a_trivial_prompt(monkeypatch, tmp_path: Path, capsys) -> None:
     from lazy_harness.hooks.builtins import user_prompt_goal as mod
     from lazy_harness.monitoring.db import MetricsDB

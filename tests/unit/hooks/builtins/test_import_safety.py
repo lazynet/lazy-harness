@@ -25,7 +25,15 @@ GUARDED_HOOKS = [
     "pre_compact",
     "session_end",
     "session_export",
+    "user_prompt_goal",
 ]
+
+# Payload that drives each hook past its early exits and into the imports the
+# guard has to cover. A hook fed `{}` may return before importing anything,
+# which would make this suite pass without exercising the guard at all.
+_PAYLOADS = {
+    "user_prompt_goal": '{"session_id": "s1", "prompt": "fix db.py", "cwd": "."}',
+}
 
 
 @pytest.mark.parametrize("hook_name", GUARDED_HOOKS)
@@ -43,7 +51,7 @@ def test_hook_exits_zero_when_lazy_harness_not_importable(tmp_path: Path, hook_n
 
     result = subprocess.run(
         [sys.executable, str(BUILTINS_DIR / f"{hook_name}.py")],
-        input="{}",
+        input=_PAYLOADS.get(hook_name, "{}"),
         capture_output=True,
         text=True,
         env=env,

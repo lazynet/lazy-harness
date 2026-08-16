@@ -244,3 +244,43 @@ def test_resolve_memory_dir_matches_the_project_dir_outside_a_worktree(tmp_path:
     assert resolve_memory_dir(
         {}, agent_dir=agent_dir, sessions_subdir="projects", cwd=plain
     ) == resolve_project_dir({}, agent_dir=agent_dir, sessions_subdir="projects", cwd=plain)
+
+
+def test_project_key_collapses_a_subdirectory_onto_the_repo_root(tmp_path: Path) -> None:
+    """An artifact subdirectory must not become its own project.
+
+    Running the agent from `<repo>/graphify-out` recorded that path verbatim,
+    splitting one repo's events across two keys nothing joins back together.
+    """
+    from lazy_harness.hooks.builtins._shared import project_key
+
+    repo, _ = _init_repo_with_worktree(tmp_path)
+    artifacts = repo / "graphify-out"
+    artifacts.mkdir()
+
+    assert project_key(artifacts) == str(repo)
+
+
+def test_project_key_collapses_a_worktree_onto_the_main_repo(tmp_path: Path) -> None:
+    from lazy_harness.hooks.builtins._shared import project_key
+
+    repo, worktree = _init_repo_with_worktree(tmp_path)
+
+    assert project_key(worktree) == str(repo.resolve())
+
+
+def test_project_key_returns_the_repo_root_unchanged(tmp_path: Path) -> None:
+    from lazy_harness.hooks.builtins._shared import project_key
+
+    repo, _ = _init_repo_with_worktree(tmp_path)
+
+    assert project_key(repo) == str(repo)
+
+
+def test_project_key_falls_back_to_cwd_outside_a_repo(tmp_path: Path) -> None:
+    from lazy_harness.hooks.builtins._shared import project_key
+
+    plain = tmp_path / "not-a-repo"
+    plain.mkdir()
+
+    assert project_key(plain) == str(plain)

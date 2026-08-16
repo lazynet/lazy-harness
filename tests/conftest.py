@@ -2,9 +2,50 @@
 
 from __future__ import annotations
 
+import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+
+
+@dataclass(frozen=True)
+class GitCheckout:
+    """A real repo with the two shapes that fragment a naive project key.
+
+    `subdir` stands in for a build- or tool-artifact directory the agent may
+    be launched from; `worktree` is a linked worktree. Both must resolve back
+    to `repo`.
+    """
+
+    repo: Path
+    subdir: Path
+    worktree: Path
+
+
+@pytest.fixture
+def git_checkout(tmp_path: Path) -> GitCheckout:
+    """Real git repo plus an artifact subdirectory and a linked worktree."""
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    base = ["git", "-c", "user.email=t@t", "-c", "user.name=t"]
+    subprocess.run([*base, "init", "-q"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        [*base, "commit", "-q", "--allow-empty", "-m", "init"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    subdir = repo / "graphify-out"
+    subdir.mkdir()
+    worktree = repo / ".worktrees" / "feat"
+    subprocess.run(
+        [*base, "worktree", "add", "-q", str(worktree), "-b", "feat"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    return GitCheckout(repo=repo, subdir=subdir, worktree=worktree)
 
 
 @pytest.fixture

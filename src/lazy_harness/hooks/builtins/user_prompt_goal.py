@@ -128,12 +128,13 @@ def main() -> None:
 
         session = payload.get("session_id")
         cwd = payload.get("cwd")
+        from lazy_harness.hooks.builtins._shared import project_key
         from lazy_harness.monitoring.db import MetricsDB
 
         MetricsDB(_db_path()).record_loop_event(
             session=session if isinstance(session, str) else "",
             kind="nontrivial_prompt",
-            project=cwd if isinstance(cwd, str) else "",
+            project=project_key(Path(cwd)) if isinstance(cwd, str) and cwd else "",
         )
 
         if _injection_enabled():

@@ -120,6 +120,19 @@ def _main_repo_root(cwd: Path) -> Path | None:
     return None
 
 
+def project_key(cwd: Path) -> str:
+    """Canonical project identity for `cwd`: the repo that owns it.
+
+    Artifact subdirectories and linked worktrees both collapse onto the main
+    checkout, so events raised from `<repo>/graphify-out` or
+    `<repo>/.worktrees/<name>` group under `<repo>` instead of fragmenting
+    into keys nothing joins back together. Outside a repo the cwd stands in
+    for itself.
+    """
+    root = _main_repo_root(cwd)
+    return str(root if root is not None else cwd)
+
+
 def resolve_memory_dir(
     payload: object, *, agent_dir: Path, sessions_subdir: str, cwd: Path
 ) -> Path:
