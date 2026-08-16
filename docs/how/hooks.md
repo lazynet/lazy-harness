@@ -486,6 +486,26 @@ The hook is fail-soft and a no-op outside Herdr: a missing `HERDR_ENV=1`, an abs
 exit 0. An unreadable transcript is not an error — it is the ordinary state at startup,
 and it clears the gauge.
 
+### `user-prompt-goal` — runs on `UserPromptSubmit`
+
+Source: `src/lazy_harness/hooks/builtins/user_prompt_goal.py`.
+
+Responsibility: record whether the user's submitted prompt declares a goal. Ships as a sensor collecting baseline data, not yet injecting goals back. The hook measures prompts heuristically by scanning for action verbs and weighing against prompt length; it records `goal_absent` for non-trivial work (where a user goal should ideally be explicit) and records nothing for trivial prompts.
+
+Mechanics:
+
+1. Read the user's submitted prompt from stdin JSON (field `prompt` or `user_prompt`).
+2. Classify the prompt:
+   - **Trivial**: empty, whitespace-only, very short (≤ 15 chars), or lacks action verbs entirely.
+   - **Non-trivial**: contains one of the predefined action verbs (e.g., `fix`, `implement`, `add`, `refactor`, `migrate`) or names a file path.
+3. For non-trivial prompts, append `{"goal_absent": true, "timestamp": ...}` to `<memory_dir>/loop_events.jsonl`.
+4. For trivial prompts, record nothing.
+5. Always exit 0, even on malformed input or write failures. This is a fail-soft sensor.
+
+Action verbs monitored (English + Spanish): `fix`, `implement`, `add`, `refactor`, `migrate`, `build`, `create`, `move`, `remove`, `rename`, `wire`, `arreglá`, `arregla`, `implementá`, `implementa`, `agregá`, `agrega`, `refactorizá`, `cambiá`, `cambia`, `cableá`, `cablea`, `hacé`, `hace`, `escribí`, `escribe`, `migrá`, `sacá`, `saca`.
+
+**Where it writes:** `<memory_dir>/loop_events.jsonl` — append-only event stream. Nothing is written for trivial prompts.
+
 ## How the hooks complement each other
 
 The magic is the composition, not any single hook. A full session lifecycle:
