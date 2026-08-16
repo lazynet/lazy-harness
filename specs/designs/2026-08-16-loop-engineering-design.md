@@ -145,19 +145,40 @@ Roughly 40 lines covering the five commands the pattern actually uses — pane s
 
 Two procedural rules the observed session got right and that a naive implementation misses: send the **evidence** inside the requirement rather than only the conclusion, and advance the independent half while waiting instead of blocking on the delegate.
 
+A third non-guessable item belongs with the other two: the rotation `/clear` must be sent without `--wait`, or the CLI reports `agent_prompt_stalled` for a call that behaved correctly. All three share a shape — the CLI does not fail, it returns an error that describes something else.
+
 The upstream `herdr` skill stays installed and is invoked only when unusual CLI syntax is genuinely needed.
+
+#### Isolation and return of work
+
+Two shapes of delegation, distinguished by whether the delegate writes:
+
+**Read delegation** — answer a question, analyse, report. No worktree, no branch. The main clone of the target repository is fine because nothing is written. Output is text the caller consumes.
+
+**Write delegation** — produce changes in the target repository. One worktree per delegation, created with `herdr worktree create --branch <type>/<slug> --no-focus --json`, matching what `/herd` already does. This is not ceremony: the target repository's main clone routinely holds the user's own uncommitted work, and a delegate writing into it corrupts both sides silently.
+
+The return policy is inherited from `/herd` unchanged: **the delegate commits, and does not push and does not merge.** It reports branch, worktree path, and a one-line summary of what it did. Branches and worktrees are left in place — cleanup is manual precisely so that unmerged work is never discarded by automation.
+
+Cross-repository delegation adds no merge path of its own. The repositories are separate; there is nothing to merge back toward the caller. Whatever integration the branch needs happens inside the target repository, under that repository's own governance, on the user's initiative.
 
 #### Pane lifecycle
 
-One pane per task. A delegate pane is closed when its task completes; a new task opens a new pane rather than re-prompting the existing one. Re-use accumulates two things, not one: context tokens, and the prior task's framing. Fresh context per unit of work is the canonical loop shape.
+Context accumulates across prompts to the same agent — `agent prompt` does not reset the delegate between briefs. The policy is inherited from `/herd` rather than reinvented:
 
-The cost is real — agent startup defaults to a 30-second timeout, paid per delegation instead of once. Accepted: a delegate carrying three tasks' worth of context answers the third one worse than a cold one would.
+- **Next task shares worktree and cwd** → rotate with `/clear`. Pane, agent name, cwd and worktree survive; only the accumulated context goes.
+- **Next task shares neither** → close the pane and dispatch a fresh one. This is the common case cross-repo, where consecutive delegations are unrelated.
+
+The rotation `/clear` is sent **without `--wait`**. It produces no lifecycle change within the five-second window, so `--wait` returns `agent_prompt_stalled` rather than waiting — an error that reads like a failure when nothing failed.
+
+Rotation exists to avoid paying agent startup (a 30-second default timeout) for work that could reuse a live worktree. It does not weaken the rule it serves: a delegate carrying three tasks' worth of context answers the third one worse than a cold one would, so context is cleared at every boundary either way.
 
 **Ownership.** The upstream skill forbids closing panes the session did not create. Cleanup is therefore scoped to panes this session opened, never to every open pane — unrelated user panes routinely share the workspace. This requires a registry: `loop_events` records `delegate_pane_opened` with the pane ID in `detail`, and `delegate_pane_closed` on teardown. Open-minus-closed for the current session is the set eligible for cleanup.
 
 **Liveness.** A pane is closed only in `idle` or `done`. In `working` or `blocked` it is left alone and reported. `unknown` is explicitly not a completion signal — the upstream skill states it "does not prove completion" — so it is treated as live, not as finished.
 
 **Session teardown.** `session_end.py` already fires exactly once on shutdown and exits 0 on every path. It gains a step that closes this session's eligible panes and reports anything left running rather than forcing it.
+
+Closing a pane never touches its worktree or branch. Teardown reclaims terminal real estate; it does not decide the fate of work. The final report lists every worktree path and branch produced during the session so nothing is lost by being invisible.
 
 **Orphans.** `SessionEnd` does not run when a session dies abnormally, so registered panes can outlive their owner. Before opening a new delegation, panes registered to sessions no longer alive are closed. This keeps the accumulation the one-pane-per-task rule exists to prevent from returning through the failure path.
 
@@ -209,6 +230,8 @@ The same applies per trigger in phase 4: the multi-repository signal and the con
 | Cleanup closes a pane the user owns | Only panes registered as opened by this session are eligible; the registry is the authority, never the workspace listing |
 | Cleanup closes a delegate mid-task | Close requires `idle` or `done`; `working`, `blocked` and `unknown` are all treated as live |
 | Abnormal session death leaves orphan panes | Panes registered to dead sessions are swept before the next delegation opens |
+| Pane cleanup discards unmerged delegate work | Worktrees and branches are never removed by cleanup; only the pane closes. Worktree removal stays manual, as in `/herd` |
+| A write delegate corrupts the user's uncommitted work in the target repo | Write delegations always get their own worktree; only read delegations run against the main clone |
 
 ## Sequencing
 
