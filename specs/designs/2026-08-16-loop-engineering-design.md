@@ -12,6 +12,7 @@ Three symptoms, all observed rather than hypothesised:
 1. **Sessions stop before the work is actually done.** A successful edit is treated as a completed task. The repo's own `CLAUDE.md` already carries a verification-gate list built from repeated failures of exactly this kind, but it is a per-repo reminder, not a mechanism.
 2. **Recurring work is re-prompted by hand.** Vault maintenance, proposal drainage, PR babysitting, and coherence audits are all well-defined recurring streams that are triggered manually each time.
 3. **The outer loop does not close.** `compound_loop.py` writes `claude-md` proposals every session, but nothing drains them. At the time of writing, 23 proposals are pending, the oldest three days old. The loop that is supposed to make the harness learn is the loop that is stalled.
+4. **Cross-repository delegation is invented from scratch every time.** When a session needs work from a sibling repository before it can continue, the pattern — open a pane, start an agent there, keep working on the independent half, wake on completion — has to be described by hand each time. Nothing suggests it, and the topology it needs does not match the one command that exists.
 
 ## Evidence
 
@@ -46,6 +47,8 @@ Verified against the installed Claude Code (2.1.232) and the deployed profile:
 - `/loop` and `/schedule` ship as skills; `CronCreate` is available as a tool.
 - `UserPromptSubmit` carries no first-party hook in the deployed profile — the injection point for phase 1 is free.
 - `monitoring/db.py` provides SQLite with an established idempotent-migration pattern, but `session_stats` is token/cost oriented. Adoption measurement needs a new table.
+- `herdr_context_gauge.py` exposes `context_tokens(transcript) -> int | None`, already used to publish a live per-pane context reading. Phase 4 reuses this function rather than building a second sensor.
+- The `/herd` command (162 lines) plus the upstream `herdr` skill it invokes (195 lines) load 357 lines of context whenever parallel work is considered. Actual usage in the observed session was five CLI commands.
 
 The consequence for scope: **most of the mechanism already exists.** This is a wiring-and-discipline problem, not a construction problem.
 
@@ -54,6 +57,8 @@ The consequence for scope: **most of the mechanism already exists.** This is a w
 - Reimplementing `/goal`. A durable `goal.json` artifact was considered and rejected: it duplicates a native primitive for portability that is not needed today.
 - Hard-blocking session close. Phase 1 ships soft enforcement and escalates only on measured data (see kill criteria).
 - LLM-based prompt classification. The `UserPromptSubmit` hook runs on every prompt and must stay deterministic and cheap.
+- Automatic *invocation* of Herdr. Phase 4 makes the harness suggest delegation; the user still triggers it. The upstream skill's self-suppressing description is respected, not forked.
+- Changing `/herd`. Phase 4 adds a second, differently-shaped pattern beside it.
 - Growing `CLAUDE.md` by more than ~15 lines. The file is already near 200 lines; context rot degrades agent quality past roughly 60% window utilisation, so doctrine belongs in skills and hooks, not in always-loaded text.
 
 ## Design
@@ -117,9 +122,45 @@ Two rules from the sources apply without exception:
 
 The existing backlog is drained manually, highest index first, before the cadence rule is enabled.
 
+### Phase 4 — Cross-repository delegation
+
+#### Why this is not the existing command
+
+`/herd` fans a written plan out to N workers in worktrees of the **same** repository, and its output is commits. Cross-repository delegation is a different topology: one agent in a **different** repository, an asynchronous dependency that blocks the caller halfway, and an output the caller needs in order to continue. The caller keeps working on the independent half rather than orchestrating.
+
+They share a CLI and nothing else. Phase 4 adds a second pattern; it does not modify `/herd`.
+
+#### Reversal of a prior decision
+
+The 2026-08-06 herd orchestration design recorded `Trigger → Manual slash command. No automatic invocation.`, reasoning that because the trigger was manual, the upstream skill's self-suppressing description did not matter and no `CLAUDE.md` nudge was needed.
+
+Phase 4 reverses that decision on the strength of ten days' usage: the pattern proved valuable and recurring, but it never fires unless described by hand. The reversal is scoped — automatic **suggestion**, never automatic invocation. The agent proposes; the user still triggers.
+
+#### Skill `delegate-cross-repo`
+
+Roughly 40 lines covering the five commands the pattern actually uses — pane split, agent start, agent prompt, background monitor, pane read — plus the two things that are not guessable:
+
+- **`pane read` blocks against an alternate screen.** When a larger `--lines` reveals nothing more, rows have left the alternate screen and cannot be recovered from scrollback. Fall back to asking the delegate to write its full response to a file and reply with only the path. Do not request file output in the initial prompt.
+- **Cross-check before closing.** Staged or uncommitted work in the target repository can silently contradict the design the caller just produced. Check for it explicitly rather than assuming the delegate's answer is the whole story.
+
+Two procedural rules the observed session got right and that a naive implementation misses: send the **evidence** inside the requirement rather than only the conclusion, and advance the independent half while waiting instead of blocking on the delegate.
+
+The upstream `herdr` skill stays installed and is invoked only when unusual CLI syntax is genuinely needed.
+
+#### Triggers
+
+Both are evaluated in the same deterministic pass already performed by `user_prompt_goal.py`. Neither fires unless `HERDR_ENV=1`.
+
+1. **Multi-repository signal.** The prompt names a known repository other than the working directory's, or references absolute paths outside it. The known-repository set is enumerated once and cached.
+2. **Context above threshold.** Reuses `context_tokens()` from `herdr_context_gauge.py`. Default threshold is 60% of the effective window — the point at which the harness-engineering literature reports context rot degrading agent quality. Configurable.
+
+Trigger 2 fires at most once per session and only when separable work is actually present; a high context reading with nothing to split off is a reason to compact, not to delegate. Suggesting delegation on context alone would be noise.
+
+Enforcement matches phase 1: soft, once per session, recorded either way. New `loop_events` kinds: `delegate_suggested`, `delegate_accepted`, `delegate_declined`.
+
 ## `CLAUDE.md` delta
 
-At most ~15 lines: a table mapping work shape to loop primitive, and the goal-driven rule. Everything else lives in skills and hooks, where it costs no context until invoked.
+At most ~20 lines: a table mapping work shape to loop primitive — including which of `/herd` and cross-repo delegation fits which topology — and the goal-driven rule. Everything else lives in skills and hooks, where it costs no context until invoked.
 
 ## Success criteria
 
@@ -129,9 +170,16 @@ Measured from `loop_events`, four weeks after phase 1 ships:
 - Verification runs in **>80%** of sessions that declared a goal.
 - Injection signal-to-noise **>50%** — the fraction of injections on prompts that genuinely were non-trivial work.
 
+For phase 4, measured separately:
+
+- Delegation suggestions accepted **>40%** (`delegate_accepted` over `delegate_suggested`). Below that the trigger is guessing.
+- Context loaded for a delegation drops from 357 lines to under 60.
+
 ## Kill criteria
 
 Binding, per proposal #15. If at four weeks adoption is zero, or signal-to-noise is below 50%, the `UserPromptSubmit` injection is **removed** rather than supplemented with additional triggers. The `verify-before-done` skill survives independently; it has value with or without the hook.
+
+The same applies per trigger in phase 4: the multi-repository signal and the context-threshold signal are measured and killed independently. One failing does not condemn the other, and neither is rescued by adding a third.
 
 ## Risks
 
@@ -141,7 +189,12 @@ Binding, per proposal #15. If at four weeks adoption is zero, or signal-to-noise
 | Soft block turns into a nag that gets ignored | Fires once per session, never twice; escalation to hard block requires data, not intuition |
 | Phases ship as one large change and none lands | Each phase is independently shippable and independently valuable; phase 1's skill works alone |
 | The evaluator subagent adds cost per session | Cheapest capable model, invoked once at verification time, not per turn |
+| The thin delegation skill drifts from the upstream CLI | It documents the pattern and its two gotchas, not the CLI surface; the upstream skill remains the syntax authority and is invoked when needed |
+| Delegation suggestions fire outside Herdr and read as broken | Both triggers gate on `HERDR_ENV=1` before evaluating anything |
+| Context-threshold trigger nags without anything to delegate | Fires once per session, and only when separable work is present |
 
 ## Sequencing
 
-Phase 0 → phase 3 (manual drainage, no code) can run in parallel → phase 1 → measure four weeks → phase 2. Phase 1 does not begin until phase 0 has a baseline.
+Phase 0 → phase 3 (manual drainage, no code) can run in parallel → phase 1 → phase 4 → measure four weeks → phase 2. Phase 1 does not begin until phase 0 has a baseline.
+
+Phase 4 follows phase 1 rather than running beside it because it extends the same hook and the same soft-enforcement path. Its skill, however, is independent and can ship first if the delegation pattern is needed before the hook exists.
