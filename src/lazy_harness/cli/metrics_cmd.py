@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import click
@@ -151,5 +152,40 @@ def metrics_status() -> None:
                 f"[bold]{name}[/bold]  pending: {stats['pending']}  "
                 f"sending: {stats['sending']}  sent: {stats['sent']}"
             )
+    finally:
+        db.close()
+
+
+@metrics.command("loops")
+@click.option("--days", type=int, default=None, help="Only count events from the last N days.")
+@click.option("--db", "db_override", type=click.Path(path_type=Path), default=None)
+def metrics_loops(days: int | None, db_override: Path | None) -> None:
+    """Report per-kind loop-event counts."""
+    console = Console()
+
+    if db_override is not None:
+        db_path = db_override
+    else:
+        try:
+            cfg = load_config(config_file())
+        except ConfigError:
+            cfg = None
+        configured = cfg.monitoring.db if cfg and cfg.monitoring.db else None
+        db_path = expand_path(configured) if configured else data_dir() / "metrics.db"
+
+    since = None if days is None else time.time() - days * 86400
+    db = MetricsDB(db_path)
+    try:
+        counts = db.loop_event_counts(since_ts=since)
+
+        if counts:
+            for kind in sorted(counts):
+                console.print(f"{kind:<20} {counts[kind]}")
+            console.print()
+
+        # No hook in this branch ever emits `goal_declared` — computing a rate
+        # from it would be structurally 0% forever, indistinguishable from a
+        # true zero. Say so instead of printing a fake percentage.
+        console.print("declaration rate: not available — no declaration sensor exists yet")
     finally:
         db.close()

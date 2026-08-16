@@ -371,3 +371,21 @@ def test_generated_settings_never_carry_a_null_matcher() -> None:
     for cc_event, groups in generated.items():
         for group in groups:
             assert isinstance(group["matcher"], str), f"{cc_event} carries a non-string matcher"
+
+
+def test_user_prompt_goal_is_registered_as_builtin() -> None:
+    from lazy_harness.hooks.loader import _BUILTIN_HOOKS
+
+    assert "user-prompt-goal" in _BUILTIN_HOOKS
+    spec = _BUILTIN_HOOKS["user-prompt-goal"]
+    assert spec.module == "lazy_harness.hooks.builtins.user_prompt_goal"
+
+
+def test_user_prompt_goal_resolves_to_concrete_file() -> None:
+    from lazy_harness.hooks.loader import resolve_hook
+
+    info = resolve_hook("user-prompt-goal")
+    assert info is not None
+    assert info.is_builtin is True
+    assert info.path.name == "user_prompt_goal.py"
+    assert info.path.is_file()

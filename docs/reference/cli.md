@@ -220,6 +220,24 @@ When `sqlite_local` is the only configured sink — the default — the command 
 
 Mechanics — sinks, outbox, drain policy, idempotency: [how the metrics ingest pipeline works](../how/metrics-ingest.md#the-sink-layer).
 
+### `lh metrics loops`
+
+Reports counts from the `loop_events` table, grouped by `kind` (e.g. `session_closed`, `nontrivial_prompt`). This is the phase-0 sensor data for the feedback-loop feature — see [how the hooks complement each other](../how/hooks.md#how-the-hooks-complement-each-other) for what writes to this table and when.
+
+`--days N` restricts the count to events from the last N days; omit it to count everything. `--db PATH` overrides the DB path outright, bypassing config resolution entirely — useful for inspecting a specific file. Without `--db`, the command resolves the same way every other `lh metrics`/`lh status` command does: `[monitoring] db` from `config.toml` if set, otherwise `data_dir()/metrics.db`.
+
+No hook in the framework currently emits a `goal_declared` event, so the command does not print a declared-goal rate — printing one would be a percentage that is always 0%, indistinguishable from a genuine zero. It prints a line saying so instead.
+
+```bash
+lh metrics loops
+lh metrics loops --days 14
+lh metrics loops --db ~/.config/lazy-harness/metrics.db
+# session_closed        12
+# nontrivial_prompt     9
+#
+# declaration rate: not available — no declaration sensor exists yet
+```
+
 ## `lh profile`
 
 Manages agent profiles.

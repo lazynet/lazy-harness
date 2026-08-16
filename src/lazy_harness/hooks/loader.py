@@ -75,6 +75,7 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
     ),
     "session-end": BuiltinHookSpec(module="lazy_harness.hooks.builtins.session_end"),
     "session-export": BuiltinHookSpec(module="lazy_harness.hooks.builtins.session_export"),
+    "user-prompt-goal": BuiltinHookSpec(module="lazy_harness.hooks.builtins.user_prompt_goal"),
 }
 
 

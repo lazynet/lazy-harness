@@ -48,7 +48,7 @@ scripts = ["post-compact"]
 | `pre_tool_use` | `PreToolUse` | Before each tool call | `pre-tool-use-security`, `pre-tool-use-memory-size`, `pre-tool-use-read-size` | Block destructive / exfiltration commands, warn before MEMORY.md exceeds the 200-line or 12KB ceiling, warn before an unbounded read of a large file |
 | `post_tool_use` | `PostToolUse` | After each tool call | `post-tool-use-format`, `post-tool-use-sync-claude` | Auto-format edited files, regenerate segmented `CLAUDE.md` after profile edits |
 | `notification` | `Notification` | Ad-hoc agent notifications | — | Desktop notifications, integrations |
-| `user_prompt_submit` | `UserPromptSubmit` | When the user submits a prompt | — | Third-party integrations |
+| `user_prompt_submit` | `UserPromptSubmit` | When the user submits a prompt | `user-prompt-goal` (opt-in, not in the default set — see below) | Goal-declaration sensor, third-party integrations |
 | `permission_request` | `PermissionRequest` | When the agent asks for a permission decision | — | Third-party integrations, approval routing |
 
 The mapping lives in `ClaudeCodeAdapter.generate_hook_config` — other agents may expose different event names, but the `config.toml` side is stable.
@@ -485,6 +485,40 @@ The hook is fail-soft and a no-op outside Herdr: a missing `HERDR_ENV=1`, an abs
 `HERDR_PANE_ID`, a `herdr` binary that is not installed, or a publish that times out all
 exit 0. An unreadable transcript is not an error — it is the ordinary state at startup,
 and it clears the gauge.
+
+### `user-prompt-goal` — runs on `UserPromptSubmit`
+
+Source: `src/lazy_harness/hooks/builtins/user_prompt_goal.py`.
+
+Responsibility: record events for prompts that look like work. Ships as a sensor collecting baseline data; injection of goal prompts back to the agent is gated behind `[loops] inject_goal_prompt`, which defaults to off until a baseline exists.
+
+The hook classifies prompts into trivial and non-trivial. For non-trivial ones it records an event with `kind="nontrivial_prompt"` to the metrics store — one row per qualifying prompt, not per session — so that later analysis can measure how often such prompts occur.
+
+Classification logic:
+
+1. A prompt is **non-trivial** if it contains a file reference (regex match for common extensions: `.py`, `.md`, `.toml`, `.yaml`, `.yml`, `.json`, `.sh`, `.lock`) OR if it is at least 25 characters long and contains at least one action verb.
+2. A prompt is **trivial** if it is empty, whitespace-only, or does not meet the criteria above.
+
+The action verbs monitored (English + Spanish): `add`, `agregá`, `agrega`, `arreglá`, `arregla`, `build`, `cableá`, `cablea`, `cambiá`, `cambia`, `create`, `escribí`, `escribe`, `fix`, `hacé`, `hace`, `implement`, `implementá`, `implementa`, `migrate`, `migrá`, `move`, `refactor`, `refactorizá`, `remove`, `rename`, `sacá`, `saca`, `wire`.
+
+Mechanics:
+
+1. Read the user's submitted prompt from stdin JSON (field `prompt`).
+2. Call `is_non_trivial(prompt)` to classify it.
+3. If the prompt is non-trivial, insert a row into the `loop_events` table of `metrics.db` with `kind="nontrivial_prompt"`, `session=<from payload>`, `project=<cwd from payload>`, and a server-generated timestamp.
+4. If the prompt is trivial, record nothing.
+5. Always exit 0, even on malformed input or database write failures. This is a fail-soft sensor.
+
+**Output:** none. The hook only records to the store, it does not emit `hookSpecificOutput`.
+
+**Where it writes:** the `loop_events` table in `metrics.db`, resolved the same way every `lh metrics`/`lh status` reader resolves it — `[monitoring] db` from `config.toml` if set, otherwise the path returned by `data_dir()` (which resolves the `LH_DATA_DIR` environment variable, falls back to `$XDG_DATA_HOME/lazy-harness`, and defaults to `~/.local/share/lazy-harness`). Nothing is written for trivial prompts.
+
+**Enabling it:** the hook is registered but not part of the default hook set — opt in explicitly in `config.toml`:
+
+```toml
+[hooks.user_prompt_submit]
+scripts = ["user-prompt-goal"]
+```
 
 ## How the hooks complement each other
 

@@ -70,7 +70,9 @@ def _run_session_end(monkeypatch: pytest.MonkeyPatch, claude_dir: Path, cwd: Pat
     monkeypatch.chdir(cwd)
     monkeypatch.setattr("sys.stdin", io.StringIO("{}"))
     monkeypatch.setattr(hook_mod.subprocess, "Popen", lambda *a, **kw: None)
-    hook_mod.main()
+    with pytest.raises(SystemExit) as exc:
+        hook_mod.main()
+    assert exc.value.code == 0
 
 
 def test_session_end_hook_queues_task_even_when_debounced(
@@ -197,7 +199,9 @@ enabled = true
     monkeypatch.chdir(cwd)
     monkeypatch.setattr("sys.stdin", io.StringIO("{}"))
     monkeypatch.setattr(hook_mod.subprocess, "Popen", lambda *a, **kw: None)
-    hook_mod.main()
+    with pytest.raises(SystemExit) as exc:
+        hook_mod.main()
+    assert exc.value.code == 0
 
     assert len(list((agent_dir / "queue").glob("*.task"))) == 1
     assert not (decoy_dir / "queue").exists()
@@ -216,3 +220,104 @@ def test_session_end_hook_skips_when_no_session_found(
     _run_session_end(monkeypatch, claude_dir, cwd)
 
     assert not queue_dir.exists() or list(queue_dir.glob("*.task")) == []
+
+
+def test_records_session_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A session_closed loop event is recorded regardless of whether the
+    compound-loop enqueue itself finds a session to act on."""
+    import io
+
+    from lazy_harness.hooks.builtins import session_end as hook_mod
+    from lazy_harness.monitoring.db import MetricsDB
+
+    claude_dir = tmp_path / ".claude-test"
+    cwd = tmp_path / "proj"
+    cwd.mkdir()
+    db_path = tmp_path / "m.db"
+
+    monkeypatch.setattr(hook_mod, "_loop_db_path", lambda: db_path)
+    _patch_config_lookup(monkeypatch, claude_dir)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_dir))
+    monkeypatch.chdir(cwd)
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"session_id": "s1"})))
+    monkeypatch.setattr(hook_mod.subprocess, "Popen", lambda *a, **kw: None)
+
+    with pytest.raises(SystemExit) as exc:
+        hook_mod.main()
+    assert exc.value.code == 0
+
+    assert MetricsDB(db_path).loop_event_counts() == {"session_closed": 1}
+
+
+def test_still_exits_zero_and_still_enqueues_when_recording_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A metrics-store failure while recording session_closed must not
+    prevent the existing compound-loop enqueue from running — this is the
+    ordering constraint the hook exists to preserve."""
+    import io
+
+    from lazy_harness.hooks.builtins import session_end as hook_mod
+
+    claude_dir = tmp_path / ".claude-test"
+    cwd = tmp_path / "proj"
+    cwd.mkdir()
+    encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
+    sessions_dir = claude_dir / "projects" / encoded
+    sessions_dir.mkdir(parents=True)
+    _interactive_session_jsonl(sessions_dir, "abcd1234-deadbeef-0004")
+    queue_dir = claude_dir / "queue"
+
+    blocked = tmp_path / "not-a-dir"
+    blocked.write_text("x")
+    monkeypatch.setattr(hook_mod, "_loop_db_path", lambda: blocked / "m.db")
+
+    _patch_config_lookup(monkeypatch, claude_dir)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_dir))
+    monkeypatch.chdir(cwd)
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"session_id": "s1"})))
+    monkeypatch.setattr(hook_mod.subprocess, "Popen", lambda *a, **kw: None)
+
+    with pytest.raises(SystemExit) as exc:
+        hook_mod.main()
+    assert exc.value.code == 0
+
+    assert len(list(queue_dir.glob("*.task"))) == 1
+
+
+def test_main_exits_zero_even_when_enqueue_raises_uncaught_exception(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Any exception inside _enqueue_compound_loop that is not explicitly
+    caught must not escape main() — the hook must degrade gracefully and
+    exit 0 rather than crashing the Claude Code shutdown chain.
+
+    This test triggers a KeyError, which is not in the current exception
+    handlers (ImportError, ConfigError, OSError).
+    """
+    import io
+
+    from lazy_harness.hooks.builtins import session_end as hook_mod
+
+    claude_dir = tmp_path / ".claude-test"
+    cwd = tmp_path / "proj"
+    cwd.mkdir()
+
+    _patch_config_lookup(monkeypatch, claude_dir)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_dir))
+    monkeypatch.chdir(cwd)
+    monkeypatch.setattr("sys.stdin", io.StringIO("{}"))
+
+    # Monkeypatch get_agent to raise KeyError — an exception type
+    # that _enqueue_compound_loop does not currently catch.
+    def raise_keyerror(*args: object, **kwargs: object) -> object:
+        raise KeyError("simulated uncaught exception in get_agent")
+
+    from lazy_harness.agents import registry as registry_mod
+
+    monkeypatch.setattr(registry_mod, "get_agent", raise_keyerror)
+
+    # main() must still raise SystemExit with code 0, not let the KeyError escape.
+    with pytest.raises(SystemExit) as exc:
+        hook_mod.main()
+    assert exc.value.code == 0

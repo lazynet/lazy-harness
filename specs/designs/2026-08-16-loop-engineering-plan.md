@@ -10,6 +10,8 @@
 
 **Spec:** [`specs/designs/2026-08-16-loop-engineering-design.md`](2026-08-16-loop-engineering-design.md)
 
+> During implementation the `goal_absent` event kind was renamed to `nontrivial_prompt`, because it fires per prompt on any non-trivial prompt rather than verifying that a goal is absent, and because its unit (per prompt) differs from `session_closed` (per session). Task bodies below retain the original name as written.
+
 ## Global Constraints
 
 - Python 3.11+, strict type hints. No `Any` unless unavoidable.
