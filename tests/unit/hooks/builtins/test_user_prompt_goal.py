@@ -61,7 +61,9 @@ def _run(monkeypatch, payload: object, capsys) -> str:
     return capsys.readouterr().out
 
 
-def test_records_goal_absent_for_non_trivial_work(monkeypatch, tmp_path: Path, capsys) -> None:
+def test_records_nontrivial_prompt_for_non_trivial_work(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
     from lazy_harness.hooks.builtins import user_prompt_goal as mod
     from lazy_harness.monitoring.db import MetricsDB
 
@@ -75,7 +77,7 @@ def test_records_goal_absent_for_non_trivial_work(monkeypatch, tmp_path: Path, c
     )
 
     assert out == "", "the sensor phase must stay silent"
-    assert MetricsDB(db_path).loop_event_counts() == {"goal_absent": 1}
+    assert MetricsDB(db_path).loop_event_counts() == {"nontrivial_prompt": 1}
 
 
 def test_records_nothing_for_a_trivial_prompt(monkeypatch, tmp_path: Path, capsys) -> None:

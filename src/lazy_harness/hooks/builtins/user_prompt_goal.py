@@ -132,7 +132,7 @@ def main() -> None:
 
         MetricsDB(_db_path()).record_loop_event(
             session=session if isinstance(session, str) else "",
-            kind="goal_absent",
+            kind="nontrivial_prompt",
             project=cwd if isinstance(cwd, str) else "",
         )
 

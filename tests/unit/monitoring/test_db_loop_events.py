@@ -13,15 +13,15 @@ def db() -> MetricsDB:
 
 
 def test_records_and_counts_events_by_kind(db: MetricsDB) -> None:
-    db.record_loop_event(session="s1", kind="goal_absent", project="p")
-    db.record_loop_event(session="s1", kind="goal_absent", project="p")
+    db.record_loop_event(session="s1", kind="nontrivial_prompt", project="p")
+    db.record_loop_event(session="s1", kind="nontrivial_prompt", project="p")
     db.record_loop_event(session="s2", kind="goal_declared", project="p")
 
-    assert db.loop_event_counts() == {"goal_absent": 2, "goal_declared": 1}
+    assert db.loop_event_counts() == {"nontrivial_prompt": 2, "goal_declared": 1}
 
 
 def test_counts_respect_the_since_cutoff(db: MetricsDB) -> None:
-    db.record_loop_event(session="old", kind="goal_absent")
+    db.record_loop_event(session="old", kind="nontrivial_prompt")
     cutoff = db._now()  # test seam, see Step 3
     db.record_loop_event(session="new", kind="goal_declared")
 
