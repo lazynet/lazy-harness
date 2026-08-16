@@ -283,3 +283,41 @@ def test_still_exits_zero_and_still_enqueues_when_recording_fails(
     assert exc.value.code == 0
 
     assert len(list(queue_dir.glob("*.task"))) == 1
+
+
+def test_main_exits_zero_even_when_enqueue_raises_uncaught_exception(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Any exception inside _enqueue_compound_loop that is not explicitly
+    caught must not escape main() — the hook must degrade gracefully and
+    exit 0 rather than crashing the Claude Code shutdown chain.
+
+    This test triggers a KeyError, which is not in the current exception
+    handlers (ImportError, ConfigError, OSError).
+    """
+    import io
+
+    from lazy_harness.hooks.builtins import session_end as hook_mod
+
+    claude_dir = tmp_path / ".claude-test"
+    cwd = tmp_path / "proj"
+    cwd.mkdir()
+
+    _patch_config_lookup(monkeypatch, claude_dir)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_dir))
+    monkeypatch.chdir(cwd)
+    monkeypatch.setattr("sys.stdin", io.StringIO("{}"))
+
+    # Monkeypatch get_agent to raise KeyError — an exception type
+    # that _enqueue_compound_loop does not currently catch.
+    def raise_keyerror(*args: object, **kwargs: object) -> object:
+        raise KeyError("simulated uncaught exception in get_agent")
+
+    from lazy_harness.agents import registry as registry_mod
+
+    monkeypatch.setattr(registry_mod, "get_agent", raise_keyerror)
+
+    # main() must still raise SystemExit with code 0, not let the KeyError escape.
+    with pytest.raises(SystemExit) as exc:
+        hook_mod.main()
+    assert exc.value.code == 0

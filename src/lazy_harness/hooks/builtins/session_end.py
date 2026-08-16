@@ -48,7 +48,12 @@ def main() -> None:
 
     _record_session_closed(payload)
 
-    _enqueue_compound_loop(payload)
+    # A hook must degrade gracefully: any exception here must not block
+    # Claude Code's shutdown. Catch all exceptions and exit cleanly.
+    try:
+        _enqueue_compound_loop(payload)
+    except Exception:
+        pass
     sys.exit(0)
 
 
