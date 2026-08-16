@@ -70,6 +70,19 @@ class MetricsDB:
             "CREATE INDEX IF NOT EXISTS idx_outbox_pending "
             "ON sink_outbox(sink_name, status, next_attempt_ts)"
         )
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS loop_events (
+                session TEXT NOT NULL,
+                ts      REAL NOT NULL,
+                project TEXT NOT NULL DEFAULT '',
+                profile TEXT NOT NULL DEFAULT '',
+                kind    TEXT NOT NULL,
+                detail  TEXT NOT NULL DEFAULT ''
+            )
+        """)
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_loop_events_session ON loop_events(session, ts)"
+        )
         self._migrate_identity_columns()
         self._conn.commit()
 
@@ -485,6 +498,37 @@ class MetricsDB:
             (sink_name,),
         )
         self._conn.commit()
+
+    def _now(self) -> float:
+        """Seam for tests that need a cutoff between two writes."""
+        return time.time()
+
+    def record_loop_event(
+        self,
+        session: str,
+        kind: str,
+        project: str = "",
+        profile: str = "",
+        detail: str = "",
+    ) -> None:
+        self._conn.execute(
+            "INSERT INTO loop_events (session, ts, project, profile, kind, "
+            "detail) VALUES (?, ?, ?, ?, ?, ?)",
+            (session, self._now(), project, profile, kind, detail),
+        )
+        self._conn.commit()
+
+    def loop_event_counts(self, since_ts: float | None = None) -> dict[str, int]:
+        if since_ts is None:
+            rows = self._conn.execute(
+                "SELECT kind, COUNT(*) AS n FROM loop_events GROUP BY kind"
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT kind, COUNT(*) AS n FROM loop_events WHERE ts >= ? GROUP BY kind",
+                (since_ts,),
+            ).fetchall()
+        return {row["kind"]: row["n"] for row in rows}
 
     def close(self) -> None:
         self._conn.close()
