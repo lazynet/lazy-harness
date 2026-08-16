@@ -244,3 +244,146 @@ def test_resolve_memory_dir_matches_the_project_dir_outside_a_worktree(tmp_path:
     assert resolve_memory_dir(
         {}, agent_dir=agent_dir, sessions_subdir="projects", cwd=plain
     ) == resolve_project_dir({}, agent_dir=agent_dir, sessions_subdir="projects", cwd=plain)
+
+
+def test_project_key_is_identical_from_every_entry_point(tmp_path: Path) -> None:
+    """One repo, one key — whichever directory the agent was launched from.
+
+    Asserting each entry point against its own expected value hides the bug
+    this catches: the worktree path resolves symlinks (git hands back an
+    absolute gitdir) while the parent walk does not, so on macOS the same
+    repo yielded /var/... and /private/var/... — two keys, one repo.
+    """
+    from lazy_harness.hooks.builtins._shared import project_key
+
+    real = tmp_path / "real"
+    real.mkdir()
+    repo, worktree = _init_repo_with_worktree(real)
+    artifacts = repo / "graphify-out"
+    artifacts.mkdir()
+
+    # Reach the same repo through a symlink, the way /var -> /private/var does
+    # on macOS. Only the worktree branch resolves it, so the keys diverge.
+    link = tmp_path / "link"
+    link.symlink_to(real, target_is_directory=True)
+    linked_repo = link / repo.name
+
+    assert project_key(linked_repo / "graphify-out") == project_key(
+        linked_repo / ".worktrees" / "feat"
+    ), "the same repo produced two keys depending on the entry point"
+    assert project_key(artifacts) == project_key(worktree) == project_key(repo)
+
+
+def test_project_key_collapses_a_subdirectory_onto_the_repo_root(tmp_path: Path) -> None:
+    """An artifact subdirectory must not become its own project.
+
+    Running the agent from `<repo>/graphify-out` recorded that path verbatim,
+    splitting one repo's events across two keys nothing joins back together.
+    """
+    from lazy_harness.hooks.builtins._shared import project_key
+
+    repo, _ = _init_repo_with_worktree(tmp_path)
+    artifacts = repo / "graphify-out"
+    artifacts.mkdir()
+
+    assert project_key(artifacts) == str(repo)
+
+
+def test_project_key_collapses_a_worktree_onto_the_main_repo(tmp_path: Path) -> None:
+    from lazy_harness.hooks.builtins._shared import project_key
+
+    repo, worktree = _init_repo_with_worktree(tmp_path)
+
+    assert project_key(worktree) == str(repo.resolve())
+
+
+def test_project_key_returns_the_repo_root_unchanged(tmp_path: Path) -> None:
+    from lazy_harness.hooks.builtins._shared import project_key
+
+    repo, _ = _init_repo_with_worktree(tmp_path)
+
+    assert project_key(repo) == str(repo)
+
+
+def test_project_key_falls_back_to_cwd_outside_a_repo(tmp_path: Path) -> None:
+    from lazy_harness.hooks.builtins._shared import project_key
+
+    plain = tmp_path / "not-a-repo"
+    plain.mkdir()
+
+    assert project_key(plain) == str(plain)
+
+
+def _write_profiles_config(tmp_path: Path, **profiles: Path) -> Path:
+    """Config declaring one `[profiles.<name>]` per keyword argument."""
+    entries = "\n".join(
+        f'\n[profiles.{name}]\nconfig_dir = "{path}"\nroots = ["~"]\n'
+        for name, path in profiles.items()
+    )
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        '[harness]\nversion = "1"\n\n[agent]\ntype = "claude-code"\n\n'
+        f'[profiles]\ndefault = "{next(iter(profiles), "")}"\n{entries}'
+    )
+    return cfg
+
+
+def test_profile_name_identifies_the_profile_the_agent_runs_under(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Every profile writes to one metrics store; a row must name its own.
+
+    Without this the lazy and flex profiles are indistinguishable once both
+    start recording, and no per-profile comparison is possible after the fact.
+    """
+    from lazy_harness.hooks.builtins import _shared
+
+    lazy_dir = tmp_path / "claude-lazy"
+    flex_dir = tmp_path / "claude-flex"
+    lazy_dir.mkdir()
+    flex_dir.mkdir()
+    cfg = _write_profiles_config(tmp_path, lazy=lazy_dir, flex=flex_dir)
+
+    monkeypatch.setattr("lazy_harness.core.paths.config_file", lambda: cfg)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(flex_dir))
+
+    assert _shared.profile_name() == "flex"
+
+
+def test_profile_name_is_empty_when_the_env_var_is_unset(tmp_path: Path, monkeypatch) -> None:
+    from lazy_harness.hooks.builtins import _shared
+
+    lazy_dir = tmp_path / "claude-lazy"
+    lazy_dir.mkdir()
+    cfg = _write_profiles_config(tmp_path, lazy=lazy_dir)
+
+    monkeypatch.setattr("lazy_harness.core.paths.config_file", lambda: cfg)
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+
+    assert _shared.profile_name() == ""
+
+
+def test_profile_name_is_empty_when_no_profile_matches(tmp_path: Path, monkeypatch) -> None:
+    from lazy_harness.hooks.builtins import _shared
+
+    lazy_dir = tmp_path / "claude-lazy"
+    lazy_dir.mkdir()
+    cfg = _write_profiles_config(tmp_path, lazy=lazy_dir)
+
+    monkeypatch.setattr("lazy_harness.core.paths.config_file", lambda: cfg)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-unknown"))
+
+    assert _shared.profile_name() == ""
+
+
+def test_profile_name_is_empty_when_the_config_cannot_be_read(tmp_path: Path, monkeypatch) -> None:
+    """A broken config must degrade to an unlabelled row, never raise."""
+    from lazy_harness.hooks.builtins import _shared
+
+    def _boom() -> Path:
+        raise OSError("config unreadable")
+
+    monkeypatch.setattr("lazy_harness.core.paths.config_file", _boom)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+
+    assert _shared.profile_name() == ""

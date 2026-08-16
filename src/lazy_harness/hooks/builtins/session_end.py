@@ -28,12 +28,17 @@ def _loop_db_path() -> Path:
 def _record_session_closed(payload: object) -> None:
     """Never raises: the compound-loop enqueue below must run regardless."""
     try:
-        session = payload.get("session_id") if isinstance(payload, dict) else None
+        data = payload if isinstance(payload, dict) else {}
+        session = data.get("session_id")
+        cwd = data.get("cwd")
+        from lazy_harness.hooks.builtins._shared import profile_name, project_key
         from lazy_harness.monitoring.db import MetricsDB
 
         MetricsDB(_loop_db_path()).record_loop_event(
             session=session if isinstance(session, str) else "",
             kind="session_closed",
+            project=project_key(Path(cwd)) if isinstance(cwd, str) and cwd else "",
+            profile=profile_name(),
         )
     except Exception:
         pass

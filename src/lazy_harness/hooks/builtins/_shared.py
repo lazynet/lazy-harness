@@ -8,6 +8,7 @@ identical to the historical per-module definitions.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from pathlib import Path
@@ -118,6 +119,51 @@ def _main_repo_root(cwd: Path) -> Path | None:
                 return parent.parent
         return directory
     return None
+
+
+def project_key(cwd: Path) -> str:
+    """Canonical project identity for `cwd`: the repo that owns it.
+
+    Artifact subdirectories and linked worktrees both collapse onto the main
+    checkout, so events raised from `<repo>/graphify-out` or
+    `<repo>/.worktrees/<name>` group under `<repo>` instead of fragmenting
+    into keys nothing joins back together. Outside a repo the cwd stands in
+    for itself.
+
+    Symlinks are resolved because only one of those two branches would do it
+    otherwise: a worktree is found through the absolute gitdir git reports,
+    while the parent walk keeps the path as given. On macOS that alone split
+    one repo into `/var/...` and `/private/var/...`.
+    """
+    root = _main_repo_root(cwd)
+    return str((root if root is not None else cwd).resolve())
+
+
+def profile_name() -> str:
+    """Configured profile whose config dir the agent runs under, or ''.
+
+    Every profile records into a single metrics store, so a row that cannot
+    name its profile cannot be told apart from another profile's after the
+    fact. Degrades to '' on any failure — an unlabelled row beats a lost one.
+    """
+    try:
+        from lazy_harness.agents.registry import get_agent
+        from lazy_harness.core.config import load_config
+        from lazy_harness.core.paths import config_file
+
+        cfg = load_config(config_file())
+        env_var = get_agent(cfg.agent.type).env_var()
+        raw = os.environ.get(env_var, "") if env_var else ""
+        if not raw:
+            return ""
+        target = Path(os.path.expanduser(raw)).resolve()
+        for name, entry in cfg.profiles.items.items():
+            entry_dir = getattr(entry, "config_dir", "") or ""
+            if entry_dir and Path(os.path.expanduser(entry_dir)).resolve() == target:
+                return name
+    except Exception:
+        return ""
+    return ""
 
 
 def resolve_memory_dir(
