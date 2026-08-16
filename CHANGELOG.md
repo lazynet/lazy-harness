@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.38.0](https://github.com/lazynet/lazy-harness/compare/v0.37.0...v0.38.0) (2026-08-16)
+
+
+### Features
+
+* instrument loop events and add opt-in goal-tracking hook ([#160](https://github.com/lazynet/lazy-harness/issues/160)) ([2eab6cc](https://github.com/lazynet/lazy-harness/commit/2eab6cc73cfba32764e2a4c3b6ce55ec3737580b))
+
+
+### Documentation
+
+* merge drained compound-loop proposals into verification gates ([#159](https://github.com/lazynet/lazy-harness/issues/159)) ([c530d01](https://github.com/lazynet/lazy-harness/commit/c530d01948dfcf99e62f880f2cc2e219aa8924ae))
+* **specs:** add cross-repo delegation phase to loop engineering design ([8e4d8db](https://github.com/lazynet/lazy-harness/commit/8e4d8db2ce41981fc3ce7d8a73efbe1c5980ec3d))
+* **specs:** add delegate isolation, return policy and rotation ([7bed461](https://github.com/lazynet/lazy-harness/commit/7bed46153288d0d29d5cf3e4214b4f96ba10d170))
+* **specs:** add delegate pane lifecycle rules ([81ed163](https://github.com/lazynet/lazy-harness/commit/81ed1635472aca9c44ae3ff07dc967b02db0d93c))
+* **specs:** add loop engineering design ([77e7cdb](https://github.com/lazynet/lazy-harness/commit/77e7cdb8c9bb723100d5509b3ad8505c3e21f205))
+* **specs:** add loop engineering implementation plan for phases 0-1 ([eed42f3](https://github.com/lazynet/lazy-harness/commit/eed42f3c117d7c45c5bf313f937371c71de5f4f6))
+
 ## [0.37.0](https://github.com/lazynet/lazy-harness/compare/v0.36.1...v0.37.0) (2026-08-15)
 
 
