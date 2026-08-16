@@ -208,6 +208,11 @@ class MemoryConfig:
 
 
 @dataclass
+class LoopsConfig:
+    inject_goal_prompt: bool = False
+
+
+@dataclass
 class Config:
     harness: HarnessConfig = field(default_factory=HarnessConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
@@ -221,6 +226,7 @@ class Config:
     metrics: MetricsConfig = field(default_factory=MetricsConfig)
     lazynorth: LazyNorthConfig = field(default_factory=LazyNorthConfig)
     context_inject: ContextInjectConfig = field(default_factory=ContextInjectConfig)
+    loops: LoopsConfig = field(default_factory=LoopsConfig)
 
 
 def _parse_profiles(raw: dict[str, Any]) -> ProfilesConfig:
@@ -504,6 +510,11 @@ def load_config(path: Path) -> Config:
             ),
         )
 
+    loops_raw = raw.get("loops", {})
+    cfg.loops = LoopsConfig(
+        inject_goal_prompt=loops_raw.get("inject_goal_prompt", False),
+    )
+
     return cfg
 
 
@@ -534,6 +545,7 @@ def _config_to_dict(cfg: Config) -> dict[str, Any]:
             "enabled": cfg.monitoring.enabled,
         },
         "scheduler": {"backend": cfg.scheduler.backend},
+        "loops": {"inject_goal_prompt": cfg.loops.inject_goal_prompt},
     }
 
     if cfg.monitoring.db:

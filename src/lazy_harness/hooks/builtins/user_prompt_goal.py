@@ -90,6 +90,35 @@ def _db_path() -> Path:
     return data_dir() / "metrics.db"
 
 
+def _injection_enabled() -> bool:
+    try:
+        from lazy_harness.core.config import load_config
+        from lazy_harness.core.paths import config_file
+
+        return bool(load_config(config_file()).loops.inject_goal_prompt)
+    except Exception:
+        return False
+
+
+_INJECTION_TEXT = (
+    "Antes de ejecutar: declará el criterio de éxito verificable de esta tarea "
+    "(qué comando o comprobación demuestra que está hecha), o usá /goal para fijarlo."
+)
+
+
+def _emit_injection() -> None:
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "UserPromptSubmit",
+                    "additionalContext": _INJECTION_TEXT,
+                }
+            }
+        )
+    )
+
+
 def main() -> None:
     try:
         payload = _read_stdin_json()
@@ -106,6 +135,9 @@ def main() -> None:
             kind="goal_absent",
             project=cwd if isinstance(cwd, str) else "",
         )
+
+        if _injection_enabled():
+            _emit_injection()
     except Exception:
         # A hook must degrade, never crash the chain: any failure here (bad
         # payload shape, an unwritable metrics store) is swallowed so the

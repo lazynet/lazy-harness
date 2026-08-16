@@ -151,3 +151,47 @@ def test_exits_zero_when_the_database_is_unwritable(monkeypatch, tmp_path, capsy
     monkeypatch.setattr(mod, "_db_path", lambda: blocked / "m.db")
 
     _run(monkeypatch, {"session_id": "s1", "prompt": "fix db.py", "cwd": "/tmp"}, capsys)
+
+
+def test_injects_only_when_the_flag_is_on(monkeypatch, tmp_path, capsys) -> None:
+    from lazy_harness.hooks.builtins import user_prompt_goal as mod
+
+    monkeypatch.setattr(mod, "_db_path", lambda: tmp_path / "m.db")
+    monkeypatch.setattr(mod, "_injection_enabled", lambda: True)
+
+    out = _run(
+        monkeypatch,
+        {"session_id": "s1", "prompt": "implementá el hook y agregá el test", "cwd": "/tmp"},
+        capsys,
+    )
+
+    payload = json.loads(out)
+    assert payload["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
+    assert "criterio" in payload["hookSpecificOutput"]["additionalContext"].lower()
+
+
+def test_stays_silent_when_the_flag_is_off(monkeypatch, tmp_path, capsys) -> None:
+    from lazy_harness.hooks.builtins import user_prompt_goal as mod
+
+    monkeypatch.setattr(mod, "_db_path", lambda: tmp_path / "m.db")
+    monkeypatch.setattr(mod, "_injection_enabled", lambda: False)
+
+    out = _run(
+        monkeypatch,
+        {"session_id": "s1", "prompt": "implementá el hook y agregá el test", "cwd": "/tmp"},
+        capsys,
+    )
+
+    assert out == ""
+
+
+def test_injection_enabled_returns_false_when_config_read_fails(monkeypatch) -> None:
+    """An unreadable or missing config must never crash the hook; stay silent."""
+    from lazy_harness.hooks.builtins import user_prompt_goal as mod
+
+    def _boom() -> Path:
+        raise OSError("config unreadable")
+
+    monkeypatch.setattr("lazy_harness.core.paths.config_file", _boom)
+
+    assert mod._injection_enabled() is False
