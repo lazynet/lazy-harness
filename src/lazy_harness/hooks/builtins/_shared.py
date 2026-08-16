@@ -129,9 +129,14 @@ def project_key(cwd: Path) -> str:
     `<repo>/.worktrees/<name>` group under `<repo>` instead of fragmenting
     into keys nothing joins back together. Outside a repo the cwd stands in
     for itself.
+
+    Symlinks are resolved because only one of those two branches would do it
+    otherwise: a worktree is found through the absolute gitdir git reports,
+    while the parent walk keeps the path as given. On macOS that alone split
+    one repo into `/var/...` and `/private/var/...`.
     """
     root = _main_repo_root(cwd)
-    return str(root if root is not None else cwd)
+    return str((root if root is not None else cwd).resolve())
 
 
 def profile_name() -> str:

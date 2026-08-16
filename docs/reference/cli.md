@@ -285,6 +285,8 @@ lh scheduler uninstall
 
 Validates the lazy-harness install end-to-end: config parses, profiles deploy, hooks fire, scheduler reachable. Use it after upgrades, after editing config, or as a smoke test in scripts.
 
+The `loop-events` group goes further than the others: it builds a throwaway git repository, runs the loop-event hook scripts the installed package ships, and reads back the rows they wrote. That catches attribution bugs — a session recorded against an artifact subdirectory instead of its repository, or a row that cannot name its profile — which unit tests cannot see, because they import the hooks rather than running them as the agent does.
+
 `--json` switches to machine-readable output. `--fix` attempts to repair fixable issues in place.
 
 ```bash

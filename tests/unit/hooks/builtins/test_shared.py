@@ -246,6 +246,34 @@ def test_resolve_memory_dir_matches_the_project_dir_outside_a_worktree(tmp_path:
     ) == resolve_project_dir({}, agent_dir=agent_dir, sessions_subdir="projects", cwd=plain)
 
 
+def test_project_key_is_identical_from_every_entry_point(tmp_path: Path) -> None:
+    """One repo, one key — whichever directory the agent was launched from.
+
+    Asserting each entry point against its own expected value hides the bug
+    this catches: the worktree path resolves symlinks (git hands back an
+    absolute gitdir) while the parent walk does not, so on macOS the same
+    repo yielded /var/... and /private/var/... — two keys, one repo.
+    """
+    from lazy_harness.hooks.builtins._shared import project_key
+
+    real = tmp_path / "real"
+    real.mkdir()
+    repo, worktree = _init_repo_with_worktree(real)
+    artifacts = repo / "graphify-out"
+    artifacts.mkdir()
+
+    # Reach the same repo through a symlink, the way /var -> /private/var does
+    # on macOS. Only the worktree branch resolves it, so the keys diverge.
+    link = tmp_path / "link"
+    link.symlink_to(real, target_is_directory=True)
+    linked_repo = link / repo.name
+
+    assert project_key(linked_repo / "graphify-out") == project_key(
+        linked_repo / ".worktrees" / "feat"
+    ), "the same repo produced two keys depending on the entry point"
+    assert project_key(artifacts) == project_key(worktree) == project_key(repo)
+
+
 def test_project_key_collapses_a_subdirectory_onto_the_repo_root(tmp_path: Path) -> None:
     """An artifact subdirectory must not become its own project.
 

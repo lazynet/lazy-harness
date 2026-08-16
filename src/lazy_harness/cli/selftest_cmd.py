@@ -10,6 +10,7 @@ from lazy_harness.selftest.checks.cli_check import check_cli
 from lazy_harness.selftest.checks.config_check import check_config
 from lazy_harness.selftest.checks.hooks_check import check_hooks
 from lazy_harness.selftest.checks.knowledge_check import check_knowledge
+from lazy_harness.selftest.checks.loop_events_check import check_loop_events
 from lazy_harness.selftest.checks.monitoring_check import check_monitoring
 from lazy_harness.selftest.checks.profile_check import check_profiles
 from lazy_harness.selftest.checks.scheduler_check import check_scheduler
@@ -31,6 +32,7 @@ def selftest(as_json: bool, fix: bool) -> None:
             lambda: check_monitoring(config_path=cfg_path),
             lambda: check_knowledge(config_path=cfg_path),
             lambda: check_scheduler(config_path=cfg_path),
+            lambda: check_loop_events(),
             lambda: check_cli(),
         ]
     )
