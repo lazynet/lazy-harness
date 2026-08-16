@@ -284,3 +284,78 @@ def test_project_key_falls_back_to_cwd_outside_a_repo(tmp_path: Path) -> None:
     plain.mkdir()
 
     assert project_key(plain) == str(plain)
+
+
+def _write_profiles_config(tmp_path: Path, **profiles: Path) -> Path:
+    """Config declaring one `[profiles.<name>]` per keyword argument."""
+    entries = "\n".join(
+        f'\n[profiles.{name}]\nconfig_dir = "{path}"\nroots = ["~"]\n'
+        for name, path in profiles.items()
+    )
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        '[harness]\nversion = "1"\n\n[agent]\ntype = "claude-code"\n\n'
+        f'[profiles]\ndefault = "{next(iter(profiles), "")}"\n{entries}'
+    )
+    return cfg
+
+
+def test_profile_name_identifies_the_profile_the_agent_runs_under(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Every profile writes to one metrics store; a row must name its own.
+
+    Without this the lazy and flex profiles are indistinguishable once both
+    start recording, and no per-profile comparison is possible after the fact.
+    """
+    from lazy_harness.hooks.builtins import _shared
+
+    lazy_dir = tmp_path / "claude-lazy"
+    flex_dir = tmp_path / "claude-flex"
+    lazy_dir.mkdir()
+    flex_dir.mkdir()
+    cfg = _write_profiles_config(tmp_path, lazy=lazy_dir, flex=flex_dir)
+
+    monkeypatch.setattr("lazy_harness.core.paths.config_file", lambda: cfg)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(flex_dir))
+
+    assert _shared.profile_name() == "flex"
+
+
+def test_profile_name_is_empty_when_the_env_var_is_unset(tmp_path: Path, monkeypatch) -> None:
+    from lazy_harness.hooks.builtins import _shared
+
+    lazy_dir = tmp_path / "claude-lazy"
+    lazy_dir.mkdir()
+    cfg = _write_profiles_config(tmp_path, lazy=lazy_dir)
+
+    monkeypatch.setattr("lazy_harness.core.paths.config_file", lambda: cfg)
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+
+    assert _shared.profile_name() == ""
+
+
+def test_profile_name_is_empty_when_no_profile_matches(tmp_path: Path, monkeypatch) -> None:
+    from lazy_harness.hooks.builtins import _shared
+
+    lazy_dir = tmp_path / "claude-lazy"
+    lazy_dir.mkdir()
+    cfg = _write_profiles_config(tmp_path, lazy=lazy_dir)
+
+    monkeypatch.setattr("lazy_harness.core.paths.config_file", lambda: cfg)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-unknown"))
+
+    assert _shared.profile_name() == ""
+
+
+def test_profile_name_is_empty_when_the_config_cannot_be_read(tmp_path: Path, monkeypatch) -> None:
+    """A broken config must degrade to an unlabelled row, never raise."""
+    from lazy_harness.hooks.builtins import _shared
+
+    def _boom() -> Path:
+        raise OSError("config unreadable")
+
+    monkeypatch.setattr("lazy_harness.core.paths.config_file", _boom)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+
+    assert _shared.profile_name() == ""

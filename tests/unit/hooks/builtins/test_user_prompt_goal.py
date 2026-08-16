@@ -154,6 +154,27 @@ def test_records_an_empty_project_when_the_payload_omits_cwd(
     assert _recorded(db_path) == [("nontrivial_prompt", "")]
 
 
+def test_records_the_profile_the_agent_runs_under(
+    monkeypatch, tmp_path: Path, capsys, active_profile: str
+) -> None:
+    """Both profiles share one metrics store; a row must name the running one."""
+    import sqlite3
+
+    from lazy_harness.hooks.builtins import user_prompt_goal as mod
+
+    db_path = tmp_path / "m.db"
+    monkeypatch.setattr(mod, "_db_path", lambda: db_path)
+
+    _run(
+        monkeypatch,
+        {"session_id": "s1", "prompt": "implementá el hook y agregá el test", "cwd": "/tmp"},
+        capsys,
+    )
+
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT profile FROM loop_events").fetchall() == [(active_profile,)]
+
+
 def test_records_nothing_for_a_trivial_prompt(monkeypatch, tmp_path: Path, capsys) -> None:
     from lazy_harness.hooks.builtins import user_prompt_goal as mod
     from lazy_harness.monitoring.db import MetricsDB

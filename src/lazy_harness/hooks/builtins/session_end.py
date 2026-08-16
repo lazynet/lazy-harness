@@ -31,13 +31,14 @@ def _record_session_closed(payload: object) -> None:
         data = payload if isinstance(payload, dict) else {}
         session = data.get("session_id")
         cwd = data.get("cwd")
-        from lazy_harness.hooks.builtins._shared import project_key
+        from lazy_harness.hooks.builtins._shared import profile_name, project_key
         from lazy_harness.monitoring.db import MetricsDB
 
         MetricsDB(_loop_db_path()).record_loop_event(
             session=session if isinstance(session, str) else "",
             kind="session_closed",
             project=project_key(Path(cwd)) if isinstance(cwd, str) and cwd else "",
+            profile=profile_name(),
         )
     except Exception:
         pass

@@ -45,6 +45,20 @@ def test_records_the_main_repo_when_the_session_ran_in_a_worktree(
     assert _recorded(db_path) == [("session_closed", "s1", str(git_checkout.repo.resolve()))]
 
 
+def test_records_the_profile_the_agent_runs_under(
+    monkeypatch, tmp_path: Path, active_profile: str
+) -> None:
+    from lazy_harness.hooks.builtins import session_end as mod
+
+    db_path = tmp_path / "m.db"
+    monkeypatch.setattr(mod, "_loop_db_path", lambda: db_path)
+
+    mod._record_session_closed({"session_id": "s1", "cwd": "/tmp"})
+
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT profile FROM loop_events").fetchall() == [(active_profile,)]
+
+
 def test_records_an_empty_project_when_the_payload_omits_cwd(monkeypatch, tmp_path: Path) -> None:
     """A missing cwd must not resolve against the hook's own process cwd."""
     from lazy_harness.hooks.builtins import session_end as mod
