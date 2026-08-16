@@ -20,9 +20,9 @@ from pathlib import Path
 
 
 def _loop_db_path() -> Path:
-    from lazy_harness.core.paths import data_dir
+    from lazy_harness.monitoring.db import resolve_db_path
 
-    return data_dir() / "metrics.db"
+    return resolve_db_path()
 
 
 def _record_session_closed(payload: object) -> None:

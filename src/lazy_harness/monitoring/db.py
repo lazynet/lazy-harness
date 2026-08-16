@@ -12,8 +12,28 @@ if TYPE_CHECKING:
     from lazy_harness.plugins.contracts import MetricEvent
 
 
+def resolve_db_path() -> Path:
+    """The metrics DB every reader and writer must agree on.
+
+    Readers honour `[monitoring] db` and fall back to the data dir; writers
+    that skip that lookup silently write to a file nothing reads.
+    """
+    try:
+        from lazy_harness.core.config import load_config
+        from lazy_harness.core.paths import config_file, expand_path
+
+        cfg = load_config(config_file())
+        if cfg.monitoring.db:
+            return expand_path(cfg.monitoring.db)
+    except Exception:
+        pass
+    from lazy_harness.core.paths import data_dir
+
+    return data_dir() / "metrics.db"
+
+
 class MetricsDB:
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path | str) -> None:
         if str(path) != ":memory:":
             path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(path))
