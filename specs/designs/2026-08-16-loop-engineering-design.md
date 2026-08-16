@@ -147,6 +147,20 @@ Two procedural rules the observed session got right and that a naive implementat
 
 The upstream `herdr` skill stays installed and is invoked only when unusual CLI syntax is genuinely needed.
 
+#### Pane lifecycle
+
+One pane per task. A delegate pane is closed when its task completes; a new task opens a new pane rather than re-prompting the existing one. Re-use accumulates two things, not one: context tokens, and the prior task's framing. Fresh context per unit of work is the canonical loop shape.
+
+The cost is real — agent startup defaults to a 30-second timeout, paid per delegation instead of once. Accepted: a delegate carrying three tasks' worth of context answers the third one worse than a cold one would.
+
+**Ownership.** The upstream skill forbids closing panes the session did not create. Cleanup is therefore scoped to panes this session opened, never to every open pane — unrelated user panes routinely share the workspace. This requires a registry: `loop_events` records `delegate_pane_opened` with the pane ID in `detail`, and `delegate_pane_closed` on teardown. Open-minus-closed for the current session is the set eligible for cleanup.
+
+**Liveness.** A pane is closed only in `idle` or `done`. In `working` or `blocked` it is left alone and reported. `unknown` is explicitly not a completion signal — the upstream skill states it "does not prove completion" — so it is treated as live, not as finished.
+
+**Session teardown.** `session_end.py` already fires exactly once on shutdown and exits 0 on every path. It gains a step that closes this session's eligible panes and reports anything left running rather than forcing it.
+
+**Orphans.** `SessionEnd` does not run when a session dies abnormally, so registered panes can outlive their owner. Before opening a new delegation, panes registered to sessions no longer alive are closed. This keeps the accumulation the one-pane-per-task rule exists to prevent from returning through the failure path.
+
 #### Triggers
 
 Both are evaluated in the same deterministic pass already performed by `user_prompt_goal.py`. Neither fires unless `HERDR_ENV=1`.
@@ -156,7 +170,7 @@ Both are evaluated in the same deterministic pass already performed by `user_pro
 
 Trigger 2 fires at most once per session and only when separable work is actually present; a high context reading with nothing to split off is a reason to compact, not to delegate. Suggesting delegation on context alone would be noise.
 
-Enforcement matches phase 1: soft, once per session, recorded either way. New `loop_events` kinds: `delegate_suggested`, `delegate_accepted`, `delegate_declined`.
+Enforcement matches phase 1: soft, once per session, recorded either way. New `loop_events` kinds: `delegate_suggested`, `delegate_accepted`, `delegate_declined`, `delegate_pane_opened`, `delegate_pane_closed`.
 
 ## `CLAUDE.md` delta
 
@@ -192,6 +206,9 @@ The same applies per trigger in phase 4: the multi-repository signal and the con
 | The thin delegation skill drifts from the upstream CLI | It documents the pattern and its two gotchas, not the CLI surface; the upstream skill remains the syntax authority and is invoked when needed |
 | Delegation suggestions fire outside Herdr and read as broken | Both triggers gate on `HERDR_ENV=1` before evaluating anything |
 | Context-threshold trigger nags without anything to delegate | Fires once per session, and only when separable work is present |
+| Cleanup closes a pane the user owns | Only panes registered as opened by this session are eligible; the registry is the authority, never the workspace listing |
+| Cleanup closes a delegate mid-task | Close requires `idle` or `done`; `working`, `blocked` and `unknown` are all treated as live |
+| Abnormal session death leaves orphan panes | Panes registered to dead sessions are swept before the next delegation opens |
 
 ## Sequencing
 
