@@ -490,21 +490,28 @@ and it clears the gauge.
 
 Source: `src/lazy_harness/hooks/builtins/user_prompt_goal.py`.
 
-Responsibility: record whether the user's submitted prompt declares a goal. Ships as a sensor collecting baseline data, not yet injecting goals back. The hook measures prompts heuristically by scanning for action verbs and weighing against prompt length; it records `goal_absent` for non-trivial work (where a user goal should ideally be explicit) and records nothing for trivial prompts.
+Responsibility: record events for prompts that look like work. Ships as a sensor collecting baseline data; injection of goal prompts back to the agent is gated behind `[loops] inject_goal_prompt`, which defaults to off until a baseline exists.
+
+The hook classifies prompts into trivial and non-trivial. For non-trivial ones — those that carry an implicit goal — it records an event with `kind="goal_absent"` to the metrics store so that later sessions can measure whether the user supplied one.
+
+Classification logic:
+
+1. A prompt is **non-trivial** if it contains a file reference (regex match for common extensions: `.py`, `.md`, `.toml`, `.yaml`, `.yml`, `.json`, `.sh`, `.lock`) OR if it is at least 25 characters long and contains at least one action verb.
+2. A prompt is **trivial** if it is empty, whitespace-only, or does not meet the criteria above.
+
+The action verbs monitored (English + Spanish): `add`, `agregá`, `agrega`, `arreglá`, `arregla`, `build`, `cableá`, `cablea`, `cambiá`, `cambia`, `create`, `escribí`, `escribe`, `fix`, `hacé`, `hace`, `implement`, `implementá`, `implementa`, `migrate`, `migrá`, `move`, `refactor`, `refactorizá`, `remove`, `rename`, `sacá`, `saca`, `wire`.
 
 Mechanics:
 
-1. Read the user's submitted prompt from stdin JSON (field `prompt` or `user_prompt`).
-2. Classify the prompt:
-   - **Trivial**: empty, whitespace-only, very short (≤ 15 chars), or lacks action verbs entirely.
-   - **Non-trivial**: contains one of the predefined action verbs (e.g., `fix`, `implement`, `add`, `refactor`, `migrate`) or names a file path.
-3. For non-trivial prompts, append `{"goal_absent": true, "timestamp": ...}` to `<memory_dir>/loop_events.jsonl`.
-4. For trivial prompts, record nothing.
-5. Always exit 0, even on malformed input or write failures. This is a fail-soft sensor.
+1. Read the user's submitted prompt from stdin JSON (field `prompt`).
+2. Call `is_non_trivial(prompt)` to classify it.
+3. If the prompt is non-trivial, insert a row into the `loop_events` table of `metrics.db` with `kind="goal_absent"`, `session=<from payload>`, `project=<cwd from payload>`, and a server-generated timestamp.
+4. If the prompt is trivial, record nothing.
+5. Always exit 0, even on malformed input or database write failures. This is a fail-soft sensor.
 
-Action verbs monitored (English + Spanish): `fix`, `implement`, `add`, `refactor`, `migrate`, `build`, `create`, `move`, `remove`, `rename`, `wire`, `arreglá`, `arregla`, `implementá`, `implementa`, `agregá`, `agrega`, `refactorizá`, `cambiá`, `cambia`, `cableá`, `cablea`, `hacé`, `hace`, `escribí`, `escribe`, `migrá`, `sacá`, `saca`.
+**Output:** none. The hook only records to the store, it does not emit `hookSpecificOutput`.
 
-**Where it writes:** `<memory_dir>/loop_events.jsonl` — append-only event stream. Nothing is written for trivial prompts.
+**Where it writes:** `<CLAUDE_DATA_DIR>/metrics.db` (SQLite database) — specifically the `loop_events` table. Nothing is written for trivial prompts.
 
 ## How the hooks complement each other
 
