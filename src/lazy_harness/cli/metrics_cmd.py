@@ -160,7 +160,7 @@ def metrics_status() -> None:
 @click.option("--days", type=int, default=None, help="Only count events from the last N days.")
 @click.option("--db", "db_override", type=click.Path(path_type=Path), default=None)
 def metrics_loops(days: int | None, db_override: Path | None) -> None:
-    """Report loop-event counts and the declared-goal rate."""
+    """Report per-kind loop-event counts."""
     console = Console()
 
     if db_override is not None:
@@ -183,9 +183,9 @@ def metrics_loops(days: int | None, db_override: Path | None) -> None:
                 console.print(f"{kind:<20} {counts[kind]}")
             console.print()
 
-        declared = counts.get("goal_declared", 0)
-        considered = declared + counts.get("goal_absent", 0)
-        rate = 0 if considered == 0 else round(100 * declared / considered)
-        console.print(f"declared rate: {rate}% ({declared}/{considered})")
+        # No hook in this branch ever emits `goal_declared` — computing a rate
+        # from it would be structurally 0% forever, indistinguishable from a
+        # true zero. Say so instead of printing a fake percentage.
+        console.print("declaration rate: not available — no declaration sensor exists yet")
     finally:
         db.close()
