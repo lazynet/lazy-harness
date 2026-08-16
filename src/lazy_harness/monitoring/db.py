@@ -34,6 +34,7 @@ def resolve_db_path() -> Path:
 
 class MetricsDB:
     def __init__(self, path: Path | str) -> None:
+        path = Path(path)
         if str(path) != ":memory:":
             path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(path))

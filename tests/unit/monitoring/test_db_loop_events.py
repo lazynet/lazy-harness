@@ -37,3 +37,17 @@ def test_detail_round_trips(db: MetricsDB) -> None:
 
 def test_empty_table_counts_to_an_empty_mapping(db: MetricsDB) -> None:
     assert db.loop_event_counts() == {}
+
+
+def test_accepts_string_path_and_creates_parent_dirs(
+    tmp_path: pytest.TempPathFactory,
+) -> None:
+    """MetricsDB should accept a string path, coerce it, and create parent dirs."""
+    db_path = tmp_path / "nonexistent" / "parent" / "metrics.db"
+    db_str_path = str(db_path)
+
+    db = MetricsDB(db_str_path)
+    db.record_loop_event(session="s1", kind="nontrivial_prompt", project="p")
+
+    assert db.loop_event_counts() == {"nontrivial_prompt": 1}
+    assert db_path.exists()
