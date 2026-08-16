@@ -48,7 +48,7 @@ scripts = ["post-compact"]
 | `pre_tool_use` | `PreToolUse` | Before each tool call | `pre-tool-use-security`, `pre-tool-use-memory-size`, `pre-tool-use-read-size` | Block destructive / exfiltration commands, warn before MEMORY.md exceeds the 200-line or 12KB ceiling, warn before an unbounded read of a large file |
 | `post_tool_use` | `PostToolUse` | After each tool call | `post-tool-use-format`, `post-tool-use-sync-claude` | Auto-format edited files, regenerate segmented `CLAUDE.md` after profile edits |
 | `notification` | `Notification` | Ad-hoc agent notifications | — | Desktop notifications, integrations |
-| `user_prompt_submit` | `UserPromptSubmit` | When the user submits a prompt | — | Third-party integrations |
+| `user_prompt_submit` | `UserPromptSubmit` | When the user submits a prompt | `user-prompt-goal` (opt-in, not in the default set — see below) | Goal-declaration sensor, third-party integrations |
 | `permission_request` | `PermissionRequest` | When the agent asks for a permission decision | — | Third-party integrations, approval routing |
 
 The mapping lives in `ClaudeCodeAdapter.generate_hook_config` — other agents may expose different event names, but the `config.toml` side is stable.
@@ -492,7 +492,7 @@ Source: `src/lazy_harness/hooks/builtins/user_prompt_goal.py`.
 
 Responsibility: record events for prompts that look like work. Ships as a sensor collecting baseline data; injection of goal prompts back to the agent is gated behind `[loops] inject_goal_prompt`, which defaults to off until a baseline exists.
 
-The hook classifies prompts into trivial and non-trivial. For non-trivial ones — those that carry an implicit goal — it records an event with `kind="goal_absent"` to the metrics store so that later sessions can measure whether the user supplied one.
+The hook classifies prompts into trivial and non-trivial. For non-trivial ones it records an event with `kind="nontrivial_prompt"` to the metrics store — one row per qualifying prompt, not per session — so that later analysis can measure how often such prompts occur.
 
 Classification logic:
 
@@ -505,13 +505,20 @@ Mechanics:
 
 1. Read the user's submitted prompt from stdin JSON (field `prompt`).
 2. Call `is_non_trivial(prompt)` to classify it.
-3. If the prompt is non-trivial, insert a row into the `loop_events` table of `metrics.db` with `kind="goal_absent"`, `session=<from payload>`, `project=<cwd from payload>`, and a server-generated timestamp.
+3. If the prompt is non-trivial, insert a row into the `loop_events` table of `metrics.db` with `kind="nontrivial_prompt"`, `session=<from payload>`, `project=<cwd from payload>`, and a server-generated timestamp.
 4. If the prompt is trivial, record nothing.
 5. Always exit 0, even on malformed input or database write failures. This is a fail-soft sensor.
 
 **Output:** none. The hook only records to the store, it does not emit `hookSpecificOutput`.
 
-**Where it writes:** the `loop_events` table in `metrics.db`, stored at the path returned by `data_dir()` — which resolves `LH_DATA_DIR` environment variable, falls back to `$XDG_DATA_HOME/lazy-harness`, and defaults to `~/.local/share/lazy-harness`. Nothing is written for trivial prompts.
+**Where it writes:** the `loop_events` table in `metrics.db`, resolved the same way every `lh metrics`/`lh status` reader resolves it — `[monitoring] db` from `config.toml` if set, otherwise the path returned by `data_dir()` (which resolves the `LH_DATA_DIR` environment variable, falls back to `$XDG_DATA_HOME/lazy-harness`, and defaults to `~/.local/share/lazy-harness`). Nothing is written for trivial prompts.
+
+**Enabling it:** the hook is registered but not part of the default hook set — opt in explicitly in `config.toml`:
+
+```toml
+[hooks.user_prompt_submit]
+scripts = ["user-prompt-goal"]
+```
 
 ## How the hooks complement each other
 
