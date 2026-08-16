@@ -174,14 +174,18 @@ def metrics_loops(days: int | None, db_override: Path | None) -> None:
         db_path = expand_path(configured) if configured else data_dir() / "metrics.db"
 
     since = None if days is None else time.time() - days * 86400
-    counts = MetricsDB(db_path).loop_event_counts(since_ts=since)
+    db = MetricsDB(db_path)
+    try:
+        counts = db.loop_event_counts(since_ts=since)
 
-    if counts:
-        for kind in sorted(counts):
-            console.print(f"{kind:<20} {counts[kind]}")
-        console.print()
+        if counts:
+            for kind in sorted(counts):
+                console.print(f"{kind:<20} {counts[kind]}")
+            console.print()
 
-    declared = counts.get("goal_declared", 0)
-    considered = declared + counts.get("goal_absent", 0)
-    rate = 0 if considered == 0 else round(100 * declared / considered)
-    console.print(f"declared rate: {rate}% ({declared}/{considered})")
+        declared = counts.get("goal_declared", 0)
+        considered = declared + counts.get("goal_absent", 0)
+        rate = 0 if considered == 0 else round(100 * declared / considered)
+        console.print(f"declared rate: {rate}% ({declared}/{considered})")
+    finally:
+        db.close()
