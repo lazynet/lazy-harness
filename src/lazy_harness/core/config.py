@@ -153,6 +153,7 @@ class ContextInjectConfig:
     proposals_summary: bool = True
     repo_map_scope: str = ""
     repo_map_doc: str = "docs/repos.md"
+    repo_map_max_chars: int = 1200
 
 
 @dataclass
@@ -512,6 +513,9 @@ def load_config(path: Path) -> Config:
             ),
             repo_map_scope=ci_raw.get("repo_map_scope", ContextInjectConfig.repo_map_scope),
             repo_map_doc=ci_raw.get("repo_map_doc", ContextInjectConfig.repo_map_doc),
+            repo_map_max_chars=ci_raw.get(
+                "repo_map_max_chars", ContextInjectConfig.repo_map_max_chars
+            ),
         )
 
     loops_raw = raw.get("loops", {})
@@ -560,6 +564,7 @@ def _config_to_dict(cfg: Config) -> dict[str, Any]:
             "proposals_summary": cfg.context_inject.proposals_summary,
             "repo_map_scope": cfg.context_inject.repo_map_scope,
             "repo_map_doc": cfg.context_inject.repo_map_doc,
+            "repo_map_max_chars": cfg.context_inject.repo_map_max_chars,
         },
     }
 

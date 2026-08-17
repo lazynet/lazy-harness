@@ -569,12 +569,14 @@ version = "1"
 [context_inject]
 repo_map_scope = "~/repos/lazy"
 repo_map_doc = "docs/otro.md"
+repo_map_max_chars = 2400
 """)
     from lazy_harness.core.config import load_config
 
     cfg = load_config(config_file)
     assert cfg.context_inject.repo_map_scope == "~/repos/lazy"
     assert cfg.context_inject.repo_map_doc == "docs/otro.md"
+    assert cfg.context_inject.repo_map_max_chars == 2400
 
 
 def test_context_inject_repo_map_survives_round_trip(config_dir: Path) -> None:
@@ -584,6 +586,7 @@ def test_context_inject_repo_map_survives_round_trip(config_dir: Path) -> None:
     config_file = config_dir / "config.toml"
     cfg = Config()
     cfg.context_inject.repo_map_scope = "~/repos/lazy"
+    cfg.context_inject.repo_map_max_chars = 2400
     save_config(cfg, config_file)
 
     reloaded = load_config(config_file)
@@ -593,3 +596,4 @@ def test_context_inject_repo_map_survives_round_trip(config_dir: Path) -> None:
     again = load_config(config_file)
     assert again.context_inject.repo_map_scope == "~/repos/lazy"
     assert again.context_inject.repo_map_doc == "docs/repos.md"
+    assert again.context_inject.repo_map_max_chars == 2400

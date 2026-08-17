@@ -81,20 +81,21 @@ Source: `src/lazy_harness/hooks/builtins/context_inject.py`.
 
 Responsibility: pull together everything a new session should know about, wrap it in markdown sections, and print it as `hookSpecificOutput.additionalContext` so the agent sees it alongside the first user message.
 
-Sections composed, in priority order:
+Sections composed, in the order they appear in the body (which is **not** the order they are dropped in — see below):
 
 1. **`## Git`** — current branch, last commit, working-tree status (modified / untracked count). Computed with a short-timeout `git` subprocess; absent if the cwd is not inside a git repo.
-2. **`## LazyNorth`** — your strategic compass file (universal + per-profile), if `[lazynorth]` is enabled in config. Truncated to ~20 lines for the universal doc and ~15 for the per-profile one.
-3. **`## Last session`** — the most recent exported session matching this project's name. Displays date, message count, and the first non-empty user message of that session (truncated to 80 chars). Pulled from the knowledge store, so it is scoped by project and spans profiles if you run multiple.
-4. **`## Handoff from last session`** — contents of `memory/handoff.md` (written by `compound-loop`) plus `memory/pre-compact-summary.md` (written by `pre-compact`) from the project's per-cwd memory dir.
-5. **`## Recent history`** — the last 3 entries from `decisions.jsonl` and the last 3 from `failures.jsonl`, with failures including their prevention field.
-6. **`## Proposals to review`** — contents of `memory/claude-md.proposal.md` when present. The compound-loop worker writes this file when it has surfaced patterns worth promoting into `CLAUDE.md` (curated semantic layer). Injecting them at session start lets you review and apply them by hand; `context-inject` never edits `CLAUDE.md` or `MEMORY.md` itself.
-
-7. **`## Code structure`** — a summary of `graphify-out/graph.json` (node, edge and community counts) when the graph is fresh, or a `## Notice` pointing at regeneration when the graph is older than `HEAD`. Absent when the repo has no graph.
+2. **`## Repo map`** — the doc at `repo_map_doc`, injected only when the session's cwd sits inside `repo_map_scope`. Off unless that scope is set. Use it for the map of which repo lives where and which remote is authoritative: knowledge an agent needs *before* it starts guessing, and that a conditional "read this file if…" instruction in `CLAUDE.md` reliably fails to trigger. Capped at `repo_map_max_chars` (default 1200), cut on a line boundary, with the remainder announced.
+3. **`## LazyNorth`** — your strategic compass file (universal + per-profile), if `[lazynorth]` is enabled in config. Truncated to ~20 lines for the universal doc and ~15 for the per-profile one.
+4. **`## Last session`** — the most recent exported session matching this project's name. Displays date, message count, and the first non-empty user message of that session (truncated to 80 chars). Pulled from the knowledge store, so it is scoped by project and spans profiles if you run multiple.
+5. **`## Handoff from last session`** — contents of `memory/handoff.md` (written by `compound-loop`) plus `memory/pre-compact-summary.md` (written by `pre-compact`) from the project's per-cwd memory dir.
+6. **`## Code structure`** — a summary of `graphify-out/graph.json` (node, edge and community counts) when the graph is fresh, or a `## Notice` pointing at regeneration when the graph is older than `HEAD`. Absent when the repo has no graph.
+7. **`## Proposals to review`** — contents of `memory/claude-md.proposal.md` when present. The compound-loop worker writes this file when it has surfaced patterns worth promoting into `CLAUDE.md` (curated semantic layer). Injecting them at session start lets you review and apply them by hand; `context-inject` never edits `CLAUDE.md` or `MEMORY.md` itself.
 8. **`## Relevant vault notes`** — QMD hits for the current branch name, when `qmd_suggest_enabled` is set.
-9. **`## Repo map`** — the doc at `repo_map_doc`, injected only when the session's cwd sits inside `repo_map_scope`. Off unless that scope is set. Use it for the map of which repo lives where and which remote is authoritative: knowledge an agent needs *before* it starts guessing, and that a conditional "read this file if…" instruction in `CLAUDE.md` reliably fails to trigger.
+9. **`## Recent history`** — the last 3 entries from `decisions.jsonl` and the last 3 from `failures.jsonl`, with failures including their prevention field.
 
 The body is truncated to `cfg.context_inject.max_body_chars` (default 3000) by dropping sections in the order `episodic → vault notes → proposals → lazynorth → code structure → repo map → handoff`. A compact banner is also emitted as `systemMessage` so the agent can surface "Session context loaded: on main | Last session: 2026-04-12 18:32 | has handoff notes" without printing the full body.
+
+**Why the repo map is capped rather than left to the drop order.** It is the only section whose source is a hand-written document of unbounded length, and it sits second-to-last in the drop order — so an uncapped map survives while every other section is dropped to make room for it, and then gets dropped itself, leaving a body with nothing in it. `repo_map_max_chars` bounds the section before the budget is ever consulted. Raise it if your map is genuinely worth the room; the cap is in characters because that is the unit `max_body_chars` spends.
 
 **Why code structure outranks vault notes.** Both are discovery aids, but the graph summary is a compact map of the repo the session is about to edit, while vault notes are speculative matches on a branch name. Under a tight budget the map is worth more, and it is the only reason to generate the graph at all. If both keep getting dropped, raise `max_body_chars` — the default is deliberately conservative and costs well under a thousand tokens even when doubled.
 

@@ -623,7 +623,7 @@ def graphify_section(graphify_dir: Path, repo_root: Path) -> str:
     return "\n".join(lines)
 
 
-def repo_map_context(cwd: Path, doc: Path, scope: Path | None) -> str:
+def repo_map_context(cwd: Path, doc: Path, scope: Path | None, max_chars: int = 1200) -> str:
     """Return the repo-map doc when `cwd` sits inside `scope`, else "".
 
     Opt-in by design: `scope=None` disables the section, so sessions outside the
@@ -631,16 +631,36 @@ def repo_map_context(cwd: Path, doc: Path, scope: Path | None) -> str:
     a cwd reached through a symlink still matches and a sibling that merely
     shares the scope's name prefix does not.
 
-    Fail-soft on any IO error — returns "".
+    The doc is capped at `max_chars` — measured in characters because that is the
+    unit `max_body_chars` spends, and a real repo map runs several times the whole
+    body budget. Uncapped it survives to second-to-last in the drop order and
+    starves every other section before dropping itself. The cut lands on a line
+    boundary so a truncated map never invents a half-written repo name, and the
+    remainder is announced rather than silently dropped.
+
+    Fail-soft on a missing, unreadable or non-UTF-8 doc — returns "".
     """
     if scope is None:
         return ""
     try:
         if not cwd.resolve().is_relative_to(scope.resolve()):
             return ""
-        return doc.read_text().strip()
-    except OSError:
+        text = doc.read_text().strip()
+    except (OSError, UnicodeDecodeError):
         return ""
+
+    if len(text) <= max_chars:
+        return text
+
+    kept: list[str] = []
+    used = 0
+    for line in text.splitlines():
+        if used + len(line) > max_chars:
+            break
+        kept.append(line)
+        used += len(line) + 1
+    note = f"[repo map truncated at {max_chars} chars — raise repo_map_max_chars for more]"
+    return "\n\n".join(filter(None, ["\n".join(kept), note]))
 
 
 def qmd_suggest_context(query_text: str, top_k: int = 3, timeout: int = 5) -> str:
@@ -776,6 +796,7 @@ def main() -> None:
             cwd,
             agent_dir / cfg.context_inject.repo_map_doc,
             _expand(cfg.context_inject.repo_map_scope),
+            cfg.context_inject.repo_map_max_chars,
         )
 
     # Sections wrapped with markdown headings
