@@ -16,6 +16,29 @@ from lazy_harness.monitoring.views._helpers import (
     time_ago,
 )
 
+_WEEKDAYS = ("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
+
+
+def _clock(entry: dict) -> str:
+    return f"{entry.get('Hour', 0):02d}:{entry.get('Minute', 0):02d}"
+
+
+def _describe_entry(entry: dict) -> str:
+    """Name a StartCalendarInterval entry by the keys it actually carries.
+
+    An absent key means "every", so Weekday and Day are what make an entry
+    weekly or monthly. Reading only Hour and Minute reported every shape as
+    `daily`, including the weekly and monthly ones.
+    """
+    if "Weekday" in entry:
+        day = _WEEKDAYS[entry["Weekday"] % 7]
+        return f"weekly {day} {_clock(entry)}"
+    if "Day" in entry:
+        return f"monthly day {entry['Day']} {_clock(entry)}"
+    if "Hour" not in entry:
+        return f"hourly :{entry.get('Minute', 0):02d}"
+    return f"daily {_clock(entry)}"
+
 
 def _format_schedule(plist_file: Path) -> str:
     """Render a launchd plist's schedule as a short human string."""
@@ -35,19 +58,19 @@ def _format_schedule(plist_file: Path) -> str:
         return f"every {interval // 86400}d"
     cal = data.get("StartCalendarInterval")
     if isinstance(cal, dict):
-        hour = cal.get("Hour", 0)
-        minute = cal.get("Minute", 0)
-        return f"daily {hour:02d}:{minute:02d}"
+        return _describe_entry(cal)
     if isinstance(cal, list):
         first = cal[0] if cal else {}
-        hour = first.get("Hour", 0)
-        minute = first.get("Minute", 0)
         n = len(cal)
-        if n == 7:
-            return f"daily {hour:02d}:{minute:02d}"
-        if n == 5:
-            return f"weekdays {hour:02d}:{minute:02d}"
-        return f"{n}x/week {hour:02d}:{minute:02d}"
+        # Which key varies across the entries is what the list means. Reading
+        # the length alone reported an hour list as a weekday count.
+        if n > 1 and "Hour" in first and len({e.get("Hour") for e in cal}) == n:
+            return f"{n}x/day {_clock(first)}"
+        if n > 1 and len({e.get("Minute") for e in cal}) == n and "Hour" not in first:
+            return f"{n}x/hour :{first.get('Minute', 0):02d}"
+        if n > 1 and len({e.get("Weekday") for e in cal}) == n:
+            return f"{n}x/week {_clock(first)}"
+        return _describe_entry(first)
     return "—"
 
 

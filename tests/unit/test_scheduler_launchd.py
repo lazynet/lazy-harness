@@ -43,22 +43,6 @@ def test_launchd_plist_uses_calendar_for_daily_schedule(tmp_path: Path) -> None:
     assert "StartInterval" not in data
 
 
-def test_launchd_plist_uses_interval_for_recurring_schedule(tmp_path: Path) -> None:
-    import plistlib
-
-    from lazy_harness.scheduler.base import SchedulerJob
-    from lazy_harness.scheduler.launchd import LaunchdBackend
-
-    backend = LaunchdBackend(label_prefix="com.lazy-harness")
-    job = SchedulerJob(name="sync", schedule="*/30 * * * *", command="lh knowledge sync")
-    plist_path = backend.generate_plist(job, tmp_path)
-    with open(plist_path, "rb") as f:
-        data = plistlib.load(f)
-
-    assert data["StartInterval"] == 1800
-    assert "StartCalendarInterval" not in data
-
-
 def test_launchd_plist_includes_stdout_and_stderr_paths(tmp_path: Path) -> None:
     import plistlib
 
@@ -137,16 +121,77 @@ def test_generate_plist_refuses_an_untranslatable_schedule(tmp_path: Path) -> No
         LaunchdBackend().generate_plist(job, tmp_path)
 
 
-def test_install_writes_nothing_for_an_untranslatable_schedule(tmp_path: Path) -> None:
-    """The refusal must reach `install`, not be swallowed into a partial run."""
+def test_install_validates_every_job_before_writing_any(tmp_path: Path) -> None:
+    """One untranslatable job must not leave a half-installed set.
+
+    install() used to write and load each job as it went, so a bad job in the
+    middle left the earlier ones installed, the later ones untouched, and the
+    caller with a traceback.
+    """
     import pytest
 
     from lazy_harness.scheduler.base import SchedulerJob
     from lazy_harness.scheduler.launchd import LaunchdBackend
     from lazy_harness.scheduler.schedule import ScheduleTranslationError
 
-    backend = LaunchdBackend()
-    job = SchedulerJob(name="weekdays", schedule="0 9 * * 1-5", command="echo hi")
-    with pytest.raises(ScheduleTranslationError):
-        backend.generate_plist(job, tmp_path)
+    loaded: list[list[str]] = []
+
+    backend = LaunchdBackend(agents_dir=tmp_path, runner=lambda argv: loaded.append(argv))
+    jobs = [
+        SchedulerJob(name="good-a", schedule="0 6 * * *", command="a"),
+        SchedulerJob(name="bad", schedule="0 9 * * 1-5", command="b"),
+        SchedulerJob(name="good-c", schedule="0 7 * * *", command="c"),
+    ]
+
+    with pytest.raises(ScheduleTranslationError, match="bad"):
+        backend.install(jobs)
+
     assert list(tmp_path.iterdir()) == []
+    assert loaded == []
+
+
+def test_install_writes_every_job_when_all_translate(tmp_path: Path) -> None:
+    from lazy_harness.scheduler.base import SchedulerJob
+    from lazy_harness.scheduler.launchd import LaunchdBackend
+
+    backend = LaunchdBackend(agents_dir=tmp_path, runner=lambda argv: None)
+    jobs = [
+        SchedulerJob(name="a", schedule="0 6 * * *", command="a"),
+        SchedulerJob(name="b", schedule="0 7 * * *", command="b"),
+    ]
+
+    installed = backend.install(jobs)
+
+    assert installed == ["com.lazy-harness.a", "com.lazy-harness.b"]
+    assert {p.name for p in tmp_path.iterdir()} == {
+        "com.lazy-harness.a.plist",
+        "com.lazy-harness.b.plist",
+    }
+
+
+def test_launchd_backend_constructs_without_arguments() -> None:
+    """Paired smoke test: always injecting agents_dir and runner would leave
+    the default resolution completely untested."""
+    from lazy_harness.scheduler.launchd import LaunchdBackend
+
+    backend = LaunchdBackend()
+    assert backend._agents_dir.name == "LaunchAgents"
+    assert backend._runner is not None
+
+def test_launchd_plist_uses_wall_clock_entries_for_a_minute_step(tmp_path: Path) -> None:
+    """Replaces the StartInterval assertion this branch made obsolete.
+
+    StartInterval counts from load time, so `*/30` fired at load+30m rather
+    than at :00 and :30. The calendar list keeps the declared meaning.
+    """
+    import plistlib
+
+    from lazy_harness.scheduler.base import SchedulerJob
+    from lazy_harness.scheduler.launchd import LaunchdBackend
+
+    job = SchedulerJob(name="qmd-sync", schedule="*/30 * * * *", command="lh knowledge sync")
+    path = LaunchdBackend().generate_plist(job, tmp_path)
+
+    data = plistlib.loads(path.read_bytes())
+    assert "StartInterval" not in data
+    assert data["StartCalendarInterval"] == [{"Minute": 0}, {"Minute": 30}]

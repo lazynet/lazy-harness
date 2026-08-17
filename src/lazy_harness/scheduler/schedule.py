@@ -42,10 +42,35 @@ def parse_cron(expr: str) -> Schedule:
     return Schedule(*parts)
 
 
+# Inclusive bounds per cron field, used to reject values launchd would
+# silently ignore — an out-of-range key means the job never fires while the
+# status view still reports it confidently.
+_RANGES: dict[str, tuple[int, int]] = {
+    "minute": (0, 59),
+    "hour": (0, 23),
+    "day_of_month": (1, 31),
+    "day_of_week": (0, 7),
+}
+
+# launchd StartCalendarInterval key per cron field.
+_PLIST_KEYS = {
+    "minute": "Minute",
+    "hour": "Hour",
+    "day_of_month": "Day",
+    "day_of_week": "Weekday",
+}
+
+
 def _as_int(field: str, name: str) -> int:
     if not field.isdigit():
         raise ScheduleTranslationError(f"launchd cannot express {name}={field!r}")
-    return int(field)
+    value = int(field)
+    low, high = _RANGES[name]
+    if not low <= value <= high:
+        raise ScheduleTranslationError(
+            f"{name}={field!r} is outside the valid range {low}-{high}"
+        )
+    return value
 
 
 def _step(field: str) -> int | None:
@@ -59,12 +84,17 @@ def _step(field: str) -> int | None:
 
 
 def render_launchd(s: Schedule) -> dict[str, object]:
-    """Render into a launchd StartCalendarInterval or StartInterval.
+    """Render into a launchd StartCalendarInterval.
 
-    launchd has no range or list syntax, so any field using `-` or `,`
-    raises. So does a month restriction: the old translator ignored the
-    month field entirely, which silently widened a yearly job into a
-    monthly one.
+    A `*` field is expressed by omitting its key — that is what launchd reads
+    as "every". Ranges, lists and month restrictions have no launchd form and
+    raise, as does a step that does not divide its field evenly, because no
+    uniform launchd schedule reproduces the uneven gaps cron would produce.
+
+    `StartInterval` is never emitted. It counts from load time rather than the
+    wall clock, so `*/30` would fire at load+30m instead of at :00 and :30 —
+    an approximation, which is the class of defect this module exists to
+    remove.
     """
     fields = (
         ("minute", s.minute),
@@ -82,34 +112,42 @@ def render_launchd(s: Schedule) -> dict[str, object]:
         raise ScheduleTranslationError(
             f"launchd cannot express month={s.month!r}; declare separate jobs instead"
         )
+    # cron ORs the two day fields when both are restricted; launchd ANDs them.
+    # `0 9 1 * 1` is roughly five times a month in cron and once a year here.
+    if s.day_of_month != "*" and s.day_of_week != "*":
+        raise ScheduleTranslationError(
+            f"cron ORs day_of_month={s.day_of_month!r} with day_of_week={s.day_of_week!r} "
+            "and launchd ANDs them; declare separate jobs instead"
+        )
 
-    minute_step = _step(s.minute)
-    if minute_step is not None:
-        if (s.hour, s.day_of_month, s.day_of_week) != ("*", "*", "*"):
-            raise ScheduleTranslationError(
-                f"launchd cannot combine minute={s.minute!r} with hour={s.hour!r}, "
-                f"day_of_month={s.day_of_month!r}, day_of_week={s.day_of_week!r}"
-            )
-        return {"StartInterval": minute_step * 60}
+    # A step in one field expands into one calendar entry per value; a step in
+    # more than one would be a cross product launchd cannot be trusted with.
+    stepped = [(n, f, _step(f)) for n, f in fields if n != "month" and _step(f) is not None]
+    if len(stepped) > 1:
+        names = ", ".join(f"{n}={f!r}" for n, f, _ in stepped)
+        raise ScheduleTranslationError(f"launchd cannot combine steps in {names}")
 
-    minute = _as_int(s.minute, "minute")
+    base: dict[str, int] = {}
+    for name, field in fields:
+        if name == "month" or field == "*" or field.startswith("*/"):
+            continue
+        base[_PLIST_KEYS[name]] = _as_int(field, name)
 
-    hour_step = _step(s.hour)
-    if hour_step is not None:
-        if (s.day_of_month, s.day_of_week) != ("*", "*"):
-            raise ScheduleTranslationError(
-                f"launchd cannot combine hour={s.hour!r} with "
-                f"day_of_month={s.day_of_month!r}, day_of_week={s.day_of_week!r}"
-            )
-        return {
-            "StartCalendarInterval": [
-                {"Hour": h, "Minute": minute} for h in range(0, 24, hour_step)
-            ]
-        }
+    if not stepped:
+        return {"StartCalendarInterval": base}
 
-    entry: dict[str, int] = {"Hour": _as_int(s.hour, "hour"), "Minute": minute}
-    if s.day_of_week != "*":
-        entry["Weekday"] = _as_int(s.day_of_week, "day_of_week")
-    if s.day_of_month != "*":
-        entry["Day"] = _as_int(s.day_of_month, "day_of_month")
-    return {"StartCalendarInterval": entry}
+    name, field, step = stepped[0]
+    low, high = _RANGES[name]
+    span = high + 1 if name != "day_of_month" else high
+    if span % step:
+        raise ScheduleTranslationError(
+            f"{name}={field!r} does not divide {span} evenly, so no launchd schedule "
+            "reproduces the gaps cron would produce; declare separate jobs instead"
+        )
+    key = _PLIST_KEYS[name]
+    start = low
+    return {
+        "StartCalendarInterval": [
+            {**base, key: v} for v in range(start, high + 1, step)
+        ]
+    }

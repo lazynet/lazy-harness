@@ -4,15 +4,32 @@ from __future__ import annotations
 
 import plistlib
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 from lazy_harness.scheduler.base import SchedulerJob
-from lazy_harness.scheduler.schedule import parse_cron, render_launchd
+from lazy_harness.scheduler.schedule import (
+    ScheduleTranslationError,
+    parse_cron,
+    render_launchd,
+)
+
+
+def _default_runner(argv: list[str]) -> None:
+    subprocess.run(argv, capture_output=True)
 
 
 class LaunchdBackend:
-    def __init__(self, label_prefix: str = "com.lazy-harness") -> None:
+    def __init__(
+        self,
+        label_prefix: str = "com.lazy-harness",
+        *,
+        agents_dir: Path | None = None,
+        runner: Callable[[list[str]], object] | None = None,
+    ) -> None:
         self._prefix = label_prefix
+        self._agents_dir = agents_dir or Path.home() / "Library" / "LaunchAgents"
+        self._runner = runner or _default_runner
 
     def _label(self, job: SchedulerJob) -> str:
         return f"{self._prefix}.{job.name}"
@@ -40,31 +57,43 @@ class LaunchdBackend:
         return plist_path
 
     def install(self, jobs: list[SchedulerJob]) -> list[str]:
-        agents_dir = Path.home() / "Library" / "LaunchAgents"
-        agents_dir.mkdir(parents=True, exist_ok=True)
+        """Install every job, or none of them.
+
+        Translation is validated for the whole set before anything is written.
+        Writing as it went left a half-installed set behind whenever one job
+        could not be translated — the earlier jobs loaded, the later ones
+        untouched, and nothing reported which.
+        """
+        for job in jobs:
+            try:
+                render_launchd(parse_cron(job.schedule))
+            except ScheduleTranslationError as e:
+                raise ScheduleTranslationError(f"job {job.name!r}: {e}") from e
+
+        self._agents_dir.mkdir(parents=True, exist_ok=True)
         installed: list[str] = []
         for job in jobs:
-            plist_path = self.generate_plist(job, agents_dir)
+            plist_path = self.generate_plist(job, self._agents_dir)
             label = self._label(job)
-            subprocess.run(["launchctl", "unload", str(plist_path)], capture_output=True)
-            subprocess.run(["launchctl", "load", str(plist_path)], capture_output=True)
+            self._runner(["launchctl", "unload", str(plist_path)])
+            self._runner(["launchctl", "load", str(plist_path)])
             installed.append(label)
         return installed
 
     def uninstall(self, jobs: list[SchedulerJob]) -> list[str]:
-        agents_dir = Path.home() / "Library" / "LaunchAgents"
+        agents_dir = self._agents_dir
         removed: list[str] = []
         for job in jobs:
             label = self._label(job)
             plist_path = agents_dir / f"{label}.plist"
             if plist_path.is_file():
-                subprocess.run(["launchctl", "unload", str(plist_path)], capture_output=True)
+                self._runner(["launchctl", "unload", str(plist_path)])
                 plist_path.unlink()
                 removed.append(label)
         return removed
 
     def list_jobs(self, search_dir: Path | None = None) -> list[str]:
-        agents_dir = search_dir or Path.home() / "Library" / "LaunchAgents"
+        agents_dir = search_dir or self._agents_dir
         if not agents_dir.is_dir():
             return []
         return [f.stem for f in agents_dir.glob(f"{self._prefix}.*.plist")]
