@@ -116,3 +116,51 @@ def test_cron_backend_constructs_without_arguments() -> None:
     from lazy_harness.scheduler.cron import CronBackend
 
     assert CronBackend()._runner is not None
+
+
+def test_install_raises_when_the_crontab_write_is_rejected() -> None:
+    """`_write` discarded the CompletedProcess, so a rejected write still
+    printed a green tick per job with nothing installed."""
+    import pytest
+
+    from lazy_harness.scheduler.cron import CronBackend
+
+    class Rejecting(FakeCrontab):
+        def __call__(self, argv, *, input=None):  # noqa: A002
+            if argv[1:] == ["-l"]:
+                return super().__call__(argv)
+            return subprocess.CompletedProcess(argv, 1, stdout="", stderr="errors in crontab file")
+
+    with pytest.raises(RuntimeError, match="errors in crontab file"):
+        CronBackend(runner=Rejecting()).install(
+            [SchedulerJob(name="x", schedule="0 6 * * *", command="true")]
+        )
+
+
+def test_uninstall_preserves_the_path_install_computed(monkeypatch, tmp_path) -> None:
+    """Re-deriving PATH on uninstall silently changes the surviving jobs.
+
+    Run `lh scheduler uninstall` from inside a project venv and the untouched
+    entries get a different PATH than the one `install` wrote.
+    """
+    from lazy_harness.scheduler.cron import CronBackend
+
+    fake = FakeCrontab()
+    backend = CronBackend(runner=fake)
+    keep = SchedulerJob(name="keep", schedule="0 6 * * *", command="true")
+    drop = SchedulerJob(name="drop", schedule="0 7 * * *", command="true")
+    backend.install([keep, drop])
+
+    original_path = next(
+        line for line in fake.content.splitlines() if line.startswith("PATH=")
+    )
+
+    # Uninstall from a different environment, which is what running it from
+    # inside a project venv looks like.
+    other = tmp_path / "elsewhere" / "bin"
+    other.mkdir(parents=True)
+    monkeypatch.setenv("PATH", str(other))
+    backend.uninstall([drop])
+
+    surviving = next(line for line in fake.content.splitlines() if line.startswith("PATH="))
+    assert surviving == original_path

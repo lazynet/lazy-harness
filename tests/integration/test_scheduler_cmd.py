@@ -126,3 +126,41 @@ def test_scheduler_install_reports_an_untranslatable_schedule_without_a_tracebac
     assert result.exit_code == 1
     assert "Traceback" not in result.output
     assert "weekdays" in result.output
+
+
+def test_scheduler_install_reports_a_backend_failure_without_a_traceback(
+    home_dir: Path, monkeypatch
+) -> None:
+    """A machine without `crontab` is the documented cron-fallback target.
+
+    The CLI caught NotImplementedError and ScheduleTranslationError only, so
+    CronBackend's RuntimeError escaped as a stack trace.
+    """
+    from lazy_harness.scheduler.cron import CronBackend
+
+    def no_crontab(argv, *, input=None):  # noqa: A002, ANN001
+        raise FileNotFoundError("crontab")
+
+    monkeypatch.setattr(
+        "lazy_harness.scheduler.manager.CronBackend",
+        lambda: CronBackend(runner=no_crontab),
+    )
+
+    config_path = home_dir / ".config" / "lazy-harness" / "config.toml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text("""
+[harness]
+version = "1"
+
+[scheduler]
+backend = "cron"
+
+[scheduler.jobs.x]
+schedule = "0 6 * * *"
+command = "true"
+""")
+    result = CliRunner().invoke(cli, ["scheduler", "install"])
+
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert "crontab" in result.output

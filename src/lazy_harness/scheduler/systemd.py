@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -36,6 +37,21 @@ def _default_unit_dir() -> Path:
     return base / "systemd" / "user"
 
 
+def _current_user() -> str:
+    """The user whose systemd session owns the timers.
+
+    `getpass.getuser` reads the password database when the environment does
+    not carry USER — which is the case under systemd and cron, the very
+    contexts this check reasons about.
+    """
+    import getpass
+
+    try:
+        return getpass.getuser()
+    except (KeyError, OSError):
+        return os.environ.get("USER") or os.environ.get("LOGNAME") or ""
+
+
 class SystemdBackend:
     def __init__(
         self,
@@ -49,6 +65,43 @@ class SystemdBackend:
     def label_for(self, job: SchedulerJob) -> str:
         return f"lazy-harness-{job.name}"
 
+    @staticmethod
+    def _which(name: str) -> str | None:
+        return shutil.which(name)
+
+    def _exec_start(self, job: SchedulerJob) -> str:
+        """Resolve the command into an absolute ExecStart line.
+
+        systemd does not consult `Environment=PATH` when resolving the
+        executable — it uses a compiled-in list of standard directories — so a
+        bare name like `lh` fails with 203/EXEC every window while the PATH
+        line right below it makes the unit look correct.
+
+        It also does not run through a shell, so an operator in the command is
+        a literal argument rather than a pipeline. Both cases refuse rather
+        than writing a unit that never works.
+        """
+        for token in ("|", "&&", "||", ";", ">", "<", "$(", "`"):
+            if token in job.command:
+                raise ValueError(
+                    f"job {job.name!r}: systemd does not run ExecStart through a shell, so "
+                    f"{token!r} in {job.command!r} would be passed as a literal argument. "
+                    "Wrap it in a script and point the command at that."
+                )
+        parts = job.command.split()
+        if not parts:
+            raise ValueError(f"job {job.name!r} has an empty command")
+        binary = parts[0]
+        if not binary.startswith("/"):
+            resolved = self._which(binary)
+            if resolved is None:
+                raise ValueError(
+                    f"job {job.name!r}: {binary!r} is not on PATH, and systemd needs an "
+                    "absolute ExecStart. Install it or declare the full path."
+                )
+            binary = resolved
+        return " ".join([binary, *parts[1:]])
+
     def _service_text(self, job: SchedulerJob) -> str:
         return (
             "[Unit]\n"
@@ -56,8 +109,11 @@ class SystemdBackend:
             "\n"
             "[Service]\n"
             "Type=oneshot\n"
-            f"ExecStart={job.command}\n"
-            f"Environment=PATH={resolved_path()}\n"
+            f"ExecStart={self._exec_start(job)}\n"
+            # Quoted: systemd splits `Environment=` on whitespace into separate
+            # assignments, so an unquoted PATH containing a space sets PATH to
+            # its first fragment and drops the rest.
+            f'Environment="PATH={resolved_path()}"\n'
         )
 
     def _timer_text(self, job: SchedulerJob) -> str:
@@ -83,7 +139,7 @@ class SystemdBackend:
         success anyway. Enabling it needs root, so this reports rather than
         escalating on its own.
         """
-        user = os.environ.get("USER") or os.environ.get("LOGNAME") or ""
+        user = _current_user()
         try:
             proc = self._runner(["loginctl", "show-user", user, "--property=Linger"])
         except Exception:  # noqa: BLE001 — an absent loginctl is not fatal here
@@ -97,11 +153,14 @@ class SystemdBackend:
 
     def install(self, jobs: list[SchedulerJob]) -> list[str]:
         """Install every job, or none of them."""
+        # Everything that can be rejected is rejected before anything is
+        # written, so a bad job leaves the existing set untouched.
         for job in jobs:
             try:
                 render_systemd(parse_cron(job.schedule))
             except ScheduleTranslationError as e:
                 raise ScheduleTranslationError(f"job {job.name!r}: {e}") from e
+            self._exec_start(job)
 
         self._unit_dir.mkdir(parents=True, exist_ok=True)
         installed: list[str] = []
@@ -111,11 +170,24 @@ class SystemdBackend:
             (self._unit_dir / f"{label}.timer").write_text(self._timer_text(job))
             installed.append(label)
 
-        self._runner(["systemctl", "--user", "daemon-reload"])
+        self._check(["systemctl", "--user", "daemon-reload"])
         for label in installed:
-            self._runner(["systemctl", "--user", "enable", "--now", f"{label}.timer"])
+            self._check(["systemctl", "--user", "enable", "--now", f"{label}.timer"])
         self._warn_if_not_lingering()
         return installed
+
+    def _check(self, argv: list[str]) -> None:
+        """Run and raise on a non-zero exit.
+
+        Discarding the return code let `install` print a green tick per job
+        while systemd had rejected the unit — the exact "reports success while
+        installing nothing" failure ADR-013 records as fixed in 0.25.0.
+        """
+        proc = self._runner(argv)
+        code = getattr(proc, "returncode", 0)
+        if code:
+            err = (getattr(proc, "stderr", "") or "").strip() or f"exit {code}"
+            raise RuntimeError(f"{' '.join(argv)} failed: {err}")
 
     def uninstall(self, jobs: list[SchedulerJob]) -> list[str]:
         removed: list[str] = []

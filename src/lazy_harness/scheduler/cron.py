@@ -53,7 +53,31 @@ class CronBackend:
         return getattr(proc, "stdout", "") or ""
 
     def _write(self, content: str) -> None:
-        self._runner(["crontab", "-"], input=content)
+        """Write the crontab and raise on rejection.
+
+        Discarding the exit code let `install` return every label while the
+        crontab was refused — a green tick per job with nothing installed.
+        """
+        proc = self._runner(["crontab", "-"], input=content)
+        code = getattr(proc, "returncode", 0)
+        if code:
+            err = (getattr(proc, "stderr", "") or "").strip() or f"exit {code}"
+            raise RuntimeError(f"crontab write failed: {err}")
+
+    @staticmethod
+    def _existing_path_line(content: str) -> str | None:
+        """The PATH line the previous `install` wrote, if the block has one."""
+        inside = False
+        for line in content.splitlines():
+            stripped = line.strip()
+            if stripped == BEGIN:
+                inside = True
+                continue
+            if stripped == END:
+                break
+            if inside and stripped.startswith("PATH="):
+                return stripped
+        return None
 
     @staticmethod
     def _strip_block(content: str) -> str:
@@ -106,7 +130,11 @@ class CronBackend:
         ]
         preserved = self._strip_block(existing)
         if kept:
-            block = "\n".join([BEGIN, f"PATH={resolved_path()}", *kept, END])
+            # Reuse the PATH `install` computed rather than re-deriving it:
+            # running uninstall from a different environment would otherwise
+            # silently change the surviving jobs' PATH.
+            path_line = self._existing_path_line(existing) or f"PATH={resolved_path()}"
+            block = "\n".join([BEGIN, path_line, *kept, END])
             parts = [p for p in (preserved, block) if p]
         else:
             parts = [p for p in (preserved,) if p]

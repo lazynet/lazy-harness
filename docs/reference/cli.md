@@ -275,7 +275,7 @@ Manages scheduled jobs declared in `[scheduler.jobs.<name>]`. The backend is aut
 
 `install` is all-or-nothing: every job's schedule is translated before anything is written, so an expression the backend cannot express aborts the run and leaves the existing set untouched. On systemd, `install` also checks whether lingering is enabled and says so if it is not — user timers stop when your last session ends, and `systemctl --user enable --now` reports success either way.
 
-On macOS, `lh scheduler install` writes the platform-native unit files for every declared job, `lh scheduler uninstall` removes them, and `lh scheduler status` shows the active backend and per-job state. On Linux, `install` exits with an error and the other two report nothing, so recurring jobs there stay yours to register by hand.
+`lh scheduler install` writes the platform-native unit files for every declared job, `lh scheduler uninstall` removes them, and `lh scheduler status` shows the active backend and per-job state. All three work on every supported platform.
 
 ```bash
 lh scheduler status

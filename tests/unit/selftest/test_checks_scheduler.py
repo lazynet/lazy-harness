@@ -112,3 +112,30 @@ def test_linger_check_is_silent_when_no_jobs_are_declared(tmp_path) -> None:
     cfg = tmp_path / "config.toml"
     cfg.write_text('[harness]\nversion = "1"\n\n[scheduler]\nbackend = "systemd"\n')
     assert check_linger(config_path=cfg) == []
+
+
+def test_linger_check_resolves_the_user_without_env_vars(tmp_path, monkeypatch) -> None:
+    """`lh selftest` can run from a systemd or cron context, where USER is unset.
+
+    Falling back to "" made the check ask loginctl about an empty user and
+    report WARNING — a non-answer in exactly the environment the check exists
+    to reason about.
+    """
+    import subprocess
+
+    from lazy_harness.selftest.checks.scheduler_check import check_linger
+    from lazy_harness.selftest.result import CheckStatus
+
+    monkeypatch.delenv("USER", raising=False)
+    monkeypatch.delenv("LOGNAME", raising=False)
+
+    asked: list[str] = []
+
+    def runner(argv):
+        asked.append(argv[2])
+        return subprocess.CompletedProcess(argv, 0, stdout="Linger=yes", stderr="")
+
+    results = check_linger(config_path=_cfg_with_a_job(tmp_path), runner=runner)
+
+    assert asked and asked[0], "loginctl was asked about an empty user"
+    assert results[0].status == CheckStatus.PASSED

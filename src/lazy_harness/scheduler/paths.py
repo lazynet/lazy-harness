@@ -57,6 +57,14 @@ def resolved_path() -> str:
             continue
         entries.append(entry)
 
+    if not entries:
+        # The fallback used to apply to the input, so a PATH made entirely of
+        # venv bins left the unit with ~/.local/bin alone — no /usr/bin, so
+        # the job cannot even find `sh`.
+        entries = [e for e in _FALLBACK.split(os.pathsep) if Path(e).is_dir()] or list(
+            _FALLBACK.split(os.pathsep)
+        )
+
     local_bin = str(Path.home() / ".local" / "bin")
     if local_bin in entries:
         entries.remove(local_bin)

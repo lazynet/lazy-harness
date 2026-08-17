@@ -77,3 +77,23 @@ def test_resolved_path_drops_the_invoking_virtualenv(monkeypatch, tmp_path) -> N
     assert str(venv) not in entries
     assert str(real) in entries
 
+
+
+def test_resolved_path_falls_back_when_filtering_empties_the_list(monkeypatch, tmp_path) -> None:
+    """The fallback applied to the input, not the result.
+
+    A PATH consisting only of venv bins — a container, a stripped env — left
+    the unit with `~/.local/bin` alone: no /usr/bin, so the job cannot find
+    `sh`.
+    """
+    from lazy_harness.scheduler import paths
+
+    venv = tmp_path / ".venv" / "bin"
+    venv.mkdir(parents=True)
+    monkeypatch.setattr(paths.Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setenv("PATH", str(venv))
+    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+
+    entries = paths.resolved_path().split(":")
+    assert str(venv) not in entries
+    assert any(e in entries for e in ("/usr/bin", "/bin")), entries

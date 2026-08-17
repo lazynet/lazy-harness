@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from lazy_harness.core.config import ConfigError, load_config
@@ -79,6 +80,21 @@ def check_scheduler(*, config_path: Path) -> list[CheckResult]:
     return results
 
 
+def _current_user() -> str:
+    """The user whose systemd session owns the timers.
+
+    `getpass.getuser` reads the password database when the environment does
+    not carry USER — which is the case under systemd and cron, the very
+    contexts this check reasons about.
+    """
+    import getpass
+
+    try:
+        return getpass.getuser()
+    except (KeyError, OSError):
+        return os.environ.get("USER") or os.environ.get("LOGNAME") or ""
+
+
 def check_linger(*, config_path: Path, runner: object | None = None) -> list[CheckResult]:
     """Verify that systemd user timers can actually fire.
 
@@ -90,7 +106,6 @@ def check_linger(*, config_path: Path, runner: object | None = None) -> list[Che
 
     Silent on any other backend; lingering is a systemd concept.
     """
-    import os
     import subprocess
 
     group = "scheduler"
@@ -109,7 +124,7 @@ def check_linger(*, config_path: Path, runner: object | None = None) -> list[Che
         return subprocess.run(argv, capture_output=True, text=True, timeout=10)
 
     call = runner if callable(runner) else _run
-    user = os.environ.get("USER") or os.environ.get("LOGNAME") or ""
+    user = _current_user()
     try:
         proc = call(["loginctl", "show-user", user, "--property=Linger"])
     except Exception as e:  # noqa: BLE001

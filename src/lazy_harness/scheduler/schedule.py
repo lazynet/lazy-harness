@@ -155,14 +155,19 @@ def render_launchd(s: Schedule) -> dict[str, object]:
 
 _SYSTEMD_DOW = ("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
 
+# systemd's calendar fields, with the lower bound a `*/N` step starts from.
+# Day-of-month and month begin at 1: rendering `*-*-0/2` names a day that does
+# not exist and systemd rejects the unit.
+_SYSTEMD_FIELDS = {"minute": 0, "hour": 0, "day_of_month": 1, "month": 1}
+
 
 def _check_range(field: str, name: str) -> None:
     """Validate every literal number in a cron field against its range.
 
     systemd accepts ranges and lists where launchd does not, so the numbers
     have to be checked without collapsing the field to a single value. An
-    out-of-range value makes systemd reject the unit at load time, which
-    surfaces as a job that silently never runs.
+    out-of-range value makes systemd reject the unit at load, which surfaces
+    as a job that silently never runs.
     """
     low, high = _RANGES[name]
     for part in field.replace("/", ",").replace("-", ",").split(","):
@@ -177,22 +182,65 @@ def _check_range(field: str, name: str) -> None:
 
 
 def _systemd_dow(field: str) -> str:
-    """Render the day-of-week field as systemd day names, or '' for every day."""
+    """Render day-of-week as systemd day names, or '' for every day.
+
+    Anything past a plain value or a simple range raises rather than reaching
+    `int()`: a bare ValueError is not a ScheduleTranslationError, so it would
+    escape both `install`'s guard and the CLI handler and surface as a
+    traceback.
+    """
     if field == "*":
         return ""
-    if "-" in field and field.count("-") == 1:
+
+    def name(part: str) -> str:
+        if not part.isdigit():
+            raise ScheduleTranslationError(
+                f"systemd cannot express day_of_week={field!r}; declare separate jobs instead"
+            )
+        return _SYSTEMD_DOW[int(part) % 7]
+
+    if "-" in field:
+        if field.count("-") != 1 or "," in field or "/" in field:
+            raise ScheduleTranslationError(
+                f"systemd cannot express day_of_week={field!r}; declare separate jobs instead"
+            )
         start, end = field.split("-")
-        return f"{_SYSTEMD_DOW[int(start) % 7]}..{_SYSTEMD_DOW[int(end) % 7]}"
-    return ",".join(_SYSTEMD_DOW[int(p) % 7] for p in field.split(","))
+        return f"{name(start)}..{name(end)}"
+    if "/" in field:
+        raise ScheduleTranslationError(
+            f"systemd cannot express day_of_week={field!r}; declare separate jobs instead"
+        )
+    return ",".join(name(p) for p in field.split(","))
 
 
-def _systemd_num(field: str, width: int) -> str:
-    """Render a numeric field, keeping `*`, steps, ranges and lists intact."""
+def _systemd_num(field: str, fname: str) -> str:
+    """Render a numeric field, keeping `*`, steps, ranges and lists intact.
+
+    Ranges use `..`, which is systemd's separator — emitting cron's `-` yields
+    a unit systemd refuses at load.
+    """
+    width = 2 if fname in ("day_of_month", "month", "hour", "minute") else 2
+    low = _SYSTEMD_FIELDS[fname]
+
+    def pad(value: str) -> str:
+        return value.zfill(width) if value.isdigit() else value
+
     if field == "*":
         return "*"
     if field.startswith("*/"):
-        return f"0/{field[2:]}"
-    return ",".join(p.zfill(width) if p.isdigit() else p for p in field.split(","))
+        step = field[2:]
+        return f"{pad(str(low))}/{step}" if low else f"0/{step}"
+
+    rendered: list[str] = []
+    for part in field.split(","):
+        if "-" in part:
+            if part.count("-") != 1:
+                raise ScheduleTranslationError(f"systemd cannot express {fname}={field!r}")
+            start, end = part.split("-")
+            rendered.append(f"{pad(start)}..{pad(end)}")
+        else:
+            rendered.append(pad(part))
+    return ",".join(rendered)
 
 
 def render_systemd(s: Schedule) -> str:
@@ -203,23 +251,30 @@ def render_systemd(s: Schedule) -> str:
     each backend renders separately instead of sharing one lowest common
     denominator.
     """
-    for name, field in (
-        ("minute", s.minute),
-        ("hour", s.hour),
-        ("day_of_month", s.day_of_month),
-        ("day_of_week", s.day_of_week),
-    ):
-        _check_range(field, name)
-    if s.month != "*":
-        for part in s.month.replace("/", ",").replace("-", ",").split(","):
-            if part and (not part.isdigit() or not 1 <= int(part) <= 12):
-                raise ScheduleTranslationError(
-                    f"month={s.month!r} is outside the valid range 1-12"
-                )
+    for name in ("minute", "hour", "day_of_month", "day_of_week"):
+        _check_range(getattr(s, name), name)
+    for part in s.month.replace("/", ",").replace("-", ",").split(","):
+        if part in ("", "*"):
+            continue
+        if not part.isdigit() or not 1 <= int(part) <= 12:
+            raise ScheduleTranslationError(
+                f"month={s.month!r} is outside the valid range 1-12"
+            )
+
+    # cron ORs the two day fields when both are restricted; systemd ANDs them,
+    # exactly as launchd does. `0 9 1 * 1` is roughly five times a month in
+    # cron and roughly once a year here.
+    if s.day_of_month != "*" and s.day_of_week != "*":
+        raise ScheduleTranslationError(
+            f"cron ORs day_of_month={s.day_of_month!r} with day_of_week={s.day_of_week!r} "
+            "and systemd ANDs them; declare separate jobs instead"
+        )
 
     dow = _systemd_dow(s.day_of_week)
-    date = f"*-{_systemd_num(s.month, 2)}-{_systemd_num(s.day_of_month, 2)}"
-    time_part = f"{_systemd_num(s.hour, 2)}:{_systemd_num(s.minute, 2)}:00"
+    date = f"*-{_systemd_num(s.month, 'month')}-{_systemd_num(s.day_of_month, 'day_of_month')}"
+    time_part = (
+        f"{_systemd_num(s.hour, 'hour')}:{_systemd_num(s.minute, 'minute')}:00"
+    )
     calendar = f"{date} {time_part}"
     return f"{dow} {calendar}" if dow else calendar
 
