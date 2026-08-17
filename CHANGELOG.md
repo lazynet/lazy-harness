@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.42.0](https://github.com/lazynet/lazy-harness/compare/v0.41.1...v0.42.0) (2026-08-17)
+
+
+### Features
+
+* detect scheduled jobs installed by a superseded generator ([#179](https://github.com/lazynet/lazy-harness/issues/179)) ([063a409](https://github.com/lazynet/lazy-harness/commit/063a409feb665bf53675f8a0c41bf2f014082abe))
+
 ## [0.41.1](https://github.com/lazynet/lazy-harness/compare/v0.41.0...v0.41.1) (2026-08-17)
 
 
