@@ -895,6 +895,14 @@ The cron runner needs an `input` parameter that the launchd and systemd runners 
 
 - [ ] Extract PATH resolution into `scheduler/paths.py`. It filters `os.environ["PATH"]` to existing directories and prepends `~/.local/bin` if absent — that is where `uv tool install` puts `lh`. Replace the hardcoded `/opt/homebrew/bin` string in `launchd.py:57`, the systemd `Environment=PATH=`, and the cron block's `PATH=` line with one call. Test that the result contains `~/.local/bin` and no nonexistent directory.
 
+  **Superseded after the Linux verification.** Deriving the PATH from
+  `os.environ` made the generated file depend on the shell that ran the
+  install: twenty-five entries with pyenv shims ahead of Homebrew from an
+  interactive terminal, five clean ones over ssh. `resolved_path` now builds
+  from the platform — `~/.local/bin`, then the standard directories that
+  exist, with `/opt/homebrew/bin` presence-gated. See the design doc's
+  "PATH resolution" note.
+
 ### Task 13: Linger check in selftest
 
 - [ ] Add a `linger` result to `check_scheduler`, systemd only, jobs declared: `Linger=no` is `FAILED`. A machine whose scheduled jobs cannot fire is not healthy, and reporting it as a warning would let it pass unnoticed. Test both branches with an injected runner.
