@@ -151,3 +151,79 @@ def render_launchd(s: Schedule) -> dict[str, object]:
             {**base, key: v} for v in range(start, high + 1, step)
         ]
     }
+
+
+_SYSTEMD_DOW = ("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
+
+
+def _check_range(field: str, name: str) -> None:
+    """Validate every literal number in a cron field against its range.
+
+    systemd accepts ranges and lists where launchd does not, so the numbers
+    have to be checked without collapsing the field to a single value. An
+    out-of-range value makes systemd reject the unit at load time, which
+    surfaces as a job that silently never runs.
+    """
+    low, high = _RANGES[name]
+    for part in field.replace("/", ",").replace("-", ",").split(","):
+        if part in ("", "*"):
+            continue
+        if not part.isdigit():
+            raise ScheduleTranslationError(f"systemd cannot express {name}={field!r}")
+        if not low <= int(part) <= high:
+            raise ScheduleTranslationError(
+                f"{name}={field!r} is outside the valid range {low}-{high}"
+            )
+
+
+def _systemd_dow(field: str) -> str:
+    """Render the day-of-week field as systemd day names, or '' for every day."""
+    if field == "*":
+        return ""
+    if "-" in field and field.count("-") == 1:
+        start, end = field.split("-")
+        return f"{_SYSTEMD_DOW[int(start) % 7]}..{_SYSTEMD_DOW[int(end) % 7]}"
+    return ",".join(_SYSTEMD_DOW[int(p) % 7] for p in field.split(","))
+
+
+def _systemd_num(field: str, width: int) -> str:
+    """Render a numeric field, keeping `*`, steps, ranges and lists intact."""
+    if field == "*":
+        return "*"
+    if field.startswith("*/"):
+        return f"0/{field[2:]}"
+    return ",".join(p.zfill(width) if p.isdigit() else p for p in field.split(","))
+
+
+def render_systemd(s: Schedule) -> str:
+    """Render into a systemd `OnCalendar=` expression.
+
+    systemd's calendar syntax covers ranges, lists and month restrictions, so
+    this accepts expressions `render_launchd` refuses. That asymmetry is why
+    each backend renders separately instead of sharing one lowest common
+    denominator.
+    """
+    for name, field in (
+        ("minute", s.minute),
+        ("hour", s.hour),
+        ("day_of_month", s.day_of_month),
+        ("day_of_week", s.day_of_week),
+    ):
+        _check_range(field, name)
+    if s.month != "*":
+        for part in s.month.replace("/", ",").replace("-", ",").split(","):
+            if part and (not part.isdigit() or not 1 <= int(part) <= 12):
+                raise ScheduleTranslationError(
+                    f"month={s.month!r} is outside the valid range 1-12"
+                )
+
+    dow = _systemd_dow(s.day_of_week)
+    date = f"*-{_systemd_num(s.month, 2)}-{_systemd_num(s.day_of_month, 2)}"
+    time_part = f"{_systemd_num(s.hour, 2)}:{_systemd_num(s.minute, 2)}:00"
+    calendar = f"{date} {time_part}"
+    return f"{dow} {calendar}" if dow else calendar
+
+
+def render_cron(s: Schedule) -> str:
+    """Render back to cron. Lossless: the declaration is already the native form."""
+    return f"{s.minute} {s.hour} {s.day_of_month} {s.month} {s.day_of_week}"

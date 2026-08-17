@@ -112,3 +112,29 @@ def home_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
     monkeypatch.delenv("LH_CONFIG_DIR", raising=False)
     return home
+
+
+@pytest.fixture(autouse=True)
+def _never_touch_the_real_crontab(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail loudly if any test reaches the user's crontab.
+
+    `crontab` is global to the user, so redirecting `$HOME` does not contain
+    it. An integration test that built a `CronBackend` with its default runner
+    installed a live `*/30 * * * * lh knowledge sync` entry on the developer's
+    machine — the suite mutated the system it was running on. That test is
+    fixed; this is the net for the next one.
+    """
+    import subprocess
+
+    real_run = subprocess.run
+
+    def guarded(argv, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        first = argv[0] if isinstance(argv, (list, tuple)) and argv else argv
+        if isinstance(first, str) and first.rsplit("/", 1)[-1] == "crontab":
+            raise AssertionError(
+                "a test invoked the real `crontab`. Inject a runner into "
+                "CronBackend instead: the user's crontab is not redirectable."
+            )
+        return real_run(argv, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", guarded)

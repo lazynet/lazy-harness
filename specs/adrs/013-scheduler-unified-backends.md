@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Date:** 2026-04-13
-**Implementation:** partial as of 2026-08-09 — the protocol, the auto-detector and `LaunchdBackend` ship; `SystemdBackend.install` and `CronBackend.install` raise `NotImplementedError`. See [Implementation status](#implementation-status).
+**Implementation:** complete as of 2026-08-17 — all three backends install, uninstall and report state. See [Implementation status](#implementation-status).
 
 ## Context
 
@@ -63,11 +63,19 @@ Annotated 2026-08-09. The Decision above is the decision as taken and is left as
 | `SchedulerBackend` protocol (`scheduler/base.py`) | shipped |
 | `detect_backend` (`scheduler/manager.py`) | shipped |
 | `LaunchdBackend` (`scheduler/launchd.py`) | shipped — writes and loads `.plist` files |
-| `SystemdBackend` (`scheduler/systemd.py`) | **`install` raises `NotImplementedError`.** No `.timer` / `.service` files are written. |
-| `CronBackend` (`scheduler/cron.py`) | **`install` raises `NotImplementedError`.** The crontab is not edited. |
+| `SystemdBackend` (`scheduler/systemd.py`) | shipped 2026-08-17 — writes `.timer` + `.service` units, enables them with `systemctl --user`, and reports when lingering is disabled |
+| `CronBackend` (`scheduler/cron.py`) | shipped 2026-08-17 — writes a delimited block into the user's crontab, preserving their own entries |
 
 Both stubs previously returned fabricated artefact labels — `[f"cron-{j.name}" for j in jobs]` — so `lh scheduler install` reported success on Linux while installing nothing, and `scheduler_check` had no way to notice. They were changed to raise in the fix released as 0.25.0.
 
-`uninstall` and `status` on those two backends still return empty lists rather than raising. That asymmetry is deliberate for now and harmless in practice, since neither backend can have installed anything, but it means `lh scheduler uninstall` stays quiet on Linux where `install` is loud.
+The asymmetry noted here — `uninstall` and `status` returning empty lists while `install` raised — disappeared with the implementation: all three methods now operate on real state.
 
 **What this does not change.** The plugin-over-protocol decision holds, and the Alternatives above were argued on their merits, not on implementation cost. Adding the two missing backends is filling in the pattern this ADR chose, not revisiting it — so this is an annotation, not a superseding ADR. The trigger for completing it is a real Linux deployment target; tracked in `specs/backlog.md`.
+
+## Amendment 2026-08-17 — translation refuses rather than approximates
+
+The Consequences above say the cron-to-native translation "is lossy for edge cases, documented in each backend module". That is no longer how it behaves, and the change is worth recording because the old wording described a defect.
+
+`LaunchdBackend` approximated: `_cron_to_calendar` recognised only the strict daily form and everything else fell through to a 3600-second default, so `0 */6 * * *` — the example this ADR uses in its own Decision section — installed as an hourly job. Nothing reported the discrepancy, because `lh status cron`, `lh scheduler status` and `lh selftest` all checked whether the label was loaded, never whether the installed schedule matched the declared one.
+
+Translation now lives in `scheduler/schedule.py`: one parser, one renderer per backend, and a `ScheduleTranslationError` when a backend cannot express an expression faithfully. `install` validates the whole set before writing anything, so a rejected expression aborts the run rather than leaving a partial install. The backends deliberately accept different subsets — systemd expresses ranges and month restrictions that launchd cannot — which is why they render separately instead of sharing a lowest common denominator.

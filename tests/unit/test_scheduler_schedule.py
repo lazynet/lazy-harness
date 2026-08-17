@@ -213,3 +213,65 @@ def test_render_launchd_rejects_out_of_range_fields(expr: str, needle: str) -> N
 
     with pytest.raises(ScheduleTranslationError, match=needle):
         render_launchd(parse_cron(expr))
+
+
+@pytest.mark.parametrize(
+    ("expr", "expected"),
+    [
+        ("0 10 * * *", "*-*-* 10:00:00"),
+        ("0 * * * *", "*-*-* *:00:00"),
+        ("30 3 * * 0", "Sun *-*-* 03:30:00"),
+        ("0 */6 * * *", "*-*-* 0/6:00:00"),
+        ("*/30 * * * *", "*-*-* *:0/30:00"),
+        ("15 2 1 * *", "*-*-01 02:15:00"),
+        ("0 9 1 6 *", "*-06-01 09:00:00"),
+    ],
+)
+def test_render_systemd_oncalendar(expr: str, expected: str) -> None:
+    from lazy_harness.scheduler.schedule import parse_cron, render_systemd
+
+    assert render_systemd(parse_cron(expr)) == expected
+
+
+def test_render_systemd_expresses_a_weekday_range_launchd_refuses() -> None:
+    """The asymmetry is the point of per-backend renderers.
+
+    launchd has no range syntax and raises on this; systemd spells it
+    natively, so refusing it here would be a translation loss with no cause.
+    """
+    from lazy_harness.scheduler.schedule import parse_cron, render_launchd, render_systemd
+
+    schedule = parse_cron("0 9 * * 1-5")
+    assert render_systemd(schedule) == "Mon..Fri *-*-* 09:00:00"
+
+    import pytest as _pytest
+
+    from lazy_harness.scheduler.schedule import ScheduleTranslationError
+
+    with _pytest.raises(ScheduleTranslationError):
+        render_launchd(schedule)
+
+
+def test_render_systemd_expresses_a_day_list() -> None:
+    from lazy_harness.scheduler.schedule import parse_cron, render_systemd
+
+    assert render_systemd(parse_cron("0 9 1,15 * *")) == "*-*-01,15 09:00:00"
+
+
+def test_render_systemd_rejects_out_of_range_fields() -> None:
+    from lazy_harness.scheduler.schedule import (
+        ScheduleTranslationError,
+        parse_cron,
+        render_systemd,
+    )
+
+    with pytest.raises(ScheduleTranslationError, match="hour"):
+        render_systemd(parse_cron("0 25 * * *"))
+
+
+def test_render_cron_is_the_expression_itself() -> None:
+    """Cron is lossless by construction: the declaration is the native form."""
+    from lazy_harness.scheduler.schedule import parse_cron, render_cron
+
+    for expr in ("0 9 * * 1-5", "*/45 * * * *", "15 2 1 6 *"):
+        assert render_cron(parse_cron(expr)) == expr

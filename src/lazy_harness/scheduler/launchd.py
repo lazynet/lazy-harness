@@ -8,6 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from lazy_harness.scheduler.base import JobRecord, JobState, SchedulerJob
+from lazy_harness.scheduler.paths import resolved_path
 from lazy_harness.scheduler.schedule import (
     ScheduleTranslationError,
     parse_cron,
@@ -111,9 +112,7 @@ class LaunchdBackend:
             "RunAtLoad": True,
             "StandardOutPath": str(log_dir / f"{job.name}-stdout.log"),
             "StandardErrorPath": str(log_dir / f"{job.name}-stderr.log"),
-            "EnvironmentVariables": {
-                "PATH": f"{Path.home()}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
-            },
+            "EnvironmentVariables": {"PATH": resolved_path()},
         }
         # Raises rather than approximating: installing a schedule other than
         # the one declared is what made every non-daily job run hourly.
