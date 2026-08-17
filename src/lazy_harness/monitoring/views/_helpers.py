@@ -13,12 +13,14 @@ import re
 import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import StrEnum
 from pathlib import Path
 
 from lazy_harness.core.config import Config
 from lazy_harness.core.profiles import ProfileInfo, list_profiles
 from lazy_harness.knowledge.directory import learnings_dir as knowledge_learnings_dir
 from lazy_harness.knowledge.marker import MarkerError, resolve_root
+from lazy_harness.scheduler.base import SchedulerBackend
 
 HOOK_NAMES_DEFAULT = (
     "context-inject",
@@ -37,7 +39,7 @@ class StatusContext:
     profiles: list[ProfileInfo] = field(default_factory=list)
     knowledge_path: Path | None = None
     learnings_dir: Path | None = None
-    launchd_prefix: str = "com.lazy-harness"
+    scheduler_backend: SchedulerBackend | None = None
 
     @classmethod
     def build(cls, cfg: Config) -> StatusContext:
@@ -47,11 +49,17 @@ class StatusContext:
             learnings_dir = knowledge_learnings_dir(knowledge_path)
         except MarkerError:
             learnings_dir = None
+        from lazy_harness.scheduler.manager import detect_backend
+
         return cls(
             cfg=cfg,
             profiles=list_profiles(cfg),
             knowledge_path=knowledge_path,
             learnings_dir=learnings_dir,
+            # The views ask the backend what exists; they used to glob
+            # ~/Library/LaunchAgents themselves, which made them macOS-only
+            # regardless of which backend was actually active.
+            scheduler_backend=detect_backend(cfg.scheduler.backend),
         )
 
     def logs_dir(self, profile: ProfileInfo) -> Path:
@@ -214,22 +222,32 @@ def count_errors_today(log_file: Path) -> int:
     return count
 
 
-def launchctl_loaded(label: str) -> bool:
-    try:
-        result = subprocess.run(
-            ["launchctl", "list", label],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        return result.returncode == 0
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        return False
+
+class LockState(StrEnum):
+    """Whether the worker's advisory lock is held.
+
+    Three-valued for the same reason `JobState` is: the previous probe
+    shelled out to `lsof` and read its absence as "not held", which is the
+    dangerous direction — the view claims the worker is idle while it runs.
+    """
+
+    HELD = "held"
+    FREE = "free"
+    UNKNOWN = "unknown"
 
 
-def file_locked(path: Path) -> bool:
+def lock_state(path: Path) -> tuple[LockState, str]:
+    """Whether an advisory lock is held on `path`, without taking it.
+
+    This must stay read-only. Probing by acquiring the lock — `flock` has no
+    test mode, so acquiring is the only direct way — makes the probe race the
+    worker for its own single-instance lock. Measured at 16.6% denial under
+    contention, and every denial is `compound_loop_worker` logging "another
+    worker is running", exiting 0, and leaving the queue undrained until the
+    next scheduled run. `lsof` cannot do that; it only reads.
+    """
     if not path.is_file():
-        return False
+        return LockState.FREE, ""
     try:
         result = subprocess.run(
             ["lsof", str(path)],
@@ -237,6 +255,8 @@ def file_locked(path: Path) -> bool:
             text=True,
             timeout=5,
         )
-        return result.returncode == 0
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        return False
+    except FileNotFoundError as e:
+        return LockState.UNKNOWN, f"lsof unavailable: {e}"
+    except (subprocess.TimeoutExpired, OSError) as e:
+        return LockState.UNKNOWN, f"lsof failed: {e}"
+    return (LockState.HELD if result.returncode == 0 else LockState.FREE), ""

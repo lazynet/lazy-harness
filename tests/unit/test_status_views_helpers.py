@@ -141,59 +141,103 @@ def test_count_errors_today_missing_log(tmp_path: Path) -> None:
     assert count_errors_today(tmp_path / "nope.log") == 0
 
 
-def _write_plist(path, payload: dict) -> None:
-    import plistlib
+def test_launchctl_loaded_is_gone() -> None:
+    """It returned False for 'cannot check'. Nothing may reintroduce that shape."""
+    from lazy_harness.monitoring.views import _helpers
 
-    with open(path, "wb") as f:
-        plistlib.dump({"Label": "com.lazy-harness.x", **payload}, f)
-
-
-def test_format_schedule_reports_a_weekly_entry_as_weekly(tmp_path) -> None:
-    """A dict carrying Weekday was reported as `daily`."""
-    from lazy_harness.monitoring.views.cron import _format_schedule
-
-    p = tmp_path / "x.plist"
-    _write_plist(p, {"StartCalendarInterval": {"Hour": 3, "Minute": 30, "Weekday": 0}})
-    assert _format_schedule(p) == "weekly Sun 03:30"
+    assert not hasattr(_helpers, "launchctl_loaded")
 
 
-def test_format_schedule_reports_a_monthly_entry_as_monthly(tmp_path) -> None:
-    """A dict carrying Day was reported as `daily`."""
-    from lazy_harness.monitoring.views.cron import _format_schedule
+def test_status_context_exposes_the_backend_not_a_launchd_prefix() -> None:
+    """Reverse-DNS labelling is a launchd convention; the status layer must
+    not know it, and must not glob a macOS-only directory."""
+    from lazy_harness.core.config import Config
+    from lazy_harness.monitoring.views._helpers import StatusContext
 
-    p = tmp_path / "x.plist"
-    _write_plist(p, {"StartCalendarInterval": {"Hour": 2, "Minute": 15, "Day": 1}})
-    assert _format_schedule(p) == "monthly day 1 02:15"
-
-
-def test_format_schedule_reports_an_hour_list_as_times_per_day(tmp_path) -> None:
-    """A 4-entry hour list was reported as `4x/week`. It is 4x/day."""
-    from lazy_harness.monitoring.views.cron import _format_schedule
-
-    p = tmp_path / "x.plist"
-    _write_plist(
-        p,
-        {
-            "StartCalendarInterval": [
-                {"Minute": 0, "Hour": h} for h in (0, 6, 12, 18)
-            ]
-        },
-    )
-    assert _format_schedule(p) == "4x/day 00:00"
+    ctx = StatusContext.build(Config())
+    assert not hasattr(ctx, "launchd_prefix")
+    assert ctx.scheduler_backend is not None
 
 
-def test_format_schedule_reports_a_minute_list_as_times_per_hour(tmp_path) -> None:
-    from lazy_harness.monitoring.views.cron import _format_schedule
-
-    p = tmp_path / "x.plist"
-    _write_plist(p, {"StartCalendarInterval": [{"Minute": 0}, {"Minute": 30}]})
-    assert _format_schedule(p) == "2x/hour :00"
 
 
-def test_format_schedule_reports_an_hourly_entry_as_hourly(tmp_path) -> None:
-    """`{"Minute": 0}` means every hour; it was reported as `daily 00:00`."""
-    from lazy_harness.monitoring.views.cron import _format_schedule
 
-    p = tmp_path / "x.plist"
-    _write_plist(p, {"StartCalendarInterval": {"Minute": 0}})
-    assert _format_schedule(p) == "hourly :00"
+
+def test_lock_state_never_acquires_the_lock(tmp_path: Path) -> None:
+    """The probe must be read-only.
+
+    Acquiring the worker's own exclusive flock to test it makes the probe
+    win the race: measured at 16.6% denial under contention, and every
+    denial is the compound-loop worker logging "another worker is running",
+    exiting 0, and leaving the queue undrained until the next scheduled run.
+    """
+    import fcntl
+
+    from lazy_harness.monitoring.views._helpers import lock_state
+
+    lock = tmp_path / ".worker.lock"
+    lock.touch()
+
+    for _ in range(200):
+        lock_state(lock)
+
+    # If the probe ever took the lock and failed to release it, or is holding
+    # it now, this acquire fails.
+    fd = open(lock, "a")
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        fd.close()
+
+
+def test_lock_state_reports_unknown_when_it_cannot_check(tmp_path: Path, monkeypatch) -> None:
+    """A missing `lsof` is 'cannot check', not 'not locked'.
+
+    Reading absence as free is the dangerous direction: the view then claims
+    the worker is idle while it runs. Same three-valued reasoning as JobState.
+    """
+    import subprocess
+
+    from lazy_harness.monitoring.views._helpers import LockState, lock_state
+
+    lock = tmp_path / ".worker.lock"
+    lock.touch()
+
+    def missing(*_a, **_k):
+        raise FileNotFoundError("lsof")
+
+    monkeypatch.setattr(subprocess, "run", missing)
+    state, detail = lock_state(lock)
+    assert state is LockState.UNKNOWN
+    assert "lsof" in detail
+
+
+def test_lock_state_reports_free_for_a_missing_file(tmp_path: Path) -> None:
+    from lazy_harness.monitoring.views._helpers import LockState, lock_state
+
+    state, _ = lock_state(tmp_path / "absent.lock")
+    assert state is LockState.FREE
+
+
+def test_lock_state_reports_held_when_the_lock_is_taken(tmp_path: Path) -> None:
+    import fcntl
+    import shutil
+
+    import pytest
+
+    from lazy_harness.monitoring.views._helpers import LockState, lock_state
+
+    if shutil.which("lsof") is None:
+        pytest.skip("lsof is not installed; the probe correctly reports UNKNOWN")
+
+    lock = tmp_path / ".worker.lock"
+    lock.touch()
+    fd = open(lock, "a")
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        state, _ = lock_state(lock)
+        assert state is LockState.HELD
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        fd.close()

@@ -17,8 +17,8 @@ from lazy_harness.monitoring.views._helpers import (
     HOOK_NAMES_DEFAULT,
     StatusContext,
     last_hook_ts,
-    launchctl_loaded,
 )
+from lazy_harness.scheduler.base import JobState
 
 
 def _hook_indicator(state: str, name: str) -> Text:
@@ -80,10 +80,7 @@ def render(ctx: StatusContext, db: MetricsDB | None, console: Console) -> None:
         return f"{label:<5} {today} today · {month} this month · {total} total"
 
     def _tok_line(label: str, tin: int, tout: int, cost: float) -> str:
-        return (
-            f"{label:<5} {_fmt(tin)} in · {_fmt(tout)} out · "
-            f"${round(cost, 2)} ({month_label})"
-        )
+        return f"{label:<5} {_fmt(tin)} in · {_fmt(tout)} out · ${round(cost, 2)} ({month_label})"
 
     session_rows: list[str] = []
     token_rows: list[str] = []
@@ -101,9 +98,7 @@ def render(ctx: StatusContext, db: MetricsDB | None, console: Console) -> None:
         session_rows.append(
             _sess_line(f"{name}:", len(today_set), len(month_set), len(total_set))  # type: ignore[arg-type]
         )
-        token_rows.append(
-            _tok_line(f"{name}:", int(b["in"]), int(b["out"]), float(b["cost"]))
-        )
+        token_rows.append(_tok_line(f"{name}:", int(b["in"]), int(b["out"]), float(b["cost"])))
         all_today |= today_set  # type: ignore[arg-type]
         all_month |= month_set  # type: ignore[arg-type]
         all_total |= total_set  # type: ignore[arg-type]
@@ -112,9 +107,7 @@ def render(ctx: StatusContext, db: MetricsDB | None, console: Console) -> None:
         all_cost += float(b["cost"])
 
     if len(profile_order) > 1:
-        session_rows.append(
-            _sess_line("all:", len(all_today), len(all_month), len(all_total))
-        )
+        session_rows.append(_sess_line("all:", len(all_today), len(all_month), len(all_total)))
         token_rows.append(_tok_line("all:", all_in, all_out, all_cost))
     elif not profile_order:
         session_rows.append(_sess_line("", 0, 0, 0))
@@ -143,19 +136,18 @@ def render(ctx: StatusContext, db: MetricsDB | None, console: Console) -> None:
         hooks_text = Text("none recent", style="dim")
 
     cron_text = Text()
-    from pathlib import Path
-
-    plist_dir = Path.home() / "Library" / "LaunchAgents"
-    if plist_dir.is_dir():
-        for plist_file in sorted(plist_dir.glob(f"{ctx.launchd_prefix}.*.plist")):
-            label = plist_file.stem
-            short = label[len(ctx.launchd_prefix) + 1 :] if "." in label else label
-            loaded = launchctl_loaded(label)
-            if cron_text.plain:
-                cron_text.append("  ")
-            cron_text.append_text(
-                Text(f"{'✓' if loaded else '✗'} {short}", style="green" if loaded else "red")
-            )
+    backend = ctx.scheduler_backend
+    for rec in backend.discover() if backend is not None else []:
+        # `?` for UNKNOWN, never `✗`: the backend could not check, which is
+        # not the same as the job being absent.
+        glyph, style = {
+            JobState.LOADED: ("✓", "green"),
+            JobState.NOT_LOADED: ("✗", "red"),
+            JobState.UNKNOWN: ("?", "yellow"),
+        }[rec.state]
+        if cron_text.plain:
+            cron_text.append("  ")
+        cron_text.append_text(Text(f"{glyph} {rec.name}", style=style))
     if not cron_text.plain:
         cron_text = Text("no managed jobs", style="dim")
 
