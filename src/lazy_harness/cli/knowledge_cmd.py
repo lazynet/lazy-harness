@@ -9,6 +9,7 @@ from pathlib import Path
 
 import click
 from rich.console import Console
+from rich.markup import escape
 
 from lazy_harness.core.config import Config, ConfigError, load_config
 from lazy_harness.core.logfile import append as log_append
@@ -59,7 +60,7 @@ def knowledge_status() -> None:
     try:
         cfg = load_config(cf)
     except ConfigError as e:
-        console.print(f"[red]Error: {e}[/red]")
+        console.print(f"[red]Error: {escape(str(e))}[/red]")
         raise SystemExit(1)
     kdir = resolve_root(cfg.knowledge.root or None)
     console.print(f"[bold]Knowledge directory:[/bold] {contract_path(kdir)}")
@@ -68,7 +69,7 @@ def knowledge_status() -> None:
         try:
             sessions = list_sessions(kdir)
         except MarkerError as e:
-            console.print(f"[red]✗[/red] {e}")
+            console.print(f"[red]✗[/red] {escape(str(e))}")
         else:
             console.print(f"  Sessions: {len(sessions)} exported")
     else:
@@ -158,13 +159,13 @@ def knowledge_export_session(session_file: Path, force: bool) -> None:
     try:
         cfg = load_config(cf)
     except ConfigError as e:
-        console.print(f"[red]Error: {e}[/red]")
+        console.print(f"[red]Error: {escape(str(e))}[/red]")
         raise SystemExit(1)
     knowledge_dir = resolve_root(cfg.knowledge.root or None)
     try:
         sessions_root = sessions_dir(knowledge_dir)
     except MarkerError as e:
-        console.print(f"[red]{e}[/red]")
+        console.print(f"[red]{escape(str(e))}[/red]")
         raise SystemExit(1) from e
     sessions_root.mkdir(parents=True, exist_ok=True)
 
@@ -192,7 +193,7 @@ def knowledge_handoff_now() -> None:
     try:
         cfg = load_config(cf)
     except ConfigError as e:
-        console.print(f"[red]Error: {e}[/red]")
+        console.print(f"[red]Error: {escape(str(e))}[/red]")
         raise SystemExit(1)
 
     if not cfg.compound_loop.enabled:
@@ -263,7 +264,7 @@ def knowledge_handoff_now() -> None:
                 close_fds=True,
             )
     except OSError as e:
-        console.print(f"[yellow]·[/yellow] worker spawn failed: {e}")
+        console.print(f"[yellow]·[/yellow] worker spawn failed: {escape(str(e))}")
 
 
 @knowledge.command("embed")
@@ -306,7 +307,7 @@ def knowledge_init(root: str | None) -> None:
     try:
         created = ensure_knowledge_dir(target)
     except MarkerError as e:
-        console.print(f"[red]{e}[/red]")
+        console.print(f"[red]{escape(str(e))}[/red]")
         raise SystemExit(1) from e
     console.print(f"[green]Knowledge store ready:[/green] {contract_path(created)}")
 
@@ -332,7 +333,7 @@ def knowledge_path(kind: str) -> None:
         else:
             target = learnings_dir(root)
     except MarkerError as e:
-        console.print(f"[red]{e}[/red]")
+        console.print(f"[red]{escape(str(e))}[/red]")
         raise SystemExit(1) from e
     click.echo(str(target))
 
@@ -392,7 +393,7 @@ def knowledge_graph_add(repo: Path) -> None:
     try:
         cfg, repos = _structure_repos(cfg_path)
     except ConfigError as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[red]Error:[/red] {escape(str(e))}")
         raise SystemExit(1)
 
     if str(resolved) in repos:
@@ -411,7 +412,7 @@ def knowledge_graph_list() -> None:
     try:
         _, repos = _structure_repos(config_file())
     except ConfigError as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[red]Error:[/red] {escape(str(e))}")
         raise SystemExit(1)
 
     if not repos:
@@ -438,7 +439,7 @@ def knowledge_graph_update() -> None:
     try:
         _, repos = _structure_repos(config_file())
     except ConfigError as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[red]Error:[/red] {escape(str(e))}")
         raise SystemExit(1)
 
     if not repos:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import click
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from lazy_harness.agents.registry import AgentNotFoundError, get_agent
@@ -135,7 +136,7 @@ def profile_move(
     try:
         cfg = load_config(cf)
     except ConfigError as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[red]Error:[/red] {escape(str(e))}")
         raise SystemExit(1)
 
     if src_name not in cfg.profiles.items:
@@ -183,7 +184,7 @@ def profile_move(
     try:
         results = do_move_projects(src_dir, dst_dir, targets, overwrite=overwrite)
     except MoveError as e:
-        console.print(f"[red]{e}[/red]")
+        console.print(f"[red]{escape(str(e))}[/red]")
         raise SystemExit(1)
 
     for r in results:
@@ -240,14 +241,14 @@ def profile_envrc(dry_run: bool) -> None:
     try:
         cfg = load_config(cf)
     except ConfigError as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[red]Error:[/red] {escape(str(e))}")
         raise SystemExit(1)
 
     if dry_run:
         try:
             adapter = get_agent(cfg.agent.type)
         except AgentNotFoundError as e:
-            console.print(f"[red]{e}[/red]")
+            console.print(f"[red]{escape(str(e))}[/red]")
             raise SystemExit(1)
         env_var = adapter.env_var()
         for entry in cfg.profiles.items.values():
@@ -263,7 +264,7 @@ def profile_envrc(dry_run: bool) -> None:
     try:
         results = deploy_envrc_for_all_profiles(cfg)
     except AgentNotFoundError as e:
-        console.print(f"[red]{e}[/red]")
+        console.print(f"[red]{escape(str(e))}[/red]")
         raise SystemExit(1)
 
     if not results:
@@ -301,13 +302,13 @@ def profile_sync_claude_md() -> None:
         cfg = load_config(config_file())
         agent = get_agent(cfg.agent.type)
     except (ConfigError, AgentNotFoundError) as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[red]Error:[/red] {escape(str(e))}")
         raise SystemExit(1)
 
     try:
         results = sync_profiles(profiles_dir, agent)
     except SyncError as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[red]Error:[/red] {escape(str(e))}")
         raise SystemExit(1)
 
     if not results:

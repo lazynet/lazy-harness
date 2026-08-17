@@ -9,6 +9,7 @@ from pathlib import Path
 import click
 import httpx
 from rich.console import Console
+from rich.markup import escape
 
 from lazy_harness.agents.base import AgentAdapter
 from lazy_harness.agents.registry import AgentNotFoundError, get_agent
@@ -92,7 +93,7 @@ def _render_llm_backend(console: Console, cl_cfg: CompoundLoopConfig) -> bool:
     try:
         backend = get_backend(cl_cfg)
     except (LLMBackendError, LLMBackendNotFoundError) as e:
-        console.print(f"  [red]✗[/red] {e}")
+        console.print(f"  [red]✗[/red] {escape(str(e))}")
         return False
 
     if isinstance(backend, OpenAICompatibleBackend):
@@ -213,7 +214,7 @@ def doctor() -> None:
     try:
         cfg = load_config(cf)
     except ConfigError as e:
-        console.print(f"[red]✗[/red] Config error: {e}")
+        console.print(f"[red]✗[/red] Config error: {escape(str(e))}")
         raise SystemExit(1)
 
     console.print(f"[green]✓[/green] Config version: {cfg.harness.version}")
@@ -222,7 +223,7 @@ def doctor() -> None:
         agent = get_agent(cfg.agent.type)
         console.print(f"[green]✓[/green] Agent: {agent.name}")
     except AgentNotFoundError as e:
-        console.print(f"[red]✗[/red] Agent: {e}")
+        console.print(f"[red]✗[/red] Agent: {escape(str(e))}")
         agent = get_agent("null")
         ok = False
 

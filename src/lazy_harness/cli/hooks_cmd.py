@@ -7,6 +7,7 @@ import sys
 
 import click
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from lazy_harness.core.config import ConfigError, load_config
@@ -42,7 +43,7 @@ def hooks_list() -> None:
     try:
         cfg = load_config(cf)
     except ConfigError as e:
-        console.print(f"[red]Error: {e}[/red]")
+        console.print(f"[red]Error: {escape(str(e))}[/red]")
         return
 
     if not cfg.hooks:
@@ -111,7 +112,7 @@ def hooks_run(event: str) -> None:
     try:
         cfg = load_config(cf)
     except ConfigError as e:
-        console.print(f"[red]Error: {e}[/red]")
+        console.print(f"[red]Error: {escape(str(e))}[/red]")
         raise SystemExit(1)
 
     from lazy_harness.hooks.engine import run_hooks_for_event
