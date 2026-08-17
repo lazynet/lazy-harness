@@ -27,15 +27,17 @@ Ranked by impact, then by dependency. Waves 1 and 2 are live bugs; 3 and 4 deliv
 
 | # | Branch | PR type | Release | Blocks | Blocked by |
 |---|---|---|---|---|---|
-| 1 | `fix/config-round-trip` | `fix:` | 0.39.1 | 6, 9 | — |
-| 2 | `fix/scheduler-schedule-translation` | `fix:` | 0.39.2 | 4 | — |
-| 3 | `fix/scheduler-job-state` | `fix:` | 0.39.3 | 4, 5 | 2 |
-| 4 | `feat/systemd-cron-backends` | `feat:` | 0.40.0 | — | 3 |
+| 1 | `fix/config-round-trip` | `feat:` | 0.40.0 ✅ PR #167 | 6, 9 | — |
+| 2 | `fix/scheduler-schedule-translation` | `fix:` | 0.40.1 | 4 | — |
+| 3 | `fix/scheduler-job-state` | `fix:` | 0.40.2 | 4, 5 | 2 |
+| 4 | `feat/systemd-cron-backends` | `feat:` | 0.41.0 | — | 3 |
 | 5 | `refactor/view-renderables` | `refactor:` | none — rides wave 7 | 7 | 3 |
 | 6 | `refactor/capability-registry` | `refactor:` | none — rides wave 7 | 8 | 1 |
-| 7 | `feat/tui-observe` | `feat:` | 0.41.0 | 8 | 5 |
-| 8 | `feat/tui-configure` | `feat:` | 0.42.0 | 9 | 6, 7 |
-| 9 | `feat/tui-write` | `feat:` | 0.43.0 | — | 1, 8 |
+| 7 | `feat/tui-observe` | `feat:` | 0.42.0 | 8 | 5 |
+| 8 | `feat/tui-configure` | `feat:` | 0.43.0 | 9 | 6, 7 |
+| 9 | `feat/tui-write` | `feat:` | 0.44.0 | — | 1, 8 |
+
+Wave 1 shipped as `feat:` rather than the predicted `fix:`, because it carries the new `lh selftest` round-trip check and titling it `fix:` would ship a feature as a patch — the v0.36.1 failure this document already warns about. Every later version shifted by one minor. Versions here are predictions; the type of the PR title is the commitment.
 
 ### Why this order
 

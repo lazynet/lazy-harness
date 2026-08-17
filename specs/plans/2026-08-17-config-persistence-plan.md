@@ -22,6 +22,20 @@
 - `/tdd-check` (pytest + ruff + `mkdocs build --strict`) before every commit.
 - Never run `uv` from a worktree. `uv add tomlkit` runs in the root checkout; the worktree picks it up from the shared `uv.lock`.
 
+## Executed 2026-08-17 — what the plan got wrong
+
+Recorded from the actual run (PR #167) so the remaining waves inherit the corrections.
+
+1. **Task order was wrong.** Task 7 (the `[context_inject]` parse gap) must run **before** Task 5 (the serializer). Emitting those three keys while `load_config` still ignores them writes defaults over the user's values.
+2. **"The worktree picks it up from the shared `uv.lock`" is false.** Each worktree has its own copy of every tracked file. `uv add` in the root checkout modifies `main`'s working tree. The correct move: run `uv add` in the root, copy `pyproject.toml` and `uv.lock` into the worktree, then `git checkout -- pyproject.toml uv.lock` in the root.
+3. **The double-round-trip test does not fail before the fix.** The old loss was deterministic — the writer dropped the same keys every pass, so `once == twice`. It is worth keeping as a guard against a future asymmetry, but it does not reproduce the bug and must not be presented as if it did.
+4. **The selftest check guards the writer, not the serializer.** Under read-modify-write a lossy `_config_to_dict` no longer loses keys — it only fails to *update* them. The Task 8 test must patch `save_config`, which means importing it at module scope in `config_check.py` so it is patchable. Task 8's original test as written passes on a correct implementation.
+5. **Two churn defects the plan listed only as "open risk" were real and required fixing.** Diffing against the live config showed `save_config` materialising every default into the file — which pins them and breaks ADR-018's no-behaviour-change-on-upgrade invariant — and reassigning unchanged values, which `tomlkit` re-serialises. Both are fixed by not writing a key whose value is unchanged, and not writing one that is absent *and* equal to the default.
+6. **That fix introduced a real bug the existing suite caught.** `[harness].version` equals its default, so skipping defaults omitted it and the written file no longer loaded. A file created from scratch must be written in full; only a merge into an existing document skips defaults.
+7. **The PR is `feat:`, not `fix:`.** The branch carries the new selftest check, which is a feature. Titling it `fix:` would ship a feature as a patch and omit it from the changelog — the exact failure `release-flow.md` records for v0.36.1. Wave 1 therefore releases **0.40.0**, and every later wave's predicted version shifts accordingly.
+
+**Outcome:** two consecutive `save_config` calls against the real 175-line config are byte-identical, all 7 comments intact. `lh selftest` reports `round-trip passed — 104 keys survive a write`.
+
 ## Deviation from the spec, recorded
 
 The spec's D5 chose read-modify-write over completing `_config_to_dict`. Planning surfaced two facts that refine it:
