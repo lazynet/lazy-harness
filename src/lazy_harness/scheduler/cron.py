@@ -11,7 +11,13 @@ from __future__ import annotations
 import subprocess
 from collections.abc import Callable
 
-from lazy_harness.scheduler.base import JobRecord, JobState, SchedulerJob
+from lazy_harness.scheduler.base import (
+    DriftState,
+    JobDrift,
+    JobRecord,
+    JobState,
+    SchedulerJob,
+)
 from lazy_harness.scheduler.paths import resolved_path
 from lazy_harness.scheduler.schedule import parse_cron, render_cron
 
@@ -144,9 +150,16 @@ class CronBackend:
         return removed
 
     @staticmethod
-    def _entries(content: str) -> list[tuple[str, str, str]]:
-        """Every managed entry as (name, schedule, command)."""
-        found: list[tuple[str, str, str]] = []
+    def _managed_lines(content: str) -> dict[str, str]:
+        """Every managed entry as name -> the exact line in the crontab.
+
+        Kept verbatim because `drift` compares against the line `install`
+        wrote. Splitting and re-joining on single spaces — which is what
+        `_entries` does, correctly, for its own callers — turns a command
+        holding a tab or a doubled space into a different string, so a job
+        nobody touched compares unequal to itself.
+        """
+        found: dict[str, str] = {}
         inside = False
         for line in content.splitlines():
             stripped = line.strip()
@@ -158,11 +171,20 @@ class CronBackend:
                 continue
             if not inside or TAG not in stripped:
                 continue
-            body, _, name = stripped.partition(TAG)
+            _, _, name = stripped.partition(TAG)
+            found[name.strip()] = stripped
+        return found
+
+    @classmethod
+    def _entries(cls, content: str) -> list[tuple[str, str, str]]:
+        """Every managed entry as (name, schedule, command)."""
+        found: list[tuple[str, str, str]] = []
+        for name, line in cls._managed_lines(content).items():
+            body, _, _ = line.partition(TAG)
             fields = body.split()
             if len(fields) < 6:
                 continue
-            found.append((name.strip(), " ".join(fields[:5]), " ".join(fields[5:])))
+            found.append((name, " ".join(fields[:5]), " ".join(fields[5:])))
         return found
 
     def job_state(self, label: str) -> tuple[JobState, str]:
@@ -177,6 +199,49 @@ class CronBackend:
         name = label[len("lazy-harness-") :] if label.startswith("lazy-harness-") else label
         present = any(entry_name == name for entry_name, _, _ in self._entries(content))
         return (JobState.LOADED if present else JobState.NOT_LOADED), ""
+
+    def drift(self, jobs: list[SchedulerJob]) -> list[JobDrift]:
+        """Compare each managed entry, and the block's PATH, against this version.
+
+        PATH is written once for the whole block, so a job whose own line is
+        untouched still runs with an environment the current generator would
+        not produce. That counts as stale for every job in the block.
+        """
+        content = self._read()
+        if content is None:
+            return [
+                JobDrift(job.name, DriftState.UNKNOWN, "crontab unavailable on this machine")
+                for job in jobs
+            ]
+
+        lines = self._managed_lines(content)
+        # An absent PATH line is the strongest evidence of an old install, not
+        # a reason to skip the comparison: this backend always emits one, so
+        # `is not None` here reported CURRENT for exactly the blocks written
+        # before it started doing so.
+        path_differs = self._existing_path_line(content) != f"PATH={resolved_path()}"
+
+        out: list[JobDrift] = []
+        for job in jobs:
+            if job.name not in lines:
+                out.append(JobDrift(job.name, DriftState.ABSENT))
+                continue
+            try:
+                expected_schedule = render_cron(parse_cron(job.schedule))
+            except Exception as e:  # noqa: BLE001 — an untranslatable schedule
+                out.append(JobDrift(job.name, DriftState.UNKNOWN, f"{type(e).__name__}: {e}"))
+                continue
+            reasons = []
+            if lines[job.name] != f"{expected_schedule} {job.command} {TAG}{job.name}":
+                reasons.append("entry")
+            if path_differs:
+                reasons.append("PATH")
+            out.append(
+                JobDrift(job.name, DriftState.STALE, ", ".join(reasons))
+                if reasons
+                else JobDrift(job.name, DriftState.CURRENT)
+            )
+        return out
 
     def discover(self) -> list[JobRecord]:
         content = self._read()

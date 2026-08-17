@@ -50,6 +50,33 @@ class JobRecord:
     detail: str = ""
 
 
+class DriftState(StrEnum):
+    """Whether a job's installed artifact is what this version would write.
+
+    A plist, a unit file and a crontab block are written once and read for
+    months, so they outlive the code that produced them. `jobs-drift` compared
+    the *number* of declared jobs against the number installed, which cannot
+    see a job that is present, loaded, and carrying content from a superseded
+    generator — the state every machine was in after the PATH resolver changed.
+
+    `UNKNOWN` is separate from `CURRENT` for the same reason `JobState` keeps
+    it: a backend that cannot render the job, or cannot read what is installed,
+    has not established that the two agree.
+    """
+
+    CURRENT = "current"
+    STALE = "stale"
+    ABSENT = "absent"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True)
+class JobDrift:
+    name: str
+    state: DriftState
+    detail: str = ""
+
+
 @runtime_checkable
 class SchedulerBackend(Protocol):
     def label_for(self, job: SchedulerJob) -> str: ...
@@ -58,3 +85,4 @@ class SchedulerBackend(Protocol):
     def status(self) -> list[dict[str, str]]: ...
     def job_state(self, label: str) -> tuple[JobState, str]: ...
     def discover(self) -> list[JobRecord]: ...
+    def drift(self, jobs: list[SchedulerJob]) -> list[JobDrift]: ...
