@@ -364,36 +364,16 @@ def _structure_repos(cfg_path: Path) -> tuple[object, list[str]]:
 
 
 def _write_repo_list(cfg_path: Path, repos: list[str]) -> None:
-    """Rewrite only the `repos =` line under [knowledge.structure].
+    """Persist the graphify repo list under [knowledge.structure].
 
-    The config is hand-edited and version-controlled, so a full
-    `save_config` round-trip is the wrong tool: it drops every comment and any
-    key this version does not model.
+    Was a hand-rolled single-line rewrite because `save_config` dropped every
+    comment and any key this version does not model. It no longer does.
     """
-    rendered = "repos = [" + ", ".join(f'"{r}"' for r in repos) + "]"
-    lines = cfg_path.read_text().splitlines()
-    out: list[str] = []
-    in_section = False
-    replaced = False
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("["):
-            # Leaving the section without having seen a `repos =` key: add one.
-            if in_section and not replaced:
-                out.append(rendered)
-                replaced = True
-            in_section = stripped == "[knowledge.structure]"
-        if in_section and stripped.startswith("repos"):
-            out.append(rendered)
-            replaced = True
-            continue
-        out.append(line)
-    if not replaced:
-        if not in_section:
-            out.append("")
-            out.append("[knowledge.structure]")
-        out.append(rendered)
-    cfg_path.write_text("\n".join(out) + "\n")
+    from lazy_harness.core.config import load_config, save_config
+
+    cfg = load_config(cfg_path)
+    cfg.knowledge.structure.repos = list(repos)
+    save_config(cfg, cfg_path)
 
 
 @knowledge_graph.command("add")

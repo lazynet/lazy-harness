@@ -633,12 +633,19 @@ def _config_to_dict(cfg: Config) -> dict[str, Any]:
     if cfg.hooks:
         hooks_dict: dict[str, Any] = {}
         for event_name, event_cfg in cfg.hooks.items():
-            event_dict: dict[str, Any] = {"scripts": event_cfg.scripts}
+            event_dict: dict[str, Any] = {}
+            # An empty `scripts` parses the same whether written or absent, so
+            # emitting it would add a key to every event declaring only
+            # `external` and churn a version-controlled file for nothing.
+            if event_cfg.scripts:
+                event_dict["scripts"] = event_cfg.scripts
             if event_cfg.external:
+                # A matcher-less entry has a shorthand — the bare command
+                # string — and `_parse_external_hooks` reads it back identically.
+                # Always emitting the table form rewrote every shorthand on
+                # every save.
                 event_dict["external"] = [
-                    {"command": e.command}
-                    if e.matcher is None
-                    else {"command": e.command, "matcher": e.matcher}
+                    e.command if e.matcher is None else {"command": e.command, "matcher": e.matcher}
                     for e in event_cfg.external
                 ]
             hooks_dict[event_name] = event_dict
@@ -669,19 +676,37 @@ def _config_to_dict(cfg: Config) -> dict[str, Any]:
     return result
 
 
-def _apply(doc: Any, overlay: dict[str, Any]) -> None:
+def _apply(doc: Any, overlay: dict[str, Any], defaults: dict[str, Any]) -> None:
     """Recursively apply `overlay` onto a tomlkit document, in place.
 
     In-place assignment is what preserves comments, key order and formatting:
     tomlkit keeps the trivia attached to every key it is not asked to rewrite.
     Keys absent from `overlay` are left untouched, which is what carries
     sections this version does not model.
+
+    Two keys are deliberately *not* written:
+
+    - One whose value already matches the document. tomlkit re-serialises
+      whatever it is assigned, so reassigning an unchanged value rewrites a
+      multi-line array as an inline one and churns the diff for nothing.
+    - One that is absent from the document and equal to this version's
+      default. Materialising defaults into the file pins them, so a later
+      release that changes a default would never reach the user — which is
+      the "no behaviour change on upgrade" invariant ADR-018 turns on.
     """
     for key, value in overlay.items():
-        if isinstance(value, dict) and isinstance(doc.get(key), dict):
-            _apply(doc[key], value)
-        else:
-            doc[key] = value
+        current = doc.get(key)
+        if isinstance(value, dict) and isinstance(current, dict):
+            sub_defaults = defaults.get(key) if isinstance(defaults, dict) else None
+            _apply(doc[key], value, sub_defaults if isinstance(sub_defaults, dict) else {})
+            continue
+        if key in doc:
+            if current != value:
+                doc[key] = value
+            continue
+        if isinstance(defaults, dict) and key in defaults and defaults[key] == value:
+            continue
+        doc[key] = value
 
 
 def _prune_removed_profiles(doc: Any, cfg: Config) -> None:
@@ -712,10 +737,17 @@ def save_config(cfg: Config, path: Path) -> None:
 
     if path.is_file():
         doc = tomlkit.parse(path.read_text(encoding="utf-8"))
+        # A pristine Config is the reference for "this value is just the
+        # default", so a key the user never set is not written into their file.
+        defaults = _config_to_dict(Config())
     else:
         doc = tomlkit.document()
+        # A file being created from nothing must come out complete: skipping
+        # defaults here would omit `[harness].version`, which `load_config`
+        # requires, and the written file would not load back.
+        defaults = {}
 
-    _apply(doc, _config_to_dict(cfg))
+    _apply(doc, _config_to_dict(cfg), defaults)
     _prune_removed_profiles(doc, cfg)
 
     path.parent.mkdir(parents=True, exist_ok=True)

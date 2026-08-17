@@ -811,3 +811,138 @@ def test_removing_a_profile_survives_a_save(tmp_path: Path) -> None:
     assert "flex" not in raw["profiles"]
     assert "lazy" in raw["profiles"]
     assert raw["profiles"]["lazy"]["lazynorth_doc"] == "LazyNorth.md"
+
+
+def test_save_config_does_not_materialise_defaults_the_user_never_set(tmp_path: Path) -> None:
+    """Writing today's defaults into the file freezes them.
+
+    ADR-018's invariant is that an upgrade changes no behaviour. If
+    `save_config` bakes in every default, a later release that changes one
+    never reaches a user whose file now pins the old value.
+    """
+    import tomllib
+
+    from lazy_harness.core.config import load_config, save_config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text('[harness]\nversion = "1"\n\n[monitoring]\nenabled = true\n')
+
+    save_config(load_config(cfg_path), cfg_path)
+
+    raw = tomllib.loads(cfg_path.read_text())
+    assert "classify_rules" not in raw.get("knowledge", {})
+    assert "search" not in raw.get("knowledge", {})
+    assert "loops" not in raw
+    assert "backend_options" not in raw.get("compound_loop", {})
+    assert raw["monitoring"]["enabled"] is True
+
+
+def test_save_config_leaves_unchanged_values_byte_identical(tmp_path: Path) -> None:
+    """A value the Config did not change must not be reformatted.
+
+    tomlkit re-serialises whatever it is assigned, so assigning an unchanged
+    value rewrites multi-line arrays as inline ones and churns the diff.
+    """
+    from lazy_harness.core.config import load_config, save_config
+
+    original = (
+        '[harness]\nversion = "1"\n\n'
+        "[profiles]\n"
+        'default = "lazy"\n\n'
+        "[profiles.lazy]\n"
+        'config_dir = "~/.claude-lazy"\n'
+        "roots = [\n"
+        '    "~/repos/lazy",\n'
+        '    "~/repos/other",\n'
+        "]\n"
+    )
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(original)
+
+    save_config(load_config(cfg_path), cfg_path)
+
+    text = cfg_path.read_text()
+    assert "roots = [\n" in text
+    assert '    "~/repos/lazy",\n' in text
+
+
+def test_a_config_written_from_scratch_loads_back(tmp_path: Path) -> None:
+    """Writing to a path that does not exist must produce a loadable file.
+
+    `[harness].version` equals its default, so a rule that skips defaults
+    omits it and `load_config` then rejects the result. Verified through a
+    full load cycle, not just a successful write.
+    """
+    from lazy_harness.core.config import Config, load_config, save_config
+
+    cfg_path = tmp_path / "fresh" / "config.toml"
+    save_config(Config(), cfg_path)
+
+    assert cfg_path.is_file()
+    reloaded = load_config(cfg_path)
+    assert reloaded.harness.version == "1"
+
+
+def test_shorthand_external_hooks_round_trip_without_reformatting(tmp_path: Path) -> None:
+    """`external = ["cmd"]` must come back as `external = ["cmd"]`.
+
+    The parser accepts a bare string (matcher inherited) or a table (matcher
+    pinned). The writer emitted the table form for both, so every save
+    rewrote the shorthand into an array of tables — semantically identical,
+    but it churns a version-controlled file on every write.
+    """
+    from lazy_harness.core.config import load_config, save_config
+
+    original = (
+        '[harness]\nversion = "1"\n\n'
+        "[hooks.session_start]\n"
+        'scripts = ["context-inject"]\n'
+        'external = ["/opt/homebrew/bin/moshi claude-hook"]\n'
+    )
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(original)
+
+    save_config(load_config(cfg_path), cfg_path)
+
+    text = cfg_path.read_text()
+    assert 'external = ["/opt/homebrew/bin/moshi claude-hook"]' in text
+    assert "[[hooks.session_start.external]]" not in text
+
+
+def test_external_hook_with_a_matcher_still_uses_the_table_form(tmp_path: Path) -> None:
+    """A pinned matcher has no shorthand, so it must stay a table."""
+    import tomllib
+
+    from lazy_harness.core.config import load_config, save_config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        '[harness]\nversion = "1"\n\n'
+        "[hooks.pre_tool_use]\n"
+        'scripts = ["pre-tool-use-security"]\n'
+        'external = [{ command = "moshi claude-hook", matcher = "ExitPlanMode" }]\n'
+    )
+
+    save_config(load_config(cfg_path), cfg_path)
+
+    entry = tomllib.loads(cfg_path.read_text())["hooks"]["pre_tool_use"]["external"][0]
+    assert entry == {"command": "moshi claude-hook", "matcher": "ExitPlanMode"}
+
+
+def test_an_event_with_no_scripts_key_does_not_gain_an_empty_one(tmp_path: Path) -> None:
+    """An event declaring only `external` must not sprout `scripts = []`."""
+    import tomllib
+
+    from lazy_harness.core.config import load_config, save_config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        '[harness]\nversion = "1"\n\n'
+        "[hooks.permission_request]\n"
+        'external = ["moshi claude-hook"]\n'
+    )
+
+    save_config(load_config(cfg_path), cfg_path)
+
+    event = tomllib.loads(cfg_path.read_text())["hooks"]["permission_request"]
+    assert "scripts" not in event
