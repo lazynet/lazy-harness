@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import os
 import re
-import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -37,7 +36,7 @@ class StatusContext:
     profiles: list[ProfileInfo] = field(default_factory=list)
     knowledge_path: Path | None = None
     learnings_dir: Path | None = None
-    launchd_prefix: str = "com.lazy-harness"
+    scheduler_backend: object | None = None
 
     @classmethod
     def build(cls, cfg: Config) -> StatusContext:
@@ -47,11 +46,17 @@ class StatusContext:
             learnings_dir = knowledge_learnings_dir(knowledge_path)
         except MarkerError:
             learnings_dir = None
+        from lazy_harness.scheduler.manager import detect_backend
+
         return cls(
             cfg=cfg,
             profiles=list_profiles(cfg),
             knowledge_path=knowledge_path,
             learnings_dir=learnings_dir,
+            # The views ask the backend what exists; they used to glob
+            # ~/Library/LaunchAgents themselves, which made them macOS-only
+            # regardless of which backend was actually active.
+            scheduler_backend=detect_backend(cfg.scheduler.backend),
         )
 
     def logs_dir(self, profile: ProfileInfo) -> Path:
@@ -214,29 +219,26 @@ def count_errors_today(log_file: Path) -> int:
     return count
 
 
-def launchctl_loaded(label: str) -> bool:
-    try:
-        result = subprocess.run(
-            ["launchctl", "list", label],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        return result.returncode == 0
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        return False
-
 
 def file_locked(path: Path) -> bool:
+    """Whether an advisory flock is held on `path`.
+
+    Was a shell-out to `lsof`, which is not guaranteed on a minimal Linux
+    image and whose absence was read as "not locked" — the dangerous
+    direction, since the queue view then claims the worker is idle while it
+    is running. This probes the same lock `compound_loop_worker.py` takes.
+    """
+    import fcntl
+
     if not path.is_file():
         return False
     try:
-        result = subprocess.run(
-            ["lsof", str(path)],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        return result.returncode == 0
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        with open(path, "a") as fd:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except (BlockingIOError, OSError):
+                return True
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    except OSError:
         return False
+    return False

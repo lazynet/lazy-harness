@@ -195,3 +195,62 @@ def test_launchd_plist_uses_wall_clock_entries_for_a_minute_step(tmp_path: Path)
     data = plistlib.loads(path.read_bytes())
     assert "StartInterval" not in data
     assert data["StartCalendarInterval"] == [{"Minute": 0}, {"Minute": 30}]
+
+
+def _write_plist(path, payload: dict) -> None:
+    import plistlib
+
+    with open(path, "wb") as f:
+        plistlib.dump({"Label": "com.lazy-harness.x", **payload}, f)
+
+
+def test_format_schedule_reports_a_weekly_entry_as_weekly(tmp_path) -> None:
+    """A dict carrying Weekday was reported as `daily`."""
+    from lazy_harness.scheduler.launchd import format_schedule
+
+    p = tmp_path / "x.plist"
+    _write_plist(p, {"StartCalendarInterval": {"Hour": 3, "Minute": 30, "Weekday": 0}})
+    assert format_schedule(p) == "weekly Sun 03:30"
+
+
+def test_format_schedule_reports_a_monthly_entry_as_monthly(tmp_path) -> None:
+    """A dict carrying Day was reported as `daily`."""
+    from lazy_harness.scheduler.launchd import format_schedule
+
+    p = tmp_path / "x.plist"
+    _write_plist(p, {"StartCalendarInterval": {"Hour": 2, "Minute": 15, "Day": 1}})
+    assert format_schedule(p) == "monthly day 1 02:15"
+
+
+def test_format_schedule_reports_an_hour_list_as_times_per_day(tmp_path) -> None:
+    """A 4-entry hour list was reported as `4x/week`. It is 4x/day."""
+    from lazy_harness.scheduler.launchd import format_schedule
+
+    p = tmp_path / "x.plist"
+    _write_plist(
+        p,
+        {
+            "StartCalendarInterval": [
+                {"Minute": 0, "Hour": h} for h in (0, 6, 12, 18)
+            ]
+        },
+    )
+    assert format_schedule(p) == "4x/day 00:00"
+
+
+def test_format_schedule_reports_a_minute_list_as_times_per_hour(tmp_path) -> None:
+    from lazy_harness.scheduler.launchd import format_schedule
+
+    p = tmp_path / "x.plist"
+    _write_plist(p, {"StartCalendarInterval": [{"Minute": 0}, {"Minute": 30}]})
+    assert format_schedule(p) == "2x/hour :00"
+
+
+def test_format_schedule_reports_an_hourly_entry_as_hourly(tmp_path) -> None:
+    """`{"Minute": 0}` means every hour; it was reported as `daily 00:00`."""
+    from lazy_harness.scheduler.launchd import format_schedule
+
+    p = tmp_path / "x.plist"
+    _write_plist(p, {"StartCalendarInterval": {"Minute": 0}})
+    assert format_schedule(p) == "hourly :00"
+

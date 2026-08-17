@@ -141,59 +141,64 @@ def test_count_errors_today_missing_log(tmp_path: Path) -> None:
     assert count_errors_today(tmp_path / "nope.log") == 0
 
 
-def _write_plist(path, payload: dict) -> None:
-    import plistlib
+def test_launchctl_loaded_is_gone() -> None:
+    """It returned False for 'cannot check'. Nothing may reintroduce that shape."""
+    from lazy_harness.monitoring.views import _helpers
 
-    with open(path, "wb") as f:
-        plistlib.dump({"Label": "com.lazy-harness.x", **payload}, f)
-
-
-def test_format_schedule_reports_a_weekly_entry_as_weekly(tmp_path) -> None:
-    """A dict carrying Weekday was reported as `daily`."""
-    from lazy_harness.monitoring.views.cron import _format_schedule
-
-    p = tmp_path / "x.plist"
-    _write_plist(p, {"StartCalendarInterval": {"Hour": 3, "Minute": 30, "Weekday": 0}})
-    assert _format_schedule(p) == "weekly Sun 03:30"
+    assert not hasattr(_helpers, "launchctl_loaded")
 
 
-def test_format_schedule_reports_a_monthly_entry_as_monthly(tmp_path) -> None:
-    """A dict carrying Day was reported as `daily`."""
-    from lazy_harness.monitoring.views.cron import _format_schedule
+def test_status_context_exposes_the_backend_not_a_launchd_prefix() -> None:
+    """Reverse-DNS labelling is a launchd convention; the status layer must
+    not know it, and must not glob a macOS-only directory."""
+    from lazy_harness.core.config import Config
+    from lazy_harness.monitoring.views._helpers import StatusContext
 
-    p = tmp_path / "x.plist"
-    _write_plist(p, {"StartCalendarInterval": {"Hour": 2, "Minute": 15, "Day": 1}})
-    assert _format_schedule(p) == "monthly day 1 02:15"
-
-
-def test_format_schedule_reports_an_hour_list_as_times_per_day(tmp_path) -> None:
-    """A 4-entry hour list was reported as `4x/week`. It is 4x/day."""
-    from lazy_harness.monitoring.views.cron import _format_schedule
-
-    p = tmp_path / "x.plist"
-    _write_plist(
-        p,
-        {
-            "StartCalendarInterval": [
-                {"Minute": 0, "Hour": h} for h in (0, 6, 12, 18)
-            ]
-        },
-    )
-    assert _format_schedule(p) == "4x/day 00:00"
+    ctx = StatusContext.build(Config())
+    assert not hasattr(ctx, "launchd_prefix")
+    assert ctx.scheduler_backend is not None
 
 
-def test_format_schedule_reports_a_minute_list_as_times_per_hour(tmp_path) -> None:
-    from lazy_harness.monitoring.views.cron import _format_schedule
+def test_file_locked_detects_a_held_flock(tmp_path: Path) -> None:
+    """Probes the same advisory lock compound_loop_worker.py takes.
 
-    p = tmp_path / "x.plist"
-    _write_plist(p, {"StartCalendarInterval": [{"Minute": 0}, {"Minute": 30}]})
-    assert _format_schedule(p) == "2x/hour :00"
+    Was a shell-out to `lsof`, absent on minimal Linux images, whose absence
+    read as 'not locked' — the dangerous direction, since the view then
+    claims the worker is idle while it runs.
+    """
+    import fcntl
+
+    from lazy_harness.monitoring.views._helpers import file_locked
+
+    lock = tmp_path / ".worker.lock"
+    lock.touch()
+    fd = open(lock, "a")
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        assert file_locked(lock) is True
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        fd.close()
+
+    assert file_locked(lock) is False
 
 
-def test_format_schedule_reports_an_hourly_entry_as_hourly(tmp_path) -> None:
-    """`{"Minute": 0}` means every hour; it was reported as `daily 00:00`."""
-    from lazy_harness.monitoring.views.cron import _format_schedule
+def test_file_locked_is_false_for_a_missing_file(tmp_path: Path) -> None:
+    from lazy_harness.monitoring.views._helpers import file_locked
 
-    p = tmp_path / "x.plist"
-    _write_plist(p, {"StartCalendarInterval": {"Minute": 0}})
-    assert _format_schedule(p) == "hourly :00"
+    assert file_locked(tmp_path / "absent.lock") is False
+
+
+def test_file_locked_does_not_shell_out(monkeypatch, tmp_path: Path) -> None:
+    """No external binary: lsof is not guaranteed on a minimal image."""
+    import subprocess
+
+    from lazy_harness.monitoring.views import _helpers
+
+    def forbidden(*_a, **_k):
+        raise AssertionError("file_locked must not spawn a subprocess")
+
+    monkeypatch.setattr(subprocess, "run", forbidden)
+    lock = tmp_path / ".worker.lock"
+    lock.touch()
+    assert _helpers.file_locked(lock) is False
