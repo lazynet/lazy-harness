@@ -105,11 +105,21 @@ class CapabilityRegistry:
         return self._caps[name]
 
     def state(self, cap: Capability, cfg: Config, *, probe: Probe = which_probe) -> CapabilityState:
-        # An empty path means there is no switch: the capability is enabled
-        # whenever it is present. `knowledge.search` carries only `engine`, so
-        # qmd has no on/off key, and inventing one to satisfy the model would
-        # be a config schema change disguised as a refactor.
-        enabled = bool(_resolve(cfg, cap.config_path)) if cap.config_path else True
+        # An empty path means there is no switch. `knowledge.search` carries
+        # only `engine`, so qmd has no on/off key, and inventing one to satisfy
+        # the model would be a config schema change disguised as a refactor.
+        # Such a capability has two states, not four: it is ACTIVE when present
+        # and MISSING when not. It is never BROKEN — that word means "enabled
+        # but the binary is gone", and nobody enabled this one.
+        if not cap.config_path:
+            if not cap.binary:
+                raise ValueError(
+                    f"capability {cap.name!r} has neither a config switch nor a binary, "
+                    "so there is nothing to report on"
+                )
+            return CapabilityState.ACTIVE if probe(cap.binary) else CapabilityState.MISSING
+
+        enabled = bool(_resolve(cfg, cap.config_path))
         if not cap.binary:
             return CapabilityState.ON if enabled else CapabilityState.OFF
         installed = probe(cap.binary)

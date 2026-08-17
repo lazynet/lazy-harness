@@ -262,3 +262,27 @@ def test_toggling_a_capability_with_no_switch_is_refused() -> None:
 
     with pytest.raises(ValueError, match="qmd"):
         reg.toggle(cap, Config(), enabled=True)
+
+
+def test_a_capability_with_neither_a_switch_nor_a_binary_is_refused() -> None:
+    """Nothing to read and nothing to probe is a registration mistake, and any
+    state it returned would be invented."""
+    from lazy_harness.core.config import Config
+    from lazy_harness.plugins.capabilities import (
+        Capability,
+        CapabilityRegistry,
+        Cardinality,
+    )
+
+    cap = Capability(
+        name="nothing",
+        kind="tool",
+        cardinality=Cardinality.MANY,
+        config_path="",
+        summary="neither switch nor binary",
+    )
+    reg = CapabilityRegistry()
+    reg.register(cap)
+
+    with pytest.raises(ValueError, match="nothing"):
+        reg.state(cap, Config())
