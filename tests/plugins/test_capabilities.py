@@ -203,3 +203,62 @@ def test_state_raises_on_a_config_path_that_does_not_resolve() -> None:
 
     with pytest.raises(AttributeError, match="not_a_real_key"):
         reg.state(cap, Config())
+
+
+@pytest.mark.parametrize(("installed", "expected"), [(True, "ACTIVE"), (False, "MISSING")])
+def test_a_capability_with_no_config_switch_is_presence_only(
+    installed: bool, expected: str
+) -> None:
+    """Not every capability has an on/off key.
+
+    `knowledge.search` carries only `engine`; qmd is reported purely on whether
+    its binary is there. Inventing a `knowledge.search.enabled` to satisfy the
+    model would be a config schema change smuggled into a refactor, so an empty
+    `config_path` means "no switch — enabled whenever it is installed".
+    """
+    from lazy_harness.core.config import Config
+    from lazy_harness.plugins.capabilities import (
+        Capability,
+        CapabilityRegistry,
+        CapabilityState,
+        Cardinality,
+    )
+
+    cap = Capability(
+        name="qmd",
+        kind="tool",
+        cardinality=Cardinality.ONE,
+        config_path="",
+        summary="Semantic search over the knowledge dir",
+        binary="qmd",
+    )
+    reg = CapabilityRegistry()
+    reg.register(cap)
+
+    state = reg.state(cap, Config(), probe=lambda _n: installed)
+    assert state is getattr(CapabilityState, expected)
+
+
+def test_toggling_a_capability_with_no_switch_is_refused() -> None:
+    """There is nothing to write, and silently returning an unchanged Config
+    would let a TUI show a toggle that does nothing."""
+    from lazy_harness.core.config import Config
+    from lazy_harness.plugins.capabilities import (
+        Capability,
+        CapabilityRegistry,
+        Cardinality,
+    )
+
+    cap = Capability(
+        name="qmd",
+        kind="tool",
+        cardinality=Cardinality.ONE,
+        config_path="",
+        summary="Semantic search over the knowledge dir",
+        binary="qmd",
+    )
+    reg = CapabilityRegistry()
+    reg.register(cap)
+
+    with pytest.raises(ValueError, match="qmd"):
+        reg.toggle(cap, Config(), enabled=True)

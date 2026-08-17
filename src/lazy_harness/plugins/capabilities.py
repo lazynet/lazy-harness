@@ -105,7 +105,11 @@ class CapabilityRegistry:
         return self._caps[name]
 
     def state(self, cap: Capability, cfg: Config, *, probe: Probe = which_probe) -> CapabilityState:
-        enabled = bool(_resolve(cfg, cap.config_path))
+        # An empty path means there is no switch: the capability is enabled
+        # whenever it is present. `knowledge.search` carries only `engine`, so
+        # qmd has no on/off key, and inventing one to satisfy the model would
+        # be a config schema change disguised as a refactor.
+        enabled = bool(_resolve(cfg, cap.config_path)) if cap.config_path else True
         if not cap.binary:
             return CapabilityState.ON if enabled else CapabilityState.OFF
         installed = probe(cap.binary)
@@ -118,7 +122,12 @@ class CapabilityRegistry:
 
         Deep-copied so the caller's object is never mutated in place: a TUI
         that toggles and then cancels must be able to discard the result.
+
+        Refuses a capability with no switch rather than returning the config
+        unchanged, which would let a surface render a toggle that does nothing.
         """
+        if not cap.config_path:
+            raise ValueError(f"capability {cap.name!r} has no config switch to set")
         updated = copy.deepcopy(cfg)
         parts = cap.config_path.split(".")
         target: object = updated
