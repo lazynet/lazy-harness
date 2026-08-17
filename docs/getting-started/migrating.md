@@ -73,7 +73,7 @@ For an automatic rollback (if a step fails mid-execution), no action is needed â
 
 1. Run `lh selftest`. Every check should pass.
 2. Start an agent session with your first profile. Verify context injection works: the first message should include a banner like `Session context loaded: on main | Last session: ...`.
-3. If you had recurring jobs (cron / launchd), verify they still run. On macOS `lh scheduler status` lists the ones the harness manages; on Linux it lists nothing, because the systemd and cron backends are not implemented yet.
+3. If you had recurring jobs (cron / launchd), verify they still run. `lh scheduler status` lists the ones the harness manages on every platform.
 4. Version your profiles. Example with chezmoi:
 
 ```bash

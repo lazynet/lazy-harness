@@ -16,10 +16,16 @@ concurrency:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        python-version: ['3.11', '3.12', '3.13']
+        # macOS carries the launchd backend, which had zero CI coverage while
+        # three consecutive waves rewrote it.
+        include:
+          - { os: ubuntu-latest, python-version: '3.11' }
+          - { os: ubuntu-latest, python-version: '3.12' }
+          - { os: ubuntu-latest, python-version: '3.13' }
+          - { os: macos-latest,  python-version: '3.13' }
     steps:
       - uses: actions/checkout@v4
 

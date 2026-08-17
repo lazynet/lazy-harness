@@ -77,13 +77,27 @@ def test_launchd_discover_reports_not_loaded_on_a_nonzero_exit(tmp_path: Path) -
     assert backend.discover()[0].state is JobState.NOT_LOADED
 
 
-def test_stub_backends_discover_nothing_without_raising() -> None:
-    """systemd and cron have no discovery yet; they must degrade, not crash."""
+def test_systemd_and_cron_discover_nothing_when_their_state_is_absent() -> None:
+    """Replaces `test_stub_backends_discover_nothing_without_raising`.
+
+    Both backends are implemented as of this wave, so "returns [] because it
+    is a stub" is no longer the reason. They return [] because there is no
+    unit directory and no crontab — and they must degrade rather than raise.
+
+    Runners are injected: the cron backend's default reaches the user's real
+    crontab, which `$HOME` redirection does not contain.
+    """
+    import subprocess
+    from pathlib import Path as _Path
+
     from lazy_harness.scheduler.cron import CronBackend
     from lazy_harness.scheduler.systemd import SystemdBackend
 
-    assert SystemdBackend().discover() == []
-    assert CronBackend().discover() == []
+    def no_crontab(argv, *, input=None):  # noqa: A002, ANN001
+        return subprocess.CompletedProcess(argv, 1, stdout="", stderr="no crontab for user")
+
+    assert SystemdBackend(unit_dir=_Path("/nonexistent/systemd/user")).discover() == []
+    assert CronBackend(runner=no_crontab).discover() == []
 
 
 def test_default_runner_returns_the_completed_process() -> None:

@@ -47,6 +47,7 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 - [x] **Rename a lazy-harness** — repo, package (`lazy_harness`), CLI (`lh`), docs site (`lazynet.github.io/lazy-harness`)
 - [x] **Docs coherence pass 2026-05-20** — `lh memory` + `lh knowledge` subcommands completos en CLI reference, hooks documentados (`pre-tool-use-memory-size`, `post-tool-use-sync-claude`), `claude-md.proposal.md` + `grades.jsonl` documentados en compound-loop how page
 - [x] **Compound-loop insight capture + delta-by-index** — `★ Insight ─` blocks captured verbatim via regex pre-LLM, gate-bypass when insights present, hash-based dedup, per-session message-index cursor for delta scans (`memory/insights/.cursor.json`). 12 tests TDD. Closed both gate-out (short sessions) and tail-of-20 (long sessions) loss paths from the design [`specs/designs/2026-04-13-compound-loop-insight-capture.md`](designs/2026-04-13-compound-loop-insight-capture.md).
+- [x] **Backends systemd y cron del scheduler** — ADR-013 completo. `SystemdBackend` escribe `.timer` + `.service` bajo `$XDG_CONFIG_HOME/systemd/user/` y chequea lingering; `CronBackend` escribe un bloque delimitado preservando las entradas del usuario. Traducción compartida en `scheduler/schedule.py`, que rechaza en vez de aproximar.
 - [x] **`lh deploy` default hooks merge** — `DEFAULT_HOOKS` literal in `deploy/defaults.py` + `merge_with_defaults` pure function; per-event override via config.toml (`scripts = []` opts out); framework-owned `settings.json[hooks]` with backup + warning when manual entries are clobbered (ADR-031, 11 tests TDD). Also fixed `ClaudeCodeAdapter` missing `post_compact → PostCompact` mapping. Closes the 2026-04-17 partial-config drift and makes built-ins out-of-the-box.
 
 ---
@@ -71,11 +72,6 @@ No causó daño visible todavía porque el único caller en producción es `lh p
 
 ## Open — Prioridad MEDIA
 
-### Implementar los backends systemd y cron del scheduler (ADR-013)
-
-`SystemdBackend.install` y `CronBackend.install` levantan `NotImplementedError` desde 0.25.0 — antes devolvían labels fabricados y reportaban éxito sin instalar nada. ADR-013 decidió los tres backends; solo launchd existe. Incluye la asimetría pendiente — `uninstall` y `status` devuelven listas vacías en vez de levantar, así que `uninstall` queda mudo donde `install` es ruidoso.
-
-**Trigger cumplido 2026-08-17:** los targets son una workstation Linux con systemd user y los servidores headless del homelab. Diseño completo en [`designs/2026-08-17-linux-parity-design.md`](designs/2026-08-17-linux-parity-design.md), que además cubre `launchctl_loaded` devolviendo `False` para "no puedo chequear" (`monitoring/views/_helpers.py:217`, consumido por `views/cron.py:95` y `views/overview.py:153`), `file_locked` dependiendo de `lsof`, el `PATH` con `/opt/homebrew` hardcodeado, y la ausencia total de un job de macOS en CI.
 
 ### Audit CLAUDE.md triple por context clash
 

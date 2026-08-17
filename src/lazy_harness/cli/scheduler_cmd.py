@@ -64,6 +64,13 @@ def scheduler_install() -> None:
     except NotImplementedError as e:
         console.print(f"[red]Error: {e}[/red]")
         raise SystemExit(1)
+    except (RuntimeError, ValueError) as e:
+        # A backend refusing to write — no crontab binary, a systemctl that
+        # rejected the unit, a command systemd cannot exec. All are the user's
+        # to fix and none should reach them as a stack trace.
+        console.print(f"[red]Error: {e}[/red]")
+        console.print("[dim]Nothing was installed.[/dim]")
+        raise SystemExit(1)
     except ScheduleTranslationError as e:
         # `install` validates the whole set before writing, so nothing was
         # installed and the user only has to fix the declaration.

@@ -165,12 +165,12 @@ Schema + design: [ADR-012 — SQLite monitoring](https://github.com/lazynet/lazy
 
 ## Scheduler — `scheduler/`
 
-Unified interface over three platform backends, only one of which installs jobs today:
+Unified interface over three platform backends:
 
 - `base.py` — `SchedulerJob` dataclass and `SchedulerBackend` protocol (`install`, `uninstall`, `status`).
-- `launchd.py` — macOS, writes `.plist` files to `~/Library/LaunchAgents/`. The only implemented backend.
-- `systemd.py` — Linux with systemd user instance. Stub: `install` raises `NotImplementedError`; the `.timer` + `.service` unit files are not written yet.
-- `cron.py` — ubiquitous fallback. Stub: `install` raises `NotImplementedError`; the user's crontab is not edited yet.
+- `launchd.py` — macOS, writes `.plist` files to `~/Library/LaunchAgents/`.
+- `systemd.py` — Linux with a systemd user instance. Writes `.timer` + `.service` units under `$XDG_CONFIG_HOME/systemd/user/`, enables them with `systemctl --user`, and warns when lingering is off, since user timers stop at logout without it.
+- `cron.py` — the ubiquitous floor. Writes a `# BEGIN lazy-harness` / `# END lazy-harness` block into the user's crontab, so uninstall removes exactly what install wrote and never touches their own entries.
 - `manager.py` — `detect_backend` auto-picks based on `platform.system()` + `shutil.which("systemctl")`, overridable via config.
 
 Design: [ADR-013 — Unified scheduler](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/013-scheduler-unified-backends.md).

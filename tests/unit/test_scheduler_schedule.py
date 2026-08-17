@@ -213,3 +213,132 @@ def test_render_launchd_rejects_out_of_range_fields(expr: str, needle: str) -> N
 
     with pytest.raises(ScheduleTranslationError, match=needle):
         render_launchd(parse_cron(expr))
+
+
+@pytest.mark.parametrize(
+    ("expr", "expected"),
+    [
+        ("0 10 * * *", "*-*-* 10:00:00"),
+        ("0 * * * *", "*-*-* *:00:00"),
+        ("30 3 * * 0", "Sun *-*-* 03:30:00"),
+        ("0 */6 * * *", "*-*-* 0/6:00:00"),
+        ("*/30 * * * *", "*-*-* *:0/30:00"),
+        ("15 2 1 * *", "*-*-01 02:15:00"),
+        ("0 9 1 6 *", "*-06-01 09:00:00"),
+    ],
+)
+def test_render_systemd_oncalendar(expr: str, expected: str) -> None:
+    from lazy_harness.scheduler.schedule import parse_cron, render_systemd
+
+    assert render_systemd(parse_cron(expr)) == expected
+
+
+def test_render_systemd_expresses_a_weekday_range_launchd_refuses() -> None:
+    """The asymmetry is the point of per-backend renderers.
+
+    launchd has no range syntax and raises on this; systemd spells it
+    natively, so refusing it here would be a translation loss with no cause.
+    """
+    from lazy_harness.scheduler.schedule import parse_cron, render_launchd, render_systemd
+
+    schedule = parse_cron("0 9 * * 1-5")
+    assert render_systemd(schedule) == "Mon..Fri *-*-* 09:00:00"
+
+    import pytest as _pytest
+
+    from lazy_harness.scheduler.schedule import ScheduleTranslationError
+
+    with _pytest.raises(ScheduleTranslationError):
+        render_launchd(schedule)
+
+
+def test_render_systemd_expresses_a_day_list() -> None:
+    from lazy_harness.scheduler.schedule import parse_cron, render_systemd
+
+    assert render_systemd(parse_cron("0 9 1,15 * *")) == "*-*-01,15 09:00:00"
+
+
+def test_render_systemd_rejects_out_of_range_fields() -> None:
+    from lazy_harness.scheduler.schedule import (
+        ScheduleTranslationError,
+        parse_cron,
+        render_systemd,
+    )
+
+    with pytest.raises(ScheduleTranslationError, match="hour"):
+        render_systemd(parse_cron("0 25 * * *"))
+
+
+def test_render_cron_is_the_expression_itself() -> None:
+    """Cron is lossless by construction: the declaration is the native form."""
+    from lazy_harness.scheduler.schedule import parse_cron, render_cron
+
+    for expr in ("0 9 * * 1-5", "*/45 * * * *", "15 2 1 6 *"):
+        assert render_cron(parse_cron(expr)) == expr
+
+
+@pytest.mark.parametrize(
+    ("expr", "expected"),
+    [
+        ("0 9-17 * * *", "*-*-* 09..17:00:00"),
+        ("0 9 1-15 * *", "*-*-01..15 09:00:00"),
+        ("0 9 * 6-8 *", "*-06..08-* 09:00:00"),
+    ],
+)
+def test_render_systemd_uses_the_double_dot_range_separator(expr: str, expected: str) -> None:
+    """systemd's range separator is `..`, not `-`.
+
+    Emitting `9-17` produces `OnCalendar=*-*-* 9-17:00:00`, which systemd
+    rejects at load — the unit never fires and nothing reports why.
+    """
+    from lazy_harness.scheduler.schedule import parse_cron, render_systemd
+
+    assert render_systemd(parse_cron(expr)) == expected
+
+
+@pytest.mark.parametrize("expr", ["0 9 * * */2", "0 9 * * 1-3,5"])
+def test_render_systemd_raises_rather_than_crashing_on_a_complex_dow(expr: str) -> None:
+    """A bare ValueError escapes both install's guard and the CLI handler.
+
+    `int("*/2")` and `int("3,5")` are not ScheduleTranslationError, so
+    `lh scheduler install` died with a traceback instead of the handled
+    "Nothing was installed" path.
+    """
+    from lazy_harness.scheduler.schedule import (
+        ScheduleTranslationError,
+        parse_cron,
+        render_systemd,
+    )
+
+    with pytest.raises(ScheduleTranslationError):
+        render_systemd(parse_cron(expr))
+
+
+def test_render_systemd_refuses_day_of_month_and_day_of_week_together() -> None:
+    """cron ORs the two day fields; systemd ANDs them, exactly like launchd.
+
+    render_launchd already refuses this with that reasoning spelled out. Doing
+    it in one renderer and not the other turns a declared ~5x/month job into
+    a ~1x/year job with nothing reporting the difference.
+    """
+    from lazy_harness.scheduler.schedule import (
+        ScheduleTranslationError,
+        parse_cron,
+        render_systemd,
+    )
+
+    with pytest.raises(ScheduleTranslationError, match="day_of_month"):
+        render_systemd(parse_cron("0 9 1 * 1"))
+
+
+def test_render_systemd_step_starts_at_the_field_lower_bound() -> None:
+    """Day-of-month and month start at 1, not 0.
+
+    `*-*-0/2` is rejected by systemd because day 0 does not exist.
+    """
+    from lazy_harness.scheduler.schedule import parse_cron, render_systemd
+
+    assert render_systemd(parse_cron("0 9 */2 * *")) == "*-*-01/2 09:00:00"
+    assert render_systemd(parse_cron("0 9 * */3 *")) == "*-01/3-* 09:00:00"
+    # Hour and minute do start at 0.
+    assert render_systemd(parse_cron("0 */6 * * *")) == "*-*-* 0/6:00:00"
