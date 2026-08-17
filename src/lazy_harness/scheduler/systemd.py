@@ -14,7 +14,7 @@ import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
-from lazy_harness.scheduler.base import JobRecord, JobState, SchedulerJob
+from lazy_harness.scheduler.base import DriftState, JobDrift, JobRecord, JobState, SchedulerJob
 from lazy_harness.scheduler.paths import resolved_path
 from lazy_harness.scheduler.schedule import (
     ScheduleTranslationError,
@@ -35,6 +35,15 @@ def _default_unit_dir() -> Path:
     xdg = os.environ.get("XDG_CONFIG_HOME")
     base = Path(xdg) if xdg else Path.home() / ".config"
     return base / "systemd" / "user"
+
+
+def _read(path: Path) -> str:
+    """The file's text, or empty when it is not there.
+
+    A half-installed pair — service present, timer gone — must compare as
+    different rather than raising, so it surfaces as STALE and not UNKNOWN.
+    """
+    return path.read_text() if path.is_file() else ""
 
 
 def _current_user() -> str:
@@ -214,6 +223,35 @@ class SystemdBackend:
         if removed:
             self._runner(["systemctl", "--user", "daemon-reload"])
         return removed
+
+    def drift(self, jobs: list[SchedulerJob]) -> list[JobDrift]:
+        """Compare both installed unit files against what this version writes.
+
+        Compared as text, unlike the launchd plist: these are files this code
+        generates verbatim, so any difference is a difference the generator
+        made — there is no serialiser in between free to reformat them.
+        """
+        out: list[JobDrift] = []
+        for job in jobs:
+            label = self.label_for(job)
+            service = self._unit_dir / f"{label}.service"
+            timer = self._unit_dir / f"{label}.timer"
+            if not service.is_file() and not timer.is_file():
+                out.append(JobDrift(job.name, DriftState.ABSENT))
+                continue
+            try:
+                expected = {"service": self._service_text(job), "timer": self._timer_text(job)}
+                actual = {"service": _read(service), "timer": _read(timer)}
+            except Exception as e:  # noqa: BLE001 — cannot render or cannot read
+                out.append(JobDrift(job.name, DriftState.UNKNOWN, f"{type(e).__name__}: {e}"))
+                continue
+            differing = sorted(k for k in expected if expected[k] != actual[k])
+            out.append(
+                JobDrift(job.name, DriftState.STALE, ", ".join(differing))
+                if differing
+                else JobDrift(job.name, DriftState.CURRENT)
+            )
+        return out
 
     def job_state(self, label: str) -> tuple[JobState, str]:
         try:

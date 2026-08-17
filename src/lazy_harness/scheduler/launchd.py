@@ -7,7 +7,7 @@ import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
-from lazy_harness.scheduler.base import JobRecord, JobState, SchedulerJob
+from lazy_harness.scheduler.base import DriftState, JobDrift, JobRecord, JobState, SchedulerJob
 from lazy_harness.scheduler.paths import resolved_path
 from lazy_harness.scheduler.schedule import (
     ScheduleTranslationError,
@@ -157,6 +157,39 @@ class LaunchdBackend:
                 plist_path.unlink()
                 removed.append(label)
         return removed
+
+    def drift(self, jobs: list[SchedulerJob]) -> list[JobDrift]:
+        """Compare each installed plist against what this version would write.
+
+        Generated into a temporary directory and compared as parsed plists
+        rather than as bytes: `plistlib` is free to order keys or format the
+        XML differently between releases, and a diagnostic that reports every
+        job stale on a formatting change is worse than none.
+        """
+        import tempfile
+
+        out: list[JobDrift] = []
+        for job in jobs:
+            installed = self._agents_dir / f"{self.label_for(job)}.plist"
+            if not installed.is_file():
+                out.append(JobDrift(job.name, DriftState.ABSENT))
+                continue
+            try:
+                with tempfile.TemporaryDirectory() as tmp:
+                    expected = plistlib.loads(self.generate_plist(job, Path(tmp)).read_bytes())
+                actual = plistlib.loads(installed.read_bytes())
+            except Exception as e:  # noqa: BLE001 — cannot render or cannot read
+                out.append(JobDrift(job.name, DriftState.UNKNOWN, f"{type(e).__name__}: {e}"))
+                continue
+            differing = sorted(
+                k for k in set(expected) | set(actual) if expected.get(k) != actual.get(k)
+            )
+            out.append(
+                JobDrift(job.name, DriftState.STALE, ", ".join(differing))
+                if differing
+                else JobDrift(job.name, DriftState.CURRENT)
+            )
+        return out
 
     def list_jobs(self, search_dir: Path | None = None) -> list[str]:
         agents_dir = search_dir or self._agents_dir

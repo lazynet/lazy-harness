@@ -11,7 +11,13 @@ from __future__ import annotations
 import subprocess
 from collections.abc import Callable
 
-from lazy_harness.scheduler.base import JobRecord, JobState, SchedulerJob
+from lazy_harness.scheduler.base import (
+    DriftState,
+    JobDrift,
+    JobRecord,
+    JobState,
+    SchedulerJob,
+)
 from lazy_harness.scheduler.paths import resolved_path
 from lazy_harness.scheduler.schedule import parse_cron, render_cron
 
@@ -177,6 +183,48 @@ class CronBackend:
         name = label[len("lazy-harness-") :] if label.startswith("lazy-harness-") else label
         present = any(entry_name == name for entry_name, _, _ in self._entries(content))
         return (JobState.LOADED if present else JobState.NOT_LOADED), ""
+
+    def drift(self, jobs: list[SchedulerJob]) -> list[JobDrift]:
+        """Compare each managed entry, and the block's PATH, against this version.
+
+        PATH is written once for the whole block, so a job whose own line is
+        untouched still runs with an environment the current generator would
+        not produce. That counts as stale for every job in the block.
+        """
+        content = self._read()
+        if content is None:
+            return [
+                JobDrift(job.name, DriftState.UNKNOWN, "crontab unavailable on this machine")
+                for job in jobs
+            ]
+
+        entries = {name: (schedule, command) for name, schedule, command in self._entries(content)}
+        path_line = self._existing_path_line(content)
+        expected_path = f"PATH={resolved_path()}"
+        path_differs = path_line is not None and path_line != expected_path
+
+        out: list[JobDrift] = []
+        for job in jobs:
+            if job.name not in entries:
+                out.append(JobDrift(job.name, DriftState.ABSENT))
+                continue
+            try:
+                expected_schedule = render_cron(parse_cron(job.schedule))
+            except Exception as e:  # noqa: BLE001 — an untranslatable schedule
+                out.append(JobDrift(job.name, DriftState.UNKNOWN, f"{type(e).__name__}: {e}"))
+                continue
+            schedule, command = entries[job.name]
+            reasons = []
+            if (schedule, command) != (expected_schedule, job.command):
+                reasons.append("entry")
+            if path_differs:
+                reasons.append("PATH")
+            out.append(
+                JobDrift(job.name, DriftState.STALE, ", ".join(reasons))
+                if reasons
+                else JobDrift(job.name, DriftState.CURRENT)
+            )
+        return out
 
     def discover(self) -> list[JobRecord]:
         content = self._read()

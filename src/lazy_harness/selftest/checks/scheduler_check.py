@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 from lazy_harness.core.config import ConfigError, load_config
+from lazy_harness.scheduler.base import DriftState, JobDrift, SchedulerJob
 from lazy_harness.scheduler.manager import detect_backend, parse_jobs_from_config
 from lazy_harness.selftest.result import CheckResult, CheckStatus
 
@@ -77,7 +78,67 @@ def check_scheduler(*, config_path: Path) -> list[CheckResult]:
                 )
             )
 
+        results.extend(_check_stale_units(backend, declared, group=group))
+
     return results
+
+
+def _check_stale_units(
+    backend: object, declared: list[SchedulerJob], *, group: str
+) -> list[CheckResult]:
+    """Whether each installed artifact is what this version would write.
+
+    `jobs-drift` above counts jobs, which cannot see a job that is present,
+    loaded and carrying content from a superseded generator — the state every
+    machine was in after the scheduler PATH resolver changed, reported as
+    PASSED throughout.
+
+    Absent jobs are deliberately not reported here: `jobs-drift` already says
+    the counts disagree, and naming one problem twice in different words makes
+    the output harder to act on rather than easier.
+    """
+    drift = getattr(backend, "drift", None)
+    if not callable(drift):
+        # A backend predating this check is not a failure. `lh selftest` is a
+        # diagnostic; it degrades rather than crashing on one it cannot run.
+        return []
+
+    try:
+        reports: list[JobDrift] = drift(declared)
+    except Exception as e:  # noqa: BLE001 — every backend shells out to something
+        return [
+            CheckResult(
+                group=group,
+                name="units-stale",
+                status=CheckStatus.WARNING,
+                message=f"could not compare installed jobs: {type(e).__name__}: {e}",
+            )
+        ]
+
+    stale = [r for r in reports if r.state is DriftState.STALE]
+    unknown = [r for r in reports if r.state is DriftState.UNKNOWN]
+
+    parts: list[str] = []
+    if stale:
+        listed = ", ".join(f"{r.name} ({r.detail})" if r.detail else r.name for r in stale)
+        parts.append(
+            f"{len(stale)} job(s) were installed by an older version and differ from what "
+            f"this one writes: {listed}. Re-run `lh scheduler install` to refresh them"
+        )
+    if unknown:
+        listed = ", ".join(f"{r.name}: {r.detail}" if r.detail else r.name for r in unknown)
+        parts.append(f"could not compare {len(unknown)} job(s): {listed}")
+
+    if not parts:
+        return [CheckResult(group=group, name="units-stale", status=CheckStatus.PASSED)]
+    return [
+        CheckResult(
+            group=group,
+            name="units-stale",
+            status=CheckStatus.WARNING,
+            message="; ".join(parts),
+        )
+    ]
 
 
 def _current_user() -> str:

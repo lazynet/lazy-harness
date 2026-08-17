@@ -289,6 +289,8 @@ Validates the lazy-harness install end-to-end: config parses, profiles deploy, h
 
 The `loop-events` group goes further than the others: it builds a throwaway git repository, runs the loop-event hook scripts the installed package ships, and reads back the rows they wrote. That catches attribution bugs — a session recorded against an artifact subdirectory instead of its repository, or a row that cannot name its profile — which unit tests cannot see, because they import the hooks rather than running them as the agent does.
 
+The `scheduler` group's `units-stale` check compares each installed job against what the current version would write, and warns naming the jobs that differ. A plist, a timer unit and a crontab block are written once and read for months, so they outlive the code that produced them: a job can be installed, loaded and counted while carrying an environment or a schedule this version no longer generates. Re-run `lh scheduler install` to refresh them.
+
 `--json` switches to machine-readable output. `--fix` attempts to repair fixable issues in place.
 
 ```bash

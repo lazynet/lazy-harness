@@ -139,3 +139,110 @@ def test_linger_check_resolves_the_user_without_env_vars(tmp_path, monkeypatch) 
 
     assert asked and asked[0], "loginctl was asked about an empty user"
     assert results[0].status == CheckStatus.PASSED
+
+
+def _jobs_toml() -> str:
+    return (
+        "\n[scheduler]\nbackend = \"auto\"\n\n"
+        "[scheduler.jobs.qmd-sync]\nschedule = \"0 6 * * *\"\ncommand = \"/usr/bin/true\"\n"
+    )
+
+
+class _Backend:
+    """A backend whose drift answer is the thing under test."""
+
+    def __init__(self, drift_result):
+        self._drift = drift_result
+
+    def label_for(self, job):
+        return f"x.{job.name}"
+
+    def status(self):
+        return [{"label": "x.qmd-sync", "status": "loaded"}]
+
+    def drift(self, jobs):
+        return self._drift
+
+
+def test_stale_units_are_reported_and_named(tmp_path: Path):
+    """A job can be installed, loaded and counted, and still carry content
+    from a superseded generator. The count comparison cannot see that."""
+    from lazy_harness.scheduler.base import DriftState, JobDrift
+
+    cfg = _make_cfg(tmp_path, _jobs_toml())
+    backend = _Backend([JobDrift("qmd-sync", DriftState.STALE, "EnvironmentVariables")])
+    with patch(
+        "lazy_harness.selftest.checks.scheduler_check.detect_backend", return_value=backend
+    ):
+        results = check_scheduler(config_path=cfg)
+
+    stale = [r for r in results if r.name == "units-stale"]
+    assert stale, [r.name for r in results]
+    assert stale[0].status == CheckStatus.WARNING
+    assert "qmd-sync" in stale[0].message
+    assert "scheduler install" in stale[0].message
+
+
+def test_current_units_pass(tmp_path: Path):
+    from lazy_harness.scheduler.base import DriftState, JobDrift
+
+    cfg = _make_cfg(tmp_path, _jobs_toml())
+    backend = _Backend([JobDrift("qmd-sync", DriftState.CURRENT)])
+    with patch(
+        "lazy_harness.selftest.checks.scheduler_check.detect_backend", return_value=backend
+    ):
+        results = check_scheduler(config_path=cfg)
+
+    stale = [r for r in results if r.name == "units-stale"]
+    assert stale and stale[0].status == CheckStatus.PASSED
+
+
+def test_undeterminable_drift_is_not_reported_as_current(tmp_path: Path):
+    """UNKNOWN means the comparison did not happen, which is not a pass."""
+    from lazy_harness.scheduler.base import DriftState, JobDrift
+
+    cfg = _make_cfg(tmp_path, _jobs_toml())
+    backend = _Backend([JobDrift("qmd-sync", DriftState.UNKNOWN, "crontab unavailable")])
+    with patch(
+        "lazy_harness.selftest.checks.scheduler_check.detect_backend", return_value=backend
+    ):
+        results = check_scheduler(config_path=cfg)
+
+    stale = [r for r in results if r.name == "units-stale"]
+    assert stale and stale[0].status == CheckStatus.WARNING
+    assert "crontab unavailable" in stale[0].message
+
+
+def test_absent_units_do_not_count_as_stale(tmp_path: Path):
+    """Not installed is what the count check already reports; saying it twice
+    in different words makes the output harder to act on, not easier."""
+    from lazy_harness.scheduler.base import DriftState, JobDrift
+
+    cfg = _make_cfg(tmp_path, _jobs_toml())
+    backend = _Backend([JobDrift("qmd-sync", DriftState.ABSENT)])
+    with patch(
+        "lazy_harness.selftest.checks.scheduler_check.detect_backend", return_value=backend
+    ):
+        results = check_scheduler(config_path=cfg)
+
+    stale = [r for r in results if r.name == "units-stale"]
+    assert stale and stale[0].status == CheckStatus.PASSED
+
+
+def test_a_backend_without_drift_support_is_skipped_not_failed(tmp_path: Path):
+    """Degrade rather than crash: `lh selftest` must survive a backend that
+    predates this check."""
+    cfg = _make_cfg(tmp_path, _jobs_toml())
+
+    class Old:
+        def label_for(self, job):
+            return f"x.{job.name}"
+
+        def status(self):
+            return [{"label": "x.qmd-sync", "status": "loaded"}]
+
+    with patch("lazy_harness.selftest.checks.scheduler_check.detect_backend", return_value=Old()):
+        results = check_scheduler(config_path=cfg)
+
+    assert not [r for r in results if r.name == "units-stale"]
+    assert all(r.status != CheckStatus.FAILED for r in results)
