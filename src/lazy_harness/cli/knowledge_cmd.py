@@ -10,7 +10,7 @@ from pathlib import Path
 import click
 from rich.console import Console
 
-from lazy_harness.core.config import ConfigError, load_config
+from lazy_harness.core.config import Config, ConfigError, load_config
 from lazy_harness.core.logfile import append as log_append
 from lazy_harness.core.logfile import default_log_dir
 from lazy_harness.core.paths import config_file, contract_path, expand_path
@@ -358,42 +358,24 @@ def knowledge_graph() -> None:
     """Manage the repos whose code graph is kept fresh."""
 
 
-def _structure_repos(cfg_path: Path) -> tuple[object, list[str]]:
+def _structure_repos(cfg_path: Path) -> tuple[Config, list[str]]:
     cfg = load_config(cfg_path)
     return cfg, list(cfg.knowledge.structure.repos)
 
 
-def _write_repo_list(cfg_path: Path, repos: list[str]) -> None:
-    """Rewrite only the `repos =` line under [knowledge.structure].
+def _write_repo_list(cfg_path: Path, cfg: Config, repos: list[str]) -> None:
+    """Persist the graphify repo list under [knowledge.structure].
 
-    The config is hand-edited and version-controlled, so a full
-    `save_config` round-trip is the wrong tool: it drops every comment and any
-    key this version does not model.
+    Was a hand-rolled single-line rewrite because `save_config` dropped every
+    comment and any key this version does not model. It no longer does.
+
+    Takes the already-loaded `cfg`: every caller holds one, and reloading here
+    put a second `ConfigError` outside their `try/except`.
     """
-    rendered = "repos = [" + ", ".join(f'"{r}"' for r in repos) + "]"
-    lines = cfg_path.read_text().splitlines()
-    out: list[str] = []
-    in_section = False
-    replaced = False
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("["):
-            # Leaving the section without having seen a `repos =` key: add one.
-            if in_section and not replaced:
-                out.append(rendered)
-                replaced = True
-            in_section = stripped == "[knowledge.structure]"
-        if in_section and stripped.startswith("repos"):
-            out.append(rendered)
-            replaced = True
-            continue
-        out.append(line)
-    if not replaced:
-        if not in_section:
-            out.append("")
-            out.append("[knowledge.structure]")
-        out.append(rendered)
-    cfg_path.write_text("\n".join(out) + "\n")
+    from lazy_harness.core.config import save_config
+
+    cfg.knowledge.structure.repos = list(repos)
+    save_config(cfg, cfg_path)
 
 
 @knowledge_graph.command("add")
@@ -408,7 +390,7 @@ def knowledge_graph_add(repo: Path) -> None:
 
     cfg_path = config_file()
     try:
-        _, repos = _structure_repos(cfg_path)
+        cfg, repos = _structure_repos(cfg_path)
     except ConfigError as e:
         console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(1)
@@ -418,7 +400,7 @@ def knowledge_graph_add(repo: Path) -> None:
         return
 
     repos.append(str(resolved))
-    _write_repo_list(cfg_path, repos)
+    _write_repo_list(cfg_path, cfg, repos)
     console.print(f"[green]registered:[/green] {contract_path(resolved)}")
 
 

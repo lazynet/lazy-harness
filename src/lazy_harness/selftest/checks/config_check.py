@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from lazy_harness.core.config import ConfigError, load_config
+from lazy_harness.core.config import ConfigError, load_config, save_config
 from lazy_harness.selftest.result import CheckResult, CheckStatus
 
 SUPPORTED_AGENTS = {"claude-code"}
@@ -49,9 +49,7 @@ def check_config(*, config_path: Path) -> list[CheckResult]:
             )
         )
     else:
-        results.append(
-            CheckResult(group=group, name="has-profiles", status=CheckStatus.PASSED)
-        )
+        results.append(CheckResult(group=group, name="has-profiles", status=CheckStatus.PASSED))
 
     if cfg.agent.type not in SUPPORTED_AGENTS:
         results.append(
@@ -63,8 +61,82 @@ def check_config(*, config_path: Path) -> list[CheckResult]:
             )
         )
     else:
-        results.append(
-            CheckResult(group=group, name="agent-valid", status=CheckStatus.PASSED)
-        )
+        results.append(CheckResult(group=group, name="agent-valid", status=CheckStatus.PASSED))
 
     return results
+
+
+def _flat_keys(data: dict, prefix: str = "") -> set[str]:
+    """Every dotted key path in a parsed TOML document, tables included."""
+    out: set[str] = set()
+    for key, value in data.items():
+        path = f"{prefix}{key}"
+        out.add(path)
+        if isinstance(value, dict):
+            out |= _flat_keys(value, path + ".")
+    return out
+
+
+def check_config_round_trip(*, config_path: Path) -> list[CheckResult]:
+    """Verify that writing the config back preserves every key it started with.
+
+    A writer that silently drops a section is invisible until the day a
+    command rewrites the file. `save_config` emitted 10 of the 14 sections
+    `load_config` reads and destroyed 51 keys per write; this is the net for
+    the next time that happens.
+    """
+    import shutil
+    import tempfile
+    import tomllib
+
+    group = "config"
+    if not config_path.is_file():
+        # CheckStatus has exactly three members — PASSED, FAILED, WARNING.
+        # A missing config is `check_config`'s failure to report, not this one's.
+        return [
+            CheckResult(
+                group=group,
+                name="round-trip",
+                status=CheckStatus.WARNING,
+                message=f"no config at {config_path}",
+            )
+        ]
+
+    try:
+        before = _flat_keys(tomllib.loads(config_path.read_text(encoding="utf-8")))
+        # The probe runs against a copy: a health check that mutates what it
+        # checks is not a health check.
+        with tempfile.TemporaryDirectory() as td:
+            probe = Path(td) / "config.toml"
+            shutil.copyfile(config_path, probe)
+            save_config(load_config(probe), probe)
+            after = _flat_keys(tomllib.loads(probe.read_text(encoding="utf-8")))
+    except (ConfigError, OSError, tomllib.TOMLDecodeError) as e:
+        return [
+            CheckResult(
+                group=group,
+                name="round-trip",
+                status=CheckStatus.FAILED,
+                message=f"round-trip probe failed: {e}",
+            )
+        ]
+
+    lost = sorted(before - after)
+    if lost:
+        shown = ", ".join(lost[:8]) + (f" (+{len(lost) - 8} more)" if len(lost) > 8 else "")
+        return [
+            CheckResult(
+                group=group,
+                name="round-trip",
+                status=CheckStatus.FAILED,
+                message=f"save_config would drop {len(lost)} keys: {shown}",
+            )
+        ]
+    return [
+        CheckResult(
+            group=group,
+            name="round-trip",
+            status=CheckStatus.PASSED,
+            message=f"{len(before)} keys survive a write",
+        )
+    ]

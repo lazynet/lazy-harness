@@ -10,8 +10,6 @@ from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
-import tomli_w
-
 
 class ConfigError(Exception):
     """Raised when config is invalid or missing."""
@@ -508,6 +506,15 @@ def load_config(path: Path) -> Config:
             last_session_enabled=ci_raw.get(
                 "last_session_enabled", ContextInjectConfig.last_session_enabled
             ),
+            qmd_suggest_enabled=ci_raw.get(
+                "qmd_suggest_enabled", ContextInjectConfig.qmd_suggest_enabled
+            ),
+            qmd_suggest_top_k=ci_raw.get(
+                "qmd_suggest_top_k", ContextInjectConfig.qmd_suggest_top_k
+            ),
+            graphify_surface_enabled=ci_raw.get(
+                "graphify_surface_enabled", ContextInjectConfig.graphify_surface_enabled
+            ),
             proposals_summary=ci_raw.get(
                 "proposals_summary", ContextInjectConfig.proposals_summary
             ),
@@ -534,6 +541,7 @@ def _config_to_dict(cfg: Config) -> dict[str, Any]:
         profiles_dict[name] = {
             "config_dir": entry.config_dir,
             "roots": entry.roots,
+            "lazynorth_doc": entry.lazynorth_doc,
         }
 
     result: dict[str, Any] = {
@@ -561,31 +569,81 @@ def _config_to_dict(cfg: Config) -> dict[str, Any]:
             "enabled": cfg.context_inject.enabled,
             "max_body_chars": cfg.context_inject.max_body_chars,
             "last_session_enabled": cfg.context_inject.last_session_enabled,
+            "qmd_suggest_enabled": cfg.context_inject.qmd_suggest_enabled,
+            "qmd_suggest_top_k": cfg.context_inject.qmd_suggest_top_k,
+            "graphify_surface_enabled": cfg.context_inject.graphify_surface_enabled,
             "proposals_summary": cfg.context_inject.proposals_summary,
             "repo_map_scope": cfg.context_inject.repo_map_scope,
             "repo_map_doc": cfg.context_inject.repo_map_doc,
             "repo_map_max_chars": cfg.context_inject.repo_map_max_chars,
         },
+        "memory": {
+            "engram": {
+                "enabled": cfg.memory.engram.enabled,
+                "git_sync": cfg.memory.engram.git_sync,
+                "cloud": cfg.memory.engram.cloud,
+                "version": cfg.memory.engram.version,
+                "binary": cfg.memory.engram.binary,
+            }
+        },
+        "lazynorth": {
+            "enabled": cfg.lazynorth.enabled,
+            "path": cfg.lazynorth.path,
+            "universal_doc": cfg.lazynorth.universal_doc,
+        },
+        "compound_loop": {
+            "enabled": cfg.compound_loop.enabled,
+            "model": cfg.compound_loop.model,
+            "min_messages": cfg.compound_loop.min_messages,
+            "min_user_chars": cfg.compound_loop.min_user_chars,
+            "debounce_seconds": cfg.compound_loop.debounce_seconds,
+            "timeout_seconds": cfg.compound_loop.timeout_seconds,
+            "reprocess_min_growth_seconds": cfg.compound_loop.reprocess_min_growth_seconds,
+            "grading_enabled": cfg.compound_loop.grading_enabled,
+            "slim_handoff_enabled": cfg.compound_loop.slim_handoff_enabled,
+            "backend": cfg.compound_loop.backend,
+            "backend_options": cfg.compound_loop.backend_options,
+        },
     }
 
-    if cfg.monitoring.db:
-        result["monitoring"]["db"] = cfg.monitoring.db
-    if cfg.monitoring.pricing:
-        result["monitoring"]["pricing"] = cfg.monitoring.pricing
+    result["knowledge"]["structure"] = {
+        "engine": cfg.knowledge.structure.engine,
+        "enabled": cfg.knowledge.structure.enabled,
+        "version": cfg.knowledge.structure.version,
+        "repos": cfg.knowledge.structure.repos,
+    }
+    result["knowledge"]["classify_rules"] = [
+        {"pattern": r.pattern, "profile": r.profile, "session_type": r.session_type}
+        for r in cfg.knowledge.classify_rules
+    ]
+    # Everything below is emitted unconditionally. Guarding on truthiness would
+    # make the value unclearable: `_apply` only adds and overwrites, so a key
+    # the serializer omits when empty can never be emptied in the file. Churn
+    # is prevented in `_apply` instead — it skips a key that is both absent
+    # from the document and empty.
 
-    if cfg.hooks:
-        hooks_dict: dict[str, Any] = {}
-        for event_name, event_cfg in cfg.hooks.items():
-            event_dict: dict[str, Any] = {"scripts": event_cfg.scripts}
-            if event_cfg.external:
-                event_dict["external"] = [
-                    {"command": e.command}
-                    if e.matcher is None
-                    else {"command": e.command, "matcher": e.matcher}
-                    for e in event_cfg.external
-                ]
-            hooks_dict[event_name] = event_dict
-        result["hooks"] = hooks_dict
+    # `lazymind_dir` is `str | None`; TOML has no null, so "" is how an unset
+    # value is spelled on disk and `_apply` drops it when it was never there.
+    result["compound_loop"]["lazymind_dir"] = cfg.compound_loop.lazymind_dir or ""
+    result["scheduler"]["jobs"] = {
+        j.name: {"schedule": j.schedule, "command": j.command} for j in cfg.scheduler.jobs
+    }
+
+    result["monitoring"]["db"] = cfg.monitoring.db
+    result["monitoring"]["pricing"] = cfg.monitoring.pricing
+
+    hooks_dict: dict[str, Any] = {}
+    for event_name, event_cfg in cfg.hooks.items():
+        event_dict: dict[str, Any] = {"scripts": event_cfg.scripts}
+        # A matcher-less entry has a shorthand — the bare command string — and
+        # `_parse_external_hooks` reads it back identically. Always emitting
+        # the table form rewrote every shorthand on every save.
+        event_dict["external"] = [
+            e.command if e.matcher is None else {"command": e.command, "matcher": e.matcher}
+            for e in event_cfg.external
+        ]
+        hooks_dict[event_name] = event_dict
+    result["hooks"] = hooks_dict
 
     if (
         cfg.metrics.sinks != ["sqlite_local"]
@@ -612,8 +670,129 @@ def _config_to_dict(cfg: Config) -> dict[str, Any]:
     return result
 
 
+def _apply(doc: Any, overlay: dict[str, Any], defaults: dict[str, Any]) -> None:
+    """Recursively apply `overlay` onto a tomlkit document, in place.
+
+    In-place assignment is what preserves comments, key order and formatting:
+    tomlkit keeps the trivia attached to every key it is not asked to rewrite.
+    Keys absent from `overlay` are left untouched, which is what carries
+    sections this version does not model.
+
+    Two keys are deliberately *not* written:
+
+    - One whose value already matches the document. tomlkit re-serialises
+      whatever it is assigned, so reassigning an unchanged value rewrites a
+      multi-line array as an inline one and churns the diff for nothing.
+    - One that is absent from the document and equal to this version's
+      default. Materialising defaults into the file pins them, so a later
+      release that changes a default would never reach the user — which is
+      the "no behaviour change on upgrade" invariant ADR-018 turns on.
+    """
+    for key, value in overlay.items():
+        current = doc.get(key)
+        if isinstance(value, dict) and isinstance(current, dict):
+            sub_defaults = defaults.get(key) if isinstance(defaults, dict) else None
+            _apply(doc[key], value, sub_defaults if isinstance(sub_defaults, dict) else {})
+            continue
+        if key in doc:
+            # Already in the file: the Config is authoritative, including when
+            # it has emptied the value. This is the only path by which a key
+            # can be cleared, since an overlay cannot express removal.
+            if current != value:
+                doc[key] = value
+            continue
+        if isinstance(defaults, dict) and key in defaults and defaults[key] == value:
+            continue
+        if (not isinstance(defaults, dict) or key not in defaults) and value in ({}, [], ""):
+            # A dynamic section — a hook event, a scheduler job table, a
+            # profile sub-key — has no entry in the defaults reference, so
+            # "empty" is the only sensible default and writing it would add
+            # noise the user never asked for.
+            continue
+        doc[key] = value
+
+
+# Sections whose contents the serializer emits in full, so a key present in
+# the document but absent from the overlay means the Config dropped it. Every
+# other section is additive and never pruned, which is what carries keys this
+# version does not model.
+_OWNED_SECTIONS: tuple[tuple[str, ...], ...] = (
+    ("profiles",),
+    ("scheduler", "jobs"),
+    ("hooks",),
+)
+
+
+def _prune_owned_sections(doc: Any, overlay: dict[str, Any]) -> None:
+    """Delete entries the overlay owns and no longer carries.
+
+    Applying an overlay can only add or overwrite, so without this a removed
+    profile, scheduler job or hook event comes back on the next write.
+    """
+    for path in _OWNED_SECTIONS:
+        node: Any = doc
+        expected: Any = overlay
+        for part in path:
+            node = node.get(part) if isinstance(node, dict) else None
+            expected = expected.get(part) if isinstance(expected, dict) else None
+        if not isinstance(node, dict) or not isinstance(expected, dict):
+            continue
+        for key, value in list(node.items()):
+            # `[profiles].default` is a scalar setting, not an entry.
+            if path == ("profiles",) and key == "default":
+                continue
+            # `_parse_profiles` only admits table values, so a scalar here is a
+            # key this version does not model — not an entry that was removed.
+            if not isinstance(value, dict):
+                continue
+            if key not in expected:
+                del node[key]
+
+
 def save_config(cfg: Config, path: Path) -> None:
-    """Save config to a TOML file."""
-    data = _config_to_dict(cfg)
+    """Write config, preserving comments and every key this version does not model.
+
+    Read-modify-write rather than serialize-from-scratch. The previous
+    implementation emitted 10 of the 14 sections `load_config` reads and
+    destroyed 51 keys per write against a real config, comments included.
+    """
+    import os
+    import tempfile
+
+    import tomlkit
+
+    if path.is_file():
+        doc = tomlkit.parse(path.read_text(encoding="utf-8"))
+        # A pristine Config is the reference for "this value is just the
+        # default", so a key the user never set is not written into their file.
+        defaults = _config_to_dict(Config())
+    else:
+        doc = tomlkit.document()
+        # A file being created from nothing must come out complete: skipping
+        # defaults here would omit `[harness].version`, which `load_config`
+        # requires, and the written file would not load back.
+        defaults = {}
+
+    overlay = _config_to_dict(cfg)
+    _apply(doc, overlay, defaults)
+    _prune_owned_sections(doc, overlay)
+
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(tomli_w.dumps(data).encode())
+    # `mkstemp` creates 0600 and `os.replace` carries that onto the target, so
+    # a 0644 config would come back 0600 — a spurious diff on every write for a
+    # file managed by a dotfile manager.
+    mode = path.stat().st_mode & 0o777 if path.is_file() else None
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".")
+    tmp_path = Path(tmp)
+    try:
+        # Close the raw descriptor and write through a buffered writer: a bare
+        # `os.write` can short-write on a full filesystem without raising, and
+        # `os.replace` would then install a truncated config over a good one.
+        os.close(fd)
+        tmp_path.write_bytes(tomlkit.dumps(doc).encode())
+        if mode is not None:
+            os.chmod(tmp_path, mode)
+        os.replace(tmp_path, path)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise

@@ -106,7 +106,7 @@ Manages the knowledge store and its QMD index.
 
 Nothing rebuilds a code graph on its own in a worktree-first workflow: graphify's `post-commit` hook exits early when the git dir differs from the common dir, so a commit made inside a worktree never triggers a rebuild — and a squash merge landing on the remote produces no local commit at all. `graph update` is the scheduled sweep that closes that gap. Point a `[scheduler.jobs.*]` entry at it.
 
-`add` registers a repo after checking it really is one, and is idempotent. It rewrites only the `repos =` line under `[knowledge.structure]`, leaving comments and unrelated keys untouched — the config is hand-maintained, so a full round-trip through the loader would strip both. `update` walks every registered repo, skips ones that have gone missing, keeps going past a repo that fails, and exits non-zero if any did. Outcomes append to `graphify-update.log`.
+`add` registers a repo after checking it really is one, and is idempotent. It updates `repos` under `[knowledge.structure]` through the normal config writer, which preserves comments, formatting, and every key this version does not model. `update` walks every registered repo, skips ones that have gone missing, keeps going past a repo that fails, and exits non-zero if any did. Outcomes append to `graphify-update.log`.
 
 ```bash
 lh knowledge init

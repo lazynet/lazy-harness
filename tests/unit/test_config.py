@@ -597,3 +597,447 @@ def test_context_inject_repo_map_survives_round_trip(config_dir: Path) -> None:
     assert again.context_inject.repo_map_scope == "~/repos/lazy"
     assert again.context_inject.repo_map_doc == "docs/repos.md"
     assert again.context_inject.repo_map_max_chars == 2400
+
+
+_FULL_CONFIG = """\
+[harness]
+version = "1"
+
+[agent]
+type = "claude-code"
+
+[profiles]
+default = "lazy"
+
+[profiles.lazy]
+config_dir = "~/.claude-lazy"
+roots = ["~/repos/lazy"]
+lazynorth_doc = "LazyNorth.md"
+
+[profiles.flex]
+config_dir = "~/.claude-flex"
+roots = ["~/repos/flex"]
+lazynorth_doc = "FlexNorth.md"
+
+[knowledge]
+root = "~/repos/lazy/lazy-knowledge"
+
+[knowledge.sessions]
+enabled = true
+
+[knowledge.learnings]
+enabled = true
+
+[knowledge.search]
+engine = "qmd"
+
+[knowledge.structure]
+engine = "graphify"
+enabled = true
+version = "0.9.38"
+repos = ["~/repos/lazy/lazy-harness"]
+
+[memory.engram]
+enabled = true
+git_sync = true
+cloud = false
+version = "1.15.4"
+binary = "/usr/local/bin/engram"
+
+[monitoring]
+enabled = true
+db = "~/.local/share/lazy-harness/metrics.db"
+
+[scheduler]
+backend = "auto"
+
+[scheduler.jobs.qmd-sync]
+schedule = "0 */6 * * *"
+command = "qmd sync"
+
+[scheduler.jobs.metrics-ingest]
+schedule = "*/30 * * * *"
+command = "lh metrics ingest"
+
+[hooks.session_start]
+scripts = ["context-inject"]
+
+[hooks.pre_tool_use]
+scripts = ["pre-tool-use-security"]
+allow_patterns = ["rm -rf ./build"]
+
+[compound_loop]
+enabled = true
+model = "claude-haiku-4-5-20251001"
+min_messages = 4
+slim_handoff_enabled = true
+
+[lazynorth]
+enabled = true
+path = "~/LazyMind/LazyNorth.md"
+universal_doc = "LazyNorth.md"
+
+[context_inject]
+enabled = true
+max_body_chars = 12000
+qmd_suggest_enabled = false
+qmd_suggest_top_k = 7
+graphify_surface_enabled = false
+
+[loops]
+inject_goal_prompt = true
+"""
+
+
+def _flat_keys(data: dict, prefix: str = "") -> set[str]:
+    """Every dotted key path in a parsed TOML document, tables included."""
+    out: set[str] = set()
+    for key, value in data.items():
+        path = f"{prefix}{key}"
+        out.add(path)
+        if isinstance(value, dict):
+            out |= _flat_keys(value, path + ".")
+    return out
+
+
+def test_save_config_preserves_every_key_it_did_not_change(tmp_path: Path) -> None:
+    """save_config must not drop sections the serializer does not model.
+
+    Measured against the live config before this fix: 51 keys were lost per
+    write, including all six declared scheduler jobs.
+    """
+    import tomllib
+
+    from lazy_harness.core.config import load_config, save_config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(_FULL_CONFIG)
+    before = _flat_keys(tomllib.loads(cfg_path.read_text()))
+
+    save_config(load_config(cfg_path), cfg_path)
+
+    after = _flat_keys(tomllib.loads(cfg_path.read_text()))
+    lost = sorted(before - after)
+    assert not lost, f"save_config dropped {len(lost)} keys: {lost}"
+
+
+def test_save_config_preserves_comments(tmp_path: Path) -> None:
+    """Config is hand-edited and version-controlled; comments carry rationale.
+
+    The live config has seven comment lines explaining why the engram MCP is
+    off and why the graphify sweep exists. `cli/knowledge_cmd.py:_write_repo_list`
+    hand-edits a single line specifically to avoid losing them.
+    """
+    from lazy_harness.core.config import load_config, save_config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        "# top-of-file rationale\n"
+        + _FULL_CONFIG
+        + "\n# why this sweep exists\n[scheduler.jobs.graphify-update]\n"
+        + 'schedule = "0 3 * * *"\ncommand = "lh knowledge graph update"\n'
+    )
+
+    save_config(load_config(cfg_path), cfg_path)
+
+    text = cfg_path.read_text()
+    assert "# top-of-file rationale" in text
+    assert "# why this sweep exists" in text
+
+
+def test_save_load_save_load_is_stable(tmp_path: Path) -> None:
+    """save -> load -> save -> load must reach the same document as one cycle.
+
+    A field the loader defaults and the writer omits survives the first
+    rewrite and vanishes on the second, so one round trip cannot see it.
+    """
+    import tomllib
+
+    from lazy_harness.core.config import load_config, save_config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(_FULL_CONFIG)
+
+    save_config(load_config(cfg_path), cfg_path)
+    once = tomllib.loads(cfg_path.read_text())
+
+    save_config(load_config(cfg_path), cfg_path)
+    twice = tomllib.loads(cfg_path.read_text())
+
+    assert once == twice
+
+
+def test_context_inject_qmd_and_graphify_switches_are_read(tmp_path: Path) -> None:
+    """These three are consumed by context_inject.py:779,787,790 and were never parsed.
+
+    Declared on the dataclass, read by a live hook, and pinned to their
+    defaults because the loader skipped them.
+    """
+    from lazy_harness.core.config import load_config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        '[harness]\nversion = "1"\n\n'
+        "[context_inject]\n"
+        "qmd_suggest_enabled = false\n"
+        "qmd_suggest_top_k = 7\n"
+        "graphify_surface_enabled = false\n"
+    )
+
+    ci = load_config(cfg_path).context_inject
+    assert ci.qmd_suggest_enabled is False
+    assert ci.qmd_suggest_top_k == 7
+    assert ci.graphify_surface_enabled is False
+
+
+def test_removing_a_profile_survives_a_save(tmp_path: Path) -> None:
+    """`lh profile remove` expresses deletion by absence; the overlay must honour it.
+
+    Applying an overlay can only add or overwrite, so without an explicit
+    prune the removed profile comes back on the next write.
+    """
+    import tomllib
+
+    from lazy_harness.core.config import load_config, save_config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(_FULL_CONFIG)
+
+    cfg = load_config(cfg_path)
+    del cfg.profiles.items["flex"]
+    save_config(cfg, cfg_path)
+
+    raw = tomllib.loads(cfg_path.read_text())
+    assert "flex" not in raw["profiles"]
+    assert "lazy" in raw["profiles"]
+    assert raw["profiles"]["lazy"]["lazynorth_doc"] == "LazyNorth.md"
+
+
+def test_save_config_does_not_materialise_defaults_the_user_never_set(tmp_path: Path) -> None:
+    """Writing today's defaults into the file freezes them.
+
+    ADR-018's invariant is that an upgrade changes no behaviour. If
+    `save_config` bakes in every default, a later release that changes one
+    never reaches a user whose file now pins the old value.
+    """
+    import tomllib
+
+    from lazy_harness.core.config import load_config, save_config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text('[harness]\nversion = "1"\n\n[monitoring]\nenabled = true\n')
+
+    save_config(load_config(cfg_path), cfg_path)
+
+    raw = tomllib.loads(cfg_path.read_text())
+    assert "classify_rules" not in raw.get("knowledge", {})
+    assert "search" not in raw.get("knowledge", {})
+    assert "loops" not in raw
+    assert "backend_options" not in raw.get("compound_loop", {})
+    assert raw["monitoring"]["enabled"] is True
+
+
+def test_save_config_leaves_unchanged_values_byte_identical(tmp_path: Path) -> None:
+    """A value the Config did not change must not be reformatted.
+
+    tomlkit re-serialises whatever it is assigned, so assigning an unchanged
+    value rewrites multi-line arrays as inline ones and churns the diff.
+    """
+    from lazy_harness.core.config import load_config, save_config
+
+    original = (
+        '[harness]\nversion = "1"\n\n'
+        "[profiles]\n"
+        'default = "lazy"\n\n'
+        "[profiles.lazy]\n"
+        'config_dir = "~/.claude-lazy"\n'
+        "roots = [\n"
+        '    "~/repos/lazy",\n'
+        '    "~/repos/other",\n'
+        "]\n"
+    )
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(original)
+
+    save_config(load_config(cfg_path), cfg_path)
+
+    text = cfg_path.read_text()
+    assert "roots = [\n" in text
+    assert '    "~/repos/lazy",\n' in text
+
+
+def test_a_config_written_from_scratch_loads_back(tmp_path: Path) -> None:
+    """Writing to a path that does not exist must produce a loadable file.
+
+    `[harness].version` equals its default, so a rule that skips defaults
+    omits it and `load_config` then rejects the result. Verified through a
+    full load cycle, not just a successful write.
+    """
+    from lazy_harness.core.config import Config, load_config, save_config
+
+    cfg_path = tmp_path / "fresh" / "config.toml"
+    save_config(Config(), cfg_path)
+
+    assert cfg_path.is_file()
+    reloaded = load_config(cfg_path)
+    assert reloaded.harness.version == "1"
+
+
+def test_shorthand_external_hooks_round_trip_without_reformatting(tmp_path: Path) -> None:
+    """`external = ["cmd"]` must come back as `external = ["cmd"]`.
+
+    The parser accepts a bare string (matcher inherited) or a table (matcher
+    pinned). The writer emitted the table form for both, so every save
+    rewrote the shorthand into an array of tables — semantically identical,
+    but it churns a version-controlled file on every write.
+    """
+    from lazy_harness.core.config import load_config, save_config
+
+    original = (
+        '[harness]\nversion = "1"\n\n'
+        "[hooks.session_start]\n"
+        'scripts = ["context-inject"]\n'
+        'external = ["/opt/homebrew/bin/moshi claude-hook"]\n'
+    )
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(original)
+
+    save_config(load_config(cfg_path), cfg_path)
+
+    text = cfg_path.read_text()
+    assert 'external = ["/opt/homebrew/bin/moshi claude-hook"]' in text
+    assert "[[hooks.session_start.external]]" not in text
+
+
+def test_external_hook_with_a_matcher_still_uses_the_table_form(tmp_path: Path) -> None:
+    """A pinned matcher has no shorthand, so it must stay a table."""
+    import tomllib
+
+    from lazy_harness.core.config import load_config, save_config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        '[harness]\nversion = "1"\n\n'
+        "[hooks.pre_tool_use]\n"
+        'scripts = ["pre-tool-use-security"]\n'
+        'external = [{ command = "moshi claude-hook", matcher = "ExitPlanMode" }]\n'
+    )
+
+    save_config(load_config(cfg_path), cfg_path)
+
+    entry = tomllib.loads(cfg_path.read_text())["hooks"]["pre_tool_use"]["external"][0]
+    assert entry == {"command": "moshi claude-hook", "matcher": "ExitPlanMode"}
+
+
+def test_an_event_with_no_scripts_key_does_not_gain_an_empty_one(tmp_path: Path) -> None:
+    """An event declaring only `external` must not sprout `scripts = []`."""
+    import tomllib
+
+    from lazy_harness.core.config import load_config, save_config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        '[harness]\nversion = "1"\n\n'
+        "[hooks.permission_request]\n"
+        'external = ["moshi claude-hook"]\n'
+    )
+
+    save_config(load_config(cfg_path), cfg_path)
+
+    event = tomllib.loads(cfg_path.read_text())["hooks"]["permission_request"]
+    assert "scripts" not in event
+
+
+def test_a_scalar_under_profiles_is_not_deleted(tmp_path: Path) -> None:
+    """`_parse_profiles` only admits table values, so a scalar under [profiles]
+    is absent from `cfg.profiles.items` and the prune must not treat that as
+    a removed profile."""
+    import tomllib
+
+    from lazy_harness.core.config import load_config, save_config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        '[harness]\nversion = "1"\n\n'
+        "[profiles]\n"
+        'default = "lazy"\n'
+        'shared_root = "~/repos"\n\n'
+        "[profiles.lazy]\n"
+        'config_dir = "~/.claude-lazy"\n'
+    )
+
+    save_config(load_config(cfg_path), cfg_path)
+
+    raw = tomllib.loads(cfg_path.read_text())
+    assert raw["profiles"]["shared_root"] == "~/repos"
+
+
+def test_clearing_a_conditionally_emitted_key_takes_effect(tmp_path: Path) -> None:
+    """The overlay only adds and overwrites, so a key the serializer omits
+    when empty could never be cleared. The old writer could clear it."""
+    import tomllib
+
+    from lazy_harness.core.config import load_config, save_config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        '[harness]\nversion = "1"\n\n'
+        "[monitoring]\n"
+        "enabled = true\n"
+        'db = "~/somewhere/metrics.db"\n\n'
+        '[scheduler.jobs.qmd-sync]\nschedule = "0 6 * * *"\ncommand = "qmd sync"\n\n'
+        '[hooks.session_start]\nscripts = ["context-inject"]\n'
+    )
+
+    cfg = load_config(cfg_path)
+    cfg.monitoring.db = ""
+    cfg.scheduler.jobs = []
+    cfg.hooks["session_start"].scripts = []
+    save_config(cfg, cfg_path)
+
+    raw = tomllib.loads(cfg_path.read_text())
+    assert raw["monitoring"].get("db", "") == ""
+    assert raw.get("scheduler", {}).get("jobs", {}) == {}
+    assert raw["hooks"]["session_start"]["scripts"] == []
+
+
+def test_an_empty_profile_subkey_is_not_materialised(tmp_path: Path) -> None:
+    """The defaults reference has no per-profile entries, so the default-skip
+    rule never fired for profile sub-keys and every save added lazynorth_doc."""
+    import tomllib
+
+    from lazy_harness.core.config import load_config, save_config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        '[harness]\nversion = "1"\n\n'
+        "[profiles]\n"
+        'default = "lazy"\n\n'
+        "[profiles.lazy]\n"
+        'config_dir = "~/.claude-lazy"\n'
+        'roots = ["~/repos/lazy"]\n'
+    )
+
+    save_config(load_config(cfg_path), cfg_path)
+
+    raw = tomllib.loads(cfg_path.read_text())
+    assert "lazynorth_doc" not in raw["profiles"]["lazy"]
+
+
+def test_save_config_preserves_the_file_mode(tmp_path: Path) -> None:
+    """mkstemp creates 0600 and os.replace carries that onto the target.
+
+    The config is chezmoi-managed, so a mode flip produces a spurious diff on
+    every `lh profile add`.
+    """
+    import stat
+
+    from lazy_harness.core.config import load_config, save_config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text('[harness]\nversion = "1"\n')
+    cfg_path.chmod(0o644)
+
+    save_config(load_config(cfg_path), cfg_path)
+
+    assert stat.S_IMODE(cfg_path.stat().st_mode) == 0o644
