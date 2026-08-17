@@ -2,7 +2,7 @@
 
 Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio MkDocs); el roadmap público vive en `docs/roadmap.md` y solo contiene los temas comprometidos a alto nivel.
 
-Última revisión: 2026-05-20 — pasada de coherencia docs↔código tras release 0.20.0. Cruce previo de 18 artículos de LazyMind + weekly reviews W14/W15: [`specs/analyses/2026-04-16-harnessing-literature-review.md`](analyses/2026-04-16-harnessing-literature-review.md).
+Última revisión: 2026-08-17 — análisis de los tres ejes de refactor (paridad Linux, capability registry, TUI). Tres defectos shipping promovidos a ALTA. Revisión previa: 2026-05-20, pasada de coherencia docs↔código tras release 0.20.0. Cruce previo de 18 artículos de LazyMind + weekly reviews W14/W15: [`specs/analyses/2026-04-16-harnessing-literature-review.md`](analyses/2026-04-16-harnessing-literature-review.md).
 
 ---
 
@@ -53,7 +53,19 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 
 ## Open — Prioridad ALTA
 
-_(empty — insight capture + delta-by-index shipped 2026-05-20)_
+### `save_config` destruye config — 51 claves perdidas por escritura
+
+`load_config` lee 14 secciones top-level; `_config_to_dict` emite 10, varias parciales. Medido contra el config vivo: se pierden `[compound_loop]`, `[memory.engram]` y `[lazynorth]` enteras, `knowledge.structure`, los 6 `[scheduler.jobs.*]`, `hooks.pre_tool_use.allow_patterns` y `profiles.<name>.lazynorth_doc`.
+
+No causó daño visible todavía porque el único caller en producción es `lh profile`, y los wizards lo esquivan vía `wizards/_toml_merge.py`. Deja de ser esquivable en cuanto algo más escriba config. Fix elegido: read-modify-write sobre el TOML crudo, no completar el serializer. Detalle y tests en [`designs/2026-08-17-capability-registry-design.md`](designs/2026-08-17-capability-registry-design.md) D5.
+
+### Tres claves de `[context_inject]` se ignoran en silencio
+
+`ContextInjectConfig` declara `qmd_suggest_enabled`, `qmd_suggest_top_k` y `graphify_surface_enabled`; `hooks/builtins/context_inject.py` las lee en las líneas 779, 787 y 790; y el bloque de parseo de `load_config` no las puebla nunca. Verificado: pedir `qmd_suggest_enabled = false` carga `True`. Los tres switches están clavados en su default y no hay forma de apagarlos desde config. Se arregla junto con el round-trip.
+
+### Traducción de cron en launchd reescribe schedules en silencio
+
+`_cron_to_calendar` solo entiende la forma diaria `M H * * *`; todo lo demás cae al fallback de 3600s de `_cron_to_interval`. Medido: `0 */6 * * *` (el ejemplo que usa ADR-013 en su propio texto) se instala como horario — 6x. Un job semanal `30 3 * * 0` se instala 168x por semana. Solo 2 de 7 formas comunes traducen bien, y ni `lh status cron` ni `lh selftest` lo notan porque ambos reportan sobre el label cargado, nunca sobre el schedule. Bug shipping en macOS. Fix en [`designs/2026-08-17-linux-parity-design.md`](designs/2026-08-17-linux-parity-design.md) D4.
 
 ---
 
@@ -61,7 +73,9 @@ _(empty — insight capture + delta-by-index shipped 2026-05-20)_
 
 ### Implementar los backends systemd y cron del scheduler (ADR-013)
 
-`SystemdBackend.install` y `CronBackend.install` levantan `NotImplementedError` desde 0.25.0 — antes devolvían labels fabricados y reportaban éxito sin instalar nada. ADR-013 decidió los tres backends; solo launchd existe. Trigger: un target real de deployment en Linux. Incluye la asimetría pendiente — `uninstall` y `status` devuelven listas vacías en vez de levantar, así que `uninstall` queda mudo donde `install` es ruidoso.
+`SystemdBackend.install` y `CronBackend.install` levantan `NotImplementedError` desde 0.25.0 — antes devolvían labels fabricados y reportaban éxito sin instalar nada. ADR-013 decidió los tres backends; solo launchd existe. Incluye la asimetría pendiente — `uninstall` y `status` devuelven listas vacías en vez de levantar, así que `uninstall` queda mudo donde `install` es ruidoso.
+
+**Trigger cumplido 2026-08-17:** los targets son una workstation Linux con systemd user y los servidores headless del homelab. Diseño completo en [`designs/2026-08-17-linux-parity-design.md`](designs/2026-08-17-linux-parity-design.md), que además cubre `launchctl_loaded` devolviendo `False` para "no puedo chequear" (`monitoring/views/_helpers.py:217`, consumido por `views/cron.py:95` y `views/overview.py:153`), `file_locked` dependiendo de `lsof`, el `PATH` con `/opt/homebrew` hardcodeado, y la ausencia total de un job de macOS en CI.
 
 ### Audit CLAUDE.md triple por context clash
 
@@ -147,4 +161,4 @@ Dedup semántico ya funciona con inyección de títulos. Diferir.
 
 - **Legacy ADR-010 Ollama backend** — promover a ADR activo o descartar. Criterio: si pensás usar Ollama en los próximos 3 meses, promoverlo; si no, descartar con nota de "revaluar cuando haya presión de costo/rate limit".
 - **Legacy ADR-013 Proactivity levels per profile** — promover o descartar. Criterio: si agregás un tercer perfil, promoverlo; si no, descartar.
-- **ADR-018 implementation epic** — `accepted-deferred`. Trigger: cuando aterrice el segundo extension point (hoy solo hay `metrics_sink`).
+- **ADR-018 implementation epic** — trigger cumplido 2026-08-17. El segundo extension point no es un tipo de plugin nuevo: es la unificación de los cinco que ya existen, propuesta en [ADR-035](adrs/035-capability-registry.md). El consumidor concreto que lo justifica es el pane de configuración de la TUI ([`designs/2026-08-17-config-tui-design.md`](designs/2026-08-17-config-tui-design.md)), que sin registry necesitaría seis code paths.
