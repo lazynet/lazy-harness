@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.41.0](https://github.com/lazynet/lazy-harness/compare/v0.40.2...v0.41.0) (2026-08-17)
+
+
+### Features
+
+* implement the systemd and cron scheduler backends ([#174](https://github.com/lazynet/lazy-harness/issues/174)) ([fa1fc1b](https://github.com/lazynet/lazy-harness/commit/fa1fc1bae4d93ad2c61e604e91e6c0ee0c22de97))
+
 ## [0.40.2](https://github.com/lazynet/lazy-harness/compare/v0.40.1...v0.40.2) (2026-08-17)
 
 
