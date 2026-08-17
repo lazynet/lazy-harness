@@ -927,15 +927,57 @@ Six pages assert that only launchd installs jobs. Fixing the behaviour without f
 
 - [ ] **Step 1:** `/tdd-check`.
 - [ ] **Step 2:** Push as `feat: implement the systemd and cron scheduler backends`. Deploy grep string: `render_systemd`.
-- [ ] **Step 3: The acceptance criterion, on real machines.** CI cannot do this.
+- [ ] **Step 3: The acceptance criterion, on the target machine.** CI cannot do this, and neither can macOS.
 
-1. Workstation: `lh scheduler install`, then `systemctl --user list-timers` shows the declared interval.
-2. Octavio or Marge over ssh with `Linger=no`: `install` warns, `lh selftest` fails the linger check.
-3. `sudo loginctl enable-linger $USER`, reinstall, **log out entirely**, wait for the window, then `journalctl --user -u lazy-harness-<job>` shows it fired with nobody logged in.
-4. A machine without `systemctl`: `detect_backend` picks cron, install works, `lh status cron` reports real state.
-5. A machine without `crontab`: `job_state` returns `UNKNOWN` and the view renders `?`, not `✗`.
+**Target, as of 2026-08-17:** the `agents` container — Debian 13, CT 145, `10.50.10.145`, declared in `lazy-ansible` at `host_vars/agents/vars.yaml`. Provisioning is in progress; the host does not answer on port 22 yet. This step runs the moment it does.
 
-Step 3 is what distinguishes "systemctl said enabled" from "the job runs". Do not mark wave 4 complete without it.
+```bash
+ssh agents
+
+# 1. Backend detection picks systemd, not the cron floor.
+lh scheduler status            # expect: "Scheduler backend: systemd (Linux)"
+
+# 2. Install, and read the units rather than the exit code.
+lh scheduler install
+systemctl --user list-timers   # the NEXT column must match the declaration
+cat ~/.config/systemd/user/lazy-harness-*.timer
+
+# 3. Lingering must be reported as the problem it is, BEFORE enabling it.
+loginctl show-user "$USER" --property=Linger   # expect Linger=no on a fresh CT
+lh selftest                                     # expect the linger check to FAIL
+
+# 4. Enable it, reinstall, and then leave.
+sudo loginctl enable-linger "$USER"
+lh scheduler install
+lh selftest                                     # linger check now passes
+exit
+
+# 5. The actual acceptance: wait past one window with NO session open, then
+#    come back and read the journal.
+ssh agents 'journalctl --user -u lazy-harness-<job> --since "1 hour ago"'
+```
+
+Step 5 is what distinguishes "systemctl said enabled" from "the job runs". **Do not mark wave 4 complete without it.**
+
+Then the degradation paths, which need a machine without the tools rather than the agents CT:
+
+6. Without `systemctl`: `detect_backend` picks cron, install works, `lh status cron` reports real state.
+7. Without `crontab`: `job_state` returns `UNKNOWN` and the view renders `?`, not `✗`.
+
+### Known gap in `lazy-ansible`, found 2026-08-17
+
+`grep -rn "enable-linger\|loginctl" ~/repos/lazy/lazy-ansible` returns **nothing**. Debian ships lingering off, so on a freshly provisioned `agents` CT every declared job installs cleanly and never fires. The `lh selftest` linger check catches it, but catching it on every run is worse than provisioning it correctly once.
+
+Add to the agents role, or to whatever grants the agent user its session:
+
+```yaml
+- name: Allow user timers to run without an open session
+  ansible.builtin.command: "loginctl enable-linger {{ agent_user }}"
+  args:
+    creates: "/var/lib/systemd/linger/{{ agent_user }}"
+```
+
+`creates:` makes it idempotent without a separate check task.
 
 ---
 
