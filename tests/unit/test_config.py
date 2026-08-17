@@ -719,3 +719,49 @@ def test_save_config_preserves_every_key_it_did_not_change(tmp_path: Path) -> No
     after = _flat_keys(tomllib.loads(cfg_path.read_text()))
     lost = sorted(before - after)
     assert not lost, f"save_config dropped {len(lost)} keys: {lost}"
+
+
+def test_save_config_preserves_comments(tmp_path: Path) -> None:
+    """Config is hand-edited and version-controlled; comments carry rationale.
+
+    The live config has seven comment lines explaining why the engram MCP is
+    off and why the graphify sweep exists. `cli/knowledge_cmd.py:_write_repo_list`
+    hand-edits a single line specifically to avoid losing them.
+    """
+    from lazy_harness.core.config import load_config, save_config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        "# top-of-file rationale\n"
+        + _FULL_CONFIG
+        + "\n# why this sweep exists\n[scheduler.jobs.graphify-update]\n"
+        + 'schedule = "0 3 * * *"\ncommand = "lh knowledge graph update"\n'
+    )
+
+    save_config(load_config(cfg_path), cfg_path)
+
+    text = cfg_path.read_text()
+    assert "# top-of-file rationale" in text
+    assert "# why this sweep exists" in text
+
+
+def test_save_load_save_load_is_stable(tmp_path: Path) -> None:
+    """save -> load -> save -> load must reach the same document as one cycle.
+
+    A field the loader defaults and the writer omits survives the first
+    rewrite and vanishes on the second, so one round trip cannot see it.
+    """
+    import tomllib
+
+    from lazy_harness.core.config import load_config, save_config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(_FULL_CONFIG)
+
+    save_config(load_config(cfg_path), cfg_path)
+    once = tomllib.loads(cfg_path.read_text())
+
+    save_config(load_config(cfg_path), cfg_path)
+    twice = tomllib.loads(cfg_path.read_text())
+
+    assert once == twice
