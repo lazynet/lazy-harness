@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 
 def test_resolved_path_ignores_the_invoking_environment(monkeypatch, tmp_path) -> None:
     """The generated PATH is a property of the platform, not of the terminal.
@@ -55,24 +53,39 @@ def test_resolved_path_prepends_local_bin(monkeypatch, tmp_path) -> None:
     assert resolved.split(":")[0] == str(tmp_path / ".local" / "bin")
 
 
-def test_resolved_path_carries_only_directories_that_exist() -> None:
+def test_resolved_path_drops_candidates_that_do_not_exist(monkeypatch, tmp_path) -> None:
     """A unit carrying dead entries is noise, and PATH is the single most
-    common reason a scheduled job fails."""
+    common reason a scheduled job fails.
+
+    The candidate list is injected rather than asserted against the real
+    filesystem: comparing `resolved_path()` to `Path(...).is_dir()` restates
+    the implementation's own predicate, and passes on any host where every
+    standard directory happens to exist — which is all of them.
+    """
     from lazy_harness.scheduler import paths
 
+    present = tmp_path / "present"
+    present.mkdir()
+    absent = tmp_path / "absent"
+    monkeypatch.setattr(paths, "_STANDARD", (str(present), str(absent)))
+
     entries = paths.resolved_path().split(":")
-    local_bin = str(Path.home() / ".local" / "bin")
-    assert all(Path(e).is_dir() for e in entries if e != local_bin), entries
+    assert str(present) in entries
+    assert str(absent) not in entries
 
 
-def test_resolved_path_includes_homebrew_exactly_when_it_is_installed() -> None:
+def test_homebrew_is_a_candidate_on_every_platform() -> None:
     """Homebrew is the one platform-specific entry, and it is presence-gated
     rather than branched on `sys.platform` — an Intel Mac, an Apple Silicon
-    Mac and a Linux box then need no separate code path."""
+    Mac and a Linux box then need no separate code path.
+
+    Asserted against the candidate list, not against the runner's filesystem:
+    `/opt/homebrew/bin` never exists on a Linux runner, so a test comparing
+    the two would pass there with the entry deleted from the source.
+    """
     from lazy_harness.scheduler import paths
 
-    entries = paths.resolved_path().split(":")
-    assert ("/opt/homebrew/bin" in entries) is Path("/opt/homebrew/bin").is_dir()
+    assert "/opt/homebrew/bin" in paths._STANDARD
 
 
 def test_resolved_path_never_carries_a_virtualenv(monkeypatch, tmp_path) -> None:

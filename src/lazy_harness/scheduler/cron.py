@@ -130,9 +130,11 @@ class CronBackend:
         ]
         preserved = self._strip_block(existing)
         if kept:
-            # Reuse the PATH `install` computed rather than re-deriving it:
-            # running uninstall from a different environment would otherwise
-            # silently change the surviving jobs' PATH.
+            # Reuse the PATH `install` computed rather than re-deriving it.
+            # Removing one job is not an occasion to rewrite the others: the
+            # block may have been written by an older version of this tool, or
+            # on a machine whose standard directories differ, and either way
+            # the surviving entries keep the PATH they were installed with.
             path_line = self._existing_path_line(existing) or f"PATH={resolved_path()}"
             block = "\n".join([BEGIN, path_line, *kept, END])
             parts = [p for p in (preserved, block) if p]
