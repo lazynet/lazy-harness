@@ -5,12 +5,13 @@ from __future__ import annotations
 import re
 from datetime import datetime
 
-from rich.console import Console
+from rich.console import Group, RenderableType
 
 from lazy_harness.monitoring.views._helpers import StatusContext, time_ago
 
 
-def render(ctx: StatusContext, console: Console) -> None:
+def render(ctx: StatusContext) -> RenderableType:
+    out: list[RenderableType] = []
     today_str = datetime.now().strftime("%Y-%m-%d")
 
     for profile in ctx.profiles:
@@ -30,14 +31,14 @@ def render(ctx: StatusContext, console: Console) -> None:
                 if mtime.strftime("%Y-%m-%d") == today_str:
                     done_today += 1
 
-        console.print(f"[bold]{profile.name}[/bold]")
-        console.print(f"  Pending:    {pending}")
-        console.print(f"  Done today: {done_today}")
-        console.print(f"  Done total: {done_total}")
+        out.append(f"[bold]{profile.name}[/bold]")
+        out.append(f"  Pending:    {pending}")
+        out.append(f"  Done today: {done_today}")
+        out.append(f"  Done total: {done_total}")
 
         cl_log = ctx.logs_dir(profile) / "compound-loop.log"
         if cl_log.is_file():
-            console.print("  [bold]Recent worker activity:[/bold]")
+            out.append("  [bold]Recent worker activity:[/bold]")
             try:
                 lines = cl_log.read_text().splitlines()
             except OSError:
@@ -55,5 +56,7 @@ def render(ctx: StatusContext, console: Console) -> None:
                     marker = "[red]✗[/red]"
                 else:
                     marker = "[green]✓[/green]"
-                console.print(f"  {marker} {ago}  {rest}")
-        console.print()
+                out.append(f"  {marker} {ago}  {rest}")
+        out.append("")
+
+    return Group(*out)

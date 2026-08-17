@@ -6,7 +6,7 @@ import os
 import re
 from datetime import datetime
 
-from rich.console import Console
+from rich.console import Group, RenderableType
 from rich.table import Table
 
 from lazy_harness.monitoring.views._helpers import (
@@ -24,7 +24,8 @@ from lazy_harness.monitoring.views._helpers import (
 HOOK_NAMES = HOOK_NAMES_DEFAULT
 
 
-def render(ctx: StatusContext, console: Console) -> None:
+def render(ctx: StatusContext) -> RenderableType:
+    out: list[RenderableType] = []
     today_str = datetime.now().strftime("%Y-%m-%d")
 
     table = Table(show_header=True, pad_edge=False)
@@ -58,9 +59,9 @@ def render(ctx: StatusContext, console: Console) -> None:
 
             table.add_row(f"{profile.name}:{hook_name}", time_ago(ts), status, project)
 
-    console.print(table)
+    out.append(table)
 
-    console.print("\n[bold]Log health:[/bold]")
+    out.append("\n[bold]Log health:[/bold]")
     for profile in ctx.profiles:
         if not profile.exists:
             continue
@@ -69,11 +70,11 @@ def render(ctx: StatusContext, console: Console) -> None:
             log_path = logs_dir / log_name
             label = f"{profile.name}:{log_name}"
             if not log_path.is_file():
-                console.print(f"  {label:<32} [dim]not found[/dim]")
+                out.append(f"  {label:<32} [dim]not found[/dim]")
                 continue
             errors = count_errors_today(log_path)
             err_style = "red" if errors > 0 else "green"
-            console.print(
+            out.append(
                 f"  {label:<32} size: {format_size(log_path):<7} "
                 f"errors today: [{err_style}]{errors}[/{err_style}]"
             )
@@ -87,8 +88,10 @@ def render(ctx: StatusContext, console: Console) -> None:
         state, detail = lock_state(lock_file)
         label = f"{profile.name}:worker.lock"
         if state is LockState.HELD:
-            console.print(f"  {label:<32} [yellow]held (worker running)[/yellow]")
+            out.append(f"  {label:<32} [yellow]held (worker running)[/yellow]")
         elif state is LockState.FREE:
-            console.print(f"  {label:<32} [green]free[/green]")
+            out.append(f"  {label:<32} [green]free[/green]")
         else:
-            console.print(f"  {label:<32} [yellow]?[/yellow] [dim]{detail}[/dim]")
+            out.append(f"  {label:<32} [yellow]?[/yellow] [dim]{detail}[/dim]")
+
+    return Group(*out)

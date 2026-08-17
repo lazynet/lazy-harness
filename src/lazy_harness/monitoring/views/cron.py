@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from rich.console import Console
+from rich.console import RenderableType
 from rich.table import Table
 
 from lazy_harness.monitoring.views._helpers import (
@@ -46,7 +46,7 @@ _STATUS_MARKUP = {
 }
 
 
-def render(ctx: StatusContext, console: Console) -> None:
+def render(ctx: StatusContext) -> RenderableType:
     table = Table(show_header=True, pad_edge=False)
     table.add_column("Agent")
     table.add_column("Schedule")
@@ -56,8 +56,7 @@ def render(ctx: StatusContext, console: Console) -> None:
     backend = ctx.scheduler_backend
     records = backend.discover() if backend is not None else []
     if not records:
-        console.print("[dim]No managed jobs.[/dim]")
-        return
+        return "[dim]No managed jobs.[/dim]"
 
     for rec in records:
         status = _STATUS_MARKUP[rec.state]
@@ -65,4 +64,4 @@ def render(ctx: StatusContext, console: Console) -> None:
             status = f"{status} [dim]{rec.detail}[/dim]"
         table.add_row(rec.name, rec.schedule, status, _last_run_for(rec.name))
 
-    console.print(table)
+    return table

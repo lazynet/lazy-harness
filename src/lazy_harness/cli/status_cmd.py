@@ -71,7 +71,7 @@ def status(ctx: click.Context) -> None:
     sctx = StatusContext.build(cfg)
     db = _open_db(cfg)
     try:
-        overview_view.render(sctx, db, Console())
+        Console().print(overview_view.render(sctx, db))
     finally:
         if db is not None:
             db.close()
@@ -84,7 +84,7 @@ def status_overview() -> None:
     sctx = StatusContext.build(cfg)
     db = _open_db(cfg)
     try:
-        overview_view.render(sctx, db, Console())
+        Console().print(overview_view.render(sctx, db))
     finally:
         if db is not None:
             db.close()
@@ -94,14 +94,14 @@ def status_overview() -> None:
 def status_profiles() -> None:
     """Per-profile config, hooks count, MCPs, auth."""
     cfg = _load()
-    profiles_view.render(StatusContext.build(cfg), Console())
+    Console().print(profiles_view.render(StatusContext.build(cfg)))
 
 
 @status.command("projects")
 def status_projects() -> None:
     """Per-project session counts and last activity."""
     cfg = _load()
-    projects_view.render(StatusContext.build(cfg), Console())
+    Console().print(projects_view.render(StatusContext.build(cfg)))
 
 
 @status.command("sessions")
@@ -119,7 +119,7 @@ def status_sessions(period: str) -> None:
         Console().print("[dim]Monitoring DB not available.[/dim]")
         return
     try:
-        sessions_view.render(db, Console(), period)
+        Console().print(sessions_view.render(db, period))
     finally:
         db.close()
 
@@ -172,35 +172,35 @@ def status_tokens(
     if as_json:
         tokens_view.render_json(agg, resolved, console)
     else:
-        tokens_view.render_table(agg, resolved, console)
+        console.print(tokens_view.render_table(agg, resolved))
 
 
 @status.command("hooks")
 def status_hooks() -> None:
     """Last fired hooks + log health."""
     cfg = _load()
-    hooks_view.render(StatusContext.build(cfg), Console())
+    Console().print(hooks_view.render(StatusContext.build(cfg)))
 
 
 @status.command("cron")
 def status_cron() -> None:
     """Scheduled launchd jobs and their last runs."""
     cfg = _load()
-    cron_view.render(StatusContext.build(cfg), Console())
+    Console().print(cron_view.render(StatusContext.build(cfg)))
 
 
 @status.command("queue")
 def status_queue() -> None:
     """Compound-loop queue depth + recent worker activity."""
     cfg = _load()
-    queue_view.render(StatusContext.build(cfg), Console())
+    Console().print(queue_view.render(StatusContext.build(cfg)))
 
 
 @status.command("memory")
 def status_memory() -> None:
     """Per-project decisions/failures/learnings counts."""
     cfg = _load()
-    memory_view.render(StatusContext.build(cfg), Console())
+    Console().print(memory_view.render(StatusContext.build(cfg)))
 
 
 @status.command("costs")

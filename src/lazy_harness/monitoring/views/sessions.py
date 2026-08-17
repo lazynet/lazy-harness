@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
-from rich.console import Console
+from rich.console import Group, RenderableType
 from rich.table import Table
 
 from lazy_harness.monitoring.aggregate import resolve_period
@@ -22,12 +22,11 @@ def _query_for_period(db: MetricsDB, period: str) -> list[dict[str, Any]]:
     return db.query_stats(period=resolved.period, since=resolved.since)
 
 
-def render(db: MetricsDB, console: Console, period: str) -> None:
-    console.print(f"[bold]Period: {_period_label(period)}[/bold]\n")
+def render(db: MetricsDB, period: str) -> RenderableType:
+    header = f"[bold]Period: {_period_label(period)}[/bold]\n"
     rows = _query_for_period(db, period)
     if not rows:
-        console.print("[dim]No data. Run a session first.[/dim]")
-        return
+        return Group(header, "[dim]No data. Run a session first.[/dim]")
 
     by_date: dict[str, dict[str, Any]] = defaultdict(
         lambda: {"sessions": set(), "projects": set(), "input": 0, "output": 0, "cost": 0.0}
@@ -83,4 +82,4 @@ def render(db: MetricsDB, console: Console, period: str) -> None:
         f"${round(total_cost, 2)}",
         style="bold",
     )
-    console.print(table)
+    return Group(header, table)

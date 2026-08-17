@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from rich.console import Console
+from rich.console import Console, Group, RenderableType
 from rich.table import Table
 
 from lazy_harness.monitoring.aggregate import Aggregation, Bucket, Period
@@ -27,18 +27,15 @@ def _measures(bucket: Bucket) -> list[str]:
     ]
 
 
-def render_table(agg: Aggregation, period: Period, console: Console) -> None:
+def render_table(agg: Aggregation, period: Period) -> RenderableType:
     header = " › ".join(agg.dimensions)
     filters = " ".join(f"{k}~{v}" for k, v in agg.filters.items())
     title = f"[bold]By: {header} | Period: {period.label}"
     if filters:
         title += f" | Filter: {filters}"
     title += f" | {agg.total.session_count} sessions[/bold]\n"
-    console.print(title)
-
     if not agg.groups:
-        console.print("[dim]No data.[/dim]")
-        return
+        return Group(title, "[dim]No data.[/dim]")
 
     table = Table(show_header=True, pad_edge=False)
     for dimension in agg.dimensions:
@@ -69,7 +66,7 @@ def render_table(agg: Aggregation, period: Period, console: Console) -> None:
         *_measures(agg.total),
         style="bold",
     )
-    console.print(table)
+    return Group(title, table)
 
 
 def _add_subtotal(table: Table, agg: Aggregation, bucket: Bucket) -> None:
