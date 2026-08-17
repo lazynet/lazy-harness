@@ -10,7 +10,7 @@ from pathlib import Path
 import click
 from rich.console import Console
 
-from lazy_harness.core.config import ConfigError, load_config
+from lazy_harness.core.config import Config, ConfigError, load_config
 from lazy_harness.core.logfile import append as log_append
 from lazy_harness.core.logfile import default_log_dir
 from lazy_harness.core.paths import config_file, contract_path, expand_path
@@ -358,20 +358,22 @@ def knowledge_graph() -> None:
     """Manage the repos whose code graph is kept fresh."""
 
 
-def _structure_repos(cfg_path: Path) -> tuple[object, list[str]]:
+def _structure_repos(cfg_path: Path) -> tuple[Config, list[str]]:
     cfg = load_config(cfg_path)
     return cfg, list(cfg.knowledge.structure.repos)
 
 
-def _write_repo_list(cfg_path: Path, repos: list[str]) -> None:
+def _write_repo_list(cfg_path: Path, cfg: Config, repos: list[str]) -> None:
     """Persist the graphify repo list under [knowledge.structure].
 
     Was a hand-rolled single-line rewrite because `save_config` dropped every
     comment and any key this version does not model. It no longer does.
-    """
-    from lazy_harness.core.config import load_config, save_config
 
-    cfg = load_config(cfg_path)
+    Takes the already-loaded `cfg`: every caller holds one, and reloading here
+    put a second `ConfigError` outside their `try/except`.
+    """
+    from lazy_harness.core.config import save_config
+
     cfg.knowledge.structure.repos = list(repos)
     save_config(cfg, cfg_path)
 
@@ -388,7 +390,7 @@ def knowledge_graph_add(repo: Path) -> None:
 
     cfg_path = config_file()
     try:
-        _, repos = _structure_repos(cfg_path)
+        cfg, repos = _structure_repos(cfg_path)
     except ConfigError as e:
         console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(1)
@@ -398,7 +400,7 @@ def knowledge_graph_add(repo: Path) -> None:
         return
 
     repos.append(str(resolved))
-    _write_repo_list(cfg_path, repos)
+    _write_repo_list(cfg_path, cfg, repos)
     console.print(f"[green]registered:[/green] {contract_path(resolved)}")
 
 

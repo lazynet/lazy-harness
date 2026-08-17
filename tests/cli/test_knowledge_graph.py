@@ -149,3 +149,31 @@ def test_graph_add_preserves_comments_and_other_sections(tmp_path: Path, monkeyp
     assert "# why this is enabled, in a comment worth keeping" in text
     assert "# another comment" in text
     assert "[memory.engram]" in text
+
+
+def test_write_repo_list_does_not_reload_the_config(tmp_path, monkeypatch) -> None:
+    """All three callers already hold a loaded Config and discard it.
+
+    Reloading inside the writer put a second `ConfigError` outside the
+    callers' try/except, so a failure there surfaced as a traceback instead
+    of the handled error path.
+    """
+    from lazy_harness.cli import knowledge_cmd
+    from lazy_harness.core.config import load_config, save_config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        '[harness]\nversion = "1"\n\n[knowledge.structure]\nenabled = true\nrepos = []\n'
+    )
+    cfg = load_config(cfg_path)
+
+    def explode(_path):  # noqa: ANN001, ANN202
+        raise AssertionError("_write_repo_list must not load the config again")
+
+    monkeypatch.setattr(knowledge_cmd, "load_config", explode)
+
+    knowledge_cmd._write_repo_list(cfg_path, cfg, ["/repos/one"])
+
+    monkeypatch.undo()
+    assert load_config(cfg_path).knowledge.structure.repos == ["/repos/one"]
+    assert save_config is not None
