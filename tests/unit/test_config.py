@@ -597,3 +597,125 @@ def test_context_inject_repo_map_survives_round_trip(config_dir: Path) -> None:
     assert again.context_inject.repo_map_scope == "~/repos/lazy"
     assert again.context_inject.repo_map_doc == "docs/repos.md"
     assert again.context_inject.repo_map_max_chars == 2400
+
+
+_FULL_CONFIG = """\
+[harness]
+version = "1"
+
+[agent]
+type = "claude-code"
+
+[profiles]
+default = "lazy"
+
+[profiles.lazy]
+config_dir = "~/.claude-lazy"
+roots = ["~/repos/lazy"]
+lazynorth_doc = "LazyNorth.md"
+
+[profiles.flex]
+config_dir = "~/.claude-flex"
+roots = ["~/repos/flex"]
+lazynorth_doc = "FlexNorth.md"
+
+[knowledge]
+root = "~/repos/lazy/lazy-knowledge"
+
+[knowledge.sessions]
+enabled = true
+
+[knowledge.learnings]
+enabled = true
+
+[knowledge.search]
+engine = "qmd"
+
+[knowledge.structure]
+engine = "graphify"
+enabled = true
+version = "0.9.38"
+repos = ["~/repos/lazy/lazy-harness"]
+
+[memory.engram]
+enabled = true
+git_sync = true
+cloud = false
+version = "1.15.4"
+binary = "/usr/local/bin/engram"
+
+[monitoring]
+enabled = true
+db = "~/.local/share/lazy-harness/metrics.db"
+
+[scheduler]
+backend = "auto"
+
+[scheduler.jobs.qmd-sync]
+schedule = "0 */6 * * *"
+command = "qmd sync"
+
+[scheduler.jobs.metrics-ingest]
+schedule = "*/30 * * * *"
+command = "lh metrics ingest"
+
+[hooks.session_start]
+scripts = ["context-inject"]
+
+[hooks.pre_tool_use]
+scripts = ["pre-tool-use-security"]
+allow_patterns = ["rm -rf ./build"]
+
+[compound_loop]
+enabled = true
+model = "claude-haiku-4-5-20251001"
+min_messages = 4
+slim_handoff_enabled = true
+
+[lazynorth]
+enabled = true
+path = "~/LazyMind/LazyNorth.md"
+universal_doc = "LazyNorth.md"
+
+[context_inject]
+enabled = true
+max_body_chars = 12000
+qmd_suggest_enabled = false
+qmd_suggest_top_k = 7
+graphify_surface_enabled = false
+
+[loops]
+inject_goal_prompt = true
+"""
+
+
+def _flat_keys(data: dict, prefix: str = "") -> set[str]:
+    """Every dotted key path in a parsed TOML document, tables included."""
+    out: set[str] = set()
+    for key, value in data.items():
+        path = f"{prefix}{key}"
+        out.add(path)
+        if isinstance(value, dict):
+            out |= _flat_keys(value, path + ".")
+    return out
+
+
+def test_save_config_preserves_every_key_it_did_not_change(tmp_path: Path) -> None:
+    """save_config must not drop sections the serializer does not model.
+
+    Measured against the live config before this fix: 51 keys were lost per
+    write, including all six declared scheduler jobs.
+    """
+    import tomllib
+
+    from lazy_harness.core.config import load_config, save_config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(_FULL_CONFIG)
+    before = _flat_keys(tomllib.loads(cfg_path.read_text()))
+
+    save_config(load_config(cfg_path), cfg_path)
+
+    after = _flat_keys(tomllib.loads(cfg_path.read_text()))
+    lost = sorted(before - after)
+    assert not lost, f"save_config dropped {len(lost)} keys: {lost}"
