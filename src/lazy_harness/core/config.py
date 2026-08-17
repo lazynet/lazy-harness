@@ -10,8 +10,6 @@ from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
-import tomli_w
-
 
 class ConfigError(Exception):
     """Raised when config is invalid or missing."""
@@ -543,6 +541,7 @@ def _config_to_dict(cfg: Config) -> dict[str, Any]:
         profiles_dict[name] = {
             "config_dir": entry.config_dir,
             "roots": entry.roots,
+            "lazynorth_doc": entry.lazynorth_doc,
         }
 
     result: dict[str, Any] = {
@@ -570,12 +569,61 @@ def _config_to_dict(cfg: Config) -> dict[str, Any]:
             "enabled": cfg.context_inject.enabled,
             "max_body_chars": cfg.context_inject.max_body_chars,
             "last_session_enabled": cfg.context_inject.last_session_enabled,
+            "qmd_suggest_enabled": cfg.context_inject.qmd_suggest_enabled,
+            "qmd_suggest_top_k": cfg.context_inject.qmd_suggest_top_k,
+            "graphify_surface_enabled": cfg.context_inject.graphify_surface_enabled,
             "proposals_summary": cfg.context_inject.proposals_summary,
             "repo_map_scope": cfg.context_inject.repo_map_scope,
             "repo_map_doc": cfg.context_inject.repo_map_doc,
             "repo_map_max_chars": cfg.context_inject.repo_map_max_chars,
         },
+        "memory": {
+            "engram": {
+                "enabled": cfg.memory.engram.enabled,
+                "git_sync": cfg.memory.engram.git_sync,
+                "cloud": cfg.memory.engram.cloud,
+                "version": cfg.memory.engram.version,
+                "binary": cfg.memory.engram.binary,
+            }
+        },
+        "lazynorth": {
+            "enabled": cfg.lazynorth.enabled,
+            "path": cfg.lazynorth.path,
+            "universal_doc": cfg.lazynorth.universal_doc,
+        },
+        "compound_loop": {
+            "enabled": cfg.compound_loop.enabled,
+            "model": cfg.compound_loop.model,
+            "min_messages": cfg.compound_loop.min_messages,
+            "min_user_chars": cfg.compound_loop.min_user_chars,
+            "debounce_seconds": cfg.compound_loop.debounce_seconds,
+            "timeout_seconds": cfg.compound_loop.timeout_seconds,
+            "reprocess_min_growth_seconds": cfg.compound_loop.reprocess_min_growth_seconds,
+            "grading_enabled": cfg.compound_loop.grading_enabled,
+            "slim_handoff_enabled": cfg.compound_loop.slim_handoff_enabled,
+            "backend": cfg.compound_loop.backend,
+            "backend_options": cfg.compound_loop.backend_options,
+        },
     }
+
+    result["knowledge"]["structure"] = {
+        "engine": cfg.knowledge.structure.engine,
+        "enabled": cfg.knowledge.structure.enabled,
+        "version": cfg.knowledge.structure.version,
+        "repos": cfg.knowledge.structure.repos,
+    }
+    result["knowledge"]["classify_rules"] = [
+        {"pattern": r.pattern, "profile": r.profile, "session_type": r.session_type}
+        for r in cfg.knowledge.classify_rules
+    ]
+    # `lazymind_dir` is `str | None`; TOML has no null, so absence is how it
+    # round-trips as None.
+    if cfg.compound_loop.lazymind_dir is not None:
+        result["compound_loop"]["lazymind_dir"] = cfg.compound_loop.lazymind_dir
+    if cfg.scheduler.jobs:
+        result["scheduler"]["jobs"] = {
+            j.name: {"schedule": j.schedule, "command": j.command} for j in cfg.scheduler.jobs
+        }
 
     if cfg.monitoring.db:
         result["monitoring"]["db"] = cfg.monitoring.db
@@ -621,8 +669,61 @@ def _config_to_dict(cfg: Config) -> dict[str, Any]:
     return result
 
 
+def _apply(doc: Any, overlay: dict[str, Any]) -> None:
+    """Recursively apply `overlay` onto a tomlkit document, in place.
+
+    In-place assignment is what preserves comments, key order and formatting:
+    tomlkit keeps the trivia attached to every key it is not asked to rewrite.
+    Keys absent from `overlay` are left untouched, which is what carries
+    sections this version does not model.
+    """
+    for key, value in overlay.items():
+        if isinstance(value, dict) and isinstance(doc.get(key), dict):
+            _apply(doc[key], value)
+        else:
+            doc[key] = value
+
+
+def _prune_removed_profiles(doc: Any, cfg: Config) -> None:
+    """Drop profile tables the Config no longer carries.
+
+    `lh profile remove` expresses deletion by absence, and applying an overlay
+    can only add or overwrite. Without this the removed profile comes back.
+    """
+    profiles = doc.get("profiles")
+    if not isinstance(profiles, dict):
+        return
+    for name in [k for k in profiles if k != "default"]:
+        if name not in cfg.profiles.items:
+            del profiles[name]
+
+
 def save_config(cfg: Config, path: Path) -> None:
-    """Save config to a TOML file."""
-    data = _config_to_dict(cfg)
+    """Write config, preserving comments and every key this version does not model.
+
+    Read-modify-write rather than serialize-from-scratch. The previous
+    implementation emitted 10 of the 14 sections `load_config` reads and
+    destroyed 51 keys per write against a real config, comments included.
+    """
+    import os
+    import tempfile
+
+    import tomlkit
+
+    if path.is_file():
+        doc = tomlkit.parse(path.read_text(encoding="utf-8"))
+    else:
+        doc = tomlkit.document()
+
+    _apply(doc, _config_to_dict(cfg))
+    _prune_removed_profiles(doc, cfg)
+
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(tomli_w.dumps(data).encode())
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".")
+    try:
+        os.write(fd, tomlkit.dumps(doc).encode())
+        os.close(fd)
+        os.replace(tmp, path)
+    except Exception:
+        os.unlink(tmp)
+        raise
