@@ -34,8 +34,12 @@ def _latest_backup_dir(parent: Path) -> Path | None:
 
 
 @click.command("migrate")
-@click.option("--dry-run", "dry_run", is_flag=True, help="Analyze and print the plan without executing.")  # noqa: E501
-@click.option("--rollback", "rollback", is_flag=True, help="Undo the last migration using its rollback log.")  # noqa: E501
+@click.option(
+    "--dry-run", "dry_run", is_flag=True, help="Analyze and print the plan without executing."
+)  # noqa: E501
+@click.option(
+    "--rollback", "rollback", is_flag=True, help="Undo the last migration using its rollback log."
+)  # noqa: E501
 def migrate(dry_run: bool, rollback: bool) -> None:
     """Migrate an existing Claude Code / lazy-claudecode setup to lazy-harness."""
     console = Console()
@@ -81,7 +85,7 @@ def migrate(dry_run: bool, rollback: bool) -> None:
 
     ok, msg = check_dry_run_gate(backups_parent)
     if not ok:
-        console.print(f"[red]{msg}[/red]")
+        console.print(f"[red]{escape(msg)}[/red]")
         raise SystemExit(1)
 
     report = execute_plan(plan, dry_run=False)

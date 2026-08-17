@@ -12,9 +12,14 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-# `{e}` and friends are the names this codebase binds exceptions to in
-# `except ... as <name>` clauses.
-_UNESCAPED = re.compile(r"console\.print\(f\"[^\"]*\{(e|exc|err|error)\}")
+# The first two groups are the names this codebase binds exceptions to in
+# `except ... as <name>` clauses. The rest are message-carrying variables: the
+# original guard covered only exceptions, and two hints naming a config section
+# went straight past it — `Set [memory.engram].enabled = true` reached the
+# terminal as `Set .enabled = true`, losing the one identifier it was for.
+_UNESCAPED = re.compile(
+    r"console\.print\(f\"[^\"]*\{(e|exc|err|error|hint|msg|message|detail|reason|summary)\}"
+)
 
 _SOURCE = Path(__file__).resolve().parents[2] / "src" / "lazy_harness"
 
@@ -37,3 +42,10 @@ def test_the_guard_matches_the_shape_it_is_written_against() -> None:
     assert _UNESCAPED.search('    console.print(f"[red]Error: {e}[/red]")')
     assert _UNESCAPED.search('    console.print(f"[red]Error:[/red] {e}")')
     assert not _UNESCAPED.search('    console.print(f"[red]Error: {escape(str(e))}[/red]")')
+
+
+def test_the_guard_covers_message_variables_not_only_exceptions() -> None:
+    """The two sites this guard was widened for."""
+    assert _UNESCAPED.search('            console.print(f"      [grey50]{hint}[/grey50]")')
+    assert _UNESCAPED.search('        console.print(f"[red]{msg}[/red]")')
+    assert not _UNESCAPED.search('        console.print(f"[red]{escape(msg)}[/red]")')
