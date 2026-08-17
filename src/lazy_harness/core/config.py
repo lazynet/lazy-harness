@@ -151,6 +151,8 @@ class ContextInjectConfig:
     qmd_suggest_top_k: int = 3
     graphify_surface_enabled: bool = True
     proposals_summary: bool = True
+    repo_map_scope: str = ""
+    repo_map_doc: str = "docs/repos.md"
 
 
 @dataclass
@@ -508,6 +510,8 @@ def load_config(path: Path) -> Config:
             proposals_summary=ci_raw.get(
                 "proposals_summary", ContextInjectConfig.proposals_summary
             ),
+            repo_map_scope=ci_raw.get("repo_map_scope", ContextInjectConfig.repo_map_scope),
+            repo_map_doc=ci_raw.get("repo_map_doc", ContextInjectConfig.repo_map_doc),
         )
 
     loops_raw = raw.get("loops", {})
@@ -547,6 +551,16 @@ def _config_to_dict(cfg: Config) -> dict[str, Any]:
         },
         "scheduler": {"backend": cfg.scheduler.backend},
         "loops": {"inject_goal_prompt": cfg.loops.inject_goal_prompt},
+        # Only the keys `load_config` reads round-trip here: emitting one it
+        # ignores would write a value that silently reverts on the next load.
+        "context_inject": {
+            "enabled": cfg.context_inject.enabled,
+            "max_body_chars": cfg.context_inject.max_body_chars,
+            "last_session_enabled": cfg.context_inject.last_session_enabled,
+            "proposals_summary": cfg.context_inject.proposals_summary,
+            "repo_map_scope": cfg.context_inject.repo_map_scope,
+            "repo_map_doc": cfg.context_inject.repo_map_doc,
+        },
     }
 
     if cfg.monitoring.db:

@@ -92,8 +92,9 @@ Sections composed, in priority order:
 
 7. **`## Code structure`** — a summary of `graphify-out/graph.json` (node, edge and community counts) when the graph is fresh, or a `## Notice` pointing at regeneration when the graph is older than `HEAD`. Absent when the repo has no graph.
 8. **`## Relevant vault notes`** — QMD hits for the current branch name, when `qmd_suggest_enabled` is set.
+9. **`## Repo map`** — the doc at `repo_map_doc`, injected only when the session's cwd sits inside `repo_map_scope`. Off unless that scope is set. Use it for the map of which repo lives where and which remote is authoritative: knowledge an agent needs *before* it starts guessing, and that a conditional "read this file if…" instruction in `CLAUDE.md` reliably fails to trigger.
 
-The body is truncated to `cfg.context_inject.max_body_chars` (default 3000) by dropping sections in the order `episodic → vault notes → proposals → lazynorth → code structure → handoff`. A compact banner is also emitted as `systemMessage` so the agent can surface "Session context loaded: on main | Last session: 2026-04-12 18:32 | has handoff notes" without printing the full body.
+The body is truncated to `cfg.context_inject.max_body_chars` (default 3000) by dropping sections in the order `episodic → vault notes → proposals → lazynorth → code structure → repo map → handoff`. A compact banner is also emitted as `systemMessage` so the agent can surface "Session context loaded: on main | Last session: 2026-04-12 18:32 | has handoff notes" without printing the full body.
 
 **Why code structure outranks vault notes.** Both are discovery aids, but the graph summary is a compact map of the repo the session is about to edit, while vault notes are speculative matches on a branch name. Under a tight budget the map is worth more, and it is the only reason to generate the graph at all. If both keep getting dropped, raise `max_body_chars` — the default is deliberately conservative and costs well under a thousand tokens even when doubled.
 
