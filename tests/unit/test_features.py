@@ -24,9 +24,11 @@ def test_feature_status_dataclass_shape() -> None:
 def test_qmd_status_active_when_installed(monkeypatch) -> None:
     from lazy_harness.core.config import Config
     from lazy_harness.features import collect_feature_statuses
-    from lazy_harness.knowledge import qmd as qmd_mod
 
-    monkeypatch.setattr(qmd_mod, "is_qmd_available", lambda: True)
+    installed = ['qmd']
+    monkeypatch.setattr(
+        "shutil.which", lambda name: f"/usr/bin/{name}" if name in installed else None
+    )
     monkeypatch.setattr("lazy_harness.features._probe_version", lambda binary: "2.1.0")
 
     statuses = collect_feature_statuses(Config())
@@ -38,9 +40,11 @@ def test_qmd_status_active_when_installed(monkeypatch) -> None:
 def test_qmd_status_missing_when_not_installed(monkeypatch) -> None:
     from lazy_harness.core.config import Config
     from lazy_harness.features import collect_feature_statuses
-    from lazy_harness.knowledge import qmd as qmd_mod
 
-    monkeypatch.setattr(qmd_mod, "is_qmd_available", lambda: False)
+    installed = []
+    monkeypatch.setattr(
+        "shutil.which", lambda name: f"/usr/bin/{name}" if name in installed else None
+    )
 
     statuses = collect_feature_statuses(Config())
     qmd = next(s for s in statuses if s.name == "qmd")
@@ -52,11 +56,11 @@ def test_qmd_status_missing_when_not_installed(monkeypatch) -> None:
 def test_engram_status_active(monkeypatch) -> None:
     from lazy_harness.core.config import Config
     from lazy_harness.features import collect_feature_statuses
-    from lazy_harness.knowledge import qmd as qmd_mod
-    from lazy_harness.memory import engram as engram_mod
 
-    monkeypatch.setattr(qmd_mod, "is_qmd_available", lambda: False)
-    monkeypatch.setattr(engram_mod, "is_engram_available", lambda: True)
+    installed = ['engram']
+    monkeypatch.setattr(
+        "shutil.which", lambda name: f"/usr/bin/{name}" if name in installed else None
+    )
     monkeypatch.setattr("lazy_harness.features._probe_version", lambda binary: "1.15.4")
 
     cfg = Config()
@@ -72,11 +76,11 @@ def test_engram_status_active(monkeypatch) -> None:
 def test_engram_status_dormant_when_installed_but_disabled(monkeypatch) -> None:
     from lazy_harness.core.config import Config
     from lazy_harness.features import collect_feature_statuses
-    from lazy_harness.knowledge import qmd as qmd_mod
-    from lazy_harness.memory import engram as engram_mod
 
-    monkeypatch.setattr(qmd_mod, "is_qmd_available", lambda: False)
-    monkeypatch.setattr(engram_mod, "is_engram_available", lambda: True)
+    installed = ['engram']
+    monkeypatch.setattr(
+        "shutil.which", lambda name: f"/usr/bin/{name}" if name in installed else None
+    )
     monkeypatch.setattr("lazy_harness.features._probe_version", lambda binary: "1.15.4")
 
     cfg = Config()
@@ -91,11 +95,11 @@ def test_engram_status_dormant_when_installed_but_disabled(monkeypatch) -> None:
 def test_engram_status_missing(monkeypatch) -> None:
     from lazy_harness.core.config import Config
     from lazy_harness.features import collect_feature_statuses
-    from lazy_harness.knowledge import qmd as qmd_mod
-    from lazy_harness.memory import engram as engram_mod
 
-    monkeypatch.setattr(qmd_mod, "is_qmd_available", lambda: False)
-    monkeypatch.setattr(engram_mod, "is_engram_available", lambda: False)
+    installed = []
+    monkeypatch.setattr(
+        "shutil.which", lambda name: f"/usr/bin/{name}" if name in installed else None
+    )
 
     cfg = Config()
     cfg.memory.engram.enabled = False
@@ -109,11 +113,11 @@ def test_engram_status_missing(monkeypatch) -> None:
 def test_engram_status_broken_when_enabled_but_missing(monkeypatch) -> None:
     from lazy_harness.core.config import Config
     from lazy_harness.features import collect_feature_statuses
-    from lazy_harness.knowledge import qmd as qmd_mod
-    from lazy_harness.memory import engram as engram_mod
 
-    monkeypatch.setattr(qmd_mod, "is_qmd_available", lambda: False)
-    monkeypatch.setattr(engram_mod, "is_engram_available", lambda: False)
+    installed = []
+    monkeypatch.setattr(
+        "shutil.which", lambda name: f"/usr/bin/{name}" if name in installed else None
+    )
 
     cfg = Config()
     cfg.memory.engram.enabled = True
@@ -126,11 +130,11 @@ def test_engram_status_broken_when_enabled_but_missing(monkeypatch) -> None:
 def test_graphify_status_active(monkeypatch) -> None:
     from lazy_harness.core.config import Config
     from lazy_harness.features import collect_feature_statuses
-    from lazy_harness.knowledge import graphify as graphify_mod
-    from lazy_harness.knowledge import qmd as qmd_mod
 
-    monkeypatch.setattr(qmd_mod, "is_qmd_available", lambda: False)
-    monkeypatch.setattr(graphify_mod, "is_graphify_available", lambda: True)
+    installed = ['graphify']
+    monkeypatch.setattr(
+        "shutil.which", lambda name: f"/usr/bin/{name}" if name in installed else None
+    )
     monkeypatch.setattr("lazy_harness.features._probe_version", lambda binary: "0.9.38")
 
     cfg = Config()
@@ -146,11 +150,11 @@ def test_graphify_status_active(monkeypatch) -> None:
 def test_graphify_status_dormant_when_installed_but_disabled(monkeypatch) -> None:
     from lazy_harness.core.config import Config
     from lazy_harness.features import collect_feature_statuses
-    from lazy_harness.knowledge import graphify as graphify_mod
-    from lazy_harness.knowledge import qmd as qmd_mod
 
-    monkeypatch.setattr(qmd_mod, "is_qmd_available", lambda: False)
-    monkeypatch.setattr(graphify_mod, "is_graphify_available", lambda: True)
+    installed = ['graphify']
+    monkeypatch.setattr(
+        "shutil.which", lambda name: f"/usr/bin/{name}" if name in installed else None
+    )
     monkeypatch.setattr("lazy_harness.features._probe_version", lambda binary: "0.9.38")
 
     cfg = Config()
@@ -165,11 +169,11 @@ def test_graphify_status_dormant_when_installed_but_disabled(monkeypatch) -> Non
 def test_graphify_status_missing(monkeypatch) -> None:
     from lazy_harness.core.config import Config
     from lazy_harness.features import collect_feature_statuses
-    from lazy_harness.knowledge import graphify as graphify_mod
-    from lazy_harness.knowledge import qmd as qmd_mod
 
-    monkeypatch.setattr(qmd_mod, "is_qmd_available", lambda: False)
-    monkeypatch.setattr(graphify_mod, "is_graphify_available", lambda: False)
+    installed = []
+    monkeypatch.setattr(
+        "shutil.which", lambda name: f"/usr/bin/{name}" if name in installed else None
+    )
 
     cfg = Config()
     cfg.knowledge.structure.enabled = False
@@ -183,11 +187,11 @@ def test_graphify_status_missing(monkeypatch) -> None:
 def test_graphify_status_broken_when_enabled_but_missing(monkeypatch) -> None:
     from lazy_harness.core.config import Config
     from lazy_harness.features import collect_feature_statuses
-    from lazy_harness.knowledge import graphify as graphify_mod
-    from lazy_harness.knowledge import qmd as qmd_mod
 
-    monkeypatch.setattr(qmd_mod, "is_qmd_available", lambda: False)
-    monkeypatch.setattr(graphify_mod, "is_graphify_available", lambda: False)
+    installed = []
+    monkeypatch.setattr(
+        "shutil.which", lambda name: f"/usr/bin/{name}" if name in installed else None
+    )
 
     cfg = Config()
     cfg.knowledge.structure.enabled = True
@@ -195,3 +199,22 @@ def test_graphify_status_broken_when_enabled_but_missing(monkeypatch) -> None:
     statuses = collect_feature_statuses(cfg)
     graphify = next(s for s in statuses if s.name == "graphify")
     assert graphify.state == "broken"
+
+
+def test_collect_accepts_an_injected_probe(monkeypatch) -> None:
+    """Paired with the tests above, which go through the default `shutil.which`.
+
+    Both halves matter: injecting everywhere would leave `which_probe` untested,
+    and patching `shutil.which` everywhere would leave the parameter untested.
+    """
+    from lazy_harness.core.config import Config
+    from lazy_harness.features import collect_feature_statuses
+
+    monkeypatch.setattr("lazy_harness.features._probe_version", lambda binary: "9.9.9")
+
+    statuses = collect_feature_statuses(Config(), probe=lambda name: name == "graphify")
+
+    by_name = {s.name: s for s in statuses}
+    assert by_name["graphify"].state == "dormant"
+    assert by_name["qmd"].state == "missing"
+    assert by_name["engram"].state == "missing"
