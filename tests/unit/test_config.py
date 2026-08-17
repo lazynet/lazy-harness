@@ -788,3 +788,26 @@ def test_context_inject_qmd_and_graphify_switches_are_read(tmp_path: Path) -> No
     assert ci.qmd_suggest_enabled is False
     assert ci.qmd_suggest_top_k == 7
     assert ci.graphify_surface_enabled is False
+
+
+def test_removing_a_profile_survives_a_save(tmp_path: Path) -> None:
+    """`lh profile remove` expresses deletion by absence; the overlay must honour it.
+
+    Applying an overlay can only add or overwrite, so without an explicit
+    prune the removed profile comes back on the next write.
+    """
+    import tomllib
+
+    from lazy_harness.core.config import load_config, save_config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(_FULL_CONFIG)
+
+    cfg = load_config(cfg_path)
+    del cfg.profiles.items["flex"]
+    save_config(cfg, cfg_path)
+
+    raw = tomllib.loads(cfg_path.read_text())
+    assert "flex" not in raw["profiles"]
+    assert "lazy" in raw["profiles"]
+    assert raw["profiles"]["lazy"]["lazynorth_doc"] == "LazyNorth.md"
