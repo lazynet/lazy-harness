@@ -150,9 +150,16 @@ class CronBackend:
         return removed
 
     @staticmethod
-    def _entries(content: str) -> list[tuple[str, str, str]]:
-        """Every managed entry as (name, schedule, command)."""
-        found: list[tuple[str, str, str]] = []
+    def _managed_lines(content: str) -> dict[str, str]:
+        """Every managed entry as name -> the exact line in the crontab.
+
+        Kept verbatim because `drift` compares against the line `install`
+        wrote. Splitting and re-joining on single spaces — which is what
+        `_entries` does, correctly, for its own callers — turns a command
+        holding a tab or a doubled space into a different string, so a job
+        nobody touched compares unequal to itself.
+        """
+        found: dict[str, str] = {}
         inside = False
         for line in content.splitlines():
             stripped = line.strip()
@@ -164,11 +171,20 @@ class CronBackend:
                 continue
             if not inside or TAG not in stripped:
                 continue
-            body, _, name = stripped.partition(TAG)
+            _, _, name = stripped.partition(TAG)
+            found[name.strip()] = stripped
+        return found
+
+    @classmethod
+    def _entries(cls, content: str) -> list[tuple[str, str, str]]:
+        """Every managed entry as (name, schedule, command)."""
+        found: list[tuple[str, str, str]] = []
+        for name, line in cls._managed_lines(content).items():
+            body, _, _ = line.partition(TAG)
             fields = body.split()
             if len(fields) < 6:
                 continue
-            found.append((name.strip(), " ".join(fields[:5]), " ".join(fields[5:])))
+            found.append((name, " ".join(fields[:5]), " ".join(fields[5:])))
         return found
 
     def job_state(self, label: str) -> tuple[JobState, str]:
@@ -198,14 +214,16 @@ class CronBackend:
                 for job in jobs
             ]
 
-        entries = {name: (schedule, command) for name, schedule, command in self._entries(content)}
-        path_line = self._existing_path_line(content)
-        expected_path = f"PATH={resolved_path()}"
-        path_differs = path_line is not None and path_line != expected_path
+        lines = self._managed_lines(content)
+        # An absent PATH line is the strongest evidence of an old install, not
+        # a reason to skip the comparison: this backend always emits one, so
+        # `is not None` here reported CURRENT for exactly the blocks written
+        # before it started doing so.
+        path_differs = self._existing_path_line(content) != f"PATH={resolved_path()}"
 
         out: list[JobDrift] = []
         for job in jobs:
-            if job.name not in entries:
+            if job.name not in lines:
                 out.append(JobDrift(job.name, DriftState.ABSENT))
                 continue
             try:
@@ -213,9 +231,8 @@ class CronBackend:
             except Exception as e:  # noqa: BLE001 — an untranslatable schedule
                 out.append(JobDrift(job.name, DriftState.UNKNOWN, f"{type(e).__name__}: {e}"))
                 continue
-            schedule, command = entries[job.name]
             reasons = []
-            if (schedule, command) != (expected_schedule, job.command):
+            if lines[job.name] != f"{expected_schedule} {job.command} {TAG}{job.name}":
                 reasons.append("entry")
             if path_differs:
                 reasons.append("PATH")
