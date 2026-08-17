@@ -11,10 +11,11 @@ Obsidian vault, which the compound loop still reads for `1-Projects/`.
 
 from __future__ import annotations
 
-import tomllib
 from pathlib import Path
 
-import tomli_w
+import tomlkit
+
+from lazy_harness.core.config import atomic_write_text
 
 LEGACY_KEYS = ("path",)
 LEGACY_SUBDIR_TABLES = ("sessions", "learnings")
@@ -26,7 +27,10 @@ def migrate_knowledge_block(config_path: Path, *, new_root: str) -> None:
     if not config_path.is_file():
         raise FileNotFoundError(config_path)
 
-    raw = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    # tomlkit rather than tomllib: this rewrites the live config, which is
+    # hand-maintained, so the comments explaining each setting have to survive
+    # the migration that touches three keys.
+    raw = tomlkit.parse(config_path.read_text(encoding="utf-8"))
 
     knowledge = raw.get("knowledge")
     if isinstance(knowledge, dict):
@@ -45,4 +49,4 @@ def migrate_knowledge_block(config_path: Path, *, new_root: str) -> None:
     if isinstance(compound_loop, dict):
         compound_loop.pop(LEGACY_COMPOUND_LOOP_KEY, None)
 
-    config_path.write_bytes(tomli_w.dumps(raw).encode())
+    atomic_write_text(config_path, tomlkit.dumps(raw))
