@@ -263,31 +263,31 @@ def test_exec_start_resolves_against_the_scheduled_path_not_the_invoking_one(
 ) -> None:
     """The binary is resolved with the same PATH the unit is given.
 
-    `shutil.which` defaults to the invoking process's PATH, so running
-    `lh scheduler install` under `uv run` from a worktree resolved `lh` to
-    that worktree's `.venv/bin` and baked the absolute path into ExecStart —
-    the same failure `resolved_path` filters out of `Environment=PATH`,
-    arriving through the other door and surviving it, because an absolute
-    ExecStart ignores PATH entirely.
+    `shutil.which` defaults to the invoking process's PATH, which is not what
+    lands in `Environment=`. Both dirs below hold a binary of the same name,
+    so only the resolver's choice of PATH can decide which one reaches
+    `ExecStart` — and the wrong one is immune to every later filter, because
+    an absolute ExecStart never consults PATH again.
     """
-    import os
-
+    from lazy_harness.scheduler import systemd as systemd_mod
     from lazy_harness.scheduler.systemd import SystemdBackend
 
-    # A name that cannot exist on any host: the point of this test is that the
-    # answer comes from the constructed PATH, never from the machine running it.
+    # A name that cannot exist on any host: the answer must come from the
+    # constructed PATH, never from the machine running the test.
     binary = "lh-path-fixture"
-    venv_bin = tmp_path / ".venv" / "bin"
-    real_bin = tmp_path / "opt" / "bin"
-    for directory in (venv_bin, real_bin):
+    from_environment = tmp_path / "shell" / "bin"
+    from_resolver = tmp_path / "unit" / "bin"
+    for directory in (from_environment, from_resolver):
         directory.mkdir(parents=True)
         exe = directory / binary
         exe.write_text("#!/bin/sh\n")
         exe.chmod(0o755)
-    monkeypatch.setenv("PATH", os.pathsep.join([str(venv_bin), str(real_bin)]))
+
+    monkeypatch.setenv("PATH", str(from_environment))
+    monkeypatch.setattr(systemd_mod, "resolved_path", lambda: str(from_resolver))
 
     backend = SystemdBackend(unit_dir=tmp_path / "units", runner=_runner(lambda a: "Linger=yes"))
     text = backend._service_text(SchedulerJob(name="x", schedule="0 6 * * *", command=binary))
 
-    assert f"ExecStart={real_bin / binary}\n" in text
-    assert ".venv" not in text
+    assert f"ExecStart={from_resolver / binary}\n" in text
+    assert str(from_environment) not in text

@@ -26,6 +26,27 @@ def test_launchd_generate_plist(tmp_path: Path) -> None:
     assert "com.lazy-harness.qmd-sync" in content
 
 
+def test_launchd_plist_carries_the_resolved_path(tmp_path: Path) -> None:
+    """launchd builds the job's environment from the plist and nothing else.
+
+    This backend had no assertion on `EnvironmentVariables` at all, so the
+    key could have been dropped or emptied without a single test noticing —
+    on the one platform where these jobs actually run today.
+    """
+    import plistlib
+
+    from lazy_harness.scheduler.base import SchedulerJob
+    from lazy_harness.scheduler.launchd import LaunchdBackend
+    from lazy_harness.scheduler.paths import resolved_path
+
+    backend = LaunchdBackend(label_prefix="com.lazy-harness")
+    job = SchedulerJob(name="qmd-sync", schedule="*/30 * * * *", command="lh knowledge sync")
+    with open(backend.generate_plist(job, tmp_path), "rb") as f:
+        data = plistlib.load(f)
+
+    assert data["EnvironmentVariables"]["PATH"] == resolved_path()
+
+
 def test_launchd_plist_uses_calendar_for_daily_schedule(tmp_path: Path) -> None:
     import plistlib
 
@@ -178,6 +199,7 @@ def test_launchd_backend_constructs_without_arguments() -> None:
     assert backend._agents_dir.name == "LaunchAgents"
     assert backend._runner is not None
 
+
 def test_launchd_plist_uses_wall_clock_entries_for_a_minute_step(tmp_path: Path) -> None:
     """Replaces the StartInterval assertion this branch made obsolete.
 
@@ -229,11 +251,7 @@ def test_format_schedule_reports_an_hour_list_as_times_per_day(tmp_path) -> None
     p = tmp_path / "x.plist"
     _write_plist(
         p,
-        {
-            "StartCalendarInterval": [
-                {"Minute": 0, "Hour": h} for h in (0, 6, 12, 18)
-            ]
-        },
+        {"StartCalendarInterval": [{"Minute": 0, "Hour": h} for h in (0, 6, 12, 18)]},
     )
     assert format_schedule(p) == "4x/day 00:00"
 
@@ -253,4 +271,3 @@ def test_format_schedule_reports_an_hourly_entry_as_hourly(tmp_path) -> None:
     p = tmp_path / "x.plist"
     _write_plist(p, {"StartCalendarInterval": {"Minute": 0}})
     assert format_schedule(p) == "hourly :00"
-

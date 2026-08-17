@@ -188,7 +188,11 @@ WantedBy=timers.target
 - `uninstall` → `systemctl --user disable --now <timer>` → unlink both files → `daemon-reload`
 - `job_state` → `systemctl --user is-active <timer>`; `active` → `LOADED`, `inactive`/`failed` → `NOT_LOADED`; `systemctl` absent, or exit indicating no DBus session → `UNKNOWN` with the reason
 
-**PATH resolution.** The unit inherits nothing from a login shell. `Environment=PATH=` is built at install time from `os.environ["PATH"]`, filtered to existing directories, with `~/.local/bin` prepended if absent — that is where `uv tool install` puts `lh`. The same helper replaces the hardcoded `/opt/homebrew/bin` string in `launchd.py:57`, so both backends derive PATH the same way instead of one guessing.
+**PATH resolution.** The unit inherits nothing from a login shell. `Environment=PATH=` is built at install time by one helper shared with the launchd and cron backends, replacing the hardcoded `/opt/homebrew/bin` string in `launchd.py:57` so no backend guesses on its own.
+
+The helper reads the platform, not the environment: `~/.local/bin` — where `uv tool install` puts `lh` — followed by the standard directories that exist, with `/opt/homebrew/bin` presence-gated so an Intel Mac, an Apple Silicon Mac and a Linux box need no separate code path.
+
+An earlier revision built it from `os.environ["PATH"]` filtered to existing directories. That made a file read for months depend on which terminal generated it: from a developer's interactive shell it produced twenty-five entries with pyenv shims ahead of Homebrew, so a job's `python` resolved to a shim in a context with no shell to initialise it, while the same call over ssh produced five clean entries — which is why it looked correct when verified on Linux. A job needing anything outside the standard set declares the full path in its command, which the live configuration already does.
 
 ### D6 — Lingering is a verified precondition, not a footnote
 

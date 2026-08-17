@@ -70,12 +70,12 @@ class SystemdBackend:
         """Resolve `name` against the PATH the unit will run with.
 
         `shutil.which` defaults to the invoking process's PATH, which is not
-        the one written into the unit: `resolved_path` strips virtualenv bins
-        precisely so a generated unit outlives the environment that generated
-        it. Resolving here against the unfiltered PATH put the worktree's
-        `.venv/bin` back into `ExecStart` as an absolute path — where it is
-        immune to the filtering, because an absolute ExecStart never consults
-        PATH at all.
+        the one written into the unit: `resolved_path` is deliberately built
+        from the platform rather than the environment, so a generated unit
+        outlives the shell that generated it. Resolving here against the
+        environment instead put the worktree's `.venv/bin` into `ExecStart` as
+        an absolute path — where nothing can correct it, because an absolute
+        ExecStart never consults PATH at all.
         """
         return shutil.which(name, path=resolved_path())
 

@@ -43,8 +43,11 @@ def test_install_preserves_foreign_entries() -> None:
     assert "# lazy-harness:qmd-sync" in fake.content
     assert "# END lazy-harness" in fake.content
     # cron's default PATH is /usr/bin:/bin, which is the most common reason a
-    # cron job fails.
-    assert "PATH=" in fake.content
+    # cron job fails. Compared against the value rather than the prefix: a
+    # substring check passes on `PATH=` followed by nothing at all.
+    from lazy_harness.scheduler.paths import resolved_path
+
+    assert f"PATH={resolved_path()}" in fake.content
 
 
 def test_install_replaces_a_previous_block_instead_of_appending() -> None:
@@ -140,10 +143,13 @@ def test_install_raises_when_the_crontab_write_is_rejected() -> None:
 def test_uninstall_preserves_the_path_install_computed(monkeypatch, tmp_path) -> None:
     """Re-deriving PATH on uninstall silently changes the surviving jobs.
 
-    Run `lh scheduler uninstall` from inside a project venv and the untouched
-    entries get a different PATH than the one `install` wrote.
+    Removing one job must not rewrite the others' environment. The block may
+    carry a PATH written by an older version of this tool — which is exactly
+    the case on any machine upgrading past the resolver change — and that is
+    the user's installed state, not something an uninstall gets to revise.
     """
     from lazy_harness.scheduler.cron import CronBackend
+    from lazy_harness.scheduler.paths import resolved_path
 
     fake = FakeCrontab()
     backend = CronBackend(runner=fake)
@@ -151,16 +157,15 @@ def test_uninstall_preserves_the_path_install_computed(monkeypatch, tmp_path) ->
     drop = SchedulerJob(name="drop", schedule="0 7 * * *", command="true")
     backend.install([keep, drop])
 
-    original_path = next(
-        line for line in fake.content.splitlines() if line.startswith("PATH=")
-    )
+    # Rewrite the block's PATH to something this machine would never derive.
+    # Setting `$PATH` no longer works as the lever: `resolved_path` is built
+    # from the platform, so it returns the same string before and after, and a
+    # backend that re-derived on every uninstall would pass unnoticed.
+    written = fake.content.replace(f"PATH={resolved_path()}", "PATH=/opt/pinned/bin")
+    assert written != fake.content, "the install did not write the PATH this test rewrites"
+    fake.content = written
 
-    # Uninstall from a different environment, which is what running it from
-    # inside a project venv looks like.
-    other = tmp_path / "elsewhere" / "bin"
-    other.mkdir(parents=True)
-    monkeypatch.setenv("PATH", str(other))
     backend.uninstall([drop])
 
     surviving = next(line for line in fake.content.splitlines() if line.startswith("PATH="))
-    assert surviving == original_path
+    assert surviving == "PATH=/opt/pinned/bin"
