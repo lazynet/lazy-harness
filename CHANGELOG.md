@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.39.0](https://github.com/lazynet/lazy-harness/compare/v0.38.1...v0.39.0) (2026-08-17)
+
+
+### Features
+
+* **context-inject:** inject a repo map for sessions inside a declared scope ([#164](https://github.com/lazynet/lazy-harness/issues/164)) ([e92a32a](https://github.com/lazynet/lazy-harness/commit/e92a32a0e2ad5d4d92584c2d54d44fb8ef490d38))
+
 ## [0.38.1](https://github.com/lazynet/lazy-harness/compare/v0.38.0...v0.38.1) (2026-08-16)
 
 
