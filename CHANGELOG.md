@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.40.2](https://github.com/lazynet/lazy-harness/compare/v0.40.1...v0.40.2) (2026-08-17)
+
+
+### Bug Fixes
+
+* preserve comments, mode and formatting in the config wizards ([#171](https://github.com/lazynet/lazy-harness/issues/171)) ([6b24cc7](https://github.com/lazynet/lazy-harness/commit/6b24cc7e4bfc5a51bc3068d1ffd511e964a9c1f1))
+* report scheduler job state honestly and move discovery behind the backend ([#172](https://github.com/lazynet/lazy-harness/issues/172)) ([ee2546e](https://github.com/lazynet/lazy-harness/commit/ee2546e78f85a8bb5203cae2a6ddaeb2de41b62f))
+
+
+### Documentation
+
+* specs and plans for the Linux parity, capability registry and TUI refactors ([#166](https://github.com/lazynet/lazy-harness/issues/166)) ([c900396](https://github.com/lazynet/lazy-harness/commit/c90039664bb5fc30ec394bbb2a95a25798f7f6de))
+
 ## [0.40.1](https://github.com/lazynet/lazy-harness/compare/v0.40.0...v0.40.1) (2026-08-17)
 
 
