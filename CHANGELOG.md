@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.40.1](https://github.com/lazynet/lazy-harness/compare/v0.40.0...v0.40.1) (2026-08-17)
+
+
+### Bug Fixes
+
+* install launchd jobs on their declared schedule ([#168](https://github.com/lazynet/lazy-harness/issues/168)) ([cb52048](https://github.com/lazynet/lazy-harness/commit/cb52048582be8db5c0653777a57834c75370fb77))
+
 ## [0.40.0](https://github.com/lazynet/lazy-harness/compare/v0.39.0...v0.40.0) (2026-08-17)
 
 
