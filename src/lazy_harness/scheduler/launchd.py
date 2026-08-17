@@ -3,37 +3,11 @@
 from __future__ import annotations
 
 import plistlib
-import re
 import subprocess
 from pathlib import Path
 
 from lazy_harness.scheduler.base import SchedulerJob
-
-
-def _cron_to_interval(cron_expr: str) -> int:
-    parts = cron_expr.strip().split()
-    if len(parts) < 5:
-        return 3600
-    minute_part = parts[0]
-    match = re.match(r"\*/(\d+)", minute_part)
-    if match:
-        return int(match.group(1)) * 60
-    if minute_part == "0" and parts[1] == "*":
-        return 3600
-    return 3600
-
-
-def _cron_to_calendar(cron_expr: str) -> dict[str, int] | None:
-    """Convert `M H * * *` → StartCalendarInterval dict. Returns None if not daily."""
-    parts = cron_expr.strip().split()
-    if len(parts) < 5:
-        return None
-    minute, hour, dom, mon, dow = parts[:5]
-    if not minute.isdigit() or not hour.isdigit():
-        return None
-    if dom != "*" or mon != "*" or dow != "*":
-        return None
-    return {"Hour": int(hour), "Minute": int(minute)}
+from lazy_harness.scheduler.schedule import parse_cron, render_launchd
 
 
 class LaunchdBackend:
@@ -57,11 +31,9 @@ class LaunchdBackend:
                 "PATH": f"{Path.home()}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
             },
         }
-        calendar = _cron_to_calendar(job.schedule)
-        if calendar is not None:
-            plist["StartCalendarInterval"] = calendar
-        else:
-            plist["StartInterval"] = _cron_to_interval(job.schedule)
+        # Raises rather than approximating: installing a schedule other than
+        # the one declared is what made every non-daily job run hourly.
+        plist.update(render_launchd(parse_cron(job.schedule)))
         plist_path = output_dir / f"{label}.plist"
         with open(plist_path, "wb") as f:
             plistlib.dump(plist, f)
