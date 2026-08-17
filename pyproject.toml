@@ -10,6 +10,7 @@ dependencies = [
     "httpx>=0.28.1",
     "rich>=13.0",
     "tomli-w>=1.0",
+    "tomlkit>=0.13",
 ]
 
 [project.scripts]
