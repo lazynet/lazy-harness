@@ -267,7 +267,10 @@ def doctor() -> None:
         console.print(f"  {icon} {s.name:<10} ({s.section}){version_part}")
         hint = s.install_hint or s.enable_hint
         if hint:
-            console.print(f"      [grey50]{hint}[/grey50]")
+            # Escaped: the hint's whole job is to name a config section, and
+            # rich parses `[memory.engram]` inside an interpolated string as a
+            # markup tag and deletes it.
+            console.print(f"      [grey50]{escape(hint)}[/grey50]")
         if s.state == "broken":
             ok = False
 

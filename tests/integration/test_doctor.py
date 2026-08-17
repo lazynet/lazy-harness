@@ -57,3 +57,19 @@ def test_doctor_missing_profile_dir(home_dir: Path) -> None:
     runner = CliRunner()
     result = runner.invoke(cli, ["doctor"])
     assert "missing" in result.output.lower()
+
+
+def test_feature_hint_keeps_the_config_section_it_names(home_dir: Path, monkeypatch) -> None:
+    """`console.print(f"[grey50]{hint}[/grey50]")` hands the hint to rich as
+    markup, so the `[memory.engram]` inside it is parsed as a tag and removed.
+
+    The hint exists to tell the user which key to set. It reached the terminal
+    as `Set .enabled = true to activate.` — the one word it was written for.
+    """
+    _setup_config(home_dir, create_profile_dirs=True)
+    # Dormant: the binary is present, the capability is not enabled.
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/engram")
+
+    result = CliRunner().invoke(cli, ["doctor"])
+
+    assert "[memory.engram]" in result.output, result.output
