@@ -765,3 +765,26 @@ def test_save_load_save_load_is_stable(tmp_path: Path) -> None:
     twice = tomllib.loads(cfg_path.read_text())
 
     assert once == twice
+
+
+def test_context_inject_qmd_and_graphify_switches_are_read(tmp_path: Path) -> None:
+    """These three are consumed by context_inject.py:779,787,790 and were never parsed.
+
+    Declared on the dataclass, read by a live hook, and pinned to their
+    defaults because the loader skipped them.
+    """
+    from lazy_harness.core.config import load_config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        '[harness]\nversion = "1"\n\n'
+        "[context_inject]\n"
+        "qmd_suggest_enabled = false\n"
+        "qmd_suggest_top_k = 7\n"
+        "graphify_surface_enabled = false\n"
+    )
+
+    ci = load_config(cfg_path).context_inject
+    assert ci.qmd_suggest_enabled is False
+    assert ci.qmd_suggest_top_k == 7
+    assert ci.graphify_surface_enabled is False

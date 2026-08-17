@@ -508,6 +508,15 @@ def load_config(path: Path) -> Config:
             last_session_enabled=ci_raw.get(
                 "last_session_enabled", ContextInjectConfig.last_session_enabled
             ),
+            qmd_suggest_enabled=ci_raw.get(
+                "qmd_suggest_enabled", ContextInjectConfig.qmd_suggest_enabled
+            ),
+            qmd_suggest_top_k=ci_raw.get(
+                "qmd_suggest_top_k", ContextInjectConfig.qmd_suggest_top_k
+            ),
+            graphify_surface_enabled=ci_raw.get(
+                "graphify_surface_enabled", ContextInjectConfig.graphify_surface_enabled
+            ),
             proposals_summary=ci_raw.get(
                 "proposals_summary", ContextInjectConfig.proposals_summary
             ),
