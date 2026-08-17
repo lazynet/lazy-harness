@@ -117,7 +117,9 @@ def test_merge_removes_the_temp_file_when_writing_fails(tmp_path: Path, monkeypa
     def boom(*_args, **_kwargs):
         raise OSError("disk full")
 
-    monkeypatch.setattr(_toml_merge.Path, "write_bytes", boom)
+    # Patched after mkstemp has already created the temp file, so the cleanup
+    # path is the thing under test.
+    monkeypatch.setattr(_toml_merge.tomlkit, "dumps", boom)
 
     with pytest.raises(OSError, match="disk full"):
         _toml_merge.merge_into_config(cfg_path, {"memory": {"engram": {"enabled": True}}})
@@ -125,3 +127,61 @@ def test_merge_removes_the_temp_file_when_writing_fails(tmp_path: Path, monkeypa
     strays = [p.name for p in tmp_path.iterdir() if p.name != "config.toml"]
     assert strays == []
     assert cfg_path.read_text() == '[harness]\nversion = "1"\n'
+
+
+def test_a_wizard_run_on_a_fresh_machine_produces_a_loadable_config(tmp_path: Path) -> None:
+    """`lh config memory --init` before `lh init` must not brick the config.
+
+    Writing only the wizard's block leaves no [harness].version, and every
+    later `lh` command then dies on ConfigError. Verified through a full load
+    cycle, not a substring assertion.
+    """
+    from lazy_harness.core.config import load_config
+    from lazy_harness.wizards._toml_merge import merge_into_config
+
+    cfg_path = tmp_path / "config.toml"
+    merge_into_config(cfg_path, {"memory": {"engram": {"enabled": True}}})
+
+    cfg = load_config(cfg_path)
+    assert cfg.harness.version == "1"
+    assert cfg.memory.engram.enabled is True
+
+
+def test_a_created_config_is_not_locked_to_0600(tmp_path: Path) -> None:
+    """mkstemp creates 0600 and the create path skipped the chmod.
+
+    save_config then preserves whatever mode it finds, so 0600 would be
+    locked in for the file's whole life — and `lh init` creates it 0644, so
+    the two writers of the same file disagreed.
+    """
+    import stat
+
+    from lazy_harness.wizards._toml_merge import merge_into_config
+
+    cfg_path = tmp_path / "config.toml"
+    merge_into_config(cfg_path, {"memory": {"engram": {"enabled": True}}})
+
+    assert stat.S_IMODE(cfg_path.stat().st_mode) == 0o644
+
+
+def test_merge_fsyncs_before_replacing(tmp_path: Path, monkeypatch) -> None:
+    """`os.replace` is atomic for visibility, not for durability.
+
+    Without an fsync of the temp file before the rename, a crash shortly
+    after can leave config.toml zero-length — the truncated-config outcome
+    the buffered write only prevents for ENOSPC.
+    """
+    import os
+
+    from lazy_harness.wizards import _toml_merge
+
+    synced: list[int] = []
+    real_fsync = os.fsync
+    monkeypatch.setattr(os, "fsync", lambda fd: (synced.append(fd), real_fsync(fd))[1])
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text('[harness]\nversion = "1"\n')
+    _toml_merge.merge_into_config(cfg_path, {"memory": {"engram": {"enabled": True}}})
+
+    # One for the temp file, one for the directory entry the rename created.
+    assert len(synced) >= 2

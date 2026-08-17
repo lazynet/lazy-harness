@@ -1041,3 +1041,22 @@ def test_save_config_preserves_the_file_mode(tmp_path: Path) -> None:
     save_config(load_config(cfg_path), cfg_path)
 
     assert stat.S_IMODE(cfg_path.stat().st_mode) == 0o644
+
+
+def test_save_config_fsyncs_before_replacing(tmp_path: Path, monkeypatch) -> None:
+    """`os.replace` is atomic for visibility, not durability."""
+    import os
+
+    from lazy_harness.core import config as config_mod
+
+    synced: list[int] = []
+    real = os.fsync
+    monkeypatch.setattr(os, "fsync", lambda fd: (synced.append(fd), real(fd))[1])
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text('[harness]\nversion = "1"\n\n[monitoring]\nenabled = true\n')
+    cfg = config_mod.load_config(cfg_path)
+    cfg.monitoring.enabled = False
+    config_mod.save_config(cfg, cfg_path)
+
+    assert len(synced) >= 2

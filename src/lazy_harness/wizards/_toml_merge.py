@@ -9,12 +9,15 @@ comments and re-serialises every value it is handed, so `lh config <feature>
 
 from __future__ import annotations
 
-import os
-import tempfile
 from pathlib import Path
 from typing import Any
 
 import tomlkit
+
+from lazy_harness.core.config import HarnessConfig, atomic_write_text
+
+# The version `lh init` writes; a wizard creating the file must match it.
+HARNESS_VERSION = HarnessConfig().version
 
 
 def _apply(doc: Any, overlay: dict[str, Any]) -> None:
@@ -38,27 +41,18 @@ def merge_into_config(config_path: Path, new_block: dict[str, Any]) -> None:
         doc = tomlkit.parse(config_path.read_text(encoding="utf-8"))
         # `mkstemp` creates 0600 and `os.replace` carries that onto the target,
         # so a 0644 config would come back 0600 on every wizard run.
-        mode: int | None = config_path.stat().st_mode & 0o777
+        mode = config_path.stat().st_mode & 0o777
     else:
         doc = tomlkit.document()
-        mode = None
+        # A wizard can run before `lh init`. Writing only its own block would
+        # leave no `[harness].version`, and every later `lh` command would then
+        # fail to load the file it just created.
+        doc["harness"] = {"version": HARNESS_VERSION}
+        # `lh init` writes 0644; without this the wizard's file would be 0600,
+        # and `save_config` preserves whatever mode it finds, so the two
+        # writers of the same file would disagree for its whole life.
+        mode = 0o644
 
     _apply(doc, new_block)
 
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=config_path.parent, prefix=config_path.name + ".")
-    tmp_path = Path(tmp)
-    try:
-        # Close the raw descriptor first and write through a buffered writer: a
-        # bare `os.write` can short-write on a full filesystem without raising,
-        # and `os.replace` would then install a truncated config over a good
-        # one. Closing here also means the descriptor cannot leak when the
-        # write fails.
-        os.close(fd)
-        tmp_path.write_bytes(tomlkit.dumps(doc).encode())
-        if mode is not None:
-            os.chmod(tmp_path, mode)
-        os.replace(tmp_path, config_path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
+    atomic_write_text(config_path, tomlkit.dumps(doc), default_mode=mode)

@@ -670,6 +670,48 @@ def _config_to_dict(cfg: Config) -> dict[str, Any]:
     return result
 
 
+def atomic_write_text(path: Path, text: str, *, default_mode: int = 0o644) -> None:
+    """Replace `path` with `text`, atomically and durably.
+
+    Three things this gets right that a plain `write_bytes` does not:
+
+    - A same-directory temp file plus `os.replace`, so a reader never sees a
+      partial file and a failure leaves the original untouched.
+    - The original's mode is carried over. `tempfile.mkstemp` creates 0600 and
+      `os.replace` would otherwise stamp that onto the target, which is a
+      permanent spurious diff for a file under a dotfile manager.
+    - `fsync` on the file and on its directory. `os.replace` is atomic for
+      visibility but says nothing about durability: without these a crash
+      shortly after can leave the target zero-length.
+    """
+    import os
+    import tempfile
+
+    mode = path.stat().st_mode & 0o777 if path.is_file() else default_mode
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".")
+    tmp_path = Path(tmp)
+    try:
+        # Close the raw descriptor and write through a buffered writer: a bare
+        # `os.write` can short-write on a full filesystem without raising.
+        os.close(fd)
+        with open(tmp_path, "r+b") as f:
+            f.write(text.encode())
+            f.truncate()
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp_path, mode)
+        os.replace(tmp_path, path)
+        dir_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
 def _apply(doc: Any, overlay: dict[str, Any], defaults: dict[str, Any]) -> None:
     """Recursively apply `overlay` onto a tomlkit document, in place.
 
@@ -756,8 +798,6 @@ def save_config(cfg: Config, path: Path) -> None:
     implementation emitted 10 of the 14 sections `load_config` reads and
     destroyed 51 keys per write against a real config, comments included.
     """
-    import os
-    import tempfile
 
     import tomlkit
 
@@ -777,22 +817,4 @@ def save_config(cfg: Config, path: Path) -> None:
     _apply(doc, overlay, defaults)
     _prune_owned_sections(doc, overlay)
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # `mkstemp` creates 0600 and `os.replace` carries that onto the target, so
-    # a 0644 config would come back 0600 — a spurious diff on every write for a
-    # file managed by a dotfile manager.
-    mode = path.stat().st_mode & 0o777 if path.is_file() else None
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".")
-    tmp_path = Path(tmp)
-    try:
-        # Close the raw descriptor and write through a buffered writer: a bare
-        # `os.write` can short-write on a full filesystem without raising, and
-        # `os.replace` would then install a truncated config over a good one.
-        os.close(fd)
-        tmp_path.write_bytes(tomlkit.dumps(doc).encode())
-        if mode is not None:
-            os.chmod(tmp_path, mode)
-        os.replace(tmp_path, path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
+    atomic_write_text(path, tomlkit.dumps(doc))
