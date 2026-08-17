@@ -26,7 +26,9 @@
 
 # Wave 2 — `fix/scheduler-schedule-translation`
 
-Six declared jobs are over-executing between 6× and 168× right now. This wave is independent of everything else.
+This wave is independent of everything else.
+
+**Corrected 2026-08-17 during execution.** An earlier draft of this plan claimed six declared jobs were over-executing. That was inferred from the translation function rather than read off the installed plists, and it is wrong. Checked against `~/Library/LaunchAgents/`, **one** job is affected: `graphify-update`, declared `0 */4 * * *` and installed as `StartInterval=3600` — 24 runs a day instead of 6, so 4×. The other five declare either `*/N` in the minute field or the strict daily form, which are exactly the two shapes the old translator handled correctly. The defect class still reaches 168× on weekly shapes; none are currently declared.
 
 ## File Structure
 
@@ -381,22 +383,36 @@ uv run pytest && uv run ruff check src tests && uv run --group docs mkdocs build
 
 - [ ] **Step 2: Print the before/after for every declared job — this is the mandatory gate**
 
+The "before" column must be read off the **installed plists**, not inferred from the translation function. Inferring it is how the first draft of this plan reported six affected jobs when the real number was one.
+
 ```bash
-uv run python -c "
-from pathlib import Path
+uv run python - <<'PY'
+import plistlib, pathlib
 from lazy_harness.core.config import load_config
 from lazy_harness.core.paths import config_file
 from lazy_harness.scheduler.schedule import parse_cron, render_launchd, ScheduleTranslationError
+
+agents = pathlib.Path.home() / "Library/LaunchAgents"
 for j in load_config(config_file()).scheduler.jobs:
+    p = agents / f"com.lazy-harness.{j.name}.plist"
+    installed = "not installed"
+    if p.is_file():
+        d = plistlib.loads(p.read_bytes())
+        installed = (
+            f"every {d['StartInterval'] // 60} min"
+            if "StartInterval" in d
+            else str(d.get("StartCalendarInterval"))
+        )
     try:
-        out = render_launchd(parse_cron(j.schedule))
+        now = render_launchd(parse_cron(j.schedule))
     except ScheduleTranslationError as e:
-        out = f'REFUSES: {e}'
-    print(f'{j.name:<20} {j.schedule:<16} was=hourly  now={out}')
-"
+        now = f"REFUSES: {e}"
+    flag = "" if str(now) == installed else "   <-- CHANGES"
+    print(f"{j.name:<20} declares={j.schedule:<16} installed={installed:<26} now={now}{flag}")
+PY
 ```
 
-**Stop and read this output.** Every one of these jobs has been running hourly. After the fix they run on their declared cadence, which is less often for most of them. For each, decide whether the declaration is still what you want now that it will be honoured — a `qmd-sync` declaring `0 */6 * * *` has effectively been syncing hourly for months, and six-hourly may be a freshness regression you would rather fix by editing the declaration than by keeping the bug.
+**Stop and read this output.** Only the rows flagged `CHANGES` are affected. For each, decide whether the declaration is still what you want now that it will be honoured: a job that has effectively been running hourly for months may be one whose declaration you would rather edit than whose cadence you would rather drop.
 
 Any job that now `REFUSES` must have its schedule rewritten before this ships, or `lh scheduler install` will fail on it.
 

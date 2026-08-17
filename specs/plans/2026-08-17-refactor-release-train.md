@@ -42,7 +42,7 @@ Wave 1 shipped as `feat:` rather than the predicted `fix:`, because it carries t
 ### Why this order
 
 - **Wave 1 first** because it is active data loss (51 keys per `save_config` call) and because waves 6 and 9 both write config. Nothing else may land before a config write is safe.
-- **Wave 2 second** because six declared jobs are over-executing right now, between 6× and 168×. It is independent of everything, so it costs nothing to ship early.
+- **Wave 2 second** because a declared job is over-executing right now and the defect class reaches 168× on shapes not currently declared. It is independent of everything, so it costs nothing to ship early.
 - **Wave 3 before 4** because `SystemdBackend` needs the runner seam to be testable and the `JobState` vocabulary to report honestly. Building it first would mean writing it twice.
 - **Wave 5 after 3** — they collide. Wave 3 rewires `views/cron.py` and `views/overview.py` to drop `launchctl_loaded`; wave 5 changes every view's signature. Same files, same lines.
 - **Wave 6 after 1** because its selftest check asserts that every capability's config path survives a round trip, which is exactly what wave 1 fixes.
