@@ -10,6 +10,7 @@ from rich.console import Console
 from lazy_harness.core.config import ConfigError, load_config
 from lazy_harness.core.paths import config_file
 from lazy_harness.scheduler.manager import detect_backend, parse_jobs_from_config
+from lazy_harness.scheduler.schedule import ScheduleTranslationError
 
 
 @click.group()
@@ -62,6 +63,12 @@ def scheduler_install() -> None:
         installed = backend.install(jobs)
     except NotImplementedError as e:
         console.print(f"[red]Error: {e}[/red]")
+        raise SystemExit(1)
+    except ScheduleTranslationError as e:
+        # `install` validates the whole set before writing, so nothing was
+        # installed and the user only has to fix the declaration.
+        console.print(f"[red]Error: {e}[/red]")
+        console.print("[dim]Nothing was installed. Fix the schedule and run again.[/dim]")
         raise SystemExit(1)
     for label in installed:
         console.print(f"  [green]✓[/green] {label}")

@@ -66,3 +66,35 @@ command = "lh knowledge sync"
     result = runner.invoke(cli, ["scheduler", "install"])
     assert result.exit_code != 0
     assert "Error" in result.output
+
+
+def test_scheduler_install_reports_an_untranslatable_schedule_without_a_traceback(
+    tmp_path, monkeypatch
+) -> None:
+    """A schedule launchd cannot express must reach the user as an error line.
+
+    The CLI caught only NotImplementedError, so a ScheduleTranslationError
+    escaped as a stack trace.
+    """
+    from click.testing import CliRunner
+
+    from lazy_harness.cli.scheduler_cmd import scheduler
+    from lazy_harness.core import paths
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        '[harness]\nversion = "1"\n\n'
+        "[scheduler]\n"
+        'backend = "launchd"\n\n'
+        "[scheduler.jobs.weekdays]\n"
+        'schedule = "0 9 * * 1-5"\n'
+        'command = "echo hi"\n'
+    )
+    monkeypatch.setattr(paths, "config_file", lambda: cfg)
+    monkeypatch.setattr("lazy_harness.cli.scheduler_cmd.config_file", lambda: cfg)
+
+    result = CliRunner().invoke(scheduler, ["install"])
+
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert "weekdays" in result.output

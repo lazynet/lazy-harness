@@ -261,10 +261,34 @@ Each `[scheduler.jobs.<name>]` sub-table:
 
 | Field      | Type   | Default | Required | Description                                              |
 | ---------- | ------ | ------- | -------- | -------------------------------------------------------- |
-| `schedule` | string | —       | yes      | Cron-style schedule expression. Missing → `ConfigError`. |
+| `schedule` | string | —       | yes      | Cron expression, restricted to the subset below. Missing → `ConfigError`. |
 | `command`  | string | —       | yes      | Shell command to run on each fire. Missing → `ConfigError`. |
 
 The job's `name` is the TOML key — there is no `name` field inside the table.
+
+### Supported schedule expressions
+
+`schedule` is a five-field cron expression, but each backend only accepts what it can express exactly. An expression the backend cannot translate faithfully **aborts `lh scheduler install` and installs nothing** — no job is written, so the whole set stays as it was. The alternative, approximating, is what previously caused every non-daily job to be installed as hourly.
+
+launchd accepts:
+
+| Form | Example | Installed as |
+| ---- | ------- | ------------ |
+| Every hour on a minute | `0 * * * *` | hourly at `:00` |
+| Daily at a time | `0 10 * * *` | daily 10:00 |
+| Minute step dividing 60 | `*/15 * * * *` | `:00`, `:15`, `:30`, `:45` |
+| Hour step dividing 24 | `0 */6 * * *` | 00:00, 06:00, 12:00, 18:00 |
+| Weekly | `30 3 * * 0` | Sundays 03:30 |
+| Monthly | `15 2 1 * *` | the 1st, 02:15 |
+
+launchd rejects, with the reason named in the error:
+
+- Ranges and lists in any field (`1-5`, `1,15`) — declare separate jobs.
+- A month restriction (`0 9 1 6 *`).
+- A step that does not divide its field evenly (`*/45`), because cron's uneven gaps have no uniform launchd equivalent.
+- `day_of_month` and `day_of_week` both restricted (`0 9 1 * 1`), because cron ORs them and launchd ANDs them.
+- Steps in more than one field at once.
+- Values outside their cron range (`0 25 * * *`).
 
 ## `[hooks.<event>]`
 
