@@ -27,9 +27,10 @@ Ranked by impact, then by dependency. Waves 1 and 2 are live bugs; 3 and 4 deliv
 
 | # | Branch | PR type | Release | Blocks | Blocked by |
 |---|---|---|---|---|---|
-| 1 | `fix/config-round-trip` | `feat:` | 0.40.0 ✅ PR #167 | 6, 9 | — |
-| 2 | `fix/scheduler-schedule-translation` | `fix:` | 0.40.1 | 4 | — |
-| 3 | `fix/scheduler-job-state` | `fix:` | 0.40.2 | 4, 5 | 2 |
+| 1 | `fix/config-round-trip` | `feat:` | **0.40.0 — shipped** (#167) | 6, 9 | — |
+| 2 | `fix/scheduler-schedule-translation` | `fix:` | **0.40.1 — shipped** (#168) | 4 | — |
+| — | `fix/toml-merge-write-defects` | `fix:` | 0.40.2 | — | — |
+| 3 | `fix/scheduler-job-state` | `fix:` | 0.40.3 | 4, 5 | 2 |
 | 4 | `feat/systemd-cron-backends` | `feat:` | 0.41.0 | — | 3 |
 | 5 | `refactor/view-renderables` | `refactor:` | none — rides wave 7 | 7 | 3 |
 | 6 | `refactor/capability-registry` | `refactor:` | none — rides wave 7 | 8 | 1 |
@@ -53,6 +54,22 @@ Wave 1 shipped as `feat:` rather than the predicted `fix:`, because it carries t
 Wave 6 touches `plugins/`, `features.py`, `hooks/loader.py`, `deploy/defaults.py`. Waves 2–4 touch `scheduler/` and `monitoring/views/`. Disjoint — **wave 6 may run in its own worktree concurrently with 2, 3 and 4**, once wave 1 has merged.
 
 Everything else is sequential. Two worktrees is the practical ceiling here; more than that and the merge order stops being obvious.
+
+## An independent review runs before every merge
+
+Added after waves 1 and 2, which measured it rather than assumed it.
+
+`/code-review <pr> high` on each branch found **seventeen defects across the two waves**, none of which the author had seen, and both waves' PR descriptions contained a claim the review proved false. Four were regressions introduced by the very change meant to fix the area:
+
+- Wave 1 claimed "deletion inside a modelled section still takes effect". It did not, for six keys, and the previous writer could delete them — so the fix was a regression on that axis.
+- Wave 2 turned `0 * * * *` from a working schedule into a hard error, with a code comment justifying it that was factually wrong about launchd.
+- Wave 2's `install()` left a half-installed set and surfaced a bare traceback.
+- Wave 2 left the very diagnostic it cites as having missed the original defect — `_format_schedule` — reporting the *fixed* schedules incorrectly.
+
+Two lessons that generalise past this train:
+
+1. **Self-review does not find this class of defect.** The author's model of what the code does is the same model that wrote the bug.
+2. **Measure the blast radius by reading installed state, never by reasoning from the function.** Wave 2 was twice reported as affecting six jobs; reading `~/Library/LaunchAgents/` showed one. Inference from the code reproduces the code's assumptions.
 
 ## Deploy procedure — run this after every releasing wave
 
