@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
-from rich.console import Console
+from rich.console import RenderableType
 from rich.table import Table
 
 from lazy_harness.monitoring.views._helpers import (
@@ -15,7 +15,7 @@ from lazy_harness.monitoring.views._helpers import (
 )
 
 
-def render(ctx: StatusContext, console: Console) -> None:
+def render(ctx: StatusContext) -> RenderableType:
     table = Table(show_header=True, pad_edge=False)
     table.add_column("Profile", style="bold")
     table.add_column("Project")
@@ -58,6 +58,5 @@ def render(ctx: StatusContext, console: Console) -> None:
             any_rows = True
 
     if not any_rows:
-        console.print("[dim]No projects yet.[/dim]")
-        return
-    console.print(table)
+        return "[dim]No projects yet.[/dim]"
+    return table

@@ -15,7 +15,7 @@ from lazy_harness.monitoring.views._helpers import StatusContext
 def _render(db: MetricsDB, cfg: Config) -> str:
     ctx = StatusContext.build(cfg)
     console = Console(width=200, record=True, color_system=None)
-    overview.render(ctx, db, console)
+    console.print(overview.render(ctx, db))
     return console.export_text()
 
 

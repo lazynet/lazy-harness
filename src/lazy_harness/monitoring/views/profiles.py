@@ -7,7 +7,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from rich.console import Console
+from rich.console import RenderableType
 from rich.table import Table
 
 from lazy_harness.core.paths import contract_path
@@ -67,7 +67,7 @@ def _profile_counts(config_dir: Path) -> tuple[int, int]:
     return hook_count, mcp_count
 
 
-def render(ctx: StatusContext, console: Console) -> None:
+def render(ctx: StatusContext) -> RenderableType:
     table = Table(show_header=True, pad_edge=False)
     table.add_column("Profile", style="bold")
     table.add_column("Config Dir")
@@ -96,4 +96,4 @@ def render(ctx: StatusContext, console: Console) -> None:
             str(mcps),
         )
 
-    console.print(table)
+    return table

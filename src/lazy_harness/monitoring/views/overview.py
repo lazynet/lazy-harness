@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from rich.console import Console
+from rich.console import RenderableType
 from rich.panel import Panel
 from rich.text import Text
 
@@ -29,7 +29,7 @@ def _hook_indicator(state: str, name: str) -> Text:
     return Text(f"✗ {name}", style="red")
 
 
-def render(ctx: StatusContext, db: MetricsDB | None, console: Console) -> None:
+def render(ctx: StatusContext, db: MetricsDB | None) -> RenderableType:
     today_str = datetime.now().strftime("%Y-%m-%d")
     month_str = datetime.now().strftime("%Y-%m")
 
@@ -179,7 +179,7 @@ def render(ctx: StatusContext, db: MetricsDB | None, console: Console) -> None:
         ("Queue", queue_val),
     ]
     panel = _build_panel(items)
-    console.print(panel)
+    return panel
 
 
 def _fmt(n: int) -> str:

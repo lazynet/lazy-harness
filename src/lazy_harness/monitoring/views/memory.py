@@ -6,7 +6,7 @@ import json
 import re
 from datetime import datetime
 
-from rich.console import Console
+from rich.console import Group, RenderableType
 from rich.table import Table
 
 from lazy_harness.monitoring.views._helpers import (
@@ -57,7 +57,7 @@ def _learnings_for_project(learnings_dir, encoded_dir: str) -> int:
     return count
 
 
-def render(ctx: StatusContext, console: Console) -> None:
+def render(ctx: StatusContext) -> RenderableType:
     table = Table(show_header=True, pad_edge=False)
     table.add_column("Project")
     table.add_column("Decisions", justify="right")
@@ -92,16 +92,16 @@ def render(ctx: StatusContext, console: Console) -> None:
             any_rows = True
 
     if not any_rows:
-        console.print("[dim]No project memory yet.[/dim]")
-        return
-    console.print(table)
+        return "[dim]No project memory yet.[/dim]"
+    return Group(
+        table,
+        *_recent(ctx, "decisions.jsonl", "Recent decisions"),
+        *_recent(ctx, "failures.jsonl", "Recent failures"),
+    )
 
-    _print_recent(ctx, console, "decisions.jsonl", "Recent decisions")
-    _print_recent(ctx, console, "failures.jsonl", "Recent failures")
 
-
-def _print_recent(ctx: StatusContext, console: Console, filename: str, title: str) -> None:
-    console.print(f"\n[bold]{title}:[/bold]")
+def _recent(ctx: StatusContext, filename: str, title: str) -> list[RenderableType]:
+    out: list[RenderableType] = [f"\n[bold]{title}:[/bold]"]
     entries: list[tuple[str, str]] = []
     for p in ctx.profiles:
         projects_dir = p.config_dir / "projects"
@@ -123,7 +123,8 @@ def _print_recent(ctx: StatusContext, console: Console, filename: str, title: st
                     entries.append((ts, summary))
     entries.sort(key=lambda x: x[0], reverse=True)
     if not entries:
-        console.print("  [dim]none[/dim]")
-        return
+        out.append("  [dim]none[/dim]")
+        return out
     for ts, summary in entries[:5]:
-        console.print(f"  • {summary} ([dim]{time_ago(ts)}[/dim])")
+        out.append(f"  • {summary} ([dim]{time_ago(ts)}[/dim])")
+    return out
