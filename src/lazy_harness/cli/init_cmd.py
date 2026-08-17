@@ -7,6 +7,7 @@ from pathlib import Path
 
 import click
 from rich.console import Console
+from rich.markup import escape
 
 from lazy_harness.core.config import ConfigError, load_config
 from lazy_harness.core.paths import config_file
@@ -35,7 +36,7 @@ def init(force: bool) -> None:
         try:
             check_existing_setup(home=home, lh_config=cfg)
         except ExistingSetupError as e:
-            console.print(f"[red]Error:[/red] {e}")
+            console.print(f"[red]Error:[/red] {escape(str(e))}")
             raise SystemExit(1) from e
 
     profile_name = click.prompt("Profile name", default="personal")
@@ -84,7 +85,7 @@ def _maybe_deploy_envrc(console: Console, cfg_path: Path) -> None:
     try:
         results = deploy_envrc_for_all_profiles(cfg)
     except Exception as e:  # noqa: BLE001 — never crash init
-        console.print(f"[yellow]·[/yellow] envrc deploy skipped: {e}")
+        console.print(f"[yellow]·[/yellow] envrc deploy skipped: {escape(str(e))}")
         return
     for r in results:
         console.print(f"[green]✓[/green] .envrc {r.action}: {r.path}")

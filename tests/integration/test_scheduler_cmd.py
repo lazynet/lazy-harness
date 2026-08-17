@@ -164,3 +164,31 @@ command = "true"
     assert result.exit_code == 1
     assert "Traceback" not in result.output
     assert "crontab" in result.output
+
+
+def test_config_error_keeps_the_section_name_it_exists_to_report(home_dir: Path) -> None:
+    """`console.print(f"[red]Error: {e}[/red]")` hands the message to rich as
+    markup, so a `[section]` inside it is parsed as a tag and deleted.
+
+    `Missing [harness].version` reached the terminal as `Missing .version` —
+    the message loses precisely the identifier it was written to name.
+    """
+    config_path = home_dir / ".config" / "lazy-harness" / "config.toml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text('[scheduler]\nbackend = "auto"\n')
+
+    result = CliRunner().invoke(cli, ["scheduler", "status"])
+
+    assert result.exit_code != 0
+    assert "[harness].version" in result.output, result.output
+
+
+def test_the_no_jobs_hint_names_the_table_to_add(home_dir: Path) -> None:
+    """Same failure in a literal string: the hint told the user to configure
+    jobs `under` and then stopped, because rich ate the table name."""
+    _setup_config(home_dir)
+
+    result = CliRunner().invoke(cli, ["scheduler", "status"])
+
+    assert result.exit_code == 0
+    assert "[scheduler.jobs]" in result.output, result.output

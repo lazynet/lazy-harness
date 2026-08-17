@@ -7,6 +7,7 @@ from pathlib import Path
 
 import click
 from rich.console import Console
+from rich.markup import escape
 
 from lazy_harness.core.config import ConfigError, load_config
 from lazy_harness.core.identity import resolve_identity
@@ -33,7 +34,7 @@ def metrics_ingest(dry_run: bool, verbose: bool) -> None:
     try:
         cfg = load_config(config_file())
     except ConfigError as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[red]Error:[/red] {escape(str(e))}")
         raise SystemExit(1)
 
     if not cfg.monitoring.enabled:
@@ -79,7 +80,7 @@ def metrics_ingest(dry_run: bool, verbose: bool) -> None:
         )
     if report.errors and verbose:
         for err in report.errors:
-            console.print(f"[red]  {err}[/red]")
+            console.print(f"[red]  {escape(str(err))}[/red]")
 
 
 def _print_active_sinks(console: Console, cfg, identity) -> None:
@@ -101,7 +102,7 @@ def metrics_drain() -> None:
     try:
         cfg = load_config(config_file())
     except ConfigError as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[red]Error:[/red] {escape(str(e))}")
         raise SystemExit(1)
 
     identity = resolve_identity(explicit=cfg.metrics.user_id or None)
@@ -131,7 +132,7 @@ def metrics_status() -> None:
     try:
         cfg = load_config(config_file())
     except ConfigError as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[red]Error:[/red] {escape(str(e))}")
         raise SystemExit(1)
 
     db_path = expand_path(cfg.monitoring.db) if cfg.monitoring.db else data_dir() / "metrics.db"

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import click
 from rich.console import Console
+from rich.markup import escape
 
 from lazy_harness.core.paths import config_dir as lh_config_dir
 from lazy_harness.core.paths import config_file
@@ -112,7 +113,7 @@ def _maybe_deploy_envrc(console: Console) -> None:
     try:
         results = deploy_envrc_for_all_profiles(cfg)
     except Exception as e:  # noqa: BLE001 — never crash post-migrate
-        console.print(f"[yellow]·[/yellow] envrc deploy skipped: {e}")
+        console.print(f"[yellow]·[/yellow] envrc deploy skipped: {escape(str(e))}")
         return
     for r in results:
         console.print(f"  [green]✓[/green] .envrc {r.action}: {r.path}")

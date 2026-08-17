@@ -6,6 +6,7 @@ import platform
 
 import click
 from rich.console import Console
+from rich.markup import escape
 
 from lazy_harness.core.config import ConfigError, load_config
 from lazy_harness.core.paths import config_file
@@ -26,7 +27,7 @@ def scheduler_status() -> None:
     try:
         cfg = load_config(cf)
     except ConfigError as e:
-        console.print(f"[red]Error: {e}[/red]")
+        console.print(f"[red]Error: {escape(str(e))}[/red]")
         raise SystemExit(1)
     backend = detect_backend(cfg.scheduler.backend)
     backend_name = backend.__class__.__name__.replace("Backend", "").lower()
@@ -41,7 +42,7 @@ def scheduler_status() -> None:
             console.print(f"  [{style}]{st}[/{style}] {label}")
     else:
         console.print("\nNo managed jobs found.")
-        console.print("Configure jobs in config.toml under [scheduler.jobs]")
+        console.print(escape("Configure jobs in config.toml under [scheduler.jobs]"))
 
 
 @scheduler.command("install")
@@ -52,29 +53,29 @@ def scheduler_install() -> None:
     try:
         cfg = load_config(cf)
     except ConfigError as e:
-        console.print(f"[red]Error: {e}[/red]")
+        console.print(f"[red]Error: {escape(str(e))}[/red]")
         raise SystemExit(1)
     backend = detect_backend(cfg.scheduler.backend)
     jobs = parse_jobs_from_config(cfg)
     if not jobs:
-        console.print("No jobs configured. Add jobs in config.toml under [scheduler.jobs]")
+        console.print(escape("No jobs configured. Add jobs in config.toml under [scheduler.jobs]"))
         return
     try:
         installed = backend.install(jobs)
     except NotImplementedError as e:
-        console.print(f"[red]Error: {e}[/red]")
+        console.print(f"[red]Error: {escape(str(e))}[/red]")
         raise SystemExit(1)
     except (RuntimeError, ValueError) as e:
         # A backend refusing to write — no crontab binary, a systemctl that
         # rejected the unit, a command systemd cannot exec. All are the user's
         # to fix and none should reach them as a stack trace.
-        console.print(f"[red]Error: {e}[/red]")
+        console.print(f"[red]Error: {escape(str(e))}[/red]")
         console.print("[dim]Nothing was installed.[/dim]")
         raise SystemExit(1)
     except ScheduleTranslationError as e:
         # `install` validates the whole set before writing, so nothing was
         # installed and the user only has to fix the declaration.
-        console.print(f"[red]Error: {e}[/red]")
+        console.print(f"[red]Error: {escape(str(e))}[/red]")
         console.print("[dim]Nothing was installed. Fix the schedule and run again.[/dim]")
         raise SystemExit(1)
     for label in installed:
@@ -89,7 +90,7 @@ def scheduler_uninstall() -> None:
     try:
         cfg = load_config(cf)
     except ConfigError as e:
-        console.print(f"[red]Error: {e}[/red]")
+        console.print(f"[red]Error: {escape(str(e))}[/red]")
         raise SystemExit(1)
     backend = detect_backend(cfg.scheduler.backend)
     jobs = parse_jobs_from_config(cfg)

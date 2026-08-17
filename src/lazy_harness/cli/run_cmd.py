@@ -44,7 +44,7 @@ def run(
     try:
         cfg = load_config(cf)
     except ConfigError as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[red]Error:[/red] {escape(str(e))}")
         raise SystemExit(1)
 
     if list_profiles_flag:
@@ -72,7 +72,7 @@ def run(
     try:
         adapter = get_agent(cfg.agent.type)
     except AgentNotFoundError as e:
-        console.print(f"[red]{e}[/red]")
+        console.print(f"[red]{escape(str(e))}[/red]")
         raise SystemExit(1)
 
     binary = adapter.resolve_binary()
