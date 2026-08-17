@@ -19,6 +19,7 @@ from lazy_harness.hooks.builtins.context_inject import (
     lazynorth_context,
     proposals_context,
     proposals_summary_line,
+    repo_map_context,
 )
 
 
@@ -1067,3 +1068,295 @@ def test_truncate_body_names_code_structure_when_it_is_finally_dropped() -> None
     )
 
     assert "Code structure" in trimmed, "dropping graphify must be named in the banner"
+
+
+def test_repo_map_returns_doc_when_cwd_inside_scope(tmp_path: Path) -> None:
+    scope = tmp_path / "repos" / "lazy"
+    project = scope / "lazy-ansible"
+    project.mkdir(parents=True)
+    doc = tmp_path / "docs" / "repos.md"
+    doc.parent.mkdir(parents=True)
+    doc.write_text("# Arquitectura de repos\n\nlazy-ansible -> github\n")
+
+    assert "Arquitectura de repos" in repo_map_context(project, doc, scope)
+
+
+def test_repo_map_skips_cwd_outside_scope(tmp_path: Path) -> None:
+    """A session in an unrelated tree must not pay for the map."""
+    scope = tmp_path / "repos" / "lazy"
+    scope.mkdir(parents=True)
+    outside = tmp_path / "repos" / "flex" / "mngt"
+    outside.mkdir(parents=True)
+    doc = tmp_path / "docs" / "repos.md"
+    doc.parent.mkdir(parents=True)
+    doc.write_text("# Arquitectura de repos\n")
+
+    assert repo_map_context(outside, doc, scope) == ""
+
+
+def test_repo_map_skips_sibling_path_with_shared_prefix(tmp_path: Path) -> None:
+    """`~/repos/lazy-other` is not inside `~/repos/lazy`, despite the prefix."""
+    scope = tmp_path / "repos" / "lazy"
+    scope.mkdir(parents=True)
+    sibling = tmp_path / "repos" / "lazy-other"
+    sibling.mkdir(parents=True)
+    doc = tmp_path / "docs" / "repos.md"
+    doc.parent.mkdir(parents=True)
+    doc.write_text("# Arquitectura de repos\n")
+
+    assert repo_map_context(sibling, doc, scope) == ""
+
+
+def test_repo_map_returns_empty_when_scope_unset(tmp_path: Path) -> None:
+    doc = tmp_path / "repos.md"
+    doc.write_text("# Arquitectura de repos\n")
+
+    assert repo_map_context(tmp_path, doc, None) == ""
+
+
+def test_repo_map_returns_empty_when_doc_missing(tmp_path: Path) -> None:
+    scope = tmp_path / "lazy"
+    scope.mkdir()
+
+    assert repo_map_context(scope, tmp_path / "nope.md", scope) == ""
+
+
+def test_repo_map_returns_empty_when_doc_is_a_directory(tmp_path: Path) -> None:
+    """Reading a directory raises OSError; the hook must degrade, not crash."""
+    scope = tmp_path / "lazy"
+    scope.mkdir()
+    doc = tmp_path / "adir"
+    doc.mkdir()
+
+    assert repo_map_context(scope, doc, scope) == ""
+
+
+def test_repo_map_follows_symlinked_scope(tmp_path: Path) -> None:
+    """cwd reached through a symlink still resolves inside the scope."""
+    scope = tmp_path / "repos" / "lazy"
+    project = scope / "lazy-ansible"
+    project.mkdir(parents=True)
+    link = tmp_path / "shortcut"
+    link.symlink_to(project)
+    doc = tmp_path / "repos.md"
+    doc.write_text("# Arquitectura de repos\n")
+
+    assert "Arquitectura de repos" in repo_map_context(link, doc, scope)
+
+
+def test_repo_map_truncates_a_doc_over_the_char_budget(tmp_path: Path) -> None:
+    """The map is the largest section by far; uncapped it starves every other one."""
+    scope = tmp_path / "lazy"
+    scope.mkdir()
+    doc = tmp_path / "repos.md"
+    doc.write_text("\n".join(f"line {i:03d} " + "x" * 40 for i in range(200)))
+
+    out = repo_map_context(scope, doc, scope, max_chars=300)
+
+    assert len(out) < 500, "a 10KB doc must not reach the body whole"
+    assert "line 000" in out, "truncation keeps the head of the map"
+    assert "line 199" not in out
+
+
+def test_repo_map_truncation_is_announced_in_the_body(tmp_path: Path) -> None:
+    """Silent truncation reads as a complete map; name the lever that widens it."""
+    scope = tmp_path / "lazy"
+    scope.mkdir()
+    doc = tmp_path / "repos.md"
+    doc.write_text("\n".join(f"line {i}" for i in range(500)))
+
+    out = repo_map_context(scope, doc, scope, max_chars=100)
+
+    assert "truncated" in out
+    assert "repo_map_max_chars" in out, "the banner names the config key that widens it"
+
+
+def test_repo_map_truncates_on_a_line_boundary(tmp_path: Path) -> None:
+    """A map cut mid-line invents a repo name that does not exist."""
+    scope = tmp_path / "lazy"
+    scope.mkdir()
+    doc = tmp_path / "repos.md"
+    doc.write_text("\n".join(f"repo-{i:02d} -> git@host:org/repo-{i:02d}.git" for i in range(40)))
+
+    out = repo_map_context(scope, doc, scope, max_chars=100)
+
+    body = [ln for ln in out.splitlines() if ln.startswith("repo-")]
+    assert body, "some map lines survive"
+    for line in body:
+        assert line.endswith(".git"), f"line cut mid-way: {line!r}"
+
+
+def test_repo_map_leaves_a_doc_under_the_budget_untouched(tmp_path: Path) -> None:
+    scope = tmp_path / "lazy"
+    scope.mkdir()
+    doc = tmp_path / "repos.md"
+    doc.write_text("# Arquitectura de repos\n\nlazy-ansible -> github\n")
+
+    out = repo_map_context(scope, doc, scope, max_chars=1200)
+
+    assert out == "# Arquitectura de repos\n\nlazy-ansible -> github"
+    assert "truncated" not in out
+
+
+def test_repo_map_returns_empty_for_a_non_utf8_doc(tmp_path: Path) -> None:
+    """UnicodeDecodeError is a ValueError, not an OSError: the hook must not crash."""
+    scope = tmp_path / "lazy"
+    scope.mkdir()
+    doc = tmp_path / "repos.md"
+    doc.write_bytes(b"# Arquitectura\n\xff\xfe not utf-8\n")
+
+    assert repo_map_context(scope, doc, scope) == ""
+
+
+def test_truncate_body_drops_repo_map_before_handoff() -> None:
+    """The map is orientation, the handoff is pending work: handoff outlives it."""
+    git = "## Git\nbranch"
+    repo_map = "## Repo map\n" + "r" * 900
+    handoff = "## Handoff from last session\nh"
+
+    trimmed = _truncate_body(
+        60,
+        git,
+        "",
+        "",
+        handoff,
+        "",
+        repo_map_section=repo_map,
+    )
+
+    assert "## Handoff from last session" in trimmed
+    assert "## Repo map" not in trimmed
+    assert "Repo map" in trimmed, "dropping the map must be named in the banner"
+
+
+def _run_hook(cwd: Path, env_extra: dict[str, str]) -> dict:
+    import os
+
+    hook_path = (
+        Path(__file__).parent.parent.parent
+        / "src"
+        / "lazy_harness"
+        / "hooks"
+        / "builtins"
+        / "context_inject.py"
+    )
+    env = {**os.environ, **env_extra}
+    result = subprocess.run(
+        [sys.executable, str(hook_path)],
+        input="{}",
+        capture_output=True,
+        text=True,
+        cwd=str(cwd),
+        timeout=15,
+        env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+def _repo_map_fixture(tmp_path: Path) -> tuple[Path, dict[str, str]]:
+    """Build an agent dir with docs/repos.md and a config declaring the scope."""
+    agent_dir = tmp_path / "agent"
+    (agent_dir / "docs").mkdir(parents=True)
+    (agent_dir / "docs" / "repos.md").write_text("# Arquitectura de repos\n\nmapa completo\n")
+
+    lh_dir = tmp_path / "lh"
+    lh_dir.mkdir()
+    scope = tmp_path / "repos" / "lazy"
+    (lh_dir / "config.toml").write_text(f"""
+[harness]
+version = "1"
+
+[context_inject]
+repo_map_scope = "{scope}"
+""")
+    return scope, {"CLAUDE_CONFIG_DIR": str(agent_dir), "LH_CONFIG_DIR": str(lh_dir)}
+
+
+def test_hook_injects_repo_map_for_session_inside_scope(tmp_path: Path) -> None:
+    scope, env = _repo_map_fixture(tmp_path)
+    project = scope / "lazy-ansible"
+    project.mkdir(parents=True)
+
+    body = _run_hook(project, env)["hookSpecificOutput"]["additionalContext"]
+
+    assert "## Repo map" in body
+    assert "mapa completo" in body
+
+
+def test_hook_omits_repo_map_for_session_outside_scope(tmp_path: Path) -> None:
+    scope, env = _repo_map_fixture(tmp_path)
+    scope.mkdir(parents=True)
+    outside = tmp_path / "repos" / "flex"
+    outside.mkdir(parents=True)
+
+    body = _run_hook(outside, env)["hookSpecificOutput"]["additionalContext"]
+
+    assert "## Repo map" not in body
+
+
+def _big_repo_map_fixture(tmp_path: Path, extra_config: str = "") -> tuple[Path, dict[str, str]]:
+    """Same as `_repo_map_fixture` but with a map far larger than any body budget."""
+    agent_dir = tmp_path / "agent"
+    (agent_dir / "docs").mkdir(parents=True)
+    (agent_dir / "docs" / "repos.md").write_text(
+        "\n".join(f"repo-{i:03d} -> git@host:org/repo-{i:03d}.git" for i in range(300))
+    )
+
+    lh_dir = tmp_path / "lh"
+    lh_dir.mkdir()
+    scope = tmp_path / "repos" / "lazy"
+    (lh_dir / "config.toml").write_text(f"""
+[harness]
+version = "1"
+
+[context_inject]
+max_body_chars = 12000
+repo_map_scope = "{scope}"
+{extra_config}
+""")
+    return scope, {"CLAUDE_CONFIG_DIR": str(agent_dir), "LH_CONFIG_DIR": str(lh_dir)}
+
+
+def test_hook_caps_repo_map_at_the_configured_budget(tmp_path: Path) -> None:
+    """The cap must be wired from config through main(), not just live in the helper."""
+    scope, env = _big_repo_map_fixture(tmp_path, "repo_map_max_chars = 200")
+    project = scope / "lazy-ansible"
+    project.mkdir(parents=True)
+
+    body = _run_hook(project, env)["hookSpecificOutput"]["additionalContext"]
+
+    assert "## Repo map" in body
+    assert "repo-000" in body
+    assert "repo-299" not in body
+    assert len(body) < 1000, "a 12KB map must not fill a 12000-char body"
+
+
+def test_hook_caps_repo_map_without_an_explicit_budget(tmp_path: Path) -> None:
+    """Smoke test for default resolution: an unset cap must still cap."""
+    scope, env = _big_repo_map_fixture(tmp_path)
+    project = scope / "lazy-ansible"
+    project.mkdir(parents=True)
+
+    body = _run_hook(project, env)["hookSpecificOutput"]["additionalContext"]
+
+    assert "## Repo map" in body, "the default cap keeps the map inside the budget"
+    assert "repo-299" not in body
+
+
+def test_hook_omits_repo_map_when_scope_unconfigured(tmp_path: Path) -> None:
+    """Default config must not inject the map anywhere."""
+    agent_dir = tmp_path / "agent"
+    (agent_dir / "docs").mkdir(parents=True)
+    (agent_dir / "docs" / "repos.md").write_text("# Arquitectura de repos\n")
+    lh_dir = tmp_path / "lh"
+    lh_dir.mkdir()
+    (lh_dir / "config.toml").write_text('[harness]\nversion = "1"\n')
+    work = tmp_path / "work"
+    work.mkdir()
+
+    body = _run_hook(work, {"CLAUDE_CONFIG_DIR": str(agent_dir), "LH_CONFIG_DIR": str(lh_dir)})[
+        "hookSpecificOutput"
+    ]["additionalContext"]
+
+    assert "## Repo map" not in body

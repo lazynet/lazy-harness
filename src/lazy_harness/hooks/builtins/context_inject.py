@@ -462,9 +462,10 @@ def _truncate_body(
     proposals_section: str = "",
     proposals_summary: str = "",
     graphify_section_text: str = "",
+    repo_map_section: str = "",
 ) -> str:
     """Drop sections in priority order until body fits: episodic → suggest →
-    proposals → north → code structure → handoff. Proposals (compound-loop
+    proposals → north → code structure → repo map → handoff. Proposals (compound-loop
     suggestions to merge into CLAUDE.md) sit between handoff and vault notes in
     document order, and are dropped after vault notes since they describe past
     work rather than pending action. The code-structure summary outranks all of
@@ -482,9 +483,11 @@ def _truncate_body(
         suggest: bool,
         episodic: bool,
         graphify: bool,
+        repo_map: bool,
     ) -> str:
         return _join_sections(
             git_section,
+            repo_map_section if repo_map else "",
             north_section if north else "",
             session_section,
             handoff_section if handoff else "",
@@ -501,6 +504,7 @@ def _truncate_body(
         "suggest": True,
         "episodic": True,
         "graphify": True,
+        "repo_map": True,
     }
     body = assemble(**keep)
     if len(body) <= max_chars:
@@ -515,6 +519,7 @@ def _truncate_body(
         ("proposals", "Proposals to review", proposals_section),
         ("north", "LazyNorth", north_section),
         ("graphify", "Code structure", graphify_section_text),
+        ("repo_map", "Repo map", repo_map_section),
         ("handoff", "Handoff from last session", handoff_section),
     ]
     for flag, label, text in order:
@@ -616,6 +621,46 @@ def graphify_section(graphify_dir: Path, repo_root: Path) -> str:
         labels = ", ".join(f"#{cid}({n})" for cid, n in top)
         lines.append(f"- Largest communities: {labels}")
     return "\n".join(lines)
+
+
+def repo_map_context(cwd: Path, doc: Path, scope: Path | None, max_chars: int = 1200) -> str:
+    """Return the repo-map doc when `cwd` sits inside `scope`, else "".
+
+    Opt-in by design: `scope=None` disables the section, so sessions outside the
+    declared tree never pay for it. Both paths are resolved before comparison, so
+    a cwd reached through a symlink still matches and a sibling that merely
+    shares the scope's name prefix does not.
+
+    The doc is capped at `max_chars` — measured in characters because that is the
+    unit `max_body_chars` spends, and a real repo map runs several times the whole
+    body budget. Uncapped it survives to second-to-last in the drop order and
+    starves every other section before dropping itself. The cut lands on a line
+    boundary so a truncated map never invents a half-written repo name, and the
+    remainder is announced rather than silently dropped.
+
+    Fail-soft on a missing, unreadable or non-UTF-8 doc — returns "".
+    """
+    if scope is None:
+        return ""
+    try:
+        if not cwd.resolve().is_relative_to(scope.resolve()):
+            return ""
+        text = doc.read_text().strip()
+    except (OSError, UnicodeDecodeError):
+        return ""
+
+    if len(text) <= max_chars:
+        return text
+
+    kept: list[str] = []
+    used = 0
+    for line in text.splitlines():
+        if used + len(line) > max_chars:
+            break
+        kept.append(line)
+        used += len(line) + 1
+    note = f"[repo map truncated at {max_chars} chars — raise repo_map_max_chars for more]"
+    return "\n\n".join(filter(None, ["\n".join(kept), note]))
 
 
 def qmd_suggest_context(query_text: str, top_k: int = 3, timeout: int = 5) -> str:
@@ -745,6 +790,15 @@ def main() -> None:
     if cfg is None or cfg.context_inject.graphify_surface_enabled:
         graphify_ctx = graphify_section(cwd / "graphify-out", cwd)
 
+    repo_map_ctx = ""
+    if cfg is not None and cfg.context_inject.repo_map_scope:
+        repo_map_ctx = repo_map_context(
+            cwd,
+            agent_dir / cfg.context_inject.repo_map_doc,
+            _expand(cfg.context_inject.repo_map_scope),
+            cfg.context_inject.repo_map_max_chars,
+        )
+
     # Sections wrapped with markdown headings
     git_section = f"## Git\n{git_ctx}" if git_ctx else ""
     session_section = f"## Last session\n{last_session_ctx}" if last_session_ctx else ""
@@ -753,6 +807,7 @@ def main() -> None:
     episodic_section = f"## Recent history\n{episodic_ctx}" if episodic_ctx else ""
     north_section = f"## LazyNorth\n{north_ctx}" if north_ctx else ""
     suggest_section = f"## Relevant vault notes\n{suggest_ctx}" if suggest_ctx else ""
+    repo_map_section = f"## Repo map\n{repo_map_ctx}" if repo_map_ctx else ""
 
     max_chars = cfg.context_inject.max_body_chars if cfg is not None else 3000
     body = _truncate_body(
@@ -766,6 +821,7 @@ def main() -> None:
         proposals_section=proposals_section,
         proposals_summary=proposals_summary,
         graphify_section_text=graphify_ctx,
+        repo_map_section=repo_map_section,
     )
     if not body:
         body = "New project, no prior context."

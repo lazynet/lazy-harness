@@ -98,6 +98,7 @@ enabled = true
 max_body_chars = 3000
 last_session_enabled = true
 proposals_summary = true
+repo_map_scope = "~/repos/work"
 ```
 
 ## `[harness]`
@@ -377,6 +378,9 @@ The `ollama` and `mlx` aliases preset `base_url` to `http://localhost:11434` and
 | `max_body_chars`       | int  | `3000`  | no       | Cap on injected body length.                                    |
 | `last_session_enabled` | bool | `true`  | no       | Whether to include a digest of the previous session.            |
 | `proposals_summary`    | bool | `true`  | no       | Whether a one-line summary of pending claude-md proposals is emitted even when the full proposals section is dropped to fit the char budget. |
+| `repo_map_scope`       | str  | `""`    | no       | Directory tree whose sessions receive the repo-map doc. Empty disables the section; a session whose cwd is outside the tree never pays for it. |
+| `repo_map_doc`         | str  | `"docs/repos.md"` | no | Path to the map, relative to the agent runtime dir. Only read when `repo_map_scope` is set. |
+| `repo_map_max_chars`   | int  | `1200`  | no       | Cap on the injected map, cut on a line boundary with the remainder announced. Keeps a long map from starving every other section of the body budget. |
 
 ## Environment variable overrides
 

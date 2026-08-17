@@ -550,3 +550,50 @@ def test_external_hooks_survive_a_full_save_load_cycle(tmp_path) -> None:
     assert [(e.command, e.matcher) for e in external] == [
         ("/opt/homebrew/bin/moshi claude-hook", "ExitPlanMode")
     ]
+
+
+def test_context_inject_repo_map_scope_defaults_to_disabled() -> None:
+    """Opt-in: no scope means the section never renders."""
+    from lazy_harness.core.config import Config, ContextInjectConfig
+
+    assert ContextInjectConfig().repo_map_scope == ""
+    assert Config().context_inject.repo_map_scope == ""
+
+
+def test_context_inject_repo_map_parses_from_toml(config_dir: Path) -> None:
+    config_file = config_dir / "config.toml"
+    config_file.write_text("""
+[harness]
+version = "1"
+
+[context_inject]
+repo_map_scope = "~/repos/lazy"
+repo_map_doc = "docs/otro.md"
+repo_map_max_chars = 2400
+""")
+    from lazy_harness.core.config import load_config
+
+    cfg = load_config(config_file)
+    assert cfg.context_inject.repo_map_scope == "~/repos/lazy"
+    assert cfg.context_inject.repo_map_doc == "docs/otro.md"
+    assert cfg.context_inject.repo_map_max_chars == 2400
+
+
+def test_context_inject_repo_map_survives_round_trip(config_dir: Path) -> None:
+    """save → load → save → load must not drop the scope on the second rewrite."""
+    from lazy_harness.core.config import Config, load_config, save_config
+
+    config_file = config_dir / "config.toml"
+    cfg = Config()
+    cfg.context_inject.repo_map_scope = "~/repos/lazy"
+    cfg.context_inject.repo_map_max_chars = 2400
+    save_config(cfg, config_file)
+
+    reloaded = load_config(config_file)
+    assert reloaded.context_inject.repo_map_scope == "~/repos/lazy"
+
+    save_config(reloaded, config_file)
+    again = load_config(config_file)
+    assert again.context_inject.repo_map_scope == "~/repos/lazy"
+    assert again.context_inject.repo_map_doc == "docs/repos.md"
+    assert again.context_inject.repo_map_max_chars == 2400
