@@ -964,6 +964,36 @@ Then the degradation paths, which need a machine without the tools rather than t
 6. Without `systemctl`: `detect_backend` picks cron, install works, `lh status cron` reports real state.
 7. Without `crontab`: `job_state` returns `UNKNOWN` and the view renders `?`, not `✗`.
 
+#### Executed 2026-08-17 on `agents` (Debian 13 trixie, systemd 257, Python 3.13.5)
+
+SSH is on port 4422, not 22 — `agents` sits in the `srvs` inventory group, whose
+`ansible_port` is 4422. An earlier probe read the closed port 22 as "still
+provisioning" when the host had been up the whole time.
+
+Both backends were exercised against the real system, not a fixture:
+
+| Check | Result |
+|---|---|
+| `detect_backend` on Debian | `Scheduler backend: systemd (Linux)` |
+| Bare `date` in `ExecStart` | resolved to `/usr/bin/date` |
+| `Environment=PATH` | quoted, `~/.local/bin` first, no venv entry |
+| `* * * * *` → `OnCalendar` | `*-*-* *:*:00`, accepted by systemd 257 |
+| Linger warning on a fresh CT | fired, named the user, gave the fix command |
+| **Timer fires with no session open** | **4 runs in a 200 s window between logout and login** |
+| `crontab -l` with no crontab | treated as empty, not as failure |
+| Cron block install | user's own line preserved above the block |
+| Cron execution | 4 `CMD` runs, one per minute, tag comment inert |
+| Cron uninstall | block removed, user's line untouched |
+
+The headless run is the one that mattered: logout at 19:06:37 UTC, login at
+19:09:57, and the journal holds starts at 19:06:45, 19:07:45, 19:08:45 and
+19:09:45 — inside the gap, with no session to keep the user manager alive.
+
+Two things worth carrying forward. `journalctl -u cron` is empty for a user
+outside `adm`/`systemd-journal`, which reads exactly like "the job never ran";
+`sudo` showed all four runs. And `lh scheduler install` on a fresh CT needs
+`[harness] version` in `config.toml` before any scheduler key is read.
+
 ### Known gap in `lazy-ansible`, found 2026-08-17
 
 `grep -rn "enable-linger\|loginctl" ~/repos/lazy/lazy-ansible` returns **nothing**. Debian ships lingering off, so on a freshly provisioned `agents` CT every declared job installs cleanly and never fires. The `lh selftest` linger check catches it, but catching it on every run is worse than provisioning it correctly once.
@@ -978,6 +1008,11 @@ Add to the agents role, or to whatever grants the agent user its session:
 ```
 
 `creates:` makes it idempotent without a separate check task.
+
+**Confirmed on the box, 2026-08-17:** a freshly provisioned `agents` reported
+`Linger=no`, so this was a real gap and not a theoretical one. Lingering has
+since been enabled on that host by hand; the ansible task above is still
+needed, or the next CT rebuilt from this role starts broken again.
 
 ---
 
