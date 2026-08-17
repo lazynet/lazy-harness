@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.41.1](https://github.com/lazynet/lazy-harness/compare/v0.41.0...v0.41.1) (2026-08-17)
+
+
+### Bug Fixes
+
+* build a scheduled job's PATH from the platform, not the environment ([#176](https://github.com/lazynet/lazy-harness/issues/176)) ([83d1ca5](https://github.com/lazynet/lazy-harness/commit/83d1ca5fe65f98585a7d6d00bb282a51e22833f0))
+* stop rich from deleting section names in CLI messages ([#177](https://github.com/lazynet/lazy-harness/issues/177)) ([69166a7](https://github.com/lazynet/lazy-harness/commit/69166a7ffbd15cce160a85a9a22b7dee9af686ca))
+
 ## [0.41.0](https://github.com/lazynet/lazy-harness/compare/v0.40.2...v0.41.0) (2026-08-17)
 
 
