@@ -616,40 +616,34 @@ def _config_to_dict(cfg: Config) -> dict[str, Any]:
         {"pattern": r.pattern, "profile": r.profile, "session_type": r.session_type}
         for r in cfg.knowledge.classify_rules
     ]
-    # `lazymind_dir` is `str | None`; TOML has no null, so absence is how it
-    # round-trips as None.
-    if cfg.compound_loop.lazymind_dir is not None:
-        result["compound_loop"]["lazymind_dir"] = cfg.compound_loop.lazymind_dir
-    if cfg.scheduler.jobs:
-        result["scheduler"]["jobs"] = {
-            j.name: {"schedule": j.schedule, "command": j.command} for j in cfg.scheduler.jobs
-        }
+    # Everything below is emitted unconditionally. Guarding on truthiness would
+    # make the value unclearable: `_apply` only adds and overwrites, so a key
+    # the serializer omits when empty can never be emptied in the file. Churn
+    # is prevented in `_apply` instead — it skips a key that is both absent
+    # from the document and empty.
 
-    if cfg.monitoring.db:
-        result["monitoring"]["db"] = cfg.monitoring.db
-    if cfg.monitoring.pricing:
-        result["monitoring"]["pricing"] = cfg.monitoring.pricing
+    # `lazymind_dir` is `str | None`; TOML has no null, so "" is how an unset
+    # value is spelled on disk and `_apply` drops it when it was never there.
+    result["compound_loop"]["lazymind_dir"] = cfg.compound_loop.lazymind_dir or ""
+    result["scheduler"]["jobs"] = {
+        j.name: {"schedule": j.schedule, "command": j.command} for j in cfg.scheduler.jobs
+    }
 
-    if cfg.hooks:
-        hooks_dict: dict[str, Any] = {}
-        for event_name, event_cfg in cfg.hooks.items():
-            event_dict: dict[str, Any] = {}
-            # An empty `scripts` parses the same whether written or absent, so
-            # emitting it would add a key to every event declaring only
-            # `external` and churn a version-controlled file for nothing.
-            if event_cfg.scripts:
-                event_dict["scripts"] = event_cfg.scripts
-            if event_cfg.external:
-                # A matcher-less entry has a shorthand — the bare command
-                # string — and `_parse_external_hooks` reads it back identically.
-                # Always emitting the table form rewrote every shorthand on
-                # every save.
-                event_dict["external"] = [
-                    e.command if e.matcher is None else {"command": e.command, "matcher": e.matcher}
-                    for e in event_cfg.external
-                ]
-            hooks_dict[event_name] = event_dict
-        result["hooks"] = hooks_dict
+    result["monitoring"]["db"] = cfg.monitoring.db
+    result["monitoring"]["pricing"] = cfg.monitoring.pricing
+
+    hooks_dict: dict[str, Any] = {}
+    for event_name, event_cfg in cfg.hooks.items():
+        event_dict: dict[str, Any] = {"scripts": event_cfg.scripts}
+        # A matcher-less entry has a shorthand — the bare command string — and
+        # `_parse_external_hooks` reads it back identically. Always emitting
+        # the table form rewrote every shorthand on every save.
+        event_dict["external"] = [
+            e.command if e.matcher is None else {"command": e.command, "matcher": e.matcher}
+            for e in event_cfg.external
+        ]
+        hooks_dict[event_name] = event_dict
+    result["hooks"] = hooks_dict
 
     if (
         cfg.metrics.sinks != ["sqlite_local"]
@@ -701,26 +695,58 @@ def _apply(doc: Any, overlay: dict[str, Any], defaults: dict[str, Any]) -> None:
             _apply(doc[key], value, sub_defaults if isinstance(sub_defaults, dict) else {})
             continue
         if key in doc:
+            # Already in the file: the Config is authoritative, including when
+            # it has emptied the value. This is the only path by which a key
+            # can be cleared, since an overlay cannot express removal.
             if current != value:
                 doc[key] = value
             continue
         if isinstance(defaults, dict) and key in defaults and defaults[key] == value:
             continue
+        if (not isinstance(defaults, dict) or key not in defaults) and value in ({}, [], ""):
+            # A dynamic section — a hook event, a scheduler job table, a
+            # profile sub-key — has no entry in the defaults reference, so
+            # "empty" is the only sensible default and writing it would add
+            # noise the user never asked for.
+            continue
         doc[key] = value
 
 
-def _prune_removed_profiles(doc: Any, cfg: Config) -> None:
-    """Drop profile tables the Config no longer carries.
+# Sections whose contents the serializer emits in full, so a key present in
+# the document but absent from the overlay means the Config dropped it. Every
+# other section is additive and never pruned, which is what carries keys this
+# version does not model.
+_OWNED_SECTIONS: tuple[tuple[str, ...], ...] = (
+    ("profiles",),
+    ("scheduler", "jobs"),
+    ("hooks",),
+)
 
-    `lh profile remove` expresses deletion by absence, and applying an overlay
-    can only add or overwrite. Without this the removed profile comes back.
+
+def _prune_owned_sections(doc: Any, overlay: dict[str, Any]) -> None:
+    """Delete entries the overlay owns and no longer carries.
+
+    Applying an overlay can only add or overwrite, so without this a removed
+    profile, scheduler job or hook event comes back on the next write.
     """
-    profiles = doc.get("profiles")
-    if not isinstance(profiles, dict):
-        return
-    for name in [k for k in profiles if k != "default"]:
-        if name not in cfg.profiles.items:
-            del profiles[name]
+    for path in _OWNED_SECTIONS:
+        node: Any = doc
+        expected: Any = overlay
+        for part in path:
+            node = node.get(part) if isinstance(node, dict) else None
+            expected = expected.get(part) if isinstance(expected, dict) else None
+        if not isinstance(node, dict) or not isinstance(expected, dict):
+            continue
+        for key, value in list(node.items()):
+            # `[profiles].default` is a scalar setting, not an entry.
+            if path == ("profiles",) and key == "default":
+                continue
+            # `_parse_profiles` only admits table values, so a scalar here is a
+            # key this version does not model — not an entry that was removed.
+            if not isinstance(value, dict):
+                continue
+            if key not in expected:
+                del node[key]
 
 
 def save_config(cfg: Config, path: Path) -> None:
@@ -747,15 +773,26 @@ def save_config(cfg: Config, path: Path) -> None:
         # requires, and the written file would not load back.
         defaults = {}
 
-    _apply(doc, _config_to_dict(cfg), defaults)
-    _prune_removed_profiles(doc, cfg)
+    overlay = _config_to_dict(cfg)
+    _apply(doc, overlay, defaults)
+    _prune_owned_sections(doc, overlay)
 
     path.parent.mkdir(parents=True, exist_ok=True)
+    # `mkstemp` creates 0600 and `os.replace` carries that onto the target, so
+    # a 0644 config would come back 0600 — a spurious diff on every write for a
+    # file managed by a dotfile manager.
+    mode = path.stat().st_mode & 0o777 if path.is_file() else None
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".")
+    tmp_path = Path(tmp)
     try:
-        os.write(fd, tomlkit.dumps(doc).encode())
+        # Close the raw descriptor and write through a buffered writer: a bare
+        # `os.write` can short-write on a full filesystem without raising, and
+        # `os.replace` would then install a truncated config over a good one.
         os.close(fd)
-        os.replace(tmp, path)
+        tmp_path.write_bytes(tomlkit.dumps(doc).encode())
+        if mode is not None:
+            os.chmod(tmp_path, mode)
+        os.replace(tmp_path, path)
     except Exception:
-        os.unlink(tmp)
+        tmp_path.unlink(missing_ok=True)
         raise

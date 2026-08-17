@@ -946,3 +946,98 @@ def test_an_event_with_no_scripts_key_does_not_gain_an_empty_one(tmp_path: Path)
 
     event = tomllib.loads(cfg_path.read_text())["hooks"]["permission_request"]
     assert "scripts" not in event
+
+
+def test_a_scalar_under_profiles_is_not_deleted(tmp_path: Path) -> None:
+    """`_parse_profiles` only admits table values, so a scalar under [profiles]
+    is absent from `cfg.profiles.items` and the prune must not treat that as
+    a removed profile."""
+    import tomllib
+
+    from lazy_harness.core.config import load_config, save_config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        '[harness]\nversion = "1"\n\n'
+        "[profiles]\n"
+        'default = "lazy"\n'
+        'shared_root = "~/repos"\n\n'
+        "[profiles.lazy]\n"
+        'config_dir = "~/.claude-lazy"\n'
+    )
+
+    save_config(load_config(cfg_path), cfg_path)
+
+    raw = tomllib.loads(cfg_path.read_text())
+    assert raw["profiles"]["shared_root"] == "~/repos"
+
+
+def test_clearing_a_conditionally_emitted_key_takes_effect(tmp_path: Path) -> None:
+    """The overlay only adds and overwrites, so a key the serializer omits
+    when empty could never be cleared. The old writer could clear it."""
+    import tomllib
+
+    from lazy_harness.core.config import load_config, save_config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        '[harness]\nversion = "1"\n\n'
+        "[monitoring]\n"
+        "enabled = true\n"
+        'db = "~/somewhere/metrics.db"\n\n'
+        '[scheduler.jobs.qmd-sync]\nschedule = "0 6 * * *"\ncommand = "qmd sync"\n\n'
+        '[hooks.session_start]\nscripts = ["context-inject"]\n'
+    )
+
+    cfg = load_config(cfg_path)
+    cfg.monitoring.db = ""
+    cfg.scheduler.jobs = []
+    cfg.hooks["session_start"].scripts = []
+    save_config(cfg, cfg_path)
+
+    raw = tomllib.loads(cfg_path.read_text())
+    assert raw["monitoring"].get("db", "") == ""
+    assert raw.get("scheduler", {}).get("jobs", {}) == {}
+    assert raw["hooks"]["session_start"]["scripts"] == []
+
+
+def test_an_empty_profile_subkey_is_not_materialised(tmp_path: Path) -> None:
+    """The defaults reference has no per-profile entries, so the default-skip
+    rule never fired for profile sub-keys and every save added lazynorth_doc."""
+    import tomllib
+
+    from lazy_harness.core.config import load_config, save_config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        '[harness]\nversion = "1"\n\n'
+        "[profiles]\n"
+        'default = "lazy"\n\n'
+        "[profiles.lazy]\n"
+        'config_dir = "~/.claude-lazy"\n'
+        'roots = ["~/repos/lazy"]\n'
+    )
+
+    save_config(load_config(cfg_path), cfg_path)
+
+    raw = tomllib.loads(cfg_path.read_text())
+    assert "lazynorth_doc" not in raw["profiles"]["lazy"]
+
+
+def test_save_config_preserves_the_file_mode(tmp_path: Path) -> None:
+    """mkstemp creates 0600 and os.replace carries that onto the target.
+
+    The config is chezmoi-managed, so a mode flip produces a spurious diff on
+    every `lh profile add`.
+    """
+    import stat
+
+    from lazy_harness.core.config import load_config, save_config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text('[harness]\nversion = "1"\n')
+    cfg_path.chmod(0o644)
+
+    save_config(load_config(cfg_path), cfg_path)
+
+    assert stat.S_IMODE(cfg_path.stat().st_mode) == 0o644
