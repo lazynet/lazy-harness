@@ -408,6 +408,31 @@ git commit -m "test: pin the effective hook set before deriving it from the regi
 
 ---
 
+### Two gaps Task 1 uncovered, which Tasks 5 and 6 must close first
+
+Measured on the branch, not inferred:
+
+1. **A dotted path cannot traverse a `dict`.** `Config.hooks` and
+   `ProfilesConfig.items` are plain dicts, so `_resolve` walking with `getattr`
+   raises on the event name. `hooks.pre_tool_use.scripts` — the exact shape
+   Task 5 specifies below — fails with
+   `AttributeError: 'dict' object has no attribute 'pre_tool_use'`. `_resolve`
+   now names the capability and the whole path in that error, but it still
+   cannot walk it. Task 5 must add mapping traversal first.
+
+2. **There is no membership test, only truthiness.** `state()` reads the
+   resolved value with `bool()`. Registering `sqlite_local` and `http_remote`
+   both at `metrics.sinks` made **both** report `ON` against the default
+   config, where the list holds only `sqlite_local`. A capability claiming to
+   be enabled when it is not is worse than a crash, because nothing announces
+   it. `state()` now refuses a list-, tuple-, set- or dict-valued path rather
+   than answering; Task 6 replaces that refusal with a real membership test,
+   which needs a per-capability identity to compare against (the script name
+   for a hook, the sink name for a sink) that the `Capability` record does not
+   carry yet.
+
+Neither blocks Task 3: the `tool` kind uses only scalar and presence-only paths.
+
 ### Task 5: Migrate the `hook` kind
 
 15 entries. Mechanical, but it is the one that touches `lh deploy`.

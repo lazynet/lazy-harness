@@ -72,17 +72,26 @@ class Capability:
     install_hint: str = ""
 
 
-def _resolve(cfg: Config, dotted: str) -> object:
+def _resolve(cfg: Config, dotted: str, *, owner: str = "") -> object:
     """Walk a dotted path against the loaded `Config`.
 
     Raises rather than defaulting: a capability naming a key that does not
     exist is a registration bug, and answering `OFF` would hide it behind a
     plausible answer — which is how a config field can promise behaviour it
     never had.
+
+    The error names the capability and the whole path. `Config.hooks` and
+    `ProfilesConfig.items` are plain dicts, so a path through either fails on
+    `getattr` with a message naming only the key it tried, which says nothing
+    about which registration is wrong.
     """
     current: object = cfg
     for part in dotted.split("."):
-        current = getattr(current, part)
+        try:
+            current = getattr(current, part)
+        except AttributeError as e:
+            where = f"capability {owner!r}: " if owner else ""
+            raise AttributeError(f"{where}config path {dotted!r} does not resolve — {e}") from e
     return current
 
 
@@ -119,7 +128,18 @@ class CapabilityRegistry:
                 )
             return CapabilityState.ACTIVE if probe(cap.binary) else CapabilityState.MISSING
 
-        enabled = bool(_resolve(cfg, cap.config_path))
+        value = _resolve(cfg, cap.config_path, owner=cap.name)
+        if isinstance(value, (list, tuple, set, dict)):
+            # `bool(["sqlite_local"])` is True for every capability pointed at
+            # that list, so two sinks sharing one path both answered ON —
+            # including the one that was never added. Membership needs a
+            # per-capability identity to test against, which does not exist
+            # yet; until it does, refusing beats answering confidently wrong.
+            raise TypeError(
+                f"capability {cap.name!r}: config path {cap.config_path!r} resolves to a "
+                f"{type(value).__name__}, and membership is not implemented yet"
+            )
+        enabled = bool(value)
         if not cap.binary:
             return CapabilityState.ON if enabled else CapabilityState.OFF
         installed = probe(cap.binary)

@@ -286,3 +286,61 @@ def test_a_capability_with_neither_a_switch_nor_a_binary_is_refused() -> None:
 
     with pytest.raises(ValueError, match="nothing"):
         reg.state(cap, Config())
+
+
+def test_a_list_valued_config_path_is_refused_until_membership_exists() -> None:
+    """`bool(["sqlite_local"])` is True for every capability sharing that path.
+
+    Two metrics sinks registered against `metrics.sinks` both answered `ON`,
+    including the one that was never added to the list. The registry has no
+    per-capability identity to test membership against yet, and a confident
+    wrong answer is worse here than an error: a checker that cannot check must
+    not spell that as a result.
+    """
+    from lazy_harness.core.config import Config
+    from lazy_harness.plugins.capabilities import (
+        Capability,
+        CapabilityRegistry,
+        Cardinality,
+    )
+
+    cap = Capability(
+        name="http_remote",
+        kind="metrics_sink",
+        cardinality=Cardinality.MANY,
+        config_path="metrics.sinks",
+        summary="Remote metrics sink",
+    )
+    reg = CapabilityRegistry()
+    reg.register(cap)
+
+    with pytest.raises(TypeError, match="metrics.sinks"):
+        reg.state(cap, Config())
+
+
+def test_a_config_path_through_a_dict_section_names_the_capability() -> None:
+    """`Config.hooks` is a `dict`, so `getattr` fails on the event name and the
+    bare AttributeError names only that key — not the capability, not the path.
+    """
+    from lazy_harness.core.config import Config
+    from lazy_harness.plugins.capabilities import (
+        Capability,
+        CapabilityRegistry,
+        Cardinality,
+    )
+
+    cap = Capability(
+        name="pre-tool-use-security",
+        kind="hook",
+        cardinality=Cardinality.MANY,
+        config_path="hooks.pre_tool_use.scripts",
+        summary="Block dangerous shell invocations",
+    )
+    reg = CapabilityRegistry()
+    reg.register(cap)
+
+    with pytest.raises(AttributeError) as excinfo:
+        reg.state(cap, Config())
+
+    assert "pre-tool-use-security" in str(excinfo.value)
+    assert "hooks.pre_tool_use.scripts" in str(excinfo.value)
