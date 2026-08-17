@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.40.0](https://github.com/lazynet/lazy-harness/compare/v0.39.0...v0.40.0) (2026-08-17)
+
+
+### Features
+
+* make config writes non-destructive and add a round-trip selftest check ([#167](https://github.com/lazynet/lazy-harness/issues/167)) ([56429ad](https://github.com/lazynet/lazy-harness/commit/56429ad2976250d7662816647aceef5e6c59499e))
+
 ## [0.39.0](https://github.com/lazynet/lazy-harness/compare/v0.38.1...v0.39.0) (2026-08-17)
 
 
