@@ -67,7 +67,17 @@ class SystemdBackend:
 
     @staticmethod
     def _which(name: str) -> str | None:
-        return shutil.which(name)
+        """Resolve `name` against the PATH the unit will run with.
+
+        `shutil.which` defaults to the invoking process's PATH, which is not
+        the one written into the unit: `resolved_path` strips virtualenv bins
+        precisely so a generated unit outlives the environment that generated
+        it. Resolving here against the unfiltered PATH put the worktree's
+        `.venv/bin` back into `ExecStart` as an absolute path — where it is
+        immune to the filtering, because an absolute ExecStart never consults
+        PATH at all.
+        """
+        return shutil.which(name, path=resolved_path())
 
     def _exec_start(self, job: SchedulerJob) -> str:
         """Resolve the command into an absolute ExecStart line.

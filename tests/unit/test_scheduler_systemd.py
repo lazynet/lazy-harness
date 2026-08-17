@@ -95,6 +95,9 @@ def test_uninstall_disables_and_removes_both_unit_files(tmp_path: Path) -> None:
 
     calls: list[list[str]] = []
     backend = SystemdBackend(unit_dir=tmp_path, runner=_runner(lambda a: "Linger=yes", calls))
+    # Inject the resolver: without it this reads the host's PATH, so the test
+    # passed on a machine with `qmd` installed and failed on CI.
+    backend._which = lambda name: f"/usr/bin/{name}"  # type: ignore[method-assign]
     job = SchedulerJob(name="qmd-sync", schedule="0 6 * * *", command="qmd sync")
     backend.install([job])
     calls.clear()
@@ -183,7 +186,6 @@ def test_install_refuses_a_command_it_cannot_resolve(tmp_path: Path) -> None:
     from lazy_harness.scheduler.systemd import SystemdBackend
 
     backend = SystemdBackend(unit_dir=tmp_path, runner=_runner(lambda a: "Linger=yes"))
-    backend._which = lambda name: f"/usr/bin/{name}"  # type: ignore[method-assign]
     backend._which = lambda name: None  # type: ignore[method-assign]
 
     with pytest.raises(ValueError, match="definitely-not-on-path"):
@@ -223,7 +225,6 @@ def test_environment_path_is_quoted(tmp_path: Path) -> None:
 
     backend = SystemdBackend(unit_dir=tmp_path, runner=_runner(lambda a: "Linger=yes"))
     backend._which = lambda name: f"/usr/bin/{name}"  # type: ignore[method-assign]
-    backend._which = lambda name: f"/usr/bin/{name}"  # type: ignore[method-assign]
 
     original = systemd_mod.resolved_path
     systemd_mod.resolved_path = lambda: "/opt/My Tools/bin:/usr/bin"  # type: ignore[assignment]
@@ -255,3 +256,38 @@ def test_install_reports_a_failed_systemctl_instead_of_a_green_tick(tmp_path: Pa
 
     with pytest.raises(RuntimeError, match="Unit is invalid"):
         backend.install([SchedulerJob(name="x", schedule="0 6 * * *", command="lh x")])
+
+
+def test_exec_start_resolves_against_the_scheduled_path_not_the_invoking_one(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The binary is resolved with the same PATH the unit is given.
+
+    `shutil.which` defaults to the invoking process's PATH, so running
+    `lh scheduler install` under `uv run` from a worktree resolved `lh` to
+    that worktree's `.venv/bin` and baked the absolute path into ExecStart —
+    the same failure `resolved_path` filters out of `Environment=PATH`,
+    arriving through the other door and surviving it, because an absolute
+    ExecStart ignores PATH entirely.
+    """
+    import os
+
+    from lazy_harness.scheduler.systemd import SystemdBackend
+
+    # A name that cannot exist on any host: the point of this test is that the
+    # answer comes from the constructed PATH, never from the machine running it.
+    binary = "lh-path-fixture"
+    venv_bin = tmp_path / ".venv" / "bin"
+    real_bin = tmp_path / "opt" / "bin"
+    for directory in (venv_bin, real_bin):
+        directory.mkdir(parents=True)
+        exe = directory / binary
+        exe.write_text("#!/bin/sh\n")
+        exe.chmod(0o755)
+    monkeypatch.setenv("PATH", os.pathsep.join([str(venv_bin), str(real_bin)]))
+
+    backend = SystemdBackend(unit_dir=tmp_path / "units", runner=_runner(lambda a: "Linger=yes"))
+    text = backend._service_text(SchedulerJob(name="x", schedule="0 6 * * *", command=binary))
+
+    assert f"ExecStart={real_bin / binary}\n" in text
+    assert ".venv" not in text
