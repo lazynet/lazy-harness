@@ -98,11 +98,11 @@ class LaunchdBackend:
         self._agents_dir = agents_dir or Path.home() / "Library" / "LaunchAgents"
         self._runner = runner or _default_runner
 
-    def _label(self, job: SchedulerJob) -> str:
+    def label_for(self, job: SchedulerJob) -> str:
         return f"{self._prefix}.{job.name}"
 
     def generate_plist(self, job: SchedulerJob, output_dir: Path) -> Path:
-        label = self._label(job)
+        label = self.label_for(job)
         cmd_parts = job.command.split()
         log_dir = Path.home() / ".local" / "share" / "lazy-harness" / "logs"
         plist: dict = {
@@ -141,7 +141,7 @@ class LaunchdBackend:
         installed: list[str] = []
         for job in jobs:
             plist_path = self.generate_plist(job, self._agents_dir)
-            label = self._label(job)
+            label = self.label_for(job)
             self._runner(["launchctl", "unload", str(plist_path)])
             self._runner(["launchctl", "load", str(plist_path)])
             installed.append(label)
@@ -151,7 +151,7 @@ class LaunchdBackend:
         agents_dir = self._agents_dir
         removed: list[str] = []
         for job in jobs:
-            label = self._label(job)
+            label = self.label_for(job)
             plist_path = agents_dir / f"{label}.plist"
             if plist_path.is_file():
                 self._runner(["launchctl", "unload", str(plist_path)])
@@ -169,10 +169,17 @@ class LaunchdBackend:
         """Whether launchd has this label loaded, or UNKNOWN with the reason."""
         try:
             proc = self._runner(["launchctl", "list", label])
-        except (FileNotFoundError, OSError) as e:
+        except OSError as e:
+            # FileNotFoundError is an OSError, so one clause covers both the
+            # missing binary and every other exec failure.
             return JobState.UNKNOWN, f"launchctl unavailable: {e}"
         except subprocess.TimeoutExpired:
             return JobState.UNKNOWN, "launchctl timed out"
+        except Exception as e:  # noqa: BLE001
+            # The runner is an injection point. Anything it raises degrades to
+            # UNKNOWN rather than crashing `lh status cron`, which is a
+            # read-only view and has no business propagating a failure.
+            return JobState.UNKNOWN, f"launchctl probe failed: {type(e).__name__}: {e}"
         code = getattr(proc, "returncode", None)
         if code is None:
             return JobState.UNKNOWN, "launchctl produced no exit status"

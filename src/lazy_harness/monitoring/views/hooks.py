@@ -11,12 +11,13 @@ from rich.table import Table
 
 from lazy_harness.monitoring.views._helpers import (
     HOOK_NAMES_DEFAULT,
+    LockState,
     StatusContext,
     count_errors_today,
-    file_locked,
     format_size,
     last_hook_line,
     last_hook_ts,
+    lock_state,
     time_ago,
 )
 
@@ -83,9 +84,11 @@ def render(ctx: StatusContext, console: Console) -> None:
         lock_file = ctx.queue_dir(profile) / ".worker.lock"
         if not lock_file.is_file():
             continue
-        held = file_locked(lock_file)
+        state, detail = lock_state(lock_file)
         label = f"{profile.name}:worker.lock"
-        if held:
+        if state is LockState.HELD:
             console.print(f"  {label:<32} [yellow]held (worker running)[/yellow]")
-        else:
+        elif state is LockState.FREE:
             console.print(f"  {label:<32} [green]free[/green]")
+        else:
+            console.print(f"  {label:<32} [yellow]?[/yellow] [dim]{detail}[/dim]")

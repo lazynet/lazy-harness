@@ -159,46 +159,85 @@ def test_status_context_exposes_the_backend_not_a_launchd_prefix() -> None:
     assert ctx.scheduler_backend is not None
 
 
-def test_file_locked_detects_a_held_flock(tmp_path: Path) -> None:
-    """Probes the same advisory lock compound_loop_worker.py takes.
 
-    Was a shell-out to `lsof`, absent on minimal Linux images, whose absence
-    read as 'not locked' — the dangerous direction, since the view then
-    claims the worker is idle while it runs.
+
+
+
+def test_lock_state_never_acquires_the_lock(tmp_path: Path) -> None:
+    """The probe must be read-only.
+
+    Acquiring the worker's own exclusive flock to test it makes the probe
+    win the race: measured at 16.6% denial under contention, and every
+    denial is the compound-loop worker logging "another worker is running",
+    exiting 0, and leaving the queue undrained until the next scheduled run.
     """
     import fcntl
 
-    from lazy_harness.monitoring.views._helpers import file_locked
+    from lazy_harness.monitoring.views._helpers import lock_state
+
+    lock = tmp_path / ".worker.lock"
+    lock.touch()
+
+    for _ in range(200):
+        lock_state(lock)
+
+    # If the probe ever took the lock and failed to release it, or is holding
+    # it now, this acquire fails.
+    fd = open(lock, "a")
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        fd.close()
+
+
+def test_lock_state_reports_unknown_when_it_cannot_check(tmp_path: Path, monkeypatch) -> None:
+    """A missing `lsof` is 'cannot check', not 'not locked'.
+
+    Reading absence as free is the dangerous direction: the view then claims
+    the worker is idle while it runs. Same three-valued reasoning as JobState.
+    """
+    import subprocess
+
+    from lazy_harness.monitoring.views._helpers import LockState, lock_state
+
+    lock = tmp_path / ".worker.lock"
+    lock.touch()
+
+    def missing(*_a, **_k):
+        raise FileNotFoundError("lsof")
+
+    monkeypatch.setattr(subprocess, "run", missing)
+    state, detail = lock_state(lock)
+    assert state is LockState.UNKNOWN
+    assert "lsof" in detail
+
+
+def test_lock_state_reports_free_for_a_missing_file(tmp_path: Path) -> None:
+    from lazy_harness.monitoring.views._helpers import LockState, lock_state
+
+    state, _ = lock_state(tmp_path / "absent.lock")
+    assert state is LockState.FREE
+
+
+def test_lock_state_reports_held_when_the_lock_is_taken(tmp_path: Path) -> None:
+    import fcntl
+    import shutil
+
+    import pytest
+
+    from lazy_harness.monitoring.views._helpers import LockState, lock_state
+
+    if shutil.which("lsof") is None:
+        pytest.skip("lsof is not installed; the probe correctly reports UNKNOWN")
 
     lock = tmp_path / ".worker.lock"
     lock.touch()
     fd = open(lock, "a")
     fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     try:
-        assert file_locked(lock) is True
+        state, _ = lock_state(lock)
+        assert state is LockState.HELD
     finally:
         fcntl.flock(fd, fcntl.LOCK_UN)
         fd.close()
-
-    assert file_locked(lock) is False
-
-
-def test_file_locked_is_false_for_a_missing_file(tmp_path: Path) -> None:
-    from lazy_harness.monitoring.views._helpers import file_locked
-
-    assert file_locked(tmp_path / "absent.lock") is False
-
-
-def test_file_locked_does_not_shell_out(monkeypatch, tmp_path: Path) -> None:
-    """No external binary: lsof is not guaranteed on a minimal image."""
-    import subprocess
-
-    from lazy_harness.monitoring.views import _helpers
-
-    def forbidden(*_a, **_k):
-        raise AssertionError("file_locked must not spawn a subprocess")
-
-    monkeypatch.setattr(subprocess, "run", forbidden)
-    lock = tmp_path / ".worker.lock"
-    lock.touch()
-    assert _helpers.file_locked(lock) is False

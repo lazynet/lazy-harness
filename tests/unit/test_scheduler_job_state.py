@@ -93,19 +93,62 @@ def test_default_runner_returns_the_completed_process() -> None:
     reported UNKNOWN — the mechanism built to stop reporting a non-answer
     reported a non-answer for everything.
     """
+    import sys
+
     from lazy_harness.scheduler.launchd import _default_runner
 
-    proc = _default_runner(["true"])
+    # sys.executable rather than a PATH lookup: the point is that the runner
+    # returns what it ran, and a missing helper binary would fail for an
+    # unrelated reason.
+    proc = _default_runner([sys.executable, "-c", "pass"])
     assert proc is not None
     assert proc.returncode == 0
 
 
 def test_job_state_is_loaded_through_the_default_runner(tmp_path: Path) -> None:
-    """Paired end-to-end check: an installed job resolves to a real state,
-    not UNKNOWN, when nothing is injected."""
+    """Paired end-to-end check: with nothing injected, a real launchctl gives
+    a real answer rather than UNKNOWN.
+
+    Guarded on the binary rather than the platform: CI runs on ubuntu, where
+    `launchctl` is absent and UNKNOWN is the correct result, so an unguarded
+    assertion here passes on macOS and breaks the build.
+    """
+    import shutil
+
+    import pytest
+
     from lazy_harness.scheduler.base import JobState
     from lazy_harness.scheduler.launchd import LaunchdBackend
+
+    if shutil.which("launchctl") is None:
+        pytest.skip("launchctl is absent; UNKNOWN is the correct answer here")
 
     backend = LaunchdBackend(agents_dir=tmp_path)
     state, detail = backend.job_state("com.lazy-harness.definitely-not-loaded")
     assert state is not JobState.UNKNOWN, detail
+
+
+def test_launchd_backend_satisfies_the_protocol() -> None:
+    """`label_for` was declared on the Protocol but only existed as `_label`,
+    so isinstance was False on the one platform that installs anything."""
+    from lazy_harness.scheduler.base import SchedulerBackend
+    from lazy_harness.scheduler.cron import CronBackend
+    from lazy_harness.scheduler.launchd import LaunchdBackend
+    from lazy_harness.scheduler.systemd import SystemdBackend
+
+    for backend in (LaunchdBackend(), SystemdBackend(), CronBackend()):
+        assert isinstance(backend, SchedulerBackend), type(backend).__name__
+
+
+def test_job_state_degrades_when_the_runner_raises_something_unexpected() -> None:
+    """The runner is an injection point; `lh status cron` is read-only and
+    must not propagate whatever it raises."""
+    from lazy_harness.scheduler.base import JobState
+    from lazy_harness.scheduler.launchd import LaunchdBackend
+
+    def weird(_argv):
+        raise RuntimeError("something nobody anticipated")
+
+    state, detail = LaunchdBackend(runner=weird).job_state("com.lazy-harness.x")
+    assert state is JobState.UNKNOWN
+    assert "RuntimeError" in detail
