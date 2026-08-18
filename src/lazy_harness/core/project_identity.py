@@ -148,10 +148,16 @@ def _remote_url(root: Path) -> str:
     A fork carries an `upstream` too; taking it would merge two people's memory
     for what is, to them, two different repositories.
     """
-    parser = configparser.ConfigParser()
+    # `strict=False` because git's format allows a key to repeat — `fetch` and
+    # `push` legitimately, and plugins write their own duplicates. Strict
+    # parsing raises on the whole file, so one repeated line silently demotes a
+    # repository with a perfectly good `origin` to `local/`.
+    # `interpolation=None` because `%` is legal in a URL and is configparser's
+    # sigil; left on, it raises from `get`, outside the guard below.
+    parser = configparser.ConfigParser(strict=False, interpolation=None)
     try:
         parser.read(root / ".git" / "config")
-    except (OSError, configparser.Error):
+    except (OSError, configparser.Error, UnicodeDecodeError):
         return ""
 
     remotes: dict[str, str] = {}

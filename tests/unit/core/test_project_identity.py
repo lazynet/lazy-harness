@@ -229,3 +229,47 @@ def test_an_alias_pointing_at_an_ip_is_not_followed(tmp_path: Path) -> None:
     assert normalise_remote("git@git.lazy.net.ar:lazy/x.git", ssh_config=cfg) == (
         "git.lazy.net.ar/lazy/x"
     )
+
+
+def test_a_git_config_with_duplicate_options_still_yields_its_remote(tmp_path: Path) -> None:
+    """Git's config format allows a key to repeat; `configparser` does not.
+
+    Measured against a real checkout: `devops-tf-infra` carries a
+    `github-pr-owner-number` written twice under one branch section by a
+    plugin, plus the ordinary repeated `fetch` lines. Strict parsing raises
+    `DuplicateOptionError` on the whole file, so a repository with a perfectly
+    good `origin` was keyed `local/` and its memory never left the machine —
+    silently, which is the expensive part.
+    """
+    from lazy_harness.core.project_identity import project_key
+
+    root = tmp_path / "repo"
+    (root / ".git").mkdir(parents=True)
+    (root / ".git" / "config").write_text(
+        '[remote "origin"]\n'
+        "\turl = git@github.com:o/x.git\n"
+        "\tfetch = +refs/heads/*:refs/remotes/origin/*\n"
+        "\tfetch = +refs/pull/*/head:refs/remotes/origin/pr/*\n"
+        '[branch "feature/DO-251"]\n'
+        "\tgithub-pr-owner-number = o#1\n"
+        "\tgithub-pr-owner-number = o#2\n"
+    )
+
+    assert project_key(root) == "github.com/o/x"
+
+
+def test_a_percent_in_a_remote_url_is_not_interpolated(tmp_path: Path) -> None:
+    """`%` is legal in a URL and is `configparser`'s interpolation sigil.
+
+    Left on, it raises and the repository silently becomes `local/` — the same
+    failure as the duplicate-option one, reached from a different direction.
+    """
+    from lazy_harness.core.project_identity import project_key
+
+    root = tmp_path / "repo"
+    (root / ".git").mkdir(parents=True)
+    (root / ".git" / "config").write_text(
+        '[remote "origin"]\n\turl = https://user%40host@example.org/o/x.git\n'
+    )
+
+    assert project_key(root) == "example.org/o/x"
