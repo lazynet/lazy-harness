@@ -95,3 +95,81 @@ def test_round_trip_check_never_writes_to_the_real_config(tmp_path: Path) -> Non
     check_config_round_trip(config_path=cfg_path)
 
     assert cfg_path.read_text() == original
+
+
+def _reg_with(config_path: str):
+    from lazy_harness.plugins.capabilities import (
+        Capability,
+        CapabilityRegistry,
+        Cardinality,
+    )
+
+    reg = CapabilityRegistry()
+    reg.register(
+        Capability(
+            name="bogus",
+            kind="tool",
+            cardinality=Cardinality.MANY,
+            config_path=config_path,
+            summary="points at nothing",
+        )
+    )
+    return reg
+
+
+def test_capability_paths_check_fails_when_a_path_does_not_resolve(tmp_path: Path) -> None:
+    """A capability pointing at a config key that does not exist is a broken
+    contract, and nothing else in the framework would notice it."""
+    from lazy_harness.selftest.checks.config_check import check_capability_paths
+    from lazy_harness.selftest.result import CheckStatus
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text('[harness]\nversion = "1"\n')
+
+    results = check_capability_paths(
+        config_path=cfg_path, registry=_reg_with("memory.engram.no_such_field")
+    )
+
+    assert results[0].status == CheckStatus.FAILED
+    assert "memory.engram.no_such_field" in results[0].message
+    assert "bogus" in results[0].message
+
+
+def test_capability_paths_check_passes_and_names_a_count(tmp_path: Path) -> None:
+    from lazy_harness.selftest.checks.config_check import check_capability_paths
+    from lazy_harness.selftest.result import CheckStatus
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text('[harness]\nversion = "1"\n')
+
+    results = check_capability_paths(
+        config_path=cfg_path, registry=_reg_with("memory.engram.enabled")
+    )
+
+    assert results[0].status == CheckStatus.PASSED
+    assert "1" in results[0].message
+
+
+def test_capability_paths_check_runs_against_the_real_registry(tmp_path: Path) -> None:
+    """Paired smoke test: always injecting the registry would leave the default
+    — the one that actually ships — unexercised."""
+    from lazy_harness.selftest.checks.config_check import check_capability_paths
+    from lazy_harness.selftest.result import CheckStatus
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text('[harness]\nversion = "1"\n')
+
+    results = check_capability_paths(config_path=cfg_path)
+
+    assert results[0].status == CheckStatus.PASSED, results[0].message
+
+
+def test_capability_paths_check_reports_a_missing_config_rather_than_crashing(
+    tmp_path: Path,
+) -> None:
+    from lazy_harness.selftest.checks.config_check import check_capability_paths
+    from lazy_harness.selftest.result import CheckStatus
+
+    results = check_capability_paths(config_path=tmp_path / "nope.toml")
+
+    assert results[0].status == CheckStatus.WARNING

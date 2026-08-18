@@ -514,6 +514,47 @@ def test_capability_paths_check_fails_when_a_path_does_not_resolve(tmp_path) -> 
 
 ---
 
+### Where the executed wave departed from this plan
+
+Each of these was forced by the code, and each would have changed `lh doctor`
+or `lh deploy` output in a wave that promises not to.
+
+1. **qmd declares no config path.** The plan gave it
+   `config_path="knowledge.search.engine"`. That field holds `"qmd"`, so
+   truthiness makes it permanently enabled and an uninstalled qmd reports
+   `BROKEN` — where `_qmd_status` has always reported `missing`, and where it
+   never consulted config at all. It is registered presence-only.
+
+2. **`install_hint` keeps the pin.** The plan's literal was
+   `"Install Engram and set [memory.engram].enabled = true."`; the code emits
+   `"Install Engram (pin 1.15.4) and set ..."`. The hint is now a template the
+   pin is formatted into, so there is still one home for the version.
+
+3. **Three builtin hooks are not registered.** `herdr-context-gauge`,
+   `post-tool-use-ansible-lint` and `user-prompt-goal` appear in no default
+   list, so no event is declared for them anywhere. A fixed `config_path` would
+   invent one and then answer wrongly for anyone who configured them elsewhere.
+   A test asserts they are knowingly absent, so the omission cannot rot into an
+   oversight.
+
+4. **The scheduler backends are not registered.** `scheduler.backend` defaults
+   to `"auto"`, which names no implementation — the choice is made at install
+   time by probing the machine. Registering the three against that field
+   reports all of them OFF on a machine demonstrably running six jobs, and
+   `CapabilityState` has no word for "chosen at runtime".
+
+5. **`ONE` cardinality needed selection semantics.** With truthiness,
+   `bool("claude-code")` is True for every sibling reading `agent.type`, so
+   both agents reported ON at once. `state` now compares the resolved name; and
+   `toggle` writes the capability's *name* rather than `True`, and refuses to
+   deselect — an exclusive choice has no "off", and the registry cannot invent
+   which sibling takes over.
+
+6. **The identity fixture holds the default hook set only.** The plan asked for
+   the two live profiles' generated blocks. Those carry absolute paths from the
+   machine that produced them, and this repository is public. The live
+   comparison was run before and after instead, against the real config.
+
 ### Task 9: Wave 6 gate and PR
 
 - [ ] `/tdd-check`.

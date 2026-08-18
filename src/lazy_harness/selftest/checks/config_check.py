@@ -140,3 +140,66 @@ def check_config_round_trip(*, config_path: Path) -> list[CheckResult]:
             message=f"{len(before)} keys survive a write",
         )
     ]
+
+
+def check_capability_paths(
+    *, config_path: Path, registry: object | None = None
+) -> list[CheckResult]:
+    """Verify every registered capability's config path resolves.
+
+    A capability declaring a key that is not in `Config` is a broken contract
+    that nothing else notices: `lh doctor` would render it, the TUI would offer
+    a toggle for it, and both would be pointing at nothing. Paired with
+    `check_config_round_trip`, this is what makes the registry's paths a
+    checkable claim rather than a comment.
+    """
+    from lazy_harness.plugins.builtins import builtin_registry
+    from lazy_harness.plugins.capabilities import _resolve
+
+    group = "config"
+    name = "capability-paths"
+    if not config_path.is_file():
+        return [
+            CheckResult(
+                group=group,
+                name=name,
+                status=CheckStatus.WARNING,
+                message=f"no config at {config_path}",
+            )
+        ]
+
+    try:
+        cfg = load_config(config_path)
+    except (ConfigError, FileNotFoundError) as e:
+        return [CheckResult(group=group, name=name, status=CheckStatus.FAILED, message=str(e))]
+
+    reg = registry if registry is not None else builtin_registry()
+    caps = reg.capabilities()  # type: ignore[attr-defined]
+
+    broken: list[str] = []
+    for cap in caps:
+        if not cap.config_path:
+            # Presence-only capabilities declare no path on purpose.
+            continue
+        try:
+            _resolve(cfg, cap.config_path, owner=cap.name)
+        except AttributeError as e:
+            broken.append(str(e))
+
+    if broken:
+        return [
+            CheckResult(
+                group=group,
+                name=name,
+                status=CheckStatus.FAILED,
+                message="; ".join(broken),
+            )
+        ]
+    return [
+        CheckResult(
+            group=group,
+            name=name,
+            status=CheckStatus.PASSED,
+            message=f"{len(caps)} capabilities, every declared path resolves",
+        )
+    ]
