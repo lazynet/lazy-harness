@@ -118,6 +118,7 @@ type = "null"
             logs_dir: Path,
             project_key: str,
             engram_bin: str | None = None,
+            cursor_dir: Path | None = None,
         ) -> None:
             captured["memory_dir"] = memory_dir
             captured["logs_dir"] = logs_dir
@@ -171,6 +172,7 @@ binary = "/opt/homebrew/bin/engram"
             logs_dir: Path,
             project_key: str,
             engram_bin: str | None = None,
+            cursor_dir: Path | None = None,
         ) -> None:
             captured["engram_bin"] = engram_bin
 

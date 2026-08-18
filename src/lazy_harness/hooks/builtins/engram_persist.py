@@ -52,6 +52,7 @@ def main() -> None:
         from lazy_harness.agents.registry import get_agent
         from lazy_harness.core.config import Config, ConfigError, load_config
         from lazy_harness.core.paths import agent_runtime_dir, config_file
+        from lazy_harness.core.project_identity import project_key as identity_key
         from lazy_harness.hooks.builtins._shared import (
             knowledge_root_for,
         )
@@ -87,11 +88,20 @@ def main() -> None:
     # explicitly configured path is the only reliable way to find the binary.
     configured_bin = cfg.memory.engram.binary if cfg is not None else ""
 
+    # Keyed by the project's identity rather than its basename: two checkouts
+    # named `proj` under different owners are different projects, and a cursor
+    # they shared would skip whichever one ran second.
+    cursor_dir = agent_dir / "engram-cursors"
+    for part in identity_key(cwd).split("/"):
+        if part and part not in (".", ".."):
+            cursor_dir = cursor_dir / part
+
     persister = EngramPersister(
         memory_dir=memory_dir,
         logs_dir=logs_dir,
         project_key=_resolve_project_key(cwd),
         engram_bin=configured_bin or None,
+        cursor_dir=cursor_dir,
     )
     try:
         persister.persist_new_entries()
