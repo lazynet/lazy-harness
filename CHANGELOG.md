@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.42.1](https://github.com/lazynet/lazy-harness/compare/v0.42.0...v0.42.1) (2026-08-18)
+
+
+### Bug Fixes
+
+* keep the config section in doctor and migrate hints ([#183](https://github.com/lazynet/lazy-harness/issues/183)) ([a02abb7](https://github.com/lazynet/lazy-harness/commit/a02abb7ccc444027b57898186e35f4950b14b994))
+
+
+### Refactors
+
+* one capability registry for everything that can be turned on ([#184](https://github.com/lazynet/lazy-harness/issues/184)) ([2968cca](https://github.com/lazynet/lazy-harness/commit/2968ccafd714add3fa74694e6f203faec2a8d6de))
+* return renderables from the status views instead of printing ([#181](https://github.com/lazynet/lazy-harness/issues/181)) ([a954afc](https://github.com/lazynet/lazy-harness/commit/a954afcc03c5cc1af4182069c8241da2c38128e8))
+
 ## [0.42.0](https://github.com/lazynet/lazy-harness/compare/v0.41.1...v0.42.0) (2026-08-17)
 
 
