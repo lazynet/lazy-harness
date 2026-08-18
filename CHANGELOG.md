@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.44.0](https://github.com/lazynet/lazy-harness/compare/v0.43.0...v0.44.0) (2026-08-18)
+
+
+### Features
+
+* replace cross-profile-check with a legacy memory detector ([#188](https://github.com/lazynet/lazy-harness/issues/188)) ([854c600](https://github.com/lazynet/lazy-harness/commit/854c600d6f2a1e475ac246fc91d071176cfc206f))
+
+
+### Bug Fixes
+
+* keep the engram cursor on the machine that owns the database ([#187](https://github.com/lazynet/lazy-harness/issues/187)) ([6fef6bc](https://github.com/lazynet/lazy-harness/commit/6fef6bcd5fce16721abfd5987049151e67c85c89))
+* let a hook's exit code reach Claude Code ([#186](https://github.com/lazynet/lazy-harness/issues/186)) ([1f601d8](https://github.com/lazynet/lazy-harness/commit/1f601d8a1b776421a24047e4186759b9ddf19fc1))
+
 ## [0.43.0](https://github.com/lazynet/lazy-harness/compare/v0.42.1...v0.43.0) (2026-08-18)
 
 
