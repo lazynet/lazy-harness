@@ -118,8 +118,13 @@ def build_memory_tails(memory_dir: Path) -> str:
     return "\n".join(parts)
 
 
-def _resolve_agent_dirs() -> tuple[Path, dict[str, str]]:
-    """(runtime_dir, session_dirs) for the configured agent (ADR-032 L3/L4).
+def _resolve_agent_dirs() -> tuple[Path, dict[str, str], Path | None]:
+    """(runtime_dir, session_dirs, knowledge_root) for the configured agent.
+
+    The knowledge root is returned rather than resolved again at the call site:
+    it comes from the same `Config` this already loads, and two readers
+    resolving one config-derived path differently is how one of them ends up
+    writing where nothing reads.
 
     Bootstrap fallback: when lazy_harness is not importable (hook run as a
     bare script) read the Claude Code env var directly, as before ADR-032.
@@ -129,7 +134,7 @@ def _resolve_agent_dirs() -> tuple[Path, dict[str, str]]:
         from lazy_harness.core.config import ConfigError, load_config
         from lazy_harness.core.paths import agent_runtime_dir, config_file
     except ImportError:
-        return Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude")), {}
+        return Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude")), {}, None
 
     cfg = None
     cf = config_file()
@@ -139,7 +144,9 @@ def _resolve_agent_dirs() -> tuple[Path, dict[str, str]]:
         except ConfigError:
             cfg = None
     agent = get_agent(cfg.agent.type if cfg is not None else "claude-code")
-    return agent_runtime_dir(agent), agent.session_dirs()
+    from lazy_harness.hooks.builtins._shared import knowledge_root_for
+
+    return agent_runtime_dir(agent), agent.session_dirs(), knowledge_root_for(cfg)
 
 
 def main() -> None:
@@ -149,16 +156,19 @@ def main() -> None:
         input_data = {}
 
     try:
-        from lazy_harness.hooks.builtins._shared import make_log, resolve_project_dir
+        from lazy_harness.hooks.builtins._shared import make_log
+        from lazy_harness.hooks.builtins._shared import memory_dir as shared_memory_dir
 
         _log = make_log("pre-compact")
     except ImportError:
-        # Bootstrap fallback, same contract as _resolve_agent_dirs.
+        # Bootstrap fallback, same contract as _resolve_agent_dirs: this hook
+        # has to run as a bare script, so nothing outside this guard may import
+        # from the package.
         _log = _bootstrap_log
-        resolve_project_dir = _bootstrap_project_dir
+        shared_memory_dir = None
 
     cwd = Path.cwd()
-    agent_dir, subdirs = _resolve_agent_dirs()
+    agent_dir, subdirs, knowledge_root = _resolve_agent_dirs()
     log_file = agent_dir / (subdirs.get("logs") or "logs") / "hooks.log"
     _log(log_file, f"fired cwd={cwd}")
 
@@ -168,15 +178,24 @@ def main() -> None:
             transcript_path_str = input_data[key]
             break
 
-    memory_dir = (
-        resolve_project_dir(
+    if shared_memory_dir is not None:
+        memory_dir = shared_memory_dir(
             input_data,
             agent_dir=agent_dir,
             sessions_subdir=subdirs.get("sessions") or "projects",
             cwd=cwd,
+            knowledge_root=knowledge_root,
         )
-        / "memory"
-    )
+    else:
+        memory_dir = (
+            _bootstrap_project_dir(
+                input_data,
+                agent_dir=agent_dir,
+                sessions_subdir=subdirs.get("sessions") or "projects",
+                cwd=cwd,
+            )
+            / "memory"
+        )
     memory_dir.mkdir(parents=True, exist_ok=True)
 
     summary = ""

@@ -105,3 +105,20 @@ def test_the_resolved_path_never_escapes_the_memory_area(tmp_path: Path) -> None
     resolved = memory_dir_for(repo, knowledge_root=store)
 
     assert (store / "memory") in resolved.parents or resolved.parent == store / "memory"
+
+
+def test_a_project_with_no_remote_stays_out_of_the_shared_store(tmp_path: Path) -> None:
+    """A `local/` key means there is no remote to key on, so two machines'
+    unrelated directories would merge under one name — and the store is a git
+    repository that gets pushed. Unshared memory stays where it was."""
+    from lazy_harness.core.memory_store import memory_dir_for
+
+    store = _store(tmp_path)
+    plain = tmp_path / "no-repo"
+    plain.mkdir()
+    legacy = tmp_path / "profile"
+
+    resolved = memory_dir_for(plain, knowledge_root=store, legacy_project_dir=legacy)
+
+    assert resolved == legacy / "memory"
+    assert store not in resolved.parents

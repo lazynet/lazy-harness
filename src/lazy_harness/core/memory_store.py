@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from lazy_harness.core.project_identity import project_key
+from lazy_harness.core.project_identity import LOCAL_PREFIX, project_key
 
 
 def memory_dir_for(
@@ -42,6 +42,12 @@ def memory_dir_for(
             area = ""
         if area:
             key = project_key(cwd)
+            # A `local/` key means there was no remote to key on. Two machines'
+            # unrelated directories would merge under one name, and the store is
+            # a git repository that gets pushed — so unshared memory stays where
+            # it was rather than being published under a colliding name.
+            if key.startswith(f"{LOCAL_PREFIX}/") and legacy_project_dir is not None:
+                return legacy_project_dir / "memory"
             resolved = knowledge_root / area
             for part in key.split("/"):
                 if part and part not in (".", ".."):

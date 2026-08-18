@@ -182,3 +182,46 @@ def resolve_memory_dir(
         )
     sessions_root = agent_dir / (sessions_subdir or "projects")
     return sessions_root / ("-" + str(root).replace("/", "-").lstrip("-"))
+
+
+def memory_dir(
+    payload: object,
+    *,
+    agent_dir: Path,
+    sessions_subdir: str,
+    cwd: Path,
+    knowledge_root: Path | None,
+) -> Path:
+    """Where this project's distilled memory lives.
+
+    Every hook used to compute a project dir and append `/ "memory"` itself.
+    That put memory inside the agent's own project directory, which is named
+    after the absolute path of the checkout — so the same repository on two
+    machines wrote to two places, and the second one looked untouched.
+
+    Resolves into the knowledge store when there is one, and otherwise keeps
+    writing exactly where it always did. Unshared is a smaller problem than
+    losing sight of memory already written.
+    """
+    from lazy_harness.core.memory_store import memory_dir_for
+
+    legacy = resolve_memory_dir(
+        payload, agent_dir=agent_dir, sessions_subdir=sessions_subdir, cwd=cwd
+    )
+    return memory_dir_for(cwd, knowledge_root=knowledge_root, legacy_project_dir=legacy)
+
+
+def knowledge_root_for(cfg: object) -> Path | None:
+    """The knowledge store root, or None when there is not a usable one.
+
+    Fail-soft on purpose: a hook that cannot find the store falls back to the
+    legacy location rather than failing the session.
+    """
+    try:
+        from lazy_harness.knowledge.marker import resolve_root
+
+        configured = getattr(getattr(cfg, "knowledge", None), "root", "") or None
+        root = resolve_root(configured)
+    except Exception:  # noqa: BLE001 — hooks degrade, they do not raise
+        return None
+    return root if root.is_dir() else None

@@ -700,7 +700,12 @@ def main() -> None:
         from lazy_harness.agents.registry import get_agent
         from lazy_harness.core.config import ConfigError, load_config
         from lazy_harness.core.paths import agent_runtime_dir, config_file
-        from lazy_harness.hooks.builtins._shared import make_log, project_dir_from_payload
+        from lazy_harness.hooks.builtins._shared import (
+            knowledge_root_for,
+            make_log,
+            project_dir_from_payload,
+        )
+        from lazy_harness.hooks.builtins._shared import memory_dir as shared_memory_dir
     except ImportError:
         # Broken/uninstalled package: silently no-op, never block the agent.
         return
@@ -734,7 +739,17 @@ def main() -> None:
     if project_dir is None:
         encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
         project_dir = agent_dir / (subdirs.get("sessions") or "projects") / encoded
-    memory_dir = project_dir / "memory"
+    # Sessions stay in the agent's project dir; distilled memory does not. That
+    # directory is named after the checkout's absolute path, so the same
+    # repository on two machines injected two different MEMORY.md files — one
+    # of them empty, with nothing to say so.
+    memory_dir = shared_memory_dir(
+        payload,
+        agent_dir=agent_dir,
+        sessions_subdir=subdirs.get("sessions") or "projects",
+        cwd=cwd,
+        knowledge_root=knowledge_root_for(cfg),
+    )
 
     git_ctx = git_context(cwd)
 

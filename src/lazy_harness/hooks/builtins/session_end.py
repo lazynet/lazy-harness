@@ -31,7 +31,10 @@ def _record_session_closed(payload: object) -> None:
         data = payload if isinstance(payload, dict) else {}
         session = data.get("session_id")
         cwd = data.get("cwd")
-        from lazy_harness.hooks.builtins._shared import profile_name, project_key
+        from lazy_harness.hooks.builtins._shared import (
+            profile_name,
+            project_key,
+        )
         from lazy_harness.monitoring.db import MetricsDB
 
         MetricsDB(_loop_db_path()).record_loop_event(
@@ -136,14 +139,15 @@ def _enqueue_compound_loop(payload: object) -> None:
         _log(log_file, f"should_queue_task returned False under force for {short_id}")
         return
 
-    memory_dir = (
-        resolve_project_dir(
-            payload,
-            agent_dir=agent_dir,
-            sessions_subdir=subdirs.get("sessions") or "projects",
-            cwd=cwd,
-        )
-        / "memory"
+    from lazy_harness.hooks.builtins._shared import knowledge_root_for
+    from lazy_harness.hooks.builtins._shared import memory_dir as shared_memory_dir
+
+    memory_dir = shared_memory_dir(
+        payload,
+        agent_dir=agent_dir,
+        sessions_subdir=subdirs.get("sessions") or "projects",
+        cwd=cwd,
+        knowledge_root=knowledge_root_for(cfg),
     )
     task_file = create_task(
         queue_dir=queue_dir,

@@ -138,3 +138,23 @@ def _never_touch_the_real_crontab(monkeypatch: pytest.MonkeyPatch) -> None:
         return real_run(argv, *args, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", guarded)
+
+
+@pytest.fixture(autouse=True)
+def _never_reach_the_real_knowledge_store(monkeypatch, tmp_path_factory):
+    """Point the knowledge store at a throwaway directory for every test.
+
+    `resolve_root` falls back to a path under `~`, and a test that does not
+    also patch `HOME` resolves the developer's real store — one did, and
+    asserted against a directory holding months of curated memory. The crontab
+    guard above exists for the same reason: an isolated test that reaches a
+    real, user-global location is not isolated.
+    """
+    # The default, not the env var: `resolve_root` prefers `LAZY_KNOWLEDGE_ROOT`
+    # over a configured value, so setting it here would override the tests that
+    # legitimately build their own store.
+    import lazy_harness.knowledge.marker as marker
+
+    monkeypatch.setattr(
+        marker, "DEFAULT_ROOT", str(tmp_path_factory.mktemp("knowledge-store-guard"))
+    )

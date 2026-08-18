@@ -36,9 +36,12 @@ def main() -> None:
         from lazy_harness.core.paths import agent_runtime_dir, config_file
         from lazy_harness.hooks.builtins._shared import (
             find_latest_session,
+            knowledge_root_for,
             make_log,
-            resolve_memory_dir,
             transcript_from_payload,
+        )
+        from lazy_harness.hooks.builtins._shared import (
+            memory_dir as shared_memory_dir,
         )
         from lazy_harness.knowledge.compound_loop import (
             create_task,
@@ -110,14 +113,12 @@ def main() -> None:
         _log(log_file, f"no new activity since last process for {short_id}")
         return
 
-    memory_dir = (
-        resolve_memory_dir(
-            payload,
-            agent_dir=agent_dir,
-            sessions_subdir=subdirs.get("sessions") or "projects",
-            cwd=cwd,
-        )
-        / "memory"
+    memory_dir = shared_memory_dir(
+        payload,
+        agent_dir=agent_dir,
+        sessions_subdir=subdirs.get("sessions") or "projects",
+        cwd=cwd,
+        knowledge_root=knowledge_root_for(cfg),
     )
     task_file = create_task(
         queue_dir=queue_dir,
