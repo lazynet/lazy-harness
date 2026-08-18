@@ -1,7 +1,8 @@
 # Linux parity: completing the scheduler backends and removing platform lies
 
-**Status:** proposed
+**Status:** accepted — delivered in v0.41.0 (waves 2–4)
 **Date:** 2026-08-17
+**Closed:** 2026-08-18
 **Relates to:** [ADR-013](../adrs/013-scheduler-unified-backends.md) (unified scheduler backends), [ADR-005](../adrs/005-xdg-first-paths.md) (XDG-first paths), [ADR-017](../adrs/017-selftest-as-health-check.md) (selftest as health check)
 
 ## Problem
@@ -240,6 +241,27 @@ The backends cannot be integration-tested in CI: GitHub runners have no systemd 
 
 - **Pure functions** (`parse_cron`, each backend's `render`, unit-file and plist generation, crontab block manipulation) — fully tested on both platforms. This is where the Category-2b defect lives, so this is where the tests matter most.
 - **Subprocess layer** (`install` / `uninstall` / `job_state`) — tested with the injected fake runner from D3, asserting the exact argv. Same tests on both platforms.
+
+## Delivery
+
+Closed 2026-08-18. Every design item landed; verified against the source
+before this status changed:
+
+| Item | Where it landed |
+|---|---|
+| D1 — `JobState` as a three-valued answer | `scheduler/base.py:17` |
+| D2 — extended `SchedulerBackend` protocol | `scheduler/base.py` — `job_state`, `discover`, `drift` on the Protocol |
+| D3 — command-runner seam | injectable runner on each backend; the crontab guard in `tests/conftest.py` exists because one test reached the real one |
+| D4 — translation that refuses rather than guesses | `scheduler/schedule.py:20` — `ScheduleTranslationError` |
+| D5 — `SystemdBackend` | `scheduler/systemd.py`, no `NotImplementedError` left |
+| D6 — lingering as a verified precondition | `scheduler/systemd.py:153` — `_warn_if_not_lingering` |
+| D7 — `CronBackend` | `scheduler/cron.py`, no `NotImplementedError` left |
+| D8 — portable lock detection | `LockState`, consumed by `monitoring/views/hooks.py:90` |
+| D9 — macOS enters CI | `.github/workflows/tests.yml:28` — `macos-latest` in the matrix |
+
+Two numbers in the Problem section were true when written and are not now:
+the suite was 1338 tests and CI was Linux-only. Both are left as written —
+the section records the state that motivated the work.
 
 ## Verification
 
