@@ -27,6 +27,7 @@ LOCAL_PREFIX = "local"
 # `scheme://user@host:port/path`, `user@host:path`, or a bare path.
 _SCP_LIKE = re.compile(r"^(?:(?P<user>[^@/]+)@)?(?P<host>[^:/]+):(?P<path>.+)$")
 _URL_LIKE = re.compile(r"^(?P<scheme>[a-zA-Z][a-zA-Z0-9+.-]*)://(?P<rest>.*)$")
+_URL_SECTION = re.compile(r'^url\s+"(?P<base>.*)"$')
 
 
 def main_repo_root(cwd: Path) -> Path | None:
@@ -105,7 +106,70 @@ def _ssh_host_aliases(ssh_config: Path | None) -> dict[str, str]:
     return aliases
 
 
-def normalise_remote(url: str, *, ssh_config: Path | None = None) -> str:
+def _insteadof_aliases(git_config: Path | None = None) -> dict[str, str]:
+    """`shorthand` -> `base` for every `url.<base>.insteadOf`.
+
+    Git stores a remote URL exactly as it was typed and expands `insteadOf` at
+    transport time, so a clone made with a shorthand keeps that spelling in
+    `.git/config` forever. `git remote get-url` hides this by expanding on
+    read; the file is what the identity has to be taken from.
+
+    `pushInsteadOf` is deliberately absent: it says where a push goes, not what
+    the repository is, and the two differ on purpose behind a read-only mirror.
+
+    Only the user-level files are read, and a key repeated across them takes
+    its last value rather than accumulating as git would. An `insteadOf` set
+    per-repository resolves to itself, which keeps the key stable per machine
+    but not across them — the same limit, and the same reason, as `Include`.
+    """
+    if git_config is None:
+        home = Path.home()
+        paths = [home / ".config" / "git" / "config", home / ".gitconfig"]
+    else:
+        paths = [git_config]
+
+    aliases: dict[str, str] = {}
+    for path in paths:
+        # One parser per file: a malformed `~/.gitconfig` must not take the
+        # XDG one down with it. Same `strict`/`interpolation` reasoning as
+        # `_remote_url`, plus `allow_no_value` because git allows a bare key.
+        parser = configparser.ConfigParser(strict=False, interpolation=None, allow_no_value=True)
+        try:
+            parser.read(path)
+        except (OSError, configparser.Error, UnicodeDecodeError):
+            continue
+        for section in parser.sections():
+            match = _URL_SECTION.match(section.strip())
+            if match is None:
+                continue
+            base = match.group("base")
+            shorthand = (parser.get(section, "insteadof", fallback="") or "").strip()
+            # An empty shorthand is a prefix of every URL: honouring it would
+            # rewrite every remote on the machine to one host.
+            if base and shorthand:
+                aliases[shorthand] = base
+    return aliases
+
+
+def _apply_insteadof(url: str, aliases: dict[str, str]) -> str:
+    """`url` with its longest matching shorthand expanded.
+
+    Longest wins because git resolves it that way, and because a general
+    prefix and a more specific one legitimately coexist — picking the first
+    match would make the result depend on the order of the file.
+    """
+    matched: str | None = None
+    for shorthand in aliases:
+        if url.startswith(shorthand) and (matched is None or len(shorthand) > len(matched)):
+            matched = shorthand
+    if matched is None:
+        return url
+    return aliases[matched] + url[len(matched) :]
+
+
+def normalise_remote(
+    url: str, *, ssh_config: Path | None = None, git_config: Path | None = None
+) -> str:
     """`host/path` for a remote URL, with no scheme, credentials or `.git`.
 
     Every URL form for one repository has to land on one string, or two
@@ -114,6 +178,11 @@ def normalise_remote(url: str, *, ssh_config: Path | None = None) -> str:
     url = url.strip()
     if not url:
         return ""
+
+    # Before parsing: an `insteadOf` shorthand names no host of its own, so a
+    # URL that still carries it has nothing for the rest of this function or
+    # the SSH lookup to resolve.
+    url = _apply_insteadof(url, _insteadof_aliases(git_config))
 
     match = _URL_LIKE.match(url)
     if match:
@@ -183,7 +252,9 @@ def _local_key(cwd: Path) -> str:
     return f"{LOCAL_PREFIX}/{root.name or 'root'}"
 
 
-def project_key(cwd: Path, *, ssh_config: Path | None = None) -> str:
+def project_key(
+    cwd: Path, *, ssh_config: Path | None = None, git_config: Path | None = None
+) -> str:
     """The stable identity of the project containing `cwd`.
 
     `host/owner/name` when the repository has a remote; `local/<name>`
@@ -193,5 +264,5 @@ def project_key(cwd: Path, *, ssh_config: Path | None = None) -> str:
     root = main_repo_root(cwd)
     if root is None:
         return _local_key(cwd)
-    key = normalise_remote(_remote_url(root), ssh_config=ssh_config)
+    key = normalise_remote(_remote_url(root), ssh_config=ssh_config, git_config=git_config)
     return key or _local_key(cwd)
