@@ -95,6 +95,17 @@ class KnowledgeConfig:
 
 
 @dataclass
+class SecretsConfig:
+    """Where per-profile secret files live.
+
+    Empty means `<config dir>/secrets`, which is where the provisioner writes.
+    Named here so a machine that keeps them elsewhere has one place to say so.
+    """
+
+    dir: str = ""
+
+
+@dataclass
 class MonitoringConfig:
     enabled: bool = False
     db: str = ""
@@ -221,6 +232,7 @@ class Config:
     knowledge: KnowledgeConfig = field(default_factory=KnowledgeConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     monitoring: MonitoringConfig = field(default_factory=MonitoringConfig)
+    secrets: SecretsConfig = field(default_factory=SecretsConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     hooks: dict[str, HookEventConfig] = field(default_factory=dict)
     compound_loop: CompoundLoopConfig = field(default_factory=CompoundLoopConfig)
@@ -429,6 +441,7 @@ def load_config(path: Path) -> Config:
     cfg.memory = _parse_memory(raw.get("memory", {}))
 
     monitoring_raw = raw.get("monitoring", {})
+    cfg.secrets = SecretsConfig(**raw.get("secrets", {}))
     cfg.monitoring = MonitoringConfig(
         enabled=monitoring_raw.get("enabled", False),
         db=monitoring_raw.get("db", ""),
@@ -561,6 +574,7 @@ def _config_to_dict(cfg: Config) -> dict[str, Any]:
         "monitoring": {
             "enabled": cfg.monitoring.enabled,
         },
+        "secrets": {"dir": cfg.secrets.dir},
         "scheduler": {"backend": cfg.scheduler.backend},
         "loops": {"inject_goal_prompt": cfg.loops.inject_goal_prompt},
         # Only the keys `load_config` reads round-trip here: emitting one it

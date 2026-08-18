@@ -14,6 +14,7 @@ from lazy_harness.agents.registry import AgentNotFoundError, get_agent
 from lazy_harness.core.config import ConfigError, load_config
 from lazy_harness.core.paths import config_file, expand_path, process_exec_path
 from lazy_harness.core.profiles import resolve_profile
+from lazy_harness.core.secrets import overlay_profile_secrets, secrets_dir_for
 
 
 @click.command(
@@ -82,6 +83,10 @@ def run(
 
     env = os.environ.copy()
     env[adapter.env_var()] = str(config_dir)
+    # The agent's credential is one global variable and its stored credentials
+    # live inside `config_dir`, so a second profile backed by a second account
+    # would otherwise authenticate as the first — silently.
+    env = overlay_profile_secrets(env, profile_name, secrets_dir=secrets_dir_for(cfg))
 
     process_name = adapter.process_name()
     argv0 = process_name or str(binary)
