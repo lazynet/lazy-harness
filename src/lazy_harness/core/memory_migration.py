@@ -132,3 +132,43 @@ def apply_migration(moves: list[Move]) -> MigrationResult:
         except OSError as e:
             result.failures.append((move, str(e)))
     return result
+
+
+@dataclass(frozen=True)
+class LegacyStatus:
+    """What a legacy memory directory is, from the reader's point of view."""
+
+    source: Path
+    status: str
+    detail: str = ""
+    checkout: Path | None = None
+    target: Path | None = None
+
+
+def classify_legacy_memory(
+    profile_dirs: list[Path], *, knowledge_root: Path | None
+) -> list[LegacyStatus]:
+    """Sort legacy memory into leftover, lost, and unmovable. Touches nothing.
+
+    `plan_migration` answers where something would go. It cannot tell a
+    harmless leftover from memory nothing reads any more, because it never
+    looks at whether the target is already there — and that difference is the
+    whole question: `superseded` is safe to delete, `orphaned` is a curated
+    document that stopped being loaded when memory moved into the store.
+    """
+    out: list[LegacyStatus] = []
+    for move in plan_migration(profile_dirs, knowledge_root=knowledge_root):
+        checkout = _checkout_for(move.source.parent.name)
+        if move.target is None:
+            out.append(LegacyStatus(move.source, "unkeyable", move.reason, checkout))
+            continue
+        superseded = move.target.is_dir() and any(move.target.iterdir())
+        out.append(
+            LegacyStatus(
+                move.source,
+                "superseded" if superseded else "orphaned",
+                checkout=checkout,
+                target=move.target,
+            )
+        )
+    return out

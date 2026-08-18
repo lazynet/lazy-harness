@@ -143,12 +143,16 @@ lh memory consolidate
 lh memory consolidate --memory-dir ~/.claude/projects/-Users-me-repo/memory --last 100
 ```
 
-### `lh memory cross-profile-check`
+### `lh memory legacy-check`
 
-Walks every profile's memory tree and reports which projects have memory artifacts under each. The output flags cross-profile divergences — the same logical project appearing with conflicting memory under more than one profile, typically a sign that `lh profile move` is needed (see `lh profile move`).
+Reports per-project memory still sitting in a profile's `projects/` tree rather than in the knowledge store, and classifies each one:
+
+- **orphaned** — the store holds no copy, so nothing reads this memory any more. Move it with `lh memory migrate`.
+- **superseded** — the store already holds a copy; the leftover is safe to delete.
+- **unkeyable** — the checkout it was named after is gone, or has no git remote to key on, so there is nowhere to move it.
 
 ```bash
-lh memory cross-profile-check
+lh memory legacy-check
 ```
 
 ### `lh memory proposals`
