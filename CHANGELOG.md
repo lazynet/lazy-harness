@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.44.2](https://github.com/lazynet/lazy-harness/compare/v0.44.1...v0.44.2) (2026-08-18)
+
+
+### Bug Fixes
+
+* report the pin from config instead of the module constant ([#192](https://github.com/lazynet/lazy-harness/issues/192)) ([f72d725](https://github.com/lazynet/lazy-harness/commit/f72d725a2084e11dd3559927264a5859bfa2ddd6))
+
 ## [0.44.1](https://github.com/lazynet/lazy-harness/compare/v0.44.0...v0.44.1) (2026-08-18)
 
 
