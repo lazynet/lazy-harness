@@ -288,15 +288,9 @@ def test_a_capability_with_neither_a_switch_nor_a_binary_is_refused() -> None:
         reg.state(cap, Config())
 
 
-def test_a_list_valued_config_path_is_refused_until_membership_exists() -> None:
-    """`bool(["sqlite_local"])` is True for every capability sharing that path.
-
-    Two metrics sinks registered against `metrics.sinks` both answered `ON`,
-    including the one that was never added to the list. The registry has no
-    per-capability identity to test membership against yet, and a confident
-    wrong answer is worse here than an error: a checker that cannot check must
-    not spell that as a result.
-    """
+def test_a_path_that_stops_on_a_whole_section_is_refused() -> None:
+    """A path naming a section rather than a switch has no honest reading, and
+    answering from its truthiness would make every capability under it agree."""
     from lazy_harness.core.config import Config
     from lazy_harness.plugins.capabilities import (
         Capability,
@@ -305,23 +299,22 @@ def test_a_list_valued_config_path_is_refused_until_membership_exists() -> None:
     )
 
     cap = Capability(
-        name="http_remote",
-        kind="metrics_sink",
+        name="whole-section",
+        kind="tool",
         cardinality=Cardinality.MANY,
-        config_path="metrics.sinks",
-        summary="Remote metrics sink",
+        config_path="memory.engram",
+        summary="path stops on a dataclass section",
     )
     reg = CapabilityRegistry()
     reg.register(cap)
 
-    with pytest.raises(TypeError, match="metrics.sinks"):
+    with pytest.raises(TypeError, match="memory.engram"):
         reg.state(cap, Config())
 
 
-def test_a_config_path_through_a_dict_section_names_the_capability() -> None:
-    """`Config.hooks` is a `dict`, so `getattr` fails on the event name and the
-    bare AttributeError names only that key — not the capability, not the path.
-    """
+def test_an_unresolvable_path_names_the_capability_and_the_path() -> None:
+    """A bare AttributeError names only the attribute it tried, which says
+    nothing about which registration is wrong."""
     from lazy_harness.core.config import Config
     from lazy_harness.plugins.capabilities import (
         Capability,
@@ -333,7 +326,7 @@ def test_a_config_path_through_a_dict_section_names_the_capability() -> None:
         name="pre-tool-use-security",
         kind="hook",
         cardinality=Cardinality.MANY,
-        config_path="hooks.pre_tool_use.scripts",
+        config_path="memory.engram.no_such_field",
         summary="Block dangerous shell invocations",
     )
     reg = CapabilityRegistry()
@@ -343,4 +336,4 @@ def test_a_config_path_through_a_dict_section_names_the_capability() -> None:
         reg.state(cap, Config())
 
     assert "pre-tool-use-security" in str(excinfo.value)
-    assert "hooks.pre_tool_use.scripts" in str(excinfo.value)
+    assert "memory.engram.no_such_field" in str(excinfo.value)

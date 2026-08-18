@@ -54,6 +54,45 @@ _TOOLS = [
 ]
 
 
+# Event -> the hooks that ship on under it. This table is what
+# `deploy/defaults.py:DEFAULT_HOOKS` is computed from, so a hook added here
+# starts being deployed without editing that file — the "registered but
+# forgotten in the defaults" failure has no place left to happen.
+#
+# Three builtin hooks are deliberately absent: `herdr-context-gauge`,
+# `post-tool-use-ansible-lint` and `user-prompt-goal` appear in no default
+# list, so no event is declared for them anywhere in the code. They attach
+# wherever the operator puts them, and giving them a fixed `config_path` here
+# would invent that event and then answer wrongly for anyone who configured
+# them under a different one.
+_DEFAULT_ON_HOOKS: dict[str, list[str]] = {
+    "session_start": ["context-inject"],
+    "session_stop": ["session-export", "compound-loop", "engram-persist"],
+    "session_end": ["session-end"],
+    "pre_compact": ["pre-compact"],
+    "post_compact": ["post-compact"],
+    "pre_tool_use": [
+        "pre-tool-use-security",
+        "pre-tool-use-memory-size",
+        "pre-tool-use-read-size",
+    ],
+    "post_tool_use": ["post-tool-use-format", "post-tool-use-sync-claude"],
+}
+
+_HOOKS = [
+    Capability(
+        name=name,
+        kind="hook",
+        cardinality=Cardinality.MANY,
+        config_path=f"hooks.{event}.scripts",
+        summary=f"Builtin {event.replace('_', ' ')} hook",
+        enabled_by_default=True,
+    )
+    for event, names in _DEFAULT_ON_HOOKS.items()
+    for name in names
+]
+
+
 @lru_cache(maxsize=1)
 def builtin_registry() -> CapabilityRegistry:
     """The one registry, built once.
@@ -62,6 +101,6 @@ def builtin_registry() -> CapabilityRegistry:
     on every call would raise on the second one.
     """
     reg = CapabilityRegistry()
-    for cap in _TOOLS:
+    for cap in (*_TOOLS, *_HOOKS):
         reg.register(cap)
     return reg

@@ -59,3 +59,53 @@ def test_the_registry_is_the_same_object_across_calls() -> None:
     from lazy_harness.plugins.builtins import builtin_registry
 
     assert builtin_registry() is builtin_registry()
+
+
+def test_every_default_on_hook_is_registered_with_its_event() -> None:
+    """`DEFAULT_HOOKS` becomes derived data, so the table is what decides which
+    hooks ship on. A hook registered but forgotten in the defaults is how one
+    stops running with nothing reporting it."""
+    from lazy_harness.plugins.builtins import builtin_registry
+
+    hooks = builtin_registry().capabilities(kind="hook")
+    on_by_default = {c.name: c.config_path for c in hooks if c.enabled_by_default}
+
+    assert on_by_default["context-inject"] == "hooks.session_start.scripts"
+    assert on_by_default["engram-persist"] == "hooks.session_stop.scripts"
+    assert len(on_by_default) == 12
+
+
+def test_the_three_any_event_hooks_are_knowingly_absent() -> None:
+    """`herdr-context-gauge`, `post-tool-use-ansible-lint` and
+    `user-prompt-goal` appear in no `DEFAULT_HOOKS` list, so no event is
+    declared for them anywhere in the code — they attach wherever the user puts
+    them. Giving them a fixed `config_path` would invent that event and answer
+    wrongly for anyone who configured them elsewhere, so they are left out
+    until the registry can express "enabled under any event"."""
+    from lazy_harness.hooks.loader import list_builtin_hooks
+    from lazy_harness.plugins.builtins import builtin_registry
+
+    registered = {c.name for c in builtin_registry().capabilities(kind="hook")}
+    missing = set(list_builtin_hooks()) - registered
+
+    assert missing == {
+        "herdr-context-gauge",
+        "post-tool-use-ansible-lint",
+        "user-prompt-goal",
+    }
+
+
+def test_default_hooks_is_derived_from_the_registry() -> None:
+    from lazy_harness.deploy.defaults import DEFAULT_HOOKS
+    from lazy_harness.plugins.builtins import builtin_registry
+
+    from_registry: dict[str, list[str]] = {}
+    for cap in builtin_registry().capabilities(kind="hook"):
+        if not cap.enabled_by_default:
+            continue
+        event = cap.config_path.split(".")[1]
+        from_registry.setdefault(event, []).append(cap.name)
+
+    assert {k: sorted(v) for k, v in DEFAULT_HOOKS.items()} == {
+        k: sorted(v) for k, v in from_registry.items()
+    }
