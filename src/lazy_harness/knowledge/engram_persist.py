@@ -151,10 +151,17 @@ class EngramPersister:
         project_key: str,
         engram_bin: str | None = None,
         slow_save_threshold_ms: int = SLOW_SAVE_THRESHOLD_MS,
+        cursor_dir: Path | None = None,
     ) -> None:
         self.memory_dir = memory_dir
         self.logs_dir = logs_dir
         self.project_key = project_key
+        # The offsets index files that travel between machines; the database
+        # they feed does not. Keeping the cursor beside the JSONL published it,
+        # and a machine that pulled someone else's cursor skipped every entry
+        # between the two. None keeps the old location for callers that have
+        # no machine-local directory to offer.
+        self.cursor_dir = cursor_dir
         self.engram_bin = engram_bin if engram_bin is not None else shutil.which("engram")
         self.slow_save_threshold_ms = slow_save_threshold_ms
 
@@ -173,8 +180,16 @@ class EngramPersister:
             _emit_skip_metric(self.logs_dir, self.project_key, "binary_not_found")
             return result
 
-        cursor_path = self.memory_dir / _CURSOR_FILENAME
+        cursor_path = (self.cursor_dir or self.memory_dir) / _CURSOR_FILENAME
         cursor = _load_cursor(cursor_path)
+        if not cursor_path.is_file():
+            # First run after the move: adopt what the old location knew, so a
+            # machine that was up to date does not resave its whole history.
+            cursor = _load_cursor(self.memory_dir / _CURSOR_FILENAME)
+            # Write it through immediately rather than on the next save. The
+            # shared copy is on its way out of the store, and a cursor that
+            # only ever exists there resets to zero the day it goes.
+            _save_cursor(cursor_path, cursor["decisions_offset"], cursor["failures_offset"])
 
         for kind in ("decision", "failure"):
             file_path = self.memory_dir / _FILES[kind]
