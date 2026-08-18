@@ -215,7 +215,8 @@ def test_project_memory_dir_resolves_worktree_to_main_checkout(
 
     encoded = "-" + str(repo).replace("/", "-").lstrip("-")
     assert (
-        _project_memory_dir(get_agent("claude-code")) == runtime / "projects" / encoded / "memory"
+        _project_memory_dir(get_agent("claude-code"), None)
+        == runtime / "projects" / encoded / "memory"
     )
 
 
@@ -233,7 +234,8 @@ def test_project_memory_dir_uses_cwd_outside_a_worktree(
 
     encoded = "-" + str(repo).replace("/", "-").lstrip("-")
     assert (
-        _project_memory_dir(get_agent("claude-code")) == runtime / "projects" / encoded / "memory"
+        _project_memory_dir(get_agent("claude-code"), None)
+        == runtime / "projects" / encoded / "memory"
     )
 
 

@@ -13,7 +13,7 @@ from rich.markup import escape
 
 from lazy_harness.agents.base import AgentAdapter
 from lazy_harness.agents.registry import AgentNotFoundError, get_agent
-from lazy_harness.core.config import CompoundLoopConfig, ConfigError, load_config
+from lazy_harness.core.config import CompoundLoopConfig, Config, ConfigError, load_config
 from lazy_harness.core.paths import agent_runtime_dir, config_file, contract_path, expand_path
 from lazy_harness.core.profiles import list_profiles
 from lazy_harness.llm import LLMBackendError, LLMBackendNotFoundError, get_backend
@@ -182,18 +182,18 @@ def _render_memory_hygiene(console: Console, memory_dir: Path, now: datetime | N
     return ok
 
 
-def _project_memory_dir(agent: AgentAdapter) -> Path:
+def _project_memory_dir(agent: AgentAdapter, cfg: Config | None) -> Path:
     """Memory dir for the current project, canonicalised across worktrees."""
-    from lazy_harness.hooks.builtins._shared import resolve_memory_dir
 
-    return (
-        resolve_memory_dir(
-            None,
-            agent_dir=agent_runtime_dir(agent),
-            sessions_subdir=agent.session_dirs().get("sessions") or "projects",
-            cwd=Path.cwd(),
-        )
-        / "memory"
+    from lazy_harness.hooks.builtins._shared import knowledge_root_for
+    from lazy_harness.hooks.builtins._shared import memory_dir as shared_memory_dir
+
+    return shared_memory_dir(
+        None,
+        agent_dir=agent_runtime_dir(agent),
+        sessions_subdir=agent.session_dirs().get("sessions") or "projects",
+        cwd=Path.cwd(),
+        knowledge_root=knowledge_root_for(cfg),
     )
 
 
@@ -308,7 +308,7 @@ def doctor() -> None:
     if not _render_engram_persist(console, health):
         ok = False
 
-    if not _render_memory_hygiene(console, _project_memory_dir(agent)):
+    if not _render_memory_hygiene(console, _project_memory_dir(agent, cfg)):
         ok = False
 
     console.print()

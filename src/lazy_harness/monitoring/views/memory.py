@@ -66,30 +66,33 @@ def render(ctx: StatusContext) -> RenderableType:
     table.add_column("Learnings (this month)", justify="right")
 
     any_rows = False
-    for p in ctx.profiles:
-        projects_dir = p.config_dir / "projects"
-        if not projects_dir.is_dir():
-            continue
-        for pdir in sorted(projects_dir.iterdir()):
-            if not pdir.is_dir():
-                continue
-            memory_dir = pdir / "memory"
-            if not memory_dir.is_dir():
-                continue
+    # Both locations. Memory keyed by project identity lives in the knowledge
+    # store; anything not yet migrated — or deliberately unshared — is still
+    # under the agent's project dir, and a view that showed only one of them
+    # would look like the other half had been deleted.
+    from lazy_harness.core.memory_store import all_memory_dirs
+    from lazy_harness.hooks.builtins._shared import knowledge_root_for
 
-            dec_count, dec_ts = _count_jsonl(memory_dir / "decisions.jsonl")
-            fail_count, fail_ts = _count_jsonl(memory_dir / "failures.jsonl")
-            last_ts = max((t for t in (dec_ts, fail_ts) if t), default="")
-            learn_count = _learnings_for_project(ctx.learnings_dir, pdir.name)
+    for memory_dir in all_memory_dirs(
+        [p.config_dir for p in ctx.profiles], knowledge_root_for(ctx.cfg)
+    ):
+        # A legacy directory is `<encoded-cwd>/memory`; a migrated one is
+        # `<host>/<owner>/<name>` and names itself.
+        label = memory_dir.parent.name if memory_dir.name == "memory" else memory_dir.name
 
-            table.add_row(
-                decode_project_name(pdir.name),
-                str(dec_count),
-                str(fail_count),
-                time_ago(last_ts),
-                str(learn_count),
-            )
-            any_rows = True
+        dec_count, dec_ts = _count_jsonl(memory_dir / "decisions.jsonl")
+        fail_count, fail_ts = _count_jsonl(memory_dir / "failures.jsonl")
+        last_ts = max((t for t in (dec_ts, fail_ts) if t), default="")
+        learn_count = _learnings_for_project(ctx.learnings_dir, label)
+
+        table.add_row(
+            decode_project_name(label),
+            str(dec_count),
+            str(fail_count),
+            time_ago(last_ts),
+            str(learn_count),
+        )
+        any_rows = True
 
     if not any_rows:
         return "[dim]No project memory yet.[/dim]"
