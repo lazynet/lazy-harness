@@ -9,6 +9,8 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 
+from lazy_harness.core.versions import parse_version
+
 PINNED_VERSION = "0.9.41"
 
 
@@ -75,6 +77,5 @@ def check_version() -> tuple[bool, str]:
     if result.returncode != 0:
         return False, ""
 
-    parts = result.stdout.strip().split()
-    current = parts[-1] if parts else ""
+    current = parse_version(result.stdout)
     return current == PINNED_VERSION, current

@@ -91,3 +91,22 @@ def test_engram_check_version_missing_binary() -> None:
         matches, current = check_version()
         assert matches is False
         assert current == ""
+
+
+def test_engram_check_version_ignores_decoration_around_the_number(monkeypatch) -> None:
+    """A `v` prefix or a trailing build hash must not read as drift."""
+    import subprocess
+    from types import SimpleNamespace
+
+    from lazy_harness.memory import engram
+
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *a, **k: SimpleNamespace(
+            returncode=0, stdout=f"engram v{engram.PINNED_VERSION} (abc1234)\n"
+        ),
+    )
+    matches, current = engram.check_version()
+    assert current == engram.PINNED_VERSION
+    assert matches
