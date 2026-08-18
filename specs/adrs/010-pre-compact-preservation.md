@@ -20,7 +20,7 @@ Built-in hook at `src/lazy_harness/hooks/builtins/pre_compact.py` that runs on e
    - The last up-to-5 non-trivial user messages (≥15 chars, truncated to 200). These are the recent intents.
    - Every file path that appears in an assistant `tool_use` block's `input.file_path` or `input.path`. Sorted, deduplicated, last 10 kept. These are the files the session has been working on.
 3. **Write the summary to `memory/pre-compact-summary.md`** inside the project's memory directory (`<CLAUDE_CONFIG_DIR>/projects/<encoded-cwd>/memory/pre-compact-summary.md`). The file starts with an HTML comment recording the generation timestamp.
-4. **Return the summary as `hookSpecificOutput.additionalContext`** so Claude Code can optionally include it in the post-compaction context that the model sees.
+4. **Print the summary as plain text on stdout**, preceded by `SUMMARY_PREAMBLE`. Claude Code's PreCompact executor joins the raw stdout of every successful hook and passes it to the compaction summariser as `newCustomInstructions`. This point originally specified `hookSpecificOutput.additionalContext`; that event has no such output variant and the payload was rejected on every compaction. Corrected by ADR-036.
 5. **Always exit 0.** Any failure is logged and swallowed — pre-compact must never prevent compaction itself.
 
 The `context-inject` hook (see [ADR-006](006-hooks-subprocess-json.md) and the memory-model doc) reads `pre-compact-summary.md` on the next session start via `handoff_context`, so the information survives not only the compaction but also the session boundary.

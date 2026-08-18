@@ -49,7 +49,6 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
         module="lazy_harness.hooks.builtins.herdr_context_gauge",
         matcher={"post_tool_use": "*"},
     ),
-    "post-compact": BuiltinHookSpec(module="lazy_harness.hooks.builtins.post_compact"),
     "post-tool-use-ansible-lint": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.post_tool_use_ansible_lint",
         matcher="Edit|Write",

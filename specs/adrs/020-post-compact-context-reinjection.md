@@ -1,6 +1,6 @@
 # ADR-020: Post-compact hook re-injects the pre-compact summary into the live session
 
-**Status:** accepted
+**Status:** superseded-by: 036
 **Date:** 2026-04-22
 
 ## Context

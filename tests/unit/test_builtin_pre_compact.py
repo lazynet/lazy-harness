@@ -8,6 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 def test_pre_compact_returns_zero(tmp_path: Path) -> None:
     hook_path = (
@@ -51,7 +53,7 @@ def _encoded_cwd(cwd: Path) -> str:
     return "-" + str(cwd).replace("/", "-").lstrip("-")
 
 
-def test_pre_compact_additional_context_includes_decisions_and_failures_tails(
+def test_pre_compact_emits_plain_text_carrying_decisions_and_failures_tails(
     tmp_path: Path,
 ) -> None:
     hook_path = (
@@ -111,8 +113,17 @@ def test_pre_compact_additional_context_includes_decisions_and_failures_tails(
     )
 
     assert result.returncode == 0
-    payload = json.loads(result.stdout)
-    ctx = payload["hookSpecificOutput"]["additionalContext"]
+    # Claude Code 2.1.234's `hookSpecificOutput` union has no PreCompact
+    # variant, so JSON here fails schema validation and the hook is marked
+    # failed — its output dropped. The executor collects each *successful*
+    # hook's raw stdout into `newCustomInstructions` instead, which is why
+    # this has to be plain text.
+    from lazy_harness.hooks.builtins.pre_compact import SUMMARY_PREAMBLE
+
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(result.stdout)
+    ctx = result.stdout
+    assert ctx.lstrip().startswith(SUMMARY_PREAMBLE)
 
     assert "Recent decisions" in ctx
     assert "pyright-lsp in both profiles" in ctx

@@ -21,7 +21,6 @@ BUILTINS_DIR = Path(__file__).parents[4] / "src" / "lazy_harness" / "hooks" / "b
 GUARDED_HOOKS = [
     "compound_loop",
     "context_inject",
-    "post_compact",
     "pre_compact",
     "session_end",
     "session_export",

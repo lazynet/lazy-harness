@@ -43,11 +43,14 @@ def test_deploy_hooks_fresh_profile_writes_all_defaults(tmp_path: Path) -> None:
         "Stop",
         "SessionEnd",
         "PreCompact",
-        "PostCompact",
         "PreToolUse",
         "PostToolUse",
     ):
         assert cc_event in cc_hooks, f"missing {cc_event} in deployed hooks"
+    assert "PostCompact" not in cc_hooks, (
+        "the PostCompact event has no channel to the model; deploying a hook "
+        "there wires a command that can only print to the user"
+    )
 
 
 def test_deploy_hooks_idempotent_on_clean_managed_state(tmp_path: Path) -> None:
@@ -250,8 +253,8 @@ def test_deploy_hooks_honors_per_event_opt_out(tmp_path: Path) -> None:
 
 def test_deploy_hooks_regression_2026_04_17(tmp_path: Path) -> None:
     """Partial user config (only pre_tool_use + post_tool_use declared) must
-    not strip the SessionStart / Stop / SessionEnd / PreCompact / PostCompact
-    defaults. Captures the real incident from 2026-04-17."""
+    not strip the SessionStart / Stop / SessionEnd / PreCompact defaults.
+    Captures the real incident from 2026-04-17."""
     profile_dir = tmp_path / "profile"
     cfg = _cfg_with_profile(
         profile_dir,
@@ -268,7 +271,7 @@ def test_deploy_hooks_regression_2026_04_17(tmp_path: Path) -> None:
     assert "Stop" in cc_hooks
     assert "SessionEnd" in cc_hooks
     assert "PreCompact" in cc_hooks
-    assert "PostCompact" in cc_hooks
+    assert "PostCompact" not in cc_hooks
     # Named by hook, not by the module file inside a deployed path: the command
     # is now `lh hook <name>` and carries no path at all.
     pre_tool_serialized = json.dumps(cc_hooks["PreToolUse"])

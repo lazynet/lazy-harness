@@ -1,7 +1,4 @@
 {
-  "post_compact": [
-    "post-compact"
-  ],
   "post_tool_use": [
     "post-tool-use-format",
     "post-tool-use-sync-claude"

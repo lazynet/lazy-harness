@@ -70,7 +70,6 @@ _DEFAULT_ON_HOOKS: dict[str, list[str]] = {
     "session_stop": ["session-export", "compound-loop", "engram-persist"],
     "session_end": ["session-end"],
     "pre_compact": ["pre-compact"],
-    "post_compact": ["post-compact"],
     "pre_tool_use": [
         "pre-tool-use-security",
         "pre-tool-use-memory-size",

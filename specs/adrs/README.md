@@ -29,7 +29,7 @@ Decisions that define the `lazy-harness` project itself.
 | [017](./017-selftest-as-health-check.md) | accepted | Selftest as user-facing health check | `lh selftest` is not pytest — it is the on-machine configuration check. |
 | [018](./018-config-discoverability.md) | accepted | Feature discoverability via `lh doctor` + `lh config <feature>` | No wizards on upgrade. `lh doctor` lists features; `lh config <feature> --init` is the opt-in wizard. |
 | [019](./019-handoff-session-end-freshness.md) | accepted | Force a final compound-loop evaluation at session end | `SessionEnd` hook + `lh knowledge handoff-now` bypass the Stop-hook gates so the handoff reflects the session's final state. |
-| [020](./020-post-compact-context-reinjection.md) | accepted | Post-compact hook re-injects the pre-compact summary | Mirror the PreCompact summary into the live post-compaction context with a 5-minute freshness check. |
+| [020](./020-post-compact-context-reinjection.md) | superseded-by: 036 | Post-compact hook re-injects the pre-compact summary | Mirror the PreCompact summary into the live post-compaction context with a 5-minute freshness check. |
 | [021](./021-async-response-grading.md) | accepted | Async response grading via the compound-loop worker | One LLM call returns decisions/failures/learnings/handoff *and* a quality grade. Poor grades escalate to PRJ.md. |
 | [022](./022-engram-episodic-memory.md) | accepted | Engram as optional episodic memory backend | New `memory/engram.py` wrapper + `[memory.engram]` config + MCP deploy gating. Mirrors the ADR-016 QMD pattern. |
 | [023](./023-graphify-code-structure.md) | accepted | Graphify as optional code-structure index | New `knowledge/graphify.py` wrapper + `[knowledge.structure]` config + MCP deploy gating. Mirrors ADR-016 / ADR-022. |
@@ -45,6 +45,7 @@ Decisions that define the `lazy-harness` project itself.
 | [033](./033-llm-backend-abstraction.md) | accepted | LLM backend abstraction — provider-agnostic inference | New `LLMBackend` Protocol decouples framework-internal inference from the agent CLI choice. Covers Ollama, MLX, and any OpenAI-compatible endpoint. Implemented 2026-06-11. |
 | [034](./034-okf-knowledge-producer.md) | proposed | OKF producer — export curated knowledge as an OKF bundle | New `knowledge/okf.py` + `lh knowledge export-okf` transform the `learnings/` layer into a conformant Open Knowledge Format v0.1 bundle. Export-only, non-invasive; episodic logs excluded. |
 | [035](./035-capability-registry.md) | proposed | Capability registry — cardinality and external dependency as the two axes | One enumerable registry over the six activation surfaces, classified by cardinality (`one`/`many`) and by whether activation needs an external binary. Explicitly not a public plugin API. |
+| [036](./036-compact-hooks-use-real-channels.md) | accepted | Compact-event hooks use the channels the agent actually provides | `PostCompact` has no output channel to the model, so the built-in is removed; `pre-compact` prints plain text into `newCustomInstructions`. |
 
 ### Status values
 
@@ -55,7 +56,7 @@ Each active ADR carries one of the following statuses in its header. The column 
 | `accepted` | Decision taken **and** embodied in code, config, or tests. Default state for a shipping decision. |
 | `accepted-deferred` | Decision taken and locked, but implementation is intentionally not yet scheduled. The ADR is not incomplete — its realisation is waiting for a specific trigger documented in the ADR itself. |
 | `proposed` | Written and reasoned, but not yet committed to. Open for revision. ADR-034 and ADR-035 currently hold this status. |
-| `superseded-by: NNN` | Replaced by a later ADR. The record is kept for history; the pointer names its replacement. No active ADR currently holds this status. |
+| `superseded-by: NNN` | Replaced by a later ADR. The record is kept for history; the pointer names its replacement. ADR-020 currently holds this status. |
 
 New decisions default to `accepted` once they ship. A decision that turns out wrong is **superseded** by a new ADR rather than edited in place.
 

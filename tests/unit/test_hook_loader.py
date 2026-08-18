@@ -130,12 +130,18 @@ def test_post_tool_use_sync_claude_resolves_to_concrete_file() -> None:
     assert info.path.is_file()
 
 
-def test_post_compact_is_registered_as_builtin() -> None:
+def test_post_compact_is_not_a_builtin_because_the_event_cannot_inject_context() -> None:
+    """Claude Code's PostCompact executor returns only `userDisplayMessage`.
+
+    Verified against the 2.1.234 bundle: the `hookSpecificOutput` union has no
+    PostCompact variant, and the executor builds a user-facing string from each
+    hook's stdout and nothing else. There is no channel to the model, so a hook
+    whose entire purpose is re-injecting context cannot do it. `context-inject`
+    on `SessionStart` with source=compact already reads the same file.
+    """
     from lazy_harness.hooks.loader import _BUILTIN_HOOKS
 
-    assert "post-compact" in _BUILTIN_HOOKS
-    spec = _BUILTIN_HOOKS["post-compact"]
-    assert spec.module == "lazy_harness.hooks.builtins.post_compact"
+    assert "post-compact" not in _BUILTIN_HOOKS
 
 
 def test_builtin_hook_spec_carries_optional_matcher() -> None:
@@ -189,14 +195,10 @@ def test_pre_tool_use_memory_size_is_registered_with_edit_write_matcher() -> Non
     assert info.path.is_file()
 
 
-def test_post_compact_resolves_to_concrete_file() -> None:
+def test_post_compact_does_not_resolve() -> None:
     from lazy_harness.hooks.loader import resolve_hook
 
-    info = resolve_hook("post-compact")
-    assert info is not None
-    assert info.is_builtin is True
-    assert info.path.name == "post_compact.py"
-    assert info.path.is_file()
+    assert resolve_hook("post-compact") is None
 
 
 def test_resolve_script_names_returns_hookinfo_list() -> None:

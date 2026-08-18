@@ -4,6 +4,12 @@
 Reads transcript path from stdin JSON, backs up transcript,
 extracts working context summary, writes to memory dir.
 Always exits 0.
+
+Output is **plain text, never JSON**. Claude Code's `hookSpecificOutput` union
+has no PreCompact variant (verified against 2.1.234), so a JSON payload fails
+schema validation, marks the hook failed, and its output is discarded. The
+PreCompact executor instead collects each successful hook's raw stdout and
+hands the joined text to the compaction summariser as `newCustomInstructions`.
 """
 
 from __future__ import annotations
@@ -14,6 +20,12 @@ import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
+
+# Claude Code's PreCompact executor collects each successful hook's raw stdout
+# and passes the joined text as `newCustomInstructions` to the compaction
+# summariser. That is a directive channel, not a context channel, so the
+# summary needs framing or it reads as a wall of unexplained assertions.
+SUMMARY_PREAMBLE = "Preserve the following working context in the summary:"
 
 
 def _bootstrap_log(log_file: Path, msg: str) -> None:
@@ -232,13 +244,7 @@ def main() -> None:
         except OSError as e:
             _log(log_file, f"summary write failed: {e}")
 
-        output = {
-            "hookSpecificOutput": {
-                "hookEventName": "PreCompact",
-                "additionalContext": summary,
-            }
-        }
-        print(json.dumps(output))
+        print(f"{SUMMARY_PREAMBLE}\n\n{summary}")
     else:
         _log(log_file, "no summary extracted")
 
