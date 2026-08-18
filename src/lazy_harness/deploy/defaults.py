@@ -11,22 +11,35 @@ from __future__ import annotations
 
 from lazy_harness.agents.base import AgentAdapter
 from lazy_harness.core.config import HookEventConfig
+from lazy_harness.plugins.builtins import _SYSTEM_DOC_HOOKS
 
-DEFAULT_HOOKS: dict[str, list[str]] = {
-    "session_start": ["context-inject"],
-    "session_stop": ["session-export", "compound-loop", "engram-persist"],
-    "session_end": ["session-end"],
-    "pre_compact": ["pre-compact"],
-    "post_compact": ["post-compact"],
-    "pre_tool_use": [
-        "pre-tool-use-security",
-        "pre-tool-use-memory-size",
-        "pre-tool-use-read-size",
-    ],
-    "post_tool_use": ["post-tool-use-format", "post-tool-use-sync-claude"],
-}
 
-_SYSTEM_DOC_HOOKS = {"post-tool-use-sync-claude"}
+def _derive_default_hooks() -> dict[str, list[str]]:
+    """The default hook set, computed from the capability registry.
+
+    This was a dict literal maintained beside the registration table, so a hook
+    could be registered and forgotten here — implemented, wired, and never
+    deployed, with no error from the framework and none from the agent. There
+    is now one place to add a hook.
+
+    Order is preserved: `capabilities()` returns registration order, and the
+    generated `settings.json` lists hooks in the order this mapping gives.
+    """
+    from lazy_harness.plugins.builtins import builtin_registry
+
+    derived: dict[str, list[str]] = {}
+    for cap in builtin_registry().capabilities(kind="hook"):
+        if not cap.enabled_by_default:
+            continue
+        # `hooks.<event>.scripts`
+        event = cap.config_path.split(".")[1]
+        derived.setdefault(event, []).append(cap.name)
+    return derived
+
+
+DEFAULT_HOOKS: dict[str, list[str]] = _derive_default_hooks()
+
+
 
 
 def merge_with_defaults(

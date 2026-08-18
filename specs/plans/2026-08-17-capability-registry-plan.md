@@ -408,6 +408,31 @@ git commit -m "test: pin the effective hook set before deriving it from the regi
 
 ---
 
+### Two gaps Task 1 uncovered, which Tasks 5 and 6 must close first
+
+Measured on the branch, not inferred:
+
+1. **A dotted path cannot traverse a `dict`.** `Config.hooks` and
+   `ProfilesConfig.items` are plain dicts, so `_resolve` walking with `getattr`
+   raises on the event name. `hooks.pre_tool_use.scripts` — the exact shape
+   Task 5 specifies below — fails with
+   `AttributeError: 'dict' object has no attribute 'pre_tool_use'`. `_resolve`
+   now names the capability and the whole path in that error, but it still
+   cannot walk it. Task 5 must add mapping traversal first.
+
+2. **There is no membership test, only truthiness.** `state()` reads the
+   resolved value with `bool()`. Registering `sqlite_local` and `http_remote`
+   both at `metrics.sinks` made **both** report `ON` against the default
+   config, where the list holds only `sqlite_local`. A capability claiming to
+   be enabled when it is not is worse than a crash, because nothing announces
+   it. `state()` now refuses a list-, tuple-, set- or dict-valued path rather
+   than answering; Task 6 replaces that refusal with a real membership test,
+   which needs a per-capability identity to compare against (the script name
+   for a hook, the sink name for a sink) that the `Capability` record does not
+   carry yet.
+
+Neither blocks Task 3: the `tool` kind uses only scalar and presence-only paths.
+
 ### Task 5: Migrate the `hook` kind
 
 15 entries. Mechanical, but it is the one that touches `lh deploy`.
@@ -488,6 +513,47 @@ def test_capability_paths_check_fails_when_a_path_does_not_resolve(tmp_path) -> 
 - [ ] **Step 3:** `uv run lh selftest 2>&1 | grep capability` must show a PASSED row naming a count. Commit as `feat: selftest check that every capability config path resolves`.
 
 ---
+
+### Where the executed wave departed from this plan
+
+Each of these was forced by the code, and each would have changed `lh doctor`
+or `lh deploy` output in a wave that promises not to.
+
+1. **qmd declares no config path.** The plan gave it
+   `config_path="knowledge.search.engine"`. That field holds `"qmd"`, so
+   truthiness makes it permanently enabled and an uninstalled qmd reports
+   `BROKEN` — where `_qmd_status` has always reported `missing`, and where it
+   never consulted config at all. It is registered presence-only.
+
+2. **`install_hint` keeps the pin.** The plan's literal was
+   `"Install Engram and set [memory.engram].enabled = true."`; the code emits
+   `"Install Engram (pin 1.15.4) and set ..."`. The hint is now a template the
+   pin is formatted into, so there is still one home for the version.
+
+3. **Three builtin hooks are not registered.** `herdr-context-gauge`,
+   `post-tool-use-ansible-lint` and `user-prompt-goal` appear in no default
+   list, so no event is declared for them anywhere. A fixed `config_path` would
+   invent one and then answer wrongly for anyone who configured them elsewhere.
+   A test asserts they are knowingly absent, so the omission cannot rot into an
+   oversight.
+
+4. **The scheduler backends are not registered.** `scheduler.backend` defaults
+   to `"auto"`, which names no implementation — the choice is made at install
+   time by probing the machine. Registering the three against that field
+   reports all of them OFF on a machine demonstrably running six jobs, and
+   `CapabilityState` has no word for "chosen at runtime".
+
+5. **`ONE` cardinality needed selection semantics.** With truthiness,
+   `bool("claude-code")` is True for every sibling reading `agent.type`, so
+   both agents reported ON at once. `state` now compares the resolved name; and
+   `toggle` writes the capability's *name* rather than `True`, and refuses to
+   deselect — an exclusive choice has no "off", and the registry cannot invent
+   which sibling takes over.
+
+6. **The identity fixture holds the default hook set only.** The plan asked for
+   the two live profiles' generated blocks. Those carry absolute paths from the
+   machine that produced them, and this repository is public. The live
+   comparison was run before and after instead, against the real config.
 
 ### Task 9: Wave 6 gate and PR
 

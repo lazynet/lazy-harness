@@ -1,10 +1,36 @@
-"""Feature status helper for lh doctor (per ADR-018, ADR-025)."""
+"""Feature status helper for lh doctor (per ADR-018, ADR-025).
+
+The three probe functions this file used to carry — one each for qmd, engram
+and graphify — implemented the same four-state model three times. They are now
+one pass over the `tool` capabilities in the registry, so a tool added to that
+table shows up here without editing this file.
+
+`FeatureStatus` is kept as the return type: `cli/doctor_cmd.py` renders it, and
+this migration changes no output.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 from lazy_harness.core.config import Config
+from lazy_harness.plugins.builtins import builtin_registry
+from lazy_harness.plugins.capabilities import (
+    Capability,
+    CapabilityState,
+    Probe,
+    which_probe,
+)
+
+# The registry's vocabulary is wider than doctor's, because a capability with
+# no external binary has ON/OFF states that no tool can be in. Only the four
+# states a tool can reach are mapped.
+_STATE_NAMES = {
+    CapabilityState.ACTIVE: "active",
+    CapabilityState.DORMANT: "dormant",
+    CapabilityState.BROKEN: "broken",
+    CapabilityState.MISSING: "missing",
+}
 
 
 @dataclass
@@ -32,102 +58,45 @@ def _probe_version(binary: str) -> str:
     return parts[-1] if parts else ""
 
 
-def _qmd_status() -> FeatureStatus:
-    from lazy_harness.knowledge import qmd
+def _section_of(cap: Capability) -> str:
+    """The config section doctor names for this capability.
 
-    if qmd.is_qmd_available():
-        return FeatureStatus(
-            name="qmd",
-            section="knowledge.search",
-            state="active",
-            installed_version=_probe_version("qmd"),
-            pinned_version="",
-            install_hint="",
-            enable_hint="",
-        )
-    return FeatureStatus(
-        name="qmd",
-        section="knowledge.search",
-        state="missing",
-        installed_version="",
-        pinned_version="",
-        install_hint="Install QMD to enable semantic search across the knowledge dir.",
-        enable_hint="",
-    )
+    A capability's `config_path` ends in the key; the section is everything
+    before it. qmd has no path at all, so its section is spelled out — the
+    label doctor has always printed is `knowledge.search`, and dropping it
+    would change the output this migration promises to preserve.
+    """
+    if not cap.config_path:
+        return "knowledge.search" if cap.name == "qmd" else ""
+    return cap.config_path.rsplit(".", 1)[0]
 
 
-def _engram_status(cfg: Config) -> FeatureStatus:
-    from lazy_harness.memory import engram
+def _status_for(cap: Capability, cfg: Config, *, probe: Probe) -> FeatureStatus:
+    state = _STATE_NAMES[builtin_registry().state(cap, cfg, probe=probe)]
+    installed = state in ("active", "dormant")
+    detected = _probe_version(cap.binary) if installed else ""
 
-    enabled = cfg.memory.engram.enabled
-    installed = engram.is_engram_available()
-    pinned = engram.PINNED_VERSION
-    detected = _probe_version("engram") if installed else ""
+    install_hint = ""
+    if state in ("missing", "broken") and cap.install_hint:
+        install_hint = cap.install_hint.format(pin=cap.pinned_version)
 
-    if enabled and installed:
-        state = "active"
-    elif installed and not enabled:
-        state = "dormant"
-    elif enabled and not installed:
-        state = "broken"
-    else:
-        state = "missing"
-
-    install_hint = (
-        f"Install Engram (pin {pinned}) and set [memory.engram].enabled = true."
-        if state in ("missing", "broken")
-        else ""
-    )
-    enable_hint = "Set [memory.engram].enabled = true to activate." if state == "dormant" else ""
+    enable_hint = ""
+    if state == "dormant":
+        section = _section_of(cap)
+        enable_hint = f"Set [{section}].enabled = true to activate."
 
     return FeatureStatus(
-        name="engram",
-        section="memory.engram",
+        name=cap.name,
+        section=_section_of(cap),
         state=state,
         installed_version=detected,
-        pinned_version=pinned,
+        pinned_version=cap.pinned_version,
         install_hint=install_hint,
         enable_hint=enable_hint,
     )
 
 
-def _graphify_status(cfg: Config) -> FeatureStatus:
-    from lazy_harness.knowledge import graphify
-
-    enabled = cfg.knowledge.structure.enabled
-    installed = graphify.is_graphify_available()
-    pinned = graphify.PINNED_VERSION
-    detected = _probe_version("graphify") if installed else ""
-
-    if enabled and installed:
-        state = "active"
-    elif installed and not enabled:
-        state = "dormant"
-    elif enabled and not installed:
-        state = "broken"
-    else:
-        state = "missing"
-
-    install_hint = (
-        f"Install Graphify (pin {pinned}) and set [knowledge.structure].enabled = true."
-        if state in ("missing", "broken")
-        else ""
-    )
-    enable_hint = (
-        "Set [knowledge.structure].enabled = true to activate." if state == "dormant" else ""
-    )
-
-    return FeatureStatus(
-        name="graphify",
-        section="knowledge.structure",
-        state=state,
-        installed_version=detected,
-        pinned_version=pinned,
-        install_hint=install_hint,
-        enable_hint=enable_hint,
-    )
-
-
-def collect_feature_statuses(cfg: Config) -> list[FeatureStatus]:
+def collect_feature_statuses(cfg: Config, *, probe: Probe = which_probe) -> list[FeatureStatus]:
     """Collect status for every optional tool the harness knows about."""
-    return [_qmd_status(), _engram_status(cfg), _graphify_status(cfg)]
+    reg = builtin_registry()
+    return [_status_for(cap, cfg, probe=probe) for cap in reg.capabilities(kind="tool")]

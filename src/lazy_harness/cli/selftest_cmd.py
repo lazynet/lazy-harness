@@ -7,7 +7,11 @@ from rich.console import Console
 
 from lazy_harness.core.paths import config_file
 from lazy_harness.selftest.checks.cli_check import check_cli
-from lazy_harness.selftest.checks.config_check import check_config, check_config_round_trip
+from lazy_harness.selftest.checks.config_check import (
+    check_capability_paths,
+    check_config,
+    check_config_round_trip,
+)
 from lazy_harness.selftest.checks.hooks_check import check_hooks
 from lazy_harness.selftest.checks.knowledge_check import check_knowledge
 from lazy_harness.selftest.checks.loop_events_check import check_loop_events
@@ -28,6 +32,7 @@ def selftest(as_json: bool, fix: bool) -> None:
         checks=[
             lambda: check_config(config_path=cfg_path),
             lambda: check_config_round_trip(config_path=cfg_path),
+            lambda: check_capability_paths(config_path=cfg_path),
             lambda: check_profiles(config_path=cfg_path),
             lambda: check_hooks(config_path=cfg_path),
             lambda: check_monitoring(config_path=cfg_path),

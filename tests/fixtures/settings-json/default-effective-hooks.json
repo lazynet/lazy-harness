@@ -1,0 +1,28 @@
+{
+  "post_compact": [
+    "post-compact"
+  ],
+  "post_tool_use": [
+    "post-tool-use-format",
+    "post-tool-use-sync-claude"
+  ],
+  "pre_compact": [
+    "pre-compact"
+  ],
+  "pre_tool_use": [
+    "pre-tool-use-security",
+    "pre-tool-use-memory-size",
+    "pre-tool-use-read-size"
+  ],
+  "session_end": [
+    "session-end"
+  ],
+  "session_start": [
+    "context-inject"
+  ],
+  "session_stop": [
+    "session-export",
+    "compound-loop",
+    "engram-persist"
+  ]
+}
