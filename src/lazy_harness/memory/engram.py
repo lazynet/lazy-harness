@@ -1,6 +1,6 @@
 """Engram CLI wrapper — episodic memory for AI coding agents.
 
-Pinned version: 1.15.4 (see ADR-022).
+Pinned version: 1.20.0 (see ADR-022).
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 
-PINNED_VERSION = "1.15.4"
+PINNED_VERSION = "1.20.0"
 
 
 @dataclass

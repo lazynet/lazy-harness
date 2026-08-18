@@ -75,4 +75,4 @@ def test_knowledge_wizard_when_graphify_missing_prints_install_hint(
     joined = "\n".join(output)
     assert "Graphify is not installed" in joined
     assert "pip install graphify" in joined
-    assert "0.9.38" in joined
+    assert "0.9.41" in joined

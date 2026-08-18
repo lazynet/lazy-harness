@@ -93,4 +93,4 @@ def test_memory_wizard_when_engram_missing_prints_install_hint(
     joined = "\n".join(output)
     assert "Engram is not installed" in joined
     assert "brew install engram" in joined
-    assert "1.15.4" in joined
+    assert "1.20.0" in joined

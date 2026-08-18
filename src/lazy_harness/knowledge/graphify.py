@@ -1,6 +1,6 @@
 """Graphify CLI wrapper — code structure index for AI coding agents.
 
-Pinned version: 0.9.38 (see ADR-023).
+Pinned version: 0.9.41 (see ADR-023).
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 
-PINNED_VERSION = "0.9.38"
+PINNED_VERSION = "0.9.41"
 
 
 @dataclass

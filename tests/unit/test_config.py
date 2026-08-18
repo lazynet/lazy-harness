@@ -214,7 +214,7 @@ def test_config_memory_engram_defaults_when_missing() -> None:
     assert cfg.memory.engram.enabled is False
     assert cfg.memory.engram.git_sync is True
     assert cfg.memory.engram.cloud is False
-    assert cfg.memory.engram.version == "1.15.4"
+    assert cfg.memory.engram.version == "1.20.0"
 
 
 def test_config_memory_engram_binary_defaults_to_empty() -> None:
@@ -249,7 +249,7 @@ version = "1"
 [memory.engram]
 enabled = true
 cloud = true
-version = "1.15.4"
+version = "1.20.0"
 """)
     from lazy_harness.core.config import load_config
 
@@ -257,7 +257,7 @@ version = "1.15.4"
     assert cfg.memory.engram.enabled is True
     assert cfg.memory.engram.cloud is True
     assert cfg.memory.engram.git_sync is True
-    assert cfg.memory.engram.version == "1.15.4"
+    assert cfg.memory.engram.version == "1.20.0"
 
 
 def test_config_knowledge_structure_defaults_when_missing() -> None:
@@ -266,7 +266,7 @@ def test_config_knowledge_structure_defaults_when_missing() -> None:
     cfg = Config()
     assert cfg.knowledge.structure.engine == "graphify"
     assert cfg.knowledge.structure.enabled is False
-    assert cfg.knowledge.structure.version == "0.9.38"
+    assert cfg.knowledge.structure.version == "0.9.41"
 
 
 def test_config_knowledge_structure_parses_from_toml(config_dir: Path) -> None:
@@ -277,14 +277,14 @@ version = "1"
 
 [knowledge.structure]
 enabled = true
-version = "0.9.38"
+version = "0.9.41"
 """)
     from lazy_harness.core.config import load_config
 
     cfg = load_config(config_file)
     assert cfg.knowledge.structure.enabled is True
     assert cfg.knowledge.structure.engine == "graphify"
-    assert cfg.knowledge.structure.version == "0.9.38"
+    assert cfg.knowledge.structure.version == "0.9.41"
 
 
 def test_compound_loop_backend_defaults_when_missing() -> None:
@@ -393,13 +393,13 @@ version = "1"
 engine = "graphify"
 enabled = true
 auto_rebuild_on_commit = true
-version = "0.9.38"
+version = "0.9.41"
 """)
     from lazy_harness.core.config import load_config
 
     cfg = load_config(config_file)
     assert cfg.knowledge.structure.enabled is True
-    assert cfg.knowledge.structure.version == "0.9.38"
+    assert cfg.knowledge.structure.version == "0.9.41"
 
 
 def test_knowledge_root_replaces_path(tmp_path: Path) -> None:
@@ -634,14 +634,14 @@ engine = "qmd"
 [knowledge.structure]
 engine = "graphify"
 enabled = true
-version = "0.9.38"
+version = "0.9.41"
 repos = ["~/repos/lazy/lazy-harness"]
 
 [memory.engram]
 enabled = true
 git_sync = true
 cloud = false
-version = "1.15.4"
+version = "1.20.0"
 binary = "/usr/local/bin/engram"
 
 [monitoring]
@@ -1060,3 +1060,23 @@ def test_save_config_fsyncs_before_replacing(tmp_path: Path, monkeypatch) -> Non
     config_mod.save_config(cfg, cfg_path)
 
     assert len(synced) >= 2
+
+def test_engram_config_default_version_is_the_module_pin() -> None:
+    """One number, one home.
+
+    A literal repeated in the dataclass default is a third place the pin can
+    live, and three copies is how they stop agreeing — which is exactly what
+    `lh doctor` was reporting before ADR-022's config-owns-the-pin rule was
+    actually implemented.
+    """
+    from lazy_harness.core.config import EngramConfig
+    from lazy_harness.memory import engram
+
+    assert EngramConfig().version == engram.PINNED_VERSION
+
+
+def test_structure_config_default_version_is_the_module_pin() -> None:
+    from lazy_harness.core.config import KnowledgeStructureConfig
+    from lazy_harness.knowledge import graphify
+
+    assert KnowledgeStructureConfig().version == graphify.PINNED_VERSION
