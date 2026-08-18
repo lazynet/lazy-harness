@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.44.3](https://github.com/lazynet/lazy-harness/compare/v0.44.2...v0.44.3) (2026-08-18)
+
+
+### Bug Fixes
+
+* parse the version out of --version instead of taking the last token ([#194](https://github.com/lazynet/lazy-harness/issues/194)) ([baf4b1e](https://github.com/lazynet/lazy-harness/commit/baf4b1e0a9cf0dcc1d0e58a2928cd6269d3824f7))
+
 ## [0.44.2](https://github.com/lazynet/lazy-harness/compare/v0.44.1...v0.44.2) (2026-08-18)
 
 
