@@ -620,3 +620,32 @@ def test_project_memory_dir_uses_cwd_outside_a_worktree(tmp_path: Path, monkeypa
 
     encoded = "-" + str(repo).replace("/", "-").lstrip("-")
     assert _project_memory_dir() == runtime / "projects" / encoded / "memory"
+
+
+def test_project_memory_dir_resolves_into_the_knowledge_store(tmp_path: Path, monkeypatch) -> None:
+    """`lh memory` and the hooks must answer this question the same way.
+
+    The hooks write `MEMORY.md` and the proposal file into the store. A CLI
+    still resolving the legacy path reads an empty directory and reports the
+    project has no pending proposals — no error, just a wrong answer.
+    """
+    from lazy_harness.cli.memory_cmd import _project_memory_dir
+
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "nohome"))
+
+    store = tmp_path / "store"
+    store.mkdir()
+    (store / "knowledge.toml").write_text(
+        '[knowledge]\nversion   = 1\nsessions  = "sessions"\n'
+        'learnings = "learnings"\nmemory    = "memory"\n'
+    )
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(f'[harness]\nversion = "1"\n\n[knowledge]\nroot = "{store}"\n')
+    monkeypatch.setattr("lazy_harness.cli.memory_cmd.config_file", lambda: config_path)
+
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    (repo / ".git" / "config").write_text('[remote "origin"]\n\turl = git@github.com:o/x.git\n')
+    monkeypatch.chdir(repo)
+
+    assert _project_memory_dir() == store / "memory" / "github.com" / "o" / "x"

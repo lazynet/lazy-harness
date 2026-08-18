@@ -363,31 +363,32 @@ def _format_entry_block(proposal: PendingProposal, status_lines: list[str]) -> s
 
 
 def _project_memory_dir() -> Path:
-    """Resolve `<agent_dir>/<sessions>/<encoded repo root>/memory` (ADR-032 pattern).
+    """Where this project's distilled memory lives.
 
-    The key comes from the main checkout, so proposals accepted from a
-    worktree land on the same file the loop writes to.
+    The same resolver the hooks use. Answering this question twice is how one
+    side ends up reading a directory the other stopped writing to: the hooks
+    moved `MEMORY.md` into the knowledge store, and a CLI still resolving the
+    legacy path reports no pending proposals rather than failing.
     """
     from lazy_harness.agents.registry import get_agent
     from lazy_harness.core.paths import agent_runtime_dir
-    from lazy_harness.hooks.builtins._shared import resolve_memory_dir
+    from lazy_harness.hooks.builtins._shared import knowledge_root_for
+    from lazy_harness.hooks.builtins._shared import memory_dir as shared_memory_dir
 
-    agent_type = "claude-code"
+    cfg = None
     cf = config_file()
     if cf.is_file():
         try:
-            agent_type = load_config(cf).agent.type
+            cfg = load_config(cf)
         except ConfigError:
-            pass
-    agent = get_agent(agent_type)
-    return (
-        resolve_memory_dir(
-            None,
-            agent_dir=agent_runtime_dir(agent),
-            sessions_subdir=agent.session_dirs().get("sessions") or "projects",
-            cwd=Path.cwd(),
-        )
-        / "memory"
+            cfg = None
+    agent = get_agent(cfg.agent.type if cfg is not None else "claude-code")
+    return shared_memory_dir(
+        None,
+        agent_dir=agent_runtime_dir(agent),
+        sessions_subdir=agent.session_dirs().get("sessions") or "projects",
+        cwd=Path.cwd(),
+        knowledge_root=knowledge_root_for(cfg),
     )
 
 
