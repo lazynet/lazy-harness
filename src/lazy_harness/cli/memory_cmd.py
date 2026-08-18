@@ -484,3 +484,66 @@ def proposals_reject(index: int, reason: str, memory_dir: Path | None) -> None:
     _atomic_write(pending_file, _remove_proposal(text, pending, index - 1))
     click.echo(f"Rejected proposal #{index}: {target.rule}")
     click.echo("Recorded in claude-md.rejected.md — the grader will be told not to re-propose it.")
+
+
+@memory.command("migrate")
+@click.option("--apply", "do_apply", is_flag=True, help="Move the files. Off by default.")
+def memory_migrate(do_apply: bool) -> None:
+    """Move project memory to its identity-keyed home in the knowledge store.
+
+    Dry by default: this moves documents a person curated over months, and the
+    plan is worth reading before any of it moves.
+
+    Nothing is merged. A target that already holds files is reported as a
+    conflict and left alone — two machines that each wrote a MEMORY.md have two
+    curated documents, and choosing one silently loses the other.
+    """
+    from lazy_harness.core.memory_migration import apply_migration, plan_migration
+    from lazy_harness.core.profiles import list_profiles
+    from lazy_harness.hooks.builtins._shared import knowledge_root_for
+
+    cf = config_file()
+    try:
+        cfg = load_config(cf)
+    except ConfigError as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1)
+
+    root = knowledge_root_for(cfg)
+    if root is None:
+        click.echo("No knowledge store; nothing to migrate into.", err=True)
+        raise SystemExit(1)
+
+    profile_dirs = [p.config_dir for p in list_profiles(cfg) if p.exists]
+    moves = plan_migration(profile_dirs, knowledge_root=root)
+    movable = [m for m in moves if m.target is not None]
+
+    click.echo(f"{len(moves)} legacy memory directories")
+    click.echo(f"{len(movable)} would move into {root}")
+    click.echo("")
+
+    reasons: dict[str, int] = {}
+    for m in moves:
+        if m.target is None:
+            reasons[m.reason] = reasons.get(m.reason, 0) + 1
+    for reason, count in sorted(reasons.items(), key=lambda kv: -kv[1]):
+        click.echo(f"  {count:4} left alone: {reason}")
+    if reasons:
+        click.echo("")
+
+    for m in movable:
+        click.echo(f"  {m.source.parent.name}")
+        click.echo(f"    -> {m.target.relative_to(root)}")
+
+    if not do_apply:
+        click.echo("")
+        click.echo("Dry run. Re-run with --apply to move them.")
+        return
+
+    result = apply_migration(movable)
+    click.echo("")
+    click.echo(f"Moved {result.moved}.")
+    for m in result.conflicts:
+        click.echo(f"  conflict: {m.target} already holds files; left {m.source} in place")
+    for m, err in result.failures:
+        click.echo(f"  failed: {m.source}: {err}")
