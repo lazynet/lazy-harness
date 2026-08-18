@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.44.1](https://github.com/lazynet/lazy-harness/compare/v0.44.0...v0.44.1) (2026-08-18)
+
+
+### Bug Fixes
+
+* resolve url.insteadOf shorthands when keying a project ([#190](https://github.com/lazynet/lazy-harness/issues/190)) ([5bf2732](https://github.com/lazynet/lazy-harness/commit/5bf27324607007c0fe579c936c8b5ee4426cf345))
+
 ## [0.44.0](https://github.com/lazynet/lazy-harness/compare/v0.43.0...v0.44.0) (2026-08-18)
 
 
