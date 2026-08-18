@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 
 def test_the_three_tools_are_registered_as_capabilities() -> None:
     from lazy_harness.plugins.builtins import builtin_registry
@@ -109,3 +111,35 @@ def test_default_hooks_is_derived_from_the_registry() -> None:
     assert {k: sorted(v) for k, v in DEFAULT_HOOKS.items()} == {
         k: sorted(v) for k, v in from_registry.items()
     }
+
+
+@pytest.mark.parametrize("agent_type", ["claude-code", "null"])
+def test_hook_state_agrees_with_the_deployed_hook_set(agent_type: str) -> None:
+    """Two answers to "is this hook on" that disagree is how one stops running
+    with nothing reporting it.
+
+    `merge_with_defaults` drops `post-tool-use-sync-claude` when the selected
+    agent has no file-based system doc. The registry knew nothing about that,
+    so it reported ON for an agent that would never deploy it — invisible
+    today, because `state()` is only called for tools, and waiting for the
+    first consumer that asks it about a hook.
+    """
+    from lazy_harness.agents.registry import get_agent
+    from lazy_harness.core.config import Config
+    from lazy_harness.deploy.defaults import merge_with_defaults
+    from lazy_harness.plugins.builtins import builtin_registry
+    from lazy_harness.plugins.capabilities import CapabilityState
+
+    cfg = Config()
+    cfg.agent.type = agent_type
+    effective = merge_with_defaults(cfg.hooks, get_agent(agent_type))
+    deployed = {name for names in effective.values() for name in names}
+
+    reg = builtin_registry()
+    for cap in reg.capabilities(kind="hook"):
+        on = reg.state(cap, cfg) is CapabilityState.ON
+        assert on == (cap.name in deployed), (
+            f"{cap.name} under agent {agent_type!r}: registry says "
+            f"{'ON' if on else 'OFF'}, deploy says "
+            f"{'ON' if cap.name in deployed else 'OFF'}"
+        )

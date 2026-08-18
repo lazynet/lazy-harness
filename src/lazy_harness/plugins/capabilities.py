@@ -70,6 +70,11 @@ class Capability:
     pinned_version: str = ""
     enabled_by_default: bool = False
     install_hint: str = ""
+    # Some hooks only make sense for an agent that keeps a file-based system
+    # instruction doc. `merge_with_defaults` drops them for one that does not,
+    # and a registry that did not know would report them ON for an agent that
+    # will never deploy them.
+    requires_system_doc: bool = False
 
 
 class _Absent:
@@ -117,6 +122,25 @@ def _resolve(cfg: Config, dotted: str, *, owner: str = "") -> object:
             where = f"capability {owner!r}: " if owner else ""
             raise AttributeError(f"{where}config path {dotted!r} does not resolve — {e}") from e
     return current
+
+
+def _agent_has_system_doc(cfg: Config) -> bool:
+    """Whether the selected agent keeps a file-based system instruction doc.
+
+    Read from the config the caller already passed rather than taken as a
+    parameter: the agent is part of the configuration being asked about, and a
+    second source for it is a second thing that can disagree. Imported inside
+    the function so `plugins` does not take an import-time dependency on
+    `agents`.
+    """
+    from lazy_harness.agents.registry import AgentNotFoundError, get_agent
+
+    try:
+        return bool(get_agent(cfg.agent.type).system_doc_name())
+    except AgentNotFoundError:
+        # An unknown agent is `check_config`'s failure to report. Assuming it
+        # has a system doc keeps this answer the same as the old default set.
+        return True
 
 
 class CapabilityRegistry:
@@ -179,6 +203,9 @@ class CapabilityRegistry:
                 f"capability {cap.name!r}: config path {cap.config_path!r} stops on a "
                 f"{type(value).__name__}, which names a section rather than a switch"
             )
+
+        if enabled and cap.requires_system_doc and not _agent_has_system_doc(cfg):
+            enabled = False
 
         if not cap.binary:
             return CapabilityState.ON if enabled else CapabilityState.OFF

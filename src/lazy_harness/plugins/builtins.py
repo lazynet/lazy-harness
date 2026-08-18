@@ -79,6 +79,13 @@ _DEFAULT_ON_HOOKS: dict[str, list[str]] = {
     "post_tool_use": ["post-tool-use-format", "post-tool-use-sync-claude"],
 }
 
+# Hooks that only make sense for an agent keeping a file-based system
+# instruction doc. `merge_with_defaults` drops them for an agent without one,
+# and `state()` reports them OFF for the same reason. One home: the set lived
+# in `deploy/defaults.py` and was mirrored here, which is how two copies of a
+# rule stop agreeing.
+_SYSTEM_DOC_HOOKS = {"post-tool-use-sync-claude"}
+
 _HOOKS = [
     Capability(
         name=name,
@@ -87,6 +94,7 @@ _HOOKS = [
         config_path=f"hooks.{event}.scripts",
         summary=f"Builtin {event.replace('_', ' ')} hook",
         enabled_by_default=True,
+        requires_system_doc=name in _SYSTEM_DOC_HOOKS,
     )
     for event, names in _DEFAULT_ON_HOOKS.items()
     for name in names

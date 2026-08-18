@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from lazy_harness.agents.base import AgentAdapter
 from lazy_harness.core.config import HookEventConfig
+from lazy_harness.plugins.builtins import _SYSTEM_DOC_HOOKS
 
 
 def _derive_default_hooks() -> dict[str, list[str]]:
@@ -38,7 +39,7 @@ def _derive_default_hooks() -> dict[str, list[str]]:
 
 DEFAULT_HOOKS: dict[str, list[str]] = _derive_default_hooks()
 
-_SYSTEM_DOC_HOOKS = {"post-tool-use-sync-claude"}
+
 
 
 def merge_with_defaults(
