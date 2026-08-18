@@ -89,7 +89,7 @@ def test_deploy_hooks_preserves_foreign_entries(
     new = json.loads((profile_dir / "settings.json").read_text())
     assert "my-manual-hook" in json.dumps(new["hooks"]["Stop"])
     assert any(
-        "session_stop" in json.dumps(e) or "compound_loop" in json.dumps(e)
+        "session-export" in json.dumps(e) or "compound-loop" in json.dumps(e)
         for e in new["hooks"]["Stop"]
     ), "harness hooks should still deploy alongside"
 
@@ -269,6 +269,55 @@ def test_deploy_hooks_regression_2026_04_17(tmp_path: Path) -> None:
     assert "SessionEnd" in cc_hooks
     assert "PreCompact" in cc_hooks
     assert "PostCompact" in cc_hooks
+    # Named by hook, not by the module file inside a deployed path: the command
+    # is now `lh hook <name>` and carries no path at all.
     pre_tool_serialized = json.dumps(cc_hooks["PreToolUse"])
-    assert "pre_tool_use_security.py" in pre_tool_serialized
-    assert "pre_tool_use_memory_size.py" not in pre_tool_serialized
+    assert "pre-tool-use-security" in pre_tool_serialized
+    assert "pre-tool-use-memory-size" not in pre_tool_serialized
+
+
+def test_a_builtin_hook_deploys_as_a_stable_launcher_invocation() -> None:
+    """`f"{sys.executable} {hook.path}"` bakes two machine-specific halves into
+    a chezmoi-managed file: the home directory appears in both, and the Python
+    minor version appears in the site-packages path. Two machines therefore
+    never converge, and every `chezmoi apply` fights the other one.
+
+    `lh hook <name>` carries neither, and resolves through PATH with or without
+    a shell — unlike `$HOME/...`, which needs one.
+    """
+    from lazy_harness.deploy.engine import hook_command
+    from lazy_harness.hooks.loader import resolve_hook
+
+    hook = resolve_hook("context-inject", event="session_start")
+    assert hook is not None
+
+    command = hook_command(hook)
+
+    assert command == "lh hook context-inject"
+
+
+def test_no_deployed_builtin_command_carries_a_home_or_a_python_version() -> None:
+    from lazy_harness.deploy.engine import hook_command
+    from lazy_harness.hooks.loader import list_builtin_hooks, resolve_hook
+
+    for name in list_builtin_hooks():
+        hook = resolve_hook(name)
+        assert hook is not None
+        command = hook_command(hook)
+        assert "/Users/" not in command and "/home/" not in command, command
+        assert "python3." not in command, command
+        assert "site-packages" not in command, command
+
+
+def test_a_user_hook_keeps_an_explicit_interpreter_and_path() -> None:
+    """There is no stable launcher for a script the framework did not ship, so
+    this half is unchanged. It still drifts across machines; the 72 lines the
+    change was measured against are all builtins."""
+    from pathlib import Path
+
+    from lazy_harness.deploy.engine import hook_command
+    from lazy_harness.hooks.loader import HookInfo
+
+    hook = HookInfo(name="mine", path=Path("/home/me/.claude/hooks/mine.py"), is_builtin=False)
+
+    assert hook_command(hook).endswith("/home/me/.claude/hooks/mine.py")

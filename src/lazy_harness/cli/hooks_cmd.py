@@ -80,25 +80,27 @@ def hook_invoke(name: str) -> None:
     The command imports the builtin module and calls its `main()` directly,
     so settings.json entries look like: `lh hook compound-loop`.
     """
-    module_path = _BUILTIN_HOOKS.get(name)
-    if module_path is None:
+    spec = _BUILTIN_HOOKS.get(name)
+    if spec is None:
         click.echo(f"Unknown hook: {name}", err=True)
         sys.exit(0)
     try:
-        module = importlib.import_module(module_path)
-    except ImportError as e:
-        click.echo(f"Failed to import {module_path}: {e}", err=True)
-        sys.exit(0)
-    main_fn = getattr(module, "main", None)
-    if main_fn is None:
-        click.echo(f"Hook {name} has no main()", err=True)
-        sys.exit(0)
-    try:
+        # `_BUILTIN_HOOKS` maps to `BuiltinHookSpec`, not to a module path.
+        # Passing the record straight to `import_module` raised an
+        # `AttributeError` outside the guard below, so this entry point exited
+        # 1 with a traceback the first time anything called it.
+        module = importlib.import_module(spec.module)
+        main_fn = getattr(module, "main", None)
+        if main_fn is None:
+            click.echo(f"Hook {name} has no main()", err=True)
+            sys.exit(0)
         main_fn()
     except SystemExit:
         pass
     except Exception as e:  # noqa: BLE001 — hooks must never bubble up to Claude Code
-        click.echo(f"Hook {name} raised: {e}", err=True)
+        # Widened from ImportError: a hook that fails has to degrade, and the
+        # narrow clause is what let the registry mistake above escape.
+        click.echo(f"Hook {name} raised: {type(e).__name__}: {e}", err=True)
     sys.exit(0)
 
 

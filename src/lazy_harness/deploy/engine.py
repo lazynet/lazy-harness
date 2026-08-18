@@ -10,7 +10,28 @@ import click
 from lazy_harness.core.config import Config
 from lazy_harness.core.paths import config_dir, expand_path
 from lazy_harness.deploy.symlinks import ensure_symlink
+from lazy_harness.hooks.loader import HookInfo
 
+
+def hook_command(hook: HookInfo) -> str:
+    """The command string written into the agent's settings for this hook.
+
+    Builtins go through `lh hook <name>`, which carries no path at all. The
+    previous form, `f"{sys.executable} {hook.path}"`, baked in two
+    machine-specific halves — the home directory appears in both, and the
+    Python minor version appears in the site-packages path — so a
+    chezmoi-managed settings file could never converge across two machines.
+
+    A bare command name is resolved against PATH by `execvp` whether or not a
+    shell is involved, which `$HOME/...` is not: that would have traded a
+    portability problem for an assumption about how the agent spawns hooks.
+
+    A user hook keeps an explicit interpreter and path. The framework did not
+    ship it and has no stable launcher for it.
+    """
+    if hook.is_builtin:
+        return f"lh hook {hook.name}"
+    return f"{sys.executable} {hook.path}"
 
 def deploy_profiles(cfg: Config) -> None:
     """Deploy profile content as symlinks to agent config dirs."""
@@ -154,7 +175,7 @@ def deploy_hooks(cfg: Config) -> None:
         if hooks:
             entries: list[str | HookEntry] = []
             for hook in hooks:
-                command = f"{sys.executable} {hook.path}"
+                command = hook_command(hook)
                 if hook.matcher is not None:
                     entries.append(HookEntry(command=command, matcher=hook.matcher))
                 else:
