@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from lazy_harness.core.config import Config
+from lazy_harness.core.versions import parse_version
 from lazy_harness.plugins.builtins import builtin_registry
 from lazy_harness.plugins.capabilities import (
     Capability,
@@ -46,7 +47,7 @@ class FeatureStatus:
 
 
 def _probe_version(binary: str) -> str:
-    """Run `<binary> --version` and return the last token of stdout, or "" on failure."""
+    """Run `<binary> --version` and return the version it prints, or "" on failure."""
     import subprocess
 
     try:
@@ -55,8 +56,7 @@ def _probe_version(binary: str) -> str:
         return ""
     if result.returncode != 0:
         return ""
-    parts = result.stdout.strip().split()
-    return parts[-1] if parts else ""
+    return parse_version(result.stdout)
 
 
 def _section_of(cap: Capability) -> str:

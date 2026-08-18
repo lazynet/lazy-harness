@@ -83,3 +83,21 @@ def test_graphify_check_version_missing_binary() -> None:
         matches, current = check_version()
         assert matches is False
         assert current == ""
+
+
+def test_graphify_check_version_ignores_decoration_around_the_number(monkeypatch) -> None:
+    import subprocess
+    from types import SimpleNamespace
+
+    from lazy_harness.knowledge import graphify
+
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *a, **k: SimpleNamespace(
+            returncode=0, stdout=f"graphify v{graphify.PINNED_VERSION} (abc1234)\n"
+        ),
+    )
+    matches, current = graphify.check_version()
+    assert current == graphify.PINNED_VERSION
+    assert matches

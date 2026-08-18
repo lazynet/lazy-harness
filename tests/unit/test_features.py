@@ -271,3 +271,22 @@ def test_install_hint_names_the_config_pin(monkeypatch) -> None:
     statuses = collect_feature_statuses(cfg)
     engram_status = next(s for s in statuses if s.name == "engram")
     assert "9.9.9" in engram_status.install_hint
+
+
+def test_probe_version_ignores_a_trailing_build_hash(monkeypatch) -> None:
+    """qmd prints `qmd 2.5.3 (5b90e281d4)`.
+
+    Taking the last token reported the hash as the installed version, and
+    `lh doctor` rendered `v(5b90e281d4)` for months.
+    """
+    import subprocess
+    from types import SimpleNamespace
+
+    from lazy_harness.features import _probe_version
+
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *a, **k: SimpleNamespace(returncode=0, stdout="qmd 2.5.3 (5b90e281d4)\n"),
+    )
+    assert _probe_version("qmd") == "2.5.3"
