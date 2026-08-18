@@ -10,6 +10,13 @@ from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
+# The pins live with the wrappers that own them, and are imported rather than
+# retyped: a literal repeated here is a second home for the same number, and
+# two homes is how they stop agreeing. Neither module imports anything from
+# the harness, so there is no cycle to work around.
+from lazy_harness.knowledge.graphify import PINNED_VERSION as GRAPHIFY_PIN
+from lazy_harness.memory.engram import PINNED_VERSION as ENGRAM_PIN
+
 
 class ConfigError(Exception):
     """Raised when config is invalid or missing."""
@@ -57,7 +64,7 @@ class KnowledgeSearchConfig:
 class KnowledgeStructureConfig:
     engine: str = "graphify"
     enabled: bool = False
-    version: str = "0.9.38"
+    version: str = GRAPHIFY_PIN
     repos: list[str] = field(default_factory=list)
 
 
@@ -210,7 +217,7 @@ class EngramConfig:
     enabled: bool = False
     git_sync: bool = True
     cloud: bool = False
-    version: str = "1.15.4"
+    version: str = ENGRAM_PIN
     binary: str = ""
 
 
@@ -344,7 +351,7 @@ def _parse_memory(raw: dict[str, Any]) -> MemoryConfig:
         enabled=bool(engram_raw.get("enabled", False)),
         git_sync=bool(engram_raw.get("git_sync", True)),
         cloud=bool(engram_raw.get("cloud", False)),
-        version=str(engram_raw.get("version", "1.15.4")),
+        version=str(engram_raw.get("version", ENGRAM_PIN)),
         binary=str(engram_raw.get("binary", "")),
     )
     return MemoryConfig(engram=engram)

@@ -165,7 +165,7 @@ there. See [The knowledge store](../how/knowledge-pipeline.md).
 | ------------------------ | ------ | ------------ | -------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | `engine`                 | string | `"graphify"` | no       | Structure backend. Only `graphify` is implemented today.                                                                                 |
 | `enabled`                | bool   | `false`      | no       | Whether `lh deploy` wires the Graphify MCP entry into each profile's `settings.json`.                                                    |
-| `version`                | string | `"0.9.38"`    | no       | Pinned Graphify version. `lh doctor` flags drift between this and the installed binary so upgrades are explicit. See [ADR-023](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/023-graphify-code-structure.md). |
+| `version`                | string | `"0.9.41"`    | no       | Pinned Graphify version. `lh doctor` flags drift between this and the installed binary so upgrades are explicit. See [ADR-023](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/023-graphify-code-structure.md). |
 
 `[[knowledge.classify_rules]]` (array of tables — see [ADR-028](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/028-classify-rules-configurable.md)):
 
@@ -200,7 +200,7 @@ The `[memory]` block configures **agent-side** memory backends — tools the age
 | `enabled`  | bool   | `false`      | no       | When true, `lh deploy` wires the Engram MCP server into each profile's `settings.json` and the `engram-persist` Stop hook becomes meaningful.   |
 | `git_sync` | bool   | `true`       | no       | Whether Engram persists per-repo memory chunks under a versioned `.engram/chunks/` directory (recommended; keeps knowledge with the code).      |
 | `cloud`    | bool   | `false`      | no       | Opt-in cloud sync. Off by default — enabling it breaks the framework's local-first guarantee, so flip it deliberately.                          |
-| `version`  | string | `"1.15.4"`   | no       | Pinned Engram version. `lh doctor` flags drift. See [ADR-022](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/022-engram-episodic-memory.md) and [ADR-029](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/029-engram-persist-deterministic-mirror.md). |
+| `version`  | string | `"1.20.0"`   | no       | Pinned Engram version. `lh doctor` flags drift. See [ADR-022](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/022-engram-episodic-memory.md) and [ADR-029](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/029-engram-persist-deterministic-mirror.md). |
 
 The interactive `lh config memory --init` wizard (see [ADR-026](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/026-config-wizards.md)) writes this block for you and merges it into an existing config preserving comments and unrelated sections.
 

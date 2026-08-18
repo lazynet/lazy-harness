@@ -61,7 +61,7 @@ def test_engram_status_active(monkeypatch) -> None:
     monkeypatch.setattr(
         "shutil.which", lambda name: f"/usr/bin/{name}" if name in installed else None
     )
-    monkeypatch.setattr("lazy_harness.features._probe_version", lambda binary: "1.15.4")
+    monkeypatch.setattr("lazy_harness.features._probe_version", lambda binary: "1.20.0")
 
     cfg = Config()
     cfg.memory.engram.enabled = True
@@ -69,8 +69,8 @@ def test_engram_status_active(monkeypatch) -> None:
     statuses = collect_feature_statuses(cfg)
     engram = next(s for s in statuses if s.name == "engram")
     assert engram.state == "active"
-    assert engram.installed_version == "1.15.4"
-    assert engram.pinned_version == "1.15.4"
+    assert engram.installed_version == "1.20.0"
+    assert engram.pinned_version == "1.20.0"
 
 
 def test_engram_status_dormant_when_installed_but_disabled(monkeypatch) -> None:
@@ -81,7 +81,7 @@ def test_engram_status_dormant_when_installed_but_disabled(monkeypatch) -> None:
     monkeypatch.setattr(
         "shutil.which", lambda name: f"/usr/bin/{name}" if name in installed else None
     )
-    monkeypatch.setattr("lazy_harness.features._probe_version", lambda binary: "1.15.4")
+    monkeypatch.setattr("lazy_harness.features._probe_version", lambda binary: "1.20.0")
 
     cfg = Config()
     cfg.memory.engram.enabled = False
@@ -135,7 +135,7 @@ def test_graphify_status_active(monkeypatch) -> None:
     monkeypatch.setattr(
         "shutil.which", lambda name: f"/usr/bin/{name}" if name in installed else None
     )
-    monkeypatch.setattr("lazy_harness.features._probe_version", lambda binary: "0.9.38")
+    monkeypatch.setattr("lazy_harness.features._probe_version", lambda binary: "0.9.41")
 
     cfg = Config()
     cfg.knowledge.structure.enabled = True
@@ -143,8 +143,8 @@ def test_graphify_status_active(monkeypatch) -> None:
     statuses = collect_feature_statuses(cfg)
     graphify = next(s for s in statuses if s.name == "graphify")
     assert graphify.state == "active"
-    assert graphify.installed_version == "0.9.38"
-    assert graphify.pinned_version == "0.9.38"
+    assert graphify.installed_version == "0.9.41"
+    assert graphify.pinned_version == "0.9.41"
 
 
 def test_graphify_status_dormant_when_installed_but_disabled(monkeypatch) -> None:
@@ -155,7 +155,7 @@ def test_graphify_status_dormant_when_installed_but_disabled(monkeypatch) -> Non
     monkeypatch.setattr(
         "shutil.which", lambda name: f"/usr/bin/{name}" if name in installed else None
     )
-    monkeypatch.setattr("lazy_harness.features._probe_version", lambda binary: "0.9.38")
+    monkeypatch.setattr("lazy_harness.features._probe_version", lambda binary: "0.9.41")
 
     cfg = Config()
     cfg.knowledge.structure.enabled = False
@@ -218,3 +218,56 @@ def test_collect_accepts_an_injected_probe(monkeypatch) -> None:
     assert by_name["graphify"].state == "dormant"
     assert by_name["qmd"].state == "missing"
     assert by_name["engram"].state == "missing"
+
+
+def test_engram_pinned_version_comes_from_config(monkeypatch) -> None:
+    """ADR-022 makes config the single source of truth for the pin.
+
+    Reporting the module constant instead means `lh doctor` contradicts the
+    config the user just edited, and the config field promises a behaviour it
+    does not have.
+    """
+    from lazy_harness.core.config import Config
+    from lazy_harness.features import collect_feature_statuses
+
+    monkeypatch.setattr("shutil.which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr("lazy_harness.features._probe_version", lambda binary: "9.9.9")
+
+    cfg = Config()
+    cfg.memory.engram.enabled = True
+    cfg.memory.engram.version = "9.9.9"
+
+    statuses = collect_feature_statuses(cfg)
+    engram_status = next(s for s in statuses if s.name == "engram")
+    assert engram_status.pinned_version == "9.9.9"
+
+
+def test_graphify_pinned_version_comes_from_config(monkeypatch) -> None:
+    from lazy_harness.core.config import Config
+    from lazy_harness.features import collect_feature_statuses
+
+    monkeypatch.setattr("shutil.which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr("lazy_harness.features._probe_version", lambda binary: "8.8.8")
+
+    cfg = Config()
+    cfg.knowledge.structure.enabled = True
+    cfg.knowledge.structure.version = "8.8.8"
+
+    statuses = collect_feature_statuses(cfg)
+    graphify_status = next(s for s in statuses if s.name == "graphify")
+    assert graphify_status.pinned_version == "8.8.8"
+
+
+def test_install_hint_names_the_config_pin(monkeypatch) -> None:
+    """The hint tells the user which version to install — from the config."""
+    from lazy_harness.core.config import Config
+    from lazy_harness.features import collect_feature_statuses
+
+    monkeypatch.setattr("shutil.which", lambda name: None)
+
+    cfg = Config()
+    cfg.memory.engram.version = "9.9.9"
+
+    statuses = collect_feature_statuses(cfg)
+    engram_status = next(s for s in statuses if s.name == "engram")
+    assert "9.9.9" in engram_status.install_hint

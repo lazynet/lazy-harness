@@ -19,6 +19,7 @@ from lazy_harness.plugins.capabilities import (
     Capability,
     CapabilityState,
     Probe,
+    _resolve,
     which_probe,
 )
 
@@ -71,14 +72,33 @@ def _section_of(cap: Capability) -> str:
     return cap.config_path.rsplit(".", 1)[0]
 
 
+def _pin_for(cap: Capability, cfg: Config) -> str:
+    """The pin doctor reports, read from config first.
+
+    ADR-022 and ADR-023 both say the config's `version` key is the single
+    source of truth for the pin. The module constant was being reported
+    instead, so `lh doctor` contradicted the config the user had just edited
+    and the field promised a behaviour it did not have.
+
+    A capability with no pin of its own — qmd — asks the config nothing: its
+    section has no `version` key, and `_resolve` is deliberately strict about
+    a path that does not exist.
+    """
+    if not cap.pinned_version:
+        return ""
+    declared = _resolve(cfg, f"{_section_of(cap)}.version", owner=cap.name)
+    return declared if isinstance(declared, str) and declared else cap.pinned_version
+
+
 def _status_for(cap: Capability, cfg: Config, *, probe: Probe) -> FeatureStatus:
     state = _STATE_NAMES[builtin_registry().state(cap, cfg, probe=probe)]
     installed = state in ("active", "dormant")
     detected = _probe_version(cap.binary) if installed else ""
+    pin = _pin_for(cap, cfg)
 
     install_hint = ""
     if state in ("missing", "broken") and cap.install_hint:
-        install_hint = cap.install_hint.format(pin=cap.pinned_version)
+        install_hint = cap.install_hint.format(pin=pin)
 
     enable_hint = ""
     if state == "dormant":
@@ -90,7 +110,7 @@ def _status_for(cap: Capability, cfg: Config, *, probe: Probe) -> FeatureStatus:
         section=_section_of(cap),
         state=state,
         installed_version=detected,
-        pinned_version=cap.pinned_version,
+        pinned_version=pin,
         install_hint=install_hint,
         enable_hint=enable_hint,
     )
