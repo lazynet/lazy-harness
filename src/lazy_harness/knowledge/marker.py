@@ -22,6 +22,9 @@ DEFAULT_ROOT = "~/repos/lazy/lazy-knowledge"
 ENV_VAR = "LAZY_KNOWLEDGE_ROOT"
 
 
+DEFAULT_MEMORY_AREA = "memory"
+
+
 class MarkerError(Exception):
     """The marker is absent, unreadable, or declares something unusable."""
 
@@ -30,6 +33,9 @@ class MarkerError(Exception):
 class KnowledgeMarker:
     sessions: str
     learnings: str
+    # Optional, with a usable default. Bumping the marker version instead would
+    # break every existing store at once, for a directory it does not use yet.
+    memory: str = "memory"
 
 
 def _require_relative(name: str, value: str) -> str:
@@ -69,7 +75,16 @@ def read_marker(root: Path) -> KnowledgeMarker:
             raise MarkerError(f"{path}: [knowledge].{name} is missing or empty")
         values[name] = _require_relative(name, value)
 
-    return KnowledgeMarker(sessions=values["sessions"], learnings=values["learnings"])
+    memory = block.get("memory", DEFAULT_MEMORY_AREA)
+    if not isinstance(memory, str) or not memory:
+        raise MarkerError(f"{path}: [knowledge].memory is declared but empty")
+    values["memory"] = _require_relative("memory", memory)
+
+    return KnowledgeMarker(
+        sessions=values["sessions"],
+        learnings=values["learnings"],
+        memory=values["memory"],
+    )
 
 
 def write_marker(root: Path) -> Path:
@@ -80,7 +95,8 @@ def write_marker(root: Path) -> Path:
         "[knowledge]\n"
         f"version   = {MARKER_VERSION}\n"
         'sessions  = "sessions"\n'
-        'learnings = "learnings"\n',
+        'learnings = "learnings"\n'
+        f'memory    = "{DEFAULT_MEMORY_AREA}"\n',
         encoding="utf-8",
     )
     return path

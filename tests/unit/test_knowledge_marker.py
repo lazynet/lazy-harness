@@ -104,3 +104,57 @@ def test_resolve_root_default_when_nothing_set(monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.delenv("LAZY_KNOWLEDGE_ROOT", raising=False)
     assert resolve_root(None) == expand_path(DEFAULT_ROOT)
+
+
+def test_a_marker_without_a_memory_field_still_loads(tmp_path: Path) -> None:
+    """Distilled memory needs a home both machines can reach, and the knowledge
+    store is the only directory the framework already synchronises between
+    them. Added as an optional field rather than a version bump: an existing
+    store's marker is version 1 and must keep loading, or every machine breaks
+    at once on upgrade for a directory it does not use yet.
+    """
+    from lazy_harness.knowledge.marker import read_marker
+
+    (tmp_path / "knowledge.toml").write_text(
+        '[knowledge]\nversion   = 1\nsessions  = "sessions"\nlearnings = "learnings"\n'
+    )
+
+    marker = read_marker(tmp_path)
+
+    assert marker.sessions == "sessions"
+    assert marker.memory == "memory", "the default has to be usable, not empty"
+
+
+def test_a_declared_memory_area_is_honoured(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.marker import read_marker
+
+    (tmp_path / "knowledge.toml").write_text(
+        '[knowledge]\nversion   = 1\nsessions  = "sessions"\n'
+        'learnings = "learnings"\nmemory    = "distilled"\n'
+    )
+
+    assert read_marker(tmp_path).memory == "distilled"
+
+
+def test_an_escaping_memory_area_is_refused(tmp_path: Path) -> None:
+    """The same rule the other two areas already carry: a relative path, or a
+    loud failure. An empty value would land files at the store root."""
+    import pytest
+
+    from lazy_harness.knowledge.marker import MarkerError, read_marker
+
+    (tmp_path / "knowledge.toml").write_text(
+        '[knowledge]\nversion   = 1\nsessions  = "sessions"\n'
+        'learnings = "learnings"\nmemory    = "../outside"\n'
+    )
+
+    with pytest.raises(MarkerError, match="memory"):
+        read_marker(tmp_path)
+
+
+def test_a_fresh_marker_declares_the_memory_area(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.marker import read_marker, write_marker
+
+    write_marker(tmp_path)
+
+    assert read_marker(tmp_path).memory == "memory"
