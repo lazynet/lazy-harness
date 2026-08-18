@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.43.0](https://github.com/lazynet/lazy-harness/compare/v0.42.1...v0.43.0) (2026-08-18)
+
+
+### Features
+
+* derive a project identity that survives moving between machines ([4666721](https://github.com/lazynet/lazy-harness/commit/46667216764f0c0b9af8d121e6add97eebf04108))
+* migrate project memory to its identity-keyed home ([95ba3e5](https://github.com/lazynet/lazy-harness/commit/95ba3e5af8d1e15db70f904bea537b21732c2a9d))
+* overlay per-profile secrets onto the launch environment ([9bdf498](https://github.com/lazynet/lazy-harness/commit/9bdf498371c8e078019c06227c291ec9d2e31f7f))
+* resolve a project's memory directory from the knowledge store ([b76b710](https://github.com/lazynet/lazy-harness/commit/b76b710b9209e65e8f4b9111f8c0321f7a8b9ff0))
+
+
+### Bug Fixes
+
+* read a git config the way git writes it, not the way configparser expects ([871a74a](https://github.com/lazynet/lazy-harness/commit/871a74a8b808169e580cd948176cae4fe7f207d2))
+* repair the hook launcher and deploy stable hook commands ([87f3b8b](https://github.com/lazynet/lazy-harness/commit/87f3b8b97aed44ba094eaaf766cfebcb2ca5ec80))
+* resolve the memory CLI's project directory the way the hooks do ([42962c9](https://github.com/lazynet/lazy-harness/commit/42962c9747d8fd299b363baaddd27911f4ec4be2))
+* use the channels the compact events actually provide ([7e3d22f](https://github.com/lazynet/lazy-harness/commit/7e3d22fa7addb17b4c9b1a384e5d895b0fe71274))
+
+
+### Refactors
+
+* read memory from both locations while machines migrate ([37847c0](https://github.com/lazynet/lazy-harness/commit/37847c09189e2fed6572a0e9a78f754960deccdc))
+* route every hook's memory directory through one resolver ([c152cc4](https://github.com/lazynet/lazy-harness/commit/c152cc43bfdd4916bdc5d58b22d8926f4cca84cd))
+
+
+### Documentation
+
+* close the linux parity spec against what shipped ([23ae7e2](https://github.com/lazynet/lazy-harness/commit/23ae7e21ec063ac7d9655bfd7c6cf878d226bf86))
+
 ## [0.42.1](https://github.com/lazynet/lazy-harness/compare/v0.42.0...v0.42.1) (2026-08-18)
 
 
