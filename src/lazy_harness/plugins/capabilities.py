@@ -163,6 +163,11 @@ class CapabilityRegistry:
             # capability pointed at that list, so two sinks sharing one path
             # both answered ON — including the one never added to it.
             enabled = cap.name in value
+        elif cap.cardinality is Cardinality.ONE and isinstance(value, str):
+            # An exclusive choice stores the selected implementation's name.
+            # Read with truthiness, `bool("claude-code")` is True for every
+            # sibling, so all of them reported enabled at once.
+            enabled = value == cap.name
         elif isinstance(value, (bool, str, int, float)) or value is None:
             enabled = bool(value)
         else:
@@ -193,10 +198,25 @@ class CapabilityRegistry:
         """
         if not cap.config_path:
             raise ValueError(f"capability {cap.name!r} has no config switch to set")
+
+        value: object = enabled
+        if cap.cardinality is Cardinality.ONE:
+            # The field holds a name, not a flag: writing `True` into
+            # `agent.type` produces a config the loader rejects. And there is
+            # no "off" for an exclusive choice — deselecting would leave the
+            # field naming nothing, and the registry cannot invent which
+            # sibling takes over.
+            if not enabled:
+                raise ValueError(
+                    f"capability {cap.name!r} is an exclusive choice; select a sibling "
+                    "instead of deselecting this one"
+                )
+            value = cap.name
+
         updated = copy.deepcopy(cfg)
         parts = cap.config_path.split(".")
         target: object = updated
         for part in parts[:-1]:
             target = getattr(target, part)
-        setattr(target, parts[-1], enabled)
+        setattr(target, parts[-1], value)
         return updated

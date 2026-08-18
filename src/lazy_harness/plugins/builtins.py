@@ -93,6 +93,63 @@ _HOOKS = [
 ]
 
 
+# Membership in `metrics.sinks` is the enabled test. `PluginRegistry` still
+# resolves the implementation classes — the two registries answer different
+# questions and both stay.
+_SINKS = [
+    Capability(
+        name="sqlite_local",
+        kind="metrics_sink",
+        cardinality=Cardinality.MANY,
+        config_path="metrics.sinks",
+        summary="Write session metrics to the local SQLite database",
+        enabled_by_default=True,
+    ),
+    Capability(
+        name="http_remote",
+        kind="metrics_sink",
+        cardinality=Cardinality.MANY,
+        config_path="metrics.sinks",
+        summary="Ship session metrics to a remote collector",
+    ),
+]
+
+# Exclusive choices: the config field holds the selected name, and every
+# sibling reads the same field.
+_AGENTS = [
+    Capability(
+        name="claude-code",
+        kind="agent",
+        cardinality=Cardinality.ONE,
+        config_path="agent.type",
+        summary="Claude Code",
+    ),
+    Capability(
+        name="null",
+        kind="agent",
+        cardinality=Cardinality.ONE,
+        config_path="agent.type",
+        summary="No agent — generate nothing",
+    ),
+]
+
+_LLM_BACKENDS = [
+    Capability(
+        name=name,
+        kind="llm_backend",
+        cardinality=Cardinality.ONE,
+        config_path="compound_loop.backend",
+        summary=f"{name} inference backend for the compound loop",
+    )
+    for name in ("claude", "ollama", "mlx", "openai-compatible")
+]
+
+# The scheduler backends are deliberately absent. `scheduler.backend` defaults
+# to `"auto"`, which names no implementation: which one runs is decided at
+# install time by probing the machine. Registering them against that field
+# would report all three OFF on a machine where one is demonstrably running
+# six jobs, and `CapabilityState` has no word for "chosen at runtime".
+
 @lru_cache(maxsize=1)
 def builtin_registry() -> CapabilityRegistry:
     """The one registry, built once.
@@ -101,6 +158,6 @@ def builtin_registry() -> CapabilityRegistry:
     on every call would raise on the second one.
     """
     reg = CapabilityRegistry()
-    for cap in (*_TOOLS, *_HOOKS):
+    for cap in (*_TOOLS, *_HOOKS, *_SINKS, *_AGENTS, *_LLM_BACKENDS):
         reg.register(cap)
     return reg

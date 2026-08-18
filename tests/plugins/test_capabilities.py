@@ -337,3 +337,115 @@ def test_an_unresolvable_path_names_the_capability_and_the_path() -> None:
 
     assert "pre-tool-use-security" in str(excinfo.value)
     assert "memory.engram.no_such_field" in str(excinfo.value)
+
+
+def test_a_one_cardinality_capability_is_on_only_when_the_config_names_it() -> None:
+    """The config holds the selected implementation's name, not a boolean.
+
+    Read with truthiness, `bool("claude-code")` is True for every sibling, so
+    both agents reported ON — the same lie the list case produced, one axis
+    over.
+    """
+    from lazy_harness.core.config import Config
+    from lazy_harness.plugins.capabilities import (
+        Capability,
+        CapabilityRegistry,
+        CapabilityState,
+        Cardinality,
+    )
+
+    reg = CapabilityRegistry()
+    caps = {}
+    for name in ("claude-code", "null"):
+        caps[name] = Capability(
+            name=name,
+            kind="agent",
+            cardinality=Cardinality.ONE,
+            config_path="agent.type",
+            summary=name,
+        )
+        reg.register(caps[name])
+
+    cfg = Config()
+    cfg.agent.type = "claude-code"
+
+    assert reg.state(caps["claude-code"], cfg) is CapabilityState.ON
+    assert reg.state(caps["null"], cfg) is CapabilityState.OFF
+
+
+def test_a_one_cardinality_capability_with_a_binary_uses_the_four_states() -> None:
+    """Selection and installation are still independent axes."""
+    from lazy_harness.core.config import Config
+    from lazy_harness.plugins.capabilities import (
+        Capability,
+        CapabilityRegistry,
+        CapabilityState,
+        Cardinality,
+    )
+
+    cap = Capability(
+        name="ollama",
+        kind="llm_backend",
+        cardinality=Cardinality.ONE,
+        config_path="compound_loop.backend",
+        summary="Local inference",
+        binary="ollama",
+    )
+    reg = CapabilityRegistry()
+    reg.register(cap)
+
+    cfg = Config()
+    cfg.compound_loop.backend = "ollama"
+    assert reg.state(cap, cfg, probe=lambda _n: False) is CapabilityState.BROKEN
+
+    cfg.compound_loop.backend = "claude"
+    assert reg.state(cap, cfg, probe=lambda _n: True) is CapabilityState.DORMANT
+
+
+def test_toggling_a_one_cardinality_capability_selects_it_by_name() -> None:
+    """Writing `True` into `agent.type` would produce an unloadable config."""
+    from lazy_harness.core.config import Config
+    from lazy_harness.plugins.capabilities import (
+        Capability,
+        CapabilityRegistry,
+        Cardinality,
+    )
+
+    cap = Capability(
+        name="null",
+        kind="agent",
+        cardinality=Cardinality.ONE,
+        config_path="agent.type",
+        summary="No agent",
+    )
+    reg = CapabilityRegistry()
+    reg.register(cap)
+
+    cfg = Config()
+    cfg.agent.type = "claude-code"
+
+    assert reg.toggle(cap, cfg, enabled=True).agent.type == "null"
+
+
+def test_deselecting_a_one_cardinality_capability_is_refused() -> None:
+    """There is no "off" for an exclusive choice — something has to be selected,
+    and the registry cannot invent which sibling takes over."""
+    from lazy_harness.core.config import Config
+    from lazy_harness.plugins.capabilities import (
+        Capability,
+        CapabilityRegistry,
+        Cardinality,
+    )
+
+    cap = Capability(
+        name="null",
+        kind="agent",
+        cardinality=Cardinality.ONE,
+        config_path="agent.type",
+        summary="No agent",
+    )
+    reg = CapabilityRegistry()
+    reg.register(cap)
+
+    with pytest.raises(ValueError, match="null"):
+        reg.toggle(cap, Config(), enabled=False)
