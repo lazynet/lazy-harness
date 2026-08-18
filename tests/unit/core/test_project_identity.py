@@ -273,3 +273,172 @@ def test_a_percent_in_a_remote_url_is_not_interpolated(tmp_path: Path) -> None:
     )
 
     assert project_key(root) == "example.org/o/x"
+
+
+def _git_config(tmp_path: Path, text: str) -> Path:
+    path = tmp_path / "gitconfig"
+    path.write_text(text)
+    return path
+
+
+def test_an_insteadof_shorthand_resolves_to_the_host_it_stands_for(tmp_path: Path) -> None:
+    """Measured against a real checkout: `lazy-desktop-manager` carries
+    `url = forge:lazy/lazy-desktop-manager.git`, because git stores the URL as
+    it was typed and applies `url.*.insteadOf` at transport time.
+
+    `forge` is not an SSH alias, so nothing else resolves it and the repository
+    opened a third namespace of its own — a split the knowledge store had to
+    fold back by hand.
+    """
+    from lazy_harness.core.project_identity import normalise_remote
+
+    cfg = _git_config(tmp_path, '[url "git@git.lazy.net.ar:"]\n\tinsteadOf = forge:\n')
+
+    assert normalise_remote("forge:lazy/lazy-desktop-manager.git", git_config=cfg) == (
+        "git.lazy.net.ar/lazy/lazy-desktop-manager"
+    )
+
+
+def test_the_longest_matching_insteadof_wins(tmp_path: Path) -> None:
+    """Git resolves the longest `insteadOf` that matches, so a general prefix
+    and a more specific one can coexist. Taking the first match instead would
+    make the result depend on the order of the file.
+    """
+    from lazy_harness.core.project_identity import normalise_remote
+
+    cfg = _git_config(
+        tmp_path,
+        '[url "git@generic.example:"]\n\tinsteadOf = forge:\n'
+        '[url "git@specific.example:mirror/"]\n\tinsteadOf = forge:lazy/\n',
+    )
+
+    assert normalise_remote("forge:lazy/x.git", git_config=cfg) == "specific.example/mirror/x"
+
+
+def test_a_push_insteadof_does_not_change_the_identity(tmp_path: Path) -> None:
+    """`pushInsteadOf` rewrites where a push goes, not what the repository is.
+
+    Applying it would key a repository by the server it publishes to rather
+    than the one it was cloned from, which are deliberately different when a
+    read-only mirror is in play.
+    """
+    from lazy_harness.core.project_identity import normalise_remote
+
+    cfg = _git_config(tmp_path, '[url "git@push.example:"]\n\tpushInsteadOf = forge:\n')
+
+    assert normalise_remote("forge:a/b.git", git_config=cfg) == "forge/a/b"
+
+
+def test_an_insteadof_is_applied_before_the_ssh_alias(tmp_path: Path) -> None:
+    """The two rewrites chain: the shorthand names a host that `~/.ssh/config`
+    then renames. Resolving them the other way round leaves the shorthand
+    unmatched, because `forge` is not a host any SSH config knows.
+    """
+    from lazy_harness.core.project_identity import normalise_remote
+
+    git_cfg = _git_config(tmp_path, '[url "git@alias.example:"]\n\tinsteadOf = forge:\n')
+    ssh_cfg = _ssh_config(tmp_path, "Host alias.example\n  HostName real.example\n")
+
+    assert normalise_remote("forge:a/b.git", ssh_config=ssh_cfg, git_config=git_cfg) == (
+        "real.example/a/b"
+    )
+
+
+def test_a_missing_git_config_is_not_an_error(tmp_path: Path) -> None:
+    from lazy_harness.core.project_identity import normalise_remote
+
+    assert normalise_remote("git@h:a/b.git", git_config=tmp_path / "nope") == "h/a/b"
+
+
+def test_a_git_config_with_duplicate_options_still_yields_its_aliases(tmp_path: Path) -> None:
+    """The same parsing hazard as `.git/config`, reached from the user's own
+    file: one repeated key must not discard every `insteadOf` on the machine.
+    """
+    from lazy_harness.core.project_identity import normalise_remote
+
+    cfg = _git_config(
+        tmp_path,
+        '[user]\n\tname = a\n\tname = b\n[url "git@git.lazy.net.ar:"]\n\tinsteadOf = forge:\n',
+    )
+
+    assert normalise_remote("forge:a/b.git", git_config=cfg) == "git.lazy.net.ar/a/b"
+
+
+def test_a_url_section_with_no_insteadof_is_ignored(tmp_path: Path) -> None:
+    """`[url]` also carries unrelated settings. A section without an
+    `insteadOf` describes no shorthand and must not rewrite anything."""
+    from lazy_harness.core.project_identity import normalise_remote
+
+    cfg = _git_config(tmp_path, '[url "git@git.lazy.net.ar:"]\n\tanything = else\n')
+
+    assert normalise_remote("https://github.com/o/x.git", git_config=cfg) == "github.com/o/x"
+
+
+def test_project_key_resolves_an_insteadof_shorthand(tmp_path: Path) -> None:
+    """The whole point: the shorthand and the canonical spelling of one server
+    have to land on one key, or the checkout keeps a memory directory of its
+    own that nothing else ever reads.
+    """
+    from lazy_harness.core.project_identity import project_key
+
+    cfg = _git_config(tmp_path, '[url "git@git.lazy.net.ar:"]\n\tinsteadOf = forge:\n')
+
+    shorthand = _repo(tmp_path / "a", "forge:lazy/x.git")
+    canonical = _repo(tmp_path / "b", "git@git.lazy.net.ar:lazy/x.git")
+
+    assert project_key(shorthand, git_config=cfg) == "git.lazy.net.ar/lazy/x"
+    assert project_key(canonical, git_config=cfg) == "git.lazy.net.ar/lazy/x"
+
+
+def test_an_empty_insteadof_does_not_match_everything(tmp_path: Path) -> None:
+    """An empty shorthand is a prefix of every URL, so honouring it would
+    rewrite every remote on the machine to one host — the `Host *` hazard in
+    its git spelling.
+    """
+    from lazy_harness.core.project_identity import normalise_remote
+
+    cfg = _git_config(tmp_path, '[url "git@wrong.example:"]\n\tinsteadOf =\n')
+
+    assert normalise_remote("https://github.com/o/x.git", git_config=cfg) == "github.com/o/x"
+
+
+def test_the_default_lookup_reads_the_users_own_gitconfig(tmp_path: Path) -> None:
+    """Every other test here injects the path, which leaves the branch that
+    actually runs in production — no argument at all — unexercised.
+    """
+    from lazy_harness.core.project_identity import normalise_remote
+
+    home = tmp_path / "nohome"
+    home.mkdir()
+    (home / ".gitconfig").write_text('[url "git@git.lazy.net.ar:"]\n\tinsteadOf = forge:\n')
+
+    assert normalise_remote("forge:lazy/x.git") == "git.lazy.net.ar/lazy/x"
+
+
+def test_the_default_lookup_also_reads_the_xdg_gitconfig(tmp_path: Path) -> None:
+    """Git reads `~/.config/git/config` too, and a machine that keeps its
+    config there has no `~/.gitconfig` to find."""
+    from lazy_harness.core.project_identity import normalise_remote
+
+    xdg = tmp_path / "nohome" / ".config" / "git"
+    xdg.mkdir(parents=True)
+    (xdg / "config").write_text('[url "git@git.lazy.net.ar:"]\n\tinsteadOf = forge:\n')
+
+    assert normalise_remote("forge:lazy/x.git") == "git.lazy.net.ar/lazy/x"
+
+
+def test_the_users_own_gitconfig_outranks_the_xdg_one(tmp_path: Path) -> None:
+    """Both files can define the same shorthand; git lets `~/.gitconfig` win.
+
+    Reading them in the other order would resolve a repository against a
+    setting the user believes they have overridden.
+    """
+    from lazy_harness.core.project_identity import normalise_remote
+
+    home = tmp_path / "nohome"
+    xdg = home / ".config" / "git"
+    xdg.mkdir(parents=True)
+    (xdg / "config").write_text('[url "git@stale.example:"]\n\tinsteadOf = forge:\n')
+    (home / ".gitconfig").write_text('[url "git@current.example:"]\n\tinsteadOf = forge:\n')
+
+    assert normalise_remote("forge:a/b.git") == "current.example/a/b"
