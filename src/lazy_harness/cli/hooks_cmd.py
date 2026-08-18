@@ -96,7 +96,11 @@ def hook_invoke(name: str) -> None:
             sys.exit(0)
         main_fn()
     except SystemExit:
-        pass
+        # The exit code is the hook's verdict, not just its status: Claude Code
+        # reads 2 on PreToolUse as "block this tool call". Swallowing it here
+        # left `pre-tool-use-security` writing a refusal to stderr while the
+        # command ran anyway.
+        raise
     except Exception as e:  # noqa: BLE001 — hooks must never bubble up to Claude Code
         # Widened from ImportError: a hook that fails has to degrade, and the
         # narrow clause is what let the registry mistake above escape.
