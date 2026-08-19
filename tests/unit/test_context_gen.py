@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 
 def _make_yaml(collections: dict[str, str]) -> str:
     """Build a minimal QMD index.yml with N collections. `collections` maps
@@ -234,3 +236,263 @@ def test_regenerate_preserves_multiple_collections(tmp_path: Path) -> None:
     assert "2 archivos .md" in content
     assert "Contiene: sa" in content
     assert "Contiene: sb" in content
+
+
+# --- Regression: duplicate `context:` keys corrupt index.yml -----------------
+#
+# A scheduled run against a config whose context values were plain inline
+# scalars appended a SECOND `context:` key to every collection instead of
+# merging. YAML forbids duplicate map keys, so qmd refused to load the file at
+# all and stayed down until it was repaired by hand.
+
+
+def _assert_no_duplicate_keys(text: str) -> None:
+    """Fail if any mapping in `text` carries the same key twice.
+
+    `yaml.safe_load` is useless here: it accepts duplicates last-wins and
+    silently discards the hand-written description, so the corrupt file parses
+    clean. `yaml.compose` returns the node graph *before* duplicate resolution,
+    so every pair survives to be counted -- and, being the real parser, it does
+    not mistake a colon inside a block scalar body for a key.
+    """
+    import yaml
+
+    def walk(node: object, path: str) -> None:
+        if isinstance(node, yaml.MappingNode):
+            keys = [k.value for k, _ in node.value]
+            duplicates = sorted({k for k in keys if keys.count(k) > 1})
+            assert not duplicates, f"duplicate keys {duplicates} in mapping at {path}"
+            for k, v in node.value:
+                walk(v, f"{path}.{k.value}")
+        elif isinstance(node, yaml.SequenceNode):
+            for item in node.value:
+                walk(item, f"{path}[]")
+
+    walk(yaml.compose(text), "root")
+
+
+def _config_with_context_block(coll_path: Path, block: str) -> str:
+    return f'collections:\n  coll:\n    path: {coll_path}\n    pattern: "**/*.md"\n{block}'
+
+
+# Every shape a hand-edited index.yml may legitimately use for a context value.
+CONTEXT_SHAPES = {
+    "plain_inline": '    context:\n      "": Descripción a mano.\n',
+    "double_quoted": '    context:\n      "": "Descripción a mano."\n',
+    "single_quoted": "    context:\n      \"\": 'Descripción a mano.'\n",
+    "folded": '    context:\n      "": >\n        Descripción a mano.\n',
+    "literal": '    context:\n      "": |\n        Descripción a mano.\n',
+}
+
+
+@pytest.mark.parametrize("shape", sorted(CONTEXT_SHAPES))
+def test_regenerate_merges_every_scalar_shape_in_place(tmp_path: Path, shape: str) -> None:
+    """Merging must work whatever scalar style the existing value uses.
+
+    Only `>` and `|` were recognised; a plain or quoted value fell through to
+    the "no context here" branch, which appended a second key.
+    """
+    from lazy_harness.knowledge.context_gen import DELIMITER, regenerate
+
+    coll_path = tmp_path / "coll"
+    _populate(coll_path, md_files=["a.md", "b.md", "c.md"], subdirs=["docs"])
+
+    config = tmp_path / "index.yml"
+    config.write_text(_config_with_context_block(coll_path, CONTEXT_SHAPES[shape]))
+
+    result = regenerate(config)
+    content = config.read_text()
+
+    _assert_no_duplicate_keys(content)
+    assert result.skipped == []
+    assert len(result.updated) == 1
+    assert content.count("context:") == 1
+    assert content.count(DELIMITER) == 1
+    assert "Descripción a mano." in content, "hand-written prose must survive"
+    assert "3 archivos .md" in content
+    assert "Contiene: docs" in content
+
+
+@pytest.mark.parametrize("shape", sorted(CONTEXT_SHAPES))
+def test_regenerate_is_idempotent_for_every_scalar_shape(tmp_path: Path, shape: str) -> None:
+    """Three runs must not accumulate text or stack `<!-- auto -->` markers."""
+    from lazy_harness.knowledge.context_gen import DELIMITER, regenerate
+
+    coll_path = tmp_path / "coll"
+    _populate(coll_path, md_files=["a.md"], subdirs=["docs"])
+
+    config = tmp_path / "index.yml"
+    config.write_text(_config_with_context_block(coll_path, CONTEXT_SHAPES[shape]))
+
+    regenerate(config)
+    first = config.read_text()
+    regenerate(config)
+    regenerate(config)
+    third = config.read_text()
+
+    assert first == third
+    _assert_no_duplicate_keys(third)
+    assert third.count(DELIMITER) == 1
+    assert third.count("Descripción a mano.") == 1
+
+
+def test_regenerate_appends_auto_block_after_multiline_prose(tmp_path: Path) -> None:
+    """A multi-line description keeps its shape and gets the auto block last.
+
+    The old code rewrote only the first line of the value, wedging the stats
+    between the author's first and second sentence.
+    """
+    from lazy_harness.knowledge.context_gen import DELIMITER, regenerate
+
+    coll_path = tmp_path / "coll"
+    _populate(coll_path, md_files=["a.md"], subdirs=["docs"])
+
+    config = tmp_path / "index.yml"
+    config.write_text(
+        _config_with_context_block(
+            coll_path,
+            '    context:\n      "": |\n        Linea uno.\n        Linea dos.\n',
+        )
+    )
+
+    regenerate(config)
+    content = config.read_text()
+
+    _assert_no_duplicate_keys(content)
+    assert "Linea uno." in content
+    assert "Linea dos." in content
+    # The auto segment goes after ALL of the prose, never between its lines.
+    assert content.index("Linea dos.") < content.index(DELIMITER)
+
+
+def test_regenerate_adds_context_when_collection_has_none(tmp_path: Path) -> None:
+    """The append path is still correct when there is genuinely no context key."""
+    from lazy_harness.knowledge.context_gen import DELIMITER, regenerate
+
+    coll_path = tmp_path / "coll"
+    _populate(coll_path, md_files=["a.md"], subdirs=["docs"])
+
+    config = tmp_path / "index.yml"
+    config.write_text(_config_with_context_block(coll_path, ""))
+
+    result = regenerate(config)
+    content = config.read_text()
+
+    _assert_no_duplicate_keys(content)
+    assert len(result.updated) == 1
+    assert content.count("context:") == 1
+    assert DELIMITER in content
+
+
+def test_regenerate_skips_context_shape_it_cannot_parse(tmp_path: Path) -> None:
+    """An unrecognised context shape degrades to "leave it alone", not to a
+    second key. Detection is heuristic and will always have blind spots; the
+    fallback is what decides whether a blind spot is harmless or destroys the
+    file. A flow mapping is one such shape."""
+    from lazy_harness.knowledge.context_gen import regenerate
+
+    coll_path = tmp_path / "coll"
+    _populate(coll_path, md_files=["a.md"], subdirs=["docs"])
+
+    config = tmp_path / "index.yml"
+    original = _config_with_context_block(coll_path, '    context: {"": Texto flow.}\n')
+    config.write_text(original)
+
+    result = regenerate(config)
+
+    assert config.read_text() == original, "unparseable context must be left untouched"
+    _assert_no_duplicate_keys(config.read_text())
+    assert result.updated == []
+    assert len(result.skipped) == 1
+    assert "coll" in result.skipped[0]
+
+
+def test_regenerate_leaves_already_corrupt_collection_untouched(tmp_path: Path) -> None:
+    """Fed the file the production run actually produced, the job must report
+    the damage and change nothing -- not round-trip it and drop the hand-written
+    descriptions on the floor."""
+    from lazy_harness.knowledge.context_gen import regenerate
+
+    coll_path = tmp_path / "projects"
+    _populate(coll_path, md_files=["a.md"], subdirs=["PRJ-Dotfiles"])
+
+    config = tmp_path / "index.yml"
+    original = (
+        "collections:\n"
+        "  lazy-lazymind-projects:\n"
+        f"    path: {coll_path}\n"
+        '    pattern: "**/*.md"\n'
+        "    context:\n"
+        '      "": Proyectos activos con objetivos y entregables concretos.\n'
+        "    context:\n"
+        '      "": >\n'
+        "        <!-- auto --> 21 archivos .md. Contiene: PRJ-Dotfiles.\n"
+    )
+    config.write_text(original)
+
+    result = regenerate(config)
+
+    assert config.read_text() == original
+    assert result.updated == []
+    assert len(result.skipped) == 1
+    assert "lazy-lazymind-projects" in result.skipped[0]
+    assert "duplicate" in result.skipped[0].lower()
+
+
+def test_regenerate_skipping_one_collection_still_updates_the_others(tmp_path: Path) -> None:
+    """One damaged collection must not stall the healthy ones."""
+    from lazy_harness.knowledge.context_gen import regenerate
+
+    bad_path = tmp_path / "bad"
+    good_path = tmp_path / "good"
+    _populate(bad_path, md_files=["a.md"], subdirs=[])
+    _populate(good_path, md_files=["a.md", "b.md"], subdirs=["docs"])
+
+    config = tmp_path / "index.yml"
+    config.write_text(
+        "collections:\n"
+        "  bad:\n"
+        f"    path: {bad_path}\n"
+        "    context:\n"
+        '      "": Uno.\n'
+        "    context:\n"
+        '      "": Dos.\n'
+        "  good:\n"
+        f"    path: {good_path}\n"
+        "    context:\n"
+        '      "": Descripción buena.\n'
+    )
+
+    result = regenerate(config)
+    content = config.read_text()
+
+    assert len(result.skipped) == 1
+    assert "bad" in result.skipped[0]
+    assert len(result.updated) == 1
+    assert "good" in result.updated[0]
+    assert "Descripción buena." in content
+    assert "2 archivos .md" in content
+    # The damaged block is preserved verbatim, still awaiting a human.
+    assert "Uno." in content
+    assert "Dos." in content
+
+
+def test_regenerate_never_writes_duplicate_keys_for_any_shape(tmp_path: Path) -> None:
+    """Whole-file guarantee: whatever the input shape, the output parses with
+    unique keys everywhere."""
+    from lazy_harness.knowledge.context_gen import regenerate
+
+    config = tmp_path / "index.yml"
+    lines = ["collections:"]
+    for shape, block in sorted(CONTEXT_SHAPES.items()):
+        coll_path = tmp_path / shape
+        _populate(coll_path, md_files=["a.md"], subdirs=["docs"])
+        lines.append(f"  {shape}:")
+        lines.append(f"    path: {coll_path}")
+        lines.append(block.rstrip("\n"))
+    config.write_text("\n".join(lines) + "\n")
+
+    regenerate(config)
+    regenerate(config)
+
+    _assert_no_duplicate_keys(config.read_text())
