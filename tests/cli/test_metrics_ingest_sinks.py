@@ -6,6 +6,8 @@ from click.testing import CliRunner
 from pytest_httpserver import HTTPServer
 
 from lazy_harness.cli.metrics_cmd import metrics
+from lazy_harness.monitoring.db import MetricsDB
+from lazy_harness.monitoring.sinks import worker
 
 
 def _write_fake_session(dir_path: Path) -> None:
@@ -53,3 +55,57 @@ def test_metrics_ingest_posts_to_remote(
     # we expect ingest to also trigger an opportunistic drain so the backend
     # has already been hit once.
     assert len(httpserver.log) >= 1
+
+
+def test_metrics_ingest_runs_local_only_when_the_url_variable_is_unset(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The whole ingest must complete without touching the network.
+
+    Any attempt to build an httpx client is a failure: the remote sink should
+    never have been instantiated, so nothing can reach the drain path.
+    """
+    profile_dir = tmp_path / "claude"
+    _write_fake_session(profile_dir)
+
+    db_path = tmp_path / "m.db"
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        '[harness]\nversion = "1"\n'
+        "[monitoring]\nenabled = true\n"
+        f'db = "{db_path.as_posix()}"\n'
+        "[profiles]\n"
+        'default = "personal"\n'
+        "[profiles.personal]\n"
+        f'config_dir = "{profile_dir.as_posix()}"\n'
+        "roots = []\n"
+        "[metrics]\n"
+        'sinks = ["sqlite_local", "http_remote"]\n'
+        'user_id = "martin"\n'
+        "[metrics.sink_options.http_remote]\n"
+        'url_env = "LH_METRICS_URL"\n'
+    )
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.delenv("LH_METRICS_URL", raising=False)
+
+    def _no_network(*args, **kwargs):
+        raise AssertionError("ingest opened an HTTP client with the sink deactivated")
+
+    monkeypatch.setattr(worker.httpx, "Client", _no_network)
+
+    runner = CliRunner()
+    result = runner.invoke(metrics, ["ingest"])
+    assert result.exit_code == 0, result.output
+    assert "http_remote" in result.output
+    assert "inactive" in result.output.lower()
+    assert "LH_METRICS_URL" in result.output
+
+    db = MetricsDB(db_path)
+    try:
+        # Every state, not just `pending`: a sink built with an empty URL
+        # would enqueue and then leave the rows claimed as `sending`.
+        stats = db.outbox_stats("http_remote")
+        assert stats["pending"] + stats["sending"] + stats["sent"] == 0
+        assert db.aggregate_costs(period="all")["session_count"] == 1
+    finally:
+        db.close()

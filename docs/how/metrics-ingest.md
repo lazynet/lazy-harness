@@ -220,7 +220,8 @@ Validation rules (enforced by the config parser):
 
 - A name in `sinks` other than `sqlite_local` **requires** a matching `[metrics.sink_options.<name>]` block. Missing options is a hard error at load time.
 - A `[metrics.sink_options.<name>]` block whose name is not in `sinks` is silently ignored (dead config).
-- `http_remote` rejects an empty `url`.
+- `http_remote` needs exactly one of `url` or `url_env`. Both present is a `ConfigError`; neither is an error when the sinks are built.
+- `url_env` names an environment variable rather than holding the endpoint. It is read at run time, never at parse time, so the value never reaches the config file that `lh` rewrites. An unset or empty variable deactivates the sink: nothing is enqueued, no request is made, and the run continues on `sqlite_local` alone.
 
 The legacy `[monitoring]` block (`db`, `pricing`) is independent of `[metrics]`. They coexist: `[monitoring]` controls the SQLite file's location and pricing rates for ingest cost rollups; `[metrics]` controls per-event fanout. A future migration may unify them; today they live side by side.
 

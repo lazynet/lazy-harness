@@ -265,6 +265,29 @@ def _parse_profiles(raw: dict[str, Any]) -> ProfilesConfig:
     return ProfilesConfig(default=default, items=items)
 
 
+def _validate_url_source(name: str, block: dict[str, Any]) -> None:
+    """Enforce that a sink block names its endpoint exactly one way.
+
+    `url` carries the endpoint; `url_env` carries the name of the environment
+    variable that carries it. Both present is a hard error rather than a
+    precedence rule, so a typo in one cannot look like it worked.
+
+    The variable is only named here, never read: resolution happens at sink
+    build time so the value never reaches `save_config` and therefore never
+    reaches disk.
+    """
+    if "url_env" not in block:
+        return
+    url_env = block["url_env"]
+    if not isinstance(url_env, str) or not url_env:
+        raise ConfigError(f"[metrics.sink_options.{name}].url_env must be a non-empty string")
+    if "url" in block:
+        raise ConfigError(
+            f"[metrics.sink_options.{name}] sets both `url` and `url_env`; "
+            f"they are mutually exclusive"
+        )
+
+
 def _parse_metrics(raw: dict[str, Any]) -> MetricsConfig:
     """Parse [metrics] with the default-local + opt-in-doble invariants.
 
@@ -276,7 +299,7 @@ def _parse_metrics(raw: dict[str, Any]) -> MetricsConfig:
         pending_ttl_days = 30
 
         [metrics.sink_options.http_remote]
-        url = "..."
+        url = "..."          # or: url_env = "LH_METRICS_URL"
 
     Rules:
     - Empty/missing [metrics] => sinks=["sqlite_local"], nothing else.
@@ -284,6 +307,8 @@ def _parse_metrics(raw: dict[str, Any]) -> MetricsConfig:
       corresponding `[metrics.sink_options.<name>]` table, else ConfigError.
     - A `[metrics.sink_options.<name>]` block whose name is not in `sinks`
       is silently ignored (dead config).
+    - A sink block names its endpoint either directly (`url`) or by the
+      environment variable holding it (`url_env`), never both.
     """
     if not raw:
         return MetricsConfig()
@@ -309,6 +334,7 @@ def _parse_metrics(raw: dict[str, Any]) -> MetricsConfig:
         block = options_raw[name]
         if not isinstance(block, dict):
             raise ConfigError(f"[metrics.sink_options.{name}] must be a table")
+        _validate_url_source(name, block)
         sink_configs[name] = SinkDefinition(options=dict(block))
 
     user_id = raw.get("user_id", "")

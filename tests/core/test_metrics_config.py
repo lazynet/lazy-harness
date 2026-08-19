@@ -11,6 +11,7 @@ from lazy_harness.core.config import (
     MetricsConfig,
     SinkDefinition,
     load_config,
+    save_config,
 )
 
 
@@ -94,3 +95,92 @@ def test_sqlite_local_is_always_valid_without_config_block(tmp_path: Path) -> No
     )
     cfg = load_config(cfg_path)
     assert cfg.metrics.sinks == ["sqlite_local"]
+
+
+def test_url_env_names_the_variable_and_keeps_the_value_off_disk(tmp_path: Path) -> None:
+    cfg_path = _write(
+        tmp_path,
+        '[harness]\nversion = "1"\n'
+        "[metrics]\n"
+        'sinks = ["sqlite_local", "http_remote"]\n'
+        "[metrics.sink_options.http_remote]\n"
+        'url_env = "LH_METRICS_URL"\n',
+    )
+    cfg = load_config(cfg_path)
+    assert cfg.metrics.sinks == ["sqlite_local", "http_remote"]
+    assert cfg.metrics.sink_configs["http_remote"].options == {"url_env": "LH_METRICS_URL"}
+
+
+def test_url_and_url_env_together_is_a_config_error(tmp_path: Path) -> None:
+    cfg_path = _write(
+        tmp_path,
+        '[harness]\nversion = "1"\n'
+        "[metrics]\n"
+        'sinks = ["sqlite_local", "http_remote"]\n'
+        "[metrics.sink_options.http_remote]\n"
+        'url = "https://example.invalid/ingest"\n'
+        'url_env = "LH_METRICS_URL"\n',
+    )
+    with pytest.raises(ConfigError) as info:
+        load_config(cfg_path)
+    assert "url_env" in str(info.value)
+
+
+def test_empty_url_env_is_a_config_error(tmp_path: Path) -> None:
+    cfg_path = _write(
+        tmp_path,
+        '[harness]\nversion = "1"\n'
+        "[metrics]\n"
+        'sinks = ["sqlite_local", "http_remote"]\n'
+        "[metrics.sink_options.http_remote]\n"
+        'url_env = ""\n',
+    )
+    with pytest.raises(ConfigError) as info:
+        load_config(cfg_path)
+    assert "url_env" in str(info.value)
+
+
+def test_non_string_url_env_is_a_config_error(tmp_path: Path) -> None:
+    cfg_path = _write(
+        tmp_path,
+        '[harness]\nversion = "1"\n'
+        "[metrics]\n"
+        'sinks = ["sqlite_local", "http_remote"]\n'
+        "[metrics.sink_options.http_remote]\n"
+        "url_env = 42\n",
+    )
+    with pytest.raises(ConfigError) as info:
+        load_config(cfg_path)
+    assert "url_env" in str(info.value)
+
+
+def test_url_env_survives_a_save_load_round_trip(tmp_path: Path) -> None:
+    cfg_path = _write(
+        tmp_path,
+        '[harness]\nversion = "1"\n'
+        "[metrics]\n"
+        'sinks = ["sqlite_local", "http_remote"]\n'
+        "[metrics.sink_options.http_remote]\n"
+        'url_env = "LH_METRICS_URL"\n',
+    )
+    cfg = load_config(cfg_path)
+    save_config(cfg, cfg_path)
+    reloaded = load_config(cfg_path)
+    assert reloaded.metrics.sink_configs["http_remote"].options == {"url_env": "LH_METRICS_URL"}
+    assert "url =" not in cfg_path.read_text(encoding="utf-8")
+
+
+def test_an_empty_url_alongside_url_env_is_still_a_config_error(tmp_path: Path) -> None:
+    """Presence, not truthiness — `url = ""` next to `url_env` is a typo, not a default."""
+    cfg_path = _write(
+        tmp_path,
+        '[harness]\nversion = "1"\n'
+        "[metrics]\n"
+        'sinks = ["sqlite_local", "http_remote"]\n'
+        "[metrics.sink_options.http_remote]\n"
+        'url = ""\n'
+        'url_env = "LH_METRICS_URL"\n',
+    )
+    with pytest.raises(ConfigError) as info:
+        load_config(cfg_path)
+    assert "url_env" in str(info.value)
