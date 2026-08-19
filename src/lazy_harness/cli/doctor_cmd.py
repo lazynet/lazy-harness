@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import click
 import httpx
@@ -22,6 +23,50 @@ from lazy_harness.monitoring.engram_persist_health import (
     EngramPersistHealth,
     collect_engram_persist_health,
 )
+from lazy_harness.monitoring.sink_setup import plan_sinks
+
+
+def _endpoint_origin(url: str) -> str:
+    """Scheme and host only.
+
+    An endpoint resolved from an environment variable may carry a token in its
+    path, and `lh doctor` output ends up in scrollback and in pasted issues.
+    The host is what answers "where does my data go"; the path is not.
+    """
+    parts = urlsplit(url)
+    if not parts.scheme or not parts.netloc:
+        return "(set, not shown)"
+    return f"{parts.scheme}://{parts.netloc}/…"
+
+
+def _render_egress(console: Console, cfg: Config) -> bool:
+    """Report remote sinks, including ones configured but not activated.
+
+    A sink switched off by an unset variable is silent everywhere else; the
+    whole point of naming the variable in config is that its absence is a
+    normal state, so doctor has to say which variable it looked for.
+    """
+    try:
+        plans = [p for p in plan_sinks(cfg.metrics) if p.name != "sqlite_local"]
+    except ValueError as exc:
+        console.print(f"  [red]✗[/red] misconfigured: {escape(str(exc))}")
+        return False
+
+    if not plans:
+        console.print("  [green]local-only[/green] — no remote sinks configured")
+        return True
+
+    for plan in plans:
+        if not plan.active:
+            console.print(
+                f"  {plan.name} → [yellow]configured but inactive[/yellow] — "
+                f"${plan.url_env} is unset or empty"
+            )
+        elif plan.url_env:
+            console.print(f"  {plan.name} → {_endpoint_origin(plan.url)} (from ${plan.url_env})")
+        else:
+            console.print(f"  {plan.name} → {plan.url}")
+    return True
 
 
 def _fmt_age(seconds: float) -> str:
@@ -282,21 +327,8 @@ def doctor() -> None:
         )
 
     console.print("\n[bold]Network egress[/bold]")
-    remote_urls: list[tuple[str, str]] = []
-    for name in cfg.metrics.sinks:
-        if name == "sqlite_local":
-            continue
-        definition = cfg.metrics.sink_configs.get(name)
-        if not definition:
-            continue
-        url = definition.options.get("url", "")
-        if url:
-            remote_urls.append((name, url))
-    if not remote_urls:
-        console.print("  [green]local-only[/green] — no remote sinks configured")
-    else:
-        for name, url in remote_urls:
-            console.print(f"  {name} → {url}")
+    if not _render_egress(console, cfg):
+        ok = False
 
     if not _render_llm_backend(console, cfg.compound_loop):
         ok = False

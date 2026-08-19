@@ -233,7 +233,8 @@ The default — no `[metrics]` block at all — keeps everything local: only the
 
 | Field             | Type   | Default | Required | Description                                                                                                                |
 | ----------------- | ------ | ------- | -------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `url`             | string | —       | yes      | HTTP(S) endpoint receiving `application/json` payloads. Empty/missing → `ConfigError`.                                     |
+| `url`             | string | —       | one of   | HTTP(S) endpoint receiving `application/json` payloads. Mutually exclusive with `url_env`.                                 |
+| `url_env`         | string | —       | one of   | Name of an environment variable holding the endpoint, resolved at run time. Unset or empty **deactivates the sink** — not an error; the run continues on `sqlite_local` and `lh doctor` reports it as configured-but-inactive. Mutually exclusive with `url`. |
 | `timeout_seconds` | float  | `5.0`   | no       | Per-request HTTP timeout.                                                                                                  |
 | `batch_size`      | int    | `50`    | no       | Number of outbox rows claimed per drain pass. Lease (60 s) is held while the batch is in flight to avoid double-sending. |
 
@@ -248,6 +249,22 @@ url = "https://metrics.example.com/v1/ingest"
 timeout_seconds = 5.0
 batch_size = 50
 ```
+
+Naming the variable instead of the endpoint keeps the value off disk and makes
+the remote sink opt-in per machine — a checkout that never sets the variable
+runs local-only with no config edit:
+
+```toml
+[metrics]
+sinks = ["sqlite_local", "http_remote"]
+
+[metrics.sink_options.http_remote]
+url_env = "LH_METRICS_URL"
+```
+
+Setting both `url` and `url_env` on the same sink is a `ConfigError`: preferring
+one silently would make a typo in the other look like it worked. Setting neither
+is an error too, raised when the sinks are built.
 
 End-to-end mechanics — outbox, drain, backoff, idempotency: [how the metrics ingest pipeline works](../how/metrics-ingest.md#the-sink-layer).
 

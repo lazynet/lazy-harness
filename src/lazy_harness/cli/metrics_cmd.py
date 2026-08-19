@@ -15,7 +15,7 @@ from lazy_harness.core.paths import config_file, data_dir, expand_path
 from lazy_harness.monitoring.db import MetricsDB
 from lazy_harness.monitoring.ingest import ingest_all
 from lazy_harness.monitoring.pricing import load_pricing
-from lazy_harness.monitoring.sink_setup import build_sinks
+from lazy_harness.monitoring.sink_setup import build_sinks, plan_sinks
 from lazy_harness.monitoring.sinks.http_remote import HttpRemoteSink
 
 
@@ -84,14 +84,29 @@ def metrics_ingest(dry_run: bool, verbose: bool) -> None:
 
 
 def _print_active_sinks(console: Console, cfg, identity) -> None:
+    """Report what actually runs, and name what was skipped and why.
+
+    A sink whose `url_env` is unset is dropped for the run. Listing it as
+    active — which the previous version did, straight from `cfg.metrics.sinks`
+    — would make a silently-off sink look like it was delivering.
+    """
+    try:
+        plans = plan_sinks(cfg.metrics)
+    except ValueError:
+        plans = []
+
     url_detail = ""
-    for name in cfg.metrics.sinks:
-        if name == "http_remote":
-            opts = cfg.metrics.sink_configs.get("http_remote")
-            if opts:
-                url_detail = f" → {opts.options.get('url', '')}"
-    sink_list = ", ".join(cfg.metrics.sinks)
-    console.print(f"[dim]metrics sinks active: {sink_list}{url_detail}[/dim]")
+    for plan in plans:
+        if plan.active and plan.name != "sqlite_local":
+            url_detail = f" → ${plan.url_env}" if plan.url_env else f" → {plan.url}"
+    active = [p.name for p in plans if p.active] or list(cfg.metrics.sinks)
+    console.print(f"[dim]metrics sinks active: {', '.join(active)}{url_detail}[/dim]")
+    for plan in plans:
+        if not plan.active:
+            console.print(
+                f"[dim]metrics sink {plan.name}: inactive — "
+                f"${plan.url_env} is unset or empty; continuing local-only[/dim]"
+            )
     console.print(f"[dim]identity: {identity.user_id} (source: {identity.source})[/dim]")
 
 
