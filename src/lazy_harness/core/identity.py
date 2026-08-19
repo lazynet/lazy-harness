@@ -1,7 +1,7 @@
 """User identity resolution for metrics events.
 
 Tries (in order): explicit profile value, `gh` CLI, `git config user.email`,
-and finally `$USER@<hostname>` marked as implicit. Every lookup is wrapped
+and finally `$USER@<short-hostname>` marked as implicit. Every lookup is wrapped
 so a failure moves to the next option instead of raising.
 """
 
@@ -85,5 +85,9 @@ def resolve_identity(
     user = os.environ.get("USER") or "unknown"
     # $HOSTNAME is a bashism that neither zsh nor systemd exports, so the
     # env lookup alone stamped a literal "host" on every Linux machine.
-    host = os.environ.get("HOSTNAME") or _hostname_reader() or "host"
+    raw_host = os.environ.get("HOSTNAME") or _hostname_reader() or ""
+    # Only the leading label is stable. macOS reports LazyMBP.local, and a DHCP
+    # collision renames it to LazyMBP-2.local, which would silently split one
+    # machine's metrics across two identities.
+    host = raw_host.split(".", 1)[0] or "host"
     return ResolvedIdentity(user_id=f"{user}@{host}", source="implicit")
