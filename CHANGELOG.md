@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.44.5](https://github.com/lazynet/lazy-harness/compare/v0.44.4...v0.44.5) (2026-08-19)
+
+
+### Bug Fixes
+
+* resolve the real hostname for implicit metrics identity ([#198](https://github.com/lazynet/lazy-harness/issues/198)) ([cba0959](https://github.com/lazynet/lazy-harness/commit/cba09594d08de06942d838a77f7bc07915f62515))
+
 ## [0.44.4](https://github.com/lazynet/lazy-harness/compare/v0.44.3...v0.44.4) (2026-08-19)
 
 
