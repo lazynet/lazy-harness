@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.44.4](https://github.com/lazynet/lazy-harness/compare/v0.44.3...v0.44.4) (2026-08-19)
+
+
+### Bug Fixes
+
+* merge qmd context blocks whatever scalar style they use ([#196](https://github.com/lazynet/lazy-harness/issues/196)) ([82c788b](https://github.com/lazynet/lazy-harness/commit/82c788bc6eb27ad77ff5e1790f5f036b19053cee))
+
 ## [0.44.3](https://github.com/lazynet/lazy-harness/compare/v0.44.2...v0.44.3) (2026-08-18)
 
 
