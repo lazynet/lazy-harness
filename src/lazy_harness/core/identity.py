@@ -1,13 +1,14 @@
 """User identity resolution for metrics events.
 
 Tries (in order): explicit profile value, `gh` CLI, `git config user.email`,
-and finally `$USER@$HOSTNAME` marked as implicit. Every lookup is wrapped
+and finally `$USER@<hostname>` marked as implicit. Every lookup is wrapped
 so a failure moves to the next option instead of raising.
 """
 
 from __future__ import annotations
 
 import os
+import platform
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -54,11 +55,19 @@ def _read_git_email() -> str | None:
     return result.stdout.strip() or None
 
 
+def _read_hostname() -> str | None:
+    try:
+        return platform.node().strip() or None
+    except OSError:
+        return None
+
+
 def resolve_identity(
     *,
     explicit: str | None,
     _gh_reader: Callable[[], str | None] = _read_gh_login,
     _git_email_reader: Callable[[], str | None] = _read_git_email,
+    _hostname_reader: Callable[[], str | None] = _read_hostname,
 ) -> ResolvedIdentity:
     if explicit:
         return ResolvedIdentity(user_id=explicit, source="explicit")
@@ -74,5 +83,7 @@ def resolve_identity(
             return ResolvedIdentity(user_id=local, source="git")
 
     user = os.environ.get("USER") or "unknown"
-    host = os.environ.get("HOSTNAME") or "host"
+    # $HOSTNAME is a bashism that neither zsh nor systemd exports, so the
+    # env lookup alone stamped a literal "host" on every Linux machine.
+    host = os.environ.get("HOSTNAME") or _hostname_reader() or "host"
     return ResolvedIdentity(user_id=f"{user}@{host}", source="implicit")
