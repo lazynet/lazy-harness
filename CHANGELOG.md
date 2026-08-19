@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.45.0](https://github.com/lazynet/lazy-harness/compare/v0.44.6...v0.45.0) (2026-08-19)
+
+
+### Features
+
+* name the metrics endpoint by environment variable ([#202](https://github.com/lazynet/lazy-harness/issues/202)) ([ab5e698](https://github.com/lazynet/lazy-harness/commit/ab5e6985280cb83630eca99007412ded65adf0bc))
+
 ## [0.44.6](https://github.com/lazynet/lazy-harness/compare/v0.44.5...v0.44.6) (2026-08-19)
 
 
