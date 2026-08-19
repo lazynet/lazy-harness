@@ -70,83 +70,160 @@ def _merge_context(existing: str, auto_part: str) -> str:
     return f"{DELIMITER} {auto_part}"
 
 
+_COLLECTION_RE = re.compile(r"^  (\S+):$")
+_PATH_RE = re.compile(r"^    path:\s*(.+)$")
+_CONTEXT_RE = re.compile(r"^    context:(.*)$")
+# The single entry under `context:` -- a quoted or bare key, then its value.
+_ENTRY_RE = re.compile(r"""^      ("[^"]*"|'[^']*'|[^:\s]+):[ \t]*(.*)$""")
+# A block scalar header: `|`, `>`, with optional chomping/indent indicators.
+_BLOCK_SCALAR_RE = re.compile(r"^[|>][+-]?\d*$|^[|>]\d*[+-]?$")
+
+VALUE_INDENT = "        "
+
+
+def _in_collection_block(line: str) -> bool:
+    """Whether `line` still belongs to the collection block being read."""
+    return not line or line.startswith("    ") or line.startswith("  #")
+
+
+def _unquote(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        return value[1:-1]
+    return value
+
+
+def _read_context_value(block: list[str], entry_idx: int) -> tuple[str, int] | None:
+    """Read the context value starting at `entry_idx`.
+
+    Returns the text and the index just past the value, or None if the entry is
+    a shape this writer does not know how to rewrite. Every scalar style a
+    hand-edited index.yml may use is accepted: plain, single- or double-quoted,
+    and the `|` / `>` block scalars, single- or multi-line.
+    """
+    entry = _ENTRY_RE.match(block[entry_idx])
+    if not entry:
+        return None
+    inline = entry.group(2).strip()
+
+    if not _BLOCK_SCALAR_RE.match(inline):
+        # A plain or quoted scalar sits entirely on this line. An empty value
+        # would mean a nested structure we do not model, so reject it.
+        return (_unquote(inline), entry_idx + 1) if inline else None
+
+    body: list[str] = []
+    i = entry_idx + 1
+    pending_blanks = 0
+    while i < len(block):
+        line = block[i]
+        if not line.strip():
+            # A blank line belongs to the scalar only if indented content follows.
+            pending_blanks += 1
+            i += 1
+            continue
+        if not line.startswith(VALUE_INDENT):
+            break
+        body.extend([""] * pending_blanks)
+        pending_blanks = 0
+        body.append(line[len(VALUE_INDENT) :])
+        i += 1
+    return "\n".join(body), i - pending_blanks
+
+
+def _render_context(key: str, text: str) -> list[str]:
+    """Render a context entry as a literal block scalar.
+
+    `|` is used unconditionally: it needs no escaping, so no description can
+    produce output that fails to parse, and it matches the shape already
+    present in healthy configs.
+    """
+    lines = ["    context:", f"      {key}: |"]
+    lines.extend(f"{VALUE_INDENT}{line}".rstrip() for line in text.split("\n"))
+    return lines
+
+
+def _update_collection(name: str, block: list[str], result: ContextGenResult) -> list[str]:
+    """Return `block` with its context entry refreshed, or unchanged on doubt."""
+    coll_path: str | None = None
+    context_idxs: list[int] = []
+    for idx, line in enumerate(block):
+        path_match = _PATH_RE.match(line)
+        if path_match:
+            coll_path = path_match.group(1).strip()
+        if _CONTEXT_RE.match(line):
+            context_idxs.append(idx)
+
+    if coll_path is None:
+        return block
+
+    path = Path(os.path.expanduser(coll_path))
+    if not path.exists():
+        result.skipped.append(f"{name}: path not found ({coll_path})")
+        return block
+
+    # Refuse to touch a collection that is already invalid. Rewriting it would
+    # mean picking one of the duplicate values and silently dropping the other.
+    if len(context_idxs) > 1:
+        result.skipped.append(
+            f"{name}: {len(context_idxs)} duplicate context keys -- left untouched, repair by hand"
+        )
+        return block
+
+    auto_part = _generate_auto_part(path)
+
+    if not context_idxs:
+        rendered = _render_context('""', f"{DELIMITER} {auto_part}")
+        end = len(block)
+        while end > 0 and not block[end - 1].strip():
+            end -= 1
+        result.updated.append(f"{name}: NEW {DELIMITER} {auto_part}")
+        return block[:end] + rendered + block[end:]
+
+    idx = context_idxs[0]
+    # `context: {...}` and friends put a value on the key line; only a bare
+    # `context:` introduces the nested entry this writer understands.
+    if _CONTEXT_RE.match(block[idx]).group(1).strip() or idx + 1 >= len(block):
+        result.skipped.append(f"{name}: unrecognised context shape -- left untouched")
+        return block
+
+    entry = _ENTRY_RE.match(block[idx + 1])
+    parsed = _read_context_value(block, idx + 1)
+    if entry is None or parsed is None:
+        result.skipped.append(f"{name}: unrecognised context shape -- left untouched")
+        return block
+
+    existing, value_end = parsed
+    new_context = _merge_context(existing, auto_part)
+    result.updated.append(f"{name}: {new_context}")
+    return block[:idx] + _render_context(entry.group(1), new_context) + block[value_end:]
+
+
 def _parse_and_update(config_text: str, result: ContextGenResult) -> str:
-    """Walk the YAML line-by-line, updating each collection's context in place.
+    """Walk the YAML collection by collection, updating each context in place.
 
     The file is hand-edited and we must preserve comments and ordering, so a
-    generic YAML parser would round-trip poorly. This matches the bash
-    implementation it replaces, which iterated indent-based blocks.
+    generic YAML parser would round-trip poorly -- and, given PyYAML resolves
+    duplicate keys last-wins, would quietly discard hand-written prose from any
+    file a previous run had already damaged.
     """
     lines = config_text.split("\n")
     out: list[str] = []
     i = 0
 
     while i < len(lines):
-        line = lines[i]
-        coll_match = re.match(r"^  (\S+):$", line)
+        coll_match = _COLLECTION_RE.match(lines[i])
         if not coll_match:
-            out.append(line)
+            out.append(lines[i])
             i += 1
             continue
 
-        coll_name = coll_match.group(1)
-        out.append(line)
-        i += 1
+        start = i + 1
+        end = start
+        while end < len(lines) and _in_collection_block(lines[end]):
+            end += 1
 
-        coll_path: str | None = None
-        context_value_idx: int | None = None
-        context_indent = "        "
-
-        while i < len(lines):
-            curr = lines[i]
-            if curr and not curr.startswith("    ") and not curr.startswith("  #"):
-                break
-            if re.match(r"^  \S", curr) and not curr.startswith("    "):
-                break
-
-            path_match = re.match(r"^    path:\s*(.+)$", curr)
-            if path_match:
-                coll_path = path_match.group(1).strip()
-
-            if re.match(r"^    context:$", curr):
-                out.append(curr)
-                i += 1
-                if i < len(lines) and re.match(r'^      ".*":\s*[>|]', lines[i]):
-                    out.append(lines[i])
-                    i += 1
-                    if i < len(lines) and lines[i].startswith("        "):
-                        context_value_idx = len(out)
-                        out.append(lines[i])
-                        i += 1
-                        while (
-                            i < len(lines) and lines[i].startswith("        ") and lines[i].strip()
-                        ):
-                            out.append(lines[i])
-                            i += 1
-                    continue
-                continue
-
-            out.append(curr)
-            i += 1
-
-        if coll_path:
-            p = Path(os.path.expanduser(coll_path))
-            if p.exists():
-                auto_part = _generate_auto_part(p)
-                if context_value_idx is not None:
-                    old_context = out[context_value_idx].strip()
-                    new_context = _merge_context(old_context, auto_part)
-                    out[context_value_idx] = f"{context_indent}{new_context}"
-                    result.updated.append(f"{coll_name}: {new_context}")
-                else:
-                    new_context = f"{DELIMITER} {auto_part}"
-                    out.append("    context:")
-                    out.append('      "": >')
-                    out.append(f"        {new_context}")
-                    out.append("")
-                    result.updated.append(f"{coll_name}: NEW {new_context}")
-            else:
-                result.skipped.append(f"{coll_name}: path not found ({coll_path})")
+        out.append(lines[i])
+        out.extend(_update_collection(coll_match.group(1), lines[start:end], result))
+        i = end
 
     return "\n".join(out)
 

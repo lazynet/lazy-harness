@@ -329,7 +329,7 @@ wheels = [
 
 [[package]]
 name = "lazy-harness"
-version = "0.44.2"
+version = "0.44.3"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
@@ -343,6 +343,7 @@ dependencies = [
 dev = [
     { name = "pytest" },
     { name = "pytest-httpserver" },
+    { name = "pyyaml" },
     { name = "ruff" },
 ]
 docs = [
@@ -364,6 +365,7 @@ requires-dist = [
 dev = [
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-httpserver", specifier = ">=1.1.5" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "ruff", specifier = ">=0.4" },
 ]
 docs = [
