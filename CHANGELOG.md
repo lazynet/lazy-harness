@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.44.6](https://github.com/lazynet/lazy-harness/compare/v0.44.5...v0.44.6) (2026-08-19)
+
+
+### Bug Fixes
+
+* keep only the leading label of the implicit identity hostname ([#200](https://github.com/lazynet/lazy-harness/issues/200)) ([d22751a](https://github.com/lazynet/lazy-harness/commit/d22751aaf3c78bcffa4ce050fc46f5f3859496cc))
+
 ## [0.44.5](https://github.com/lazynet/lazy-harness/compare/v0.44.4...v0.44.5) (2026-08-19)
 
 
