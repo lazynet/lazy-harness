@@ -79,8 +79,51 @@ def test_implicit_fallback_reads_real_hostname_without_injection() -> None:
             _gh_reader=lambda: None,
             _git_email_reader=lambda: None,
         )
-    assert ident.user_id == f"martin@{node}"
+    assert ident.user_id == f"martin@{node.split('.', 1)[0]}"
+    assert "." not in ident.user_id
     assert ident.source == "implicit"
+
+
+def test_implicit_fallback_drops_mdns_suffix() -> None:
+    """macOS reports LazyMBP.local; the .local label is mDNS and drifts.
+
+    A DHCP collision renames the host to LazyMBP-2.local, which would silently
+    change the identity, so only the leading label is kept.
+    """
+    env = {k: v for k, v in os.environ.items() if k != "HOSTNAME"}
+    env["USER"] = "martin"
+    with patch.dict(os.environ, env, clear=True):
+        ident = resolve_identity(
+            explicit=None,
+            _gh_reader=lambda: None,
+            _git_email_reader=lambda: None,
+            _hostname_reader=lambda: "LazyMBP.local",
+        )
+    assert ident.user_id == "martin@LazyMBP"
+    assert ident.source == "implicit"
+
+
+def test_implicit_fallback_shortens_hostname_from_env_too() -> None:
+    with patch.dict(os.environ, {"USER": "martin", "HOSTNAME": "box.example.com"}):
+        ident = resolve_identity(
+            explicit=None,
+            _gh_reader=lambda: None,
+            _git_email_reader=lambda: None,
+        )
+    assert ident.user_id == "martin@box"
+
+
+def test_implicit_fallback_keeps_host_literal_when_hostname_is_only_a_suffix() -> None:
+    env = {k: v for k, v in os.environ.items() if k != "HOSTNAME"}
+    env["USER"] = "martin"
+    with patch.dict(os.environ, env, clear=True):
+        ident = resolve_identity(
+            explicit=None,
+            _gh_reader=lambda: None,
+            _git_email_reader=lambda: None,
+            _hostname_reader=lambda: ".local",
+        )
+    assert ident.user_id == "martin@host"
 
 
 def test_implicit_fallback_keeps_host_literal_when_hostname_unknown() -> None:
