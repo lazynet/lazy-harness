@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.45.1](https://github.com/lazynet/lazy-harness/compare/v0.45.0...v0.45.1) (2026-08-21)
+
+
+### Bug Fixes
+
+* forgive an embed timeout that drained backlog ([a25e1bc](https://github.com/lazynet/lazy-harness/commit/a25e1bc793255006c41188c1e7d7ff71f3b41931))
+
 ## [0.45.0](https://github.com/lazynet/lazy-harness/compare/v0.44.6...v0.45.0) (2026-08-19)
 
 
