@@ -291,3 +291,25 @@ def test_exec_start_resolves_against_the_scheduled_path_not_the_invoking_one(
 
     assert f"ExecStart={from_resolver / binary}\n" in text
     assert str(from_environment) not in text
+
+
+def test_service_yields_cpu_to_interactive_work(tmp_path: Path) -> None:
+    """Every scheduled job here is background maintenance, so none of it may
+    outrank the work a human is waiting on.
+
+    Measured on the agent station 2026-08-21: `qmd embed` pegs 3 of 4 cores for
+    17 minutes at default priority, on the same box that hosts the coding
+    agents. Raising the run frequency to drain backlog faster makes that
+    collision routine rather than daily, so the units carry the deprioritisation.
+    """
+    from lazy_harness.scheduler.systemd import SystemdBackend
+
+    backend = SystemdBackend(unit_dir=tmp_path, runner=_runner(lambda a: "Linger=yes"))
+    backend._which = lambda name: f"/usr/bin/{name}"  # type: ignore[method-assign]
+
+    text = backend._service_text(
+        SchedulerJob(name="qmd-embed", schedule="0 */2 * * *", command="lh knowledge embed")
+    )
+
+    assert "Nice=10" in text
+    assert "CPUWeight=20" in text

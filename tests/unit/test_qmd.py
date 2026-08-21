@@ -122,3 +122,84 @@ def test_qmd_query_returns_empty_on_timeout() -> None:
     ):
         hits = query("foo", timeout=5)
     assert hits == []
+
+
+def test_qmd_run_marks_a_timeout_as_such() -> None:
+    """A timeout must be distinguishable from every other -1.
+
+    `run_qmd` returns `exit_code=-1` for a timeout AND for a missing binary,
+    so a caller that wants to treat "ran out of time but made progress" as
+    success cannot tell the two apart from the exit code alone.
+    """
+    import subprocess as _subprocess
+
+    from lazy_harness.knowledge.qmd import run_qmd
+
+    with patch(
+        "subprocess.run",
+        side_effect=_subprocess.TimeoutExpired(cmd=["qmd", "embed"], timeout=600),
+    ):
+        result = run_qmd("embed", timeout=600)
+    assert result.exit_code == -1
+    assert result.timed_out is True
+    assert "600s" in result.stderr
+
+
+def test_qmd_run_missing_binary_is_not_a_timeout() -> None:
+    from lazy_harness.knowledge.qmd import run_qmd
+
+    with patch("subprocess.run", side_effect=FileNotFoundError("no qmd")):
+        result = run_qmd("embed")
+    assert result.exit_code == -1
+    assert result.timed_out is False
+
+
+def test_qmd_embed_honours_an_explicit_timeout() -> None:
+    from lazy_harness.knowledge.qmd import embed
+
+    with patch("lazy_harness.knowledge.qmd.run_qmd") as mock_run:
+        embed(timeout=3600)
+    assert mock_run.call_args.kwargs["timeout"] == 3600
+
+
+def test_qmd_pending_embeddings_parses_status_output() -> None:
+    from lazy_harness.knowledge.qmd import pending_embeddings
+
+    status_text = (
+        "QMD Status\n"
+        "\n"
+        "Index: /home/u/.cache/qmd/index.sqlite\n"
+        "Size:  205.6 MB\n"
+        "\n"
+        "Documents\n"
+        "  Total:    5391 files indexed\n"
+        "  Vectors:  25779 embedded\n"
+        "  Pending:  119 need embedding (run 'qmd embed')\n"
+        "  Updated:  1d ago\n"
+    )
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value = type(
+            "R", (), {"returncode": 0, "stdout": status_text, "stderr": ""}
+        )()
+        assert pending_embeddings() == 119
+
+
+def test_qmd_pending_embeddings_is_zero_when_status_omits_the_line() -> None:
+    """qmd drops the Pending line entirely once nothing is outstanding."""
+    from lazy_harness.knowledge.qmd import pending_embeddings
+
+    status_text = "QMD Status\n\nDocuments\n  Total:    10 files indexed\n  Vectors:  10 embedded\n"
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value = type(
+            "R", (), {"returncode": 0, "stdout": status_text, "stderr": ""}
+        )()
+        assert pending_embeddings() == 0
+
+
+def test_qmd_pending_embeddings_is_unknown_when_status_fails() -> None:
+    """Unknown is not zero: a failed probe must not read as "nothing pending"."""
+    from lazy_harness.knowledge.qmd import pending_embeddings
+
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value = type("R", (), {"returncode": 1, "stdout": "", "stderr": "boom"})()
+        assert pending_embeddings() is None

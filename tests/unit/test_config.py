@@ -1080,3 +1080,39 @@ def test_structure_config_default_version_is_the_module_pin() -> None:
     from lazy_harness.knowledge import graphify
 
     assert KnowledgeStructureConfig().version == graphify.PINNED_VERSION
+
+
+def test_knowledge_embed_timeout_defaults_to_ten_minutes(config_dir: Path) -> None:
+    cfg_path = config_dir / "config.toml"
+    cfg_path.write_text('[harness]\nversion = "1"\n')
+
+    from lazy_harness.core.config import load_config
+
+    assert load_config(cfg_path).knowledge.embed.timeout == 600
+
+
+def test_knowledge_embed_timeout_is_configurable(config_dir: Path) -> None:
+    """A CPU-only host needs a bigger window than a Metal one, so this is a knob.
+
+    600s is not enough on the agent station: measured 374 chunks in 17m33s.
+    """
+    cfg_path = config_dir / "config.toml"
+    cfg_path.write_text('[harness]\nversion = "1"\n\n[knowledge.embed]\ntimeout = 3600\n')
+
+    from lazy_harness.core.config import load_config
+
+    assert load_config(cfg_path).knowledge.embed.timeout == 3600
+
+
+def test_knowledge_embed_timeout_survives_a_save(tmp_path: Path) -> None:
+    import tomllib
+
+    from lazy_harness.core.config import load_config, save_config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text('[harness]\nversion = "1"\n\n[knowledge.embed]\ntimeout = 3600\n')
+
+    save_config(load_config(cfg_path), cfg_path)
+
+    raw = tomllib.loads(cfg_path.read_text())
+    assert raw["knowledge"]["embed"]["timeout"] == 3600

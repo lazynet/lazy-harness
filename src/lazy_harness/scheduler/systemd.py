@@ -133,6 +133,19 @@ class SystemdBackend:
             # assignments, so an unquoted PATH containing a space sets PATH to
             # its first fragment and drops the rest.
             f'Environment="PATH={resolved_path()}"\n'
+            # Every job here is background maintenance — indexing, embedding,
+            # pushing — and shares the machine with whatever a human is
+            # waiting on. `qmd embed` alone pegs 3 of 4 cores for a quarter of
+            # an hour on the agent station, so the deprioritisation lives in
+            # the unit rather than depending on each command to be polite.
+            #
+            # `Nice` needs no privilege in the positive direction. `CPUWeight`
+            # needs the cpu controller delegated to the user manager, which
+            # systemd does by default and logs a warning about when it cannot
+            # — it degrades to a no-op rather than refusing the unit, so it is
+            # safe to state unconditionally.
+            "Nice=10\n"
+            "CPUWeight=20\n"
         )
 
     def _timer_text(self, job: SchedulerJob) -> str:

@@ -15,6 +15,7 @@ from typing import Any
 # two homes is how they stop agreeing. Neither module imports anything from
 # the harness, so there is no cycle to work around.
 from lazy_harness.knowledge.graphify import PINNED_VERSION as GRAPHIFY_PIN
+from lazy_harness.knowledge.qmd import DEFAULT_EMBED_TIMEOUT as QMD_EMBED_TIMEOUT
 from lazy_harness.memory.engram import PINNED_VERSION as ENGRAM_PIN
 
 
@@ -61,6 +62,20 @@ class KnowledgeSearchConfig:
 
 
 @dataclass
+class KnowledgeEmbedConfig:
+    """How long `lh knowledge embed` gives qmd before it gives up.
+
+    A knob rather than a constant because the answer is a property of the
+    host, not of the harness: with a GPU the whole corpus embeds in under a
+    minute, and on the CPU-only agent station a single day of ingestion
+    measured 374 chunks in 17m33s — over the 600s default, so the job failed
+    daily while genuinely draining its backlog.
+    """
+
+    timeout: int = QMD_EMBED_TIMEOUT
+
+
+@dataclass
 class KnowledgeStructureConfig:
     engine: str = "graphify"
     enabled: bool = False
@@ -97,6 +112,7 @@ class KnowledgeConfig:
     sessions: KnowledgeSessionsConfig = field(default_factory=KnowledgeSessionsConfig)
     learnings: KnowledgeLearningsConfig = field(default_factory=KnowledgeLearningsConfig)
     search: KnowledgeSearchConfig = field(default_factory=KnowledgeSearchConfig)
+    embed: KnowledgeEmbedConfig = field(default_factory=KnowledgeEmbedConfig)
     structure: KnowledgeStructureConfig = field(default_factory=KnowledgeStructureConfig)
     classify_rules: list[ClassifyRule] = field(default_factory=_default_classify_rules)
 
@@ -467,6 +483,7 @@ def load_config(path: Path) -> Config:
         sessions=KnowledgeSessionsConfig(**knowledge_raw.get("sessions", {})),
         learnings=KnowledgeLearningsConfig(**knowledge_raw.get("learnings", {})),
         search=KnowledgeSearchConfig(**knowledge_raw.get("search", {})),
+        embed=KnowledgeEmbedConfig(**knowledge_raw.get("embed", {})),
         structure=_parse_structure(knowledge_raw.get("structure", {})),
         classify_rules=classify_rules,
     )
@@ -603,6 +620,7 @@ def _config_to_dict(cfg: Config) -> dict[str, Any]:
                 "enabled": cfg.knowledge.learnings.enabled,
             },
             "search": {"engine": cfg.knowledge.search.engine},
+            "embed": {"timeout": cfg.knowledge.embed.timeout},
         },
         "monitoring": {
             "enabled": cfg.monitoring.enabled,

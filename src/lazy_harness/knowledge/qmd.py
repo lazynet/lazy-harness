@@ -3,9 +3,17 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
+
+# Ten minutes was the hardcoded budget until 0.46.0. It stays the default
+# because it is ample wherever the embedding model gets a GPU; the agent
+# station is the case that needs it raised, and now can.
+DEFAULT_EMBED_TIMEOUT = 600
+
+_PENDING = re.compile(r"^\s*Pending:\s+(\d+)\s+need embedding", re.MULTILINE)
 
 
 @dataclass
@@ -13,6 +21,9 @@ class QmdResult:
     exit_code: int
     stdout: str
     stderr: str
+    # `exit_code == -1` means both "timed out" and "qmd is not installed", and
+    # a caller that forgives a timeout must not also forgive a missing binary.
+    timed_out: bool = False
 
 
 @dataclass
@@ -39,7 +50,9 @@ def run_qmd(action: str, collection: str | None = None, timeout: int = 300) -> Q
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         return QmdResult(exit_code=result.returncode, stdout=result.stdout, stderr=result.stderr)
     except subprocess.TimeoutExpired:
-        return QmdResult(exit_code=-1, stdout="", stderr=f"QMD timed out after {timeout}s")
+        return QmdResult(
+            exit_code=-1, stdout="", stderr=f"QMD timed out after {timeout}s", timed_out=True
+        )
     except FileNotFoundError:
         return QmdResult(exit_code=-1, stdout="", stderr="qmd not found in PATH")
 
@@ -48,12 +61,31 @@ def sync(collection: str | None = None, timeout: int = 300) -> QmdResult:
     return run_qmd("update", collection=collection, timeout=timeout)
 
 
-def embed(collection: str | None = None, timeout: int = 600) -> QmdResult:
+def embed(collection: str | None = None, timeout: int = DEFAULT_EMBED_TIMEOUT) -> QmdResult:
     return run_qmd("embed", collection=collection, timeout=timeout)
 
 
 def status() -> QmdResult:
     return run_qmd("status", timeout=30)
+
+
+def pending_embeddings() -> int | None:
+    """Documents awaiting a vector, or None when that cannot be established.
+
+    Read from `qmd status` rather than from the sqlite index directly: the
+    schema behind that count is qmd's private business, while the status line
+    is its published surface.
+
+    None and 0 are deliberately different. qmd drops the Pending line once
+    nothing is outstanding, so an absent line means zero — but a status call
+    that failed means unknown, and a caller deciding whether a run made
+    progress must not read a failed probe as "backlog is clear".
+    """
+    result = status()
+    if result.exit_code != 0:
+        return None
+    match = _PENDING.search(result.stdout)
+    return int(match.group(1)) if match else 0
 
 
 def mcp_server_config() -> dict:

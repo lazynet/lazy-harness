@@ -20,7 +20,14 @@ from lazy_harness.knowledge.context_gen import DEFAULT_CONFIG as CONTEXT_GEN_DEF
 from lazy_harness.knowledge.context_gen import regenerate as regenerate_contexts
 from lazy_harness.knowledge.directory import list_sessions, sessions_dir
 from lazy_harness.knowledge.marker import MarkerError, resolve_root
-from lazy_harness.knowledge.qmd import QmdResult, embed, is_qmd_available, sync
+from lazy_harness.knowledge.qmd import (
+    DEFAULT_EMBED_TIMEOUT,
+    QmdResult,
+    embed,
+    is_qmd_available,
+    pending_embeddings,
+    sync,
+)
 from lazy_harness.knowledge.qmd import status as qmd_status
 from lazy_harness.knowledge.session_export import export_session
 
@@ -269,20 +276,63 @@ def knowledge_handoff_now() -> None:
 
 @knowledge.command("embed")
 @click.option("--collection", default=None, help="Embed specific collection")
-def knowledge_embed(collection: str | None) -> None:
-    """Run QMD vector embedding."""
+@click.option(
+    "--timeout",
+    type=int,
+    default=None,
+    help=f"Seconds to allow qmd (default: [knowledge.embed].timeout, {DEFAULT_EMBED_TIMEOUT})",
+)
+def knowledge_embed(collection: str | None, timeout: int | None) -> None:
+    """Run QMD vector embedding.
+
+    A timeout that still drained backlog exits 0. qmd commits per batch, so a
+    run cut short has really embedded most of what it reached — and on a
+    CPU-only host a burst of ingestion legitimately needs more than one window
+    to clear. Reporting that as a failure is how a scheduled job alerts every
+    day for a week while the index is in fact catching up.
+    """
     console = Console()
     if not is_qmd_available():
         console.print("[red]QMD not found in PATH[/red]")
         raise SystemExit(1)
+    limit = timeout if timeout is not None else _configured_embed_timeout()
+    before = pending_embeddings()
     console.print("Running QMD embedding...")
-    result = embed(collection=collection)
+    result = embed(collection=collection, timeout=limit)
     _log_qmd_result("embed", result)
     if result.exit_code == 0:
         console.print("[green]✓[/green] Embedding complete")
-    else:
-        console.print(f"[red]✗[/red] Embedding failed (exit {result.exit_code})")
-        raise SystemExit(1)
+        return
+
+    # Only a timeout is forgiven, and only against measured progress: a qmd
+    # that crashed is a failure however much the previous run had embedded,
+    # and an unreadable count is not evidence of anything.
+    after = pending_embeddings()
+    if result.timed_out and before is not None and after is not None and after < before:
+        console.print(
+            f"[yellow]·[/yellow] Embedding hit the {limit}s limit with "
+            f"{before - after} document(s) embedded and {after} still pending. "
+            "Raise [knowledge.embed].timeout or run the job more often."
+        )
+        return
+
+    console.print(f"[red]✗[/red] Embedding failed (exit {result.exit_code})")
+    raise SystemExit(1)
+
+
+def _configured_embed_timeout() -> int:
+    """[knowledge.embed].timeout, falling back to the default on any doubt.
+
+    An unreadable or stale config must not stop the job from embedding — the
+    default is a working value everywhere, just a tight one on slow hosts.
+    """
+    cf = config_file()
+    if not cf.is_file():
+        return DEFAULT_EMBED_TIMEOUT
+    try:
+        return load_config(cf).knowledge.embed.timeout
+    except ConfigError:
+        return DEFAULT_EMBED_TIMEOUT
 
 
 def _configured_root() -> str | None:
