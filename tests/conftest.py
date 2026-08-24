@@ -35,6 +35,30 @@ def _isolate_agent_config_dir(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_home_dir(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep every test off the developer's real machine home.
+
+    `CLAUDE_CONFIG_DIR` alone isn't enough: when it's unset, `agent_runtime_dir`
+    falls back to the adapter's `global_config_link()` (e.g. `~/.claude`),
+    which is derived from `HOME`/`Path.home()`, not from this fixture. A hook
+    test that spawns the hook as a subprocess without pinning `HOME` in the
+    child's `env=` inherits the real one — `test_pre_compact_empty_input` did
+    exactly that and left 170 stray `~/.claude-lazy/projects/<encoded tmp_path>`
+    directories on the live profile, one per test run, before this existed.
+
+    A test that explicitly sets `HOME` (directly, via `home_dir`, or via an
+    explicit `env=` dict passed to `subprocess.run`) still gets its own value:
+    this only supplies the default a test would otherwise silently inherit
+    from the real machine.
+    """
+    fake_home = tmp_path_factory.mktemp("isolated-home")
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("USERPROFILE", str(fake_home))
+
+
 @pytest.fixture
 def active_profile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
     """Point the agent at one of two configured profiles; return its name.

@@ -10,6 +10,10 @@ from pathlib import Path
 
 import pytest
 
+# Captured at collection time, before any per-test fixture can patch HOME, so
+# it reflects the real machine home regardless of what a test later pins.
+_REAL_HOME = Path(os.environ.get("HOME") or Path.home())
+
 
 def test_pre_compact_returns_zero(tmp_path: Path) -> None:
     hook_path = (
@@ -141,6 +145,57 @@ def test_pre_compact_empty_input(tmp_path: Path) -> None:
         / "builtins"
         / "pre_compact.py"
     )
+    claude_dir = tmp_path / ".claude"
+    claude_dir.mkdir()
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": str(tmp_path),
+        "CLAUDE_CONFIG_DIR": str(claude_dir),
+    }
+
+    result = subprocess.run(
+        [sys.executable, str(hook_path)],
+        input="{}",
+        capture_output=True,
+        text=True,
+        cwd=str(tmp_path),
+        timeout=10,
+        env=env,
+    )
+    assert result.returncode == 0
+
+    # Effect, not just exit code: the hook always creates the memory dir
+    # (even with no transcript), so its presence at the pinned location is
+    # proof the run stayed inside the sandbox instead of the real machine.
+    memory_dir = claude_dir / "projects" / _encoded_cwd(tmp_path) / "memory"
+    assert memory_dir.is_dir()
+
+
+def test_pre_compact_subprocess_cannot_leak_into_real_machine_home(tmp_path: Path) -> None:
+    """Regression test for the leak this hook's tests caused on the real machine.
+
+    `test_pre_compact_empty_input` used to spawn this hook via `subprocess.run`
+    without setting `HOME`/`CLAUDE_CONFIG_DIR` in the child's env. The child
+    inherited the *developer's real* environment, so `paths._home()` resolved
+    to the real machine home and the hook created a project dir under the real
+    `~/.claude-lazy` on every run - 170 stray directories accumulated this way.
+
+    This test reproduces that exact call shape (no `env=` kwarg) and asserts
+    the hook never touches the real machine home. Before the `_isolate_home_dir`
+    guard in conftest.py existed, this failed - the directory below was really
+    created on disk.
+    """
+    hook_path = (
+        Path(__file__).parent.parent.parent
+        / "src"
+        / "lazy_harness"
+        / "hooks"
+        / "builtins"
+        / "pre_compact.py"
+    )
+    encoded = _encoded_cwd(tmp_path)
+    real_leak_target = _REAL_HOME / ".claude" / "projects" / encoded
+
     result = subprocess.run(
         [sys.executable, str(hook_path)],
         input="{}",
@@ -149,7 +204,11 @@ def test_pre_compact_empty_input(tmp_path: Path) -> None:
         cwd=str(tmp_path),
         timeout=10,
     )
+
     assert result.returncode == 0
+    assert not real_leak_target.exists(), (
+        f"hook subprocess leaked into the real machine home at {real_leak_target}"
+    )
 
 
 def test_pre_compact_routes_paths_through_agent_adapter(tmp_path, monkeypatch) -> None:
