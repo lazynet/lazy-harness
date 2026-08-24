@@ -141,3 +141,163 @@ def test_neither_url_nor_url_env_is_an_error() -> None:
     with pytest.raises(ValueError) as info:
         plan_sinks(cfg)
     assert "url_env" in str(info.value)
+
+
+def _remote_cfg() -> MetricsConfig:
+    return MetricsConfig(
+        sinks=["sqlite_local", "http_remote"],
+        sink_configs={"http_remote": SinkDefinition(options={"url_env": "LH_METRICS_URL"})},
+    )
+
+
+def _write_secrets_file(tmp_path: Path, content: str, *, mode: int = 0o600) -> Path:
+    secrets_dir = tmp_path / "secrets"
+    secrets_dir.mkdir(parents=True, exist_ok=True)
+    path = secrets_dir / "metrics.env"
+    path.write_text(content)
+    path.chmod(mode)
+    return path
+
+
+def test_secrets_file_fallback_used_when_env_var_is_unset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Parameter-less smoke test: no explicit `env=` kwarg, real os.environ."""
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.delenv("LH_METRICS_URL", raising=False)
+    _write_secrets_file(tmp_path, "LH_METRICS_URL=https://metrics.invalid/from-file\n")
+
+    remote = {p.name: p for p in plan_sinks(_remote_cfg())}["http_remote"]
+
+    assert remote.active is True
+    assert remote.url == "https://metrics.invalid/from-file"
+
+
+def test_secrets_file_fallback_used_with_explicit_env_param(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Explicit-parameter counterpart: `env={}` passed directly."""
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    _write_secrets_file(tmp_path, "LH_METRICS_URL=https://metrics.invalid/from-file\n")
+
+    remote = {p.name: p for p in plan_sinks(_remote_cfg(), env={})}["http_remote"]
+
+    assert remote.active is True
+    assert remote.url == "https://metrics.invalid/from-file"
+
+
+def test_environment_wins_over_secrets_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("LH_METRICS_URL", "https://metrics.invalid/from-env")
+    _write_secrets_file(tmp_path, "LH_METRICS_URL=https://metrics.invalid/from-file\n")
+
+    remote = {p.name: p for p in plan_sinks(_remote_cfg())}["http_remote"]
+
+    assert remote.url == "https://metrics.invalid/from-env"
+
+
+def test_missing_secrets_file_is_a_clean_degrade(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.delenv("LH_METRICS_URL", raising=False)
+
+    remote = {p.name: p for p in plan_sinks(_remote_cfg())}["http_remote"]
+
+    assert remote.active is False
+    assert remote.url == ""
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+def test_secrets_file_with_group_or_other_permissions_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.delenv("LH_METRICS_URL", raising=False)
+    _write_secrets_file(tmp_path, "LH_METRICS_URL=https://metrics.invalid/from-file\n", mode=0o644)
+
+    remote = {p.name: p for p in plan_sinks(_remote_cfg())}["http_remote"]
+
+    assert remote.active is False
+    assert remote.url == ""
+
+
+def test_refused_secrets_file_names_the_file_and_variable_on_stderr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.delenv("LH_METRICS_URL", raising=False)
+    _write_secrets_file(tmp_path, "LH_METRICS_URL=https://metrics.invalid/from-file\n", mode=0o644)
+
+    plan_sinks(_remote_cfg())
+
+    err = capsys.readouterr().err
+    assert "metrics.env" in err
+    assert "LH_METRICS_URL" in err
+
+
+def test_secret_value_never_appears_in_captured_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.delenv("LH_METRICS_URL", raising=False)
+    secret_value = "https://metrics.invalid/ingest/s3cr3t-do-not-print"
+    _write_secrets_file(tmp_path, f"LH_METRICS_URL={secret_value}\n", mode=0o644)
+
+    plan_sinks(_remote_cfg())
+
+    captured = capsys.readouterr()
+    assert secret_value not in captured.out
+    assert secret_value not in captured.err
+
+
+def test_secrets_file_malformed_line_is_skipped_valid_key_still_resolves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.delenv("LH_METRICS_URL", raising=False)
+    _write_secrets_file(
+        tmp_path,
+        "this is not an assignment\nLH_METRICS_URL=https://metrics.invalid/from-file\n",
+    )
+
+    remote = {p.name: p for p in plan_sinks(_remote_cfg())}["http_remote"]
+
+    assert remote.active is True
+    assert remote.url == "https://metrics.invalid/from-file"
+
+
+def test_secrets_file_duplicate_key_last_one_wins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.delenv("LH_METRICS_URL", raising=False)
+    _write_secrets_file(
+        tmp_path,
+        "LH_METRICS_URL=https://metrics.invalid/first\n"
+        "LH_METRICS_URL=https://metrics.invalid/second\n",
+    )
+
+    remote = {p.name: p for p in plan_sinks(_remote_cfg())}["http_remote"]
+
+    assert remote.url == "https://metrics.invalid/second"
+
+
+def test_full_load_cycle_from_secrets_file_to_active_http_remote_sink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.delenv("LH_METRICS_URL", raising=False)
+    _write_secrets_file(tmp_path, "LH_METRICS_URL=https://metrics.invalid/from-file\n")
+
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        sinks = build_sinks(_remote_cfg(), db=db)
+        assert [type(s).__name__ for s in sinks] == ["SqliteLocalSink", "HttpRemoteSink"]
+        assert sinks[1].url == "https://metrics.invalid/from-file"
+    finally:
+        db.close()

@@ -81,6 +81,32 @@ def config_file() -> Path:
     return config_dir() / "config.toml"
 
 
+def default_secrets_dir() -> Path:
+    """Return the default secrets directory: `<config dir>/secrets`.
+
+    This is the base every secrets-file path in the app builds on, and the
+    fallback `core.secrets.secrets_dir_for()` uses when `[secrets] dir` is
+    not set — that option's contract is per-profile agent credentials, so
+    callers unrelated to a profile (like `metrics_secrets_file()` below) use
+    this directly rather than going through the config override.
+    """
+    return config_dir() / "secrets"
+
+
+def metrics_secrets_file() -> Path:
+    """Path to the metrics sink secrets file.
+
+    `[metrics.sink_options.<name>].url_env` names an environment variable
+    read at sink-activation time (`monitoring/sink_setup.py`). A scheduler
+    job (launchd/systemd) does not inherit an interactive shell's exported
+    environment, so the variable can resolve fine in a terminal and still
+    come back empty on a timer running the same config. This file is the
+    fallback read in that case: `KEY=value` lines, same format and
+    permission contract (owner-only) as per-profile secrets.
+    """
+    return default_secrets_dir() / "metrics.env"
+
+
 def expand_path(path: str | Path) -> Path:
     """Expand ~ and resolve to absolute path."""
     return Path(os.path.expanduser(str(path))).resolve()

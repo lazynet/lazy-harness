@@ -132,6 +132,28 @@ def test_process_exec_path_relinks_when_binary_changes(home_dir: Path, tmp_path:
     assert result.resolve() == new_binary.resolve()
 
 
+def test_default_secrets_dir_default_unix(home_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("platform.system", lambda: "Linux")
+    from lazy_harness.core.paths import default_secrets_dir
+
+    assert default_secrets_dir() == home_dir / ".config" / "lazy-harness" / "secrets"
+
+
+def test_metrics_secrets_file_lives_under_the_default_secrets_dir(home_dir: Path) -> None:
+    from lazy_harness.core.paths import default_secrets_dir, metrics_secrets_file
+
+    assert metrics_secrets_file() == default_secrets_dir() / "metrics.env"
+
+
+def test_metrics_secrets_file_honours_lh_config_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    from lazy_harness.core.paths import metrics_secrets_file
+
+    assert metrics_secrets_file() == tmp_path / "secrets" / "metrics.env"
+
+
 def test_process_exec_path_falls_back_to_binary_when_symlinks_unsupported(
     home_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

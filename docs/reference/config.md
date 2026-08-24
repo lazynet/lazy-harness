@@ -266,6 +266,17 @@ Setting both `url` and `url_env` on the same sink is a `ConfigError`: preferring
 one silently would make a typo in the other look like it worked. Setting neither
 is an error too, raised when the sinks are built.
 
+A scheduler job (launchd/systemd) does not inherit an interactive shell's
+exported environment, so `url_env` can resolve fine in a terminal and still
+come back empty when the identical config runs on a timer. When the variable
+is unset or empty, `url_env` resolution falls back to reading it from
+`<lh config dir>/secrets/metrics.env` — `KEY=value` lines, `#` comments and
+blank lines allowed, same format as per-profile secrets files. The file must
+be owner-only (`chmod 600`); one that grants any group or other permission is
+refused outright and treated the same as a missing file. The environment
+always wins: when `url_env` is set in the process environment, the file is
+never read.
+
 End-to-end mechanics — outbox, drain, backoff, idempotency: [how the metrics ingest pipeline works](../how/metrics-ingest.md#the-sink-layer).
 
 ## `[scheduler]` and `[scheduler.jobs.<name>]`
