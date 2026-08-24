@@ -509,6 +509,20 @@ class MetricsDB:
             "next_attempt_ts": row["next_attempt_ts"],
         }
 
+    def outbox_last_enqueued_ts(self, sink_name: str) -> float | None:
+        """When this sink last had an event enqueued, across every status.
+
+        Deliberately not scoped to `status='sent'`: a sink that drained its
+        entire backlog days ago and has taken nothing new since is stale, not
+        healthy — `lh doctor`'s freshness check reads this to tell "nothing
+        new is happening" apart from "everything is flowing".
+        """
+        row = self._conn.execute(
+            "SELECT MAX(created_ts) AS last_ts FROM sink_outbox WHERE sink_name = ?",
+            (sink_name,),
+        ).fetchone()
+        return row["last_ts"]
+
     def outbox_reset_backoff(self, sink_name: str) -> None:
         self._conn.execute(
             """

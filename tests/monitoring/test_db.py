@@ -202,3 +202,38 @@ def test_outbox_dedupe_by_event_id_on_enqueue(tmp_path: Path) -> None:
         assert json.loads(rows[0].payload_json)["v"] == 2
     finally:
         db.close()
+
+
+def test_outbox_last_enqueued_ts_is_none_for_a_sink_with_no_rows(tmp_path: Path) -> None:
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        assert db.outbox_last_enqueued_ts("http_remote") is None
+    finally:
+        db.close()
+
+
+def test_outbox_last_enqueued_ts_reflects_the_newest_row_regardless_of_status(
+    tmp_path: Path,
+) -> None:
+    """created_ts is when the event was enqueued, not when it was last sent —
+    a sink that has drained everything to 'sent' is not thereby "fresh"."""
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.outbox_enqueue(sink_name="http_remote", event_id="e1", payload_json="{}")
+        db._conn.execute("UPDATE sink_outbox SET created_ts = ? WHERE event_id = 'e1'", (1000.0,))
+        db.outbox_enqueue(sink_name="http_remote", event_id="e2", payload_json="{}")
+        db._conn.execute("UPDATE sink_outbox SET created_ts = ? WHERE event_id = 'e2'", (2000.0,))
+        db.outbox_mark_sent("http_remote", "e1")
+        db.outbox_mark_sent("http_remote", "e2")
+        assert db.outbox_last_enqueued_ts("http_remote") == 2000.0
+    finally:
+        db.close()
+
+
+def test_outbox_last_enqueued_ts_is_scoped_to_the_named_sink(tmp_path: Path) -> None:
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.outbox_enqueue(sink_name="http_remote", event_id="e1", payload_json="{}")
+        assert db.outbox_last_enqueued_ts("other_sink") is None
+    finally:
+        db.close()
