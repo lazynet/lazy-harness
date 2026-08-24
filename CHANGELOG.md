@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.46.0](https://github.com/lazynet/lazy-harness/compare/v0.45.1...v0.46.0) (2026-08-24)
+
+
+### Features
+
+* emit the goal declaration verdict the baseline was missing ([32896e5](https://github.com/lazynet/lazy-harness/commit/32896e50b58fa69b7c59a5dde108075fcf18fa82))
+* read a metrics sink URL from a secrets file when the environment is bare ([b911bf1](https://github.com/lazynet/lazy-harness/commit/b911bf1a1a6fb5b504327d3c3054f8a2575ea020))
+* report metrics sink freshness in doctor ([d0ec6f0](https://github.com/lazynet/lazy-harness/commit/d0ec6f0593158bc802b25287a7ca5873256b21aa))
+
+
+### Bug Fixes
+
+* isolate the test suite from the real home directory ([96ec145](https://github.com/lazynet/lazy-harness/commit/96ec145a53d50a07874b38a256c93d2e54fb4731))
+* key a --separate-git-dir checkout on its remote ([b4aa1ff](https://github.com/lazynet/lazy-harness/commit/b4aa1fff715a636955d7204530c7a61399f922ae))
+* stop grading the engram protocol as a session failure ([1a9ac09](https://github.com/lazynet/lazy-harness/commit/1a9ac09be96234704779f57a48ff91ae71dae7b5))
+
+
+### Documentation
+
+* merge the accepted governance proposals into CLAUDE.md ([5219707](https://github.com/lazynet/lazy-harness/commit/52197071e84095af0e0d3c7a84f92fcbb411163c))
+
 ## [0.45.1](https://github.com/lazynet/lazy-harness/compare/v0.45.0...v0.45.1) (2026-08-21)
 
 
