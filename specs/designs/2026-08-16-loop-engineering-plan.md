@@ -11,6 +11,8 @@
 **Spec:** [`specs/designs/2026-08-16-loop-engineering-design.md`](2026-08-16-loop-engineering-design.md)
 
 > During implementation the `goal_absent` event kind was renamed to `nontrivial_prompt`, because it fires per prompt on any non-trivial prompt rather than verifying that a goal is absent, and because its unit (per prompt) differs from `session_closed` (per session). Task bodies below retain the original name as written.
+>
+> `goal_absent` was later reintroduced as a distinct kind, emitted by the compound-loop worker rather than `user_prompt_goal.py` — see the Phase 0 rationale in design.md. It is not the same event this note describes being renamed away: this one is a per-session verdict ("the assistant did not declare a criterion"), not a per-prompt classification.
 
 ## Global Constraints
 
@@ -932,7 +934,9 @@ git commit -m "feat: record session_closed loop events"
 
 Phase 0 is not complete when the code merges. It is complete when two weeks of data exist.
 
+> **The clock restarts at the numerator sensor's deploy, not at this plan's.** `nontrivial_prompt` (the denominator) shipped first and had already accumulated 644 events with zero matching verdicts by the time `goal_declared`/`goal_absent` (the numerator, emitted by the compound-loop worker — see design.md Phase 0) shipped. Those pre-existing `nontrivial_prompt` events cannot be paired with a verdict and do not count toward the baseline: a calibration a baseline will be read against is frozen until the baseline closes, and backfilling or approximating verdicts for sessions that already closed would violate that. Start the fourteen-day window from the numerator sensor's deploy date, not from whenever the denominator first fired.
+
 - [ ] Deploy with the installed `lh` and confirm the sensor fires (Task 5, Step 5).
-- [ ] Leave `inject_goal_prompt = false` for two weeks.
+- [ ] Leave `inject_goal_prompt = false` for two weeks from the numerator sensor's deploy.
 - [ ] Run `lh metrics loops --days 14` and record the declared rate as the baseline.
 - [ ] Only then flip the flag, and start the four-week clock against the kill criteria in the spec: remove the injection if adoption is zero or signal-to-noise falls below 50%.

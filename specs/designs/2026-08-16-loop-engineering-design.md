@@ -79,7 +79,7 @@ CREATE TABLE IF NOT EXISTS loop_events (
 CREATE INDEX IF NOT EXISTS idx_loop_events_session ON loop_events(session, ts);
 ```
 
-`kind` is one of `goal_declared`, `nontrivial_prompt`, `verify_ran`, `verify_skipped`, `session_closed`. Surfaced through `lh metrics loops`.
+`kind` is one of `goal_declared`, `goal_absent`, `nontrivial_prompt`, `verify_ran`, `verify_skipped`, `session_closed`. Surfaced through `lh metrics loops`. `goal_declared`/`goal_absent` are emitted by the compound-loop worker — exactly one of the two per session it grades, idempotent across reprocessing — not by the `UserPromptSubmit` hook: that hook fires before any assistant text exists, so it structurally cannot know whether a goal was declared. `nontrivial_prompt` is the separate, per-prompt sensor the hook does record; it is the measurement's denominator, `goal_declared` is the numerator.
 
 This phase ships **with zero user-facing friction** and runs for two weeks to establish a baseline: in what fraction of non-trivial sessions is a success criterion declared at all. The expected answer is near zero, but proposal #9 makes the measurement a precondition, not an afterthought — without a baseline there is no way to tell later whether the enforcement worked or merely added noise.
 
@@ -96,7 +96,7 @@ This phase ships **with zero user-facing friction** and runs for two weeks to es
 
 The governing rule: a task is never reported complete on the strength of a successful edit. This generalises a verification gate the repo already carries and makes it executable.
 
-**Hook `user_prompt_goal.py` on `UserPromptSubmit`.** Deterministic classification of the incoming prompt — length, action verbs, file references. When the work looks non-trivial and no goal is active, it injects a request for a verifiable success criterion through `additionalContext`. It never blocks, and it records `goal_declared` or `nontrivial_prompt`.
+**Hook `user_prompt_goal.py` on `UserPromptSubmit`.** Deterministic classification of the incoming prompt — length, action verbs, file references. When the work looks non-trivial and no goal is active, it injects a request for a verifiable success criterion through `additionalContext`. It never blocks, and it records `nontrivial_prompt` — the denominator. It cannot record `goal_declared` itself: `UserPromptSubmit` fires before the assistant has produced any text, so the hook can classify the incoming request but not judge what the assistant did with it. The compound-loop worker fills that gap, since it already reads the full transcript to grade the session: it emits `goal_declared` or `goal_absent` per session it grades.
 
 **Separate evaluator.** A subagent on the cheapest capable model receives the declared criterion plus the collected evidence and rules on whether the criterion was met. It is invoked from the skill, not from a hook: hooks cannot spawn subagents.
 

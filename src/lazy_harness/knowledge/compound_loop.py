@@ -724,7 +724,8 @@ Return ONLY this JSON structure (no markdown fences, no explanation):
     "issues": ["incomplete|hallucination|tool_misuse|missed_context|wrong_approach|inefficient|none"],
     "reasoning": "1-2 sentences on why this grade",
     "confidence": 0.0
-  }}
+  }},
+  "goal_declared": false
 }}
 
 Rules:
@@ -735,7 +736,8 @@ Rules:
 - CRITICAL: Check ALL existing lists above. If a decision, failure, or learning already exists that covers the same concept (even with different wording), do NOT generate a new one. Only add genuinely new insights.
 - handoff: concrete, actionable items left pending for the next session. NOT summaries of what was done. Only what remains to be done. If everything was resolved or it was just a Q&A, return [].
 - grade: rate the assistant's overall performance against the user's intent. quality is one of excellent|good|acceptable|poor. issues come from this fixed taxonomy: incomplete (stopped before resolving), hallucination (invented APIs/files/tools), tool_misuse (wrong tool/args/repeated failures), missed_context (ignored a stated constraint), wrong_approach (solved a different problem), inefficient (right answer, avoidable cost), none (no issues observed). Use ["none"] when quality is excellent or good. confidence is 0.0-1.0. reasoning must reference concrete evidence from the transcript.
-- Empty session or just status checks? Return {{"decisions": [], "failures": [], "learnings": [], "handoff": [], "claude_md_proposals": [], "grade": {{"quality": "good", "issues": ["none"], "reasoning": "trivial session", "confidence": 0.9}}}}
+- goal_declared: true only if, BEFORE doing the work, the assistant stated a concrete verifiable success criterion for this session — a specific command, test, or check whose outcome would demonstrate the task is done (for example: "this is done when `pytest tests/test_foo.py` passes", or "verify by curling /health and confirming a 200"). What does NOT count: restating the user's request in different words is not a criterion; a summary of what was done written after the work is finished is not a criterion (this field asks whether a target was set before execution, not whether the result got described afterward); a vague intention such as "I'll make sure it works" or "let's get this right" is not a criterion. Use false for trivial or purely conversational sessions, or whenever no such criterion was stated.
+- Empty session or just status checks? Return {{"decisions": [], "failures": [], "learnings": [], "handoff": [], "claude_md_proposals": [], "grade": {{"quality": "good", "issues": ["none"], "reasoning": "trivial session", "confidence": 0.9}}, "goal_declared": false}}
 - Output ONLY the JSON object."""
 
 
@@ -1098,6 +1100,48 @@ class TaskOutcome:
         return self.skipped is None
 
 
+def _db_path() -> Path:
+    from lazy_harness.monitoring.db import resolve_db_path
+
+    return resolve_db_path()
+
+
+def _record_goal_verdict(data: dict, *, session_id: str, cwd: str) -> None:
+    """Record the worker's goal_declared/goal_absent verdict into loop_events.
+
+    The grading JSON is untrusted LLM output: a missing or wrong-typed
+    `goal_declared` field must degrade silently rather than emit a guessed
+    verdict or crash the worker.
+
+    Idempotent across reprocessing: `MetricsDB.clear_goal_verdict` deletes
+    any prior verdict for this session before the new one is inserted, so a
+    session that grows and gets re-evaluated (`should_reprocess`) still
+    contributes exactly one row toward the goal_declared/goal_absent ratio —
+    the most recent processing's verdict is the one that counts.
+
+    Fail-soft like every other metrics write in this codebase: a DB error
+    here must not stop the rest of process_task's persistence.
+    """
+    goal_declared = data.get("goal_declared")
+    if not isinstance(goal_declared, bool):
+        return
+    kind = "goal_declared" if goal_declared else "goal_absent"
+    try:
+        from lazy_harness.hooks.builtins._shared import profile_name, project_key
+        from lazy_harness.monitoring.db import MetricsDB
+
+        db = MetricsDB(_db_path())
+        db.clear_goal_verdict(session_id)
+        db.record_loop_event(
+            session=session_id,
+            kind=kind,
+            project=project_key(Path(cwd)) if cwd else "",
+            profile=profile_name(),
+        )
+    except Exception:  # noqa: BLE001 — a metrics write must not break the worker
+        pass
+
+
 def process_task(
     task_file: Path,
     cfg: CompoundLoopConfig,
@@ -1164,6 +1208,8 @@ def process_task(
     if data is None:
         snippet = raw_output[:200].replace("\n", " ")
         return TaskOutcome(skipped=f"JSON parse failed for {session_id[:8]} — raw: {snippet}")
+
+    _record_goal_verdict(data, session_id=session_id, cwd=cwd)
 
     wrote = persist_results(
         data,
