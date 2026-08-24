@@ -729,7 +729,7 @@ Return ONLY this JSON structure (no markdown fences, no explanation):
 
 Rules:
 - decisions: architectural or design decisions made. Skip if already in recent decisions above.
-- failures: preventable errors. Skip if already in recent failures above. Include root cause and prevention.
+- failures: preventable errors. Skip if already in recent failures above. Include root cause and prevention. Do not record a failure for the engram/mem_save memory persistence protocol not being invoked by hand — the `engram-persist` Stop hook already persists session memory automatically on every session close, so the model not calling `mem_save`/`mem_session_summary` itself is not a preventable error. Only record a failure here if the hook itself malfunctioned (crashed, wrote nothing, cursor stuck).
 - learnings: ONLY transferable knowledge useful outside this project. Universal patterns, reusable insights. Project-specific stuff goes in decisions.
 - claude_md_proposals: workflow rules or conventions that emerged this session and would belong as a bullet in *this project's* CLAUDE.md. Different from learnings (cross-project) and decisions (one-off). Only include if the rule is concrete, durable, and specific to how to work in this repo. Empty list `[]` if nothing qualifies — this is the common case.
 - CRITICAL: Check ALL existing lists above. If a decision, failure, or learning already exists that covers the same concept (even with different wording), do NOT generate a new one. Only add genuinely new insights.

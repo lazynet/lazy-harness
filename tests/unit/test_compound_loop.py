@@ -1836,6 +1836,35 @@ def test_build_prompt_omits_recorded_failures_section_when_empty() -> None:
     assert "[EVITAR]" not in prompt
 
 
+def test_build_prompt_excludes_engram_persist_protocol_from_failures() -> None:
+    prompt = build_prompt(
+        project_name="proj",
+        cwd="/tmp/proj",
+        session_id="sess1",
+        timestamp="2026-06-11T10:00:00-03:00",
+        existing_decisions="",
+        existing_failures="",
+        existing_learnings="",
+        summary="## User\nx",
+    )
+    assert "engram-persist" in prompt
+    assert "mem_save" in prompt
+
+
+def test_build_prompt_engram_exclusion_still_allows_genuine_malfunction() -> None:
+    prompt = build_prompt(
+        project_name="proj",
+        cwd="/tmp/proj",
+        session_id="sess1",
+        timestamp="2026-06-11T10:00:00-03:00",
+        existing_decisions="",
+        existing_failures="",
+        existing_learnings="",
+        summary="## User\nx",
+    )
+    assert "the hook itself malfunctioned" in prompt
+
+
 def test_process_task_feeds_recent_failures_into_prompt(tmp_path: Path) -> None:
     queue = tmp_path / "queue"
     memory = tmp_path / "memory"
