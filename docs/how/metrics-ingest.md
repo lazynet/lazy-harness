@@ -222,6 +222,7 @@ Validation rules (enforced by the config parser):
 - A `[metrics.sink_options.<name>]` block whose name is not in `sinks` is silently ignored (dead config).
 - `http_remote` needs exactly one of `url` or `url_env`. Both present is a `ConfigError`; neither is an error when the sinks are built.
 - `url_env` names an environment variable rather than holding the endpoint. It is read at run time, never at parse time, so the value never reaches the config file that `lh` rewrites. An unset or empty variable deactivates the sink: nothing is enqueued, no request is made, and the run continues on `sqlite_local` alone.
+- If `url_env` is unset in the process environment, resolution falls back to `<lh config dir>/secrets/metrics.env` (`KEY=value` lines, owner-only permissions required) before deactivating the sink. This is what makes a scheduled `lh metrics ingest` see the same value an interactive shell does — the scheduler does not inherit the shell's exported environment. A file with group- or other-readable permissions is refused, not read. See `[metrics.sink_options.<name>]` in the [config reference](../reference/config.md#metrics) for the exact contract.
 
 The legacy `[monitoring]` block (`db`, `pricing`) is independent of `[metrics]`. They coexist: `[monitoring]` controls the SQLite file's location and pricing rates for ingest cost rollups; `[metrics]` controls per-event fanout. A future migration may unify them; today they live side by side.
 

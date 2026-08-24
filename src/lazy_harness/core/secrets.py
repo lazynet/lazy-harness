@@ -23,20 +23,20 @@ import sys
 from pathlib import Path
 
 from lazy_harness.core.config import Config
-from lazy_harness.core.paths import config_dir, expand_path
+from lazy_harness.core.paths import default_secrets_dir, expand_path
 
 
 def secrets_dir_for(cfg: Config) -> Path:
     """Where per-profile secret files live.
 
-    Honours `[secrets] dir` before falling back to `<config dir>/secrets`,
-    which is the same order every other config-derived path in this repo
-    resolves in. Two readers disagreeing about a path is how one of them ends
-    up writing a file nothing reads.
+    Honours `[secrets] dir` before falling back to `default_secrets_dir()`
+    (`<config dir>/secrets`), which is the same order every other
+    config-derived path in this repo resolves in. Two readers disagreeing
+    about a path is how one of them ends up writing a file nothing reads.
     """
     if cfg.secrets.dir:
         return expand_path(cfg.secrets.dir)
-    return config_dir() / "secrets"
+    return default_secrets_dir()
 
 
 def _warn(message: str) -> None:
