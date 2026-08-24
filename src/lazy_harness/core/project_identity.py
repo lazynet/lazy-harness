@@ -30,31 +30,71 @@ _URL_LIKE = re.compile(r"^(?P<scheme>[a-zA-Z][a-zA-Z0-9+.-]*)://(?P<rest>.*)$")
 _URL_SECTION = re.compile(r'^url\s+"(?P<base>.*)"$')
 
 
+def _git_dir(directory: Path) -> Path | None:
+    """The git directory a checkout at `directory` uses, or None.
+
+    `.git` is a directory in an ordinary clone and a `gitdir:` pointer in both
+    a linked worktree and a checkout made with `--separate-git-dir`. The two
+    pointer cases are not distinguishable here and do not need to be: what
+    each names is the directory holding the repository.
+    """
+    dot_git = directory / ".git"
+    if dot_git.is_dir():
+        return dot_git
+    if not dot_git.is_file():
+        return None
+    try:
+        pointer = dot_git.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not pointer.startswith("gitdir:"):
+        return None
+    target = Path(pointer[len("gitdir:") :].strip())
+    # Git spells the pointer relative whenever it was handed a relative path.
+    # Read as given it would resolve against the process's cwd, which on the
+    # Stop path is whatever directory the session happened to be in.
+    if not target.is_absolute():
+        target = directory / target
+    return target
+
+
+def _common_git_dir(git_dir: Path) -> Path:
+    """The git directory that holds the shared `config`.
+
+    A linked worktree's own directory carries no remote; `commondir` names the
+    one it borrows. Absent, `git_dir` already is the common one.
+    """
+    try:
+        rel = (git_dir / "commondir").read_text(encoding="utf-8").strip()
+    except OSError:
+        return git_dir
+    return (git_dir / rel).resolve() if rel else git_dir
+
+
 def main_repo_root(cwd: Path) -> Path | None:
-    """Main working tree for `cwd`, or None outside a repository.
+    """Working tree root for `cwd`, or None outside a repository.
 
     A linked worktree's `.git` is a file pointing at
     `<repo>/.git/worktrees/<name>`, so the main checkout is recoverable
-    without asking git.
+    without asking git — memory written from a worktree then lands under the
+    repository that outlives it.
+
+    A checkout made with `--separate-git-dir` also has a `.git` file, but it
+    names a directory under no `.git/` at all and nothing on disk leads back
+    from there to a checkout. That checkout is its own root; the shared
+    identity is still reached, through the git directory rather than the path.
     """
     for directory in (cwd, *cwd.parents):
-        dot_git = directory / ".git"
-        if dot_git.is_dir():
-            return directory
-        if not dot_git.is_file():
+        if not (directory / ".git").exists():
             continue
-        try:
-            pointer = dot_git.read_text(encoding="utf-8").strip()
-        except OSError:
+        git_dir = _git_dir(directory)
+        if git_dir is None:
             return None
-        if not pointer.startswith("gitdir:"):
-            return None
-        gitdir = Path(pointer[len("gitdir:") :].strip())
         # `<repo>/.git/worktrees/<name>` -> `<repo>`
-        for parent in gitdir.parents:
+        for parent in git_dir.parents:
             if parent.name == ".git":
                 return parent.parent
-        return None
+        return directory
     return None
 
 
@@ -211,7 +251,7 @@ def normalise_remote(
     return "/".join(parts)
 
 
-def _remote_url(root: Path) -> str:
+def _remote_url(git_dir: Path) -> str:
     """The `origin` remote's URL, or the only remote's if there is no origin.
 
     A fork carries an `upstream` too; taking it would merge two people's memory
@@ -225,7 +265,7 @@ def _remote_url(root: Path) -> str:
     # sigil; left on, it raises from `get`, outside the guard below.
     parser = configparser.ConfigParser(strict=False, interpolation=None)
     try:
-        parser.read(root / ".git" / "config")
+        parser.read(git_dir / "config")
     except (OSError, configparser.Error, UnicodeDecodeError):
         return ""
 
@@ -264,5 +304,9 @@ def project_key(
     root = main_repo_root(cwd)
     if root is None:
         return _local_key(cwd)
-    key = normalise_remote(_remote_url(root), ssh_config=ssh_config, git_config=git_config)
+    git_dir = _git_dir(root)
+    if git_dir is None:
+        return _local_key(cwd)
+    url = _remote_url(_common_git_dir(git_dir))
+    key = normalise_remote(url, ssh_config=ssh_config, git_config=git_config)
     return key or _local_key(cwd)

@@ -80,6 +80,87 @@ def test_a_linked_worktree_resolves_to_the_main_checkout(tmp_path: Path) -> None
     assert project_key(wt) == "github.com/lazynet/x"
 
 
+def _separate_git_dir_repo(tmp_path: Path, remote: str, *, pointer: str | None = None) -> Path:
+    """A checkout made with `git init --separate-git-dir`.
+
+    Its `.git` is a file, like a linked worktree's, but the directory it names
+    is not under any `.git/` — the vault lives in iCloud, where a real `.git`
+    directory would be synced file by file, so its git directory sits in
+    `~/repos`.
+    """
+    root = tmp_path / "checkout"
+    root.mkdir()
+    git_dir = tmp_path / "store.git"
+    git_dir.mkdir()
+    (git_dir / "config").write_text(f'[remote "origin"]\n\turl = {remote}\n')
+    (root / ".git").write_text(pointer or f"gitdir: {git_dir}\n")
+    return root
+
+
+def test_a_separate_git_dir_checkout_keys_on_its_remote(tmp_path: Path) -> None:
+    """The git directory is outside the checkout and outside any `.git/`, so
+    the walk that recovers a worktree's main checkout finds nothing and the
+    config that holds the remote is never read. The vault then keys as
+    `local/LazyMind` on every machine and distils no memory at all."""
+    from lazy_harness.core.project_identity import project_key
+
+    root = _separate_git_dir_repo(tmp_path, "git@git.lazy.net.ar:lazy/LazyMind.git")
+
+    assert project_key(root) == "git.lazy.net.ar/lazy/LazyMind"
+
+
+def test_a_separate_git_dir_checkout_keys_the_same_from_a_subdirectory(tmp_path: Path) -> None:
+    from lazy_harness.core.project_identity import project_key
+
+    root = _separate_git_dir_repo(tmp_path, "git@git.lazy.net.ar:lazy/LazyMind.git")
+    deep = root / "1-Projects" / "PRJ-Thing"
+    deep.mkdir(parents=True)
+
+    assert project_key(deep) == project_key(root)
+
+
+def test_a_relative_gitdir_pointer_is_resolved_against_the_checkout(tmp_path: Path) -> None:
+    """Git writes the pointer relative whenever the repository was created with
+    a relative path. Read as-is it resolves against the process's cwd, which is
+    whatever directory the hook happened to run in."""
+    from lazy_harness.core.project_identity import project_key
+
+    root = _separate_git_dir_repo(
+        tmp_path, "git@github.com:lazynet/x.git", pointer="gitdir: ../store.git\n"
+    )
+
+    assert project_key(root) == "github.com/lazynet/x"
+
+
+def test_a_worktree_of_a_separate_git_dir_repo_keys_on_the_same_remote(tmp_path: Path) -> None:
+    """A linked worktree's own git directory holds no remote — `commondir`
+    names the one that does. Without following it the worktree falls to
+    `local/`, splitting the memory of a repository that is already shared."""
+    from lazy_harness.core.project_identity import project_key
+
+    root = _separate_git_dir_repo(tmp_path, "git@git.lazy.net.ar:lazy/LazyMind.git")
+    common = tmp_path / "store.git"
+    wt_git_dir = common / "worktrees" / "wt"
+    wt_git_dir.mkdir(parents=True)
+    (wt_git_dir / "commondir").write_text("../..\n")
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    (wt / ".git").write_text(f"gitdir: {wt_git_dir}\n")
+
+    assert project_key(wt) == "git.lazy.net.ar/lazy/LazyMind"
+
+
+def test_a_pointer_to_a_git_dir_that_is_gone_is_local(tmp_path: Path) -> None:
+    """A stale pointer is not a repository identity. Degrade, do not raise."""
+    from lazy_harness.core.project_identity import project_key
+
+    root = tmp_path / "checkout"
+    root.mkdir()
+    (root / ".git").write_text(f"gitdir: {tmp_path / 'vanished.git'}\n")
+
+    assert project_key(root).startswith("local/")
+
+
 def test_a_repository_without_a_remote_is_local_and_says_so(tmp_path: Path) -> None:
     """No remote means nothing to share against. The key stays machine-local
     and is spelled that way, so an unshared project is visible rather than
