@@ -138,7 +138,7 @@ def test_a_worktree_of_a_separate_git_dir_repo_keys_on_the_same_remote(tmp_path:
     `local/`, splitting the memory of a repository that is already shared."""
     from lazy_harness.core.project_identity import project_key
 
-    root = _separate_git_dir_repo(tmp_path, "git@git.lazy.net.ar:lazy/LazyMind.git")
+    _separate_git_dir_repo(tmp_path, "git@git.lazy.net.ar:lazy/LazyMind.git")
     common = tmp_path / "store.git"
     wt_git_dir = common / "worktrees" / "wt"
     wt_git_dir.mkdir(parents=True)
