@@ -553,6 +553,25 @@ class MetricsDB:
         )
         self._conn.commit()
 
+    def clear_goal_verdict(self, session: str) -> None:
+        """Delete any prior goal_declared/goal_absent row for `session`.
+
+        Call before `record_loop_event` when recording the compound-loop
+        worker's per-session goal verdict. The worker re-evaluates a session
+        as it grows (`should_reprocess`), and `loop_events` carries no
+        per-session unique constraint — a naive insert on every reprocess
+        would double-count the ratio this table exists to produce. Deleting
+        the previous verdict first makes the most recent processing's
+        judgment the one that counts, so a reprocessed session still
+        contributes exactly one row toward `goal_declared`/`goal_absent`.
+        """
+        self._conn.execute(
+            "DELETE FROM loop_events WHERE session = ? AND kind IN "
+            "('goal_declared', 'goal_absent')",
+            (session,),
+        )
+        self._conn.commit()
+
     def loop_event_counts(self, since_ts: float | None = None) -> dict[str, int]:
         if since_ts is None:
             rows = self._conn.execute(

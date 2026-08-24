@@ -51,3 +51,39 @@ def test_accepts_string_path_and_creates_parent_dirs(
 
     assert db.loop_event_counts() == {"nontrivial_prompt": 1}
     assert db_path.exists()
+
+
+def test_clear_goal_verdict_removes_a_prior_verdict_for_the_session(db: MetricsDB) -> None:
+    db.record_loop_event(session="s1", kind="goal_declared", project="p")
+
+    db.clear_goal_verdict("s1")
+
+    assert db.loop_event_counts() == {}
+
+
+def test_clear_goal_verdict_leaves_other_kinds_for_the_same_session_alone(
+    db: MetricsDB,
+) -> None:
+    db.record_loop_event(session="s1", kind="goal_declared", project="p")
+    db.record_loop_event(session="s1", kind="nontrivial_prompt", project="p")
+
+    db.clear_goal_verdict("s1")
+
+    assert db.loop_event_counts() == {"nontrivial_prompt": 1}
+
+
+def test_clear_goal_verdict_leaves_other_sessions_alone(db: MetricsDB) -> None:
+    db.record_loop_event(session="s1", kind="goal_declared", project="p")
+    db.record_loop_event(session="s2", kind="goal_absent", project="p")
+
+    db.clear_goal_verdict("s1")
+
+    assert db.loop_event_counts() == {"goal_absent": 1}
+
+
+def test_clear_goal_verdict_on_a_session_with_no_verdict_is_a_no_op(db: MetricsDB) -> None:
+    db.record_loop_event(session="s1", kind="nontrivial_prompt", project="p")
+
+    db.clear_goal_verdict("s1")
+
+    assert db.loop_event_counts() == {"nontrivial_prompt": 1}

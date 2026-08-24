@@ -29,18 +29,32 @@ def test_reports_per_kind_counts(tmp_path: Path) -> None:
     assert "nontrivial_prompt" in result.output
 
 
-def test_never_prints_a_declared_rate_no_sensor_emits(tmp_path: Path) -> None:
-    """FINDING 2: goal_declared has no emitter, so any percentage computed from
-    it is structurally always zero. The command must not print a rate at all
-    — only an honest statement that no declaration sensor exists yet."""
+def test_prints_the_declared_rate_from_goal_declared_and_goal_absent(tmp_path: Path) -> None:
+    """The compound-loop worker now emits goal_declared/goal_absent, so the
+    rate is computable: declared / (declared + absent)."""
     db_path = tmp_path / "metrics.db"
-    _seed(db_path)
+    db = MetricsDB(db_path)
+    db.record_loop_event(session="s1", kind="goal_declared")
+    db.record_loop_event(session="s2", kind="goal_absent")
+    db.record_loop_event(session="s3", kind="goal_absent")
 
     result = CliRunner().invoke(metrics, ["loops", "--db", str(db_path)])
 
     assert result.exit_code == 0
-    assert "%" not in result.output
-    assert "no declaration sensor" in result.output.lower()
+    assert "goal_declared" in result.output
+    assert "declared rate: 33% (1/3)" in result.output
+
+
+def test_prints_a_zero_percent_rate_without_a_zero_division(tmp_path: Path) -> None:
+    db_path = tmp_path / "metrics.db"
+    db = MetricsDB(db_path)
+    db.record_loop_event(session="s1", kind="goal_absent")
+    db.record_loop_event(session="s2", kind="goal_absent")
+
+    result = CliRunner().invoke(metrics, ["loops", "--db", str(db_path)])
+
+    assert result.exit_code == 0
+    assert "declared rate: 0% (0/2)" in result.output
 
 
 def test_runs_on_an_empty_db_without_crashing(tmp_path: Path) -> None:
@@ -50,7 +64,7 @@ def test_runs_on_an_empty_db_without_crashing(tmp_path: Path) -> None:
     result = CliRunner().invoke(metrics, ["loops", "--db", str(db_path)])
 
     assert result.exit_code == 0
-    assert "no declaration sensor" in result.output.lower()
+    assert "declared rate: 0% (0/0)" in result.output
 
 
 def test_days_filters_out_events_older_than_the_window(tmp_path: Path) -> None:

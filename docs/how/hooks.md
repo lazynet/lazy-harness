@@ -158,7 +158,7 @@ This is the hook that does the heaviest lifting. It is split into two pieces del
 **Consumer (worker, slow, async):**
 1. Acquire `fcntl.flock` on `~/.claude/queue/.worker.lock`. If another worker is running, exit 0.
 2. Drain `*.task` files in FIFO order.
-3. For each task: parse metadata → filter trivial sessions (`min_user_chars`, `min_messages`) → collect existing decisions/failures/learnings for deduplication → build prompt with `build_prompt` (ported verbatim from the predecessor; the wording is calibration, not code) → call `claude -p --model <model>` with a configurable timeout → parse the JSON response with `parse_response` (handles bare JSON, fenced JSON, and prose-preamble JSON) → persist with `persist_results`.
+3. For each task: parse metadata → filter trivial sessions (`min_user_chars`, `min_messages`) → collect existing decisions/failures/learnings for deduplication → build prompt with `build_prompt` (ported verbatim from the predecessor; the wording is calibration, not code) → call `claude -p --model <model>` with a configurable timeout → parse the JSON response with `parse_response` (handles bare JSON, fenced JSON, and prose-preamble JSON) → persist with `persist_results` → record the session's `goal_declared`/`goal_absent` verdict (see below).
 4. Move the task to `queue/done/` regardless of outcome — failures never block the queue.
 
 **Where it writes (via `persist_results` + `persist_insights`):**
@@ -170,6 +170,7 @@ This is the hook that does the heaviest lifting. It is split into two pieces del
 - `<memory_dir>/insights/.cursor.json` — per-session last-processed message index, so subsequent Stop hooks scan only the delta.
 - `<learnings_dir>/YYYY-MM/YYYY-MM-DD-<slug>.md` — one markdown file per learning, atomic write.
 - `<memory_dir>/handoff.md` — overwritten with the current pending items, or deleted if empty.
+- `loop_events` table in `metrics.db` — one `goal_declared` or `goal_absent` row per graded session, recording whether the grading JSON's `goal_declared` field was `true`. A missing or non-boolean field records nothing. Idempotent across reprocessing: `MetricsDB.clear_goal_verdict` deletes any prior verdict for the session before inserting the new one, so a session that grows and gets re-evaluated still contributes exactly one row — the most recent processing's verdict is the one that counts. Surfaced by [`lh metrics loops`](../reference/cli.md#lh-metrics-loops).
 
 `<memory_dir>` is `<CLAUDE_CONFIG_DIR>/projects/<encoded-cwd>/memory/`. `<learnings_dir>` is the knowledge store root joined with the learnings subdirectory its `knowledge.toml` marker declares.
 
@@ -473,7 +474,7 @@ Source: `src/lazy_harness/hooks/builtins/user_prompt_goal.py`.
 
 Responsibility: record events for prompts that look like work. Ships as a sensor collecting baseline data; injection of goal prompts back to the agent is gated behind `[loops] inject_goal_prompt`, which defaults to off until a baseline exists.
 
-The hook classifies prompts into trivial and non-trivial. For non-trivial ones it records an event with `kind="nontrivial_prompt"` to the metrics store — one row per qualifying prompt, not per session — so that later analysis can measure how often such prompts occur.
+The hook classifies prompts into trivial and non-trivial. For non-trivial ones it records an event with `kind="nontrivial_prompt"` to the metrics store — one row per qualifying prompt, not per session — so that later analysis can measure how often such prompts occur. This hook records only the denominator: `UserPromptSubmit` fires before the assistant has produced any text, so it can classify the incoming request but cannot judge whether a goal actually got declared. The numerator — `goal_declared`/`goal_absent` — is recorded by the compound-loop worker instead, which already reads the full transcript to grade the session.
 
 Classification logic:
 

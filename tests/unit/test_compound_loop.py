@@ -887,6 +887,40 @@ def test_build_prompt_includes_grade_schema_block() -> None:
         assert issue in prompt
 
 
+def test_build_prompt_includes_goal_declared_contract() -> None:
+    prompt = build_prompt(
+        project_name="proj",
+        cwd="/tmp/proj",
+        session_id="sess1234",
+        timestamp="2026-05-02T10:00:00-03:00",
+        existing_decisions="",
+        existing_failures="",
+        existing_learnings="",
+        summary="## User\n\nhi",
+    )
+    assert '"goal_declared"' in prompt
+    # It must be defined concretely: a stated, verifiable, up-front criterion.
+    assert "verifiable success criterion" in prompt
+    assert "before" in prompt
+    # And explicitly rule out the two ways this metric goes fake.
+    assert "restat" in prompt.lower()  # restating the request does not count
+    assert "after" in prompt.lower()  # a post-hoc summary does not count
+
+
+def test_build_prompt_trivial_session_skeleton_defaults_goal_declared_false() -> None:
+    prompt = build_prompt(
+        project_name="proj",
+        cwd="/tmp/proj",
+        session_id="sess1234",
+        timestamp="2026-05-02T10:00:00-03:00",
+        existing_decisions="",
+        existing_failures="",
+        existing_learnings="",
+        summary="## User\n\nhi",
+    )
+    assert '"goal_declared": false' in prompt
+
+
 def test_persist_results_writes_grades_jsonl_when_grade_present(tmp_path: Path) -> None:
     memory = tmp_path / "memory"
     learnings = tmp_path / "Learnings"
@@ -1204,6 +1238,180 @@ def test_process_task_persists_grade_and_appends_backlog(tmp_path: Path) -> None
     assert outcome.was_processed
     assert (memory / "grades.jsonl").is_file()
     assert "Session quality regression" in prj_md.read_text()
+
+
+# ---------------------------------------------------------------------------
+# goal_declared/goal_absent — the loop-engineering numerator sensor
+# ---------------------------------------------------------------------------
+
+
+def _response(goal_declared: bool | str | None = None, **overrides: Any) -> str:
+    body: dict[str, Any] = {"decisions": [], "failures": [], "learnings": [], "handoff": []}
+    if goal_declared is not None:
+        body["goal_declared"] = goal_declared
+    body.update(overrides)
+    return json.dumps(body)
+
+
+def test_process_task_records_goal_declared_event(tmp_path: Path, monkeypatch) -> None:
+    from lazy_harness.knowledge import compound_loop as cl
+    from lazy_harness.monitoring.db import MetricsDB
+
+    db_path = tmp_path / "metrics.db"
+    monkeypatch.setattr(cl, "_db_path", lambda: db_path)
+
+    queue = tmp_path / "queue"
+    memory = tmp_path / "memory"
+    learnings = tmp_path / "Learnings"
+    session = _interactive_session(tmp_path)
+    task = create_task(queue, Path("/tmp/proj"), session, "abcd1234efgh", memory)
+
+    outcome = process_task(task, _cfg(), learnings, backend=StubBackend(lambda *a: _response(True)))
+
+    assert outcome.was_processed
+    assert MetricsDB(db_path).loop_event_counts() == {"goal_declared": 1}
+
+
+def test_process_task_records_goal_absent_event(tmp_path: Path, monkeypatch) -> None:
+    from lazy_harness.knowledge import compound_loop as cl
+    from lazy_harness.monitoring.db import MetricsDB
+
+    db_path = tmp_path / "metrics.db"
+    monkeypatch.setattr(cl, "_db_path", lambda: db_path)
+
+    queue = tmp_path / "queue"
+    memory = tmp_path / "memory"
+    learnings = tmp_path / "Learnings"
+    session = _interactive_session(tmp_path)
+    task = create_task(queue, Path("/tmp/proj"), session, "abcd1234efgh", memory)
+
+    outcome = process_task(
+        task, _cfg(), learnings, backend=StubBackend(lambda *a: _response(False))
+    )
+
+    assert outcome.was_processed
+    assert MetricsDB(db_path).loop_event_counts() == {"goal_absent": 1}
+
+
+def test_process_task_records_nothing_when_goal_declared_field_is_absent(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from lazy_harness.knowledge import compound_loop as cl
+    from lazy_harness.monitoring.db import MetricsDB
+
+    db_path = tmp_path / "metrics.db"
+    monkeypatch.setattr(cl, "_db_path", lambda: db_path)
+
+    queue = tmp_path / "queue"
+    memory = tmp_path / "memory"
+    learnings = tmp_path / "Learnings"
+    session = _interactive_session(tmp_path)
+    task = create_task(queue, Path("/tmp/proj"), session, "abcd1234efgh", memory)
+
+    outcome = process_task(task, _cfg(), learnings, backend=StubBackend(lambda *a: _response()))
+
+    assert outcome.was_processed
+    assert MetricsDB(db_path).loop_event_counts() == {}
+
+
+def test_process_task_ignores_a_non_boolean_goal_declared_field(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """LLM output is untrusted: a wrong-typed field must degrade, not crash
+    the worker and must not be coerced into a guessed verdict."""
+    from lazy_harness.knowledge import compound_loop as cl
+    from lazy_harness.monitoring.db import MetricsDB
+
+    db_path = tmp_path / "metrics.db"
+    monkeypatch.setattr(cl, "_db_path", lambda: db_path)
+
+    queue = tmp_path / "queue"
+    memory = tmp_path / "memory"
+    learnings = tmp_path / "Learnings"
+    session = _interactive_session(tmp_path)
+    task = create_task(queue, Path("/tmp/proj"), session, "abcd1234efgh", memory)
+
+    outcome = process_task(
+        task, _cfg(), learnings, backend=StubBackend(lambda *a: _response("yes"))
+    )
+
+    assert outcome.was_processed
+    assert MetricsDB(db_path).loop_event_counts() == {}
+
+
+def test_process_task_reprocessing_the_same_session_does_not_double_count(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The worker re-evaluates a growing session (should_reprocess). A naive
+    insert on every reprocess would double-count the goal_declared/goal_absent
+    ratio; this is the idempotency guard requirement (see MetricsDB.clear_goal_verdict)."""
+    from lazy_harness.knowledge import compound_loop as cl
+    from lazy_harness.monitoring.db import MetricsDB
+
+    db_path = tmp_path / "metrics.db"
+    monkeypatch.setattr(cl, "_db_path", lambda: db_path)
+
+    queue = tmp_path / "queue"
+    memory = tmp_path / "memory"
+    learnings = tmp_path / "Learnings"
+    session = _interactive_session(tmp_path)
+    task = create_task(queue, Path("/tmp/proj"), session, "abcd1234efgh", memory)
+    backend = StubBackend(lambda *a: _response(True))
+
+    process_task(task, _cfg(), learnings, backend=backend)
+    process_task(task, _cfg(), learnings, backend=backend)
+
+    assert MetricsDB(db_path).loop_event_counts() == {"goal_declared": 1}
+
+
+def test_process_task_reprocessing_replaces_the_verdict_with_the_latest(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A later processing has strictly more transcript to judge from, so its
+    verdict — not the first one — is the one that should count."""
+    from lazy_harness.knowledge import compound_loop as cl
+    from lazy_harness.monitoring.db import MetricsDB
+
+    db_path = tmp_path / "metrics.db"
+    monkeypatch.setattr(cl, "_db_path", lambda: db_path)
+
+    queue = tmp_path / "queue"
+    memory = tmp_path / "memory"
+    learnings = tmp_path / "Learnings"
+    session = _interactive_session(tmp_path)
+    task = create_task(queue, Path("/tmp/proj"), session, "abcd1234efgh", memory)
+
+    process_task(task, _cfg(), learnings, backend=StubBackend(lambda *a: _response(False)))
+    process_task(task, _cfg(), learnings, backend=StubBackend(lambda *a: _response(True)))
+
+    assert MetricsDB(db_path).loop_event_counts() == {"goal_declared": 1}
+
+
+def test_process_task_resolves_the_project_key_like_the_prompt_sensor(
+    tmp_path: Path, monkeypatch, git_checkout
+) -> None:
+    """Rows from the worker and rows from user_prompt_goal.py must be
+    comparable: same project_key() canonicalisation, worktrees included."""
+    from lazy_harness.knowledge import compound_loop as cl
+    from lazy_harness.monitoring.db import MetricsDB
+
+    db_path = tmp_path / "metrics.db"
+    monkeypatch.setattr(cl, "_db_path", lambda: db_path)
+
+    queue = tmp_path / "queue"
+    memory = tmp_path / "memory"
+    learnings = tmp_path / "Learnings"
+    session = _interactive_session(tmp_path)
+    task = create_task(queue, git_checkout.worktree, session, "abcd1234efgh", memory)
+
+    process_task(task, _cfg(), learnings, backend=StubBackend(lambda *a: _response(True)))
+
+    rows = (
+        MetricsDB(db_path)
+        ._conn.execute("SELECT project FROM loop_events WHERE kind = 'goal_declared'")
+        .fetchall()
+    )
+    assert rows[0]["project"] == str(git_checkout.repo.resolve())
 
 
 # ---------------------------------------------------------------------------
