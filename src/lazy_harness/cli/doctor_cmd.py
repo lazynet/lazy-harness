@@ -23,6 +23,7 @@ from lazy_harness.monitoring.engram_persist_health import (
     EngramPersistHealth,
     collect_engram_persist_health,
 )
+from lazy_harness.monitoring.sink_freshness import SinkFreshness, collect_sinks_freshness
 from lazy_harness.monitoring.sink_setup import plan_sinks
 
 
@@ -67,6 +68,35 @@ def _render_egress(console: Console, cfg: Config) -> bool:
         else:
             console.print(f"  {plan.name} → {plan.url}")
     return True
+
+
+def _render_sink_freshness(console: Console, results: list[SinkFreshness]) -> bool:
+    """Report whether each active remote sink has enqueued anything recently.
+
+    Silent when there is nothing to check — no active remote sink, or
+    monitoring disabled entirely — same as `_render_memory_hygiene` skipping
+    when there is no project memory: an absent subsystem is not a degraded one.
+    """
+    if not results:
+        return True
+
+    icons = {
+        "ok": "[green]✓[/green]",
+        "warn": "[yellow]![/yellow]",
+        "fail": "[red]✗[/red]",
+        "missing": "[grey50]·[/grey50]",
+    }
+    console.print("\n[bold]Sink freshness[/bold]")
+    ok = True
+    for r in results:
+        if r.state == "missing":
+            console.print(f"  {icons['missing']} {r.name} — no events enqueued yet")
+            continue
+        age = r.last_enqueued_age_seconds or 0.0
+        console.print(f"  {icons[r.state]} {r.name} — last enqueued {_fmt_age(age)}")
+        if r.state == "fail":
+            ok = False
+    return ok
 
 
 def _fmt_age(seconds: float) -> str:
@@ -328,6 +358,10 @@ def doctor() -> None:
 
     console.print("\n[bold]Network egress[/bold]")
     if not _render_egress(console, cfg):
+        ok = False
+
+    sinks_freshness = collect_sinks_freshness(cfg, now=datetime.now(UTC))
+    if not _render_sink_freshness(console, sinks_freshness):
         ok = False
 
     if not _render_llm_backend(console, cfg.compound_loop):

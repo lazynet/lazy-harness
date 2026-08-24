@@ -23,6 +23,8 @@ The output has two parts:
 - **Environment checks** — Python version, agent binary present, config readable, profile dirs writable, `direnv` detected.
 - **Features section** ([ADR-025](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/025-doctor-features-section.md)) — one row per memory-stack tool (`qmd`, `engram`, `graphify`) with state (`active`, `dormant`, `missing`), installed version vs pinned version, and a one-line hint when something needs attention. Tools that need an explicit enable in `config.toml` (e.g. `[memory.engram].enabled = true`) show as `dormant` until the flag flips. The `engram-persist` row reports loop health (`ok` / `warn` / `fail` / `missing`) classified from `~/.claude/logs/engram_persist_metrics.jsonl` against three thresholds: last-run age (warn ≥ 24 h, fail ≥ 7 d), recent failure rate (warn > 0%, fail > 10%), and cursor lag in bytes (fail ≥ 64 KiB).
 
+A **Sink freshness** section reports, for every `[metrics]` sink `plan_sinks()` currently resolves as active (everything except `sqlite_local`, which is the local store itself, not a delivery pipeline), how long it has been since anything was last enqueued in `sink_outbox` — `ok` / `warn` (≥ 24 h) / `fail` (≥ 7 d) / `missing` (no history yet, not the same as stale). This catches a sink that quietly stopped moving data — e.g. an environment variable that resolved when the config was written but is unset wherever the scheduled ingest job actually runs — instead of doctor passing because the sink is merely *configured*. The section is omitted entirely when `[monitoring].enabled` is false or no remote sink is active, since neither case has anything to check.
+
 ```bash
 lh doctor
 ```
