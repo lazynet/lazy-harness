@@ -127,3 +127,70 @@ def test_resolve_profile_falls_back_to_default(tmp_path: Path) -> None:
     cfg, _ = _make_config(tmp_path)
     result = resolve_profile(cfg, cwd=Path("/some/random/path"))
     assert result == "personal"
+
+
+def test_resolve_with_source_reports_a_root_match(tmp_path: Path) -> None:
+    from lazy_harness.core.profiles import resolve_profile_with_source
+
+    work_root = tmp_path / "work" / "project"
+    work_root.mkdir(parents=True)
+    cfg, _ = _make_config(
+        tmp_path,
+        {
+            "personal": ProfileEntry(
+                config_dir=str(tmp_path / ".claude-personal"), roots=[str(tmp_path)]
+            ),
+            "work": ProfileEntry(
+                config_dir=str(tmp_path / ".claude-work"), roots=[str(tmp_path / "work")]
+            ),
+        },
+    )
+
+    resolution = resolve_profile_with_source(cfg, cwd=work_root)
+
+    assert resolution.name == "work"
+    assert resolution.source == "root-match"
+
+
+def test_resolve_with_source_marks_the_silent_fallback(tmp_path: Path) -> None:
+    """The dangerous case: no root matched, so the default profile is a guess."""
+    from lazy_harness.core.profiles import resolve_profile_with_source
+
+    cfg, _ = _make_config(tmp_path)
+
+    resolution = resolve_profile_with_source(cfg, cwd=Path("/some/random/path"))
+
+    assert resolution.name == "personal"
+    assert resolution.source == "default-fallback"
+
+
+def test_resolve_with_source_marks_an_override_as_explicit(tmp_path: Path) -> None:
+    from lazy_harness.core.profiles import resolve_profile_with_source
+
+    cfg, _ = _make_config(tmp_path)
+
+    resolution = resolve_profile_with_source(
+        cfg, cwd=Path("/some/random/path"), override="personal"
+    )
+
+    assert resolution.name == "personal"
+    assert resolution.source == "explicit"
+
+
+def test_resolve_with_source_rejects_an_unknown_override(tmp_path: Path) -> None:
+    from lazy_harness.core.profiles import ProfileError, resolve_profile_with_source
+
+    cfg, _ = _make_config(tmp_path)
+
+    with pytest.raises(ProfileError, match="ghost"):
+        resolve_profile_with_source(cfg, cwd=tmp_path, override="ghost")
+
+
+@pytest.mark.parametrize("cwd", [Path("/some/random/path"), None])
+def test_resolve_profile_agrees_with_resolve_with_source(tmp_path: Path, cwd: Path | None) -> None:
+    """Two code paths answering the same question must not diverge."""
+    from lazy_harness.core.profiles import resolve_profile, resolve_profile_with_source
+
+    cfg, _ = _make_config(tmp_path)
+
+    assert resolve_profile(cfg, cwd) == resolve_profile_with_source(cfg, cwd).name

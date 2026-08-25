@@ -10,11 +10,9 @@ import click
 from rich.console import Console
 from rich.markup import escape
 
-from lazy_harness.agents.registry import AgentNotFoundError, get_agent
+from lazy_harness.agents.launch import LaunchError, resolve_launch
 from lazy_harness.core.config import ConfigError, load_config
-from lazy_harness.core.paths import config_file, expand_path, process_exec_path
-from lazy_harness.core.profiles import resolve_profile
-from lazy_harness.core.secrets import overlay_profile_secrets, secrets_dir_for
+from lazy_harness.core.paths import config_file, process_exec_path
 
 
 @click.command(
@@ -55,38 +53,17 @@ def run(
             console.print(f"{marker} {name:12} {escape(entry.config_dir):30} \\[{escape(roots)}]")
         return
 
-    if not cfg.profiles.items:
-        console.print("[red]No profiles configured.[/red] Run [bold]lh init[/bold].")
-        raise SystemExit(1)
-
-    if profile_override:
-        if profile_override not in cfg.profiles.items:
-            console.print(f"[red]Unknown profile:[/red] {profile_override}")
-            raise SystemExit(1)
-        profile_name = profile_override
-    else:
-        profile_name = resolve_profile(cfg, Path.cwd())
-
-    entry = cfg.profiles.items[profile_name]
-    config_dir = expand_path(entry.config_dir)
-
     try:
-        adapter = get_agent(cfg.agent.type)
-    except AgentNotFoundError as e:
-        console.print(f"[red]{escape(str(e))}[/red]")
+        plan = resolve_launch(cfg, Path.cwd(), profile_override)
+    except LaunchError as e:
+        console.print(f"[red]Error:[/red] {escape(str(e))}")
         raise SystemExit(1)
 
-    binary = adapter.resolve_binary()
-    if binary is None:
-        console.print(f"[red]Cannot locate {cfg.agent.type} binary.[/red]")
-        raise SystemExit(1)
-
-    env = os.environ.copy()
-    env[adapter.env_var()] = str(config_dir)
-    # The agent's credential is one global variable and its stored credentials
-    # live inside `config_dir`, so a second profile backed by a second account
-    # would otherwise authenticate as the first — silently.
-    env = overlay_profile_secrets(env, profile_name, secrets_dir=secrets_dir_for(cfg))
+    profile_name = plan.profile
+    adapter = plan.adapter
+    config_dir = plan.config_dir
+    binary = plan.binary
+    env = plan.env
 
     process_name = adapter.process_name()
     argv0 = process_name or str(binary)

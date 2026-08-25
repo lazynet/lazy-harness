@@ -202,14 +202,49 @@ def test_secrets_dir_honours_the_config_override(monkeypatch, tmp_path: Path) ->
 
 
 def test_the_overlay_reaches_the_launched_process(tmp_path: Path, monkeypatch) -> None:
-    """`lh run` builds the environment it execs with. Wiring this into a helper
-    nobody calls is the failure this repo already records once."""
+    """`resolve_launch` builds the environment both `lh run` and `lh exec` use.
+
+    Wiring this into a helper nobody calls is the failure this repo already
+    records once, so assert the built environment rather than trusting that
+    some caller remembered to apply the overlay itself.
+    """
+    from lazy_harness.agents.launch import resolve_launch
+    from lazy_harness.core.config import Config, ProfileEntry
+
+    versions = Path.home() / ".local" / "share" / "claude" / "versions"
+    versions.mkdir(parents=True, exist_ok=True)
+    binary = versions / "0.0.1-fake"
+    binary.write_text("#!/bin/sh\nexit 0\n")
+    binary.chmod(0o755)
+
+    secrets_dir = tmp_path / "secrets"
+    secrets_dir.mkdir()
+    (secrets_dir / "flex.env").write_text("CLAUDE_CODE_OAUTH_TOKEN=flex-token\n")
+    (secrets_dir / "flex.env").chmod(0o600)
+
+    cfg = Config()
+    cfg.secrets.dir = str(secrets_dir)
+    cfg.profiles.default = "flex"
+    cfg.profiles.items = {"flex": ProfileEntry(config_dir=str(tmp_path / "cfg"), roots=[])}
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "lazy-token")
+
+    plan = resolve_launch(cfg, cwd=tmp_path)
+
+    assert plan.env["CLAUDE_CODE_OAUTH_TOKEN"] == "flex-token"
+    assert plan.env["CLAUDE_CONFIG_DIR"] == str(tmp_path / "cfg")
+
+
+def test_both_launch_paths_go_through_the_shared_resolution(tmp_path: Path) -> None:
+    """The env-building rule lives in one place; neither CLI may rebuild it."""
+    import lazy_harness.cli.exec_cmd as exec_cmd
     import lazy_harness.cli.run_cmd as run_cmd
 
-    assert "overlay_profile_secrets" in Path(run_cmd.__file__).read_text(), (
-        "run_cmd must apply the overlay; a helper that is implemented but not "
-        "called passes every unit test and never runs"
-    )
+    for module in (run_cmd, exec_cmd):
+        source = Path(module.__file__).read_text()
+        assert "resolve_launch" in source, f"{module.__name__} must not resolve its own launch"
+        assert "overlay_profile_secrets" not in source, (
+            f"{module.__name__} re-applies the overlay instead of using resolve_launch"
+        )
 
 
 def test_os_environ_is_untouched_by_the_overlay(tmp_path: Path, monkeypatch) -> None:
