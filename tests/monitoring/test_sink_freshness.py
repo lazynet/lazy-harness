@@ -198,3 +198,109 @@ def test_default_db_path_resolves_via_data_dir_when_monitoring_db_unset(
     assert results[0].state == "missing"
     # And must not have created a db file as a side effect (doctor is read-only).
     assert not (tmp_path / "data" / "metrics.db").exists()
+
+
+# --- delivery health: is the drain moving what ingest enqueued? ---
+
+
+def _enqueue(db_path: Path, *, attempts: int, error: str = "HTTP 503") -> None:
+    db = MetricsDB(db_path)
+    try:
+        db.outbox_enqueue(sink_name="http_remote", event_id="e1", payload_json="{}")
+        for _ in range(attempts):
+            db.outbox_mark_failed("http_remote", "e1", error=error, retry_after_seconds=60)
+        db._conn.execute(
+            "UPDATE sink_outbox SET created_ts = ? WHERE event_id = 'e1'",
+            (NOW.timestamp() - 300,),
+        )
+        db._conn.commit()
+    finally:
+        db.close()
+
+
+def test_a_freshly_enqueued_row_the_drain_has_not_reached_yet_is_not_a_problem(
+    tmp_path: Path,
+) -> None:
+    """Ingest enqueues, then drains, in that order. Between the two there is
+    always an untried row; flagging it would fire on every healthy run."""
+    db_path = tmp_path / "m.db"
+    _enqueue(db_path, attempts=0)
+
+    result = collect_sink_freshness(db_path, "http_remote", now=NOW)
+    assert result.delivery_state == "ok"
+    assert result.undelivered == 1
+    assert result.max_attempts == 0
+
+
+def test_warn_once_the_drain_has_failed_three_times(tmp_path: Path) -> None:
+    """The drain runs on every ingest, so three attempts is roughly 45 minutes
+    of a sink that is reachable enough to try and never succeeding."""
+    db_path = tmp_path / "m.db"
+    _enqueue(db_path, attempts=3)
+
+    result = collect_sink_freshness(db_path, "http_remote", now=NOW)
+    assert result.delivery_state == "warn"
+    assert result.max_attempts == 3
+    assert result.last_error == "HTTP 503"
+
+
+def test_fail_once_the_drain_has_failed_six_times(tmp_path: Path) -> None:
+    db_path = tmp_path / "m.db"
+    _enqueue(db_path, attempts=6)
+
+    result = collect_sink_freshness(db_path, "http_remote", now=NOW)
+    assert result.delivery_state == "fail"
+
+
+def test_delivery_failure_is_reported_even_when_the_enqueue_age_is_healthy(
+    tmp_path: Path,
+) -> None:
+    """The whole point of the second signal: a dead endpoint keeps accepting
+    enqueues, so enqueue age stays green while nothing is being delivered."""
+    db_path = tmp_path / "m.db"
+    _enqueue(db_path, attempts=6)
+
+    result = collect_sink_freshness(db_path, "http_remote", now=NOW)
+    assert result.state == "ok"
+    assert result.delivery_state == "fail"
+
+
+def test_a_drained_backlog_reports_no_delivery_problem(tmp_path: Path) -> None:
+    db_path = tmp_path / "m.db"
+    db = MetricsDB(db_path)
+    try:
+        db.outbox_enqueue(sink_name="http_remote", event_id="e1", payload_json="{}")
+        db.outbox_mark_failed("http_remote", "e1", error="HTTP 502", retry_after_seconds=60)
+        db.outbox_mark_sent("http_remote", "e1")
+    finally:
+        db.close()
+
+    result = collect_sink_freshness(db_path, "http_remote", now=NOW)
+    assert result.delivery_state == "ok"
+    assert result.undelivered == 0
+
+
+def test_an_idle_machine_reports_no_delivery_problem(tmp_path: Path) -> None:
+    """Nothing enqueued means nothing to deliver. This is why attempts beats
+    age: a stale sink is ambiguous, a failing attempt is not."""
+    db_path = tmp_path / "m.db"
+    db = MetricsDB(db_path)
+    try:
+        db.outbox_enqueue(sink_name="http_remote", event_id="e1", payload_json="{}")
+        db.outbox_mark_sent("http_remote", "e1")
+        stale_ts = (NOW - timedelta(days=8)).timestamp()
+        db._conn.execute("UPDATE sink_outbox SET created_ts = ? WHERE event_id = 'e1'", (stale_ts,))
+        db._conn.commit()
+    finally:
+        db.close()
+
+    result = collect_sink_freshness(db_path, "http_remote", now=NOW)
+    assert result.state == "fail"
+    assert result.delivery_state == "ok"
+
+
+def test_missing_sink_carries_no_delivery_verdict(tmp_path: Path) -> None:
+    result = collect_sink_freshness(tmp_path / "does-not-exist.db", "http_remote", now=NOW)
+    assert result.state == "missing"
+    assert result.delivery_state == "ok"
+    assert result.undelivered == 0

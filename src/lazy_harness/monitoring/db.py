@@ -509,6 +509,41 @@ class MetricsDB:
             "next_attempt_ts": row["next_attempt_ts"],
         }
 
+    def outbox_delivery_health(self, sink_name: str) -> dict[str, Any]:
+        """How badly this sink's undelivered rows are going, by attempt count.
+
+        `status != 'sent'` rather than `status = 'pending'`: a process killed
+        mid-POST leaves its row in 'sending', and `outbox_claim` only takes it
+        back once the lease expires. Scoping to 'pending' would hide exactly
+        the crash this is meant to catch.
+
+        Attempts, not age: `outbox_mark_failed` returns a row to 'pending' with
+        a longer backoff and there is no attempt ceiling, so a permanently
+        undeliverable event ages forever. `attempts` counts what the drain
+        actually tried, which cannot be confused with a machine nobody used.
+        """
+        row = self._conn.execute(
+            """
+            SELECT
+                COUNT(*) AS undelivered,
+                COALESCE(MAX(attempts), 0) AS max_attempts,
+                COALESCE((
+                    SELECT last_error FROM sink_outbox
+                    WHERE sink_name = ? AND status != 'sent'
+                    ORDER BY attempts DESC, created_ts ASC
+                    LIMIT 1
+                ), '') AS last_error
+            FROM sink_outbox
+            WHERE sink_name = ? AND status != 'sent'
+            """,
+            (sink_name, sink_name),
+        ).fetchone()
+        return {
+            "undelivered": int(row["undelivered"] or 0),
+            "max_attempts": int(row["max_attempts"] or 0),
+            "last_error": row["last_error"] or "",
+        }
+
     def outbox_last_enqueued_ts(self, sink_name: str) -> float | None:
         """When this sink last had an event enqueued, across every status.
 

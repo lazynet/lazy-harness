@@ -237,3 +237,74 @@ def test_outbox_last_enqueued_ts_is_scoped_to_the_named_sink(tmp_path: Path) -> 
         assert db.outbox_last_enqueued_ts("other_sink") is None
     finally:
         db.close()
+
+
+def test_outbox_delivery_health_reports_untried_rows_as_zero_attempts(tmp_path: Path) -> None:
+    db = MetricsDB(tmp_path / "m.db")
+    db.outbox_enqueue(sink_name="http_remote", event_id="e1", payload_json="{}")
+
+    health = db.outbox_delivery_health("http_remote")
+
+    assert health["undelivered"] == 1
+    assert health["max_attempts"] == 0
+    assert health["last_error"] == ""
+
+
+def test_outbox_delivery_health_surfaces_the_worst_attempt_count_and_its_error(
+    tmp_path: Path,
+) -> None:
+    db = MetricsDB(tmp_path / "m.db")
+    db.outbox_enqueue(sink_name="http_remote", event_id="e1", payload_json="{}")
+    db.outbox_enqueue(sink_name="http_remote", event_id="e2", payload_json="{}")
+    db.outbox_mark_failed(
+        "http_remote", "e1", error="HTTP 502", retry_after_seconds=60
+    )
+    for _ in range(3):
+        db.outbox_mark_failed(
+            "http_remote", "e2", error="HTTP 503", retry_after_seconds=60
+        )
+
+    health = db.outbox_delivery_health("http_remote")
+
+    assert health["undelivered"] == 2
+    assert health["max_attempts"] == 3
+    assert health["last_error"] == "HTTP 503"
+
+
+def test_outbox_delivery_health_ignores_rows_already_sent(tmp_path: Path) -> None:
+    """A drained backlog is the healthy state, not a silent one."""
+    db = MetricsDB(tmp_path / "m.db")
+    db.outbox_enqueue(sink_name="http_remote", event_id="e1", payload_json="{}")
+    db.outbox_mark_failed(
+        "http_remote", "e1", error="HTTP 502", retry_after_seconds=60
+    )
+    db.outbox_mark_sent("http_remote", "e1")
+
+    health = db.outbox_delivery_health("http_remote")
+
+    assert health["undelivered"] == 0
+    assert health["max_attempts"] == 0
+    assert health["last_error"] == ""
+
+
+def test_outbox_delivery_health_counts_a_row_stuck_in_sending(tmp_path: Path) -> None:
+    """A process that died mid-POST leaves 'sending' behind; that is undelivered,
+    and outbox_claim only reclaims it once the lease expires."""
+    db = MetricsDB(tmp_path / "m.db")
+    db.outbox_enqueue(sink_name="http_remote", event_id="e1", payload_json="{}")
+    db.outbox_claim(sink_name="http_remote", batch_size=10, lease_seconds=300)
+
+    health = db.outbox_delivery_health("http_remote")
+
+    assert health["undelivered"] == 1
+
+
+def test_outbox_delivery_health_is_scoped_to_one_sink(tmp_path: Path) -> None:
+    db = MetricsDB(tmp_path / "m.db")
+    db.outbox_enqueue(sink_name="other_sink", event_id="e1", payload_json="{}")
+    db.outbox_mark_failed("other_sink", "e1", error="HTTP 500", retry_after_seconds=60)
+
+    health = db.outbox_delivery_health("http_remote")
+
+    assert health["undelivered"] == 0
+    assert health["max_attempts"] == 0

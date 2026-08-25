@@ -71,11 +71,16 @@ def _render_egress(console: Console, cfg: Config) -> bool:
 
 
 def _render_sink_freshness(console: Console, results: list[SinkFreshness]) -> bool:
-    """Report whether each active remote sink has enqueued anything recently.
+    """Report whether each active remote sink is still being fed, and whether
+    what it was fed is actually leaving the machine.
 
     Silent when there is nothing to check — no active remote sink, or
     monitoring disabled entirely — same as `_render_memory_hygiene` skipping
     when there is no project memory: an absent subsystem is not a degraded one.
+    The delivery line follows the same rule at row level. It keys off the
+    verdict, not the backlog size: between an enqueue and the drain that
+    follows it there is always an untried row, so printing on `undelivered`
+    would put a line in every healthy run.
     """
     if not results:
         return True
@@ -94,7 +99,13 @@ def _render_sink_freshness(console: Console, results: list[SinkFreshness]) -> bo
             continue
         age = r.last_enqueued_age_seconds or 0.0
         console.print(f"  {icons[r.state]} {r.name} — last enqueued {_fmt_age(age)}")
-        if r.state == "fail":
+        if r.delivery_state != "ok":
+            detail = f" ({escape(r.last_error)})" if r.last_error else ""
+            console.print(
+                f"  {icons[r.delivery_state]} {r.name} — {r.undelivered} undelivered, "
+                f"{r.max_attempts} failed attempts{detail}"
+            )
+        if r.state == "fail" or r.delivery_state == "fail":
             ok = False
     return ok
 

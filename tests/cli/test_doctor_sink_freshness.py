@@ -202,3 +202,82 @@ def test_doctor_default_smoke_no_config_at_all_still_passes(tmp_path: Path, monk
     assert result.exit_code == 0
     assert "Sink freshness" not in result.output
     assert not (tmp_path / "data" / "metrics.db").exists()
+
+
+# --- delivery health: the drain, not the ingest ---
+
+_CFG = (
+    '[harness]\nversion = "1"\n'
+    "[monitoring]\nenabled = true\n"
+    'db = "{db}"\n'
+    "[metrics]\n"
+    'sinks = ["sqlite_local", "http_remote"]\n'
+    "[metrics.sink_options.http_remote]\n"
+    'url = "https://metrics.flex.internal/ingest"\n'
+)
+
+
+def _enqueue_failing(db_path: Path, *, attempts: int, error: str = "HTTP 503") -> None:
+    """A row enqueued moments ago that the drain keeps refusing to deliver."""
+    db = MetricsDB(db_path)
+    try:
+        db.outbox_enqueue(sink_name="http_remote", event_id="e1", payload_json="{}")
+        for _ in range(attempts):
+            db.outbox_mark_failed("http_remote", "e1", error=error, retry_after_seconds=60)
+    finally:
+        db.close()
+
+
+def test_doctor_stays_silent_about_delivery_until_the_drain_actually_fails(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The row here is enqueued and untried, which is where every healthy run
+    sits between ingest and drain. A line per run would be noise."""
+    db_path = tmp_path / "m.db"
+    _enqueue_stale(db_path, "http_remote", age_seconds=300)
+    (tmp_path / "config.toml").write_text(_CFG.format(db=db_path.as_posix()))
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+
+    result = CliRunner().invoke(doctor)
+    assert "Sink freshness" in result.output
+    assert "undelivered" not in result.output
+    assert result.exit_code == 0
+
+
+def test_doctor_reports_the_backlog_and_its_last_error(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "m.db"
+    _enqueue_failing(db_path, attempts=3)
+    (tmp_path / "config.toml").write_text(_CFG.format(db=db_path.as_posix()))
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+
+    result = CliRunner().invoke(doctor)
+    assert "1 undelivered" in result.output
+    assert "3 failed attempts" in result.output
+    assert "HTTP 503" in result.output
+
+
+def test_doctor_fails_when_the_drain_has_given_up_though_ingest_looks_healthy(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The gap this closes: the row was enqueued seconds ago, so enqueue age is
+    green, and every event is still sitting on the machine."""
+    db_path = tmp_path / "m.db"
+    _enqueue_failing(db_path, attempts=6)
+    (tmp_path / "config.toml").write_text(_CFG.format(db=db_path.as_posix()))
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+
+    result = CliRunner().invoke(doctor)
+    assert "last enqueued 0s ago" in result.output
+    assert result.exit_code == 1
+
+
+def test_doctor_does_not_fail_on_a_backlog_the_drain_has_only_warned_about(
+    tmp_path: Path, monkeypatch
+) -> None:
+    db_path = tmp_path / "m.db"
+    _enqueue_failing(db_path, attempts=3)
+    (tmp_path / "config.toml").write_text(_CFG.format(db=db_path.as_posix()))
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+
+    result = CliRunner().invoke(doctor)
+    assert result.exit_code == 0
