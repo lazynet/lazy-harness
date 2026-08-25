@@ -13,6 +13,7 @@ from rich.markup import escape
 from lazy_harness.agents.launch import LaunchError, resolve_launch
 from lazy_harness.core.config import ConfigError, load_config
 from lazy_harness.core.paths import config_file, process_exec_path
+from lazy_harness.core.profiles import SOURCE_DEFAULT_FALLBACK, root_routing_is_configured
 
 
 @click.command(
@@ -58,6 +59,20 @@ def run(
     except LaunchError as e:
         console.print(f"[red]Error:[/red] {escape(str(e))}")
         raise SystemExit(1)
+
+    if plan.profile_source == SOURCE_DEFAULT_FALLBACK and root_routing_is_configured(cfg):
+        # Unconditional, and on stderr. This is the one resolution outcome that
+        # cannot announce itself later: the agent starts, runs against whatever
+        # config dir the default happens to name, and nothing looks broken.
+        # A tty check would silence exactly the scheduled callers that need it.
+        # soft_wrap keeps the path on one line: without a tty rich wraps at 80
+        # columns, and a path broken across lines cannot be grepped out of a log.
+        console.print(
+            f"[yellow]lh run:[/yellow] no configured root matches "
+            f"{escape(str(Path.cwd()))} — using default profile "
+            f"'{escape(plan.profile)}'",
+            soft_wrap=True,
+        )
 
     profile_name = plan.profile
     adapter = plan.adapter
