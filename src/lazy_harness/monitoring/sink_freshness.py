@@ -1,11 +1,20 @@
 """Health classifier for remote metrics sinks.
 
-Reads two independent signals. `sink_outbox.created_ts` for the most recent
-event a sink was handed, regardless of whether it has since been sent, says
-whether ingest is still producing. `attempts` on the rows that are not yet
-sent says whether the drain is still delivering — the failure this module's
-name promises and enqueue age cannot see, because a dead endpoint keeps
-accepting enqueues while nothing leaves the machine.
+Reads three independent signals, because each is blind to a failure the
+others catch.
+
+`sink_outbox.created_ts` for the most recent event a sink was handed,
+regardless of whether it has since been sent, says whether ingest is still
+producing. `attempts` on the rows that are not yet sent says whether the
+drain is being refused — which enqueue age cannot see, because a dead
+endpoint keeps accepting enqueues while nothing leaves the machine.
+
+Neither one sees a queue that stalls while every POST succeeds. An unchanged
+re-enqueue used to return a delivered row to 'pending', so the drain re-sent
+the head of the queue on every run and never reached anything behind it:
+enqueue age stayed minutes, `attempts` stayed 0, and six days of metrics
+never left the machine under an all-green report. The age of the oldest
+undelivered row is the third signal, and the only one that saw it.
 The CLI rendering lives in `lh doctor`; this module is pure logic — mirrors
 `engram_persist_health.py`'s split between classifier and renderer.
 
@@ -40,6 +49,18 @@ AGE_FAIL = timedelta(days=7)
 ATTEMPTS_WARN = 3
 ATTEMPTS_FAIL = 6
 
+# The second half of the delivery signal, for the stall `attempts` cannot see:
+# every POST succeeds and something puts the row back, so the drain re-sends
+# the head of the queue forever with `attempts` pinned at 0.
+#
+# Age is safe here in a way it is not for enqueue age — an idle machine has
+# nothing undelivered to age — but it must stay loose enough to let a genuine
+# backlog drain. The drain moves one batch (50) per ingest and ingest runs
+# every 15 minutes, so even a 2500-event burst clears in about 13 hours.
+# A day is therefore slack; three days is unambiguously stuck.
+UNDELIVERED_AGE_WARN = timedelta(hours=24)
+UNDELIVERED_AGE_FAIL = timedelta(days=3)
+
 
 @dataclass(frozen=True)
 class SinkFreshness:
@@ -50,20 +71,38 @@ class SinkFreshness:
     undelivered: int = 0
     max_attempts: int = 0
     last_error: str = ""
+    oldest_undelivered_age_seconds: float | None = None
 
 
 def _missing(name: str) -> SinkFreshness:
     return SinkFreshness(name=name, state="missing", last_enqueued_age_seconds=None)
 
 
-def _delivery_state(max_attempts: int) -> HealthState:
-    """Never "missing": a sink with nothing undelivered has a verdict, and it
-    is "ok". Absence of a backlog is the healthy state, not an unknown one."""
+def _delivery_state(max_attempts: int, oldest_undelivered_age: timedelta | None) -> HealthState:
+    """The worse of two independent verdicts on the same backlog.
+
+    Never "missing": a sink with nothing undelivered has a verdict, and it is
+    "ok". Absence of a backlog is the healthy state, not an unknown one.
+
+    Attempts catch a sink that is refused; age catches a sink whose queue does
+    not advance even though every POST returns 200. Taking the worse of the two
+    means neither failure mode can hide behind the other's green.
+    """
+    by_attempts: HealthState = "ok"
     if max_attempts >= ATTEMPTS_FAIL:
-        return "fail"
-    if max_attempts >= ATTEMPTS_WARN:
-        return "warn"
-    return "ok"
+        by_attempts = "fail"
+    elif max_attempts >= ATTEMPTS_WARN:
+        by_attempts = "warn"
+
+    by_age: HealthState = "ok"
+    if oldest_undelivered_age is not None:
+        if oldest_undelivered_age >= UNDELIVERED_AGE_FAIL:
+            by_age = "fail"
+        elif oldest_undelivered_age >= UNDELIVERED_AGE_WARN:
+            by_age = "warn"
+
+    ranking: dict[HealthState, int] = {"ok": 0, "warn": 1, "fail": 2, "missing": 3}
+    return by_attempts if ranking[by_attempts] >= ranking[by_age] else by_age
 
 
 def _age_state(age: timedelta) -> HealthState:
@@ -91,14 +130,19 @@ def collect_sink_freshness(db_path: Path, sink_name: str, *, now: datetime) -> S
         return _missing(sink_name)
 
     age_seconds = now.timestamp() - last_ts
+    oldest_ts = delivery["oldest_undelivered_ts"]
+    undelivered_age = None if oldest_ts is None else timedelta(seconds=now.timestamp() - oldest_ts)
     return SinkFreshness(
         name=sink_name,
         state=_age_state(timedelta(seconds=age_seconds)),
         last_enqueued_age_seconds=age_seconds,
-        delivery_state=_delivery_state(delivery["max_attempts"]),
+        delivery_state=_delivery_state(delivery["max_attempts"], undelivered_age),
         undelivered=delivery["undelivered"],
         max_attempts=delivery["max_attempts"],
         last_error=delivery["last_error"],
+        oldest_undelivered_age_seconds=(
+            None if undelivered_age is None else undelivered_age.total_seconds()
+        ),
     )
 
 

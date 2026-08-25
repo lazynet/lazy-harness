@@ -336,6 +336,7 @@ class MetricsDB:
                 next_attempt_ts = NULL,
                 lease_until = NULL,
                 last_error = ''
+            WHERE sink_outbox.payload_json <> excluded.payload_json
             """,
             (sink_name, event_id, payload_json, now),
         )
@@ -517,16 +518,24 @@ class MetricsDB:
         back once the lease expires. Scoping to 'pending' would hide exactly
         the crash this is meant to catch.
 
-        Attempts, not age: `outbox_mark_failed` returns a row to 'pending' with
-        a longer backoff and there is no attempt ceiling, so a permanently
-        undeliverable event ages forever. `attempts` counts what the drain
-        actually tried, which cannot be confused with a machine nobody used.
+        Attempts and age, because neither alone is sufficient. `attempts`
+        counts what the drain actually tried, which cannot be confused with a
+        machine nobody used — but it is blind to a queue that stalls while
+        every POST succeeds. An unchanged re-enqueue used to resurrect a
+        delivered row, so the drain re-sent the same oldest batch forever with
+        `attempts` pinned at 0 and a backlog six days deep.
+
+        `oldest_undelivered_ts` catches that. It is safe against the machine
+        nobody used, which is why age was rejected here before: an idle machine
+        has nothing undelivered to age. Callers cross it with enqueue freshness
+        to tell a stalled queue from a cold one.
         """
         row = self._conn.execute(
             """
             SELECT
                 COUNT(*) AS undelivered,
                 COALESCE(MAX(attempts), 0) AS max_attempts,
+                MIN(created_ts) AS oldest_undelivered_ts,
                 COALESCE((
                     SELECT last_error FROM sink_outbox
                     WHERE sink_name = ? AND status != 'sent'
@@ -541,6 +550,7 @@ class MetricsDB:
         return {
             "undelivered": int(row["undelivered"] or 0),
             "max_attempts": int(row["max_attempts"] or 0),
+            "oldest_undelivered_ts": row["oldest_undelivered_ts"],
             "last_error": row["last_error"] or "",
         }
 

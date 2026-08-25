@@ -1,6 +1,7 @@
 """Sending the same (profile, session, model) tuple twice produces a single
 backend row because event_id is deterministic and the backend upserts."""
 
+from dataclasses import replace
 from pathlib import Path
 
 from pytest_httpserver import HTTPServer
@@ -60,7 +61,9 @@ def test_backend_receives_same_event_id_across_rewrites(
         drain_http_remote(
             db=db, url=httpserver.url_for("/ingest"), timeout_seconds=2, batch_size=10
         )
-        sink.write(event)  # rewrite — same tuple
+        # A real rewrite: same tuple, later totals. Re-writing the identical
+        # payload is not a resend — that was the outbox treadmill.
+        sink.write(replace(event, output_tokens=9))
         drain_http_remote(
             db=db, url=httpserver.url_for("/ingest"), timeout_seconds=2, batch_size=10
         )

@@ -228,6 +228,46 @@ def _enqueue_failing(db_path: Path, *, attempts: int, error: str = "HTTP 503") -
         db.close()
 
 
+def _enqueue_stalled(db_path: Path, *, oldest_age_seconds: float) -> None:
+    """A queue whose head never clears, with nothing having ever failed.
+
+    Ingest keeps enqueuing and every POST succeeds, so both of the older
+    signals — enqueue age and failed attempts — stay green.
+    """
+    db = MetricsDB(db_path)
+    try:
+        db.outbox_enqueue(sink_name="http_remote", event_id="old", payload_json="{}")
+        db.outbox_enqueue(sink_name="http_remote", event_id="fresh", payload_json="{}")
+        db._conn.execute(
+            "UPDATE sink_outbox SET created_ts = ? WHERE event_id = 'old'",
+            (time.time() - oldest_age_seconds,),
+        )
+        db._conn.commit()
+    finally:
+        db.close()
+
+
+def test_doctor_fails_on_a_stalled_queue_even_though_nothing_ever_failed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The blind spot that let six days of metrics go missing under all-green.
+
+    Enqueue age was minutes and failed attempts were zero, so `lh doctor`
+    printed nothing at all while the head of the outbox had been undelivered
+    since the previous week. Reporting the count without the age would still
+    be useless here: "0 failed attempts" names no problem.
+    """
+    db_path = tmp_path / "m.db"
+    _enqueue_stalled(db_path, oldest_age_seconds=6 * 86400)
+    (tmp_path / "config.toml").write_text(_CFG.format(db=db_path.as_posix()))
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+
+    result = CliRunner().invoke(doctor)
+    assert "2 undelivered" in result.output
+    assert "oldest 6d ago" in result.output
+    assert result.exit_code == 1
+
+
 def test_doctor_stays_silent_about_delivery_until_the_drain_actually_fails(
     tmp_path: Path, monkeypatch
 ) -> None:
