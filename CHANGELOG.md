@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.48.0](https://github.com/lazynet/lazy-harness/compare/v0.47.1...v0.48.0) (2026-08-25)
+
+
+### Features
+
+* headless invocation seam and lh exec ([#209](https://github.com/lazynet/lazy-harness/issues/209)) ([b280e9e](https://github.com/lazynet/lazy-harness/commit/b280e9eff16068c883a927bb48d877aa3875e496))
+
 ## [0.47.1](https://github.com/lazynet/lazy-harness/compare/v0.47.0...v0.47.1) (2026-08-25)
 
 
