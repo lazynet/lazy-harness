@@ -204,6 +204,55 @@ def test_outbox_dedupe_by_event_id_on_enqueue(tmp_path: Path) -> None:
         db.close()
 
 
+def test_outbox_enqueue_leaves_a_delivered_row_alone_when_the_payload_is_unchanged(
+    tmp_path: Path,
+) -> None:
+    """An unchanged re-enqueue must not undo delivery.
+
+    `ingest` re-emits an event for every (session, model) it can still read on
+    every run, so a finished session is re-enqueued with a byte-identical
+    payload forever. Flipping those rows back to 'pending' put the outbox on a
+    treadmill: `outbox_claim` orders by `created_ts`, so the drain re-sent the
+    same oldest batch every run and never reached anything newer.
+    """
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.outbox_enqueue(sink_name="http_remote", event_id="e1", payload_json='{"v":1}')
+        db.outbox_mark_sent("http_remote", "e1")
+
+        db.outbox_enqueue(sink_name="http_remote", event_id="e1", payload_json='{"v":1}')
+
+        stats = db.outbox_stats("http_remote")
+        assert stats["sent"] == 1
+        assert stats["pending"] == 0
+    finally:
+        db.close()
+
+
+def test_outbox_enqueue_requeues_a_delivered_row_when_the_payload_changed(
+    tmp_path: Path,
+) -> None:
+    """A live session's totals grow, and the newer numbers must still be sent.
+
+    Guards the shape of the unchanged-payload fix above: suppressing every
+    conflict (`DO NOTHING`) would also pass that test while permanently
+    freezing a session at whatever totals it happened to have when it was
+    first delivered.
+    """
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.outbox_enqueue(sink_name="http_remote", event_id="e1", payload_json='{"v":1}')
+        db.outbox_mark_sent("http_remote", "e1")
+
+        db.outbox_enqueue(sink_name="http_remote", event_id="e1", payload_json='{"v":2}')
+
+        rows = db.outbox_list_pending(sink_name="http_remote")
+        assert len(rows) == 1
+        assert json.loads(rows[0].payload_json)["v"] == 2
+    finally:
+        db.close()
+
+
 def test_outbox_last_enqueued_ts_is_none_for_a_sink_with_no_rows(tmp_path: Path) -> None:
     db = MetricsDB(tmp_path / "m.db")
     try:
@@ -269,6 +318,44 @@ def test_outbox_delivery_health_surfaces_the_worst_attempt_count_and_its_error(
     assert health["undelivered"] == 2
     assert health["max_attempts"] == 3
     assert health["last_error"] == "HTTP 503"
+
+
+def test_outbox_delivery_health_reports_the_oldest_undelivered_timestamp(
+    tmp_path: Path,
+) -> None:
+    """Attempts alone cannot see a queue that stalls while every POST succeeds.
+
+    The treadmill delivered a batch, had it resurrected, and re-delivered it —
+    `attempts` stayed 0 the whole time, so a health check reading only
+    `MAX(attempts)` reported perfect health over a six-day-old backlog. Age of
+    the oldest undelivered row is the signal that survives that.
+    """
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.outbox_enqueue(sink_name="http_remote", event_id="old", payload_json="{}")
+        db._conn.execute("UPDATE sink_outbox SET created_ts = ? WHERE event_id = 'old'", (1000.0,))
+        db.outbox_enqueue(sink_name="http_remote", event_id="new", payload_json="{}")
+        db._conn.execute("UPDATE sink_outbox SET created_ts = ? WHERE event_id = 'new'", (5000.0,))
+
+        health = db.outbox_delivery_health("http_remote")
+
+        assert health["max_attempts"] == 0
+        assert health["oldest_undelivered_ts"] == 1000.0
+    finally:
+        db.close()
+
+
+def test_outbox_delivery_health_has_no_oldest_undelivered_when_all_sent(
+    tmp_path: Path,
+) -> None:
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.outbox_enqueue(sink_name="http_remote", event_id="e1", payload_json="{}")
+        db.outbox_mark_sent("http_remote", "e1")
+
+        assert db.outbox_delivery_health("http_remote")["oldest_undelivered_ts"] is None
+    finally:
+        db.close()
 
 
 def test_outbox_delivery_health_ignores_rows_already_sent(tmp_path: Path) -> None:

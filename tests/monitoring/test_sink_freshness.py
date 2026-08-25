@@ -265,6 +265,60 @@ def test_delivery_failure_is_reported_even_when_the_enqueue_age_is_healthy(
     assert result.delivery_state == "fail"
 
 
+def _enqueue_aged(db_path: Path, *, oldest_age: timedelta) -> None:
+    """One ancient undelivered row plus a fresh one, no failed attempts.
+
+    The treadmill's exact shape: ingest keeps enqueuing (so enqueue age is
+    green) and every POST succeeds (so attempts stay 0) while the head of the
+    queue never clears.
+    """
+    db = MetricsDB(db_path)
+    try:
+        db.outbox_enqueue(sink_name="http_remote", event_id="old", payload_json="{}")
+        db.outbox_enqueue(sink_name="http_remote", event_id="fresh", payload_json="{}")
+        db._conn.execute(
+            "UPDATE sink_outbox SET created_ts = ? WHERE event_id = 'old'",
+            (NOW.timestamp() - oldest_age.total_seconds(),),
+        )
+        db._conn.execute(
+            "UPDATE sink_outbox SET created_ts = ? WHERE event_id = 'fresh'",
+            (NOW.timestamp() - 300,),
+        )
+        db._conn.commit()
+    finally:
+        db.close()
+
+
+def test_warn_when_the_head_of_the_queue_has_gone_undelivered_for_a_day(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "m.db"
+    _enqueue_aged(db_path, oldest_age=timedelta(hours=25))
+
+    result = collect_sink_freshness(db_path, "http_remote", now=NOW)
+    assert result.delivery_state == "warn"
+    assert result.max_attempts == 0
+
+
+def test_fail_when_the_head_of_the_queue_has_gone_undelivered_for_three_days(
+    tmp_path: Path,
+) -> None:
+    """The failure `max_attempts` could not see.
+
+    Six days of token metrics never reached Grafana while `lh doctor` reported
+    every check green: the drain delivered a batch, an unchanged re-enqueue
+    resurrected it, and it was re-delivered forever with `attempts` at 0.
+    Enqueue age was green too, because ingest never stopped producing.
+    """
+    db_path = tmp_path / "m.db"
+    _enqueue_aged(db_path, oldest_age=timedelta(days=6))
+
+    result = collect_sink_freshness(db_path, "http_remote", now=NOW)
+    assert result.state == "ok"
+    assert result.max_attempts == 0
+    assert result.delivery_state == "fail"
+
+
 def test_a_drained_backlog_reports_no_delivery_problem(tmp_path: Path) -> None:
     db_path = tmp_path / "m.db"
     db = MetricsDB(db_path)

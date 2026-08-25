@@ -101,9 +101,17 @@ def _render_sink_freshness(console: Console, results: list[SinkFreshness]) -> bo
         console.print(f"  {icons[r.state]} {r.name} — last enqueued {_fmt_age(age)}")
         if r.delivery_state != "ok":
             detail = f" ({escape(r.last_error)})" if r.last_error else ""
+            # Age before attempts: when a queue stalls while every POST
+            # succeeds, "0 failed attempts" is the whole line and it names no
+            # problem. The age of the head of the queue is what says "stuck".
+            oldest = (
+                f"oldest {_fmt_age(r.oldest_undelivered_age_seconds)}, "
+                if r.oldest_undelivered_age_seconds is not None
+                else ""
+            )
             console.print(
                 f"  {icons[r.delivery_state]} {r.name} — {r.undelivered} undelivered, "
-                f"{r.max_attempts} failed attempts{detail}"
+                f"{oldest}{r.max_attempts} failed attempts{detail}"
             )
         if r.state == "fail" or r.delivery_state == "fail":
             ok = False

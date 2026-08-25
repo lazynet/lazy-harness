@@ -9,7 +9,7 @@ from lazy_harness.monitoring.sinks.worker import drain_http_remote
 from lazy_harness.plugins.contracts import METRIC_EVENT_SCHEMA_VERSION, MetricEvent
 
 
-def _event(session: str) -> MetricEvent:
+def _event(session: str, output_tokens: int = 50) -> MetricEvent:
     return MetricEvent(
         event_id=f"eid-{session}",
         schema_version=METRIC_EVENT_SCHEMA_VERSION,
@@ -21,7 +21,7 @@ def _event(session: str) -> MetricEvent:
         project="lazy-harness",
         date="2026-04-14",
         input_tokens=100,
-        output_tokens=50,
+        output_tokens=output_tokens,
         cache_read=0,
         cache_create=0,
         cost=0.001,
@@ -91,7 +91,7 @@ def test_drain_when_backend_unreachable_does_not_raise(tmp_path: Path) -> None:
         db.close()
 
 
-def test_drain_twice_is_idempotent_against_backend(
+def test_a_rewritten_event_is_resent_under_the_same_event_id(
     tmp_path: Path, httpserver: HTTPServer
 ) -> None:
     received: list[dict] = []
@@ -113,7 +113,10 @@ def test_drain_twice_is_idempotent_against_backend(
         drain_http_remote(
             db=db, url=httpserver.url_for("/ingest"), timeout_seconds=2, batch_size=10
         )
-        sink.write(_event("s1"))
+        # A live session's totals grow, so the rewrite carries new numbers under
+        # the same event_id. Re-writing byte-identical totals is deliberately
+        # not a resend — see test_drain_does_not_resend_an_unchanged_event.
+        sink.write(_event("s1", output_tokens=80))
         drain_http_remote(
             db=db, url=httpserver.url_for("/ingest"), timeout_seconds=2, batch_size=10
         )
@@ -122,3 +125,43 @@ def test_drain_twice_is_idempotent_against_backend(
 
     assert len(received) == 2
     assert received[0]["event_id"] == received[1]["event_id"]
+    assert [r["output_tokens"] for r in received] == [50, 80]
+
+
+def test_drain_does_not_resend_an_unchanged_event(
+    tmp_path: Path, httpserver: HTTPServer
+) -> None:
+    """The treadmill, at the level that actually POSTs.
+
+    `ingest` re-emits every session it can still read on every run. When an
+    unchanged re-emission returned its row to 'pending', the drain re-sent the
+    oldest batch forever and never reached anything newer.
+    """
+    received: list[dict] = []
+
+    def _handler(req):  # type: ignore[no-untyped-def]
+        received.append(json.loads(req.get_data(as_text=True)))
+        from werkzeug.wrappers import Response
+
+        return Response('{"ok":true}', 200, content_type="application/json")
+
+    httpserver.expect_request("/ingest", method="POST").respond_with_handler(_handler)
+
+    db = MetricsDB(tmp_path / "m.db")
+    sink = HttpRemoteSink(
+        db=db, url=httpserver.url_for("/ingest"), timeout_seconds=2, batch_size=10
+    )
+    try:
+        sink.write(_event("s1"))
+        drain_http_remote(
+            db=db, url=httpserver.url_for("/ingest"), timeout_seconds=2, batch_size=10
+        )
+        sink.write(_event("s1"))
+        result = drain_http_remote(
+            db=db, url=httpserver.url_for("/ingest"), timeout_seconds=2, batch_size=10
+        )
+    finally:
+        db.close()
+
+    assert len(received) == 1
+    assert result.sent == 0
