@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.47.0](https://github.com/lazynet/lazy-harness/compare/v0.46.0...v0.47.0) (2026-08-25)
+
+
+### Features
+
+* report sink delivery health in lh doctor ([#207](https://github.com/lazynet/lazy-harness/issues/207)) ([5b4e339](https://github.com/lazynet/lazy-harness/commit/5b4e33951383930b32f73a5ee354fe7691ee8738))
+
 ## [0.46.0](https://github.com/lazynet/lazy-harness/compare/v0.45.1...v0.46.0) (2026-08-24)
 
 
