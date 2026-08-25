@@ -50,6 +50,83 @@ lh config knowledge --init
 lh config migrate-knowledge --root ~/repos/lazy-knowledge
 ```
 
+## `lh exec`
+
+Runs the agent non-interactively and writes one normalised JSON envelope to stdout. Where `lh run` execs the agent and disappears, `lh exec` stays alive to translate the agent's own output format into a provider-neutral result — so a caller can change agents without changing its invocation or its parsing.
+
+The prompt is read from **stdin**, never from argv: argv is bounded by `ARG_MAX` (1 MiB on macOS) and a long prompt is not. Arguments after `--` are forwarded to the agent verbatim; unknown arguments *before* `--` are rejected rather than silently forwarded.
+
+The agent's stderr passes through untouched. Nothing but the envelope is ever written to stdout, including on failure.
+
+```bash
+echo "summarise this repo" | lh exec --tier fast --no-tools
+echo "$PROMPT" | lh exec --profile work --allow-tools Read,Grep --timeout 300
+lh exec --dry-run --tier deep          # plan only, no agent spawned, no stdin read
+echo hi | lh exec -- --resume abc123   # everything after `--` goes to the agent
+```
+
+### Selecting a model
+
+`--tier fast|balanced|deep` is the provider-neutral vocabulary; each adapter maps it to a concrete model (Claude Code: `haiku`, `sonnet`, `opus`). `--model <id>` passes an id straight through and is not validated. The two are mutually exclusive, and with neither the provider picks its own default.
+
+### Tool policy
+
+Three states, deliberately distinct:
+
+| Flags | Meaning |
+| --- | --- |
+| *(neither)* | Leave the agent's own tool policy alone |
+| `--no-tools` | Deny every tool the agent can be told to deny — pins the call to one turn |
+| `--allow-tools Read,Grep` | Grant exactly these |
+
+`--allow-tools ""` is refused: passing an empty allow-list to Claude Code is a no-op that silently leaves the default read tools enabled, so the ambiguity is rejected instead of inherited.
+
+### Envelope
+
+```json
+{
+  "schema": "lh.exec/v1",
+  "dry_run": false,
+  "success": true,
+  "exit_code": 0,
+  "output": "…the agent's reply…",
+  "cost_usd": 0.0619,
+  "duration_ms": 2100,
+  "prompt_tokens": 30885,
+  "output_tokens": 42,
+  "cache_creation_tokens": 30876,
+  "cache_read_tokens": 0,
+  "num_turns": 1,
+  "error": null,
+  "harness": {
+    "profile": "work",
+    "profile_source": "root-match",
+    "agent": "claude-code",
+    "binary": "/…/claude",
+    "config_dir": "/…/.claude-work",
+    "lh_version": "0.47.0",
+    "argv": ["/…/claude", "-p", "--output-format", "json"]
+  },
+  "raw": { "…": "the provider's own envelope, verbatim" }
+}
+```
+
+Every numeric field is `null` when the provider did not report it — never `0`. A provider without a prompt cache reports `null` cache tokens, because "no cache exists" and "nothing was cached this call" are different facts and a `0` enters a cost report as the second one. `prompt_tokens` is the **sum** of the uncached, cache-creation and cache-read counts: Claude Code's own `input_tokens` covers only the uncached slice of the final turn and reads as single digits on a 100k-token prompt.
+
+`harness.profile_source` is `explicit` (`--profile`), `root-match` (the cwd fell under a configured root) or `default-fallback` (nothing matched, so the default profile was a guess). A caller recording which provider it was billed for should record this alongside the cost.
+
+### Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| `0` | The agent ran and succeeded |
+| *(agent's own)* | The agent ran and exited non-zero; mirrored verbatim |
+| `2` | Usage error — conflicting or unknown flags, unknown tier |
+| `70` | Harness failure before the agent ran: bad config, unknown profile, agent cannot run headless, binary not found, empty prompt |
+| `124` | The agent exceeded `--timeout` and its process group was killed |
+
+`--timeout` (default 600s, `0` disables) is owned by `lh exec`, which kills the agent's whole **process group** — killing only the direct child leaves grandchildren such as MCP servers running and billable. A caller wrapping `lh exec` in its own timeout should set that backstop above this one.
+
 ## `lh hook`
 
 Invokes a single built-in hook by name. This is what `settings.json` entries actually call — the agent runs `lh hook <name>` and the command imports the matching builtin module and calls its `main()`.
