@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.47.1](https://github.com/lazynet/lazy-harness/compare/v0.47.0...v0.47.1) (2026-08-25)
+
+
+### Bug Fixes
+
+* stop the metrics outbox from re-delivering its head forever ([#210](https://github.com/lazynet/lazy-harness/issues/210)) ([3a51fcc](https://github.com/lazynet/lazy-harness/commit/3a51fcc8e1fd8d26429e35821c4135e93732db8f))
+
 ## [0.47.0](https://github.com/lazynet/lazy-harness/compare/v0.46.0...v0.47.0) (2026-08-25)
 
 
