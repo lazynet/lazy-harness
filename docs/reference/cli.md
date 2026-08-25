@@ -348,6 +348,8 @@ Resolves the right profile for the current directory (or `--profile <name>`), se
 
 `--list` prints profiles and exits. `--dry-run` prints the resolved exec invocation without running.
 
+If no configured root matches the current directory, the default profile is used and a warning naming the directory and the profile is written to **stderr** — never stdout, which belongs to the agent once `lh run` execs it. The warning is unconditional rather than interactive-only: a scheduled caller has no terminal and is the one most likely to be launching from an unrouted directory. It is suppressed when no profile declares a root at all, since routing by directory is then not in use and the default is the configured design rather than a guess.
+
 ```bash
 lh run                    # launch agent for current cwd's profile
 lh run --profile work
