@@ -55,8 +55,39 @@ def remove_profile(cfg: Config, name: str) -> None:
     del cfg.profiles.items[name]
 
 
-def resolve_profile(cfg: Config, cwd: Path | None = None) -> str:
-    """Resolve which profile to use based on cwd. Longest matching root wins."""
+SOURCE_EXPLICIT = "explicit"
+SOURCE_ROOT_MATCH = "root-match"
+SOURCE_DEFAULT_FALLBACK = "default-fallback"
+
+PROFILE_SOURCES: tuple[str, ...] = (SOURCE_EXPLICIT, SOURCE_ROOT_MATCH, SOURCE_DEFAULT_FALLBACK)
+"""How a profile was decided. `default-fallback` means nothing matched the cwd.
+
+Callers that record which profile an invocation ran under need to distinguish a
+match from a guess: a cwd outside every configured root resolves to the default
+profile, which is correct only for as long as the default happens to be the
+right one.
+"""
+
+
+@dataclass(frozen=True)
+class ProfileResolution:
+    name: str
+    source: str
+
+
+def resolve_profile_with_source(
+    cfg: Config, cwd: Path | None = None, override: str | None = None
+) -> ProfileResolution:
+    """Resolve the profile and report how it was decided.
+
+    Longest matching root wins. An `override` short-circuits the match and is
+    validated here so every caller rejects an unknown name the same way.
+    """
+    if override is not None:
+        if override not in cfg.profiles.items:
+            raise ProfileError(f"Unknown profile '{override}'")
+        return ProfileResolution(name=override, source=SOURCE_EXPLICIT)
+
     if cwd is None:
         cwd = Path.cwd()
 
@@ -71,4 +102,21 @@ def resolve_profile(cfg: Config, cwd: Path | None = None) -> str:
                 best_match = name
                 best_len = len(root_str)
 
-    return best_match if best_match else cfg.profiles.default
+    if best_match:
+        return ProfileResolution(name=best_match, source=SOURCE_ROOT_MATCH)
+    return ProfileResolution(name=cfg.profiles.default, source=SOURCE_DEFAULT_FALLBACK)
+
+
+def resolve_profile(cfg: Config, cwd: Path | None = None) -> str:
+    """Resolve which profile to use based on cwd. Longest matching root wins."""
+    return resolve_profile_with_source(cfg, cwd).name
+
+
+def root_routing_is_configured(cfg: Config) -> bool:
+    """True when at least one profile declares a root, i.e. cwd routing is in use.
+
+    With no roots anywhere, resolving to the default profile is the configured
+    design rather than a guess, so it is not worth warning about. `lh init`
+    leaves exactly that state until the user adds roots.
+    """
+    return any(entry.roots for entry in cfg.profiles.items.values())

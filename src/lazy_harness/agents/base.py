@@ -6,6 +6,70 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+HEADLESS_TIERS: tuple[str, ...] = ("fast", "balanced", "deep")
+"""Provider-neutral capability tiers a caller may ask for.
+
+The vocabulary lives here so the CLI and every adapter agree on it; the
+mapping from a tier to a concrete model id is the adapter's business.
+"""
+
+
+@dataclass(frozen=True)
+class HeadlessResult:
+    """One headless invocation, normalised across providers.
+
+    Token fields are `None` when the provider did not report them — never 0.
+    A zero enters a cost report as a fact, and "this provider has no prompt
+    cache" is not the same fact as "this call cached nothing".
+    """
+
+    success: bool
+    output: str
+    exit_code: int
+    cost_usd: float | None = None
+    duration_ms: int | None = None
+    prompt_tokens: int | None = None
+    output_tokens: int | None = None
+    cache_creation_tokens: int | None = None
+    cache_read_tokens: int | None = None
+    num_turns: int | None = None
+    raw: dict | None = None
+
+
+@runtime_checkable
+class HeadlessAgent(Protocol):
+    """Optional capability: an agent that can be driven non-interactively.
+
+    Deliberately separate from `AgentAdapter`. An adapter that cannot be
+    invoked headlessly simply does not implement these, and `lh exec` refuses
+    it up front instead of exec'ing something whose output it cannot parse.
+    """
+
+    def resolve_model(self, *, tier: str | None, explicit: str | None) -> str | None:
+        """Resolve a model id. `explicit` wins; `None`/`None` means provider default.
+
+        Raises ValueError for a tier this provider does not map.
+        """
+        ...
+
+    def headless_argv(self, *, model: str | None, allowed_tools: list[str] | None) -> list[str]:
+        """Build the argv that follows argv[0], excluding the prompt.
+
+        The prompt travels on stdin, so argv stays bounded regardless of
+        prompt size. `allowed_tools` is tri-state: `None` leaves the
+        provider's own policy alone, `[]` denies every tool it can be told
+        to deny, and a list grants exactly those.
+        """
+        ...
+
+    def parse_headless_result(self, stdout: str, exit_code: int) -> HeadlessResult:
+        """Normalise the provider's stdout into a `HeadlessResult`.
+
+        Must not raise: unparseable output degrades to `output=stdout`,
+        `raw=None`, and metadata left `None`.
+        """
+        ...
+
 
 @dataclass(frozen=True)
 class HookEntry:
