@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.48.1](https://github.com/lazynet/lazy-harness/compare/v0.48.0...v0.48.1) (2026-08-26)
+
+
+### Bug Fixes
+
+* fold worktrees into their main repo in metrics project names ([#214](https://github.com/lazynet/lazy-harness/issues/214)) ([33ea00b](https://github.com/lazynet/lazy-harness/commit/33ea00b3855b2827eb9649c6b53cce323da37a16))
+
 ## [0.48.0](https://github.com/lazynet/lazy-harness/compare/v0.47.1...v0.48.0) (2026-08-25)
 
 
