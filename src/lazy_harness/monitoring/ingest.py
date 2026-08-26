@@ -1,8 +1,8 @@
 """Metrics ingest pipeline.
 
 Walks each profile's `<config_dir>/projects/` tree recursively, parses token
-usage from every session JSONL (including nested subagent files), and
-REBUILDS the per-profile `session_stats` rows from scratch on every run.
+usage from every session JSONL (including nested subagent files), and upserts
+one `session_stats` row per `(session, model)` on every run.
 
 Two precision properties the pipeline guarantees:
 
@@ -12,9 +12,19 @@ Two precision properties the pipeline guarantees:
    `message.id`; we attribute it to the oldest file (by mtime) that mentions
    it and ignore every subsequent occurrence.
 
-2. **Atomic rebuild per profile** — the profile's rows are deleted and
-   re-inserted inside a single SQLite transaction. Partial failures leave
-   the previous state untouched.
+2. **Overwrite, never accumulate** — `upsert_stats` writes each row with
+   `ON CONFLICT(session, model) DO UPDATE`, so re-reading a transcript that
+   grew since the last run stores the new total rather than adding to the
+   old one.
+
+What this is NOT is a rebuild. Nothing here deletes, and a run is not one
+transaction: a session absent from this walk keeps its last-written row.
+That is deliberate — Claude Code prunes transcripts on `cleanupPeriodDays`
+and cost history must not shrink to a rolling window with them
+(`test_ingest_preserves_sessions_after_transcript_pruned`). The cost is that
+`session_stats` outgrows what is on disk, and that a row whose transcript is
+gone can never be re-derived, so it can never reach a sink that was
+configured after it was last written.
 """
 
 from __future__ import annotations
