@@ -8,6 +8,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+from lazy_harness.core.project_identity import main_repo_root
+
 _KNOWN_CONTAINERS = frozenset(
     {"repos", "projects", "src", "work", "dev", "code", "workspace", "workspaces"}
 )
@@ -30,6 +32,21 @@ def extract_session_date(filepath: Path) -> str:
     return "unknown"
 
 
+def _repo_name(resolved: Path) -> str:
+    """The name the project should be reported under for a real path.
+
+    A linked worktree is a checkout of a repository, not a project of its
+    own: reporting it by its own basename splits one repository across as
+    many rows as it has branches, and understates the cost of every one of
+    them. `main_repo_root` is the same rule memory keys on, so the two
+    subsystems agree about what a project is.
+    """
+    root = main_repo_root(resolved)
+    if root is not None and root.name:
+        return root.name
+    return resolved.name
+
+
 def extract_project_name(encoded_dir: str) -> str:
     if not encoded_dir.startswith("-"):
         return encoded_dir
@@ -40,20 +57,29 @@ def extract_project_name(encoded_dir: str) -> str:
 
     def try_build(index: int, current_path: str) -> str | None:
         if index == len(parts):
-            return current_path if os.path.exists(current_path) else None
+            return current_path
         combined = parts[index]
         for j in range(index, len(parts)):
             if j > index:
                 combined += "-" + parts[j]
-            candidate = os.path.join(current_path, combined)
-            result = try_build(j + 1, candidate)
-            if result:
-                return result
+            # Both spellings, because the encoding maps `.` to `-` alongside
+            # `/`: `.worktrees` and `worktrees` arrive here identical and only
+            # the filesystem can say which one was on disk.
+            for name in (combined, f".{combined}"):
+                candidate = os.path.join(current_path, name)
+                # Descend only into directories that exist. Checking at the
+                # leaf alone searched every partition of `parts` blindly,
+                # which the second spelling would have squared.
+                if not os.path.isdir(candidate):
+                    continue
+                result = try_build(j + 1, candidate)
+                if result:
+                    return result
         return None
 
     resolved = try_build(0, "/")
     if resolved:
-        return os.path.basename(resolved)
+        return _repo_name(Path(resolved))
 
     # Fallback: look for a known container directory (repos, projects, etc.)
     # and return everything after it as the project name.
