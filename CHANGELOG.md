@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.49.0](https://github.com/lazynet/lazy-harness/compare/v0.48.1...v0.49.0) (2026-08-30)
+
+
+### Features
+
+* read systemd schedules in a declared timezone ([#216](https://github.com/lazynet/lazy-harness/issues/216)) ([d627ec7](https://github.com/lazynet/lazy-harness/commit/d627ec7ba3b56a487d5e757b7a5e293caace1f95))
+
 ## [0.48.1](https://github.com/lazynet/lazy-harness/compare/v0.48.0...v0.48.1) (2026-08-26)
 
 
