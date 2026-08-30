@@ -243,7 +243,7 @@ def _systemd_num(field: str, fname: str) -> str:
     return ",".join(rendered)
 
 
-def render_systemd(s: Schedule) -> str:
+def render_systemd(s: Schedule, timezone: str | None = None) -> str:
     """Render into a systemd `OnCalendar=` expression.
 
     systemd's calendar syntax covers ranges, lists and month restrictions, so
@@ -276,7 +276,8 @@ def render_systemd(s: Schedule) -> str:
         f"{_systemd_num(s.hour, 'hour')}:{_systemd_num(s.minute, 'minute')}:00"
     )
     calendar = f"{date} {time_part}"
-    return f"{dow} {calendar}" if dow else calendar
+    expr = f"{dow} {calendar}" if dow else calendar
+    return f"{expr} {timezone}" if timezone else expr
 
 
 def render_cron(s: Schedule) -> str:

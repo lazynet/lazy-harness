@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 
 
@@ -271,3 +272,40 @@ def test_format_schedule_reports_an_hourly_entry_as_hourly(tmp_path) -> None:
     p = tmp_path / "x.plist"
     _write_plist(p, {"StartCalendarInterval": {"Minute": 0}})
     assert format_schedule(p) == "hourly :00"
+
+
+def test_install_accepts_a_timezone_matching_the_machine(tmp_path: Path) -> None:
+    """The shared config declares one zone; on the Mac it is already local."""
+    from lazy_harness.scheduler.base import SchedulerJob
+    from lazy_harness.scheduler.launchd import LaunchdBackend
+
+    backend = LaunchdBackend(
+        agents_dir=tmp_path, runner=lambda a: None, timezone="America/Argentina/Buenos_Aires"
+    )
+    backend._local_utcoffset = lambda: timedelta(hours=-3)  # type: ignore[method-assign]
+    backend.install([SchedulerJob(name="brief", schedule="0 8 * * 1", command="/usr/bin/true")])
+
+    assert (tmp_path / "com.lazy-harness.brief.plist").is_file()
+
+
+def test_install_refuses_a_timezone_the_machine_does_not_use(tmp_path: Path) -> None:
+    """launchd reads `StartCalendarInterval` in local time and cannot be told otherwise.
+
+    Accepting the key and ignoring it would install a job at the right hour of
+    the wrong zone, reported as loaded and correct by every status view.
+    """
+    import pytest
+
+    from lazy_harness.scheduler.base import SchedulerJob
+    from lazy_harness.scheduler.launchd import LaunchdBackend
+    from lazy_harness.scheduler.schedule import ScheduleTranslationError
+
+    backend = LaunchdBackend(
+        agents_dir=tmp_path, runner=lambda a: None, timezone="America/Argentina/Buenos_Aires"
+    )
+    backend._local_utcoffset = lambda: timedelta(hours=0)  # type: ignore[method-assign]
+
+    with pytest.raises(ScheduleTranslationError, match="America/Argentina/Buenos_Aires"):
+        backend.install([SchedulerJob(name="brief", schedule="0 8 * * 1", command="/usr/bin/true")])
+
+    assert not list(tmp_path.glob("*.plist"))

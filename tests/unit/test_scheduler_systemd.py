@@ -313,3 +313,33 @@ def test_service_yields_cpu_to_interactive_work(tmp_path: Path) -> None:
 
     assert "Nice=10" in text
     assert "CPUWeight=20" in text
+
+
+def test_install_writes_the_configured_timezone_into_the_timer(tmp_path: Path) -> None:
+    """The unit carries the zone, so the CT's own `Etc/UTC` cannot reinterpret it."""
+    from lazy_harness.scheduler.systemd import SystemdBackend
+
+    backend = SystemdBackend(
+        unit_dir=tmp_path,
+        runner=_runner(lambda a: "Linger=yes"),
+        timezone="America/Argentina/Buenos_Aires",
+    )
+    backend._which = lambda name: f"/usr/bin/{name}"  # type: ignore[method-assign]
+    backend.install(
+        [SchedulerJob(name="weekly-review", schedule="0 8 * * 1", command="lazy-vault weekly")]
+    )
+
+    timer = (tmp_path / "lazy-harness-weekly-review.timer").read_text()
+    assert "OnCalendar=Mon *-*-* 08:00:00 America/Argentina/Buenos_Aires" in timer
+
+
+def test_install_without_a_timezone_leaves_the_expression_bare(tmp_path: Path) -> None:
+    """Every unit installed before this existed must still compare as current."""
+    from lazy_harness.scheduler.systemd import SystemdBackend
+
+    backend = SystemdBackend(unit_dir=tmp_path, runner=_runner(lambda a: "Linger=yes"))
+    backend._which = lambda name: f"/usr/bin/{name}"  # type: ignore[method-assign]
+    backend.install([SchedulerJob(name="qmd-sync", schedule="0 */6 * * *", command="qmd sync")])
+
+    timer = (tmp_path / "lazy-harness-qmd-sync.timer").read_text()
+    assert "OnCalendar=*-*-* 0/6:00:00\n" in timer

@@ -1116,3 +1116,75 @@ def test_knowledge_embed_timeout_survives_a_save(tmp_path: Path) -> None:
 
     raw = tomllib.loads(cfg_path.read_text())
     assert raw["knowledge"]["embed"]["timeout"] == 3600
+
+
+def test_load_config_scheduler_timezone(config_dir: Path) -> None:
+    """Declared once for the whole scheduler, not per job."""
+    config_file = config_dir / "config.toml"
+    config_file.write_text("""
+[harness]
+version = "1"
+
+[scheduler]
+backend = "systemd"
+timezone = "America/Argentina/Buenos_Aires"
+
+[scheduler.jobs.weekly-review]
+schedule = "0 8 * * 1"
+command = "/usr/local/bin/lazy-vault weekly-review"
+""")
+    from lazy_harness.core.config import load_config
+
+    cfg = load_config(config_file)
+    assert cfg.scheduler.timezone == "America/Argentina/Buenos_Aires"
+
+
+def test_load_config_scheduler_timezone_defaults_to_none(config_dir: Path) -> None:
+    """Absent means "the machine's zone", which is what every existing unit assumes."""
+    config_file = config_dir / "config.toml"
+    config_file.write_text("""
+[harness]
+version = "1"
+
+[scheduler]
+backend = "systemd"
+""")
+    from lazy_harness.core.config import load_config
+
+    assert load_config(config_file).scheduler.timezone is None
+
+
+def test_save_config_round_trips_the_scheduler_timezone(config_dir: Path) -> None:
+    """A key `save_config` drops reverts silently on the next load."""
+    from lazy_harness.core.config import load_config, save_config
+
+    config_file = config_dir / "config.toml"
+    config_file.write_text("""
+[harness]
+version = "1"
+""")
+    cfg = load_config(config_file)
+    cfg.scheduler.timezone = "America/Argentina/Buenos_Aires"
+    save_config(cfg, config_file)
+
+    reloaded = load_config(config_file)
+    assert reloaded.scheduler.timezone == "America/Argentina/Buenos_Aires"
+
+    save_config(reloaded, config_file)
+    assert load_config(config_file).scheduler.timezone == "America/Argentina/Buenos_Aires"
+
+
+def test_save_config_omits_an_unset_scheduler_timezone(config_dir: Path) -> None:
+    """`timezone = None` is not TOML; emitting it would break the next load."""
+    from lazy_harness.core.config import load_config, save_config
+
+    config_file = config_dir / "config.toml"
+    config_file.write_text("""
+[harness]
+version = "1"
+""")
+    cfg = load_config(config_file)
+    save_config(cfg, config_file)
+
+    assert "timezone" not in config_file.read_text()
+    assert load_config(config_file).scheduler.timezone is None

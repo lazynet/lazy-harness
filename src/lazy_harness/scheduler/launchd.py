@@ -5,7 +5,9 @@ from __future__ import annotations
 import plistlib
 import subprocess
 from collections.abc import Callable
+from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from lazy_harness.scheduler.base import DriftState, JobDrift, JobRecord, JobState, SchedulerJob
 from lazy_harness.scheduler.paths import resolved_path
@@ -94,10 +96,45 @@ class LaunchdBackend:
         *,
         agents_dir: Path | None = None,
         runner: Callable[[list[str]], object] | None = None,
+        timezone: str | None = None,
     ) -> None:
         self._prefix = label_prefix
         self._agents_dir = agents_dir or Path.home() / "Library" / "LaunchAgents"
         self._runner = runner or _default_runner
+        self._timezone = timezone
+
+    @staticmethod
+    def _local_utcoffset() -> timedelta:
+        """This machine's current offset from UTC."""
+        return datetime.now().astimezone().utcoffset() or timedelta(0)
+
+    def _check_timezone(self) -> None:
+        """Refuse a declared zone this machine does not currently observe.
+
+        launchd reads `StartCalendarInterval` in local time and has no key to
+        override it, so a zone it does not share cannot be expressed — only
+        approximated, which is what `schedule.py` exists to refuse.
+
+        Offsets are compared, not names: the config names an IANA zone and the
+        OS reports an abbreviation. Comparing at install time means a zone that
+        agrees today and diverges under DST passes here; the shared config this
+        guard was written for names a zone without DST, and a false accept in
+        that direction is still louder than the silent one it replaces.
+        """
+        if not self._timezone:
+            return
+        try:
+            declared = datetime.now(ZoneInfo(self._timezone)).utcoffset() or timedelta(0)
+        except (ZoneInfoNotFoundError, ValueError) as e:
+            raise ScheduleTranslationError(
+                f"[scheduler] timezone={self._timezone!r} is not a known zone"
+            ) from e
+        if declared != self._local_utcoffset():
+            raise ScheduleTranslationError(
+                f"[scheduler] timezone={self._timezone!r} is not this machine's zone, "
+                "and launchd reads its schedules in local time with no way to override it. "
+                "Declare the jobs under a backend that can express the zone, or drop the key."
+            )
 
     def label_for(self, job: SchedulerJob) -> str:
         return f"{self._prefix}.{job.name}"
@@ -130,6 +167,7 @@ class LaunchdBackend:
         could not be translated — the earlier jobs loaded, the later ones
         untouched, and nothing reported which.
         """
+        self._check_timezone()
         for job in jobs:
             try:
                 render_launchd(parse_cron(job.schedule))
