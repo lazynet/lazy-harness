@@ -281,9 +281,14 @@ End-to-end mechanics — outbox, drain, backoff, idempotency: [how the metrics i
 
 ## `[scheduler]` and `[scheduler.jobs.<name>]`
 
-| Field     | Type   | Default  | Required | Description                                                                           |
-| --------- | ------ | -------- | -------- | ------------------------------------------------------------------------------------- |
-| `backend` | string | `"auto"` | no       | Scheduler backend. `auto` picks launchd (macOS), systemd (Linux with `systemctl`), or cron. All three install jobs. |
+| Field      | Type   | Default  | Required | Description                                                                          |
+| ---------- | ------ | -------- | -------- | ------------------------------------------------------------------------------------ |
+| `backend`  | string | `"auto"` | no       | Scheduler backend. `auto` picks launchd (macOS), systemd (Linux with `systemctl`), or cron. All three install jobs. |
+| `timezone` | string | unset    | no       | IANA zone the schedules are read in, e.g. `"America/Argentina/Buenos_Aires"`. Unset means the machine's own zone. |
+
+`timezone` exists because a headless host usually runs `Etc/UTC` while the schedules are written for a human's day. Without it, a job declared `0 8 * * 1` fires at 08:00 UTC — the wrong hour anywhere else, with every status view reporting it as correct.
+
+Only the systemd backend can express it, as a suffix on `OnCalendar=`. launchd reads `StartCalendarInterval` in local time and has no key to override it, so rather than accept the field and ignore it, **it refuses to install when the declared zone is not the one the machine currently observes**. That keeps a single config shared across a Mac and a Linux host honest.
 
 Each `[scheduler.jobs.<name>]` sub-table:
 

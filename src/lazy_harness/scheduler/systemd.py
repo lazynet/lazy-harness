@@ -67,9 +67,11 @@ class SystemdBackend:
         *,
         unit_dir: Path | None = None,
         runner: Runner | None = None,
+        timezone: str | None = None,
     ) -> None:
         self._unit_dir = unit_dir or _default_unit_dir()
         self._runner = runner or _default_runner
+        self._timezone = timezone
 
     def label_for(self, job: SchedulerJob) -> str:
         return f"lazy-harness-{job.name}"
@@ -154,7 +156,7 @@ class SystemdBackend:
             f"Description=lazy-harness timer for {job.name}\n"
             "\n"
             "[Timer]\n"
-            f"OnCalendar={render_systemd(parse_cron(job.schedule))}\n"
+            f"OnCalendar={render_systemd(parse_cron(job.schedule), self._timezone)}\n"
             # A missed run fires on next boot — the closest analogue to
             # launchd's catch-up, and it matters on a machine that sleeps.
             "Persistent=true\n"
@@ -189,7 +191,7 @@ class SystemdBackend:
         # written, so a bad job leaves the existing set untouched.
         for job in jobs:
             try:
-                render_systemd(parse_cron(job.schedule))
+                render_systemd(parse_cron(job.schedule), self._timezone)
             except ScheduleTranslationError as e:
                 raise ScheduleTranslationError(f"job {job.name!r}: {e}") from e
             self._exec_start(job)

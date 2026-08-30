@@ -19,7 +19,7 @@ def check_scheduler(*, config_path: Path) -> list[CheckResult]:
         return [CheckResult(group=group, name="load", status=CheckStatus.FAILED, message=str(e))]
 
     try:
-        backend = detect_backend(cfg.scheduler.backend)
+        backend = detect_backend(cfg.scheduler.backend, timezone=cfg.scheduler.timezone)
         backend_name = type(backend).__name__
         results.append(
             CheckResult(
@@ -175,7 +175,7 @@ def check_linger(*, config_path: Path, runner: object | None = None) -> list[Che
     except (ConfigError, FileNotFoundError):
         return []
 
-    backend = detect_backend(cfg.scheduler.backend)
+    backend = detect_backend(cfg.scheduler.backend, timezone=cfg.scheduler.timezone)
     if type(backend).__name__ != "SystemdBackend":
         return []
     if not parse_jobs_from_config(cfg):

@@ -59,7 +59,9 @@ class StatusContext:
             # The views ask the backend what exists; they used to glob
             # ~/Library/LaunchAgents themselves, which made them macOS-only
             # regardless of which backend was actually active.
-            scheduler_backend=detect_backend(cfg.scheduler.backend),
+            scheduler_backend=detect_backend(
+                cfg.scheduler.backend, timezone=cfg.scheduler.timezone
+            ),
         )
 
     def logs_dir(self, profile: ProfileInfo) -> Path:
@@ -220,7 +222,6 @@ def count_errors_today(log_file: Path) -> int:
     except OSError:
         pass
     return count
-
 
 
 class LockState(StrEnum):

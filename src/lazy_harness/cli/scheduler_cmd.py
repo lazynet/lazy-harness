@@ -29,7 +29,7 @@ def scheduler_status() -> None:
     except ConfigError as e:
         console.print(f"[red]Error: {escape(str(e))}[/red]")
         raise SystemExit(1)
-    backend = detect_backend(cfg.scheduler.backend)
+    backend = detect_backend(cfg.scheduler.backend, timezone=cfg.scheduler.timezone)
     backend_name = backend.__class__.__name__.replace("Backend", "").lower()
     console.print(f"[bold]Scheduler backend:[/bold] {backend_name} ({platform.system()})")
     jobs = backend.status()
@@ -55,7 +55,7 @@ def scheduler_install() -> None:
     except ConfigError as e:
         console.print(f"[red]Error: {escape(str(e))}[/red]")
         raise SystemExit(1)
-    backend = detect_backend(cfg.scheduler.backend)
+    backend = detect_backend(cfg.scheduler.backend, timezone=cfg.scheduler.timezone)
     jobs = parse_jobs_from_config(cfg)
     if not jobs:
         console.print(escape("No jobs configured. Add jobs in config.toml under [scheduler.jobs]"))
@@ -92,7 +92,7 @@ def scheduler_uninstall() -> None:
     except ConfigError as e:
         console.print(f"[red]Error: {escape(str(e))}[/red]")
         raise SystemExit(1)
-    backend = detect_backend(cfg.scheduler.backend)
+    backend = detect_backend(cfg.scheduler.backend, timezone=cfg.scheduler.timezone)
     jobs = parse_jobs_from_config(cfg)
     removed = backend.uninstall(jobs)
     if removed:

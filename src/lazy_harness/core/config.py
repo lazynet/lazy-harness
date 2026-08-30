@@ -145,6 +145,11 @@ class SchedulerJobConfig:
 @dataclass
 class SchedulerConfig:
     backend: str = "auto"
+    # The zone `OnCalendar=` is read in. `None` means the machine's own, which
+    # is what launchd always does and what every unit written before this
+    # assumed. It is named here rather than per job because a scheduler
+    # spanning two zones is not a thing this config can express honestly.
+    timezone: str | None = None
     jobs: list[SchedulerJobConfig] = field(default_factory=list)
 
 
@@ -512,6 +517,7 @@ def load_config(path: Path) -> Config:
             jobs.append(SchedulerJobConfig(name=job_name, schedule=schedule, command=command))
     cfg.scheduler = SchedulerConfig(
         backend=scheduler_raw.get("backend", "auto"),
+        timezone=scheduler_raw.get("timezone"),
         jobs=jobs,
     )
 
@@ -626,7 +632,12 @@ def _config_to_dict(cfg: Config) -> dict[str, Any]:
             "enabled": cfg.monitoring.enabled,
         },
         "secrets": {"dir": cfg.secrets.dir},
-        "scheduler": {"backend": cfg.scheduler.backend},
+        "scheduler": {
+            "backend": cfg.scheduler.backend,
+            # Omitted when unset: TOML has no null, and emitting one would
+            # make the next load fail on a file this function wrote.
+            **({"timezone": cfg.scheduler.timezone} if cfg.scheduler.timezone else {}),
+        },
         "loops": {"inject_goal_prompt": cfg.loops.inject_goal_prompt},
         # Only the keys `load_config` reads round-trip here: emitting one it
         # ignores would write a value that silently reverts on the next load.

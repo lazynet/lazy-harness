@@ -342,3 +342,26 @@ def test_render_systemd_step_starts_at_the_field_lower_bound() -> None:
     assert render_systemd(parse_cron("0 9 * */3 *")) == "*-01/3-* 09:00:00"
     # Hour and minute do start at 0.
     assert render_systemd(parse_cron("0 */6 * * *")) == "*-*-* 0/6:00:00"
+
+
+def test_render_systemd_appends_the_timezone_when_one_is_given() -> None:
+    """Without it, `OnCalendar=` is read in the machine's local zone.
+
+    The agent station runs `Etc/UTC`, so a job declared for 08:00 fired at
+    05:00 local — on time by the unit's own reckoning, three hours early by
+    every other measure, and nothing reports a discrepancy.
+    """
+    from lazy_harness.scheduler.schedule import parse_cron, render_systemd
+
+    assert (
+        render_systemd(parse_cron("0 8 * * 1-5"), timezone="America/Argentina/Buenos_Aires")
+        == "Mon..Fri *-*-* 08:00:00 America/Argentina/Buenos_Aires"
+    )
+
+
+def test_render_systemd_omits_the_timezone_when_none_is_given() -> None:
+    """The zoneless form stays byte-identical, or every installed unit drifts."""
+    from lazy_harness.scheduler.schedule import parse_cron, render_systemd
+
+    assert render_systemd(parse_cron("0 8 * * 1-5")) == "Mon..Fri *-*-* 08:00:00"
+    assert render_systemd(parse_cron("0 8 * * 1-5"), timezone=None) == "Mon..Fri *-*-* 08:00:00"

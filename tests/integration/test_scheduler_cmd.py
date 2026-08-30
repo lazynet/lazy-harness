@@ -192,3 +192,44 @@ def test_the_no_jobs_hint_names_the_table_to_add(home_dir: Path) -> None:
 
     assert result.exit_code == 0
     assert "[scheduler.jobs]" in result.output, result.output
+
+
+def test_scheduler_install_carries_the_configured_timezone(home_dir: Path, monkeypatch) -> None:
+    """`lh scheduler install` is the only writer that matters.
+
+    The renderer and the backend both accepting a zone proves nothing while
+    the CLI builds its backend without one: the field loads, validates, and
+    changes nothing on disk.
+    """
+    from lazy_harness.core.config import SchedulerJobConfig
+
+    config_path = home_dir / ".config" / "lazy-harness" / "config.toml"
+    cfg = Config(
+        harness=HarnessConfig(version="1"),
+        scheduler=SchedulerConfig(
+            backend="systemd",
+            timezone="America/Argentina/Buenos_Aires",
+            jobs=[
+                SchedulerJobConfig(
+                    name="weekly-review", schedule="0 8 * * 1", command="/usr/bin/true"
+                )
+            ],
+        ),
+    )
+    save_config(cfg, config_path)
+
+    unit_dir = home_dir / ".config" / "systemd" / "user"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home_dir / ".config"))
+    monkeypatch.setattr(
+        "lazy_harness.scheduler.systemd.SystemdBackend._which", lambda self, name: "/usr/bin/true"
+    )
+    monkeypatch.setattr(
+        "lazy_harness.scheduler.systemd._default_runner",
+        lambda argv: __import__("subprocess").CompletedProcess(argv, 0, "Linger=yes", ""),
+    )
+
+    result = CliRunner().invoke(cli, ["scheduler", "install"])
+
+    assert result.exit_code == 0, result.output
+    timer = (unit_dir / "lazy-harness-weekly-review.timer").read_text()
+    assert "OnCalendar=Mon *-*-* 08:00:00 America/Argentina/Buenos_Aires" in timer

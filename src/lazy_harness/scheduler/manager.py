@@ -12,22 +12,33 @@ from lazy_harness.scheduler.launchd import LaunchdBackend
 from lazy_harness.scheduler.systemd import SystemdBackend
 
 
-def detect_backend(override: str | None = None) -> LaunchdBackend | SystemdBackend | CronBackend:
+def detect_backend(
+    override: str | None = None, timezone: str | None = None
+) -> LaunchdBackend | SystemdBackend | CronBackend:
+    """The backend for this machine, carrying the zone its units are read in.
+
+    `timezone` reaches systemd only. launchd and cron read their schedules in
+    the machine's local zone with no way to say otherwise, so passing it to
+    them would be an approximation — the class of defect `schedule.py` exists
+    to refuse. `LaunchdBackend` rejects a mismatching zone at install instead.
+
+    Every call site resolves it from `cfg.scheduler.timezone`, because a
+    backend built without it renders a bare `OnCalendar=` and reports the unit
+    it just wrote as drifted.
+    """
     if override and override != "auto":
-        backends: dict[str, type[LaunchdBackend | SystemdBackend | CronBackend]] = {
-            "launchd": LaunchdBackend,
-            "systemd": SystemdBackend,
-            "cron": CronBackend,
-        }
-        cls = backends.get(override)
-        if cls:
-            return cls()
+        if override == "systemd":
+            return SystemdBackend(timezone=timezone)
+        if override == "launchd":
+            return LaunchdBackend(timezone=timezone)
+        if override == "cron":
+            return CronBackend()
     system = platform.system()
     if system == "Darwin":
-        return LaunchdBackend()
+        return LaunchdBackend(timezone=timezone)
     if system == "Linux":
         if shutil.which("systemctl"):
-            return SystemdBackend()
+            return SystemdBackend(timezone=timezone)
         return CronBackend()
     return CronBackend()
 
