@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.49.1](https://github.com/lazynet/lazy-harness/compare/v0.49.0...v0.49.1) (2026-08-31)
+
+
+### Bug Fixes
+
+* price cache writes by TTL and correct sonnet-5 rates ([#219](https://github.com/lazynet/lazy-harness/issues/219)) ([4527e74](https://github.com/lazynet/lazy-harness/commit/4527e74f5c7df3dd8841b7f325805676c1e93c80))
+
 ## [0.49.0](https://github.com/lazynet/lazy-harness/compare/v0.48.1...v0.49.0) (2026-08-30)
 
 
