@@ -659,7 +659,7 @@ parseable JSON object — `result.success is False and result.raw is None`.
 
 ```json
 {"kind": "no-envelope",
- "message": "agent exited 1 with no envelope on stdout; its stderr was passed through untouched"}
+ "message": "agent exited 1 with no envelope on stdout; the cause, if any, went to its stderr, which lh exec does not capture"}
 ```
 
 Named for the evidence rather than the symptom. The existing vocabulary —
@@ -675,11 +675,31 @@ diagnosing has to look next.
 and an `error` block on a successful envelope would contradict itself. That shape
 is pre-existing and unchanged.
 
-**Also unchanged:** `lh exec` keeps `stderr=None`, so the agent's stderr passes
-through to the caller's stderr untouched and does not reach `error.message`.
-Capturing it would require teeing to preserve the interactive pass-through; that
-is a larger decision and is deliberately not taken here. The kind converts a mute
-failure into a typed one, which is what the consumer needs to branch.
+**Also unchanged:** `lh exec` keeps `stderr=None`, so the agent's stderr goes to
+the caller's stderr and never reaches `error.message`. Capturing it would require
+teeing to preserve the interactive pass-through; that is a larger decision and is
+deliberately not taken here. The kind converts a mute failure into a typed one,
+which is what the consumer needs in order to branch.
+
+The message says "which `lh exec` does not capture" rather than "passed through
+untouched", because *where* it goes is the caller's business and only the caller
+knows. Interactively it reaches a terminal. `lazy-ai-tools` spawns with
+`stderr=PIPE`, or redirects to a launchd log the next run overwrites — so
+"passed through" would have described a destination that does not durably exist.
+
+**Durability of the cause is the consumer's responsibility.** A consumer that
+captures stderr may **append** its tail to `error.message` when
+`kind == "no-envelope"`. The producer's message is a prefix and is never
+machine-parsed by this repo — nothing here reads `error.message` back. The
+appending consumer must not overwrite `kind`, must not rewrite the prefix, and
+must not append on any other kind: on `timeout` the cause is the timeout itself,
+and on the harness kinds the message is already the whole explanation.
+
+Recorded because it was found the hard way: before `lh exec` stamped a kind, the
+`lazy-ai-tools` side synthesised `error_message` from captured stderr *precisely
+when the kind was null*. Stamping the kind here silently retires that synthesis
+and would have destroyed the only durable copy of the cause — a producer fix
+taking away a consumer's fallback path is not visible from either side alone.
 
 ### C5 — no exit code moves
 
@@ -702,6 +722,25 @@ Reading and pricing the transcript never changes `success`, `exit_code` or
 `cost_source` at `null`, which is exactly today's behaviour. Accounting about a
 run must never be the reason the run reports differently — the same discipline
 `_record_attribution` is already held to.
+
+### C6b — every envelope has the same shape, on every path
+
+`lh exec` has exactly four `_emit` call sites — `_fail`, `--dry-run`, timeout,
+and the parsed result — and each builds its envelope from the one
+`_base_envelope()` dict, overwriting values and never adding or removing a key.
+`click.echo` in `_emit` is the only writer of stdout in the command.
+
+So the timeout envelope carries the **identical key set** to the successful one,
+`cost_source` included; a consumer needs no separate code path to read it. That
+property is what makes the recompute in C1 reach the consumer at all, and it is
+asserted rather than assumed.
+
+**The shape is identical; the values are not.** On the timeout path `num_turns`
+and `duration_ms` stay `null` even when `cost_usd` carries a figure. The only
+implication a consumer may draw between fields is the C2 iff — `cost_usd`
+non-null ⟺ `cost_source` non-null. Deriving "`cost_usd` is set, therefore
+`num_turns` is set" breaks on exactly the run this amendment exists to account
+for.
 
 ### C7 — what an older `lh` emits, and why the consumer's fallback is permanent
 
@@ -737,3 +776,5 @@ is not relieved of any defence by this amendment:
   exit 0 and unparseable stdout carries `error is None` and `success is true`.
 - `cost_source` is `"agent"` on a successful run and `null` on one whose agent
   envelope carried no cost figure, pinning the iff invariant from both sides.
+- The timeout envelope and the successful envelope have equal key sets, asserted
+  by comparing them directly rather than by listing the keys a test expects.
