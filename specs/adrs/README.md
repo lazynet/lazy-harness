@@ -47,6 +47,7 @@ Decisions that define the `lazy-harness` project itself.
 | [035](./035-capability-registry.md) | proposed | Capability registry — cardinality and external dependency as the two axes | One enumerable registry over the six activation surfaces, classified by cardinality (`one`/`many`) and by whether activation needs an external binary. Explicitly not a public plugin API. |
 | [036](./036-compact-hooks-use-real-channels.md) | accepted | Compact-event hooks use the channels the agent actually provides | `PostCompact` has no output channel to the model, so the built-in is removed; `pre-compact` prints plain text into `newCustomInstructions`. |
 | [037](./037-metric-event-v2-host-and-workload.md) | proposed | Metric event schema v2 — `host` and `workload` as first-class dimensions | `MetricEvent` gains `host` (resolved at ingest) and a caller-supplied `workload`, carried by a session id `lh exec` pins before spawning. |
+| [038](./038-exec-envelope-cost-provenance.md) | proposed | The `lh exec` envelope — cost provenance and the mute failure | A timed-out run is priced from its own transcript, `cost_source` names which door the figure came through, and a failure that says nothing gets a typed `error.kind`. |
 
 ### Status values
 
