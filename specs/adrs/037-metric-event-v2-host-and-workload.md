@@ -312,6 +312,14 @@ session id out of the parsed result — degraded, not broken.
 `HeadlessResult` also gains `session_id: str | None = None`, populated by
 `parse_headless_result` from the envelope.
 
+**Implemented as a separate `SessionPinningAgent` Protocol**, not as a method on
+`HeadlessAgent`. `HeadlessAgent` is `@runtime_checkable` and `lh exec` gates on
+`isinstance`, so a method declared there would have made every adapter without
+it fail that check and be refused outright — the opposite of optional. A second
+capability Protocol is the same idiom `HeadlessAgent` already applies to
+`AgentAdapter`, one level down, and `tests/unit/test_agent_headless.py` pins an
+adapter that satisfies `HeadlessAgent` while failing `SessionPinningAgent`.
+
 ### D6 — `event_id` inputs are unchanged
 
 `derive_event_id(profile, session, model)` stays as it is. Adding `host` or
@@ -455,6 +463,16 @@ posts `row.payload_json` without deserialising it
 (`monitoring/sinks/worker.py`), so the receiver will be fed v1 and v2
 concurrently for as long as the backlog lasts, whatever order we deploy in.
 A receiver that rejects unknown *or* missing keys breaks one of the two.
+
+**Resolved 2026-08-31: Branch B.** The receiver was made tolerant in both
+directions and deployed first — 18 columns, 3393 pre-existing rows intact, zero
+`db_error`, 11 real v1 events accepted during the window, and the rollback
+measured non-destructive because the previous UPSERT does not name the new
+columns and so cannot overwrite `host`/`workload`. `lazy-ansible` commit
+`c40248f`. The harness side is what remains.
+
+The original framing is kept below because it is what the branch was chosen
+against.
 
 Measurement in progress against `lazy-ansible`, separately from this repo. The
 receiver lives at `lazy-ansible/docker/lh-metrics/app.py` — which matters for

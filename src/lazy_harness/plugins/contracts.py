@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any, ClassVar, Protocol, runtime_checkable
 
-METRIC_EVENT_SCHEMA_VERSION: int = 1
+METRIC_EVENT_SCHEMA_VERSION: int = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +34,12 @@ class MetricEvent:
     cache_read: int
     cache_create: int
     cost: float
+    # Appended with defaults so a v1 payload — a pending outbox row, a stored
+    # event — still loads through `from_dict` unchanged. `host` is a dimension
+    # of its own and is never folded into `user_id`; `workload` is supplied by
+    # whoever invoked the agent and is never interpreted here.
+    host: str = ""
+    workload: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

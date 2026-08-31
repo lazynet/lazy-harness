@@ -587,3 +587,151 @@ def test_exec_is_not_wired_to_claude_specific_flags_or_fields(
     assert envelope["prompt_tokens"] == 11
     assert envelope["cache_creation_tokens"] is None
     assert envelope["cost_usd"] is None
+
+
+# --- workload attribution (ADR-037 D4) -------------------------------------
+
+SESSION_ECHO_AGENT = """
+    import json, sys
+    sys.stdin.read()
+    argv = sys.argv[1:]
+    reported = ""
+    if "--session-id" in argv:
+        reported = argv[argv.index("--session-id") + 1]
+    print(json.dumps({
+        "is_error": False,
+        "result": "ok",
+        "session_id": reported,
+        "argv": argv,
+    }))
+"""
+
+
+def _attribution(tmp_path: Path) -> dict[str, str]:
+    from lazy_harness.monitoring.db import MetricsDB
+
+    db = MetricsDB(tmp_path / "data" / "metrics.db")
+    try:
+        return db.attribution_map()
+    finally:
+        db.close()
+
+
+@pytest.fixture
+def metrics_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    monkeypatch.setenv("LH_DATA_DIR", str(tmp_path / "data"))
+    return tmp_path
+
+
+def test_exec_pins_a_session_id_in_the_agent_argv(
+    harness_config: Path, metrics_data_dir: Path
+) -> None:
+    import uuid
+
+    _write_agent(SESSION_ECHO_AGENT)
+
+    _, envelope = _invoke(["--workload", "vault-pass"])
+
+    argv = envelope["raw"]["argv"]
+    assert "--session-id" in argv
+    pinned = argv[argv.index("--session-id") + 1]
+    uuid.UUID(pinned)  # raises if it is not a well-formed UUID
+
+
+def test_exec_records_the_workload_against_the_pinned_session(
+    harness_config: Path, metrics_data_dir: Path, tmp_path: Path
+) -> None:
+    _write_agent(SESSION_ECHO_AGENT)
+
+    _, envelope = _invoke(["--workload", "vault-pass"])
+
+    argv = envelope["raw"]["argv"]
+    pinned = argv[argv.index("--session-id") + 1]
+    assert _attribution(tmp_path) == {pinned: "vault-pass"}
+
+
+def test_exec_mints_a_fresh_session_id_per_invocation(
+    harness_config: Path, metrics_data_dir: Path, tmp_path: Path
+) -> None:
+    """A reused id is refused by the agent, so it must never be remembered."""
+    _write_agent(SESSION_ECHO_AGENT)
+
+    _invoke(["--workload", "one"])
+    _invoke(["--workload", "two"])
+
+    recorded = _attribution(tmp_path)
+    assert len(recorded) == 2
+    assert sorted(recorded.values()) == ["one", "two"]
+
+
+def test_exec_reads_the_workload_from_the_environment(
+    harness_config: Path, metrics_data_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The lazy-vault contract is a binary string, so env is the other channel."""
+    _write_agent(SESSION_ECHO_AGENT)
+    monkeypatch.setenv("LH_WORKLOAD", "from-env")
+
+    _invoke([])
+
+    assert list(_attribution(tmp_path).values()) == ["from-env"]
+
+
+def test_exec_records_nothing_without_a_workload(
+    harness_config: Path, metrics_data_dir: Path, tmp_path: Path
+) -> None:
+    """No caller label means no row: the table must not grow on every run."""
+    _write_agent(SESSION_ECHO_AGENT)
+
+    _invoke([])
+
+    assert _attribution(tmp_path) == {}
+
+
+def test_exec_dry_run_records_nothing(
+    harness_config: Path, metrics_data_dir: Path, tmp_path: Path
+) -> None:
+    _write_agent(SESSION_ECHO_AGENT)
+
+    code, envelope = _invoke(["--workload", "vault-pass", "--dry-run"])
+
+    assert code == 0
+    assert envelope["dry_run"] is True
+    assert _attribution(tmp_path) == {}
+
+
+REPORTS_OTHER_SESSION_AGENT = """
+    import json, sys
+    sys.stdin.read()
+    print(json.dumps({
+        "is_error": False,
+        "result": "ok",
+        "session_id": "a-different-id",
+        "argv": sys.argv[1:],
+    }))
+"""
+
+
+def test_exec_reconciles_when_the_agent_reports_another_session_id(
+    harness_config: Path, metrics_data_dir: Path, tmp_path: Path
+) -> None:
+    """An exit code is not proof the pin took effect."""
+    _write_agent(REPORTS_OTHER_SESSION_AGENT)
+
+    _invoke(["--workload", "vault-pass"])
+
+    assert _attribution(tmp_path) == {"a-different-id": "vault-pass"}
+
+
+def test_exec_survives_an_unwritable_attribution_store(
+    harness_config: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Attribution is bookkeeping; it must never fail the run it describes."""
+    _write_agent(SESSION_ECHO_AGENT)
+    blocker = tmp_path / "blocked"
+    blocker.write_text("not a directory")
+    monkeypatch.setenv("LH_DATA_DIR", str(blocker / "nested"))
+
+    code, envelope = _invoke(["--workload", "vault-pass"])
+
+    assert code == 0
+    assert envelope["success"] is True

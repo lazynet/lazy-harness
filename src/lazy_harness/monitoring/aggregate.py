@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
-DIMENSIONS = ("profile", "project", "model", "day", "week", "month")
+DIMENSIONS = ("profile", "project", "model", "host", "workload", "day", "week", "month")
 
 _N_DAYS = re.compile(r"^(\d+)d$")
 
@@ -104,8 +104,14 @@ class Aggregation:
     total: Bucket
 
 
+# `workload` reads "unknown" when unset rather than blank: an empty cell in the
+# table renders as a rendering bug, and an unlabelled run is genuinely one whose
+# caller we cannot name.
+_STRING_DIMENSIONS = ("profile", "project", "model", "host", "workload")
+
+
 def _dimension_value(row: dict[str, Any], dimension: str) -> str:
-    if dimension in ("profile", "project", "model"):
+    if dimension in _STRING_DIMENSIONS:
         return str(row.get(dimension) or "") or "unknown"
 
     date = str(row.get("date") or "")
@@ -124,7 +130,7 @@ def _dimension_value(row: dict[str, Any], dimension: str) -> str:
     return f"{iso[0]}-W{iso[1]:02d}"
 
 
-FILTERABLE = ("profile", "project", "model")
+FILTERABLE = _STRING_DIMENSIONS
 
 
 def _matches(row: dict[str, Any], filters: dict[str, str]) -> bool:

@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from lazy_harness.monitoring.db import MetricsDB
+from lazy_harness.plugins.contracts import METRIC_EVENT_SCHEMA_VERSION, MetricEvent
 
 
 def test_new_db_has_identity_columns(tmp_path: Path) -> None:
@@ -395,3 +396,198 @@ def test_outbox_delivery_health_is_scoped_to_one_sink(tmp_path: Path) -> None:
 
     assert health["undelivered"] == 0
     assert health["max_attempts"] == 0
+
+
+def _event(**over: object) -> MetricEvent:
+    base = dict(
+        event_id="e1",
+        schema_version=METRIC_EVENT_SCHEMA_VERSION,
+        user_id="martin",
+        tenant_id="local",
+        profile="lazy",
+        session="s1",
+        model="sonnet",
+        project="lazy-harness",
+        date="2026-08-31",
+        input_tokens=10,
+        output_tokens=5,
+        cache_read=0,
+        cache_create=0,
+        cost=0.01,
+    )
+    base.update(over)
+    return MetricEvent(**base)  # type: ignore[arg-type]
+
+
+def test_new_db_has_host_and_workload_columns(tmp_path: Path) -> None:
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        cols = {row[1] for row in db._conn.execute("PRAGMA table_info(session_stats)").fetchall()}
+    finally:
+        db.close()
+    assert "host" in cols
+    assert "workload" in cols
+
+
+def test_migration_adds_host_and_workload_to_an_identity_era_db(tmp_path: Path) -> None:
+    """A DB created after the identity columns but before ADR-037."""
+    path = tmp_path / "mid.db"
+    legacy = sqlite3.connect(str(path))
+    legacy.execute(
+        """
+        CREATE TABLE session_stats (
+            session TEXT NOT NULL,
+            date TEXT NOT NULL,
+            model TEXT NOT NULL,
+            profile TEXT NOT NULL DEFAULT '',
+            project TEXT NOT NULL DEFAULT '',
+            input_tokens INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_read INTEGER NOT NULL DEFAULT 0,
+            cache_create INTEGER NOT NULL DEFAULT 0,
+            cost REAL NOT NULL DEFAULT 0.0,
+            user_id TEXT NOT NULL DEFAULT 'local',
+            tenant_id TEXT NOT NULL DEFAULT 'local',
+            event_id TEXT NOT NULL DEFAULT '',
+            UNIQUE(session, model)
+        )
+        """
+    )
+    legacy.execute(
+        "INSERT INTO session_stats (session, date, model, cost) VALUES (?, ?, ?, ?)",
+        ("old", "2026-04-01", "sonnet", 1.25),
+    )
+    legacy.commit()
+    legacy.close()
+
+    db = MetricsDB(path)
+    try:
+        row = db._conn.execute(
+            "SELECT session, cost, host, workload FROM session_stats WHERE session = 'old'"
+        ).fetchone()
+    finally:
+        db.close()
+    assert row["cost"] == 1.25, "a v1 row must survive the migration untouched"
+    assert row["host"] == ""
+    assert row["workload"] == ""
+
+
+def test_session_attribution_roundtrips_by_session(tmp_path: Path) -> None:
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.set_attribution(session="sess-a", workload="vault-pass", host="agents")
+        assert db.attribution_map() == {"sess-a": "vault-pass"}
+    finally:
+        db.close()
+
+
+def test_set_attribution_overwrites_the_same_session(tmp_path: Path) -> None:
+    """`lh exec` reconciles the row when the agent reports a different id."""
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.set_attribution(session="sess-a", workload="first", host="agents")
+        db.set_attribution(session="sess-a", workload="second", host="agents")
+        assert db.attribution_map() == {"sess-a": "second"}
+    finally:
+        db.close()
+
+
+def test_attribution_map_is_empty_on_a_fresh_db(tmp_path: Path) -> None:
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        assert db.attribution_map() == {}
+    finally:
+        db.close()
+
+
+def test_upsert_event_stores_host_and_workload(tmp_path: Path) -> None:
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.upsert_event(_event(host="agents", workload="nightly"))
+        row = db._conn.execute(
+            "SELECT host, workload FROM session_stats WHERE session = 's1'"
+        ).fetchone()
+    finally:
+        db.close()
+    assert row["host"] == "agents"
+    assert row["workload"] == "nightly"
+
+
+def test_upsert_event_updates_host_and_workload_on_conflict(tmp_path: Path) -> None:
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.upsert_event(_event(host="mac", workload=""))
+        db.upsert_event(_event(host="agents", workload="nightly"))
+        rows = db._conn.execute(
+            "SELECT host, workload FROM session_stats WHERE session = 's1'"
+        ).fetchall()
+    finally:
+        db.close()
+    assert len(rows) == 1
+    assert rows[0]["host"] == "agents"
+    assert rows[0]["workload"] == "nightly"
+
+
+def test_query_stats_projects_host_and_workload(tmp_path: Path) -> None:
+    """`query_stats` builds a fixed dict, so a new column is invisible until named."""
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.upsert_event(_event(host="agents", workload="nightly"))
+        rows = db.query_stats()
+    finally:
+        db.close()
+    assert len(rows) == 1
+    assert rows[0]["host"] == "agents"
+    assert rows[0]["workload"] == "nightly"
+
+
+def test_query_stats_reports_empty_strings_for_a_row_written_by_upsert_stats(
+    tmp_path: Path,
+) -> None:
+    """`upsert_stats` never wrote identity columns; that shape must still read."""
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.upsert_stats(
+            [
+                {
+                    "session": "s9",
+                    "date": "2026-08-31",
+                    "model": "sonnet",
+                    "profile": "lazy",
+                    "project": "p",
+                    "cost": 0.5,
+                }
+            ]
+        )
+        rows = db.query_stats()
+    finally:
+        db.close()
+    assert rows[0]["host"] == ""
+    assert rows[0]["workload"] == ""
+    assert rows[0]["cost"] == 0.5
+
+
+def test_delete_attribution_removes_only_the_named_session(tmp_path: Path) -> None:
+    """Reconciliation moves a row; it must not leave the stale one behind.
+
+    An adapter that cannot pin a session id would otherwise leave one orphan
+    per run — the pinned id never reaches the agent, so every run writes a row
+    nothing joins alongside the real one.
+    """
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.set_attribution(session="pinned", workload="w")
+        db.set_attribution(session="reported", workload="w")
+        db.delete_attribution("pinned")
+        assert db.attribution_map() == {"reported": "w"}
+    finally:
+        db.close()
+
+
+def test_delete_attribution_is_silent_for_an_unknown_session(tmp_path: Path) -> None:
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.delete_attribution("never-existed")
+        assert db.attribution_map() == {}
+    finally:
+        db.close()

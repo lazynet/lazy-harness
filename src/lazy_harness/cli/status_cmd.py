@@ -140,6 +140,8 @@ def status_sessions(period: str) -> None:
 @click.option("--profile", default="", help="Only rows whose profile contains this.")
 @click.option("--model", default="", help="Only rows whose model contains this.")
 @click.option("--project", default="", help="Only rows whose project contains this.")
+@click.option("--host", default="", help="Only rows whose host contains this.")
+@click.option("--workload", default="", help="Only rows whose workload contains this.")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON instead of a table.")
 def status_tokens(
     period: str,
@@ -147,6 +149,8 @@ def status_tokens(
     profile: str,
     model: str,
     project: str,
+    host: str,
+    workload: str,
     as_json: bool,
 ) -> None:
     """Token / cost breakdown across any combination of dimensions."""
@@ -166,7 +170,13 @@ def status_tokens(
     agg = aggregate(
         rows,
         dims,
-        {"profile": profile, "model": model, "project": project},
+        {
+            "profile": profile,
+            "model": model,
+            "project": project,
+            "host": host,
+            "workload": workload,
+        },
     )
     console = Console()
     if as_json:

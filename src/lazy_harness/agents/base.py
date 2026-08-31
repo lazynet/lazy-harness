@@ -34,6 +34,9 @@ class HeadlessResult:
     cache_read_tokens: int | None = None
     num_turns: int | None = None
     raw: dict | None = None
+    # The provider's own id for the conversation. `lh exec` pins it up front
+    # when the adapter can, and reconciles against this when it cannot.
+    session_id: str | None = None
 
 
 @runtime_checkable
@@ -68,6 +71,21 @@ class HeadlessAgent(Protocol):
         Must not raise: unparseable output degrades to `output=stdout`,
         `raw=None`, and metadata left `None`.
         """
+        ...
+
+
+@runtime_checkable
+class SessionPinningAgent(Protocol):
+    """Optional capability: an agent whose session id the caller can choose.
+
+    Kept out of `HeadlessAgent` on purpose. Adding it there would make every
+    adapter that cannot pin a session fail `isinstance` and be refused
+    outright, when the right behaviour is to run it and resolve the session id
+    after the fact.
+    """
+
+    def session_argv(self, session_id: str) -> list[str]:
+        """Argv fragment that pins the conversation to `session_id`."""
         ...
 
 

@@ -173,6 +173,12 @@ class ClaudeCodeAdapter:
             argv += ["--disallowedTools", ",".join(NO_TOOLS)]
         return argv
 
+    def session_argv(self, session_id: str) -> list[str]:
+        """Pin the conversation. A session id already in use is refused, not
+        resumed: exit 1 with an empty stdout, so the caller must never reuse
+        one."""
+        return ["--session-id", session_id]
+
     def parse_headless_result(self, stdout: str, exit_code: int) -> HeadlessResult:
         try:
             data = json.loads(stdout)
@@ -214,6 +220,7 @@ class ClaudeCodeAdapter:
             cost = None
 
         result_text = data.get("result")
+        session_id = data.get("session_id")
         return HeadlessResult(
             success=exit_code == 0 and data.get("is_error") is not True,
             output=result_text if isinstance(result_text, str) else stdout,
@@ -226,6 +233,7 @@ class ClaudeCodeAdapter:
             cache_read_tokens=cache_read,
             num_turns=_as_int(data.get("num_turns")),
             raw=data,
+            session_id=session_id if isinstance(session_id, str) else None,
         )
 
     def generate_mcp_config(self, servers: dict[str, dict]) -> dict:

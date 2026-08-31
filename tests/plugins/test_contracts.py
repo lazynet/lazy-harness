@@ -60,9 +60,108 @@ def test_metric_event_json_roundtrip() -> None:
     assert restored == event
 
 
-def test_schema_version_is_int_one() -> None:
-    assert METRIC_EVENT_SCHEMA_VERSION == 1
+def test_schema_version_is_int_two() -> None:
+    assert METRIC_EVENT_SCHEMA_VERSION == 2
     assert isinstance(METRIC_EVENT_SCHEMA_VERSION, int)
+
+
+def test_metric_event_carries_host_and_workload() -> None:
+    """ADR-037: both are dimensions of their own, not folded into user_id."""
+    event = MetricEvent(
+        event_id="01HABCDE",
+        schema_version=METRIC_EVENT_SCHEMA_VERSION,
+        user_id="martin",
+        tenant_id="local",
+        profile="personal",
+        session="abc123",
+        model="claude-sonnet-4-5",
+        project="lazy-harness",
+        date="2026-04-14",
+        input_tokens=100,
+        output_tokens=50,
+        cache_read=0,
+        cache_create=0,
+        cost=0.0012,
+        host="LazyMBP",
+        workload="nightly-pass",
+    )
+    assert event.host == "LazyMBP"
+    assert event.workload == "nightly-pass"
+    assert event.user_id == "martin", "host must not be folded into user_id"
+
+
+def test_host_and_workload_default_to_empty_string() -> None:
+    event = MetricEvent(
+        event_id="01HABCDE",
+        schema_version=METRIC_EVENT_SCHEMA_VERSION,
+        user_id="martin",
+        tenant_id="local",
+        profile="personal",
+        session="abc123",
+        model="claude-sonnet-4-5",
+        project="lazy-harness",
+        date="2026-04-14",
+        input_tokens=100,
+        output_tokens=50,
+        cache_read=0,
+        cache_create=0,
+        cost=0.0012,
+    )
+    assert event.host == ""
+    assert event.workload == ""
+
+
+def test_from_dict_accepts_a_v1_payload() -> None:
+    """A payload stored before the bump has neither key and must still load.
+
+    This is what keeps pending outbox rows drainable across the version
+    change: they hold v1 JSON and are posted verbatim.
+    """
+    v1_payload = {
+        "event_id": "01HABCDE",
+        "schema_version": 1,
+        "user_id": "martin",
+        "tenant_id": "local",
+        "profile": "personal",
+        "session": "abc123",
+        "model": "claude-sonnet-4-5",
+        "project": "lazy-harness",
+        "date": "2026-04-14",
+        "input_tokens": 100,
+        "output_tokens": 50,
+        "cache_read": 0,
+        "cache_create": 0,
+        "cost": 0.0012,
+    }
+    restored = MetricEvent.from_dict(v1_payload)
+    assert restored.schema_version == 1
+    assert restored.host == ""
+    assert restored.workload == ""
+
+
+def test_to_dict_names_match_the_receiver_columns() -> None:
+    """The receiver ignores unknown keys silently, so a typo loses the data."""
+    event = MetricEvent(
+        event_id="01HABCDE",
+        schema_version=METRIC_EVENT_SCHEMA_VERSION,
+        user_id="martin",
+        tenant_id="local",
+        profile="personal",
+        session="abc123",
+        model="claude-sonnet-4-5",
+        project="lazy-harness",
+        date="2026-04-14",
+        input_tokens=1,
+        output_tokens=1,
+        cache_read=0,
+        cache_create=0,
+        cost=0.0,
+        host="agents",
+        workload="vault-pass",
+    )
+    payload = event.to_dict()
+    assert payload["host"] == "agents"
+    assert payload["workload"] == "vault-pass"
 
 
 def test_sink_write_result_ok_and_error() -> None:

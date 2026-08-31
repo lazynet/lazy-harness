@@ -20,7 +20,12 @@ Everything the command does comes from two independent choices.
 
 **`--by` picks the dimensions you break the numbers down by.** It is repeatable,
 and the order you pass the flags is the order of the columns. Available
-dimensions: `profile`, `project`, `model`, `day`, `week`, `month`.
+dimensions: `profile`, `project`, `model`, `host`, `workload`, `day`, `week`,
+`month`.
+
+`host` is the machine that produced the sessions, stamped by whichever machine
+ingested them. `workload` is the label a caller passed to `lh exec --workload`;
+interactive sessions have none and group under `unknown`.
 
 **`--period` picks the rows that get counted at all.** It takes the four
 keywords (`today`, `week`, `month`, `all`) plus a rolling window (`30d`), a
