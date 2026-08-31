@@ -97,9 +97,8 @@ LH_WORKLOAD=nightly-index; export LH_WORKLOAD   # same effect
 lh status tokens --by workload --period all     # what each caller cost
 ```
 
-The label survives a run killed by `--timeout`, which is the point: the
-envelope reports `cost_usd: null` for a killed run, so the ingest is the only
-place that accounts for it.
+The label survives a run killed by `--timeout`, which is the point: the label is
+written before the agent is spawned, so a kill cannot outrun it.
 
 ### Envelope
 
@@ -111,6 +110,7 @@ place that accounts for it.
   "exit_code": 0,
   "output": "…the agent's reply…",
   "cost_usd": 0.0619,
+  "cost_source": "agent",
   "duration_ms": 2100,
   "prompt_tokens": 30885,
   "output_tokens": 42,
@@ -133,6 +133,22 @@ place that accounts for it.
 
 Every numeric field is `null` when the provider did not report it — never `0`. A provider without a prompt cache reports `null` cache tokens, because "no cache exists" and "nothing was cached this call" are different facts and a `0` enters a cost report as the second one. `prompt_tokens` is the **sum** of the uncached, cache-creation and cache-read counts: Claude Code's own `input_tokens` covers only the uncached slice of the final turn and reads as single digits on a 100k-token prompt.
 
+`cost_source` says which door the figure came through: `agent` for the provider's
+own number, passed through verbatim, or `transcript` for one measured from the
+session the run wrote. It is non-null if and only if `cost_usd` is. The two can
+disagree — the harness pricing table is the only thing that notices when a
+provider's own accounting drifts — so a consumer summing costs across runs needs
+to be able to tell them apart.
+
+A run killed by `--timeout` is billed from its transcript rather than reported as
+free: the session id is pinned before the spawn, so the turns the agent flushed
+before the kill are still on disk under a known name. `cost_usd`, `prompt_tokens`,
+`output_tokens` and the two cache counters are filled from it; `num_turns` and
+`duration_ms` stay `null`, because the transcript does not measure them. All of
+them stay `null` when the kill landed before the first turn was flushed, or when
+any model in the transcript has no entry in the pricing table — tokens counted is
+not the same fact as run priced.
+
 `harness.profile_source` is `explicit` (`--profile`), `root-match` (the cwd fell under a configured root) or `default-fallback` (nothing matched, so the default profile was a guess). A caller recording which provider it was billed for should record this alongside the cost.
 
 ### Exit codes
@@ -144,6 +160,13 @@ Every numeric field is `null` when the provider did not report it — never `0`.
 | `2` | Usage error — conflicting or unknown flags, unknown tier |
 | `70` | Harness failure before the agent ran: bad config, unknown profile, agent cannot run headless, binary not found, empty prompt |
 | `124` | The agent exceeded `--timeout` and its process group was killed |
+
+`error` is `null` on success and otherwise carries a `kind` and a `message`.
+`timeout` means the process group was killed; `no-envelope` means the agent ran,
+exited non-zero and left nothing parseable on stdout — its stderr passed through
+to the caller's stderr and is not captured here, so a caller that needs the cause
+durably has to keep that stream itself. The remaining kinds report a harness
+failure before the agent ran.
 
 `--timeout` (default 600s, `0` disables) is owned by `lh exec`, which kills the agent's whole **process group** — killing only the direct child leaves grandchildren such as MCP servers running and billable. A caller wrapping `lh exec` in its own timeout should set that backstop above this one.
 

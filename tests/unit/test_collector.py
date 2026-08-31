@@ -507,3 +507,20 @@ def test_session_cost_from_disk_reports_nothing_when_no_turn_was_flushed(tmp_pat
 
     assert cost.cost_usd is None
     assert cost.output_tokens is None
+
+
+def test_session_cost_from_disk_survives_an_unreadable_transcript(tmp_path: Path) -> None:
+    """A directory where the transcript should be raises OSError on read. The
+    caller is an envelope path that must not change what a run reports, so this
+    degrades to "unmeasured" rather than propagating."""
+    from lazy_harness.monitoring.collector import session_cost_from_disk
+    from lazy_harness.monitoring.pricing import default_pricing
+
+    project = _project_dir(tmp_path)
+    session_id = "55555555-6666-4777-8888-999900001111"
+    (project / f"{session_id}.jsonl").mkdir()
+
+    cost = session_cost_from_disk(project.parent, session_id, default_pricing())
+
+    assert cost.cost_usd is None
+    assert cost.output_tokens is None

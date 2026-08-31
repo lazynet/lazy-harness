@@ -735,3 +735,177 @@ def test_exec_survives_an_unwritable_attribution_store(
 
     assert code == 0
     assert envelope["success"] is True
+
+
+# --- cost provenance (ADR-037 amendment, C1-C3) ----------------------------
+
+COSTLESS_AGENT = """
+    import json, sys
+    sys.stdin.read()
+    print(json.dumps({"is_error": False, "result": "ok"}))
+"""
+
+
+def test_exec_marks_a_passed_through_cost_as_the_agents_own(harness_config: Path) -> None:
+    """The agent's figure and the harness pricing table disagree by design, so
+    the envelope has to say which door the number came through."""
+    _write_agent(ECHO_AGENT)
+
+    _, envelope = _invoke([])
+
+    assert envelope["cost_usd"] == 0.5
+    assert envelope["cost_source"] == "agent"
+
+
+def test_exec_leaves_cost_source_null_when_the_agent_reported_no_cost(
+    harness_config: Path,
+) -> None:
+    """`cost_source` is non-null if and only if `cost_usd` is."""
+    _write_agent(COSTLESS_AGENT)
+
+    _, envelope = _invoke([])
+
+    assert envelope["cost_usd"] is None
+    assert envelope["cost_source"] is None
+
+
+# Writes a real transcript at the pinned stem, then hangs so `--timeout` kills
+# it. 200_000 input and 40_000 output tokens at claude-opus-4-6's rates are
+# exactly $1.00 each, so a lost bucket shows as 1.0 rather than as a plausible
+# total.
+TIMEOUT_TRANSCRIPT_AGENT = """
+    import json, os, sys, time
+    argv = sys.argv[1:]
+    session_id = argv[argv.index("--session-id") + 1]
+    project = os.path.join(os.environ["CLAUDE_CONFIG_DIR"], "projects", "-fake-project")
+    os.makedirs(project, exist_ok=True)
+    with open(os.path.join(project, session_id + ".jsonl"), "w") as fh:
+        fh.write(json.dumps({"type": "user", "timestamp": "2026-08-31T11:19:00"}) + "\\n")
+        fh.write(json.dumps({
+            "type": "assistant",
+            "timestamp": "2026-08-31T11:19:01",
+            "message": {
+                "id": "msg_flushed",
+                "model": "claude-opus-4-6",
+                "usage": {"input_tokens": 200000, "output_tokens": 40000},
+            },
+        }) + "\\n")
+    time.sleep(60)
+"""
+
+
+def test_exec_bills_a_timed_out_run_from_its_transcript(harness_config: Path) -> None:
+    """The most expensive outcome `lh exec` has reported `cost_usd: null` while
+    the ingest billed the same run. The transcript is written at the stem this
+    command pinned before spawning, so the kill does not destroy the figure."""
+    _write_agent(TIMEOUT_TRANSCRIPT_AGENT)
+
+    code, envelope = _invoke(["--timeout", "1"])
+
+    assert code == 124
+    assert envelope["error"]["kind"] == "timeout"
+    assert envelope["cost_usd"] == 2.0
+    assert envelope["cost_source"] == "transcript"
+    assert envelope["prompt_tokens"] == 200_000
+    assert envelope["output_tokens"] == 40_000
+
+
+# --- the mute failure (ADR-037 amendment, C4) ------------------------------
+
+REFUSING_AGENT = """
+    import sys
+    sys.stdin.read()
+    sys.stderr.write("Error: Session ID 925529e2 is already in use.\\n")
+    sys.exit(1)
+"""
+
+GARBAGE_ON_SUCCESS_AGENT = """
+    import sys
+    sys.stdin.read()
+    sys.stdout.write("not json at all")
+"""
+
+
+def test_exec_types_a_failure_that_left_nothing_on_stdout(harness_config: Path) -> None:
+    """A refused session id exits 1 with an empty stdout. The envelope was
+    well-formed but carried no `error`, so the consumer got `success=False`
+    with a null kind and no exception — the failure arrived mute."""
+    _write_agent(REFUSING_AGENT)
+
+    code, envelope = _invoke([])
+
+    assert code == 1
+    assert envelope["success"] is False
+    assert envelope["error"]["kind"] == "no-envelope"
+    assert "stderr" in envelope["error"]["message"]
+
+
+def test_exec_leaves_a_zero_exit_with_unparseable_stdout_alone(harness_config: Path) -> None:
+    """Explicitly not covered by `no-envelope`: `parse_headless_result` derives
+    success from the exit code when it cannot parse, and an `error` block on a
+    successful envelope would contradict itself."""
+    _write_agent(GARBAGE_ON_SUCCESS_AGENT)
+
+    code, envelope = _invoke([])
+
+    assert code == 0
+    assert envelope["success"] is True
+    assert envelope["error"] is None
+
+
+HANGING_AGENT = """
+    import sys, time
+    sys.stdin.read()
+    time.sleep(60)
+"""
+
+
+def test_exec_reports_no_cost_for_a_timeout_that_flushed_no_turn(harness_config: Path) -> None:
+    """A kill landing before the first assistant turn leaves a transcript with
+    no usage lines, or none at all. The ingest bills nothing for it, and a 0
+    here would report the run as free rather than as unmeasured."""
+    _write_agent(HANGING_AGENT)
+
+    code, envelope = _invoke(["--timeout", "1"])
+
+    assert code == 124
+    assert envelope["cost_usd"] is None
+    assert envelope["cost_source"] is None
+    assert envelope["prompt_tokens"] is None
+    assert envelope["output_tokens"] is None
+
+
+def test_every_envelope_has_the_same_keys_whatever_the_outcome(
+    harness_config: Path, tmp_path: Path
+) -> None:
+    """A consumer must not need a separate code path to read a timeout. The
+    four `_emit` sites all build from one `_base_envelope()`; this asserts the
+    property they are supposed to have rather than listing expected keys."""
+    _write_agent(ECHO_AGENT)
+    _, success = _invoke([])
+    _, dry_run = _invoke(["--dry-run"])
+    _, harness_error = _invoke(["--profile", "nonexistent"])
+
+    _write_agent(HANGING_AGENT)
+    _, timeout = _invoke(["--timeout", "1"])
+
+    assert set(timeout) == set(success)
+    assert set(dry_run) == set(success)
+    assert set(harness_error) == set(success)
+    assert "cost_source" in success
+
+
+def test_a_timeout_reports_the_cost_fields_the_success_path_reports(
+    harness_config: Path,
+) -> None:
+    """Identical keys, deliberately non-identical values: `num_turns` and
+    `duration_ms` stay null on a timeout even when `cost_usd` carries a figure,
+    so `cost_usd` implies nothing beyond `cost_source`."""
+    _write_agent(TIMEOUT_TRANSCRIPT_AGENT)
+
+    _, envelope = _invoke(["--timeout", "1"])
+
+    assert envelope["cost_usd"] is not None
+    assert envelope["cost_source"] == "transcript"
+    assert envelope["num_turns"] is None
+    assert envelope["duration_ms"] is None
