@@ -591,3 +591,86 @@ def test_delete_attribution_is_silent_for_an_unknown_session(tmp_path: Path) -> 
         assert db.attribution_map() == {}
     finally:
         db.close()
+
+
+# --- host backfill ----------------------------------------------------------
+
+
+def test_backfill_host_stamps_only_the_rows_that_have_none(tmp_path: Path) -> None:
+    """A local metrics DB only ever holds sessions ingested on that machine, so
+    stamping the local host on a row that has none is lossless. A row that
+    already names a host is an answer someone else wrote and must be left alone."""
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.upsert_event(_event(event_id="e-old", session="s-old", host=""))
+        db.upsert_event(_event(event_id="e-new", session="s-new", host="OtherBox"))
+
+        report = db.backfill_host("LazyMBP")
+
+        rows = {r["session"]: r["host"] for r in db.query_stats()}
+        assert rows["s-old"] == "LazyMBP"
+        assert rows["s-new"] == "OtherBox"
+        assert report.rows_stamped == 1
+    finally:
+        db.close()
+
+
+def test_backfill_host_is_idempotent(tmp_path: Path) -> None:
+    """The second run finds nothing left to stamp. A backfill that keeps
+    reporting work is indistinguishable from one that never applied."""
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.upsert_event(_event(event_id="e-old", session="s-old", host=""))
+        db.backfill_host("LazyMBP")
+
+        second = db.backfill_host("LazyMBP")
+
+        assert second.rows_stamped == 0
+        assert second.events_requeued == 0
+    finally:
+        db.close()
+
+
+def test_backfill_host_requeues_an_event_the_remote_already_has(tmp_path: Path) -> None:
+    """The remote upserts by event_id and event_id does not include host, so a
+    resend corrects the row in place. Without the requeue the local store and
+    the dashboard disagree forever, with no error on either side."""
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.upsert_event(_event(event_id="e-old", session="s-old", host=""))
+        db.outbox_enqueue(
+            sink_name="http_remote",
+            event_id="e-old",
+            payload_json=json.dumps({"event_id": "e-old", "host": "", "cost": 0.01}),
+        )
+        db.outbox_mark_sent("http_remote", "e-old")
+
+        report = db.backfill_host("LazyMBP")
+
+        pending = db.outbox_list_pending(sink_name="http_remote")
+        assert report.events_requeued == 1
+        assert len(pending) == 1
+        payload = json.loads(pending[0].payload_json)
+        assert payload["host"] == "LazyMBP"
+        assert payload["cost"] == 0.01
+
+
+    finally:
+        db.close()
+
+
+def test_backfill_host_leaves_a_stamped_row_with_no_outbox_entry_alone(tmp_path: Path) -> None:
+    """A row the outbox never carried was never sent, so there is nothing to
+    correct remotely. Minting an entry would push history the remote never had
+    under the guise of a fix."""
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.upsert_event(_event(event_id="e-orphan", session="s-orphan", host=""))
+
+        report = db.backfill_host("LazyMBP")
+
+        assert report.rows_stamped == 1
+        assert report.events_requeued == 0
+        assert db.outbox_list_pending(sink_name="http_remote") == []
+    finally:
+        db.close()

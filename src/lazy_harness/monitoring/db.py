@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
 from dataclasses import dataclass
@@ -272,6 +273,91 @@ class MetricsDB:
             "SELECT session, workload FROM session_attribution"
         ).fetchall()
         return {r["session"]: r["workload"] for r in rows}
+
+    def backfill_host(self, host: str, *, dry_run: bool = False) -> BackfillReport:
+        """Stamp `host` on every stats row that has none, and re-queue what was
+        already sent without it.
+
+        Safe because of what a local metrics DB is: the ingest reads only the
+        transcripts on the machine it runs on and writes only that machine's
+        store, so a row here with no host was produced here. Stamping the local
+        answer recovers a fact rather than inventing one — but only on this
+        machine's own DB, which is why the host is passed in by the caller that
+        resolved it rather than read from the environment down here.
+
+        The remote upserts by `event_id`, and `derive_event_id` does not take
+        `host`, so a re-queued payload corrects the remote row in place instead
+        of landing as a second one. Only rows the outbox already carries are
+        re-queued: a row it never carried was never sent, and minting an entry
+        for it would push unsent history under the guise of a fix.
+        """
+        if dry_run:
+            return self._backfill_host_preview(host)
+
+        cur = self._conn.execute(
+            "UPDATE session_stats SET host = ? WHERE host = ''",
+            (host,),
+        )
+        rows_stamped = cur.rowcount
+
+        requeued = 0
+        for sink_name, event_id, payload_json in self._conn.execute(
+            """
+            SELECT o.sink_name, o.event_id, o.payload_json
+            FROM sink_outbox o
+            JOIN session_stats s ON s.event_id = o.event_id
+            WHERE s.host = ?
+            """,
+            (host,),
+        ).fetchall():
+            try:
+                payload = json.loads(payload_json)
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(payload, dict) or payload.get("host"):
+                continue
+            payload["host"] = host
+            self._conn.execute(
+                """
+                UPDATE sink_outbox
+                SET payload_json = ?, status = 'pending', attempts = 0,
+                    last_error = '', next_attempt_ts = NULL, lease_until = NULL
+                WHERE sink_name = ? AND event_id = ?
+                """,
+                (json.dumps(payload), sink_name, event_id),
+            )
+            requeued += 1
+
+        self._conn.commit()
+        return BackfillReport(rows_stamped=rows_stamped, events_requeued=requeued)
+
+    def _backfill_host_preview(self, host: str) -> BackfillReport:
+        """Count what `backfill_host` would change, touching nothing.
+
+        Counts the outbox side by the same join the apply path uses, against
+        the rows that are *about* to be stamped rather than the ones already
+        stamped — the one place the two paths cannot share a query.
+        """
+        rows = self._conn.execute(
+            "SELECT COUNT(*) FROM session_stats WHERE host = ''"
+        ).fetchone()[0]
+        candidates = self._conn.execute(
+            """
+            SELECT o.payload_json
+            FROM sink_outbox o
+            JOIN session_stats s ON s.event_id = o.event_id
+            WHERE s.host = ''
+            """
+        ).fetchall()
+        requeued = 0
+        for (payload_json,) in candidates:
+            try:
+                payload = json.loads(payload_json)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(payload, dict) and not payload.get("host"):
+                requeued += 1
+        return BackfillReport(rows_stamped=rows, events_requeued=requeued)
 
     def get_ingest_mtime(self, session: str) -> int | None:
         row = self._conn.execute(
@@ -690,6 +776,19 @@ class MetricsDB:
 
     def close(self) -> None:
         self._conn.close()
+
+
+@dataclass(frozen=True, slots=True)
+class BackfillReport:
+    """What one `backfill_host` pass changed.
+
+    Two counters rather than one: a pass can stamp local rows while re-queueing
+    nothing, which is the normal shape for history the outbox no longer holds.
+    Collapsing them would report that as a full correction.
+    """
+
+    rows_stamped: int
+    events_requeued: int
 
 
 @dataclass(frozen=True, slots=True)

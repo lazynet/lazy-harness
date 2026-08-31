@@ -98,3 +98,98 @@ def test_metrics_ingest_dry_run_writes_nothing(home_dir: Path) -> None:
     rows = db.query_stats(period="all")
     db.close()
     assert rows == []
+
+
+# --- backfill-host ----------------------------------------------------------
+
+
+def _v1_row(db_path: Path, session: str) -> None:
+    """One stats row as the store held it before ADR-037: host empty."""
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.event_id import derive_event_id
+    from lazy_harness.plugins.contracts import METRIC_EVENT_SCHEMA_VERSION, MetricEvent
+
+    db = MetricsDB(db_path)
+    try:
+        db.upsert_event(
+            MetricEvent(
+                event_id=derive_event_id(profile="lazy", session=session, model="opus"),
+                schema_version=METRIC_EVENT_SCHEMA_VERSION,
+                user_id="lazynet",
+                tenant_id="local",
+                profile="lazy",
+                session=session,
+                model="opus",
+                project="demo",
+                date="2026-07-01",
+                input_tokens=10,
+                output_tokens=5,
+                cache_read=0,
+                cache_create=0,
+                cost=0.25,
+                host="",
+            )
+        )
+    finally:
+        db.close()
+
+
+def test_metrics_backfill_host_stamps_rows_without_one(home_dir: Path) -> None:
+    """No --host: the command resolves the local one itself. Always passing it
+    would leave the default resolution — the only path a real run takes —
+    untested."""
+    db_path = _setup(home_dir)
+    _v1_row(db_path, "s-old")
+
+    result = CliRunner().invoke(cli, ["metrics", "backfill-host"])
+    assert result.exit_code == 0, result.output
+
+    from lazy_harness.core.identity import resolve_host
+    from lazy_harness.monitoring.db import MetricsDB
+
+    db = MetricsDB(db_path)
+    rows = db.query_stats(period="all")
+    db.close()
+    assert rows[0]["host"] == resolve_host()
+
+
+def test_metrics_backfill_host_honours_an_explicit_host(home_dir: Path) -> None:
+    db_path = _setup(home_dir)
+    _v1_row(db_path, "s-old")
+
+    result = CliRunner().invoke(cli, ["metrics", "backfill-host", "--host", "CT145"])
+    assert result.exit_code == 0, result.output
+
+    from lazy_harness.monitoring.db import MetricsDB
+
+    db = MetricsDB(db_path)
+    rows = db.query_stats(period="all")
+    db.close()
+    assert rows[0]["host"] == "CT145"
+
+
+def test_metrics_backfill_host_dry_run_writes_nothing(home_dir: Path) -> None:
+    """The count is reported without applying it, so the size of the change is
+    knowable before it is made."""
+    db_path = _setup(home_dir)
+    _v1_row(db_path, "s-old")
+
+    result = CliRunner().invoke(cli, ["metrics", "backfill-host", "--dry-run"])
+    assert result.exit_code == 0, result.output
+    assert "1" in result.output
+
+    from lazy_harness.monitoring.db import MetricsDB
+
+    db = MetricsDB(db_path)
+    rows = db.query_stats(period="all")
+    db.close()
+    assert rows[0]["host"] == ""
+
+
+def test_metrics_backfill_host_reports_when_there_is_nothing_to_do(home_dir: Path) -> None:
+    _setup(home_dir)
+
+    result = CliRunner().invoke(cli, ["metrics", "backfill-host"])
+
+    assert result.exit_code == 0, result.output
+    assert "0" in result.output

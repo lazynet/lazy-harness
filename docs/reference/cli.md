@@ -309,6 +309,22 @@ lh metrics drain
 
 Output is one summary line: `drain complete: <sent> sent, <failed> failed`.
 
+### `lh metrics backfill-host`
+
+Stamps the `host` dimension on stats rows written before it existed, and re-queues the events the remote already received without it.
+
+Re-ingesting cannot recover these: the transcripts they were derived from are deleted long before the rows are. What makes the local host the right answer anyway is what a metrics DB is — the ingest reads only the transcripts on the machine it runs on and writes only that machine's store, so a row with no host was produced by the machine holding it. **Run it on the machine that owns the DB.** The default host is that machine's own; `--host` overrides it for a DB you are repairing from elsewhere.
+
+Only rows the outbox still carries are re-queued. `derive_event_id` does not take `host`, so a resend upserts the remote row in place rather than landing as a second one — the cost is corrected, never doubled. A row the outbox no longer holds is stamped locally and left alone remotely: it was never sent, and minting an entry for it would push unsent history under the guise of a fix.
+
+```bash
+lh metrics backfill-host --dry-run
+lh metrics backfill-host
+# stamped 2526 rows as LazyMBP · 387 events re-queued for resend
+```
+
+Idempotent: a second run finds nothing left to stamp and reports `0`.
+
 ### `lh metrics status`
 
 Prints the local database summary (session count, accumulated cost, path), then per-sink outbox counters (`pending`, `sending`, `sent`) for every non-`sqlite_local` sink. Use it to spot a stuck `http_remote` without `sqlite3`-ing the DB.
