@@ -334,3 +334,193 @@ def test_parse_session_and_iter_assistant_messages_agree_on_ttl(tmp_path: Path) 
     (parsed,) = parse_session(session_file)
     assert parsed["cache_create"] == streamed["cache_create"] == 500
     assert parsed["cache_create_1h"] == streamed["cache_create_1h"] == 50000
+
+
+def _usage(*, inp: int, out: int, cache_read: int, c5m: int, c1h: int) -> dict:
+    return {
+        "input_tokens": inp,
+        "output_tokens": out,
+        "cache_read_input_tokens": cache_read,
+        "cache_creation_input_tokens": c5m + c1h,
+        "cache_creation": {
+            "ephemeral_5m_input_tokens": c5m,
+            "ephemeral_1h_input_tokens": c1h,
+        },
+    }
+
+
+def _assistant(msg_id: str, model: str, usage: dict) -> dict:
+    return {
+        "type": "assistant",
+        "timestamp": "2026-08-31T11:00:00",
+        "message": {"id": msg_id, "model": model, "usage": usage},
+    }
+
+
+def _project_dir(tmp_path: Path) -> Path:
+    projects = tmp_path / "projects"
+    project = projects / "-Users-someone-repos-thing"
+    project.mkdir(parents=True)
+    return project
+
+
+# Each bucket below is priced to exactly $1.00 against claude-opus-4-6's rates
+# (5.0 / 25.0 / 0.5 / 6.25 / 10.0 per million), so a dropped bucket surfaces as
+# a round 4.0 rather than as a plausible-looking total.
+_ONE_DOLLAR_EACH = _usage(inp=200_000, out=40_000, cache_read=2_000_000, c5m=160_000, c1h=100_000)
+
+
+def test_session_cost_from_disk_prices_every_token_bucket(tmp_path: Path) -> None:
+    from lazy_harness.monitoring.collector import session_cost_from_disk
+    from lazy_harness.monitoring.pricing import default_pricing
+
+    project = _project_dir(tmp_path)
+    session_id = "0f6b0e0e-1111-4222-8333-444455556666"
+    _write_session_jsonl(
+        project / f"{session_id}.jsonl",
+        [
+            {"type": "user", "content": "hi", "timestamp": "2026-08-31T11:00:00"},
+            _assistant("msg_1", "claude-opus-4-6", _ONE_DOLLAR_EACH),
+        ],
+    )
+
+    cost = session_cost_from_disk(project.parent, session_id, default_pricing())
+
+    assert cost.cost_usd == 5.0
+    assert cost.prompt_tokens == 2_460_000
+    assert cost.output_tokens == 40_000
+    assert cost.cache_creation_tokens == 260_000
+    assert cost.cache_read_tokens == 2_000_000
+
+
+def test_session_cost_from_disk_folds_subagent_turns_into_the_parent(tmp_path: Path) -> None:
+    """`_find_session_files` bills `<id>/subagents/*.jsonl` to the parent id, so
+    a lookup reading only `<id>.jsonl` under-reports on exactly the runs that
+    spawned the most work."""
+    from lazy_harness.monitoring.collector import session_cost_from_disk
+    from lazy_harness.monitoring.pricing import default_pricing
+
+    project = _project_dir(tmp_path)
+    session_id = "0f6b0e0e-1111-4222-8333-444455556666"
+    _write_session_jsonl(
+        project / f"{session_id}.jsonl",
+        [_assistant("msg_parent", "claude-opus-4-6", _ONE_DOLLAR_EACH)],
+    )
+    subagents = project / session_id / "subagents"
+    subagents.mkdir(parents=True)
+    # 80_000 output tokens at $25/M is exactly $2.00, so dropping the subagent
+    # shows up as 5.0 rather than as a number that could pass for right.
+    _write_session_jsonl(
+        subagents / "aa11bb22.jsonl",
+        [
+            _assistant(
+                "msg_sub",
+                "claude-opus-4-6",
+                _usage(inp=0, out=80_000, cache_read=0, c5m=0, c1h=0),
+            )
+        ],
+    )
+
+    cost = session_cost_from_disk(project.parent, session_id, default_pricing())
+
+    assert cost.cost_usd == 7.0
+    assert cost.output_tokens == 120_000
+
+
+def test_session_cost_from_disk_leaves_cost_null_for_an_unpriced_model(tmp_path: Path) -> None:
+    """Tokens were counted; the run was not priced. `calculate_cost` returns
+    0.0 for a model it has no rate for, and a 0 enters a cost report as a
+    fact."""
+    from lazy_harness.monitoring.collector import session_cost_from_disk
+    from lazy_harness.monitoring.pricing import default_pricing
+
+    project = _project_dir(tmp_path)
+    session_id = "11111111-2222-4333-8444-555566667777"
+    _write_session_jsonl(
+        project / f"{session_id}.jsonl",
+        [_assistant("msg_1", "claude-not-in-the-table-9", _ONE_DOLLAR_EACH)],
+    )
+
+    cost = session_cost_from_disk(project.parent, session_id, default_pricing())
+
+    assert cost.cost_usd is None
+    assert cost.output_tokens == 40_000
+    assert cost.prompt_tokens == 2_460_000
+
+
+def test_session_cost_from_disk_prices_a_pseudo_model_at_zero(tmp_path: Path) -> None:
+    """`<synthetic>` stands in for a model on messages that consumed no tokens,
+    so $0 is the measurement rather than a hole — it must not be swept up by
+    the unpriced-model rule."""
+    from lazy_harness.monitoring.collector import session_cost_from_disk
+    from lazy_harness.monitoring.pricing import default_pricing
+
+    project = _project_dir(tmp_path)
+    session_id = "22222222-3333-4444-8555-666677778888"
+    _write_session_jsonl(
+        project / f"{session_id}.jsonl",
+        [_assistant("msg_1", "<synthetic>", _usage(inp=0, out=0, cache_read=0, c5m=0, c1h=0))],
+    )
+
+    cost = session_cost_from_disk(project.parent, session_id, default_pricing())
+
+    assert cost.cost_usd == 0.0
+    assert cost.output_tokens == 0
+
+
+def test_session_cost_from_disk_reports_nothing_when_no_transcript_exists(tmp_path: Path) -> None:
+    """A run killed before its first token leaves no file to price."""
+    from lazy_harness.monitoring.collector import session_cost_from_disk
+    from lazy_harness.monitoring.pricing import default_pricing
+
+    project = _project_dir(tmp_path)
+
+    cost = session_cost_from_disk(
+        project.parent, "33333333-4444-4555-8666-777788889999", default_pricing()
+    )
+
+    assert cost.cost_usd is None
+    assert cost.prompt_tokens is None
+    assert cost.output_tokens is None
+    assert cost.cache_creation_tokens is None
+    assert cost.cache_read_tokens is None
+
+
+def test_session_cost_from_disk_reports_nothing_when_no_turn_was_flushed(tmp_path: Path) -> None:
+    """A transcript written before the first assistant turn holds queue and
+    attachment lines only. The ingest skips it and bills nothing; a 0 here
+    would report the run as free rather than as unmeasured."""
+    from lazy_harness.monitoring.collector import session_cost_from_disk
+    from lazy_harness.monitoring.pricing import default_pricing
+
+    project = _project_dir(tmp_path)
+    session_id = "44444444-5555-4666-8777-888899990000"
+    _write_session_jsonl(
+        project / f"{session_id}.jsonl",
+        [
+            {"type": "queue-operation", "timestamp": "2026-08-31T11:00:00"},
+            {"type": "user", "content": "hi", "timestamp": "2026-08-31T11:00:01"},
+        ],
+    )
+
+    cost = session_cost_from_disk(project.parent, session_id, default_pricing())
+
+    assert cost.cost_usd is None
+    assert cost.output_tokens is None
+
+
+def test_session_cost_from_disk_survives_an_unreadable_transcript(tmp_path: Path) -> None:
+    """A directory where the transcript should be raises OSError on read. The
+    caller is an envelope path that must not change what a run reports, so this
+    degrades to "unmeasured" rather than propagating."""
+    from lazy_harness.monitoring.collector import session_cost_from_disk
+    from lazy_harness.monitoring.pricing import default_pricing
+
+    project = _project_dir(tmp_path)
+    session_id = "55555555-6666-4777-8888-999900001111"
+    (project / f"{session_id}.jsonl").mkdir()
+
+    cost = session_cost_from_disk(project.parent, session_id, default_pricing())
+
+    assert cost.cost_usd is None
+    assert cost.output_tokens is None

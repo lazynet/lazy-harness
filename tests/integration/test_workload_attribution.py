@@ -168,14 +168,19 @@ def test_the_workload_reaches_the_ingested_event(channel: dict[str, Path]) -> No
 
 def test_attribution_survives_the_timeout(channel: dict[str, Path]) -> None:
     """The most expensive outcome `lh exec` has, and the reason the write is
-    pre-spawn: the envelope reports no cost, but the ingest bills the run."""
+    pre-spawn: the kill must not outrun the attribution row.
+
+    The envelope now bills the killed run from its transcript too, but only the
+    ingest puts that cost in the store `lh status --by workload` reads, so the
+    row is still what makes the run answerable by caller."""
     _write_agent(HANGING_AGENT)
 
     code, envelope = _exec(["--workload", "vault-pass", "--timeout", "2"])
 
     assert code == 124
     assert envelope["error"]["kind"] == "timeout"
-    assert envelope["cost_usd"] is None, "the envelope cannot account for a killed run"
+    assert envelope["cost_usd"] is not None, "a killed run is billed from its transcript"
+    assert envelope["cost_source"] == "transcript"
 
     db = MetricsDB(channel["db"])
     sink = _CapturingSink()
@@ -186,7 +191,7 @@ def test_attribution_survives_the_timeout(channel: dict[str, Path]) -> None:
     finally:
         db.close()
 
-    assert len(sink.events) == 1, "the ingest is the only thing that bills this run"
+    assert len(sink.events) == 1, "the ingest is what makes the run queryable by caller"
     assert sink.events[0].workload == "vault-pass"
 
 

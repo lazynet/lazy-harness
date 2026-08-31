@@ -195,7 +195,8 @@ a timed-out run, which is why attribution has to be resolvable there.
 Corollary worth recording separately: **`lh exec` under-reports cost on every
 timeout.** `cost_usd`, all four token counters and `num_turns` come back `null`
 while the ingest bills $0.066526 for the same run. That is a pre-existing
-accounting gap, independent of this ADR, and it is not fixed here.
+accounting gap, independent of this ADR. It is closed by the amendment at the
+end of this document, not by the schema change itself.
 
 
 ## Decision
@@ -444,7 +445,10 @@ sets `error.kind = "timeout"` with exit 124 and `headless.py:263-265` raises
 Whoever picks this up owns the choice of which side fixes it — `lh exec`
 stamping an `error.kind` when the agent fails with nothing on stdout, or the
 consumer treating `success=False` with a null `error_kind` as its own error
-class. Both are defensible; neither is decided here.
+class. Both are defensible; neither is decided here. **Resolved 2026-08-31 —
+see the amendment at the end of this document: `lh exec` stamps
+`error.kind: "no-envelope"`, and the consumer keeps its null-kind fallback
+permanently, for older harnesses.**
 
 ## Deploy order
 
@@ -550,3 +554,11 @@ nothing else disturbed.
 - Orphan attribution rows: a run refused or killed before its first token
   leaves a `session_attribution` row no session joins; assert every reader
   tolerates it rather than counting it.
+
+
+## Follow-on
+
+Two accounting holes this ADR opened in the `lh exec` envelope — `cost_usd: null`
+on every timeout, and a failed run carrying no `error.kind` — are closed by
+[ADR-038](./038-exec-envelope-cost-provenance.md), which owns the envelope
+contract from here on.

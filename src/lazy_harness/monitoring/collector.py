@@ -5,10 +5,12 @@ from __future__ import annotations
 import json
 import os
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from lazy_harness.core.project_identity import main_repo_root
+from lazy_harness.monitoring.pricing import calculate_cost, is_pseudo_model
 
 _KNOWN_CONTAINERS = frozenset(
     {"repos", "projects", "src", "work", "dev", "code", "workspace", "workspaces"}
@@ -211,3 +213,96 @@ def parse_session(filepath: Path) -> list[dict[str, Any]]:
             }
         )
     return results
+
+
+_TOKEN_KEYS = ("input", "output", "cache_read", "cache_create", "cache_create_1h")
+
+
+@dataclass(frozen=True)
+class SessionCost:
+    """What one session cost, measured from its transcript on disk.
+
+    Every field is `None` rather than `0` when it could not be measured: a
+    zero enters a cost report as a fact.
+    """
+
+    cost_usd: float | None = None
+    prompt_tokens: int | None = None
+    output_tokens: int | None = None
+    cache_creation_tokens: int | None = None
+    cache_read_tokens: int | None = None
+
+
+def session_cost_from_disk(
+    projects_dir: Path,
+    session_id: str,
+    pricing: dict[str, dict[str, float]],
+) -> SessionCost:
+    """Price one session by reading the transcript the agent already wrote.
+
+    The same file, the same `message.id` dedup and the same pricing table the
+    ingest bills from, so `lh exec` and `lh metrics ingest` answer "what did
+    this session cost" with one number rather than two.
+    """
+    per_model: dict[str, dict[str, int]] = {}
+    dates: dict[str, str] = {}
+    seen: set[str] = set()
+
+    for session_file in _session_files(projects_dir, session_id):
+        file_date = extract_session_date(session_file)
+        for msg in iter_assistant_messages(session_file):
+            if msg["msg_id"] in seen:
+                continue
+            seen.add(msg["msg_id"])
+            agg = per_model.setdefault(msg["model"], dict.fromkeys(_TOKEN_KEYS, 0))
+            dates.setdefault(msg["model"], file_date)
+            for key in _TOKEN_KEYS:
+                agg[key] += msg[key]
+
+    if not per_model:
+        return SessionCost()
+
+    # `calculate_cost` answers 0.0 for a model it has no rate for, so a partial
+    # sum over the priced subset would be a real number for a fictitious run.
+    # Tokens are still reported: they were counted, the run just was not priced.
+    unpriced = any(m not in pricing and not is_pseudo_model(m) for m in per_model)
+    cost = (
+        None
+        if unpriced
+        else round(
+            sum(
+                calculate_cost(model, agg, pricing, on=dates[model])
+                for model, agg in per_model.items()
+            ),
+            6,
+        )
+    )
+    totals = {key: sum(agg[key] for agg in per_model.values()) for key in _TOKEN_KEYS}
+    return SessionCost(
+        cost_usd=cost,
+        prompt_tokens=(
+            totals["input"]
+            + totals["cache_read"]
+            + totals["cache_create"]
+            + totals["cache_create_1h"]
+        ),
+        output_tokens=totals["output"],
+        cache_creation_tokens=totals["cache_create"] + totals["cache_create_1h"],
+        cache_read_tokens=totals["cache_read"],
+    )
+
+
+def _session_files(projects_dir: Path, session_id: str) -> list[Path]:
+    """Every transcript that bills to `session_id`, oldest write first.
+
+    Subagent turns live under `<session_id>/subagents/` and the ingest folds
+    them into the parent session, so a lookup that reads only
+    `<session_id>.jsonl` under-reports on exactly the runs that spawned the
+    most work. Both readers have to agree or the envelope and `lh status`
+    disagree about the same run.
+    """
+    files = [
+        *projects_dir.glob(f"*/{session_id}.jsonl"),
+        *projects_dir.glob(f"*/{session_id}/subagents/**/*.jsonl"),
+    ]
+    return sorted(files, key=lambda f: f.stat().st_mtime_ns)

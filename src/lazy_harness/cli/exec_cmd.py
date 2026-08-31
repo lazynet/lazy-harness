@@ -50,6 +50,11 @@ def _base_envelope() -> dict:
         "exit_code": EXIT_HARNESS_ERROR,
         "output": "",
         "cost_usd": None,
+        # Which door the figure came through. The agent's own number and the
+        # harness pricing table disagree by design, so a consumer summing costs
+        # across runs has to be able to tell them apart. Non-null if and only if
+        # `cost_usd` is non-null.
+        "cost_source": None,
         "duration_ms": None,
         "prompt_tokens": None,
         "output_tokens": None,
@@ -104,6 +109,36 @@ def _record_attribution(session_id: str, workload: str, *, replaces: str | None 
                 db.delete_attribution(replaces)
         finally:
             db.close()
+    except Exception:
+        pass
+
+
+def _bill_from_transcript(
+    envelope: dict, config_dir: Path, session_id: str, pricing_overrides: dict
+) -> None:
+    """Fill the cost fields from the transcript the agent already wrote.
+
+    A kill destroys the stdout envelope but not the transcript, and the session
+    id was pinned before the spawn — so the run's cost is still on disk under a
+    stem this command chose. Without this, the single most expensive outcome
+    `lh exec` has is the one it reports as free, while the ingest bills it.
+
+    Fail-soft by construction: accounting about a run must never change what the
+    run reports. Every field stays `None` if anything here goes wrong.
+    """
+    try:
+        from lazy_harness.monitoring.collector import session_cost_from_disk
+        from lazy_harness.monitoring.pricing import load_pricing
+
+        cost = session_cost_from_disk(
+            config_dir / "projects", session_id, load_pricing(pricing_overrides)
+        )
+        envelope["cost_usd"] = cost.cost_usd
+        envelope["cost_source"] = "transcript" if cost.cost_usd is not None else None
+        envelope["prompt_tokens"] = cost.prompt_tokens
+        envelope["output_tokens"] = cost.output_tokens
+        envelope["cache_creation_tokens"] = cost.cache_creation_tokens
+        envelope["cache_read_tokens"] = cost.cache_read_tokens
     except Exception:
         pass
 
@@ -267,6 +302,7 @@ def exec_cmd(
         envelope["exit_code"] = EXIT_TIMEOUT
         envelope["error"] = {"kind": "timeout", "message": f"Agent exceeded {timeout}s."}
         envelope["harness"] = harness
+        _bill_from_transcript(envelope, plan.config_dir, session_id, cfg.monitoring.pricing)
         _emit(envelope)
         raise SystemExit(EXIT_TIMEOUT) from None
 
@@ -284,6 +320,7 @@ def exec_cmd(
             "exit_code": result.exit_code,
             "output": result.output,
             "cost_usd": result.cost_usd,
+            "cost_source": "agent" if result.cost_usd is not None else None,
             "duration_ms": result.duration_ms,
             "prompt_tokens": result.prompt_tokens,
             "output_tokens": result.output_tokens,
@@ -294,5 +331,29 @@ def exec_cmd(
             "raw": result.raw,
         }
     )
+
+    # The agent ran and failed. Left unnamed, the envelope is well-formed,
+    # parses cleanly, and reaches the consumer as `success=False` with a null
+    # kind and no exception: the failure arrives mute. Both kinds name the
+    # evidence rather than the symptom, because what a consumer does next
+    # differs — the cause is on stderr for one and on stdout for the other.
+    if not result.success and envelope["error"] is None:
+        if result.raw is None:
+            envelope["error"] = {
+                "kind": "no-envelope",
+                "message": (
+                    f"agent exited {result.exit_code} with no envelope on stdout; "
+                    "the cause, if any, went to its stderr, which lh exec does not capture"
+                ),
+            }
+        else:
+            envelope["error"] = {
+                "kind": "agent-error",
+                "message": (
+                    f"agent exited {result.exit_code} reporting its own failure; "
+                    "its message is in `output`"
+                ),
+            }
+
     _emit(envelope)
     raise SystemExit(result.exit_code)
