@@ -63,10 +63,25 @@ class MetricsDB:
                 user_id TEXT NOT NULL DEFAULT 'local',
                 tenant_id TEXT NOT NULL DEFAULT 'local',
                 event_id TEXT NOT NULL DEFAULT '',
+                host TEXT NOT NULL DEFAULT '',
+                workload TEXT NOT NULL DEFAULT '',
                 UNIQUE(session, model)
             )
         """)
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_stats_date ON session_stats(date)")
+        # Written by `lh exec` before it spawns the agent, read by the ingest.
+        # Keyed by the session id `lh exec` pins, which is the stem the agent
+        # writes its transcript under and therefore the ingest's own join key.
+        # A run that dies before writing a transcript leaves a row no session
+        # joins; orphans are harmless to every reader and are not pruned.
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS session_attribution (
+                session TEXT PRIMARY KEY,
+                workload TEXT NOT NULL DEFAULT '',
+                host TEXT NOT NULL DEFAULT '',
+                created_ts REAL NOT NULL
+            )
+        """)
         self._conn.execute("""
             CREATE TABLE IF NOT EXISTS ingest_meta (
                 session TEXT PRIMARY KEY,
@@ -108,13 +123,18 @@ class MetricsDB:
         self._conn.commit()
 
     def _migrate_identity_columns(self) -> None:
-        """Add user_id/tenant_id/event_id to session_stats if missing.
+        """Add columns added after a database's creation to session_stats.
 
         Older databases created before the plugin system rename have a
         narrower schema. Use PRAGMA table_info to detect missing columns
         and ALTER TABLE them in. event_id is backfilled deterministically
         from (profile, session, model) for legacy rows so the remote sink
         has a stable idempotency key.
+
+        host and workload (ADR-037) are added the same way and are *not*
+        backfilled: nothing on disk can say which machine wrote a historical
+        row or which caller asked for it, and an invented value would read as
+        a fact.
         """
         cols = {row[1] for row in self._conn.execute("PRAGMA table_info(session_stats)")}
         if "user_id" not in cols:
@@ -124,6 +144,14 @@ class MetricsDB:
         if "tenant_id" not in cols:
             self._conn.execute(
                 "ALTER TABLE session_stats ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'local'"
+            )
+        if "host" not in cols:
+            self._conn.execute(
+                "ALTER TABLE session_stats ADD COLUMN host TEXT NOT NULL DEFAULT ''"
+            )
+        if "workload" not in cols:
+            self._conn.execute(
+                "ALTER TABLE session_stats ADD COLUMN workload TEXT NOT NULL DEFAULT ''"
             )
         if "event_id" not in cols:
             self._conn.execute(
@@ -183,8 +211,8 @@ class MetricsDB:
             INSERT INTO session_stats
                 (session, date, model, profile, project,
                  input_tokens, output_tokens, cache_read, cache_create, cost,
-                 user_id, tenant_id, event_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 user_id, tenant_id, event_id, host, workload)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(session, model) DO UPDATE SET
                 date=excluded.date,
                 profile=excluded.profile,
@@ -196,7 +224,9 @@ class MetricsDB:
                 cost=excluded.cost,
                 user_id=excluded.user_id,
                 tenant_id=excluded.tenant_id,
-                event_id=excluded.event_id
+                event_id=excluded.event_id,
+                host=excluded.host,
+                workload=excluded.workload
             """,
             (
                 event.session,
@@ -212,9 +242,36 @@ class MetricsDB:
                 event.user_id,
                 event.tenant_id,
                 event.event_id,
+                event.host,
+                event.workload,
             ),
         )
         self._conn.commit()
+
+    def set_attribution(self, *, session: str, workload: str, host: str = "") -> None:
+        """Record who a session's cost belongs to, keyed by session id."""
+        self._conn.execute(
+            """INSERT INTO session_attribution (session, workload, host, created_ts)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(session) DO UPDATE SET
+                   workload=excluded.workload,
+                   host=excluded.host,
+                   created_ts=excluded.created_ts""",
+            (session, workload, host, time.time()),
+        )
+        self._conn.commit()
+
+    def delete_attribution(self, session: str) -> None:
+        """Drop one attribution row. Used when reconciliation moves it."""
+        self._conn.execute("DELETE FROM session_attribution WHERE session = ?", (session,))
+        self._conn.commit()
+
+    def attribution_map(self) -> dict[str, str]:
+        """session -> workload for every recorded attribution."""
+        rows = self._conn.execute(
+            "SELECT session, workload FROM session_attribution"
+        ).fetchall()
+        return {r["session"]: r["workload"] for r in rows}
 
     def get_ingest_mtime(self, session: str) -> int | None:
         row = self._conn.execute(
@@ -282,6 +339,8 @@ class MetricsDB:
                 "cache_read": r["cache_read"],
                 "cache_create": r["cache_create"],
                 "cost": r["cost"],
+                "host": r["host"],
+                "workload": r["workload"],
             }
             for r in rows
         ]

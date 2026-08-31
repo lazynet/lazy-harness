@@ -83,3 +83,109 @@ def test_ingest_fans_out_to_every_configured_sink(tmp_path: Path) -> None:
         assert ev.user_id  # stamped by identity resolver
     finally:
         db.close()
+
+
+def _one_profile_config(profile_dir: Path) -> Config:
+    cfg = Config()
+    cfg.profiles = ProfilesConfig(
+        default="personal",
+        items={
+            "personal": ProfileEntry(config_dir=str(profile_dir), roots=[], lazynorth_doc=""),
+        },
+    )
+    cfg.metrics = MetricsConfig(
+        sinks=["sqlite_local"],
+        sink_configs={"sqlite_local": SinkDefinition(options={})},
+    )
+    return cfg
+
+
+def test_ingest_stamps_the_host_on_every_event(tmp_path: Path) -> None:
+    """ADR-037 D3: the ingesting process runs on the machine that wrote the
+    transcripts, so `host` needs no channel — it is resolved here."""
+    from lazy_harness.core.identity import resolve_host
+
+    profile_dir = tmp_path / "claude-personal"
+    _write_fake_jsonl(profile_dir / "projects", "sess1")
+
+    db = MetricsDB(tmp_path / "m.db")
+    counting = _CountingSink()
+    try:
+        ingest_all(_one_profile_config(profile_dir), db, pricing={}, sinks=[counting])
+    finally:
+        db.close()
+
+    assert counting.events[0].host == resolve_host()
+    assert counting.events[0].host != ""
+
+
+def test_ingest_joins_the_workload_recorded_by_lh_exec(tmp_path: Path) -> None:
+    profile_dir = tmp_path / "claude-personal"
+    _write_fake_jsonl(profile_dir / "projects", "sess1")
+
+    db = MetricsDB(tmp_path / "m.db")
+    counting = _CountingSink()
+    try:
+        db.set_attribution(session="sess1", workload="vault-pass", host="agents")
+        ingest_all(_one_profile_config(profile_dir), db, pricing={}, sinks=[counting])
+    finally:
+        db.close()
+
+    assert counting.events[0].workload == "vault-pass"
+
+
+def test_ingest_leaves_workload_empty_for_an_unattributed_session(tmp_path: Path) -> None:
+    """Interactive sessions have no caller label, and that is correct."""
+    profile_dir = tmp_path / "claude-personal"
+    _write_fake_jsonl(profile_dir / "projects", "sess1")
+
+    db = MetricsDB(tmp_path / "m.db")
+    counting = _CountingSink()
+    try:
+        db.set_attribution(session="a-different-session", workload="vault-pass")
+        ingest_all(_one_profile_config(profile_dir), db, pricing={}, sinks=[counting])
+    finally:
+        db.close()
+
+    assert counting.events[0].workload == ""
+
+
+def test_ingest_does_not_fold_host_into_user_id(tmp_path: Path) -> None:
+    """ADR-037 D2: `user_id` keeps identifying the person, not the machine."""
+    profile_dir = tmp_path / "claude-personal"
+    _write_fake_jsonl(profile_dir / "projects", "sess1")
+
+    cfg = _one_profile_config(profile_dir)
+    cfg.metrics.user_id = "martin"
+
+    db = MetricsDB(tmp_path / "m.db")
+    counting = _CountingSink()
+    try:
+        ingest_all(cfg, db, pricing={}, sinks=[counting])
+    finally:
+        db.close()
+
+    assert counting.events[0].user_id == "martin"
+    assert counting.events[0].host != "martin"
+
+
+def test_ingest_event_id_is_unchanged_by_the_new_dimensions(tmp_path: Path) -> None:
+    """ADR-037 D6: the remote upserts by event_id; new inputs would re-land
+    every historical event as a new row and double the recorded cost."""
+    from lazy_harness.monitoring.event_id import derive_event_id
+
+    profile_dir = tmp_path / "claude-personal"
+    _write_fake_jsonl(profile_dir / "projects", "sess1")
+
+    db = MetricsDB(tmp_path / "m.db")
+    counting = _CountingSink()
+    try:
+        db.set_attribution(session="sess1", workload="vault-pass")
+        ingest_all(_one_profile_config(profile_dir), db, pricing={}, sinks=[counting])
+    finally:
+        db.close()
+
+    ev = counting.events[0]
+    assert ev.event_id == derive_event_id(
+        profile="personal", session="sess1", model="claude-sonnet-4-5"
+    )

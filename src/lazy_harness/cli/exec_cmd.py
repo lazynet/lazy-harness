@@ -12,13 +12,19 @@ import os
 import signal
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 from typing import NoReturn
 
 import click
 
 from lazy_harness import __version__
-from lazy_harness.agents.base import HEADLESS_TIERS, HeadlessAgent, HeadlessResult
+from lazy_harness.agents.base import (
+    HEADLESS_TIERS,
+    HeadlessAgent,
+    HeadlessResult,
+    SessionPinningAgent,
+)
 from lazy_harness.agents.launch import LaunchError, LaunchPlan, resolve_launch
 from lazy_harness.core.config import ConfigError, load_config
 from lazy_harness.core.paths import config_file, process_exec_path
@@ -76,6 +82,32 @@ def _fail(kind: str, message: str, harness: dict | None = None) -> NoReturn:
     raise SystemExit(EXIT_HARNESS_ERROR)
 
 
+def _record_attribution(session_id: str, workload: str, *, replaces: str | None = None) -> None:
+    """Attach `workload` to `session_id` in the metrics store.
+
+    Called before the agent is spawned so a run killed by the timeout — the
+    most expensive outcome this command has — is still attributed. The ingest
+    is the only subsystem that accounts for such a run; this envelope reports
+    `cost_usd: null` for it.
+
+    Fail-soft by construction: attribution is bookkeeping about a run and must
+    never be the reason the run fails.
+    """
+    try:
+        from lazy_harness.core.identity import resolve_host
+        from lazy_harness.monitoring.db import MetricsDB, resolve_db_path
+
+        db = MetricsDB(resolve_db_path())
+        try:
+            db.set_attribution(session=session_id, workload=workload, host=resolve_host())
+            if replaces is not None and replaces != session_id:
+                db.delete_attribution(replaces)
+        finally:
+            db.close()
+    except Exception:
+        pass
+
+
 def _terminate_group(proc: subprocess.Popen) -> None:
     """Kill the child *and* whatever it spawned.
 
@@ -122,6 +154,12 @@ def _terminate_group(proc: subprocess.Popen) -> None:
     show_default=True,
     help="Seconds before the agent's process group is killed. 0 disables.",
 )
+@click.option(
+    "--workload",
+    default="",
+    envvar="LH_WORKLOAD",
+    help="Attribution label for this run, recorded against its session id.",
+)
 @click.option("--dry-run", is_flag=True, help="Emit the plan without spawning the agent")
 @click.argument("agent_args", nargs=-1, type=click.UNPROCESSED)
 def exec_cmd(
@@ -131,6 +169,7 @@ def exec_cmd(
     allow_tools: str | None,
     no_tools: bool,
     timeout: float,
+    workload: str,
     dry_run: bool,
     agent_args: tuple[str, ...],
 ) -> None:
@@ -172,8 +211,13 @@ def exec_cmd(
     except ValueError as e:
         raise click.UsageError(str(e)) from e
 
+    # A fresh id every invocation, never remembered: the agent refuses one
+    # already in use with exit 1 and an empty stdout.
+    session_id = str(uuid.uuid4())
+    pin = adapter.session_argv(session_id) if isinstance(adapter, SessionPinningAgent) else []
     tail = [
         *adapter.headless_argv(model=resolved_model, allowed_tools=allowed_tools),
+        *pin,
         *agent_args,
     ]
     harness = _harness_block(plan, [str(plan.binary), *tail])
@@ -187,6 +231,11 @@ def exec_cmd(
     prompt = sys.stdin.read() if not sys.stdin.isatty() else ""
     if not prompt.strip():
         _fail("empty-prompt", "No prompt on stdin.", harness)
+
+    # Before the spawn, so the attribution outlives a kill. An empty workload
+    # writes nothing: the table must not grow a row on every unlabelled run.
+    if workload:
+        _record_attribution(session_id, workload)
 
     process_name = adapter.process_name()
     executable = process_exec_path(plan.binary, process_name) if process_name else plan.binary
@@ -222,6 +271,11 @@ def exec_cmd(
         raise SystemExit(EXIT_TIMEOUT) from None
 
     result: HeadlessResult = adapter.parse_headless_result(stdout, proc.returncode)
+
+    # An exit code is not proof the pin took effect. If the agent named a
+    # different conversation, the attribution belongs to that one.
+    if workload and result.session_id and result.session_id != session_id:
+        _record_attribution(result.session_id, workload, replaces=session_id)
 
     envelope = _base_envelope()
     envelope.update(

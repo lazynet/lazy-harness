@@ -6,7 +6,9 @@ import os
 import platform
 from unittest.mock import patch
 
-from lazy_harness.core.identity import resolve_identity
+import pytest
+
+from lazy_harness.core.identity import resolve_host, resolve_identity
 
 
 def test_explicit_user_id_wins() -> None:
@@ -155,3 +157,42 @@ def test_gh_reader_returning_empty_string_treated_as_missing() -> None:
         _git_email_reader=lambda: "martin@example.com",
     )
     assert ident.source == "git"
+
+
+def test_resolve_host_drops_the_mdns_suffix() -> None:
+    env = {k: v for k, v in os.environ.items() if k != "HOSTNAME"}
+    with patch.dict(os.environ, env, clear=True):
+        assert resolve_host(_hostname_reader=lambda: "LazyMBP.local") == "LazyMBP"
+
+
+def test_resolve_host_prefers_the_env_var() -> None:
+    with patch.dict(os.environ, {"HOSTNAME": "agents.lan"}):
+        assert resolve_host(_hostname_reader=lambda: "ignored") == "agents"
+
+
+def test_resolve_host_falls_back_to_the_host_literal() -> None:
+    env = {k: v for k, v in os.environ.items() if k != "HOSTNAME"}
+    with patch.dict(os.environ, env, clear=True):
+        assert resolve_host(_hostname_reader=lambda: "") == "host"
+        assert resolve_host(_hostname_reader=lambda: ".local") == "host"
+
+
+@pytest.mark.parametrize("raw", ["LazyMBP.local", "LazyMBP-2.local", "agents", "box.example.com"])
+def test_resolve_host_agrees_with_the_implicit_identity_branch(raw: str) -> None:
+    """ADR-037 D3: two code paths answering "what host is this" must agree.
+
+    `user_id` keeps stamping `user@host` on its implicit branch while `host`
+    becomes a dimension of its own, so the normalisation has to live in one
+    importable place or the two drift.
+    """
+    env = {k: v for k, v in os.environ.items() if k != "HOSTNAME"}
+    env["USER"] = "martin"
+    with patch.dict(os.environ, env, clear=True):
+        host = resolve_host(_hostname_reader=lambda: raw)
+        ident = resolve_identity(
+            explicit=None,
+            _gh_reader=lambda: None,
+            _git_email_reader=lambda: None,
+            _hostname_reader=lambda: raw,
+        )
+    assert ident.user_id == f"martin@{host}"

@@ -9,6 +9,7 @@ import pytest
 
 from lazy_harness.monitoring.aggregate import (
     DIMENSIONS,
+    FILTERABLE,
     aggregate,
     resolve_period,
 )
@@ -83,7 +84,16 @@ def test_resolve_period_accepts_an_explicit_day() -> None:
 
 
 def test_every_documented_dimension_is_supported() -> None:
-    assert set(DIMENSIONS) == {"profile", "project", "model", "day", "week", "month"}
+    assert set(DIMENSIONS) == {
+        "profile",
+        "project",
+        "model",
+        "day",
+        "week",
+        "month",
+        "host",
+        "workload",
+    }
 
 
 def test_grouping_by_profile_collapses_models_into_one_row() -> None:
@@ -285,3 +295,49 @@ def test_aggregated_total_matches_the_databases_own_sum(tmp_path: Any) -> None:
     result = aggregate(rows, ["profile", "model"])
     assert round(result.total.cost, 2) == expected["total_cost"]
     assert result.total.session_count == expected["session_count"]
+
+
+def test_aggregate_groups_by_host() -> None:
+    rows = [
+        _row(session="s1", host="LazyMBP", cost=1.0),
+        _row(session="s2", host="agents", cost=2.0),
+        _row(session="s3", host="agents", cost=4.0),
+    ]
+    result = aggregate(rows, ["host"])
+    by_host = {g.key["host"]: g.cost for g in result.groups}
+    assert by_host == {"LazyMBP": 1.0, "agents": 6.0}
+
+
+def test_aggregate_groups_by_workload() -> None:
+    rows = [
+        _row(session="s1", workload="vault-pass", cost=1.0),
+        _row(session="s2", workload="vault-pass", cost=2.0),
+        _row(session="s3", workload="", cost=4.0),
+    ]
+    result = aggregate(rows, ["workload"])
+    by_workload = {g.key["workload"]: g.cost for g in result.groups}
+    assert by_workload == {"vault-pass": 3.0, "unknown": 4.0}
+
+
+def test_host_and_workload_are_filterable() -> None:
+    assert set(FILTERABLE) == {"profile", "project", "model", "host", "workload"}
+
+
+def test_aggregate_filters_by_workload() -> None:
+    rows = [
+        _row(session="s1", workload="vault-pass", cost=1.0),
+        _row(session="s2", workload="other", cost=9.0),
+    ]
+    result = aggregate(rows, ["workload"], {"workload": "vault"})
+    assert result.total.cost == 1.0
+
+
+def test_aggregate_crosses_host_with_workload() -> None:
+    rows = [
+        _row(session="s1", host="agents", workload="vault-pass", cost=1.0),
+        _row(session="s2", host="agents", workload="vault-pass", cost=2.0),
+        _row(session="s3", host="LazyMBP", workload="vault-pass", cost=4.0),
+    ]
+    result = aggregate(rows, ["host", "workload"])
+    keys = {(g.key["host"], g.key["workload"]): g.cost for g in result.groups}
+    assert keys == {("agents", "vault-pass"): 3.0, ("LazyMBP", "vault-pass"): 4.0}

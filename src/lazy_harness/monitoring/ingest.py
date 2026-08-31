@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from lazy_harness.core.config import Config
-from lazy_harness.core.identity import resolve_identity
+from lazy_harness.core.identity import resolve_host, resolve_identity
 from lazy_harness.core.paths import expand_path
 from lazy_harness.core.profiles import ProfileInfo, list_profiles
 from lazy_harness.monitoring.collector import (
@@ -114,6 +114,8 @@ def ingest_profile(
     sinks: list[Any] | None = None,
     user_id: str = "local",
     tenant_id: str = "local",
+    host: str = "",
+    workload_by_session: dict[str, str] | None = None,
 ) -> IngestReport:
     report = IngestReport()
     projects_dir = profile.config_dir / "projects"
@@ -216,6 +218,11 @@ def ingest_profile(
                 cache_read=agg["cache_read"],
                 cache_create=cache_create_total,
                 cost=cost,
+                host=host,
+                # Recorded by `lh exec` against the session id it pinned before
+                # spawning. A session nobody labelled joins nothing and stays
+                # empty, which is the right answer for interactive work.
+                workload=(workload_by_session or {}).get(session_id, ""),
             )
         )
 
@@ -242,6 +249,10 @@ def ingest_all(
 ) -> IngestReport:
     total = IngestReport()
     identity = resolve_identity(explicit=cfg.metrics.user_id or None)
+    # Resolved once: the process that ingests a profile's transcripts is
+    # running on the machine that produced them, so `host` needs no channel.
+    host = resolve_host()
+    workload_by_session = db.attribution_map()
     for prof in list_profiles(cfg):
         config_path = expand_path(str(prof.config_dir))
         resolved = ProfileInfo(
@@ -261,6 +272,8 @@ def ingest_all(
                 sinks=sinks,
                 user_id=identity.user_id,
                 tenant_id=cfg.metrics.tenant_id,
+                host=host,
+                workload_by_session=workload_by_session,
             )
         )
     return total

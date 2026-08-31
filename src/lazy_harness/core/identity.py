@@ -62,6 +62,23 @@ def _read_hostname() -> str | None:
         return None
 
 
+def resolve_host(*, _hostname_reader: Callable[[], str | None] = _read_hostname) -> str:
+    """The machine name every subsystem must agree on.
+
+    `user_id` stamps `user@host` on its implicit branch and `MetricEvent.host`
+    is a dimension of its own, so both resolve through here rather than
+    repeating the normalisation.
+
+    $HOSTNAME is a bashism that neither zsh nor systemd exports, so the env
+    lookup alone stamped a literal "host" on every Linux machine. Only the
+    leading label is stable: macOS reports LazyMBP.local, and a DHCP collision
+    renames it to LazyMBP-2.local, which would silently split one machine's
+    metrics across two values.
+    """
+    raw_host = os.environ.get("HOSTNAME") or _hostname_reader() or ""
+    return raw_host.split(".", 1)[0] or "host"
+
+
 def resolve_identity(
     *,
     explicit: str | None,
@@ -83,11 +100,5 @@ def resolve_identity(
             return ResolvedIdentity(user_id=local, source="git")
 
     user = os.environ.get("USER") or "unknown"
-    # $HOSTNAME is a bashism that neither zsh nor systemd exports, so the
-    # env lookup alone stamped a literal "host" on every Linux machine.
-    raw_host = os.environ.get("HOSTNAME") or _hostname_reader() or ""
-    # Only the leading label is stable. macOS reports LazyMBP.local, and a DHCP
-    # collision renames it to LazyMBP-2.local, which would silently split one
-    # machine's metrics across two identities.
-    host = raw_host.split(".", 1)[0] or "host"
+    host = resolve_host(_hostname_reader=_hostname_reader)
     return ResolvedIdentity(user_id=f"{user}@{host}", source="implicit")

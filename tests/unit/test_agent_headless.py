@@ -294,3 +294,76 @@ def test_headless_tiers_are_declared_in_one_place() -> None:
     from lazy_harness.agents.base import HEADLESS_TIERS
 
     assert HEADLESS_TIERS == ("fast", "balanced", "deep")
+
+
+# --- session pinning (ADR-037 D5) ------------------------------------------
+
+
+def test_parse_surfaces_the_session_id_from_the_envelope() -> None:
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    result = ClaudeCodeAdapter().parse_headless_result(
+        _claude_envelope(session_id="925529e2-211b-4f64-b2a2-90a4f57b23c9"), 0
+    )
+    assert result.session_id == "925529e2-211b-4f64-b2a2-90a4f57b23c9"
+
+
+def test_parse_leaves_session_id_none_when_the_envelope_omits_it() -> None:
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    result = ClaudeCodeAdapter().parse_headless_result(_claude_envelope(), 0)
+    assert result.session_id is None
+
+
+def test_parse_leaves_session_id_none_on_unparseable_stdout() -> None:
+    """The measured shape of a refused session id: exit 1, empty stdout."""
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    result = ClaudeCodeAdapter().parse_headless_result("", 1)
+    assert result.session_id is None
+    assert result.success is False
+
+
+def test_parse_ignores_a_non_string_session_id() -> None:
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    result = ClaudeCodeAdapter().parse_headless_result(_claude_envelope(session_id=42), 0)
+    assert result.session_id is None
+
+
+def test_claude_session_argv_pins_the_session_id() -> None:
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    assert ClaudeCodeAdapter().session_argv("abc-123") == ["--session-id", "abc-123"]
+
+
+def test_claude_adapter_satisfies_the_session_pinning_protocol() -> None:
+    from lazy_harness.agents.base import SessionPinningAgent
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    assert isinstance(ClaudeCodeAdapter(), SessionPinningAgent)
+
+
+def test_an_adapter_without_session_argv_is_not_a_session_pinning_agent() -> None:
+    """Pinning is a capability, not a requirement: `lh exec` degrades instead.
+
+    Adding the method to `HeadlessAgent` itself would have made every
+    third-party adapter fail `isinstance` and be refused outright.
+    """
+    from lazy_harness.agents.base import HeadlessAgent, SessionPinningAgent
+
+    class _NoPinning:
+        def resolve_model(self, *, tier: str | None, explicit: str | None) -> str | None:
+            return explicit
+
+        def headless_argv(
+            self, *, model: str | None, allowed_tools: list[str] | None
+        ) -> list[str]:
+            return []
+
+        def parse_headless_result(self, stdout: str, exit_code: int):  # noqa: ANN201
+            raise NotImplementedError
+
+    adapter = _NoPinning()
+    assert isinstance(adapter, HeadlessAgent), "must still be usable headlessly"
+    assert not isinstance(adapter, SessionPinningAgent)

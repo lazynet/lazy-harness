@@ -81,6 +81,26 @@ Three states, deliberately distinct:
 
 `--allow-tools ""` is refused: passing an empty allow-list to Claude Code is a no-op that silently leaves the default read tools enabled, so the ambiguity is rejected instead of inherited.
 
+### Attributing a run
+
+`--workload <label>` records a free-form label against the session id `lh exec`
+pins before it spawns the agent, so the cost the ingest later derives from that
+session carries the label. It also reads `LH_WORKLOAD`, which is what lets a
+caller configured as a plain binary string — `lh exec --profile lazy` — supply
+one without changing its invocation.
+
+The harness never interprets the label. Omitting it records nothing.
+
+```bash
+echo "$PROMPT" | lh exec --profile lazy --workload nightly-index
+LH_WORKLOAD=nightly-index; export LH_WORKLOAD   # same effect
+lh status tokens --by workload --period all     # what each caller cost
+```
+
+The label survives a run killed by `--timeout`, which is the point: the
+envelope reports `cost_usd: null` for a killed run, so the ingest is the only
+place that accounts for it.
+
 ### Envelope
 
 ```json
@@ -411,11 +431,13 @@ lh status tokens --by model --period month
 
 | Flag | Values | Default | Notes |
 | --- | --- | --- | --- |
-| `--by` | `profile` `project` `model` `day` `week` `month` | `project` + `model` | Repeatable. Flag order is column order. |
+| `--by` | `profile` `project` `model` `host` `workload` `day` `week` `month` | `project` + `model` | Repeatable. Flag order is column order. |
 | `--period` | `today` `week` `month` `all`, `<N>d`, `YYYY-MM`, `YYYY-MM-DD` | `month` | `week` and `<N>d` are rolling windows ending today. |
 | `--profile` | any string | — | Case-insensitive substring filter. |
 | `--model` | any string | — | Case-insensitive substring filter. |
 | `--project` | any string | — | Case-insensitive substring filter. |
+| `--host` | any string | — | Case-insensitive substring filter. |
+| `--workload` | any string | — | Case-insensitive substring filter. |
 | `--json` | flag | off | Emits the aggregation instead of the table. |
 
 Each `--by` adds a grouping column, so `--by month --by profile` gives one row
