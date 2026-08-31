@@ -332,19 +332,28 @@ def exec_cmd(
         }
     )
 
-    # The agent ran and failed without saying why on stdout — a refused session
-    # id does exactly this. Left unnamed, the envelope is well-formed, parses
-    # cleanly, and reaches the consumer as `success=False` with a null kind and
-    # no exception: the failure arrives mute. The kind names the evidence, not
-    # the symptom, and points at where the cause actually went.
-    if not result.success and result.raw is None:
-        envelope["error"] = {
-            "kind": "no-envelope",
-            "message": (
-                f"agent exited {result.exit_code} with no envelope on stdout; "
-                "the cause, if any, went to its stderr, which lh exec does not capture"
-            ),
-        }
+    # The agent ran and failed. Left unnamed, the envelope is well-formed,
+    # parses cleanly, and reaches the consumer as `success=False` with a null
+    # kind and no exception: the failure arrives mute. Both kinds name the
+    # evidence rather than the symptom, because what a consumer does next
+    # differs — the cause is on stderr for one and on stdout for the other.
+    if not result.success and envelope["error"] is None:
+        if result.raw is None:
+            envelope["error"] = {
+                "kind": "no-envelope",
+                "message": (
+                    f"agent exited {result.exit_code} with no envelope on stdout; "
+                    "the cause, if any, went to its stderr, which lh exec does not capture"
+                ),
+            }
+        else:
+            envelope["error"] = {
+                "kind": "agent-error",
+                "message": (
+                    f"agent exited {result.exit_code} reporting its own failure; "
+                    "its message is in `output`"
+                ),
+            }
 
     _emit(envelope)
     raise SystemExit(result.exit_code)

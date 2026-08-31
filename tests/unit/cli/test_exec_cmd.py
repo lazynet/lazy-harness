@@ -737,7 +737,7 @@ def test_exec_survives_an_unwritable_attribution_store(
     assert envelope["success"] is True
 
 
-# --- cost provenance (ADR-037 amendment, C1-C3) ----------------------------
+# --- cost provenance (ADR-038, C1-C3) --------------------------------------
 
 COSTLESS_AGENT = """
     import json, sys
@@ -810,7 +810,7 @@ def test_exec_bills_a_timed_out_run_from_its_transcript(harness_config: Path) ->
     assert envelope["output_tokens"] == 40_000
 
 
-# --- the mute failure (ADR-037 amendment, C4) ------------------------------
+# --- the mute failure (ADR-038, C4) ----------------------------------------
 
 REFUSING_AGENT = """
     import sys
@@ -838,6 +838,52 @@ def test_exec_types_a_failure_that_left_nothing_on_stdout(harness_config: Path) 
     assert envelope["success"] is False
     assert envelope["error"]["kind"] == "no-envelope"
     assert "stderr" in envelope["error"]["message"]
+
+
+SELF_REPORTING_AGENT = """
+    import json, sys
+    sys.stdin.read()
+    sys.stdout.write(json.dumps({
+        "type": "result",
+        "is_error": True,
+        "result": "tool use rejected by policy",
+        "session_id": "0f2b9a1c-0000-4000-8000-000000000000",
+    }))
+    sys.exit(1)
+"""
+
+
+def test_exec_types_a_failure_the_agent_reported_in_its_own_envelope(
+    harness_config: Path,
+) -> None:
+    """The other half of the mute failure. `parse_headless_result` derives
+    `success` from `exit_code == 0 and is_error is not True`, so an agent that
+    reports its own failure in well-formed JSON lands on `success=False` with a
+    populated `raw` — which `no-envelope`'s guard deliberately excludes. Left
+    unnamed it is the same mute shape from the consumer's side: `success=False`,
+    `error=None`, and an exit code matching none it branches on."""
+    _write_agent(SELF_REPORTING_AGENT)
+
+    code, envelope = _invoke([])
+
+    assert code == 1
+    assert envelope["success"] is False
+    assert envelope["error"]["kind"] == "agent-error"
+    assert envelope["output"] == "tool use rejected by policy"
+
+
+def test_a_named_failure_never_overwrites_the_agents_own_output(
+    harness_config: Path,
+) -> None:
+    """The kind is stamped alongside the agent's message, never over it: the
+    cause of an `agent-error` is on stdout, unlike `no-envelope` where it went
+    to stderr. A consumer reading `output` must still find what the agent said."""
+    _write_agent(SELF_REPORTING_AGENT)
+
+    _, envelope = _invoke([])
+
+    assert "rejected by policy" in envelope["output"]
+    assert envelope["error"]["kind"] != "no-envelope"
 
 
 def test_exec_leaves_a_zero_exit_with_unparseable_stdout_alone(harness_config: Path) -> None:

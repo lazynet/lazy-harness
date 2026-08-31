@@ -161,12 +161,21 @@ not the same fact as run priced.
 | `70` | Harness failure before the agent ran: bad config, unknown profile, agent cannot run headless, binary not found, empty prompt |
 | `124` | The agent exceeded `--timeout` and its process group was killed |
 
-`error` is `null` on success and otherwise carries a `kind` and a `message`.
-`timeout` means the process group was killed; `no-envelope` means the agent ran,
-exited non-zero and left nothing parseable on stdout — its stderr passed through
-to the caller's stderr and is not captured here, so a caller that needs the cause
-durably has to keep that stream itself. The remaining kinds report a harness
-failure before the agent ran.
+`error` is `null` on success and otherwise carries a `kind` and a `message`. A
+run that failed always carries one: `success: false` with `error: null` is not a
+shape this command emits.
+
+| `kind` | What happened | Where the cause is |
+| --- | --- | --- |
+| `timeout` | The process group was killed at `--timeout` | The timeout is the cause |
+| `no-envelope` | The agent ran, exited non-zero and left nothing parseable on stdout | Its stderr, which passed through to the caller's and is **not** captured here |
+| `agent-error` | The agent ran and reported its own failure in a well-formed envelope | `output`, which carries the agent's message |
+| `config`, `empty-prompt`, `spawn-failed`, and the launch kinds | A harness failure before the agent ran | `message`, which is the whole explanation |
+
+A caller that needs the cause of a `no-envelope` durably has to keep the agent's
+stderr itself; `lh exec` never captures it. An agent that exits **0** with
+unparseable stdout is not a failure at all — `success` is derived from the exit
+code when the output cannot be parsed — so it carries `error: null`.
 
 `--timeout` (default 600s, `0` disables) is owned by `lh exec`, which kills the agent's whole **process group** — killing only the direct child leaves grandchildren such as MCP servers running and billable. A caller wrapping `lh exec` in its own timeout should set that backstop above this one.
 
