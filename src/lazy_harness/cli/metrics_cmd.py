@@ -10,7 +10,7 @@ from rich.console import Console
 from rich.markup import escape
 
 from lazy_harness.core.config import ConfigError, load_config
-from lazy_harness.core.identity import resolve_identity
+from lazy_harness.core.identity import resolve_host, resolve_identity
 from lazy_harness.core.paths import config_file, data_dir, expand_path
 from lazy_harness.monitoring.db import MetricsDB
 from lazy_harness.monitoring.ingest import ingest_all
@@ -138,6 +138,41 @@ def metrics_drain() -> None:
         db.close()
 
     Console().print(f"[green]drain complete:[/green] {total_sent} sent, {total_failed} failed")
+
+
+@metrics.command("backfill-host")
+@click.option("--host", default="", help="Host to stamp. Defaults to this machine's.")
+@click.option("--dry-run", is_flag=True, help="Report what would change without applying it.")
+def metrics_backfill_host(host: str, dry_run: bool) -> None:
+    """Stamp `host` on stats rows that predate it, and re-queue what was sent without it.
+
+    Rows ingested before the dimension existed carry an empty host, and the
+    transcripts they came from are long deleted — so re-ingesting cannot
+    recover it. What can: a local metrics DB only ever holds sessions ingested
+    on the machine that owns it, which makes this machine's host the right
+    answer for every unstamped row in it. Run it on the machine that owns the
+    DB; the default host is that machine's own.
+    """
+    console = Console(stderr=True)
+    try:
+        cfg = load_config(config_file())
+    except ConfigError as e:
+        console.print(f"[red]Error:[/red] {escape(str(e))}")
+        raise SystemExit(1)
+
+    resolved_host = host or resolve_host()
+    db_path = expand_path(cfg.monitoring.db) if cfg.monitoring.db else data_dir() / "metrics.db"
+    db = MetricsDB(Path(db_path))
+    try:
+        report = db.backfill_host(resolved_host, dry_run=dry_run)
+    finally:
+        db.close()
+
+    prefix = "would stamp" if dry_run else "stamped"
+    Console().print(
+        f"[green]{prefix}[/green] {report.rows_stamped} rows as {escape(resolved_host)} · "
+        f"{report.events_requeued} events re-queued for resend"
+    )
 
 
 @metrics.command("status")
