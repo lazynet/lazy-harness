@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.50.0](https://github.com/lazynet/lazy-harness/compare/v0.49.1...v0.50.0) (2026-08-31)
+
+
+### Features
+
+* add host and workload dimensions to metric events ([#223](https://github.com/lazynet/lazy-harness/issues/223)) ([3df6bb9](https://github.com/lazynet/lazy-harness/commit/3df6bb9956ac9a1c5833a6cc724e560d47389fdb))
+
+
+### Documentation
+
+* add ADR-037 for metric event schema v2 ([#221](https://github.com/lazynet/lazy-harness/issues/221)) ([919dfa7](https://github.com/lazynet/lazy-harness/commit/919dfa71d35c65e0fb9aaf54246d0bc54660d9b9))
+
 ## [0.49.1](https://github.com/lazynet/lazy-harness/compare/v0.49.0...v0.49.1) (2026-08-31)
 
 
