@@ -46,6 +46,7 @@ Decisions that define the `lazy-harness` project itself.
 | [034](./034-okf-knowledge-producer.md) | proposed | OKF producer — export curated knowledge as an OKF bundle | New `knowledge/okf.py` + `lh knowledge export-okf` transform the `learnings/` layer into a conformant Open Knowledge Format v0.1 bundle. Export-only, non-invasive; episodic logs excluded. |
 | [035](./035-capability-registry.md) | proposed | Capability registry — cardinality and external dependency as the two axes | One enumerable registry over the six activation surfaces, classified by cardinality (`one`/`many`) and by whether activation needs an external binary. Explicitly not a public plugin API. |
 | [036](./036-compact-hooks-use-real-channels.md) | accepted | Compact-event hooks use the channels the agent actually provides | `PostCompact` has no output channel to the model, so the built-in is removed; `pre-compact` prints plain text into `newCustomInstructions`. |
+| [037](./037-metric-event-v2-host-and-workload.md) | proposed | Metric event schema v2 — `host` and `workload` as first-class dimensions | `MetricEvent` gains `host` (resolved at ingest) and a caller-supplied `workload`, carried by a session id `lh exec` pins before spawning. |
 
 ### Status values
 
@@ -55,7 +56,7 @@ Each active ADR carries one of the following statuses in its header. The column 
 |---|---|
 | `accepted` | Decision taken **and** embodied in code, config, or tests. Default state for a shipping decision. |
 | `accepted-deferred` | Decision taken and locked, but implementation is intentionally not yet scheduled. The ADR is not incomplete — its realisation is waiting for a specific trigger documented in the ADR itself. |
-| `proposed` | Written and reasoned, but not yet committed to. Open for revision. ADR-034 and ADR-035 currently hold this status. |
+| `proposed` | Written and reasoned, but not yet committed to. Open for revision. ADR-034, ADR-035 and ADR-037 currently hold this status. |
 | `superseded-by: NNN` | Replaced by a later ADR. The record is kept for history; the pointer names its replacement. ADR-020 currently holds this status. |
 
 New decisions default to `accepted` once they ship. A decision that turns out wrong is **superseded** by a new ADR rather than edited in place.
