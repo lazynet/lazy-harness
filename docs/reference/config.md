@@ -212,7 +212,7 @@ The `[monitoring]` block controls the **session-rollup** SQLite store written by
 | --------- | ------------- | ------- | -------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | `enabled` | bool          | `false` | no       | Whether the monitoring pipeline writes to SQLite.                                                                              |
 | `db`      | string (path) | `""`    | no       | Path to the monitoring DB. Empty falls back to the data dir default.                                                           |
-| `pricing` | table         | `{}`    | no       | Per-model pricing for cost rollups, e.g. `[monitoring.pricing.<model>]` with `input` / `output` USD-per-million-tokens floats. |
+| `pricing` | table         | `{}`    | no       | Per-model pricing for cost rollups, e.g. `[monitoring.pricing.<model>]` with `input` / `output` / `cache_read` / `cache_create` (5-minute TTL write) / `cache_create_1h` (1-hour TTL write) USD-per-million-tokens floats. |
 
 ## `[metrics]`
 

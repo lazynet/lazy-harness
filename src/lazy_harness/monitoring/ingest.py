@@ -151,6 +151,7 @@ def ingest_profile(
                     "output": 0,
                     "cache_read": 0,
                     "cache_create": 0,
+                    "cache_create_1h": 0,
                     "date": session_date,
                     "project": project_name,
                 }
@@ -159,6 +160,7 @@ def ingest_profile(
             agg["output"] += m["output"]
             agg["cache_read"] += m["cache_read"]
             agg["cache_create"] += m["cache_create"]
+            agg["cache_create_1h"] += m["cache_create_1h"]
         if novel_for_this_file == 0:
             report.sessions_skipped += 1
 
@@ -174,10 +176,16 @@ def ingest_profile(
                 "output": agg["output"],
                 "cache_read": agg["cache_read"],
                 "cache_create": agg["cache_create"],
+                "cache_create_1h": agg["cache_create_1h"],
             },
             pricing,
             on=agg["date"],
         )
+        # The TTL split only has to survive as far as the price. Stored rows
+        # and the sink payload keep one cache-write token total: splitting
+        # the column would cost a schema migration and a wire-format bump
+        # for a distinction no reader consumes.
+        cache_create_total = agg["cache_create"] + agg["cache_create_1h"]
         entries.append(
             {
                 "session": session_id,
@@ -188,7 +196,7 @@ def ingest_profile(
                 "input": agg["input"],
                 "output": agg["output"],
                 "cache_read": agg["cache_read"],
-                "cache_create": agg["cache_create"],
+                "cache_create": cache_create_total,
                 "cost": cost,
             }
         )
@@ -206,7 +214,7 @@ def ingest_profile(
                 input_tokens=agg["input"],
                 output_tokens=agg["output"],
                 cache_read=agg["cache_read"],
-                cache_create=agg["cache_create"],
+                cache_create=cache_create_total,
                 cost=cost,
             )
         )

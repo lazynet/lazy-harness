@@ -200,6 +200,13 @@ class ClaudeCodeAdapter:
             else (uncached or 0) + (cache_creation or 0) + (cache_read or 0)
         )
 
+        # Claude Code's own figure, passed through verbatim — the harness
+        # never recomputes it. It can disagree with `lh metrics` costs: as of
+        # 2026-08-31 it bills claude-sonnet-5 at claude-sonnet-4-6's rates
+        # ($3/$15 rather than $2/$10), over-reporting those sessions by 50%.
+        # Recomputing it here would make the two agree by construction and
+        # cost us the only signal we get when it is our own table that has
+        # gone stale, so the disagreement is deliberate.
         cost = data.get("total_cost_usd")
         if not isinstance(cost, (int, float)) or isinstance(cost, bool):
             cost = data.get("cost_usd")
