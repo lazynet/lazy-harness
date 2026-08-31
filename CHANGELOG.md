@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.51.0](https://github.com/lazynet/lazy-harness/compare/v0.50.0...v0.51.0) (2026-08-31)
+
+
+### Features
+
+* add lh metrics backfill-host ([#225](https://github.com/lazynet/lazy-harness/issues/225)) ([4df62ba](https://github.com/lazynet/lazy-harness/commit/4df62ba1fb4cd5b1aa50c130627f849d6533c359))
+
+
+### Bug Fixes
+
+* account for a timed-out run and type a mute agent failure ([#224](https://github.com/lazynet/lazy-harness/issues/224)) ([c646f41](https://github.com/lazynet/lazy-harness/commit/c646f41df28f5f302ff863ff7f0140ec8d55cc15))
+
 ## [0.50.0](https://github.com/lazynet/lazy-harness/compare/v0.49.1...v0.50.0) (2026-08-31)
 
 
