@@ -4,27 +4,85 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+# Rates are per million tokens, from Anthropic's published table.
+# `cache_create` is the 5-minute write (1.25x base input); `cache_create_1h`
+# is the 1-hour write (2x base input). Claude Code reports which TTL a write
+# used, and the harness bills the two separately — one shared rate prices a
+# 1-hour write at 62.5% of what it costs.
 DEFAULT_PRICING: dict[str, dict[str, float]] = {
-    "claude-opus-4-6": {"input": 5.0, "output": 25.0, "cache_read": 0.5, "cache_create": 6.25},
-    "claude-opus-4-7": {"input": 5.0, "output": 25.0, "cache_read": 0.5, "cache_create": 6.25},
-    "claude-opus-4-8": {"input": 5.0, "output": 25.0, "cache_read": 0.5, "cache_create": 6.25},
-    "claude-opus-5": {"input": 5.0, "output": 25.0, "cache_read": 0.5, "cache_create": 6.25},
-    "claude-fable-5": {"input": 10.0, "output": 50.0, "cache_read": 1.0, "cache_create": 12.5},
-    "claude-mythos-5": {"input": 10.0, "output": 50.0, "cache_read": 1.0, "cache_create": 12.5},
-    "claude-sonnet-4-6": {"input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_create": 3.75},
-    # Standing rate. The launch discount lives in INTRODUCTORY_PRICING below.
-    "claude-sonnet-5": {"input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_create": 3.75},
+    "claude-opus-4-6": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.5,
+        "cache_create": 6.25,
+        "cache_create_1h": 10.0,
+    },
+    "claude-opus-4-7": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.5,
+        "cache_create": 6.25,
+        "cache_create_1h": 10.0,
+    },
+    "claude-opus-4-8": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.5,
+        "cache_create": 6.25,
+        "cache_create_1h": 10.0,
+    },
+    "claude-opus-5": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.5,
+        "cache_create": 6.25,
+        "cache_create_1h": 10.0,
+    },
+    "claude-fable-5": {
+        "input": 10.0,
+        "output": 50.0,
+        "cache_read": 1.0,
+        "cache_create": 12.5,
+        "cache_create_1h": 20.0,
+    },
+    "claude-mythos-5": {
+        "input": 10.0,
+        "output": 50.0,
+        "cache_read": 1.0,
+        "cache_create": 12.5,
+        "cache_create_1h": 20.0,
+    },
+    "claude-sonnet-4-6": {
+        "input": 3.0,
+        "output": 15.0,
+        "cache_read": 0.3,
+        "cache_create": 3.75,
+        "cache_create_1h": 6.0,
+    },
+    # Sonnet 5 is a tier below Sonnet 4.6, not the same one — the default
+    # here used to be a copy of that row. The $2/$10 launch rate became the
+    # standard price: the increase to $3/$15 scheduled for 2026-09-01 was
+    # cancelled.
+    "claude-sonnet-5": {
+        "input": 2.0,
+        "output": 10.0,
+        "cache_read": 0.2,
+        "cache_create": 2.5,
+        "cache_create_1h": 4.0,
+    },
     "claude-haiku-4-5-20251001": {
         "input": 1.0,
         "output": 5.0,
         "cache_read": 0.1,
         "cache_create": 1.25,
+        "cache_create_1h": 2.0,
     },
     "claude-haiku-4-5": {
         "input": 1.0,
         "output": 5.0,
         "cache_read": 0.1,
         "cache_create": 1.25,
+        "cache_create_1h": 2.0,
     },
 }
 
@@ -50,13 +108,10 @@ class IntroductoryRate:
         return self.since <= date <= self.through
 
 
-INTRODUCTORY_PRICING: dict[str, IntroductoryRate] = {
-    "claude-sonnet-5": IntroductoryRate(
-        since="2026-07-01",
-        through="2026-08-31",
-        rates={"input": 2.0, "output": 10.0, "cache_read": 0.2, "cache_create": 2.5},
-    ),
-}
+# Empty today. Sonnet 5's launch discount became the standard price, so it
+# moved into DEFAULT_PRICING and the window it needed went away. The
+# mechanism stays for the next launch discount.
+INTRODUCTORY_PRICING: dict[str, IntroductoryRate] = {}
 
 
 def is_pseudo_model(model: str) -> bool:
@@ -94,6 +149,9 @@ def calculate_cost(
 ) -> float:
     """Price one session's tokens.
 
+    `tokens` carries the two cache-write buckets separately:
+    `cache_create` is the 5-minute write, `cache_create_1h` the 1-hour one.
+
     `on` is the session date (YYYY-MM-DD). It only matters for models with an
     entry in INTRODUCTORY_PRICING, where it selects the discounted rate for
     sessions inside the window. Without a date, the standing rate applies —
@@ -108,10 +166,15 @@ def calculate_cost(
     # discount while the table still holds the shipped default.
     if intro and on and intro.covers(on) and rates == DEFAULT_PRICING.get(model):
         rates = intro.rates
+    # A config override replaces a model's whole rate dict, so one written
+    # against the older four-key shape carries no 1-hour rate. Falling back
+    # to the published 2x multiplier keeps it from billing at zero.
+    one_hour = rates.get("cache_create_1h", 2.0 * rates.get("input", 0.0))
     cost = (
         tokens.get("input", 0) * rates.get("input", 0)
         + tokens.get("output", 0) * rates.get("output", 0)
         + tokens.get("cache_read", 0) * rates.get("cache_read", 0)
         + tokens.get("cache_create", 0) * rates.get("cache_create", 0)
+        + tokens.get("cache_create_1h", 0) * one_hour
     ) / 1_000_000
     return round(cost, 6)

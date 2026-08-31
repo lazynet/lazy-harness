@@ -90,10 +90,32 @@ def extract_project_name(encoded_dir: str) -> str:
     return parts[-1] if parts else encoded_dir
 
 
+def split_cache_creation(usage: dict[str, Any]) -> tuple[int, int]:
+    """Split a usage block's cache writes into (5-minute, 1-hour) tokens.
+
+    Claude Code reports the breakdown under `usage.cache_creation` and the
+    total under `cache_creation_input_tokens`; across 6,642 measured
+    assistant messages the two always agree, so the breakdown is
+    authoritative when present.
+
+    A transcript written before the breakdown existed carries only the
+    total. Nothing records its TTL, so it goes to the 5-minute bucket —
+    the alternative invents a 2x charge on evidence we do not have.
+    """
+    breakdown = usage.get("cache_creation")
+    if isinstance(breakdown, dict):
+        return (
+            breakdown.get("ephemeral_5m_input_tokens", 0),
+            breakdown.get("ephemeral_1h_input_tokens", 0),
+        )
+    return usage.get("cache_creation_input_tokens", 0), 0
+
+
 def iter_assistant_messages(filepath: Path):
     """Yield one dict per assistant message in a JSONL session file.
 
-    Each dict has: msg_id, model, input, output, cache_read, cache_create.
+    Each dict has: msg_id, model, input, output, cache_read, cache_create
+    (5-minute writes) and cache_create_1h (1-hour writes).
     Messages without a usage block are skipped. msg_id falls back to a
     synthetic key when the upstream JSON has no `message.id` (legacy rows).
     """
@@ -117,19 +139,27 @@ def iter_assistant_messages(filepath: Path):
         if not usage:
             continue
         msg_id = msg.get("id") or f"{filepath.stem}:{lineno}"
+        cache_create, cache_create_1h = split_cache_creation(usage)
         yield {
             "msg_id": msg_id,
             "model": msg.get("model", "unknown"),
             "input": usage.get("input_tokens", 0),
             "output": usage.get("output_tokens", 0),
             "cache_read": usage.get("cache_read_input_tokens", 0),
-            "cache_create": usage.get("cache_creation_input_tokens", 0),
+            "cache_create": cache_create,
+            "cache_create_1h": cache_create_1h,
         }
 
 
 def parse_session(filepath: Path) -> list[dict[str, Any]]:
     aggregated: dict[str, dict[str, int]] = defaultdict(
-        lambda: {"input": 0, "output": 0, "cache_read": 0, "cache_create": 0}
+        lambda: {
+            "input": 0,
+            "output": 0,
+            "cache_read": 0,
+            "cache_create": 0,
+            "cache_create_1h": 0,
+        }
     )
 
     try:
@@ -153,11 +183,13 @@ def parse_session(filepath: Path) -> list[dict[str, Any]]:
             if not usage:
                 continue
 
+            cache_create, cache_create_1h = split_cache_creation(usage)
             agg = aggregated[model]
             agg["input"] += usage.get("input_tokens", 0)
             agg["output"] += usage.get("output_tokens", 0)
             agg["cache_read"] += usage.get("cache_read_input_tokens", 0)
-            agg["cache_create"] += usage.get("cache_creation_input_tokens", 0)
+            agg["cache_create"] += cache_create
+            agg["cache_create_1h"] += cache_create_1h
     except OSError:
         return []
 
@@ -175,6 +207,7 @@ def parse_session(filepath: Path) -> list[dict[str, Any]]:
                 "output": tokens["output"],
                 "cache_read": tokens["cache_read"],
                 "cache_create": tokens["cache_create"],
+                "cache_create_1h": tokens["cache_create_1h"],
             }
         )
     return results

@@ -63,19 +63,41 @@ Claude Code only ever appends to an existing session JSONL, never rewrites past 
 
 ## Pricing
 
-`DEFAULT_PRICING` in `monitoring/pricing.py` holds per-million-token rates for the Claude models currently observed in the wild. The rates mirror what LiteLLM publishes in `model_prices_and_context_window.json`, which is also what `ccusage` consumes — keeping the two aligned is the only way the cost numbers on `lh status` reconcile with `npx ccusage`.
+`DEFAULT_PRICING` in `monitoring/pricing.py` holds per-million-token rates for the Claude models currently observed in the wild, taken from Anthropic's published pricing table. Mirror that table, not a third-party mirror of it: the `claude-sonnet-5` row was once copied from `claude-sonnet-4-6` and over-reported every Sonnet 5 session by 50% until the two were compared against the source.
 
-Cache rates follow the published convention: `cache_read` is 0.1× the input rate, `cache_create` is 1.25× it (the 5-minute TTL write premium).
+Cache rates follow the published multipliers, relative to the model's base input rate:
+
+| Bucket | Field | Multiplier |
+| --- | --- | --- |
+| Cache read (hit) | `cache_read` | 0.1× |
+| 5-minute TTL write | `cache_create` | 1.25× |
+| 1-hour TTL write | `cache_create_1h` | 2× |
+
+### Cache writes are priced by TTL
+
+Claude Code reports which TTL a cache write used, under `usage.cache_creation`:
+
+```json
+"cache_creation": {"ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": 26038}
+```
+
+`split_cache_creation()` in `monitoring/collector.py` is the single place that reads it, and both transcript readers go through it. The two buckets stay separate as far as `calculate_cost()`, which prices each at its own rate.
+
+They are recombined immediately after. The stored `session_stats.cache_create` column and the emitted `MetricEvent` carry one **total** cache-write token count, as they always have — only the cost changes. Splitting the column would cost a schema migration and a wire-format bump for a distinction no reader consumes; if re-pricing history ever needs it, the split can be added then.
+
+A transcript written before the breakdown existed carries only `cache_creation_input_tokens`. Nothing records its TTL, so it is billed as a 5-minute write — the alternative invents a 2× charge on evidence we do not have.
+
+This distinction is not marginal. Across a week of measured local traffic, 1-hour writes were 92.9% of all cache-write tokens; pricing them at the 5-minute rate under-reported the total cost by 26.5%.
 
 ### Launch discounts expire on their own
 
-A model that ships with an introductory rate gets a second entry in `INTRODUCTORY_PRICING`, carrying the discounted rates and the window they apply to:
+A model that ships with an introductory rate gets an entry in `INTRODUCTORY_PRICING`, carrying the discounted rates and the window they apply to:
 
 ```python
 INTRODUCTORY_PRICING = {
-    "claude-sonnet-5": IntroductoryRate(
-        since="2026-07-01",
-        through="2026-08-31",
+    "some-future-model": IntroductoryRate(
+        since="2027-01-01",
+        through="2027-03-31",
         rates={"input": 2.0, "output": 10.0, "cache_read": 0.2, "cache_create": 2.5},
     ),
 }
@@ -83,7 +105,9 @@ INTRODUCTORY_PRICING = {
 
 `DEFAULT_PRICING` always holds the **standing** rate, so the discount is the exception and reverting is the default. `calculate_cost()` takes the session's date and picks the discounted rate only for sessions inside the window — which means a session from the discount period keeps its discounted cost forever, even when re-ingested years later, and a session after it never gets one.
 
-Encoding the end date is what makes this automatic. A comment saying "bump this after 2026-08-31" is not a mechanism: nothing reads it, and the day it lapses every cost figure silently drifts.
+Encoding the end date is what makes this automatic. A comment saying "bump this after the window closes" is not a mechanism: nothing reads it, and the day it lapses every cost figure silently drifts.
+
+The table is **empty today**. Sonnet 5's launch discount became its standard price — Anthropic cancelled the increase that had been scheduled for 2026-09-01 — so the rates moved into `DEFAULT_PRICING` and the window was removed. An expiry that still fired would have inflated every reported Sonnet 5 cost by 50% overnight, with no change in usage. A window is only correct while the vendor still intends to raise the price; re-check the source before trusting one.
 
 ### Unpriced models
 
@@ -110,9 +134,12 @@ input = 5.0
 output = 25.0
 cache_read = 0.5
 cache_create = 6.25
+cache_create_1h = 10.0
 ```
 
 Overrides are merged over `DEFAULT_PRICING` at ingest time via `load_pricing()`, and they win over an introductory window — once you set a model's rate yourself, that rate is what gets used on every date.
+
+An override replaces the model's whole rate dict. One written before `cache_create_1h` existed carries no 1-hour rate, so `calculate_cost()` falls back to 2× the override's `input` rather than billing that bucket at zero.
 
 ## Precision tests
 

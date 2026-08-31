@@ -176,3 +176,161 @@ def test_extract_project_name_keeps_an_ordinary_checkout_name(tmp_path: Path) ->
     (root / ".git").mkdir(parents=True)
 
     assert extract_project_name(_encode(root)) == "lazy-harness"
+
+
+def _usage_msg(usage: dict, model: str = "claude-sonnet-5") -> dict:
+    return {
+        "type": "assistant",
+        "message": {"id": "msg_ttl", "model": model, "usage": usage},
+        "timestamp": "2026-08-31T10:00:00Z",
+    }
+
+
+def test_iter_assistant_messages_splits_a_one_hour_cache_write(tmp_path: Path) -> None:
+    """Claude Code reports cache writes broken down by TTL.
+
+    `usage.cache_creation` carries `ephemeral_5m_input_tokens` and
+    `ephemeral_1h_input_tokens`. Collapsing them into the flat total
+    charges every write at the 5-minute rate.
+    """
+    from lazy_harness.monitoring.collector import iter_assistant_messages
+
+    session_file = tmp_path / "ttl.jsonl"
+    _write_session_jsonl(
+        session_file,
+        [
+            _usage_msg(
+                {
+                    "input_tokens": 2,
+                    "output_tokens": 141,
+                    "cache_read_input_tokens": 26168,
+                    "cache_creation_input_tokens": 26038,
+                    "cache_creation": {
+                        "ephemeral_5m_input_tokens": 0,
+                        "ephemeral_1h_input_tokens": 26038,
+                    },
+                }
+            )
+        ],
+    )
+
+    (m,) = list(iter_assistant_messages(session_file))
+    assert m["cache_create"] == 0
+    assert m["cache_create_1h"] == 26038
+
+
+def test_iter_assistant_messages_splits_a_five_minute_cache_write(tmp_path: Path) -> None:
+    """The 5-minute bucket must survive the split, not be folded into 1h."""
+    from lazy_harness.monitoring.collector import iter_assistant_messages
+
+    session_file = tmp_path / "ttl5m.jsonl"
+    _write_session_jsonl(
+        session_file,
+        [
+            _usage_msg(
+                {
+                    "input_tokens": 10,
+                    "output_tokens": 20,
+                    "cache_read_input_tokens": 0,
+                    "cache_creation_input_tokens": 900,
+                    "cache_creation": {
+                        "ephemeral_5m_input_tokens": 700,
+                        "ephemeral_1h_input_tokens": 200,
+                    },
+                }
+            )
+        ],
+    )
+
+    (m,) = list(iter_assistant_messages(session_file))
+    assert m["cache_create"] == 700
+    assert m["cache_create_1h"] == 200
+
+
+def test_a_transcript_without_the_breakdown_bills_the_five_minute_rate(
+    tmp_path: Path,
+) -> None:
+    """Older transcripts carry only the flat total.
+
+    Nothing records their TTL, so the cheaper 5-minute bucket is the only
+    honest place to put them — the alternative invents a 2x charge.
+    """
+    from lazy_harness.monitoring.collector import iter_assistant_messages
+
+    session_file = tmp_path / "legacy.jsonl"
+    _write_session_jsonl(
+        session_file,
+        [
+            _usage_msg(
+                {
+                    "input_tokens": 100,
+                    "output_tokens": 50,
+                    "cache_read_input_tokens": 200,
+                    "cache_creation_input_tokens": 1234,
+                }
+            )
+        ],
+    )
+
+    (m,) = list(iter_assistant_messages(session_file))
+    assert m["cache_create"] == 1234
+    assert m["cache_create_1h"] == 0
+
+
+def test_a_non_dict_cache_creation_falls_back_to_the_flat_total(tmp_path: Path) -> None:
+    """Valid JSON of the wrong type must not crash or drop the tokens."""
+    from lazy_harness.monitoring.collector import iter_assistant_messages
+
+    session_file = tmp_path / "wrongtype.jsonl"
+    _write_session_jsonl(
+        session_file,
+        [
+            _usage_msg(
+                {
+                    "input_tokens": 1,
+                    "output_tokens": 1,
+                    "cache_read_input_tokens": 0,
+                    "cache_creation_input_tokens": 500,
+                    "cache_creation": 500,
+                }
+            )
+        ],
+    )
+
+    (m,) = list(iter_assistant_messages(session_file))
+    assert m["cache_create"] == 500
+    assert m["cache_create_1h"] == 0
+
+
+def test_parse_session_and_iter_assistant_messages_agree_on_ttl(tmp_path: Path) -> None:
+    """Two readers of the same field must resolve it identically.
+
+    `parse_session` and `iter_assistant_messages` each decode `usage`; if
+    only one learns about the TTL split they answer the same question two
+    different ways depending on the caller.
+    """
+    from lazy_harness.monitoring.collector import iter_assistant_messages, parse_session
+
+    session_file = tmp_path / "agree.jsonl"
+    _write_session_jsonl(
+        session_file,
+        [
+            _usage_msg(
+                {
+                    "input_tokens": 6,
+                    "output_tokens": 4405,
+                    "cache_read_input_tokens": 134665,
+                    "cache_creation_input_tokens": 50500,
+                    "cache_creation": {
+                        "ephemeral_5m_input_tokens": 500,
+                        "ephemeral_1h_input_tokens": 50000,
+                    },
+                }
+            )
+        ],
+    )
+
+    (streamed,) = list(iter_assistant_messages(session_file))
+    (parsed,) = parse_session(session_file)
+    assert parsed["cache_create"] == streamed["cache_create"] == 500
+    assert parsed["cache_create_1h"] == streamed["cache_create_1h"] == 50000

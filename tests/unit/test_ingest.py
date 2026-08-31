@@ -458,14 +458,18 @@ def _ingest_sonnet_5_on(tmp_path: Path, session_date: str) -> float:
     return rows[0]["cost"]
 
 
-def test_ingest_prices_a_session_inside_the_introductory_window(tmp_path: Path) -> None:
-    """The session date, not today's date, selects the rate."""
+def test_ingest_prices_sonnet_5_at_its_own_rate(tmp_path: Path) -> None:
+    """Sonnet 5 bills $2/MTok input, not Sonnet 4.6's $3."""
     assert _ingest_sonnet_5_on(tmp_path, "2026-08-12") == pytest.approx(2.0)
 
 
-def test_ingest_prices_a_session_after_the_introductory_window(tmp_path: Path) -> None:
-    """Regression: re-ingesting must not keep applying an expired discount."""
-    assert _ingest_sonnet_5_on(tmp_path, "2026-09-15") == pytest.approx(3.0)
+def test_ingest_does_not_apply_the_cancelled_september_increase(tmp_path: Path) -> None:
+    """Regression: the 2026-09-01 rise to $3/$15 was cancelled.
+
+    An expiry reverting sonnet-5 to $3/$15 would inflate every reported
+    cost by 50% from one day to the next, with no change in usage.
+    """
+    assert _ingest_sonnet_5_on(tmp_path, "2026-09-15") == pytest.approx(2.0)
 
 
 def test_ingest_does_not_flag_a_pseudo_model_as_unpriced(tmp_path: Path) -> None:
@@ -513,3 +517,89 @@ def test_ingest_still_flags_a_real_unpriced_model(tmp_path: Path) -> None:
     finally:
         db.close()
     assert report.unknown_models == {"claude-future-model-99"}
+
+
+def test_ingest_prices_one_hour_writes_and_stores_the_token_total(tmp_path: Path) -> None:
+    """The stored row keeps one token column; the cost knows about both.
+
+    `session_stats.cache_create` stays the total number of cache-write
+    tokens — splitting it would mean a schema migration and a wire-format
+    bump for no reader that wants the split. The TTL only has to reach
+    `calculate_cost`, which happens before the row is written.
+    """
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.ingest import ingest_profile
+    from lazy_harness.monitoring.pricing import load_pricing
+
+    prof = _profile(tmp_path, "lazy")
+    _write_session(
+        prof.config_dir / "projects",
+        "-Users-x-repo",
+        "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        [
+            {
+                "type": "assistant",
+                "message": {
+                    "id": "msg_reduce",
+                    "model": "claude-opus-5",
+                    "usage": {
+                        "input_tokens": 10,
+                        "output_tokens": 14607,
+                        "cache_read_input_tokens": 267362,
+                        "cache_creation_input_tokens": 55875,
+                        "cache_creation": {
+                            "ephemeral_5m_input_tokens": 0,
+                            "ephemeral_1h_input_tokens": 55875,
+                        },
+                    },
+                },
+                "timestamp": "2026-08-31T10:00:00Z",
+            }
+        ],
+    )
+
+    db = MetricsDB(tmp_path / "metrics.db")
+    ingest_profile(prof, db, load_pricing())
+
+    (row,) = db.query_stats(period="all")
+    assert row["cache_create"] == 55875
+    assert row["cost"] == pytest.approx(1.0577, abs=0.00005)
+    db.close()
+
+
+def test_ingest_bills_a_legacy_transcript_at_the_five_minute_rate(tmp_path: Path) -> None:
+    """No breakdown recorded means no evidence of a 1-hour write."""
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.ingest import ingest_profile
+    from lazy_harness.monitoring.pricing import load_pricing
+
+    prof = _profile(tmp_path, "lazy")
+    _write_session(
+        prof.config_dir / "projects",
+        "-Users-x-repo",
+        "11111111-2222-3333-4444-555555555555",
+        [
+            {
+                "type": "assistant",
+                "message": {
+                    "id": "msg_legacy",
+                    "model": "claude-opus-5",
+                    "usage": {
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "cache_read_input_tokens": 0,
+                        "cache_creation_input_tokens": 1_000_000,
+                    },
+                },
+                "timestamp": "2026-08-31T10:00:00Z",
+            }
+        ],
+    )
+
+    db = MetricsDB(tmp_path / "metrics.db")
+    ingest_profile(prof, db, load_pricing())
+
+    (row,) = db.query_stats(period="all")
+    assert row["cache_create"] == 1_000_000
+    assert row["cost"] == pytest.approx(6.25, abs=0.00005)
+    db.close()
