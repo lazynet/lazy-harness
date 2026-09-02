@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from datetime import date
@@ -339,6 +340,35 @@ def _project_memory_dir() -> Path:
     )
 
 
+def _legacy_memory_dir() -> Path:
+    """The pre-store location: memory inside the agent's own project directory.
+
+    Resolved through the same helper the store path falls back to, so the two
+    answers cannot drift apart.
+    """
+    from lazy_harness.agents.registry import get_agent
+    from lazy_harness.core.paths import agent_runtime_dir
+    from lazy_harness.hooks.builtins._shared import resolve_memory_dir
+
+    cfg = None
+    cf = config_file()
+    if cf.is_file():
+        try:
+            cfg = load_config(cf)
+        except ConfigError:
+            cfg = None
+    agent = get_agent(cfg.agent.type if cfg is not None else "claude-code")
+    return (
+        resolve_memory_dir(
+            None,
+            agent_dir=agent_runtime_dir(agent),
+            sessions_subdir=agent.session_dirs().get("sessions") or "projects",
+            cwd=Path.cwd(),
+        )
+        / "memory"
+    )
+
+
 def _load_pending(memory_dir: Path | None) -> tuple[Path, str, list[PendingProposal]]:
     target = memory_dir or _project_memory_dir()
     pending_file = target / "claude-md.proposal.md"
@@ -360,6 +390,134 @@ _MEMORY_DIR_OPTION = click.option(
     default=None,
     help="Project memory directory. Defaults to the agent runtime dir for this cwd.",
 )
+
+
+def _read_text(path: Path) -> str:
+    return path.read_text() if path.is_file() else ""
+
+
+def _count_rules(path: Path) -> int:
+    """Rules, not timestamped blocks.
+
+    One block can carry several rules, and `proposals list` numbers rules — so
+    counting blocks here would disagree with the command that drains the queue.
+    """
+    return sum(
+        1 for line in _read_text(path).splitlines() if line.startswith(_RULE_PREFIX)
+    )
+
+
+def _jsonl_summary(path: Path) -> tuple[int | None, str]:
+    """Record count and the most recent date, or (None, "") when absent.
+
+    Rows spell the timestamp two ways — `ts` on everything the compound loop
+    writes today, `timestamp` on rows predating the rename — so a reader
+    honouring one key silently reports the wrong last-written date. A line that
+    does not parse still counts as a record: it was appended, and dropping it
+    would report a smaller file than exists.
+    """
+    if not path.is_file():
+        return None, ""
+    count = 0
+    latest = ""
+    for line in path.read_text(errors="replace").splitlines():
+        if not line.strip():
+            continue
+        count += 1
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        stamp = row.get("ts") or row.get("timestamp") or ""
+        if isinstance(stamp, str) and stamp[:10] > latest:
+            latest = stamp[:10]
+    return count, latest
+
+
+def _memory_documents(target: Path) -> list[Path]:
+    """The curated memories, without the index or the proposal ledgers.
+
+    `MEMORY.md` is the index and `claude-md.accepted/rejected/proposal.md` are
+    the compound loop's ledgers. Counting every `.md` reports the bookkeeping
+    as if it were memory.
+    """
+    if not target.is_dir():
+        return []
+    return sorted(
+        p
+        for p in target.glob("*.md")
+        if p.name != "MEMORY.md" and not p.name.startswith("claude-md.")
+    )
+
+
+def _human_bytes(n: int) -> str:
+    """Bytes at the scale a curated memory file actually reaches."""
+    if n < 1000:
+        return f"{n} B"
+    return f"{n / 1000:.1f} KB"
+
+
+@memory.command("status")
+@_MEMORY_DIR_OPTION
+def status(memory_dir: Path | None) -> None:
+    """Report where this project's memory lives and what is in it."""
+    target = memory_dir or _project_memory_dir()
+    if memory_dir is None:
+        from lazy_harness.core.project_identity import LOCAL_PREFIX, project_key
+
+        key = project_key(Path.cwd())
+        reason = (
+            " — no git remote, so memory stays out of the shared store"
+            if key.startswith(f"{LOCAL_PREFIX}/")
+            else ""
+        )
+        click.echo(f"{'Project':<8} {key}{reason}")
+    click.echo(f"{'Store':<8} {target}")
+    click.echo("")
+
+    index = target / "MEMORY.md"
+    if index.is_file():
+        text = index.read_text()
+        click.echo(
+            f"  MEMORY.md        {len(text.splitlines())} lines · "
+            f"{_human_bytes(len(text.encode()))}"
+        )
+    else:
+        click.echo("  MEMORY.md        absent")
+
+    docs = _memory_documents(target)
+    total = sum(d.stat().st_size for d in docs)
+    click.echo(f"  memories         {len(docs)} files · {_human_bytes(total)}")
+
+    for name in ("decisions", "failures", "grades"):
+        count, last = _jsonl_summary(target / f"{name}.jsonl")
+        if count is None:
+            continue
+        tail = f" · last {last}" if last else ""
+        click.echo(f"  {name + '.jsonl':<16} {count} records{tail}")
+
+    pending = len(parse_proposals(_read_text(target / "claude-md.proposal.md")))
+    rejected = _count_rules(target / "claude-md.rejected.md")
+    accepted = _count_rules(target / "claude-md.accepted.md")
+    click.echo(
+        f"  proposals        {pending} pending · {rejected} rejected · {accepted} accepted"
+    )
+
+    if memory_dir is not None:
+        return
+    legacy = _legacy_memory_dir()
+    if legacy == target or not any(legacy.glob("*")):
+        return
+    index = legacy / "MEMORY.md"
+    lines = len(index.read_text().splitlines()) if index.is_file() else 0
+    click.echo("")
+    click.echo(f"Also present, outside the store: {legacy}")
+    click.echo(
+        f"  MEMORY.md {lines} lines · {len(_memory_documents(legacy))} memories — "
+        "classify it: lh memory legacy-check"
+    )
 
 
 @memory.group("proposals")

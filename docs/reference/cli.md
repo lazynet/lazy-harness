@@ -258,6 +258,21 @@ lh knowledge graph update
 
 Diagnostic commands for the memory stack. Read-only inspection plus a propose-only consolidator — none of these write to `MEMORY.md` directly. Pair them with `lh status memory` for per-project counts.
 
+### `lh memory status`
+
+Inventory of the current project's memory: the key its store path is built from, the resolved store directory, and what sits in it — `MEMORY.md` in lines and bytes, the curated memory documents, record counts and last-written dates for `decisions.jsonl`, `failures.jsonl` and `grades.jsonl`, and proposals by state.
+
+It reports; it does not judge. The hygiene verdict — `MEMORY.md` against its ceiling, the age of the oldest pending proposal — belongs to `lh doctor`, and the cross-project table to `lh status memory`.
+
+When the agent's own project directory still holds memory of its own, that appears as a second block. Two directories can carry a `MEMORY.md` for one repository and only the store one is read once a store resolves; `lh memory legacy-check` classifies the leftover.
+
+A checkout with no git remote reports a `local/` key and says so: memory deliberately stays out of the shared store, which is a git repository that gets pushed, rather than merging two machines' unrelated directories under one name.
+
+```bash
+lh memory status
+lh memory status --memory-dir ~/.claude/projects/-Users-me-repo/memory
+```
+
 ### `lh memory consolidate`
 
 Proposes additions to `MEMORY.md` distilled from the most recent decisions and failures in the per-project memory dir. The command is read-only: it prints a proposal to stdout (typically a few bullet points fit for the curated semantic layer) and never edits `MEMORY.md` itself. Pair it with the warning emitted by `pre-tool-use-memory-size` when the file is near the 200-line or 12KB ceiling ([ADR-030](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/030-memory-stack-glue-layer.md) G2).
