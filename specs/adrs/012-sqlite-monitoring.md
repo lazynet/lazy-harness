@@ -17,7 +17,9 @@ Running an agent as a daily driver quickly raises the question "how much did thi
 
 **A local SQLite database (`monitoring/db.py`) populated by a collector that parses session JSONLs (`monitoring/collector.py`), plus a small set of view modules (`monitoring/views/`) that render aggregated output.**
 
-Schema (single table, intentional):
+Schema as decided on 2026-04-13 — a single table, intentional. It has since grown;
+`src/lazy_harness/monitoring/db.py` is the source of truth, and the *Evolution* section
+below records what changed and why:
 
 ```sql
 CREATE TABLE session_stats (
@@ -55,6 +57,35 @@ Views under `monitoring/views/` each render a distinct slice (`overview`, `proje
 - `lh status` is instant on any reasonable history size. The indexed `date` column and single-table queries keep every view under 50ms.
 - The database file lives at `~/.config/lazy-harness/metrics.db` by default (overridable). It is user-owned and survives uninstalls, consistent with the other persistent stores ([ADR-001](001-hybrid-architecture.md)).
 - Re-ingestion is safe. Running `lh status` (or a future scheduler job) on the same JSONLs over and over produces the same database.
-- Adding a new view = one new file in `monitoring/views/` and one registration in `dashboard.py`. No schema change, no migration.
+- Adding a new view = one new file in `monitoring/views/` and one registration in `dashboard.py`. No schema change, no migration. (This held for views. The schema itself later needed both — see *Evolution*.)
 - The collector filters project and profile out of the JSONL via the same decoder as `session_export` (see [ADR-011](011-session-export-and-classification.md)), sharing the calibration used for the knowledge directory.
 - The schema is deliberately flat. Future features (per-tool usage breakdown, per-hook timing) will either add columns or introduce a second table, not restructure this one.
+
+## Evolution
+
+The decision this ADR records — SQLite, populated from session JSONLs, queried by view
+modules — still holds. The schema block above does not: it describes the 2026-04-13 state
+and is kept as the record of what was decided, not as documentation of what exists. Read
+`src/lazy_harness/monitoring/db.py` for the current DDL.
+
+Tables now created by `MetricsDB._ensure_schema`:
+
+| Table | Purpose | Introduced by |
+|---|---|---|
+| `session_stats` | Per-session, per-model token and cost rows. The original table. | this ADR |
+| `ingest_meta` | `mtime_ns` per session, so re-ingest skips untouched transcripts. | `lh metrics ingest` pipeline (#1) |
+| `sink_outbox` | Durable queue of metric events pending delivery to a remote sink, with attempt count, backoff and lease. | metrics sink plugin slice (#8) |
+| `loop_events` | Compound-loop events keyed by session and timestamp, written by `knowledge/compound_loop.py`. | loop instrumentation (#160) |
+| `session_attribution` | `workload` and `host`, written by `lh exec` before the agent starts and joined at ingest. | [ADR-037](037-metric-event-v2-host-and-workload.md) (#223) |
+
+`session_stats` also gained five columns beyond the ten above — `user_id`, `tenant_id`,
+`event_id`, `host`, `workload` — added to existing databases by
+`_migrate_identity_columns()` rather than by a rebuild. `event_id` is backfilled
+deterministically from `(profile, session, model)` so the remote sink has a stable
+idempotency key; `host` and `workload` are deliberately not backfilled, because nothing
+on disk can say which machine wrote a historical row.
+
+The last consequence listed above anticipated the shape of this growth: new features
+would add columns or a table rather than restructure. That is what happened. What it did
+not anticipate is that an embedded schema block goes stale silently — hence this section
+and the pointer to the module.
