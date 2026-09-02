@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.51.1](https://github.com/lazynet/lazy-harness/compare/v0.51.0...v0.51.1) (2026-09-02)
+
+
+### Documentation
+
+* record the monitoring schema's evolution in ADR-012 ([#228](https://github.com/lazynet/lazy-harness/issues/228)) ([27f2da8](https://github.com/lazynet/lazy-harness/commit/27f2da8e17ef87cfa384b00c5249e2ee54434161))
+
 ## [0.51.0](https://github.com/lazynet/lazy-harness/compare/v0.50.0...v0.51.0) (2026-08-31)
 
 
