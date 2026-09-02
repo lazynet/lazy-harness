@@ -45,10 +45,12 @@ Once the PR is merged, remove the worktree **and** the local branch:
 
 ```bash
 git worktree remove .worktrees/<short-name>
-git branch -d <type>/<short-name>
+git branch -D <type>/<short-name>
 ```
 
-Preferred: use the `/cleanup-worktree` slash command. It verifies the branch has been merged into `main` before removing, so you do not discard unmerged work by accident.
+`-D` rather than `-d`: this repo merges by squash, and git only considers a branch merged when its commits are ancestors of `main`. A squash rewrites them into one new commit, so `-d` refuses to delete a branch whose work is already on `main`.
+
+Preferred: use the `/cleanup-worktree` slash command. It verifies the branch was merged before removing — by ancestry first, then by comparing the branch's content against `origin/main` for the squash case — so you do not discard unmerged work by accident.
 
 ## Common mistakes to avoid
 
