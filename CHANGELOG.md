@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.52.0](https://github.com/lazynet/lazy-harness/compare/v0.51.1...v0.52.0) (2026-09-02)
+
+
+### Features
+
+* add lh memory status ([#230](https://github.com/lazynet/lazy-harness/issues/230)) ([e799dce](https://github.com/lazynet/lazy-harness/commit/e799dceaaee5be0503a38d3019ce0b865ca43e70))
+
 ## [0.51.1](https://github.com/lazynet/lazy-harness/compare/v0.51.0...v0.51.1) (2026-09-02)
 
 
