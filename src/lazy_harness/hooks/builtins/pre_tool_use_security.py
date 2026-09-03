@@ -263,12 +263,17 @@ def should_block(command: str, allow_patterns: list[str]) -> BlockDecision | Non
     return None
 
 
-def should_block_path(path: str, allow_patterns: list[str]) -> BlockDecision | None:
+def should_block_path(path: str) -> BlockDecision | None:
     """Return BlockDecision if `path` resolves onto a secret glob.
 
     The path is made absolute first: the globs are anchored with `**/`, and
     fnmatch treats `*` as crossing `/`, so an absolute path is what makes
     `**/secrets/**` match a nested file the way the deny rule used to.
+
+    `allow_patterns` deliberately does not apply here. It rescues commands, and
+    a pattern wide enough to be useful for one — `\\.worktrees/` is real in this
+    repo's own config — would silently exempt every secret underneath it. Paths
+    are rescued only by SECRET_PATH_EXCEPTIONS.
     """
     if not path:
         return None
@@ -278,8 +283,6 @@ def should_block_path(path: str, allow_patterns: list[str]) -> BlockDecision | N
     for glob in SECRET_PATH_GLOBS:
         if not fnmatch.fnmatch(resolved, glob):
             continue
-        if any(_safe_search(ap, resolved) for ap in allow_patterns):
-            return None
         return BlockDecision(
             rule=BlockRule(
                 category="credentials",
@@ -324,7 +327,7 @@ def main() -> None:
             (str(tool_input[k]) for k in FILE_PATH_KEYS if tool_input.get(k)),
             "",
         )
-        decision = should_block_path(subject, allow)
+        decision = should_block_path(subject)
     else:
         sys.exit(0)
     if decision is None:

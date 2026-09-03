@@ -381,7 +381,7 @@ def test_main_exits_zero_on_empty_stdin(monkeypatch: pytest.MonkeyPatch, tmp_pat
 def test_should_block_path_blocks_secrets(path: str) -> None:
     from lazy_harness.hooks.builtins import pre_tool_use_security as mod
 
-    decision = mod.should_block_path(path, [])
+    decision = mod.should_block_path(path)
     assert decision is not None
     assert decision.rule.category == "credentials"
 
@@ -402,28 +402,34 @@ def test_should_block_path_blocks_secrets(path: str) -> None:
 def test_should_block_path_allows_ordinary_files(path: str) -> None:
     from lazy_harness.hooks.builtins import pre_tool_use_security as mod
 
-    assert mod.should_block_path(path, []) is None
+    assert mod.should_block_path(path) is None
 
 
 def test_should_block_path_resolves_relative_paths() -> None:
     """A relative path is absolutised first, so the anchored globs still match."""
     from lazy_harness.hooks.builtins import pre_tool_use_security as mod
 
-    assert mod.should_block_path("sub/.env", []) is not None
+    assert mod.should_block_path("sub/.env") is not None
 
 
 def test_should_block_path_ignores_empty_path() -> None:
     from lazy_harness.hooks.builtins import pre_tool_use_security as mod
 
-    assert mod.should_block_path("", []) is None
+    assert mod.should_block_path("") is None
 
 
-def test_should_block_path_honours_allow_patterns() -> None:
+def test_should_block_path_ignores_command_allow_patterns() -> None:
+    """`allow_patterns` rescues commands, never paths.
+
+    The two share a config key but not a threat model: a pattern broad enough to
+    wave through a shell command — `\\.worktrees/` is real in this repo — would
+    silently exempt every secret living under it. Paths are rescued only by
+    SECRET_PATH_EXCEPTIONS.
+    """
     from lazy_harness.hooks.builtins import pre_tool_use_security as mod
 
-    path = "/Users/x/fixtures/secrets/dummy.yaml"
-    assert mod.should_block_path(path, []) is not None
-    assert mod.should_block_path(path, [r"/fixtures/"]) is None
+    path = "/Users/x/proj/.worktrees/wt/secrets/prod.yaml"
+    assert mod.should_block_path(path) is not None
 
 
 @pytest.mark.parametrize("tool", ["Read", "Edit", "Write"])

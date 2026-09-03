@@ -253,8 +253,12 @@ classifier escalate *any* compound command that combines a `cd` with a relative
 file read — it cannot resolve the path statically, so it refuses to auto-approve
 and prompts instead. Enforcing the same globs from the hook keeps the coverage,
 drops the prompts, and extends the protection to `Bash`, which a `Read()` deny
-rule never reached. `allow_patterns` rescues a path the same way it rescues a
-command.
+rule never reached.
+
+`allow_patterns` does **not** apply to these paths — it rescues commands only. A
+pattern broad enough to wave through a shell command would silently exempt every
+secret living under it, so the only escape hatch here is the exception list
+above.
 
 The `.env` rule follows the same principle: it matches the dotenv **file**, not any identifier that happens to end in `.env`. Searching source for the Node or Vite environment APIs — `grep -rn "process\.env" src/`, `rg 'import.meta.env' app/` — reads code, not credentials, and is not blocked.
 
