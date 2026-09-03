@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.53.0](https://github.com/lazynet/lazy-harness/compare/v0.52.0...v0.53.0) (2026-09-03)
+
+
+### Features
+
+* guard secret paths on file tools instead of Read() deny rules ([#232](https://github.com/lazynet/lazy-harness/issues/232)) ([b5ce502](https://github.com/lazynet/lazy-harness/commit/b5ce502c92f67a8a75339508468183adb83dfef4))
+
 ## [0.52.0](https://github.com/lazynet/lazy-harness/compare/v0.51.1...v0.52.0) (2026-09-02)
 
 
