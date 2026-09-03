@@ -211,7 +211,10 @@ Source: `src/lazy_harness/hooks/builtins/pre_tool_use_security.py`.
 
 Responsibility: stop high-blast-radius shell commands **before** the agent runs them. This is the framework's only built-in that exits non-zero on purpose — Claude Code interprets exit code 2 from a `PreToolUse` hook as a **block** decision and surfaces the hook's stderr message back into the agent's turn so it can adapt.
 
-Scope: only `Bash` tool calls are inspected. Every other tool name (Read, Edit, Write, MCP tools, …) is a fast exit 0. The hook reads `tool_input.command` from stdin and walks an ordered list of regex rules grouped by category. The first match wins; later rules are not evaluated.
+Scope: two shapes of tool call are inspected, and every other tool name (Grep, MCP tools, …) is a fast exit 0.
+
+- **`Bash`** — the hook reads `tool_input.command` and walks an ordered list of regex rules grouped by category. The first match wins; later rules are not evaluated.
+- **`Read`, `Edit`, `Write`, `NotebookEdit`** — the hook reads `tool_input.file_path` (or `notebook_path`) and matches it against `SECRET_PATH_GLOBS`, the secret-path list described below.
 
 Categories shipped:
 
@@ -222,8 +225,40 @@ Categories shipped:
 | `sql` | `DROP TABLE`, `DROP DATABASE`, `TRUNCATE TABLE` |
 | `terraform` | `terraform destroy`, `terraform apply -auto-approve`, `terraform apply -replace=…`, `terraform state rm`/`push` |
 | `credentials` | reads of `.env` (excluding `.env.example` / `.sample` / `.template`), `.ssh/id_*` private keys (excluding `*.pub`), `.aws/credentials` & `.aws/config`, any `.pem` / `.key` / `.p12` |
+| `credentials` (path guard) | any file tool reaching a `SECRET_PATH_GLOBS` entry — see below |
 
 The `rm` rule only fires when `rm` appears in a **command position** — at the start of the command, after a `;`, `&&`, `||`, `|` or `(`, or after an exec wrapper such as `sudo`, `xargs` or `sh -c`. A command that merely mentions the string, like `grep -rn "rm -rf" src`, is not a delete and is not blocked.
+
+**Secret-path guard on the file tools.** The regex rules above only see shell
+commands; a `Read` of the same file is a different tool call, so the hook matches
+file-tool paths against a separate glob list:
+
+```
+**/.env             **/secrets/**            **/.npmrc
+**/.env.*           **/credentials/**        **/.pypirc
+**/.dev.vars        **/.aws/**               **/.netrc
+**/.dev.vars.*      **/.ssh/**               **/config/database.yml
+**/*.pem            **/.gnupg/**             **/config/credentials.json
+**/*.key            **/id_rsa*
+                    **/id_ed25519*
+```
+
+Public keys (`*.pub`) and dotenv samples (`.env.example`, `.env.sample`,
+`.env.template`) are exempt. The path is made absolute before matching, so a
+relative `file_path` is still caught.
+
+These globs are deliberately enforced here rather than as `Read(...)` entries in
+`permissions.deny`. A single `Read()` deny rule makes the agent's auto-approval
+classifier escalate *any* compound command that combines a `cd` with a relative
+file read — it cannot resolve the path statically, so it refuses to auto-approve
+and prompts instead. Enforcing the same globs from the hook keeps the coverage,
+drops the prompts, and extends the protection to `Bash`, which a `Read()` deny
+rule never reached.
+
+`allow_patterns` does **not** apply to these paths — it rescues commands only. A
+pattern broad enough to wave through a shell command would silently exempt every
+secret living under it, so the only escape hatch here is the exception list
+above.
 
 The `.env` rule follows the same principle: it matches the dotenv **file**, not any identifier that happens to end in `.env`. Searching source for the Node or Vite environment APIs — `grep -rn "process\.env" src/`, `rg 'import.meta.env' app/` — reads code, not credentials, and is not blocked.
 
@@ -516,7 +551,7 @@ The magic is the composition, not any single hook. A full session lifecycle:
 └──────────────────────┘      └──────────────────────┘
               │
               │  user ↔ agent conversation
-              │  (every Bash tool call → PreToolUse → pre-tool-use-security)
+              │  (every Bash / Read / Edit / Write tool call → PreToolUse → pre-tool-use-security)
               │  (every Edit/Write tool call → PostToolUse → post-tool-use-format)
               ▼
 ┌──────────────────────┐      ┌──────────────────────┐

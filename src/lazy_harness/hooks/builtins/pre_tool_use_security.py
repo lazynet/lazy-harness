@@ -7,7 +7,9 @@ block per Claude Code PreToolUse semantics. See spec
 
 from __future__ import annotations
 
+import fnmatch
 import json
+import os
 import re
 import sys
 import tomllib
@@ -139,6 +141,48 @@ BLOCK_RULES: tuple[BlockRule, ...] = (
 )
 
 
+# Path globs that must never be reached through the file tools. These used to
+# live in `permissions.deny` as `Read(...)` / `Edit(...)` entries, and moved here
+# because a single Read() deny rule makes the auto-mode classifier escalate any
+# compound `cd <dir> && <reader> <relative-file>` command to a permission prompt:
+# it cannot resolve the relative path statically, so it refuses to auto-approve.
+# Enforcing the same globs from the hook keeps the coverage without that cost --
+# and extends it to Bash, which the deny rules never reached.
+SECRET_PATH_GLOBS: tuple[str, ...] = (
+    "**/.env",
+    "**/.env.*",
+    "**/.dev.vars",
+    "**/.dev.vars.*",
+    "**/*.pem",
+    "**/*.key",
+    "**/id_rsa*",
+    "**/id_ed25519*",
+    "**/secrets/**",
+    "**/credentials/**",
+    "**/.aws/**",
+    "**/.ssh/**",
+    "**/.gnupg/**",
+    "**/config/database.yml",
+    "**/config/credentials.json",
+    "**/.npmrc",
+    "**/.pypirc",
+    "**/.netrc",
+)
+
+# Globs whose match is a false positive: a public key is not a secret, and the
+# checked-in samples exist precisely to be read.
+SECRET_PATH_EXCEPTIONS: tuple[str, ...] = (
+    "**/*.pub",
+    "**/.env.example",
+    "**/.env.sample",
+    "**/.env.template",
+)
+
+# Tools that take a filesystem path instead of a command. NotebookEdit names its
+# path field differently, so both keys are read.
+FILE_TOOLS = frozenset({"Read", "Edit", "Write", "NotebookEdit"})
+FILE_PATH_KEYS = ("file_path", "notebook_path")
+
 MAX_MATCH_LEN = 120
 
 
@@ -219,6 +263,37 @@ def should_block(command: str, allow_patterns: list[str]) -> BlockDecision | Non
     return None
 
 
+def should_block_path(path: str) -> BlockDecision | None:
+    """Return BlockDecision if `path` resolves onto a secret glob.
+
+    The path is made absolute first: the globs are anchored with `**/`, and
+    fnmatch treats `*` as crossing `/`, so an absolute path is what makes
+    `**/secrets/**` match a nested file the way the deny rule used to.
+
+    `allow_patterns` deliberately does not apply here. It rescues commands, and
+    a pattern wide enough to be useful for one — `\\.worktrees/` is real in this
+    repo's own config — would silently exempt every secret underneath it. Paths
+    are rescued only by SECRET_PATH_EXCEPTIONS.
+    """
+    if not path:
+        return None
+    resolved = os.path.abspath(os.path.expanduser(path))
+    if any(fnmatch.fnmatch(resolved, exc) for exc in SECRET_PATH_EXCEPTIONS):
+        return None
+    for glob in SECRET_PATH_GLOBS:
+        if not fnmatch.fnmatch(resolved, glob):
+            continue
+        return BlockDecision(
+            rule=BlockRule(
+                category="credentials",
+                pattern=re.compile(re.escape(glob)),
+                reason=f"Secret path ({glob})",
+            ),
+            matched_text=resolved,
+        )
+    return None
+
+
 def _log_block(decision: BlockDecision, command: str) -> None:
     """Record a block so the guardrail leaves an auditable trace.
 
@@ -241,14 +316,23 @@ def _log_block(decision: BlockDecision, command: str) -> None:
 def main() -> None:
     """Entry point invoked by Claude Code as a PreToolUse hook command."""
     payload = _read_stdin_json()
-    if payload.get("tool_name") != "Bash":
-        sys.exit(0)
-    command = str(payload.get("tool_input", {}).get("command", ""))
+    tool = payload.get("tool_name")
+    tool_input = payload.get("tool_input") or {}
     allow = _load_allowlist()
-    decision = should_block(command, allow)
+    if tool == "Bash":
+        subject = str(tool_input.get("command", ""))
+        decision = should_block(subject, allow)
+    elif tool in FILE_TOOLS:
+        subject = next(
+            (str(tool_input[k]) for k in FILE_PATH_KEYS if tool_input.get(k)),
+            "",
+        )
+        decision = should_block_path(subject)
+    else:
+        sys.exit(0)
     if decision is None:
         sys.exit(0)
-    _log_block(decision, command)
+    _log_block(decision, subject)
     sys.stderr.write(_format_block_message(decision))
     sys.exit(2)
 

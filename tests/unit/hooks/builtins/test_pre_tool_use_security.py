@@ -350,3 +350,154 @@ def test_main_exits_zero_on_empty_stdin(monkeypatch: pytest.MonkeyPatch, tmp_pat
     with pytest.raises(SystemExit) as exc_info:
         mod.main()
     assert exc_info.value.code == 0
+
+
+# --- file-tool path guard (moved here from permissions.deny) -----------------
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/Users/x/proj/.env",
+        "/Users/x/proj/.env.production",
+        "/Users/x/proj/.dev.vars",
+        "/Users/x/certs/server.pem",
+        "/Users/x/certs/server.key",
+        "/Users/x/.ssh/id_rsa",
+        "/Users/x/.ssh/id_ed25519",
+        "/Users/x/.ssh/config",
+        "/Users/x/repo/secrets/prod.yaml",
+        "/Users/x/repo/deep/secrets/nested/token.txt",
+        "/Users/x/repo/credentials/gcp.json",
+        "/Users/x/.aws/credentials",
+        "/Users/x/.gnupg/secring.gpg",
+        "/Users/x/app/config/database.yml",
+        "/Users/x/app/config/credentials.json",
+        "/Users/x/.npmrc",
+        "/Users/x/.pypirc",
+        "/Users/x/.netrc",
+    ],
+)
+def test_should_block_path_blocks_secrets(path: str) -> None:
+    from lazy_harness.hooks.builtins import pre_tool_use_security as mod
+
+    decision = mod.should_block_path(path)
+    assert decision is not None
+    assert decision.rule.category == "credentials"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/Users/x/proj/src/main.py",
+        "/Users/x/proj/README.md",
+        "/Users/x/.ssh_backup_notes.md",
+        "/Users/x/proj/.env.example",
+        "/Users/x/proj/.env.sample",
+        "/Users/x/.ssh/id_ed25519.pub",
+        "/Users/x/proj/environment.ts",
+        "/Users/x/proj/keychain.md",
+    ],
+)
+def test_should_block_path_allows_ordinary_files(path: str) -> None:
+    from lazy_harness.hooks.builtins import pre_tool_use_security as mod
+
+    assert mod.should_block_path(path) is None
+
+
+def test_should_block_path_resolves_relative_paths() -> None:
+    """A relative path is absolutised first, so the anchored globs still match."""
+    from lazy_harness.hooks.builtins import pre_tool_use_security as mod
+
+    assert mod.should_block_path("sub/.env") is not None
+
+
+def test_should_block_path_ignores_empty_path() -> None:
+    from lazy_harness.hooks.builtins import pre_tool_use_security as mod
+
+    assert mod.should_block_path("") is None
+
+
+def test_should_block_path_ignores_command_allow_patterns() -> None:
+    """`allow_patterns` rescues commands, never paths.
+
+    The two share a config key but not a threat model: a pattern broad enough to
+    wave through a shell command — `\\.worktrees/` is real in this repo — would
+    silently exempt every secret living under it. Paths are rescued only by
+    SECRET_PATH_EXCEPTIONS.
+    """
+    from lazy_harness.hooks.builtins import pre_tool_use_security as mod
+
+    path = "/Users/x/proj/.worktrees/wt/secrets/prod.yaml"
+    assert mod.should_block_path(path) is not None
+
+
+@pytest.mark.parametrize("tool", ["Read", "Edit", "Write"])
+def test_main_blocks_secret_path_for_file_tools(
+    tool: str, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    import io
+    import json as _json
+
+    from lazy_harness.hooks.builtins import pre_tool_use_security as mod
+
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
+    payload = _json.dumps({"tool_name": tool, "tool_input": {"file_path": "/Users/x/proj/.env"}})
+    monkeypatch.setattr("sys.stdin", io.StringIO(payload))
+    with pytest.raises(SystemExit) as exc_info:
+        mod.main()
+    assert exc_info.value.code == 2
+
+
+def test_main_reads_notebook_path_key(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    import io
+    import json as _json
+
+    from lazy_harness.hooks.builtins import pre_tool_use_security as mod
+
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
+    payload = _json.dumps(
+        {
+            "tool_name": "NotebookEdit",
+            "tool_input": {"notebook_path": "/Users/x/secrets/nb.ipynb"},
+        }
+    )
+    monkeypatch.setattr("sys.stdin", io.StringIO(payload))
+    with pytest.raises(SystemExit) as exc_info:
+        mod.main()
+    assert exc_info.value.code == 2
+
+
+def test_main_allows_ordinary_path_for_file_tools(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    import io
+    import json as _json
+
+    from lazy_harness.hooks.builtins import pre_tool_use_security as mod
+
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
+    payload = _json.dumps(
+        {"tool_name": "Read", "tool_input": {"file_path": "/Users/x/proj/main.py"}}
+    )
+    monkeypatch.setattr("sys.stdin", io.StringIO(payload))
+    with pytest.raises(SystemExit) as exc_info:
+        mod.main()
+    assert exc_info.value.code == 0
+
+
+def test_main_ignores_unrelated_tools(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    import io
+    import json as _json
+
+    from lazy_harness.hooks.builtins import pre_tool_use_security as mod
+
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    payload = _json.dumps({"tool_name": "Grep", "tool_input": {"pattern": ".env"}})
+    monkeypatch.setattr("sys.stdin", io.StringIO(payload))
+    with pytest.raises(SystemExit) as exc_info:
+        mod.main()
+    assert exc_info.value.code == 0
