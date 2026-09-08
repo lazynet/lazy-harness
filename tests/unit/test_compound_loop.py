@@ -1034,6 +1034,86 @@ def test_persist_results_skips_proposal_file_when_no_proposals(tmp_path: Path) -
     assert not (memory / "claude-md.proposal.md").exists()
 
 
+# --- backpressure: a full queue halts emission (not a silent discard) ---
+
+
+def _proposal_data(rule: str) -> dict[str, Any]:
+    return {
+        "decisions": [],
+        "failures": [],
+        "learnings": [],
+        "handoff": [],
+        "claude_md_proposals": [{"rule": rule, "rationale": "why"}],
+    }
+
+
+def _queue_with(memory: Path, count: int) -> None:
+    memory.mkdir(parents=True, exist_ok=True)
+    body = "\n\n".join(
+        f"## 2026-09-0{i % 9 + 1}T10:00:00-03:00\n\n- **Rule:** queued rule {i}"
+        for i in range(count)
+    )
+    (memory / "claude-md.proposal.md").write_text(body + "\n")
+
+
+def test_persist_results_writes_proposals_while_under_the_cap(tmp_path: Path) -> None:
+    memory = tmp_path / "memory"
+    _queue_with(memory, 9)
+
+    wrote = persist_results(
+        _proposal_data("a brand new rule"),
+        memory,
+        tmp_path / "Learnings",
+        "proj",
+        "2026-09-08T10:00:00-03:00",
+        max_pending_proposals=10,
+    )
+
+    assert "a brand new rule" in (memory / "claude-md.proposal.md").read_text()
+    assert any("claude_md_proposals: 1" in line for line in wrote)
+
+
+def test_persist_results_halts_proposal_emission_at_the_cap(tmp_path: Path) -> None:
+    """Backpressure, not a discard.
+
+    Capping by dropping the newest proposal loses signal silently. Halting
+    emission makes a full queue cost something visible — you stop capturing
+    rules until you drain — which is the only thing that made the queue get
+    drained at all.
+    """
+    memory = tmp_path / "memory"
+    _queue_with(memory, 10)
+    before = (memory / "claude-md.proposal.md").read_text()
+
+    wrote = persist_results(
+        _proposal_data("a rule that must not be queued"),
+        memory,
+        tmp_path / "Learnings",
+        "proj",
+        "2026-09-08T10:00:00-03:00",
+        max_pending_proposals=10,
+    )
+
+    assert (memory / "claude-md.proposal.md").read_text() == before
+    assert any("halted" in line and "10" in line for line in wrote)
+
+
+def test_persist_results_without_a_cap_still_writes_proposals(tmp_path: Path) -> None:
+    """The parameter-less path: default resolution must not silently halt."""
+    memory = tmp_path / "memory"
+    _queue_with(memory, 50)
+
+    persist_results(
+        _proposal_data("uncapped rule"),
+        memory,
+        tmp_path / "Learnings",
+        "proj",
+        "2026-09-08T10:00:00-03:00",
+    )
+
+    assert "uncapped rule" in (memory / "claude-md.proposal.md").read_text()
+
+
 def test_build_prompt_includes_claude_md_proposals_schema() -> None:
     prompt = build_prompt(
         project_name="proj",
@@ -2059,6 +2139,37 @@ def test_process_task_feeds_pending_proposals_into_prompt(tmp_path: Path) -> Non
     assert outcome.was_processed
     assert "already pending review" in captured["prompt"]
     assert "- Verify a tool's effect, not its exit code" in captured["prompt"]
+
+
+def test_process_task_honours_the_configured_pending_cap(tmp_path: Path) -> None:
+    """The cap is useless if process_task never hands it to persist_results."""
+    queue = tmp_path / "queue"
+    memory = tmp_path / "memory"
+    _queue_with(memory, 3)
+    before = (memory / "claude-md.proposal.md").read_text()
+    session = _interactive_session(tmp_path)
+    task = create_task(queue, Path("/tmp/proj"), session, "abcd1234efgh", memory)
+
+    def fake_invoke(prompt: str, model: str, timeout: int) -> str:
+        return json.dumps(
+            {
+                "decisions": [],
+                "failures": [],
+                "learnings": [],
+                "handoff": [],
+                "claude_md_proposals": [{"rule": "must not be queued", "rationale": "why"}],
+            }
+        )
+
+    outcome = process_task(
+        task,
+        _cfg(max_pending_proposals=3),
+        tmp_path / "Learnings",
+        backend=StubBackend(fake_invoke),
+    )
+
+    assert outcome.was_processed
+    assert (memory / "claude-md.proposal.md").read_text() == before
 
 
 # --- failure promotion via grading prompt (Phase 3b) ---

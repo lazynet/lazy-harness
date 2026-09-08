@@ -207,6 +207,10 @@ class CompoundLoopConfig:
     slim_handoff_enabled: bool = True
     backend: str = "claude"
     backend_options: dict[str, str] = field(default_factory=dict)
+    #: Pending claude-md proposals above which the loop stops emitting new
+    #: ones. Backpressure, not a discard: a queue nobody drains silently
+    #: crowded the session-start budget for months.
+    max_pending_proposals: int = 10
 
 
 @dataclass
@@ -554,6 +558,9 @@ def load_config(path: Path) -> Config:
             ),
             backend=cl_raw.get("backend", CompoundLoopConfig.backend),
             backend_options={str(k): str(v) for k, v in cl_raw.get("backend_options", {}).items()},
+            max_pending_proposals=cl_raw.get(
+                "max_pending_proposals", CompoundLoopConfig.max_pending_proposals
+            ),
         )
 
     metrics_raw = raw.get("metrics", {})
@@ -679,6 +686,7 @@ def _config_to_dict(cfg: Config) -> dict[str, Any]:
             "slim_handoff_enabled": cfg.compound_loop.slim_handoff_enabled,
             "backend": cfg.compound_loop.backend,
             "backend_options": cfg.compound_loop.backend_options,
+            "max_pending_proposals": cfg.compound_loop.max_pending_proposals,
         },
     }
 

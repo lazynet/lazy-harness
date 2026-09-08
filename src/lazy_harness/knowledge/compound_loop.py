@@ -666,6 +666,9 @@ def _tail_within_budget(rules: list[str], max_chars: int) -> list[str]:
 #: `CompoundLoopConfig.max_pending_proposals`).
 PENDING_PROPOSALS_MAX_CHARS = 10_000
 
+#: Budget that admits any queue — for counting, where truncation would lie.
+_UNBOUNDED = 1 << 30
+
 
 def collect_pending_proposals(
     memory_dir: Path, max_chars: int = PENDING_PROPOSALS_MAX_CHARS
@@ -905,6 +908,7 @@ def persist_results(
     *,
     session_id: str = "",
     session_jsonl: Path | None = None,
+    max_pending_proposals: int | None = None,
 ) -> list[str]:
     """Persist decisions/failures/learnings/handoff. Returns a list of summaries
     of what was written, suitable for logging. Atomic writes everywhere."""
@@ -994,6 +998,18 @@ deprecated_reason: null
     proposals = [
         p for p in data.get("claude_md_proposals", []) if isinstance(p, dict) and p.get("rule")
     ]
+    if proposals:
+        proposal_file = memory_dir / "claude-md.proposal.md"
+        queued = len(collect_pending_proposals(proposal_file.parent, max_chars=_UNBOUNDED))
+        if max_pending_proposals is not None and queued >= max_pending_proposals:
+            # Backpressure, not a discard. Dropping the new proposal would lose
+            # signal silently; halting emission makes a full queue cost
+            # something the next session is told about.
+            wrote.append(
+                f"claude_md_proposals: halted ({queued} pending "
+                f">= cap {max_pending_proposals})"
+            )
+            proposals = []
     if proposals:
         proposal_file = memory_dir / "claude-md.proposal.md"
         block_lines = [f"## {timestamp}\n"]
@@ -1275,6 +1291,7 @@ def process_task(
         timestamp,
         session_id=session_id,
         session_jsonl=session_jsonl,
+        max_pending_proposals=cfg.max_pending_proposals,
     )
 
     if persisted_insights:
