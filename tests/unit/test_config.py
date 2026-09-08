@@ -287,6 +287,60 @@ version = "0.9.41"
     assert cfg.knowledge.structure.version == "0.9.41"
 
 
+def test_compound_loop_max_pending_proposals_defaults() -> None:
+    from lazy_harness.core.config import Config
+
+    assert Config().compound_loop.max_pending_proposals == 10
+
+
+def test_compound_loop_max_pending_proposals_parses_from_toml(config_dir: Path) -> None:
+    from lazy_harness.core.config import load_config
+
+    config_file = config_dir / "config.toml"
+    config_file.write_text(
+        '[harness]\nversion = "1"\n\n[compound_loop]\nmax_pending_proposals = 25\n'
+    )
+
+    assert load_config(config_file).compound_loop.max_pending_proposals == 25
+
+
+def test_compound_loop_max_pending_proposals_survives_round_trip(config_dir: Path) -> None:
+    """save → load → save → load must not drop the cap on the second rewrite."""
+    from lazy_harness.core.config import Config, load_config, save_config
+
+    config_file = config_dir / "config.toml"
+    cfg = Config()
+    cfg.compound_loop.max_pending_proposals = 25
+    save_config(cfg, config_file)
+
+    reloaded = load_config(config_file)
+    assert reloaded.compound_loop.max_pending_proposals == 25
+
+    save_config(reloaded, config_file)
+    assert load_config(config_file).compound_loop.max_pending_proposals == 25
+
+
+def test_compound_loop_max_pending_proposals_survives_merge_onto_existing(
+    config_dir: Path,
+) -> None:
+    """The merge-on-existing path is not the create path and has skipped fields
+    the other supplied. Write a config by hand, then save over it."""
+    from lazy_harness.core.config import load_config, save_config
+
+    config_file = config_dir / "config.toml"
+    config_file.write_text(
+        '[harness]\nversion = "1"\n\n[compound_loop]\n'
+        'enabled = true\nmax_pending_proposals = 25\n'
+    )
+
+    cfg = load_config(config_file)
+    save_config(cfg, config_file)
+
+    again = load_config(config_file)
+    assert again.compound_loop.max_pending_proposals == 25
+    assert again.compound_loop.enabled is True
+
+
 def test_compound_loop_backend_defaults_when_missing() -> None:
     from lazy_harness.core.config import CompoundLoopConfig, Config
 

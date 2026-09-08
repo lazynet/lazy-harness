@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
@@ -12,6 +11,13 @@ import click
 
 from lazy_harness.core.config import ConfigError, load_config
 from lazy_harness.core.paths import config_file
+from lazy_harness.core.proposals import (
+    _RATIONALE_PREFIX,
+    _RULE_PREFIX,
+    PendingProposal,
+    _remove_proposal,
+    parse_proposals,
+)
 from lazy_harness.knowledge.compound_loop import invoke_llm as _invoke_llm
 from lazy_harness.llm import (
     LLMBackend,
@@ -181,106 +187,6 @@ def consolidate(memory_dir: Path | None, last: int, model: str | None, timeout: 
 
 
 # --- claude-md proposals lifecycle (Phase 3c) ---
-
-_RULE_PREFIX = "- **Rule:**"
-_RATIONALE_PREFIX = "- **Rationale:**"
-
-
-@dataclass(frozen=True)
-class PendingProposal:
-    """One `- **Rule:**` bullet from claude-md.proposal.md, with line spans."""
-
-    timestamp: str
-    rule: str
-    rationale: str
-    start_line: int
-    end_line: int  # exclusive
-    header_line: int  # line index of the owning `## <timestamp>` header, -1 if none
-
-
-def parse_proposals(text: str) -> list[PendingProposal]:
-    """Parse pending proposal bullets out of claude-md.proposal.md content.
-
-    Tolerates the archived-comments-only file state: HTML comments and
-    anything outside `- **Rule:**` bullets are ignored.
-    """
-    lines = text.splitlines()
-    proposals: list[PendingProposal] = []
-    in_comment = False
-    header_ts = ""
-    header_line = -1
-    current: dict[str, object] | None = None
-
-    def close(end: int) -> None:
-        nonlocal current
-        if current is None:
-            return
-        start = int(current["start"])
-        while end - 1 > start and not lines[end - 1].strip():
-            end -= 1
-        proposals.append(
-            PendingProposal(
-                timestamp=str(current["timestamp"]),
-                rule=str(current["rule"]),
-                rationale=str(current["rationale"]),
-                start_line=start,
-                end_line=end,
-                header_line=int(current["header_line"]),
-            )
-        )
-        current = None
-
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        if in_comment:
-            if "-->" in stripped:
-                in_comment = False
-            continue
-        if stripped.startswith("<!--"):
-            close(i)
-            if "-->" not in stripped:
-                in_comment = True
-            continue
-        if stripped.startswith("## "):
-            close(i)
-            header_ts = stripped[3:].strip()
-            header_line = i
-            continue
-        if stripped.startswith(_RULE_PREFIX) and not line.startswith(" "):
-            close(i)
-            current = {
-                "timestamp": header_ts,
-                "rule": stripped[len(_RULE_PREFIX) :].strip(),
-                "rationale": "",
-                "start": i,
-                "header_line": header_line,
-            }
-            continue
-        if current is not None and stripped.startswith(_RATIONALE_PREFIX):
-            current["rationale"] = stripped[len(_RATIONALE_PREFIX) :].strip()
-    close(len(lines))
-    return proposals
-
-
-def _remove_proposal(text: str, proposals: list[PendingProposal], index: int) -> str:
-    """Return `text` without proposal `index` (0-based), dropping its section
-    header when no sibling rule remains under it."""
-    target = proposals[index]
-    drop = set(range(target.start_line, target.end_line))
-    header_shared = any(
-        p.header_line == target.header_line for i, p in enumerate(proposals) if i != index
-    )
-    lines = text.splitlines()
-    if target.header_line >= 0 and not header_shared:
-        drop.add(target.header_line)
-        j = target.header_line + 1
-        while j < len(lines) and not lines[j].strip():
-            drop.add(j)
-            j += 1
-    kept = [line for i, line in enumerate(lines) if i not in drop]
-    out = "\n".join(kept).rstrip("\n")
-    return out + "\n" if out else ""
-
 
 def _atomic_write(path: Path, content: str) -> None:
     """Atomic write via tempfile + os.replace (mirrors knowledge.compound_loop)."""
@@ -526,10 +432,33 @@ def proposals() -> None:
 
 
 @proposals.command("list")
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit the listing as JSON, indices included, for `proposals apply`.",
+)
 @_MEMORY_DIR_OPTION
-def proposals_list(memory_dir: Path | None) -> None:
+def proposals_list(as_json: bool, memory_dir: Path | None) -> None:
     """List pending claude-md proposals."""
     pending_file, _, pending = _load_pending(memory_dir)
+    if as_json:
+        click.echo(
+            json.dumps(
+                [
+                    {
+                        "index": i,
+                        "timestamp": p.timestamp,
+                        "rule": p.rule,
+                        "rationale": p.rationale,
+                    }
+                    for i, p in enumerate(pending, start=1)
+                ],
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
     if not pending:
         click.echo(f"No pending claude-md proposals at {pending_file}.")
         return
@@ -539,8 +468,117 @@ def proposals_list(memory_dir: Path | None) -> None:
         click.echo(f"  {i:>3}  {p.timestamp[:10] or '????-??-??'}  {excerpt}")
     click.echo(
         "\nAccept: lh memory proposals accept <N> — reject: "
-        'lh memory proposals reject <N> --reason "..."'
+        'lh memory proposals reject <N> --reason "..."\n'
+        "Whole queue at once: lh memory proposals list --json, then "
+        "lh memory proposals apply --verdicts <file>"
     )
+
+
+_VERDICTS = ("accept", "reject")
+
+
+def _parse_verdicts(raw: object, pending_count: int) -> list[tuple[int, str, str]]:
+    """Validate the whole verdict document before a single write happens.
+
+    Half-applying a hundred verdicts and then failing leaves a queue nobody can
+    reconcile against the listing the verdicts were written from, so every
+    check runs up front.
+    """
+    if not isinstance(raw, list):
+        raise click.ClickException(
+            "The verdicts document must be a JSON list of "
+            '{"index": N, "verdict": "accept"|"reject", "reason": "..."} objects.'
+        )
+    seen: set[int] = set()
+    parsed: list[tuple[int, str, str]] = []
+    for i, item in enumerate(raw):
+        where = f"entry {i + 1}"
+        if not isinstance(item, dict):
+            raise click.ClickException(f"{where}: expected an object, got {type(item).__name__}.")
+        index = item.get("index")
+        if not isinstance(index, int) or isinstance(index, bool):
+            raise click.ClickException(f"{where}: 'index' must be an integer.")
+        if index < 1 or index > pending_count:
+            raise click.ClickException(
+                f"{where}: no proposal #{index} — {pending_count} pending. "
+                "Re-read the queue with `lh memory proposals list --json`."
+            )
+        if index in seen:
+            raise click.ClickException(f"{where}: duplicate verdict for proposal #{index}.")
+        seen.add(index)
+        verdict = item.get("verdict")
+        if verdict not in _VERDICTS:
+            raise click.ClickException(
+                f"{where}: unknown verdict {verdict!r} — expected 'accept' or 'reject'."
+            )
+        reason = item.get("reason") or ""
+        if verdict == "reject" and not str(reason).strip():
+            raise click.ClickException(
+                f"{where}: a rejection needs a 'reason'. The reason is what the "
+                "immunity registry teaches the grader; without it the rule comes back."
+            )
+        parsed.append((index, verdict, str(reason)))
+    return parsed
+
+
+@proposals.command("apply")
+@click.option(
+    "--verdicts",
+    "verdicts_file",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="JSON list of {index, verdict, reason} against `proposals list --json`.",
+)
+@_MEMORY_DIR_OPTION
+def proposals_apply(verdicts_file: Path, memory_dir: Path | None) -> None:
+    """Accept or reject many proposals in one pass.
+
+    Indices are resolved against the listing the verdicts were written from.
+    `accept N`/`reject N` index into a file that shrinks under them, so a caller
+    draining 1, 2, 3 in that order silently hits the wrong entries; this applies
+    them back-to-front so that footgun is gone.
+    """
+    pending_file, text, pending = _load_pending(memory_dir)
+    try:
+        raw = json.loads(verdicts_file.read_text())
+    except ValueError as exc:
+        raise click.ClickException(f"{verdicts_file} is not valid JSON: {exc}") from exc
+
+    decisions = _parse_verdicts(raw, len(pending))
+    if not decisions:
+        click.echo("No verdicts — nothing to apply.")
+        return
+
+    today = date.today().isoformat()
+    accepted_rules: list[str] = []
+    n_accepted = n_rejected = 0
+    # Descending: every removal shifts the positions after it.
+    for index, verdict, reason in sorted(decisions, key=lambda d: -d[0]):
+        target = pending[index - 1]
+        if verdict == "accept":
+            _append_block(
+                pending_file.with_name("claude-md.accepted.md"),
+                "<!-- accepted claude-md proposals (append-only). -->\n\n",
+                _format_entry_block(target, [f"accepted: {today}"]),
+            )
+            accepted_rules.append(target.rule)
+            n_accepted += 1
+        else:
+            _append_block(
+                pending_file.with_name("claude-md.rejected.md"),
+                "<!-- rejected claude-md proposals (append-only immunity registry). -->\n\n",
+                _format_entry_block(target, [f"rejected: {today}", f"reason: {reason}"]),
+            )
+            n_rejected += 1
+        text = _remove_proposal(text, pending, index - 1)
+    _atomic_write(pending_file, text)
+
+    remaining = len(parse_proposals(text))
+    click.echo(f"{n_accepted} accepted · {n_rejected} rejected · {remaining} pending")
+    if accepted_rules:
+        click.echo("\nAccepted rules were NOT applied automatically — merge them yourself:")
+        for rule in reversed(accepted_rules):
+            click.echo(f"  · {rule}")
 
 
 @proposals.command("accept")

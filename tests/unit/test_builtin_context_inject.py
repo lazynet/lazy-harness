@@ -794,6 +794,41 @@ def test_proposals_summary_line_empty_when_no_pending_entries(tmp_path: Path) ->
     assert proposals_summary_line(memory) == ""
 
 
+def test_proposals_summary_line_reports_the_producer_halted_at_the_cap(
+    tmp_path: Path,
+) -> None:
+    """At the cap the consequence is not \"review these\" but \"you stopped
+    capturing\". The line has to say so, or the halt is invisible."""
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    (memory / "claude-md.proposal.md").write_text(
+        "\n".join(
+            f"## 2026-05-2{i}T10:00:00-03:00\n\n- **Rule:** queued rule {i}\n" for i in range(3)
+        )
+    )
+
+    line = proposals_summary_line(memory, max_pending=3)
+
+    assert "3 claude-md proposal(s) pending" in line
+    assert "no new ones are being recorded" in line
+    assert "lh memory proposals" in line
+
+
+def test_proposals_summary_line_below_the_cap_does_not_claim_a_halt(
+    tmp_path: Path,
+) -> None:
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    (memory / "claude-md.proposal.md").write_text(
+        "## 2026-05-20T10:00:00-03:00\n\n- **Rule:** queued rule\n"
+    )
+
+    line = proposals_summary_line(memory, max_pending=3)
+
+    assert "1 claude-md proposal(s) pending" in line
+    assert "no new ones are being recorded" not in line
+
+
 def test_proposals_summary_line_empty_when_no_file(tmp_path: Path) -> None:
     memory = tmp_path / "memory"
     memory.mkdir()
@@ -896,6 +931,36 @@ def test_context_inject_reads_memory_from_agent_declared_project_dir(
     body = _run_hook_in_process(monkeypatch, capsys, cwd, cfg_file, payload)
 
     assert "Vault indexing left half-done." in body
+
+
+def test_context_inject_reports_the_halt_using_the_configured_cap(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """The cap is useless if the hook never reads it out of config."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    claude_dir = tmp_path / "claude"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_dir))
+
+    cwd = tmp_path / "proj"
+    cwd.mkdir()
+    encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
+    memory_dir = claude_dir / "projects" / encoded / "memory"
+    memory_dir.mkdir(parents=True)
+    (memory_dir / "claude-md.proposal.md").write_text(
+        "## 2026-05-20T10:00:00-03:00\n\n- **Rule:** first\n"
+        "\n## 2026-05-21T10:00:00-03:00\n\n- **Rule:** second\n"
+    )
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        '[harness]\nversion = "1"\n\n[compound_loop]\nmax_pending_proposals = 2\n'
+    )
+
+    body = _run_hook_in_process(monkeypatch, capsys, cwd, cfg_file)
+
+    assert "no new ones are being recorded" in body
 
 
 def test_context_inject_emits_proposals_summary_under_budget_pressure(

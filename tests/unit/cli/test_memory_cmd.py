@@ -6,6 +6,8 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
+from lazy_harness.core.proposals import parse_proposals
+
 
 def _make_profile(profile_dir: Path, projects: dict[str, str]) -> None:
     """Create a fake `<profile>/projects/<key>/memory/MEMORY.md` tree."""
@@ -535,3 +537,235 @@ def test_project_memory_dir_resolves_into_the_knowledge_store(tmp_path: Path, mo
     monkeypatch.chdir(repo)
 
     assert _project_memory_dir() == store / "memory" / "github.com" / "o" / "x"
+
+
+# --- batch drain: one call, many verdicts, applied back-to-front ---
+
+
+def _verdict_file(tmp_path: Path, verdicts: list[dict]) -> Path:
+    import json as _json
+
+    path = tmp_path / "verdicts.json"
+    path.write_text(_json.dumps(verdicts))
+    return path
+
+
+def test_proposals_list_json_emits_indices_the_apply_command_takes(tmp_path: Path) -> None:
+    import json as _json
+
+    from lazy_harness.cli.memory_cmd import memory
+
+    memory_dir = tmp_path / "memory"
+    _write_proposals(memory_dir)
+
+    result = CliRunner().invoke(
+        memory, ["proposals", "list", "--json", "--memory-dir", str(memory_dir)]
+    )
+
+    assert result.exit_code == 0, result.output
+    rows = _json.loads(result.output)
+    assert [r["index"] for r in rows] == [1, 2, 3]
+    assert rows[0]["rule"] == "Run a docs coherence pass before each release"
+    assert rows[0]["rationale"] == "Docs drifted twice before releases"
+    assert rows[0]["timestamp"] == "2026-05-20T10:00:00-03:00"
+    assert rows[1]["rationale"] == ""
+
+
+def test_proposals_apply_resolves_indices_against_the_original_listing(
+    tmp_path: Path,
+) -> None:
+    """Verdicts are numbered against one listing, so ascending order must work.
+
+    `accept N`/`reject N` index into a file that shrinks under them: draining
+    1, 2, 3 in that order rejects proposal 1, then what used to be 3, then
+    nothing. Callers were expected to know to iterate backwards. This applies
+    them back-to-front internally so the caller never has to.
+    """
+    from lazy_harness.cli.memory_cmd import memory
+
+    memory_dir = tmp_path / "memory"
+    _write_proposals(memory_dir)
+    verdicts = _verdict_file(
+        tmp_path,
+        [
+            {"index": 1, "verdict": "reject", "reason": "already enforced by CI"},
+            {"index": 2, "verdict": "accept"},
+            {"index": 3, "verdict": "reject", "reason": "duplicate of MEMORY.md"},
+        ],
+    )
+
+    result = CliRunner().invoke(
+        memory,
+        ["proposals", "apply", "--verdicts", str(verdicts), "--memory-dir", str(memory_dir)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert parse_proposals((memory_dir / "claude-md.proposal.md").read_text()) == []
+
+    rejected = (memory_dir / "claude-md.rejected.md").read_text()
+    assert "Run a docs coherence pass before each release" in rejected
+    assert "already enforced by CI" in rejected
+    assert "Verify persistence with explicit file output" in rejected
+    assert "duplicate of MEMORY.md" in rejected
+
+    accepted = (memory_dir / "claude-md.accepted.md").read_text()
+    assert "Never amend published commits" in accepted
+    assert "Run a docs coherence pass" not in accepted
+
+
+def test_proposals_apply_rejects_an_out_of_range_index_without_writing(
+    tmp_path: Path,
+) -> None:
+    from lazy_harness.cli.memory_cmd import memory
+
+    memory_dir = tmp_path / "memory"
+    _write_proposals(memory_dir)
+    before = (memory_dir / "claude-md.proposal.md").read_text()
+    verdicts = _verdict_file(
+        tmp_path,
+        [
+            {"index": 1, "verdict": "reject", "reason": "fine"},
+            {"index": 99, "verdict": "accept"},
+        ],
+    )
+
+    result = CliRunner().invoke(
+        memory,
+        ["proposals", "apply", "--verdicts", str(verdicts), "--memory-dir", str(memory_dir)],
+    )
+
+    assert result.exit_code != 0
+    assert "99" in result.output
+    assert (memory_dir / "claude-md.proposal.md").read_text() == before
+    assert not (memory_dir / "claude-md.rejected.md").exists()
+
+
+def test_proposals_apply_rejects_a_duplicate_index_without_writing(tmp_path: Path) -> None:
+    from lazy_harness.cli.memory_cmd import memory
+
+    memory_dir = tmp_path / "memory"
+    _write_proposals(memory_dir)
+    before = (memory_dir / "claude-md.proposal.md").read_text()
+    verdicts = _verdict_file(
+        tmp_path,
+        [
+            {"index": 2, "verdict": "accept"},
+            {"index": 2, "verdict": "reject", "reason": "changed my mind"},
+        ],
+    )
+
+    result = CliRunner().invoke(
+        memory,
+        ["proposals", "apply", "--verdicts", str(verdicts), "--memory-dir", str(memory_dir)],
+    )
+
+    assert result.exit_code != 0
+    assert "duplicate" in result.output.lower()
+    assert (memory_dir / "claude-md.proposal.md").read_text() == before
+
+
+def test_proposals_apply_requires_a_reason_for_every_rejection(tmp_path: Path) -> None:
+    """The reason is the immunity registry's whole payload — a rejection
+    without one teaches the grader nothing."""
+    from lazy_harness.cli.memory_cmd import memory
+
+    memory_dir = tmp_path / "memory"
+    _write_proposals(memory_dir)
+    before = (memory_dir / "claude-md.proposal.md").read_text()
+    verdicts = _verdict_file(tmp_path, [{"index": 1, "verdict": "reject"}])
+
+    result = CliRunner().invoke(
+        memory,
+        ["proposals", "apply", "--verdicts", str(verdicts), "--memory-dir", str(memory_dir)],
+    )
+
+    assert result.exit_code != 0
+    assert "reason" in result.output
+    assert (memory_dir / "claude-md.proposal.md").read_text() == before
+
+
+def test_proposals_apply_rejects_an_unknown_verdict_value(tmp_path: Path) -> None:
+    from lazy_harness.cli.memory_cmd import memory
+
+    memory_dir = tmp_path / "memory"
+    _write_proposals(memory_dir)
+    verdicts = _verdict_file(tmp_path, [{"index": 1, "verdict": "maybe", "reason": "x"}])
+
+    result = CliRunner().invoke(
+        memory,
+        ["proposals", "apply", "--verdicts", str(verdicts), "--memory-dir", str(memory_dir)],
+    )
+
+    assert result.exit_code != 0
+    assert "maybe" in result.output
+
+
+def test_proposals_apply_rejects_a_document_that_is_not_a_list(tmp_path: Path) -> None:
+    from lazy_harness.cli.memory_cmd import memory
+
+    memory_dir = tmp_path / "memory"
+    _write_proposals(memory_dir)
+    verdicts = tmp_path / "verdicts.json"
+    verdicts.write_text('{"index": 1, "verdict": "accept"}')
+
+    result = CliRunner().invoke(
+        memory,
+        ["proposals", "apply", "--verdicts", str(verdicts), "--memory-dir", str(memory_dir)],
+    )
+
+    assert result.exit_code != 0
+    assert "list" in result.output.lower()
+
+
+def test_proposals_apply_reports_what_it_did(tmp_path: Path) -> None:
+    from lazy_harness.cli.memory_cmd import memory
+
+    memory_dir = tmp_path / "memory"
+    _write_proposals(memory_dir)
+    verdicts = _verdict_file(
+        tmp_path,
+        [
+            {"index": 1, "verdict": "reject", "reason": "already enforced by CI"},
+            {"index": 2, "verdict": "accept"},
+        ],
+    )
+
+    result = CliRunner().invoke(
+        memory,
+        ["proposals", "apply", "--verdicts", str(verdicts), "--memory-dir", str(memory_dir)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "1 accepted" in result.output
+    assert "1 rejected" in result.output
+    assert "1 pending" in result.output
+
+
+def test_proposals_apply_leaves_the_untouched_proposals_intact(tmp_path: Path) -> None:
+    """Line spans are computed against the original text.
+
+    Removing a proposal shifts every line after it, so a partial drain applied
+    in the wrong order corrupts the entries it was supposed to leave alone.
+    """
+    from lazy_harness.cli.memory_cmd import memory
+
+    memory_dir = tmp_path / "memory"
+    _write_proposals(memory_dir)
+    verdicts = _verdict_file(
+        tmp_path,
+        [
+            {"index": 1, "verdict": "reject", "reason": "already enforced by CI"},
+            {"index": 2, "verdict": "accept"},
+        ],
+    )
+
+    result = CliRunner().invoke(
+        memory,
+        ["proposals", "apply", "--verdicts", str(verdicts), "--memory-dir", str(memory_dir)],
+    )
+
+    assert result.exit_code == 0, result.output
+    remaining = parse_proposals((memory_dir / "claude-md.proposal.md").read_text())
+    assert [p.rule for p in remaining] == ["Verify persistence with explicit file output"]
+    assert remaining[0].rationale == "A write was claimed that never happened"
+    assert remaining[0].timestamp == "2026-05-27T09:30:00-03:00"

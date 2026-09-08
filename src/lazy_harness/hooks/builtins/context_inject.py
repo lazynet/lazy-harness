@@ -341,33 +341,69 @@ def proposals_context(memory_dir: Path) -> str:
     return "\n".join(filtered).strip()
 
 
-_PROPOSAL_ENTRY_RE = re.compile(r"^## (\d{4}-\d{2}-\d{2})", re.MULTILINE)
-_PROPOSAL_RULE_RE = re.compile(r"^\s*- \*\*Rule:\*\*", re.MULTILINE)
 _HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+_PROPOSAL_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}")
+
+#: Said once, read by both callers. The halt notice and the budget-pressure
+#: fallback are the same sentence: a reader who sees one and not the other
+#: would otherwise get two different accounts of the same queue.
+_QUEUE_FULL_TAIL = "the queue is full, so no new ones are being recorded. Drain it"
 
 
-def proposals_summary_line(memory_dir: Path) -> str:
-    """One-line reminder that pending claude-md proposals exist, so the
-    self-healing channel stays visible even when the full section is dropped
-    under budget pressure. Counts individual ``- **Rule:**`` bullets to match
-    ``lh memory proposals list`` numbering; HTML comment blocks (archived
-    content) are stripped before counting. Empty string when none."""
+def _pending_summary(memory_dir: Path) -> tuple[int, str]:
+    """(count, oldest date) for the pending queue, counted the way the CLI
+    numbers it. `(0, "")` when there is nothing to report."""
+    from lazy_harness.core.proposals import parse_proposals
+
     proposal_file = memory_dir / "claude-md.proposal.md"
     if not proposal_file.is_file():
-        return ""
+        return 0, ""
     try:
         raw = proposal_file.read_text()
     except OSError:
+        return 0, ""
+    pending = parse_proposals(raw)
+    dates = [p.timestamp[:10] for p in pending if _PROPOSAL_DATE_RE.match(p.timestamp)]
+    if not pending or not dates:
+        return 0, ""
+    return len(pending), min(dates)
+
+
+def proposals_summary_line(memory_dir: Path, max_pending: int | None = None) -> str:
+    """One-line reminder that pending claude-md proposals exist, so the
+    self-healing channel stays visible even when the full section is dropped
+    under budget pressure.
+
+    Counting goes through the same parser `lh memory proposals list` numbers
+    with: a reader that counts a bullet the CLI declines to number reports a
+    queue the user cannot drain. Archived HTML comment blocks do not count.
+
+    At or above `max_pending` the compound loop has stopped emitting proposals,
+    so the line says that rather than only asking for a review — the halt is
+    the part that costs something. Empty string when nothing is pending.
+    """
+    count, oldest = _pending_summary(memory_dir)
+    if not count:
         return ""
-    visible = _HTML_COMMENT_RE.sub("", raw)
-    rules = _PROPOSAL_RULE_RE.findall(visible)
-    dates = _PROPOSAL_ENTRY_RE.findall(visible)
-    if not rules or not dates:
+    head = f"⚠ {count} claude-md proposal(s) pending (oldest {oldest})"
+    if max_pending is not None and count >= max_pending:
+        return f"{head} — {_QUEUE_FULL_TAIL}: lh memory proposals"
+    return f"{head} — review: lh memory proposals"
+
+
+def proposals_halt_notice(memory_dir: Path, max_pending: int | None) -> str:
+    """The same line, but only once the queue is at the cap.
+
+    The budget-pressure fallback fires only when the proposals section is
+    dropped. A halted producer has to be visible in the ordinary case too —
+    the whole point of the cap is that stopping is noticed.
+    """
+    if max_pending is None:
         return ""
-    return (
-        f"⚠ {len(rules)} claude-md proposal(s) pending (oldest {min(dates)}) "
-        "— review: lh memory proposals"
-    )
+    count, _ = _pending_summary(memory_dir)
+    if not count or count < max_pending:
+        return ""
+    return proposals_summary_line(memory_dir, max_pending)
 
 
 def _jsonl_tail_summaries(path: Path, limit: int, include_prevention: bool) -> list[str]:
@@ -787,7 +823,10 @@ def main() -> None:
     proposals_ctx = proposals_context(memory_dir)
     proposals_summary = ""
     if cfg is None or cfg.context_inject.proposals_summary:
-        proposals_summary = proposals_summary_line(memory_dir)
+        proposals_summary = proposals_summary_line(
+            memory_dir,
+            max_pending=(cfg.compound_loop.max_pending_proposals if cfg is not None else None),
+        )
     episodic_ctx = episodic_context(memory_dir)
 
     suggest_ctx = ""
@@ -818,7 +857,14 @@ def main() -> None:
     git_section = f"## Git\n{git_ctx}" if git_ctx else ""
     session_section = f"## Last session\n{last_session_ctx}" if last_session_ctx else ""
     handoff_section = f"## Handoff from last session\n{handoff_ctx}" if handoff_ctx else ""
-    proposals_section = f"## Proposals to review\n{proposals_ctx}" if proposals_ctx else ""
+    proposals_section = ""
+    if proposals_ctx:
+        halt = proposals_halt_notice(
+            memory_dir,
+            cfg.compound_loop.max_pending_proposals if cfg is not None else None,
+        )
+        lead = f"{halt}\n\n" if halt else ""
+        proposals_section = f"## Proposals to review\n{lead}{proposals_ctx}"
     episodic_section = f"## Recent history\n{episodic_ctx}" if episodic_ctx else ""
     north_section = f"## LazyNorth\n{north_ctx}" if north_ctx else ""
     suggest_section = f"## Relevant vault notes\n{suggest_ctx}" if suggest_ctx else ""

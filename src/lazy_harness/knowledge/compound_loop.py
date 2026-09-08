@@ -25,6 +25,7 @@ from datetime import datetime
 from pathlib import Path
 
 from lazy_harness.core.config import CompoundLoopConfig
+from lazy_harness.core.proposals import rule_lines
 from lazy_harness.llm import LLMBackend, LLMBackendError
 
 _INTERACTIVE_MARKERS = ("permission-mode", "last-prompt")
@@ -618,11 +619,22 @@ def collect_recent_failures(memory_dir: Path, limit: int = 30) -> list[str]:
     return rendered
 
 
-def collect_rejected_proposals(memory_dir: Path, limit: int = 20) -> list[str]:
+#: Prompt budget for the immunity registry, in characters. Bounded by what a
+#: prompt costs rather than by a rule count: a 20-rule tail hid 94% of one
+#: repo's 337 rejections, and the grader re-proposed what the human had already
+#: refused. Rules are short, so this admits several hundred of them.
+REJECTED_PROPOSALS_MAX_CHARS = 20_000
+
+
+def collect_rejected_proposals(
+    memory_dir: Path, max_chars: int = REJECTED_PROPOSALS_MAX_CHARS
+) -> list[str]:
     """Rule lines from claude-md.rejected.md — the immunity registry (Phase 3c).
 
-    Returns the last `limit` rejected rules (rules only, no reasons) so the
-    grading prompt can tell the evaluator not to re-propose them.
+    Returns rejected rules (rules only, no reasons) so the grading prompt can
+    tell the evaluator not to re-propose them, newest last. When the registry
+    exceeds `max_chars` the oldest rules are dropped: recency is the only cheap
+    proxy for "about to be re-proposed" available here.
     """
     path = memory_dir / "claude-md.rejected.md"
     if not path.is_file():
@@ -631,13 +643,50 @@ def collect_rejected_proposals(memory_dir: Path, limit: int = 20) -> list[str]:
         text = path.read_text()
     except OSError:
         return []
-    prefix = "- **Rule:**"
-    rules = [
-        line.strip()[len(prefix) :].strip()
-        for line in text.splitlines()
-        if line.strip().startswith(prefix)
-    ]
-    return rules[-limit:]
+    rules = rule_lines(text)
+    return _tail_within_budget(rules, max_chars)
+
+
+def _tail_within_budget(rules: list[str], max_chars: int) -> list[str]:
+    """The newest suffix of `rules` whose combined length fits `max_chars`."""
+    kept: list[str] = []
+    spent = 0
+    for rule in reversed(rules):
+        spent += len(rule)
+        if spent > max_chars:
+            break
+        kept.append(rule)
+    kept.reverse()
+    return kept
+
+
+#: Prompt budget for the pending queue, in characters. Smaller than the
+#: immunity budget: the queue is meant to stay short, and a queue big enough to
+#: exhaust this is itself the signal that emission should stop (see
+#: `CompoundLoopConfig.max_pending_proposals`).
+PENDING_PROPOSALS_MAX_CHARS = 10_000
+
+#: Budget that admits any queue — for counting, where truncation would lie.
+_UNBOUNDED = 1 << 30
+
+
+def collect_pending_proposals(
+    memory_dir: Path, max_chars: int = PENDING_PROPOSALS_MAX_CHARS
+) -> list[str]:
+    """Rule lines already queued in claude-md.proposal.md, newest last.
+
+    The grader was shown decisions, failures, learnings and rejections but never
+    the queue itself, so it re-proposed what was already waiting for review.
+    Archived blocks (HTML comments) are not pending and are excluded.
+    """
+    path = memory_dir / "claude-md.proposal.md"
+    if not path.is_file():
+        return []
+    try:
+        text = path.read_text()
+    except OSError:
+        return []
+    return _tail_within_budget(rule_lines(text), max_chars)
 
 
 def build_prompt(
@@ -651,6 +700,7 @@ def build_prompt(
     summary: str,
     captured_insights: list[Insight] | None = None,
     rejected_proposals: list[str] | None = None,
+    pending_proposals: list[str] | None = None,
     recent_failures: list[str] | None = None,
 ) -> str:
     """Build the headless-Claude prompt. Ported verbatim from the bash worker
@@ -670,6 +720,14 @@ def build_prompt(
             "\n## Previously rejected proposals — do NOT re-propose rules "
             "equivalent to these:\n"
             f"{rejected}\n"
+        )
+    pending_section = ""
+    if pending_proposals:
+        pending = "\n".join(f"- {rule}" for rule in pending_proposals)
+        pending_section = (
+            "\n## Proposals already pending review — do NOT re-propose rules "
+            "equivalent to these:\n"
+            f"{pending}\n"
         )
     failures_section = ""
     if recent_failures:
@@ -698,7 +756,7 @@ Timestamp: {timestamp}
 
 ## Existing learnings already recorded (DO NOT repeat these or semantic equivalents):
 {existing_learnings}
-{insights_section}{rejected_section}{failures_section}
+{insights_section}{rejected_section}{pending_section}{failures_section}
 ## Session conversation:
 {summary}
 
@@ -850,6 +908,7 @@ def persist_results(
     *,
     session_id: str = "",
     session_jsonl: Path | None = None,
+    max_pending_proposals: int | None = None,
 ) -> list[str]:
     """Persist decisions/failures/learnings/handoff. Returns a list of summaries
     of what was written, suitable for logging. Atomic writes everywhere."""
@@ -939,6 +998,18 @@ deprecated_reason: null
     proposals = [
         p for p in data.get("claude_md_proposals", []) if isinstance(p, dict) and p.get("rule")
     ]
+    if proposals:
+        proposal_file = memory_dir / "claude-md.proposal.md"
+        queued = len(collect_pending_proposals(proposal_file.parent, max_chars=_UNBOUNDED))
+        if max_pending_proposals is not None and queued >= max_pending_proposals:
+            # Backpressure, not a discard. Dropping the new proposal would lose
+            # signal silently; halting emission makes a full queue cost
+            # something the next session is told about.
+            wrote.append(
+                f"claude_md_proposals: halted ({queued} pending "
+                f">= cap {max_pending_proposals})"
+            )
+            proposals = []
     if proposals:
         proposal_file = memory_dir / "claude-md.proposal.md"
         block_lines = [f"## {timestamp}\n"]
@@ -1197,6 +1268,7 @@ def process_task(
         existing_learnings,
         summary,
         rejected_proposals=collect_rejected_proposals(memory_dir),
+        pending_proposals=collect_pending_proposals(memory_dir),
         recent_failures=collect_recent_failures(memory_dir),
     )
 
@@ -1219,6 +1291,7 @@ def process_task(
         timestamp,
         session_id=session_id,
         session_jsonl=session_jsonl,
+        max_pending_proposals=cfg.max_pending_proposals,
     )
 
     if persisted_insights:
