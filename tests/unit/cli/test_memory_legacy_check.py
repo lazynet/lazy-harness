@@ -77,13 +77,36 @@ def test_legacy_check_does_not_flag_memory_the_store_already_holds(
     _legacy(profile, repo)
     target = store / "memory" / "github.com" / "o" / "liverepo"
     target.mkdir(parents=True)
-    (target / "MEMORY.md").write_text("# the copy that is read\n")
+    (target / "MEMORY.md").write_text("# curated over months\n")
 
     result = CliRunner().invoke(memory, ["legacy-check"])
 
     assert result.exit_code == 0, result.output
     assert "orphaned" not in result.output.lower()
     assert "superseded" in result.output.lower()
+
+
+def test_legacy_check_reports_a_partly_copied_directory_as_diverged(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The dangerous case: the store has a copy, but not all of it.
+
+    Reported as superseded, this reads as \"safe to delete\" over a document
+    whose lines exist nowhere else.
+    """
+    store, profile = _setup(tmp_path, monkeypatch)
+    repo = _repo(tmp_path, "liverepo")
+    _legacy(profile, repo)
+    target = store / "memory" / "github.com" / "o" / "liverepo"
+    target.mkdir(parents=True)
+    (target / "MEMORY.md").write_text("# something else entirely\n")
+
+    result = CliRunner().invoke(memory, ["legacy-check"])
+
+    assert result.exit_code == 0, result.output
+    assert "diverged" in result.output.lower()
+    assert "MEMORY.md" in result.output
+    assert "not safe to delete" in result.output.lower()
 
 
 def test_legacy_check_points_at_the_command_that_fixes_it(tmp_path: Path, monkeypatch) -> None:

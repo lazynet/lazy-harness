@@ -294,7 +294,8 @@ lh memory consolidate --memory-dir ~/.claude/projects/-Users-me-repo/memory --la
 Reports per-project memory still sitting in a profile's `projects/` tree rather than in the knowledge store, and classifies each one:
 
 - **orphaned** — the store holds no copy, so nothing reads this memory any more. Move it with `lh memory migrate`.
-- **superseded** — the store already holds a copy; the leftover is safe to delete.
+- **superseded** — every line of every file in the leftover is present in the store copy, so the leftover is safe to delete. Coverage is line-level rather than byte-level on purpose: the store's `decisions.jsonl` is an append-only superset that is never byte-identical to what was left behind.
+- **diverged** — the store holds a copy, but not all of it: the leftover has at least one file, or one line, the store lacks. `detail` names the files. **Not safe to delete** — diff them first. This is the case a presence-only check reported as `superseded`.
 - **unkeyable** — the checkout it was named after is gone, or has no git remote to key on, so there is nowhere to move it.
 
 ```bash

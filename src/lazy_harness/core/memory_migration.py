@@ -155,6 +155,12 @@ def classify_legacy_memory(
     looks at whether the target is already there — and that difference is the
     whole question: `superseded` is safe to delete, `orphaned` is a curated
     document that stopped being loaded when memory moved into the store.
+
+    `superseded` has to be earned by content. Deciding it on
+    `any(target.iterdir())` asks whether the store directory holds *something*,
+    never whether it holds *this*: a real profile's `MEMORY.md` carried four
+    rules the store copy lacked and was reported safe to delete. A directory the
+    store does not fully cover is `diverged`, and `detail` names the files.
     """
     out: list[LegacyStatus] = []
     for move in plan_migration(profile_dirs, knowledge_root=knowledge_root):
@@ -162,13 +168,59 @@ def classify_legacy_memory(
         if move.target is None:
             out.append(LegacyStatus(move.source, "unkeyable", move.reason, checkout))
             continue
-        superseded = move.target.is_dir() and any(move.target.iterdir())
+        if not (move.target.is_dir() and any(move.target.iterdir())):
+            out.append(
+                LegacyStatus(move.source, "orphaned", checkout=checkout, target=move.target)
+            )
+            continue
+        uncovered = _uncovered_files(move.source, move.target)
         out.append(
             LegacyStatus(
                 move.source,
-                "superseded" if superseded else "orphaned",
+                "diverged" if uncovered else "superseded",
+                detail=_uncovered_detail(uncovered),
                 checkout=checkout,
                 target=move.target,
             )
         )
     return out
+
+
+def _uncovered_files(source: Path, target: Path) -> list[str]:
+    """Names of files under `source` the store copy does not account for.
+
+    Coverage is line-level, not byte-level, and deliberately so: the store's
+    `decisions.jsonl` is an append-only superset that is never byte-identical to
+    the copy left behind, so a byte comparison would report every project
+    diverged and make the check useless. A curated document with one line the
+    store lacks is exactly what must not be called safe to delete.
+    """
+    uncovered: list[str] = []
+    for path in sorted(source.rglob("*")):
+        if not path.is_file():
+            continue
+        counterpart = target / path.relative_to(source)
+        if not counterpart.is_file():
+            uncovered.append(path.name)
+            continue
+        try:
+            legacy_lines = {ln.strip() for ln in path.read_text(errors="replace").splitlines()}
+            store_lines = {
+                ln.strip() for ln in counterpart.read_text(errors="replace").splitlines()
+            }
+        except OSError:
+            # Unreadable is not provably covered, so it is not safe to delete.
+            uncovered.append(path.name)
+            continue
+        if legacy_lines - store_lines - {""}:
+            uncovered.append(path.name)
+    return uncovered
+
+
+def _uncovered_detail(uncovered: list[str]) -> str:
+    if not uncovered:
+        return ""
+    shown = ", ".join(uncovered[:3])
+    if len(uncovered) > 3:
+        shown += f", +{len(uncovered) - 3} more"
+    return f"not in the store: {shown}"

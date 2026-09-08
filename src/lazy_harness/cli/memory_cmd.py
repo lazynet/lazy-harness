@@ -92,8 +92,10 @@ def legacy_check() -> None:
     for s in statuses:
         by_status.setdefault(s.status, []).append(s)
 
-    # Orphaned first: it is the only one that costs anything to leave alone.
-    for status in ("orphaned", "unkeyable", "superseded"):
+    # Orphaned and diverged first: they are the ones that cost something to
+    # leave alone, or to act on. A status missing from this tuple prints
+    # nothing at all, so it must list every status the classifier can return.
+    for status in ("orphaned", "diverged", "unkeyable", "superseded"):
         found = by_status.get(status, [])
         if not found:
             continue
@@ -106,6 +108,11 @@ def legacy_check() -> None:
 
     if by_status.get("orphaned"):
         click.echo("Orphaned memory is read by nothing. Move it: lh memory migrate")
+    if by_status.get("diverged"):
+        click.echo(
+            "Diverged memory is NOT safe to delete: the store holds a copy, but not "
+            "all of it. Diff the named files before removing anything."
+        )
 
 
 def _read_jsonl_tail(path: Path, last: int) -> list[str]:
