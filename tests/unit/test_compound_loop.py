@@ -1861,17 +1861,127 @@ def test_collect_rejected_proposals_missing_file_returns_empty(tmp_path: Path) -
     assert collect_rejected_proposals(tmp_path / "memory") == []
 
 
-def test_collect_rejected_proposals_caps_at_limit(tmp_path: Path) -> None:
+def test_collect_rejected_proposals_budgets_by_chars_not_count(tmp_path: Path) -> None:
+    """The immunity registry is bounded by prompt cost, not by an arbitrary count.
+
+    A 20-rule tail hid 94% of the rejections in a real repo (337 rejected), so
+    the grader kept re-proposing rules the human had already refused. Chars are
+    what a prompt actually spends; rule count is a proxy that breaks the moment
+    rules are short.
+    """
     from lazy_harness.knowledge.compound_loop import collect_rejected_proposals
 
     memory = tmp_path / "memory"
     memory.mkdir()
-    lines = "\n".join(f"- **Rule:** rule number {i}" for i in range(30))
+    lines = "\n".join(f"- **Rule:** rule number {i}" for i in range(200))
     (memory / "claude-md.rejected.md").write_text(lines)
+
     rules = collect_rejected_proposals(memory)
-    assert len(rules) == 20
-    assert rules[0] == "rule number 10"
-    assert rules[-1] == "rule number 29"
+
+    # 200 short rules cost well under the default budget, so none are dropped —
+    # where the old 20-item tail would have discarded 180 of them.
+    assert len(rules) == 200
+    assert rules[0] == "rule number 0"
+    assert rules[-1] == "rule number 199"
+
+
+def test_collect_rejected_proposals_keeps_newest_when_over_budget(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.compound_loop import collect_rejected_proposals
+
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    lines = "\n".join(f"- **Rule:** {'x' * 100} number {i}" for i in range(50))
+    (memory / "claude-md.rejected.md").write_text(lines)
+
+    rules = collect_rejected_proposals(memory, max_chars=1000)
+
+    assert sum(len(r) for r in rules) <= 1000
+    assert rules[-1].endswith("number 49")
+
+
+# --- pending-queue dedupe: the grader must see what is already queued ---
+
+PENDING_TEXT = """\
+<!-- claude-md proposals (append-only). Review and merge into CLAUDE.md or discard. -->
+
+## 2026-09-01T22:21:21-03:00
+
+- **Rule:** Resolve the memory dir the same way in every reader
+  - **Rationale:** Two resolvers drift apart silently
+
+## 2026-09-04T08:00:00-03:00
+
+- **Rule:** Verify a tool's effect, not its exit code
+"""
+
+
+def test_collect_pending_proposals_returns_queued_rule_lines(tmp_path: Path) -> None:
+    """The queue is the grader's blind spot.
+
+    build_prompt was fed decisions, failures, learnings and rejections — never
+    claude-md.proposal.md. So the evaluator re-proposed rules already sitting in
+    the queue, which is how one repo reached 125 pending rules in 78 blocks.
+    """
+    from lazy_harness.knowledge.compound_loop import collect_pending_proposals
+
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    (memory / "claude-md.proposal.md").write_text(PENDING_TEXT)
+
+    assert collect_pending_proposals(memory) == [
+        "Resolve the memory dir the same way in every reader",
+        "Verify a tool's effect, not its exit code",
+    ]
+
+
+def test_collect_pending_proposals_skips_archived_comment_blocks(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.compound_loop import collect_pending_proposals
+
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    (memory / "claude-md.proposal.md").write_text(
+        "<!--\n## 2026-08-01T00:00:00-03:00\n\n"
+        "- **Rule:** archived and no longer pending\n-->\n\n"
+        "## 2026-09-04T08:00:00-03:00\n\n- **Rule:** still pending\n"
+    )
+
+    assert collect_pending_proposals(memory) == ["still pending"]
+
+
+def test_collect_pending_proposals_missing_file_returns_empty(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.compound_loop import collect_pending_proposals
+
+    assert collect_pending_proposals(tmp_path / "memory") == []
+
+
+def test_build_prompt_includes_pending_proposals_section() -> None:
+    prompt = build_prompt(
+        project_name="proj",
+        cwd="/tmp/proj",
+        session_id="sess1",
+        timestamp="2026-06-11T10:00:00-03:00",
+        existing_decisions="",
+        existing_failures="",
+        existing_learnings="",
+        summary="## User\nx",
+        pending_proposals=["Verify a tool's effect, not its exit code"],
+    )
+    assert "already pending review" in prompt
+    assert "- Verify a tool's effect, not its exit code" in prompt
+
+
+def test_build_prompt_omits_pending_section_when_none() -> None:
+    prompt = build_prompt(
+        project_name="proj",
+        cwd="/tmp/proj",
+        session_id="sess1",
+        timestamp="2026-06-11T10:00:00-03:00",
+        existing_decisions="",
+        existing_failures="",
+        existing_learnings="",
+        summary="## User\nx",
+    )
+    assert "already pending review" not in prompt
 
 
 def test_build_prompt_includes_rejected_proposals_section() -> None:
@@ -1928,6 +2038,27 @@ def test_process_task_feeds_rejected_proposals_into_prompt(tmp_path: Path) -> No
     assert outcome.was_processed
     assert "Previously rejected proposals" in captured["prompt"]
     assert "- Never amend published commits" in captured["prompt"]
+
+
+def test_process_task_feeds_pending_proposals_into_prompt(tmp_path: Path) -> None:
+    queue = tmp_path / "queue"
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    (memory / "claude-md.proposal.md").write_text(PENDING_TEXT)
+    learnings = tmp_path / "Learnings"
+    session = _interactive_session(tmp_path)
+    task = create_task(queue, Path("/tmp/proj"), session, "abcd1234efgh", memory)
+
+    captured: dict[str, Any] = {}
+
+    def fake_invoke(prompt: str, model: str, timeout: int) -> str:
+        captured["prompt"] = prompt
+        return json.dumps({"decisions": [], "failures": [], "learnings": [], "handoff": []})
+
+    outcome = process_task(task, _cfg(), learnings, backend=StubBackend(fake_invoke))
+    assert outcome.was_processed
+    assert "already pending review" in captured["prompt"]
+    assert "- Verify a tool's effect, not its exit code" in captured["prompt"]
 
 
 # --- failure promotion via grading prompt (Phase 3b) ---
