@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.54.1](https://github.com/lazynet/lazy-harness/compare/v0.54.0...v0.54.1) (2026-09-08)
+
+
+### Bug Fixes
+
+* earn superseded by content instead of by a non-empty directory ([#236](https://github.com/lazynet/lazy-harness/issues/236)) ([a5cf8a0](https://github.com/lazynet/lazy-harness/commit/a5cf8a069fa73c57da1f229244af7ba158e97ce0))
+
 ## [0.54.0](https://github.com/lazynet/lazy-harness/compare/v0.53.0...v0.54.0) (2026-09-08)
 
 
