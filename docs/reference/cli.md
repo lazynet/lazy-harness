@@ -303,16 +303,24 @@ lh memory legacy-check
 
 ### `lh memory proposals`
 
-Lifecycle for the `claude-md.proposal.md` entries the compound loop appends (see [Memory: the compound loop](../how/memory-compound.md)). All three subcommands take `--memory-dir <path>`; by default the per-project memory dir is resolved from the agent runtime dir and the repository the working directory belongs to. Inside a linked git worktree the key comes from the main checkout, so proposals stay on the file the loop writes to instead of following each worktree.
+Lifecycle for the `claude-md.proposal.md` entries the compound loop appends (see [Memory: the compound loop](../how/memory-compound.md)). Every subcommand takes `--memory-dir <path>`; by default the per-project memory dir is resolved from the agent runtime dir and the repository the working directory belongs to. Inside a linked git worktree the key comes from the main checkout, so proposals stay on the file the loop writes to instead of following each worktree.
 
-- `lh memory proposals list` — numbered table of pending proposals (index, date, rule excerpt).
+- `lh memory proposals list` — numbered table of pending proposals (index, date, rule excerpt). `--json` emits the same listing as JSON, indices included, for `apply`.
 - `lh memory proposals accept <N>` — removes entry N from the pending file, archives it to `claude-md.accepted.md` with the acceptance date, and prints the full rule. It never edits `MEMORY.md` or `CLAUDE.md` itself — pasting the rule is the human's call.
-- `lh memory proposals reject <N> --reason "<text>"` — removes entry N and records it in `claude-md.rejected.md` with the date and reason. That file is an immunity registry: the grading prompt includes the last 20 rejected rules with an instruction not to re-propose equivalents.
+- `lh memory proposals reject <N> --reason "<text>"` — removes entry N and records it in `claude-md.rejected.md` with the date and reason. That file is an immunity registry: the grading prompt carries as many of its rules as fit a 20,000-character budget, newest first, with an instruction not to re-propose equivalents.
+- `lh memory proposals apply --verdicts <file>` — drains many at once. The file is a JSON list of `{"index": N, "verdict": "accept"|"reject", "reason": "..."}` numbered against `list --json`. Every entry is validated before anything is written, and the verdicts are applied back-to-front, so an out-of-range or duplicate index leaves the queue untouched and the caller never has to iterate in reverse to avoid `accept`/`reject`'s shifting positions.
+
+A queue that is never drained does not sit still: at `[compound_loop].max_pending_proposals` the loop stops emitting new proposals altogether, and the session-start context says so.
 
 ```bash
 lh memory proposals list
 lh memory proposals accept 1
 lh memory proposals reject 2 --reason "too strict for this repo"
+
+# Whole queue in one pass
+lh memory proposals list --json > /tmp/queue.json
+# ...write verdicts against those indices...
+lh memory proposals apply --verdicts /tmp/verdicts.json
 ```
 
 ## `lh migrate`

@@ -432,10 +432,33 @@ def proposals() -> None:
 
 
 @proposals.command("list")
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit the listing as JSON, indices included, for `proposals apply`.",
+)
 @_MEMORY_DIR_OPTION
-def proposals_list(memory_dir: Path | None) -> None:
+def proposals_list(as_json: bool, memory_dir: Path | None) -> None:
     """List pending claude-md proposals."""
     pending_file, _, pending = _load_pending(memory_dir)
+    if as_json:
+        click.echo(
+            json.dumps(
+                [
+                    {
+                        "index": i,
+                        "timestamp": p.timestamp,
+                        "rule": p.rule,
+                        "rationale": p.rationale,
+                    }
+                    for i, p in enumerate(pending, start=1)
+                ],
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
     if not pending:
         click.echo(f"No pending claude-md proposals at {pending_file}.")
         return
@@ -445,8 +468,117 @@ def proposals_list(memory_dir: Path | None) -> None:
         click.echo(f"  {i:>3}  {p.timestamp[:10] or '????-??-??'}  {excerpt}")
     click.echo(
         "\nAccept: lh memory proposals accept <N> — reject: "
-        'lh memory proposals reject <N> --reason "..."'
+        'lh memory proposals reject <N> --reason "..."\n'
+        "Whole queue at once: lh memory proposals list --json, then "
+        "lh memory proposals apply --verdicts <file>"
     )
+
+
+_VERDICTS = ("accept", "reject")
+
+
+def _parse_verdicts(raw: object, pending_count: int) -> list[tuple[int, str, str]]:
+    """Validate the whole verdict document before a single write happens.
+
+    Half-applying a hundred verdicts and then failing leaves a queue nobody can
+    reconcile against the listing the verdicts were written from, so every
+    check runs up front.
+    """
+    if not isinstance(raw, list):
+        raise click.ClickException(
+            "The verdicts document must be a JSON list of "
+            '{"index": N, "verdict": "accept"|"reject", "reason": "..."} objects.'
+        )
+    seen: set[int] = set()
+    parsed: list[tuple[int, str, str]] = []
+    for i, item in enumerate(raw):
+        where = f"entry {i + 1}"
+        if not isinstance(item, dict):
+            raise click.ClickException(f"{where}: expected an object, got {type(item).__name__}.")
+        index = item.get("index")
+        if not isinstance(index, int) or isinstance(index, bool):
+            raise click.ClickException(f"{where}: 'index' must be an integer.")
+        if index < 1 or index > pending_count:
+            raise click.ClickException(
+                f"{where}: no proposal #{index} — {pending_count} pending. "
+                "Re-read the queue with `lh memory proposals list --json`."
+            )
+        if index in seen:
+            raise click.ClickException(f"{where}: duplicate verdict for proposal #{index}.")
+        seen.add(index)
+        verdict = item.get("verdict")
+        if verdict not in _VERDICTS:
+            raise click.ClickException(
+                f"{where}: unknown verdict {verdict!r} — expected 'accept' or 'reject'."
+            )
+        reason = item.get("reason") or ""
+        if verdict == "reject" and not str(reason).strip():
+            raise click.ClickException(
+                f"{where}: a rejection needs a 'reason'. The reason is what the "
+                "immunity registry teaches the grader; without it the rule comes back."
+            )
+        parsed.append((index, verdict, str(reason)))
+    return parsed
+
+
+@proposals.command("apply")
+@click.option(
+    "--verdicts",
+    "verdicts_file",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="JSON list of {index, verdict, reason} against `proposals list --json`.",
+)
+@_MEMORY_DIR_OPTION
+def proposals_apply(verdicts_file: Path, memory_dir: Path | None) -> None:
+    """Accept or reject many proposals in one pass.
+
+    Indices are resolved against the listing the verdicts were written from.
+    `accept N`/`reject N` index into a file that shrinks under them, so a caller
+    draining 1, 2, 3 in that order silently hits the wrong entries; this applies
+    them back-to-front so that footgun is gone.
+    """
+    pending_file, text, pending = _load_pending(memory_dir)
+    try:
+        raw = json.loads(verdicts_file.read_text())
+    except ValueError as exc:
+        raise click.ClickException(f"{verdicts_file} is not valid JSON: {exc}") from exc
+
+    decisions = _parse_verdicts(raw, len(pending))
+    if not decisions:
+        click.echo("No verdicts — nothing to apply.")
+        return
+
+    today = date.today().isoformat()
+    accepted_rules: list[str] = []
+    n_accepted = n_rejected = 0
+    # Descending: every removal shifts the positions after it.
+    for index, verdict, reason in sorted(decisions, key=lambda d: -d[0]):
+        target = pending[index - 1]
+        if verdict == "accept":
+            _append_block(
+                pending_file.with_name("claude-md.accepted.md"),
+                "<!-- accepted claude-md proposals (append-only). -->\n\n",
+                _format_entry_block(target, [f"accepted: {today}"]),
+            )
+            accepted_rules.append(target.rule)
+            n_accepted += 1
+        else:
+            _append_block(
+                pending_file.with_name("claude-md.rejected.md"),
+                "<!-- rejected claude-md proposals (append-only immunity registry). -->\n\n",
+                _format_entry_block(target, [f"rejected: {today}", f"reason: {reason}"]),
+            )
+            n_rejected += 1
+        text = _remove_proposal(text, pending, index - 1)
+    _atomic_write(pending_file, text)
+
+    remaining = len(parse_proposals(text))
+    click.echo(f"{n_accepted} accepted · {n_rejected} rejected · {remaining} pending")
+    if accepted_rules:
+        click.echo("\nAccepted rules were NOT applied automatically — merge them yourself:")
+        for rule in reversed(accepted_rules):
+            click.echo(f"  · {rule}")
 
 
 @proposals.command("accept")
