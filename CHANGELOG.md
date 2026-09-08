@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.54.0](https://github.com/lazynet/lazy-harness/compare/v0.53.0...v0.54.0) (2026-09-08)
+
+
+### Features
+
+* stop the claude-md proposal queue from accumulating ([#234](https://github.com/lazynet/lazy-harness/issues/234)) ([cf46613](https://github.com/lazynet/lazy-harness/commit/cf4661300600f699380380ddb1dcb59d4fe421e4))
+
 ## [0.53.0](https://github.com/lazynet/lazy-harness/compare/v0.52.0...v0.53.0) (2026-09-03)
 
 
