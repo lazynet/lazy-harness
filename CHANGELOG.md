@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.55.0](https://github.com/lazynet/lazy-harness/compare/v0.54.1...v0.55.0) (2026-09-09)
+
+
+### Features
+
+* route inference by role through lh exec ([#238](https://github.com/lazynet/lazy-harness/issues/238)) ([01cff53](https://github.com/lazynet/lazy-harness/commit/01cff536c25a8f493cccb73b5a29d00fe8ff50db))
+
 ## [0.54.1](https://github.com/lazynet/lazy-harness/compare/v0.54.0...v0.54.1) (2026-09-08)
 
 
