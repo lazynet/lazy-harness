@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -93,11 +94,12 @@ enabled = true
     assert (claude_dir / "logs" / "compound-loop.log").is_file()
 
 
-def test_worker_resolves_backend_from_config_and_passes_it_to_process_task(
+def test_worker_passes_the_full_config_to_process_task(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """ADR-033: the worker resolves [compound_loop].backend once at startup and
-    threads the instance into process_task — zero subprocess involvement."""
+    """ADR-039: the worker no longer pre-resolves a backend — it threads the
+    loaded Config straight into process_task, which resolves a role lazily
+    per task via run_inference."""
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
@@ -134,8 +136,8 @@ backend = "ollama"
 
     captured: dict = {}
 
-    def fake_process_task(task_file, cfg, learnings_dir, backend):  # noqa: ANN001
-        captured["backend"] = backend
+    def fake_process_task(task_file, cfg, learnings_dir):  # noqa: ANN001
+        captured["cfg"] = cfg
         return TaskOutcome(skipped="stubbed")
 
     monkeypatch.setattr(worker_mod, "process_task", fake_process_task)
@@ -143,16 +145,14 @@ backend = "ollama"
     rc = worker_mod.main()
 
     assert rc == 0
-    from lazy_harness.llm.openai_compat import OpenAICompatibleBackend
-
-    assert isinstance(captured["backend"], OpenAICompatibleBackend)
-    assert captured["backend"]._base_url == "http://localhost:11434"
+    assert captured["cfg"].compound_loop.backend == "ollama"
 
 
-def test_worker_exits_cleanly_on_unknown_backend(
+def test_worker_logs_and_exits_zero_when_role_cannot_resolve(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A misconfigured backend name must not crash the worker; it logs and exits."""
+    """run_inference never raises: a misconfigured backend must surface as a
+    per-task skip logged by the drain loop, not crash the worker."""
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
@@ -178,6 +178,27 @@ enabled = true
 backend = "no-such-backend"
 """
     )
+    session = tmp_path / "sess.jsonl"
+    session.write_text(
+        "\n".join(
+            json.dumps(r)
+            for r in [
+                {"type": "permission-mode"},
+                {"type": "user", "message": {"content": "a" * 250}},
+                {"type": "assistant", "message": {"content": "ok"}},
+                {"type": "user", "message": {"content": "next step please"}},
+                {"type": "assistant", "message": {"content": "done"}},
+            ]
+        )
+        + "\n"
+    )
+    queue_dir = home / ".null" / "queue"
+    queue_dir.mkdir(parents=True)
+    (queue_dir / "t.task").write_text(
+        f"cwd=/tmp/proj\nsession_jsonl={session}\nsession_id=abcd1234\n"
+        f"memory_dir={tmp_path / 'memory'}\ntimestamp=2026-09-09T10:00:00-03:00\n"
+    )
+
     from lazy_harness.knowledge import compound_loop_worker as worker_mod
 
     monkeypatch.setattr(worker_mod, "config_file", lambda: cfg_file)
@@ -186,8 +207,8 @@ backend = "no-such-backend"
 
     assert rc == 0
     log = (home / ".null" / "logs" / "compound-loop.log").read_text()
-    assert "backend" in log
-    assert "no-such-backend" in log
+    assert "skipped" in log
+    assert (queue_dir / "done" / "t.task").is_file()
 
 
 def test_resolve_learnings_dir_uses_marker(tmp_path: Path, monkeypatch) -> None:

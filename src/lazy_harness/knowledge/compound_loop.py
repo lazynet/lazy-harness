@@ -24,9 +24,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from lazy_harness.core.config import CompoundLoopConfig
+from lazy_harness.core.config import Config
 from lazy_harness.core.proposals import rule_lines
-from lazy_harness.llm import LLMBackend, LLMBackendError
+from lazy_harness.llm.invoke import run_inference
 
 _INTERACTIVE_MARKERS = ("permission-mode", "last-prompt")
 _INTERACTIVE_SCAN_LINES = 10
@@ -854,19 +854,6 @@ def parse_response(raw_output: str) -> dict | None:
     return None
 
 
-def invoke_llm(prompt: str, backend: LLMBackend, model: str, timeout: int) -> str | None:
-    """Run a single-turn completion via the backend (ADR-033).
-
-    Returns the response text, or None on failure or empty output — the
-    historical `invoke_claude` contract, now provider-agnostic.
-    """
-    try:
-        output = backend.complete(prompt, model, timeout)
-    except LLMBackendError:
-        return None
-    return output if output else None
-
-
 def _atomic_write(path: Path, content: str) -> None:
     """Atomic write via tempfile in the same dir + os.replace.
 
@@ -1006,8 +993,7 @@ deprecated_reason: null
             # signal silently; halting emission makes a full queue cost
             # something the next session is told about.
             wrote.append(
-                f"claude_md_proposals: halted ({queued} pending "
-                f">= cap {max_pending_proposals})"
+                f"claude_md_proposals: halted ({queued} pending >= cap {max_pending_proposals})"
             )
             proposals = []
     if proposals:
@@ -1215,11 +1201,11 @@ def _record_goal_verdict(data: dict, *, session_id: str, cwd: str) -> None:
 
 def process_task(
     task_file: Path,
-    cfg: CompoundLoopConfig,
+    cfg: Config,
     learnings_dir: Path,
-    backend: LLMBackend,
 ) -> TaskOutcome:
-    """Process one queued task with the resolved LLM backend (ADR-033)."""
+    """Process one queued task, routing inference through the `distill` role (ADR-039)."""
+    cl = cfg.compound_loop
     meta = parse_task(task_file)
     session_jsonl = Path(meta.get("session_jsonl", ""))
     session_id = meta.get("session_id", "")
@@ -1242,16 +1228,16 @@ def process_task(
     insight_bypass = bool(insights)
 
     user_chars = count_user_chars(session_jsonl)
-    if user_chars < cfg.min_user_chars and not insight_bypass:
-        if cfg.slim_handoff_enabled:
+    if user_chars < cl.min_user_chars and not insight_bypass:
+        if cl.slim_handoff_enabled:
             write_slim_handoff(session_jsonl, memory_dir, cwd)
-        return TaskOutcome(skipped=f"{user_chars} user chars (min {cfg.min_user_chars})")
+        return TaskOutcome(skipped=f"{user_chars} user chars (min {cl.min_user_chars})")
 
     summary, msg_count = extract_messages(session_jsonl)
-    if (not summary or msg_count < cfg.min_messages) and not insight_bypass:
-        if cfg.slim_handoff_enabled:
+    if (not summary or msg_count < cl.min_messages) and not insight_bypass:
+        if cl.slim_handoff_enabled:
             write_slim_handoff(session_jsonl, memory_dir, cwd)
-        return TaskOutcome(skipped=f"{msg_count} messages (min {cfg.min_messages})")
+        return TaskOutcome(skipped=f"{msg_count} messages (min {cl.min_messages})")
 
     existing_decisions = collect_existing_decisions(memory_dir)
     existing_failures = collect_existing_failures(memory_dir)
@@ -1272,9 +1258,14 @@ def process_task(
         recent_failures=collect_recent_failures(memory_dir),
     )
 
-    raw_output = invoke_llm(prompt, backend, cfg.model, cfg.timeout_seconds)
-    if not raw_output:
-        return TaskOutcome(skipped=f"{backend.name} returned empty for {session_id[:8]}")
+    result = run_inference(prompt, role="distill", cfg=cfg, timeout=cl.timeout_seconds)
+    if not result.success:
+        if cl.slim_handoff_enabled:
+            write_slim_handoff(session_jsonl, memory_dir, cwd)
+        kind = result.error.kind if result.error is not None else "unknown"
+        backend_name = result.backend or "backend"
+        return TaskOutcome(skipped=f"{backend_name} {kind} for {session_id[:8]}")
+    raw_output = result.output
 
     data = parse_response(raw_output)
     if data is None:
@@ -1291,15 +1282,15 @@ def process_task(
         timestamp,
         session_id=session_id,
         session_jsonl=session_jsonl,
-        max_pending_proposals=cfg.max_pending_proposals,
+        max_pending_proposals=cl.max_pending_proposals,
     )
 
     if persisted_insights:
         wrote.append(f"insights: {len(persisted_insights)}")
 
     grade = data.get("grade")
-    if cfg.grading_enabled and isinstance(grade, dict) and cfg.lazymind_dir:
-        prj_md = resolve_prj_md(project_name, Path(cfg.lazymind_dir))
+    if cl.grading_enabled and isinstance(grade, dict) and cl.lazymind_dir:
+        prj_md = resolve_prj_md(project_name, Path(cl.lazymind_dir))
         if prj_md is not None:
             date_str = timestamp[:10] if len(timestamp) >= 10 else "unknown"
             if append_grade_to_prj_backlog(prj_md, grade, date_str, session_id):

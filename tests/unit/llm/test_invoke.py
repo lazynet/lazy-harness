@@ -285,3 +285,15 @@ def test_typed_timeout_maps_to_the_timeout_kind(monkeypatch: pytest.MonkeyPatch)
     r = run_inference("p", role="classify", cfg=_cfg(), timeout=5)
     assert r.error is not None
     assert r.error.kind == "timeout"
+
+
+def test_model_override_replaces_the_resolved_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A caller-supplied model (e.g. `lh memory consolidate --model`) wins over
+    the role's configured model, without changing which backend answers."""
+    from lazy_harness.llm.invoke import run_inference
+
+    backend = _StubBackend("ok")
+    _patch_backend(monkeypatch, backend)
+    r = run_inference("p", role="classify", cfg=_cfg(), timeout=5, model="override-model")
+    assert r.model == "override-model"
+    assert backend.calls[0]["model"] == "override-model"

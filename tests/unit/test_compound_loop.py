@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from lazy_harness.core.config import CompoundLoopConfig
+from lazy_harness.core.config import CompoundLoopConfig, Config
 from lazy_harness.knowledge.compound_loop import (
     Insight,
     build_prompt,
@@ -19,7 +19,6 @@ from lazy_harness.knowledge.compound_loop import (
     create_task,
     extract_insights,
     extract_messages,
-    invoke_llm,
     is_debounced,
     is_interactive_session,
     last_processed_mtime,
@@ -33,40 +32,48 @@ from lazy_harness.knowledge.compound_loop import (
     should_reprocess,
     strip_markdown_fences,
 )
-from lazy_harness.llm.base import LLMBackendError
+from lazy_harness.llm.invoke import InferenceError, InferenceResult
 
 
-class StubBackend:
-    """In-memory LLMBackend — proves invoke_llm needs no subprocess mocking."""
+def _stub_run_inference(monkeypatch: pytest.MonkeyPatch, fn: Any) -> None:
+    """Monkeypatch `run_inference` in `compound_loop` with the old StubBackend
+    contract: `fn(prompt, model, timeout) -> str`, empty string means failure.
 
-    def __init__(self, fn: Any) -> None:  # fn: (prompt, model, timeout) -> str
-        self._fn = fn
+    `model` is threaded through as `cfg.compound_loop.model` — the model the
+    deprecated-role fallback resolves to when a test's `_cfg()` sets no
+    `[llm]` table, matching what `invoke_llm` used to receive directly.
+    """
+    import lazy_harness.knowledge.compound_loop as cl_mod
 
-    @property
-    def name(self) -> str:
-        return "stub"
+    def fake_run_inference(
+        prompt: str, *, role: str, cfg: Config, timeout: int, schema: dict | None = None
+    ) -> InferenceResult:
+        output = fn(prompt, cfg.compound_loop.model, timeout)
+        if not output:
+            return InferenceResult(
+                output="",
+                success=False,
+                model="stub-model",
+                backend="stub",
+                duration_ms=0,
+                error=InferenceError(kind="empty", message="backend returned no output"),
+            )
+        return InferenceResult(
+            output=output,
+            success=True,
+            model="stub-model",
+            backend="stub",
+            duration_ms=0,
+            error=None,
+        )
 
-    def default_model(self) -> str:
-        return "stub-model"
-
-    def complete(self, prompt: str, model: str, timeout: int) -> str:
-        return self._fn(prompt, model, timeout)
+    monkeypatch.setattr(cl_mod, "run_inference", fake_run_inference)
 
 
-def test_invoke_llm_returns_backend_completion() -> None:
-    backend = StubBackend(lambda prompt, model, timeout: f"{prompt}|{model}|{timeout}")
-    assert invoke_llm("p", backend, "m", 7) == "p|m|7"
+def test_invoke_llm_is_gone() -> None:
+    import lazy_harness.knowledge.compound_loop as cl
 
-
-def test_invoke_llm_returns_none_on_backend_error() -> None:
-    def _boom(prompt: str, model: str, timeout: int) -> str:
-        raise LLMBackendError("down")
-
-    assert invoke_llm("p", StubBackend(_boom), "m", 7) is None
-
-
-def test_invoke_llm_returns_none_on_empty_output() -> None:
-    assert invoke_llm("p", StubBackend(lambda *a: ""), "m", 7) is None
+    assert not hasattr(cl, "invoke_llm")
 
 
 def _write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
@@ -643,14 +650,16 @@ def test_persist_results_skips_duplicate_learning(tmp_path: Path) -> None:
     assert files[0].read_text() == first_content
 
 
-def _cfg(**kwargs: Any) -> CompoundLoopConfig:
-    return CompoundLoopConfig(
-        enabled=True,
-        min_messages=4,
-        min_user_chars=200,
-        debounce_seconds=60,
-        timeout_seconds=120,
-        **kwargs,
+def _cfg(**kwargs: Any) -> Config:
+    return Config(
+        compound_loop=CompoundLoopConfig(
+            enabled=True,
+            min_messages=4,
+            min_user_chars=200,
+            debounce_seconds=60,
+            timeout_seconds=120,
+            **kwargs,
+        )
     )
 
 
@@ -659,19 +668,9 @@ def test_process_task_skips_missing_session(tmp_path: Path) -> None:
     memory = tmp_path / "memory"
     learnings = tmp_path / "Learnings"
     task = create_task(queue, Path("/tmp"), tmp_path / "nope.jsonl", "abcd1234", memory)
-    outcome = process_task(task, _cfg(), learnings, backend=StubBackend(lambda *a: ""))
+    outcome = process_task(task, _cfg(), learnings)
     assert not outcome.was_processed
     assert "not found" in outcome.skipped
-
-
-def test_process_task_requires_explicit_backend(tmp_path: Path) -> None:
-    """ADR-033: no silent ClaudeBackend fallback — callers must pass a backend."""
-    queue = tmp_path / "queue"
-    memory = tmp_path / "memory"
-    learnings = tmp_path / "Learnings"
-    task = create_task(queue, Path("/tmp"), tmp_path / "nope.jsonl", "abcd1234", memory)
-    with pytest.raises(TypeError):
-        process_task(task, _cfg(), learnings)  # type: ignore[call-arg]
 
 
 def test_process_task_skips_non_interactive(tmp_path: Path) -> None:
@@ -681,7 +680,7 @@ def test_process_task_skips_non_interactive(tmp_path: Path) -> None:
     session = tmp_path / "s.jsonl"
     _write_jsonl(session, [{"type": "queue-operation"}])
     task = create_task(queue, Path("/tmp"), session, "abcd1234", memory)
-    outcome = process_task(task, _cfg(), learnings, backend=StubBackend(lambda *a: ""))
+    outcome = process_task(task, _cfg(), learnings)
     assert "non-interactive" in outcome.skipped
 
 
@@ -701,7 +700,7 @@ def test_process_task_skips_below_min_chars(tmp_path: Path) -> None:
         ],
     )
     task = create_task(queue, Path("/tmp"), session, "abcd1234", memory)
-    outcome = process_task(task, _cfg(), learnings, backend=StubBackend(lambda *a: ""))
+    outcome = process_task(task, _cfg(), learnings)
     assert "user chars" in outcome.skipped
 
 
@@ -721,7 +720,7 @@ def test_process_task_writes_slim_handoff_when_min_chars_gate_blocks(
         ],
     )
     task = create_task(queue, Path("/tmp"), session, "abcd1234", memory)
-    outcome = process_task(task, _cfg(), learnings, backend=StubBackend(lambda *a: ""))
+    outcome = process_task(task, _cfg(), learnings)
 
     assert "user chars" in outcome.skipped
     handoff = memory / "handoff.md"
@@ -746,7 +745,7 @@ def test_process_task_writes_slim_handoff_when_min_messages_gate_blocks(
         ],
     )
     task = create_task(queue, Path("/tmp"), session, "abcd1234", memory)
-    outcome = process_task(task, _cfg(), learnings, backend=StubBackend(lambda *a: ""))
+    outcome = process_task(task, _cfg(), learnings)
 
     assert "messages" in outcome.skipped
     handoff = memory / "handoff.md"
@@ -770,13 +769,13 @@ def test_process_task_does_not_write_slim_handoff_when_disabled(
     )
     task = create_task(queue, Path("/tmp"), session, "abcd1234", memory)
     cfg = _cfg(slim_handoff_enabled=False)
-    outcome = process_task(task, cfg, learnings, backend=StubBackend(lambda *a: ""))
+    outcome = process_task(task, cfg, learnings)
 
     assert "user chars" in outcome.skipped
     assert not (memory / "handoff.md").exists()
 
 
-def test_process_task_calls_invoke_and_persists(tmp_path: Path) -> None:
+def test_process_task_calls_invoke_and_persists(tmp_path: Path, monkeypatch) -> None:
     queue = tmp_path / "queue"
     memory = tmp_path / "memory"
     learnings = tmp_path / "Learnings"
@@ -804,9 +803,8 @@ def test_process_task_calls_invoke_and_persists(tmp_path: Path) -> None:
             }
         )
 
-    outcome = process_task(
-        task, _cfg(model="test-model"), learnings, backend=StubBackend(fake_invoke)
-    )
+    _stub_run_inference(monkeypatch, fake_invoke)
+    outcome = process_task(task, _cfg(model="test-model"), learnings)
     assert outcome.was_processed
     assert captured["model"] == "test-model"
     assert "Session conversation" in captured["prompt"]
@@ -814,25 +812,62 @@ def test_process_task_calls_invoke_and_persists(tmp_path: Path) -> None:
     assert len(learning_files) == 1
 
 
-def test_process_task_skips_on_invoke_failure(tmp_path: Path) -> None:
+def test_process_task_uses_the_distill_role(tmp_path: Path, monkeypatch) -> None:
+    queue = tmp_path / "queue"
+    memory = tmp_path / "memory"
+    learnings = tmp_path / "Learnings"
+    session = _interactive_session(tmp_path)
+    task = create_task(queue, Path("/tmp/proj"), session, "abcd1234efgh", memory)
+
+    seen: dict[str, Any] = {}
+
+    def fake_run_inference(
+        prompt: str, *, role: str, cfg: Config, timeout: int, schema: dict | None = None
+    ) -> InferenceResult:
+        seen["role"] = role
+        return InferenceResult(
+            output="{}", success=True, model="m", backend="stub", duration_ms=1, error=None
+        )
+
+    import lazy_harness.knowledge.compound_loop as cl_mod
+
+    monkeypatch.setattr(cl_mod, "run_inference", fake_run_inference)
+    process_task(task, _cfg(), learnings)
+    assert seen["role"] == "distill"
+
+
+def test_process_task_skips_on_invoke_failure(tmp_path: Path, monkeypatch) -> None:
     queue = tmp_path / "queue"
     memory = tmp_path / "memory"
     learnings = tmp_path / "Learnings"
     session = _interactive_session(tmp_path)
     task = create_task(queue, Path("/tmp/proj"), session, "abcd1234", memory)
-    outcome = process_task(task, _cfg(), learnings, backend=StubBackend(lambda *a: ""))
+    _stub_run_inference(monkeypatch, lambda *a: "")
+    outcome = process_task(task, _cfg(), learnings)
     assert "empty" in outcome.skipped
 
 
-def test_process_task_skips_on_bad_json(tmp_path: Path) -> None:
+def test_failed_inference_still_writes_the_slim_handoff(tmp_path: Path, monkeypatch) -> None:
+    """The existing degradation path must survive the migration to run_inference."""
     queue = tmp_path / "queue"
     memory = tmp_path / "memory"
     learnings = tmp_path / "Learnings"
     session = _interactive_session(tmp_path)
     task = create_task(queue, Path("/tmp/proj"), session, "abcd1234", memory)
-    outcome = process_task(
-        task, _cfg(), learnings, backend=StubBackend(lambda *a: "not json at all")
-    )
+    _stub_run_inference(monkeypatch, lambda *a: "")
+    outcome = process_task(task, _cfg(), learnings)
+    assert outcome.skipped
+    assert (memory / "handoff.md").exists()
+
+
+def test_process_task_skips_on_bad_json(tmp_path: Path, monkeypatch) -> None:
+    queue = tmp_path / "queue"
+    memory = tmp_path / "memory"
+    learnings = tmp_path / "Learnings"
+    session = _interactive_session(tmp_path)
+    task = create_task(queue, Path("/tmp/proj"), session, "abcd1234", memory)
+    _stub_run_inference(monkeypatch, lambda *a: "not json at all")
+    outcome = process_task(task, _cfg(), learnings)
     assert "JSON parse failed" in outcome.skipped
 
 
@@ -1282,7 +1317,7 @@ def test_append_grade_to_prj_backlog_returns_false_when_section_missing(
     assert appended is False
 
 
-def test_process_task_persists_grade_and_appends_backlog(tmp_path: Path) -> None:
+def test_process_task_persists_grade_and_appends_backlog(tmp_path: Path, monkeypatch) -> None:
     queue = tmp_path / "queue"
     memory = tmp_path / "memory"
     learnings = tmp_path / "Learnings"
@@ -1307,13 +1342,16 @@ def test_process_task_persists_grade_and_appends_backlog(tmp_path: Path) -> None
             },
         }
     )
-    cfg = CompoundLoopConfig(
-        enabled=True,
-        min_messages=2,
-        min_user_chars=100,
-        lazymind_dir=str(lazymind),
+    cfg = Config(
+        compound_loop=CompoundLoopConfig(
+            enabled=True,
+            min_messages=2,
+            min_user_chars=100,
+            lazymind_dir=str(lazymind),
+        )
     )
-    outcome = process_task(task, cfg, learnings, backend=StubBackend(lambda *a: response))
+    _stub_run_inference(monkeypatch, lambda *a: response)
+    outcome = process_task(task, cfg, learnings)
 
     assert outcome.was_processed
     assert (memory / "grades.jsonl").is_file()
@@ -1346,7 +1384,8 @@ def test_process_task_records_goal_declared_event(tmp_path: Path, monkeypatch) -
     session = _interactive_session(tmp_path)
     task = create_task(queue, Path("/tmp/proj"), session, "abcd1234efgh", memory)
 
-    outcome = process_task(task, _cfg(), learnings, backend=StubBackend(lambda *a: _response(True)))
+    _stub_run_inference(monkeypatch, lambda *a: _response(True))
+    outcome = process_task(task, _cfg(), learnings)
 
     assert outcome.was_processed
     assert MetricsDB(db_path).loop_event_counts() == {"goal_declared": 1}
@@ -1365,9 +1404,8 @@ def test_process_task_records_goal_absent_event(tmp_path: Path, monkeypatch) -> 
     session = _interactive_session(tmp_path)
     task = create_task(queue, Path("/tmp/proj"), session, "abcd1234efgh", memory)
 
-    outcome = process_task(
-        task, _cfg(), learnings, backend=StubBackend(lambda *a: _response(False))
-    )
+    _stub_run_inference(monkeypatch, lambda *a: _response(False))
+    outcome = process_task(task, _cfg(), learnings)
 
     assert outcome.was_processed
     assert MetricsDB(db_path).loop_event_counts() == {"goal_absent": 1}
@@ -1388,7 +1426,8 @@ def test_process_task_records_nothing_when_goal_declared_field_is_absent(
     session = _interactive_session(tmp_path)
     task = create_task(queue, Path("/tmp/proj"), session, "abcd1234efgh", memory)
 
-    outcome = process_task(task, _cfg(), learnings, backend=StubBackend(lambda *a: _response()))
+    _stub_run_inference(monkeypatch, lambda *a: _response())
+    outcome = process_task(task, _cfg(), learnings)
 
     assert outcome.was_processed
     assert MetricsDB(db_path).loop_event_counts() == {}
@@ -1411,9 +1450,8 @@ def test_process_task_ignores_a_non_boolean_goal_declared_field(
     session = _interactive_session(tmp_path)
     task = create_task(queue, Path("/tmp/proj"), session, "abcd1234efgh", memory)
 
-    outcome = process_task(
-        task, _cfg(), learnings, backend=StubBackend(lambda *a: _response("yes"))
-    )
+    _stub_run_inference(monkeypatch, lambda *a: _response("yes"))
+    outcome = process_task(task, _cfg(), learnings)
 
     assert outcome.was_processed
     assert MetricsDB(db_path).loop_event_counts() == {}
@@ -1436,10 +1474,10 @@ def test_process_task_reprocessing_the_same_session_does_not_double_count(
     learnings = tmp_path / "Learnings"
     session = _interactive_session(tmp_path)
     task = create_task(queue, Path("/tmp/proj"), session, "abcd1234efgh", memory)
-    backend = StubBackend(lambda *a: _response(True))
+    _stub_run_inference(monkeypatch, lambda *a: _response(True))
 
-    process_task(task, _cfg(), learnings, backend=backend)
-    process_task(task, _cfg(), learnings, backend=backend)
+    process_task(task, _cfg(), learnings)
+    process_task(task, _cfg(), learnings)
 
     assert MetricsDB(db_path).loop_event_counts() == {"goal_declared": 1}
 
@@ -1461,8 +1499,10 @@ def test_process_task_reprocessing_replaces_the_verdict_with_the_latest(
     session = _interactive_session(tmp_path)
     task = create_task(queue, Path("/tmp/proj"), session, "abcd1234efgh", memory)
 
-    process_task(task, _cfg(), learnings, backend=StubBackend(lambda *a: _response(False)))
-    process_task(task, _cfg(), learnings, backend=StubBackend(lambda *a: _response(True)))
+    _stub_run_inference(monkeypatch, lambda *a: _response(False))
+    process_task(task, _cfg(), learnings)
+    _stub_run_inference(monkeypatch, lambda *a: _response(True))
+    process_task(task, _cfg(), learnings)
 
     assert MetricsDB(db_path).loop_event_counts() == {"goal_declared": 1}
 
@@ -1484,7 +1524,8 @@ def test_process_task_resolves_the_project_key_like_the_prompt_sensor(
     session = _interactive_session(tmp_path)
     task = create_task(queue, git_checkout.worktree, session, "abcd1234efgh", memory)
 
-    process_task(task, _cfg(), learnings, backend=StubBackend(lambda *a: _response(True)))
+    _stub_run_inference(monkeypatch, lambda *a: _response(True))
+    process_task(task, _cfg(), learnings)
 
     rows = (
         MetricsDB(db_path)
@@ -1633,7 +1674,7 @@ def test_persist_insights_is_idempotent_by_hash(tmp_path: Path) -> None:
     assert len(md_files) == 1
 
 
-def test_process_task_bypasses_gate_when_insights_present(tmp_path: Path) -> None:
+def test_process_task_bypasses_gate_when_insights_present(tmp_path: Path, monkeypatch) -> None:
     queue = tmp_path / "queue"
     memory = tmp_path / "memory"
     learnings = tmp_path / "Learnings"
@@ -1658,7 +1699,8 @@ def test_process_task_bypasses_gate_when_insights_present(tmp_path: Path) -> Non
         }
     )
 
-    outcome = process_task(task, _cfg(), learnings, backend=StubBackend(lambda *a: response))
+    _stub_run_inference(monkeypatch, lambda *a: response)
+    outcome = process_task(task, _cfg(), learnings)
 
     assert outcome.skipped is None or "user chars" not in outcome.skipped
     insight_files = list((memory / "insights").rglob("*.md"))
@@ -1681,7 +1723,7 @@ def test_process_task_still_gates_empty_short_session(tmp_path: Path) -> None:
     )
     task = create_task(queue, Path("/tmp"), session, "deadbeef", memory)
 
-    outcome = process_task(task, _cfg(), learnings, backend=StubBackend(lambda *a: ""))
+    outcome = process_task(task, _cfg(), learnings)
 
     assert outcome.skipped is not None
     assert "user chars" in outcome.skipped
@@ -1723,7 +1765,7 @@ def test_build_prompt_includes_captured_insights_block(tmp_path: Path) -> None:
     assert "PreToolUse exit-2 is the only block channel." in prompt
 
 
-def test_insights_persisted_even_if_claude_invocation_fails(tmp_path: Path) -> None:
+def test_insights_persisted_even_if_claude_invocation_fails(tmp_path: Path, monkeypatch) -> None:
     queue = tmp_path / "queue"
     memory = tmp_path / "memory"
     learnings = tmp_path / "Learnings"
@@ -1741,7 +1783,8 @@ def test_insights_persisted_even_if_claude_invocation_fails(tmp_path: Path) -> N
     )
     task = create_task(queue, Path("/tmp"), session, "feedface", memory)
 
-    outcome = process_task(task, _cfg(), learnings, backend=StubBackend(lambda *a: ""))
+    _stub_run_inference(monkeypatch, lambda *a: "")
+    outcome = process_task(task, _cfg(), learnings)
 
     # backend returned empty → outcome is skipped, but insight file must already exist
     assert outcome.skipped is not None
@@ -1750,7 +1793,7 @@ def test_insights_persisted_even_if_claude_invocation_fails(tmp_path: Path) -> N
     assert body in insight_files[0].read_text()
 
 
-def test_delta_scan_skips_already_processed_indices(tmp_path: Path) -> None:
+def test_delta_scan_skips_already_processed_indices(tmp_path: Path, monkeypatch) -> None:
     queue = tmp_path / "queue"
     memory = tmp_path / "memory"
     learnings = tmp_path / "Learnings"
@@ -1772,7 +1815,8 @@ def test_delta_scan_skips_already_processed_indices(tmp_path: Path) -> None:
     )
 
     # Run 1
-    process_task(task, _cfg(), learnings, backend=StubBackend(lambda *a: response))
+    _stub_run_inference(monkeypatch, lambda *a: response)
+    process_task(task, _cfg(), learnings)
 
     cursor_path = memory / "insights" / ".cursor.json"
     assert cursor_path.is_file()
@@ -1805,7 +1849,7 @@ def test_delta_scan_skips_already_processed_indices(tmp_path: Path) -> None:
         # need a fresh task file because the previous one moved to done conceptually,
         # but process_task in tests doesn't move it — re-create to be explicit
         task2 = create_task(queue, Path("/tmp"), session, "deadbabe", memory)
-        process_task(task2, _cfg(), learnings, backend=StubBackend(lambda *a: response))
+        process_task(task2, _cfg(), learnings)
     finally:
         cl_mod.extract_insights = monkey_target  # type: ignore[assignment]
 
@@ -2099,7 +2143,7 @@ def test_build_prompt_omits_rejected_section_when_none() -> None:
     assert "Previously rejected proposals" not in prompt
 
 
-def test_process_task_feeds_rejected_proposals_into_prompt(tmp_path: Path) -> None:
+def test_process_task_feeds_rejected_proposals_into_prompt(tmp_path: Path, monkeypatch) -> None:
     queue = tmp_path / "queue"
     memory = tmp_path / "memory"
     memory.mkdir()
@@ -2114,13 +2158,14 @@ def test_process_task_feeds_rejected_proposals_into_prompt(tmp_path: Path) -> No
         captured["prompt"] = prompt
         return json.dumps({"decisions": [], "failures": [], "learnings": [], "handoff": []})
 
-    outcome = process_task(task, _cfg(), learnings, backend=StubBackend(fake_invoke))
+    _stub_run_inference(monkeypatch, fake_invoke)
+    outcome = process_task(task, _cfg(), learnings)
     assert outcome.was_processed
     assert "Previously rejected proposals" in captured["prompt"]
     assert "- Never amend published commits" in captured["prompt"]
 
 
-def test_process_task_feeds_pending_proposals_into_prompt(tmp_path: Path) -> None:
+def test_process_task_feeds_pending_proposals_into_prompt(tmp_path: Path, monkeypatch) -> None:
     queue = tmp_path / "queue"
     memory = tmp_path / "memory"
     memory.mkdir()
@@ -2135,13 +2180,14 @@ def test_process_task_feeds_pending_proposals_into_prompt(tmp_path: Path) -> Non
         captured["prompt"] = prompt
         return json.dumps({"decisions": [], "failures": [], "learnings": [], "handoff": []})
 
-    outcome = process_task(task, _cfg(), learnings, backend=StubBackend(fake_invoke))
+    _stub_run_inference(monkeypatch, fake_invoke)
+    outcome = process_task(task, _cfg(), learnings)
     assert outcome.was_processed
     assert "already pending review" in captured["prompt"]
     assert "- Verify a tool's effect, not its exit code" in captured["prompt"]
 
 
-def test_process_task_honours_the_configured_pending_cap(tmp_path: Path) -> None:
+def test_process_task_honours_the_configured_pending_cap(tmp_path: Path, monkeypatch) -> None:
     """The cap is useless if process_task never hands it to persist_results."""
     queue = tmp_path / "queue"
     memory = tmp_path / "memory"
@@ -2161,11 +2207,11 @@ def test_process_task_honours_the_configured_pending_cap(tmp_path: Path) -> None
             }
         )
 
+    _stub_run_inference(monkeypatch, fake_invoke)
     outcome = process_task(
         task,
         _cfg(max_pending_proposals=3),
         tmp_path / "Learnings",
-        backend=StubBackend(fake_invoke),
     )
 
     assert outcome.was_processed
@@ -2315,7 +2361,7 @@ def test_build_prompt_engram_exclusion_still_allows_genuine_malfunction() -> Non
     assert "the hook itself malfunctioned" in prompt
 
 
-def test_process_task_feeds_recent_failures_into_prompt(tmp_path: Path) -> None:
+def test_process_task_feeds_recent_failures_into_prompt(tmp_path: Path, monkeypatch) -> None:
     queue = tmp_path / "queue"
     memory = tmp_path / "memory"
     _write_failures(
@@ -2338,7 +2384,8 @@ def test_process_task_feeds_recent_failures_into_prompt(tmp_path: Path) -> None:
         captured["prompt"] = prompt
         return json.dumps({"decisions": [], "failures": [], "learnings": [], "handoff": []})
 
-    outcome = process_task(task, _cfg(), learnings, backend=StubBackend(fake_invoke))
+    _stub_run_inference(monkeypatch, fake_invoke)
+    outcome = process_task(task, _cfg(), learnings)
     assert outcome.was_processed
     assert "## Recorded failures from previous sessions" in captured["prompt"]
     assert "- 2026-06-10: stale handoff loaded" in captured["prompt"]

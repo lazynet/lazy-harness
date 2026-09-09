@@ -306,6 +306,25 @@ class Config:
     context_inject: ContextInjectConfig = field(default_factory=ContextInjectConfig)
     loops: LoopsConfig = field(default_factory=LoopsConfig)
 
+    @property
+    def active_llm_backend(self) -> str:
+        """Backend *type* serving the default inference role (ADR-039).
+
+        The capability registry addresses a knob by a dotted path, but the
+        live answer takes two hops — role to backend name, backend name to
+        type — which a path cannot express. Exposing it here keeps the
+        deciding rule in `llm/roles.py` alone, so the registry and
+        `run_inference` cannot drift into two answers.
+
+        Imported inside the body: `llm.roles` imports this module.
+        """
+        from lazy_harness.llm.roles import DEPRECATED_ROLE, RoleNotFoundError, resolve_role
+
+        try:
+            return resolve_role(self, self.llm.default_role or DEPRECATED_ROLE).type
+        except RoleNotFoundError:
+            return ""
+
 
 def _parse_llm(raw: object) -> LLMConfig:
     """Parse the `[llm]` table (ADR-039).

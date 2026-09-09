@@ -145,7 +145,11 @@ _LLM_BACKENDS = [
         name=name,
         kind="llm_backend",
         cardinality=Cardinality.ONE,
-        config_path="compound_loop.backend",
+        # The live answer, not the deprecated field. `[compound_loop].backend`
+        # still parses, so a path left pointing at it would report the stale
+        # value and let `toggle` write to a field nothing reads — silently,
+        # because a dotted path resolved by getattr has no compile-time check.
+        config_path="active_llm_backend",
         summary=f"{name} inference backend for the compound loop",
     )
     for name in ("claude", "ollama", "mlx", "openai-compatible")
@@ -156,6 +160,7 @@ _LLM_BACKENDS = [
 # install time by probing the machine. Registering them against that field
 # would report all three OFF on a machine where one is demonstrably running
 # six jobs, and `CapabilityState` has no word for "chosen at runtime".
+
 
 @lru_cache(maxsize=1)
 def builtin_registry() -> CapabilityRegistry:

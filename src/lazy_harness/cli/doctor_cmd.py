@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,11 +15,12 @@ from rich.markup import escape
 
 from lazy_harness.agents.base import AgentAdapter
 from lazy_harness.agents.registry import AgentNotFoundError, get_agent
-from lazy_harness.core.config import CompoundLoopConfig, Config, ConfigError, load_config
+from lazy_harness.core.config import Config, ConfigError, load_config
 from lazy_harness.core.paths import agent_runtime_dir, config_file, contract_path, expand_path
 from lazy_harness.core.profiles import list_profiles
-from lazy_harness.llm import LLMBackendError, LLMBackendNotFoundError, get_backend
+from lazy_harness.llm import LLMBackendError, LLMBackendNotFoundError
 from lazy_harness.llm.openai_compat import OpenAICompatibleBackend
+from lazy_harness.llm.registry import build_backend
 from lazy_harness.monitoring.engram_persist_health import (
     EngramPersistHealth,
     collect_engram_persist_health,
@@ -177,39 +179,71 @@ def _render_engram_persist(console: Console, health: EngramPersistHealth) -> boo
     return health.state != "fail"
 
 
-def _render_llm_backend(console: Console, cl_cfg: CompoundLoopConfig) -> bool:
-    """ADR-033: report whether the configured inference backend is usable.
+def _render_one_role(console: Console, cfg: Config, role: str) -> bool:
+    """Report one role. Returns False only for a hard failure.
 
-    Reachability problems are warnings (compound-loop is best-effort); only a
-    backend name the registry cannot resolve is a hard failure.
+    Reachability is a warning — inference is best-effort — while a role naming
+    a backend that does not exist is a misconfiguration nothing else reports.
     """
-    console.print("\n[bold]LLM backend[/bold]")
+    from lazy_harness.llm.roles import RoleNotFoundError, resolve_role
+
     try:
-        backend = get_backend(cl_cfg)
-    except (LLMBackendError, LLMBackendNotFoundError) as e:
-        console.print(f"  [red]✗[/red] {escape(str(e))}")
+        target = resolve_role(cfg, role)
+    except RoleNotFoundError as e:
+        console.print(f"  [red]✗[/red] {escape(role)}: {escape(str(e))}")
         return False
+
+    try:
+        backend = build_backend(type=target.type, base_url=target.base_url, api_key=target.api_key)
+    except (LLMBackendError, LLMBackendNotFoundError) as e:
+        console.print(f"  [red]✗[/red] {escape(role)}: {escape(str(e))}")
+        return False
+
+    suffix = ""
+    if target.api_key_env:
+        # Names the variable and whether it resolves, never the value.
+        resolved = "resolves" if os.environ.get(target.api_key_env) else "NOT SET"
+        suffix = f" (key from ${target.api_key_env}: {resolved})"
 
     if isinstance(backend, OpenAICompatibleBackend):
         url = backend._base_url
         try:
             httpx.get(url, timeout=2)
-            console.print(f"  [green]✓[/green] {cl_cfg.backend} reachable at {url}")
+            console.print(
+                f"  [green]✓[/green] {escape(role)} → {target.type} reachable at {url}{suffix}"
+            )
         except httpx.HTTPError:
             console.print(
-                f"  [yellow]![/yellow] {cl_cfg.backend} not reachable at {url} — "
-                "compound-loop inference will fail until the endpoint is up"
+                f"  [yellow]![/yellow] {escape(role)} → {target.type} not reachable at "
+                f"{url}{suffix} — inference for this role will fail until the endpoint is up"
             )
         return True
 
     if shutil.which("claude"):
-        console.print("  [green]✓[/green] claude binary on PATH")
+        console.print(f"  [green]✓[/green] {escape(role)} → claude binary on PATH")
     else:
         console.print(
-            "  [yellow]![/yellow] claude binary not found on PATH — "
-            "install Claude Code or set [compound_loop].backend"
+            f"  [yellow]![/yellow] {escape(role)} → claude binary not found on PATH — "
+            "install Claude Code or point the role at another backend"
         )
     return True
+
+
+def _render_llm_backend(console: Console, cfg: Config) -> bool:
+    """ADR-039: report every role in `[llm.roles]`, not one global backend.
+
+    A role table where one entry is broken must not be reported by its
+    healthy siblings, so each is resolved and probed on its own.
+    """
+    console.print("\n[bold]LLM roles[/bold]")
+
+    roles = sorted(cfg.llm.roles)
+    if not roles:
+        # No table declared: the deprecated single-backend form is still live,
+        # and reporting nothing would read as "nothing configured".
+        return _render_one_role(console, cfg, "distill")
+
+    return all([_render_one_role(console, cfg, role) for role in roles])
 
 
 def _render_memory_hygiene(console: Console, memory_dir: Path, now: datetime | None = None) -> bool:
@@ -383,7 +417,7 @@ def doctor() -> None:
     if not _render_sink_freshness(console, sinks_freshness):
         ok = False
 
-    if not _render_llm_backend(console, cfg.compound_loop):
+    if not _render_llm_backend(console, cfg):
         ok = False
 
     health = collect_engram_persist_health(

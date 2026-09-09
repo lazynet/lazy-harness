@@ -9,7 +9,7 @@ from pathlib import Path
 
 import click
 
-from lazy_harness.core.config import ConfigError, load_config
+from lazy_harness.core.config import Config, ConfigError, load_config
 from lazy_harness.core.paths import config_file
 from lazy_harness.core.proposals import (
     _RATIONALE_PREFIX,
@@ -18,37 +18,24 @@ from lazy_harness.core.proposals import (
     _remove_proposal,
     parse_proposals,
 )
-from lazy_harness.knowledge.compound_loop import invoke_llm as _invoke_llm
-from lazy_harness.llm import (
-    LLMBackend,
-    LLMBackendError,
-    LLMBackendNotFoundError,
-    get_backend,
-)
-from lazy_harness.llm.claude import ClaudeBackend
+from lazy_harness.llm.invoke import run_inference
 
 
-def _resolve_backend_and_model() -> tuple[LLMBackend, str]:
-    """Resolve [compound_loop].backend and .model from config.toml (ADR-033).
+def _load_config_for_consolidate() -> Config:
+    """Load config.toml, defaulting to an empty Config on missing/unloadable.
 
-    Missing or unloadable config falls back to ClaudeBackend and its default
-    model — the same bootstrap default as the compound-loop worker. With a
-    loadable config the model is `[compound_loop].model`, mirroring how the
-    worker passes `cfg.model` to `process_task`.
+    A default `Config()` resolves the `distill` role through the deprecated
+    `[compound_loop]` bridge (`resolve_role`), which lands on `ClaudeBackend`
+    and its default model — the same bootstrap default as the compound-loop
+    worker.
     """
     cf = config_file()
     if not cf.is_file():
-        backend: LLMBackend = ClaudeBackend()
-        return backend, backend.default_model()
+        return Config()
     try:
-        cfg = load_config(cf)
+        return load_config(cf)
     except ConfigError:
-        backend = ClaudeBackend()
-        return backend, backend.default_model()
-    try:
-        return get_backend(cfg.compound_loop), cfg.compound_loop.model
-    except (LLMBackendError, LLMBackendNotFoundError) as e:
-        raise click.ClickException(str(e)) from e
+        return Config()
 
 
 @click.group("memory")
@@ -181,12 +168,13 @@ def consolidate(memory_dir: Path | None, last: int, model: str | None, timeout: 
         return
 
     prompt = _build_consolidate_prompt(decisions, failures)
-    backend, default_model = _resolve_backend_and_model()
-    result = _invoke_llm(prompt, backend, model or default_model, timeout)
-    if not result:
-        click.echo("The LLM backend returned empty output. Try again or increase --timeout.")
+    cfg = _load_config_for_consolidate()
+    result = run_inference(prompt, role="distill", cfg=cfg, timeout=timeout, model=model)
+    if not result.success:
+        error = result.error.message if result.error else "unknown error"
+        click.echo(f"The LLM backend failed ({error}). Try again or increase --timeout.")
         return
-    click.echo(result)
+    click.echo(result.output)
     click.echo(
         "\n# Above is a proposal — review before pasting into MEMORY.md.\n"
         "# Use LH_MEMORY_SIZE_BYPASS=1 if your edit transiently exceeds 200 lines."
@@ -194,6 +182,7 @@ def consolidate(memory_dir: Path | None, last: int, model: str | None, timeout: 
 
 
 # --- claude-md proposals lifecycle (Phase 3c) ---
+
 
 def _atomic_write(path: Path, content: str) -> None:
     """Atomic write via tempfile + os.replace (mirrors knowledge.compound_loop)."""
@@ -315,9 +304,7 @@ def _count_rules(path: Path) -> int:
     One block can carry several rules, and `proposals list` numbers rules — so
     counting blocks here would disagree with the command that drains the queue.
     """
-    return sum(
-        1 for line in _read_text(path).splitlines() if line.startswith(_RULE_PREFIX)
-    )
+    return sum(1 for line in _read_text(path).splitlines() if line.startswith(_RULE_PREFIX))
 
 
 def _jsonl_summary(path: Path) -> tuple[int | None, str]:
@@ -414,9 +401,7 @@ def status(memory_dir: Path | None) -> None:
     pending = len(parse_proposals(_read_text(target / "claude-md.proposal.md")))
     rejected = _count_rules(target / "claude-md.rejected.md")
     accepted = _count_rules(target / "claude-md.accepted.md")
-    click.echo(
-        f"  proposals        {pending} pending · {rejected} rejected · {accepted} accepted"
-    )
+    click.echo(f"  proposals        {pending} pending · {rejected} rejected · {accepted} accepted")
 
     if memory_dir is not None:
         return

@@ -3,7 +3,12 @@ that can be turned on."""
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
+
+if TYPE_CHECKING:
+    from lazy_harness.core.config import Config
 
 
 def test_capability_without_a_binary_is_on_or_off() -> None:
@@ -449,3 +454,62 @@ def test_deselecting_a_one_cardinality_capability_is_refused() -> None:
 
     with pytest.raises(ValueError, match="null"):
         reg.toggle(cap, Config(), enabled=False)
+
+
+# --- LLM capability follows the live role table (ADR-039) --------------------
+
+
+def _cfg_deprecated_form() -> Config:
+    from lazy_harness.core.config import Config
+
+    cfg = Config()
+    cfg.compound_loop.backend = "ollama"
+    cfg.compound_loop.model = "llama3.2:3b"
+    return cfg
+
+
+def _cfg_role_table_form() -> Config:
+    from lazy_harness.core.config import Config, LLMBackendConfig, LLMConfig
+
+    cfg = Config()
+    cfg.llm = LLMConfig(
+        default_role="distill",
+        backends={"local": LLMBackendConfig(type="ollama", model="qwen2.5-coder:7b")},
+        roles={"distill": "local"},
+    )
+    return cfg
+
+
+def _backends_reported_on(cfg: Config) -> list[str]:
+    from lazy_harness.plugins.builtins import builtin_registry
+    from lazy_harness.plugins.capabilities import CapabilityState
+
+    reg = builtin_registry()
+    return [
+        cap.name
+        for cap in reg.capabilities(kind="llm_backend")
+        if reg.state(cap, cfg, probe=lambda _n: True)
+        in (CapabilityState.ACTIVE, CapabilityState.ON)
+    ]
+
+
+def test_llm_capability_no_longer_points_at_the_deprecated_field() -> None:
+    """A dotted path resolved by getattr gives no compile-time signal, so a
+    stale one would report the deprecated value with the suite green."""
+    from lazy_harness.plugins.builtins import builtin_registry
+
+    caps = builtin_registry().capabilities(kind="llm_backend")
+    assert caps
+    assert all(cap.config_path != "compound_loop.backend" for cap in caps)
+
+
+def test_registry_and_run_inference_agree_on_the_active_backend() -> None:
+    """Two code paths answering the same question, over one config each."""
+    from lazy_harness.llm.roles import resolve_role
+
+    for cfg in (_cfg_deprecated_form(), _cfg_role_table_form()):
+        assert _backends_reported_on(cfg) == [resolve_role(cfg, "distill").type]
+
+
+def test_llm_capability_reads_the_role_table() -> None:
+    assert _backends_reported_on(_cfg_role_table_form()) == ["ollama"]

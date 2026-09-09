@@ -7,6 +7,43 @@ from pathlib import Path
 from click.testing import CliRunner
 
 from lazy_harness.core.proposals import parse_proposals
+from lazy_harness.llm.invoke import InferenceError, InferenceResult
+
+
+def _stub_run_inference(monkeypatch, mod, fn) -> None:
+    """Monkeypatch `run_inference` in `mod` (memory_cmd) with the old
+    `_invoke_llm(prompt, backend, model, timeout) -> str | None` contract:
+    `fn(prompt, model, timeout) -> str | None`, `None`/`""` means failure.
+    `backend` on the returned InferenceResult carries the resolved role's
+    backend type so tests can assert on it the way they used to assert on a
+    constructed backend instance.
+    """
+
+    def fake_run_inference(prompt, *, role, cfg, timeout, schema=None, model=None):
+        from lazy_harness.llm.roles import resolve_role
+
+        target = resolve_role(cfg, role)
+        resolved_model = model or target.model
+        output = fn(prompt, resolved_model, timeout)
+        if not output:
+            return InferenceResult(
+                output="",
+                success=False,
+                model=resolved_model,
+                backend=target.type,
+                duration_ms=0,
+                error=InferenceError(kind="empty", message="backend returned no output"),
+            )
+        return InferenceResult(
+            output=output,
+            success=True,
+            model=resolved_model,
+            backend=target.type,
+            duration_ms=0,
+            error=None,
+        )
+
+    monkeypatch.setattr(mod, "run_inference", fake_run_inference)
 
 
 def _make_profile(profile_dir: Path, projects: dict[str, str]) -> None:
@@ -33,7 +70,7 @@ def _write_jsonl(path: Path, records: list[dict]) -> None:
 
 def test_consolidate_reads_jsonl_and_invokes_claude(tmp_path: Path, monkeypatch) -> None:
     """Reads decisions.jsonl + failures.jsonl, builds prompt, calls invoke."""
-    from lazy_harness.cli.memory_cmd import memory
+    from lazy_harness.cli import memory_cmd as mod
 
     memory_dir = tmp_path / "memory"
     memory_dir.mkdir()
@@ -51,16 +88,15 @@ def test_consolidate_reads_jsonl_and_invokes_claude(tmp_path: Path, monkeypatch)
 
     captured: dict = {}
 
-    def fake_invoke(prompt: str, backend: object, model: str, timeout: int) -> str:
+    def fake_invoke(prompt: str, model: str, timeout: int) -> str:
         captured["prompt"] = prompt
-        captured["backend"] = backend
         captured["model"] = model
         return "## Proposed additions\n- prefer uv over pip everywhere"
 
-    monkeypatch.setattr("lazy_harness.cli.memory_cmd._invoke_llm", fake_invoke)
+    _stub_run_inference(monkeypatch, mod, fake_invoke)
 
     runner = CliRunner()
-    result = runner.invoke(memory, ["consolidate", "--memory-dir", str(memory_dir)])
+    result = runner.invoke(mod.memory, ["consolidate", "--memory-dir", str(memory_dir)])
     assert result.exit_code == 0, result.output
     assert "Proposed additions" in result.output
     assert "use uv for deps" in captured["prompt"]
@@ -79,7 +115,7 @@ def test_consolidate_exits_with_message_when_no_jsonl_present(
 
 
 def test_consolidate_respects_last_n_flag(tmp_path: Path, monkeypatch) -> None:
-    from lazy_harness.cli.memory_cmd import memory
+    from lazy_harness.cli import memory_cmd as mod
 
     memory_dir = tmp_path / "memory"
     memory_dir.mkdir()
@@ -90,15 +126,15 @@ def test_consolidate_respects_last_n_flag(tmp_path: Path, monkeypatch) -> None:
 
     captured: dict = {}
 
-    def fake_invoke(prompt: str, backend: object, model: str, timeout: int) -> str:
+    def fake_invoke(prompt: str, model: str, timeout: int) -> str:
         captured["prompt"] = prompt
         return "ok"
 
-    monkeypatch.setattr("lazy_harness.cli.memory_cmd._invoke_llm", fake_invoke)
+    _stub_run_inference(monkeypatch, mod, fake_invoke)
 
     runner = CliRunner()
     result = runner.invoke(
-        memory,
+        mod.memory,
         ["consolidate", "--memory-dir", str(memory_dir), "--last", "5"],
     )
     assert result.exit_code == 0, result.output
@@ -107,9 +143,25 @@ def test_consolidate_respects_last_n_flag(tmp_path: Path, monkeypatch) -> None:
     assert "d14" not in captured["prompt"]
 
 
+class _RecordingBackend:
+    """A backend stub for asserting on the type run_inference resolved to,
+    without hitting a real subprocess or HTTP call."""
+
+    def __init__(self, model: str = "stub-default") -> None:
+        self._model = model
+
+    def default_model(self) -> str:
+        return self._model
+
+    def complete(self, prompt: str, model: str, timeout: int, *, schema=None) -> str:
+        return "ok"
+
+
 def test_consolidate_resolves_backend_from_config(tmp_path: Path, monkeypatch) -> None:
-    """ADR-033: consolidate uses the [compound_loop].backend from config.toml."""
+    """ADR-039: consolidate resolves the `distill` role, which falls back to
+    [compound_loop].backend from config.toml via the deprecated bridge."""
     from lazy_harness.cli import memory_cmd as mod
+    from lazy_harness.llm import invoke as invoke_mod
 
     cfg_file = tmp_path / "config.toml"
     cfg_file.write_text(
@@ -127,21 +179,18 @@ backend = "ollama"
     memory_dir.mkdir()
     _write_jsonl(memory_dir / "decisions.jsonl", [{"decision": "x"}])
 
-    captured: dict = {}
+    built: dict = {}
 
-    def fake_invoke(prompt: str, backend: object, model: str, timeout: int) -> str:
-        captured["backend"] = backend
-        return "ok"
+    def fake_build_backend(**kwargs):
+        built.update(kwargs)
+        return _RecordingBackend()
 
-    monkeypatch.setattr(mod, "_invoke_llm", fake_invoke)
+    monkeypatch.setattr(invoke_mod, "build_backend", fake_build_backend)
 
     runner = CliRunner()
     result = runner.invoke(mod.memory, ["consolidate", "--memory-dir", str(memory_dir)])
     assert result.exit_code == 0, result.output
-
-    from lazy_harness.llm.openai_compat import OpenAICompatibleBackend
-
-    assert isinstance(captured["backend"], OpenAICompatibleBackend)
+    assert built["type"] == "ollama"
 
 
 def test_consolidate_model_defaults_to_compound_loop_config(tmp_path: Path, monkeypatch) -> None:
@@ -167,11 +216,11 @@ model = "llama3.2:3b"
 
     captured: dict = {}
 
-    def fake_invoke(prompt: str, backend: object, model: str, timeout: int) -> str:
+    def fake_invoke(prompt: str, model: str, timeout: int) -> str:
         captured["model"] = model
         return "ok"
 
-    monkeypatch.setattr(mod, "_invoke_llm", fake_invoke)
+    _stub_run_inference(monkeypatch, mod, fake_invoke)
 
     runner = CliRunner()
     result = runner.invoke(mod.memory, ["consolidate", "--memory-dir", str(memory_dir)])
@@ -201,11 +250,11 @@ model = "llama3.2:3b"
 
     captured: dict = {}
 
-    def fake_invoke(prompt: str, backend: object, model: str, timeout: int) -> str:
+    def fake_invoke(prompt: str, model: str, timeout: int) -> str:
         captured["model"] = model
         return "ok"
 
-    monkeypatch.setattr(mod, "_invoke_llm", fake_invoke)
+    _stub_run_inference(monkeypatch, mod, fake_invoke)
 
     runner = CliRunner()
     result = runner.invoke(
@@ -220,6 +269,7 @@ def test_consolidate_falls_back_to_claude_backend_without_config(
     tmp_path: Path, monkeypatch
 ) -> None:
     from lazy_harness.cli import memory_cmd as mod
+    from lazy_harness.llm import invoke as invoke_mod
 
     monkeypatch.setattr(mod, "config_file", lambda: tmp_path / "missing" / "config.toml")
 
@@ -227,23 +277,19 @@ def test_consolidate_falls_back_to_claude_backend_without_config(
     memory_dir.mkdir()
     _write_jsonl(memory_dir / "decisions.jsonl", [{"decision": "x"}])
 
-    captured: dict = {}
+    built: dict = {}
 
-    def fake_invoke(prompt: str, backend: object, model: str, timeout: int) -> str:
-        captured["backend"] = backend
-        captured["model"] = model
-        return "ok"
+    def fake_build_backend(**kwargs):
+        built.update(kwargs)
+        return _RecordingBackend()
 
-    monkeypatch.setattr(mod, "_invoke_llm", fake_invoke)
+    monkeypatch.setattr(invoke_mod, "build_backend", fake_build_backend)
 
     runner = CliRunner()
     result = runner.invoke(mod.memory, ["consolidate", "--memory-dir", str(memory_dir)])
     assert result.exit_code == 0, result.output
 
-    from lazy_harness.llm.claude import ClaudeBackend
-
-    assert isinstance(captured["backend"], ClaudeBackend)
-    assert captured["model"] == ClaudeBackend().default_model()
+    assert built["type"] == "claude"
 
 
 # --- proposals lifecycle (Phase 3c) ---

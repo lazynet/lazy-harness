@@ -955,3 +955,203 @@ def test_a_timeout_reports_the_cost_fields_the_success_path_reports(
     assert envelope["cost_source"] == "transcript"
     assert envelope["num_turns"] is None
     assert envelope["duration_ms"] is None
+
+
+# --- inference mode: lh exec --role (ADR-039) -------------------------------
+
+
+_AGENT_ENVELOPE_KEYS_BEFORE_ADR039 = {
+    "schema", "dry_run", "success", "exit_code", "output", "cost_usd",
+    "cost_source", "duration_ms", "prompt_tokens", "output_tokens",
+    "cache_creation_tokens", "cache_read_tokens", "num_turns", "error",
+    "harness", "raw",
+}
+
+
+@pytest.fixture
+def role_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A config whose `classify` role points at a local inference backend."""
+    lh_config = tmp_path / "lh"
+    lh_config.mkdir()
+    (lh_config / "config.toml").write_text(
+        '[harness]\nversion = "1"\n\n'
+        '[agent]\ntype = "claude-code"\n\n'
+        '[profiles]\ndefault = "personal"\n\n'
+        f'[profiles.personal]\nconfig_dir = "{tmp_path / "cfg"}"\nroots = []\n\n'
+        "[llm.backends.local]\n"
+        'type = "ollama"\nmodel = "qwen2.5-coder:7b"\n\n'
+        "[llm.roles]\n"
+        'classify = "local"\n'
+    )
+    monkeypatch.setenv("LH_CONFIG_DIR", str(lh_config))
+    monkeypatch.setenv("LH_CACHE_DIR", str(tmp_path / "cache"))
+    return lh_config
+
+
+def _stub_inference(monkeypatch: pytest.MonkeyPatch, result: object) -> None:
+    from lazy_harness.cli import exec_cmd as mod
+
+    monkeypatch.setattr(mod, "run_inference", lambda *a, **kw: result)
+
+
+def _ok(output: str = "answer") -> object:
+    from lazy_harness.llm.invoke import InferenceResult
+
+    return InferenceResult(
+        output=output, success=True, model="qwen2.5-coder:7b",
+        backend="ollama", duration_ms=12, error=None,
+    )
+
+
+def _failed(kind: str) -> object:
+    from lazy_harness.llm.invoke import InferenceError, InferenceResult
+
+    return InferenceResult(
+        output="", success=False, model="qwen2.5-coder:7b", backend="ollama",
+        duration_ms=3, error=InferenceError(kind=kind, message=f"{kind} happened"),
+    )
+
+
+def test_agent_envelope_gains_only_mode(harness_config: Path) -> None:
+    """The lh.exec/v1 compatibility invariant, asserted rather than assumed."""
+    _write_agent(ECHO_AGENT)
+    _, envelope = _invoke([])
+    assert set(envelope) - _AGENT_ENVELOPE_KEYS_BEFORE_ADR039 == {"mode"}
+    assert _AGENT_ENVELOPE_KEYS_BEFORE_ADR039 - set(envelope) == set()
+    assert envelope["mode"] == "agent"
+
+
+def test_inference_envelope_declares_its_mode(
+    role_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stub_inference(monkeypatch, _ok())
+    code, envelope = _invoke(["--role", "classify"])
+    assert code == 0
+    assert envelope["mode"] == "inference"
+    assert envelope["success"] is True
+    assert envelope["output"] == "answer"
+    assert envelope["num_turns"] is None
+
+
+def test_inference_reports_backend_and_model(
+    role_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stub_inference(monkeypatch, _ok())
+    _, envelope = _invoke(["--role", "classify"])
+    assert envelope["harness"]["backend"] == "ollama"
+    assert envelope["harness"]["model"] == "qwen2.5-coder:7b"
+
+
+def test_output_is_never_null_on_failure(
+    role_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for kind in ("backend-unreachable", "timeout", "schema-violation", "empty",
+                 "backend-error"):
+        _stub_inference(monkeypatch, _failed(kind))
+        _, envelope = _invoke(["--role", "classify"])
+        assert envelope["output"] == ""
+        assert envelope["error"]["kind"] == kind
+
+
+def test_timeout_exits_124(role_config: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub_inference(monkeypatch, _failed("timeout"))
+    code, _ = _invoke(["--role", "classify"])
+    assert code == 124
+
+
+def test_other_failures_exit_70(
+    role_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for kind in ("backend-unreachable", "schema-violation", "empty", "backend-error"):
+        _stub_inference(monkeypatch, _failed(kind))
+        code, _ = _invoke(["--role", "classify"])
+        assert code == 70, kind
+
+
+def test_no_failed_inference_exits_2(
+    role_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """2 stays the usage-error code, which carries no envelope. A consumer
+    branching on it before parsing stdout must never lose a typed failure."""
+    for kind in ("backend-unreachable", "timeout", "schema-violation", "empty",
+                 "backend-error"):
+        _stub_inference(monkeypatch, _failed(kind))
+        code, _ = _invoke(["--role", "classify"])
+        assert code != 2, kind
+
+
+def test_no_tools_with_role_is_an_accepted_no_op(
+    role_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A wrapper emits --no-tools unconditionally; on a backend with no tools
+    it asserts a truth that already holds, so it must not be an error."""
+    _stub_inference(monkeypatch, _ok())
+    code, envelope = _invoke(["--role", "classify", "--no-tools"])
+    assert code == 0
+    assert envelope["mode"] == "inference"
+    assert envelope["error"] is None
+
+
+def test_allow_tools_with_role_is_a_usage_error(role_config: Path) -> None:
+    code, _ = _invoke(["--role", "classify", "--allow-tools", "Read"])
+    assert code == 2
+
+
+def test_tier_with_role_is_a_usage_error(role_config: Path) -> None:
+    code, _ = _invoke(["--role", "classify", "--tier", "fast"])
+    assert code == 2
+
+
+def test_model_with_role_is_a_usage_error(role_config: Path) -> None:
+    code, _ = _invoke(["--role", "classify", "--model", "x"])
+    assert code == 2
+
+
+def test_dry_run_emits_the_same_shape_with_the_resolved_plan(
+    role_config: Path,
+) -> None:
+    code, envelope = _invoke(["--role", "classify", "--dry-run"], prompt=None)
+    assert code == 0
+    assert envelope["dry_run"] is True
+    assert envelope["success"] is True
+    assert envelope["exit_code"] == 0
+    assert envelope["mode"] == "inference"
+    assert envelope["output"] == ""
+    assert envelope["error"] is None
+    assert envelope["harness"]["backend"] == "ollama"
+    assert envelope["harness"]["base_url"] == "http://localhost:11434"
+
+
+def test_dry_run_names_the_key_variable_never_its_value(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lh_config = tmp_path / "lh"
+    lh_config.mkdir()
+    (lh_config / "config.toml").write_text(
+        '[harness]\nversion = "1"\n\n'
+        '[agent]\ntype = "claude-code"\n\n'
+        '[profiles]\ndefault = "personal"\n\n'
+        f'[profiles.personal]\nconfig_dir = "{tmp_path / "cfg"}"\nroots = []\n\n'
+        "[llm.backends.remote]\n"
+        'type = "openai-compatible"\nbase_url = "http://x/v1"\n'
+        'api_key_env = "SOME_LLM_KEY"\n\n'
+        "[llm.roles]\n"
+        'classify = "remote"\n'
+    )
+    monkeypatch.setenv("LH_CONFIG_DIR", str(lh_config))
+    monkeypatch.setenv("LH_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv("SOME_LLM_KEY", "sk-secret")
+
+    _, envelope = _invoke(["--role", "classify", "--dry-run"], prompt=None)
+    blob = json.dumps(envelope)
+    assert "SOME_LLM_KEY" in blob
+    assert "sk-secret" not in blob
+    assert envelope["harness"]["api_key_resolves"] is True
+
+
+def test_unknown_role_reports_a_typed_failure(role_config: Path) -> None:
+    """Not a usage error: the flag is well-formed, the config is not."""
+    code, envelope = _invoke(["--role", "ghost"])
+    assert code == 70
+    assert envelope["mode"] == "inference"
+    assert envelope["error"]["kind"] == "backend-unreachable"

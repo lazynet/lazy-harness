@@ -93,6 +93,7 @@ def run_inference(
     cfg: Config,
     timeout: int,
     schema: dict | None = None,
+    model: str | None = None,
 ) -> InferenceResult:
     """Run one single-turn completion through the backend `role` names.
 
@@ -100,6 +101,9 @@ def run_inference(
     fall-through from a local backend to a billed one is how a cost
     optimisation becomes a cost surprise, and it hides a broken local backend
     behind an invoice. Callers that want one retry with a different role.
+
+    `model` overrides the role's resolved model (e.g. `lh memory consolidate
+    --model`) without changing which backend answers the call.
     """
     started = time.perf_counter()
 
@@ -130,7 +134,7 @@ def run_inference(
     except Exception as e:
         return _fail("backend-unreachable", str(e), backend=target.type)
 
-    model = target.model or backend.default_model()
+    model = model or target.model or backend.default_model()
 
     try:
         output = backend.complete(prompt, model, timeout, schema=schema)
