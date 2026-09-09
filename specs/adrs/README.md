@@ -48,6 +48,7 @@ Decisions that define the `lazy-harness` project itself.
 | [036](./036-compact-hooks-use-real-channels.md) | accepted | Compact-event hooks use the channels the agent actually provides | `PostCompact` has no output channel to the model, so the built-in is removed; `pre-compact` prints plain text into `newCustomInstructions`. |
 | [037](./037-metric-event-v2-host-and-workload.md) | proposed | Metric event schema v2 — `host` and `workload` as first-class dimensions | `MetricEvent` gains `host` (resolved at ingest) and a caller-supplied `workload`, carried by a session id `lh exec` pins before spawning. |
 | [038](./038-exec-envelope-cost-provenance.md) | proposed | The `lh exec` envelope — cost provenance and the mute failure | A timed-out run is priced from its own transcript, `cost_source` names which door the figure came through, and a failure that says nothing gets a typed `error.kind`. |
+| [039](./039-role-routed-inference.md) | proposed | Role-routed inference — one resolution seam, two front ends | `lh exec` and `llm/registry.py` converge on `run_inference`; a named role picks the backend, so local models serve cheap work while Claude keeps the work that needs it. |
 
 ### Status values
 
@@ -57,7 +58,7 @@ Each active ADR carries one of the following statuses in its header. The column 
 |---|---|
 | `accepted` | Decision taken **and** embodied in code, config, or tests. Default state for a shipping decision. |
 | `accepted-deferred` | Decision taken and locked, but implementation is intentionally not yet scheduled. The ADR is not incomplete — its realisation is waiting for a specific trigger documented in the ADR itself. |
-| `proposed` | Written and reasoned, but not yet committed to. Open for revision. ADR-034, ADR-035 and ADR-037 currently hold this status. |
+| `proposed` | Written and reasoned, but not yet committed to. Open for revision. ADR-034, ADR-035, ADR-037, ADR-038 and ADR-039 currently hold this status. |
 | `superseded-by: NNN` | Replaced by a later ADR. The record is kept for history; the pointer names its replacement. ADR-020 currently holds this status. |
 
 New decisions default to `accepted` once they ship. A decision that turns out wrong is **superseded** by a new ADR rather than edited in place.

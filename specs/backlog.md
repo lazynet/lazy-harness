@@ -103,7 +103,7 @@ No causó daño visible todavía porque el único caller en producción es `lh p
 
 **Fuente:** [W15 review](lazy-lazymind-meta/weekly-reviews/wr-2026-w15.md) — advisor strategy y cost optimization. Legacy [ADR-010](specs/archive/adrs-legacy/010-ollama-local-llm-integration.md) propone este backend.
 
-**Decisión pendiente:** promover ADR-010 legacy a ADR activo o descartar. Criterio: evaluar cuando homelab esté estable.
+**Resuelto:** [ADR-033](adrs/033-llm-backend-abstraction.md) promovió la idea a un Protocol provider-agnostic (implementado 2026-06-11) y [ADR-039](adrs/039-role-routed-inference.md) la hace utilizable: el ruteo pasa a ser por rol, así el modelo local atiende trabajo barato sin quedarse también con el destilado y el grading.
 
 ---
 
@@ -155,6 +155,6 @@ Dedup semántico ya funciona con inyección de títulos. Diferir.
 
 ## ADR decisions pending
 
-- **Legacy ADR-010 Ollama backend** — promover a ADR activo o descartar. Criterio: si pensás usar Ollama en los próximos 3 meses, promoverlo; si no, descartar con nota de "revaluar cuando haya presión de costo/rate limit".
+- ~~**Legacy ADR-010 Ollama backend**~~ — cerrado. Promovido por [ADR-033](adrs/033-llm-backend-abstraction.md) y hecho utilizable por [ADR-039](adrs/039-role-routed-inference.md) (ruteo por rol).
 - **Legacy ADR-013 Proactivity levels per profile** — promover o descartar. Criterio: si agregás un tercer perfil, promoverlo; si no, descartar.
 - **ADR-018 implementation epic** — trigger cumplido 2026-08-17. El segundo extension point no es un tipo de plugin nuevo: es la unificación de los cinco que ya existen, propuesta en [ADR-035](adrs/035-capability-registry.md). El consumidor concreto que lo justifica es el pane de configuración de la TUI ([`designs/2026-08-17-config-tui-design.md`](designs/2026-08-17-config-tui-design.md)), que sin registry necesitaría seis code paths.

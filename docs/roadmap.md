@@ -30,7 +30,7 @@ The compound-loop worker is the framework's memory engine. Two known issues toda
 
 Decisions the audit surfaced that are waiting on real evidence before being promoted or rejected. Each one has a concrete trigger for revisiting.
 
-- [ ] **Legacy ADR-010 Ollama backend.** Decide: promote to active ADR as a configurable alternative, or reject with a "revisit if cost/rate-limit pressure appears" note. Trigger: if you hit Claude API cost or throttling limits driving compound-loop failures in practice.
+- [x] **Legacy ADR-010 Ollama backend.** Promoted and superseded twice over. [ADR-033](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/033-llm-backend-abstraction.md) made inference provider-agnostic (implemented 2026-06-11); [ADR-039](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/039-role-routed-inference.md) routes it per named role, so a local model can serve cheap work without taking over the calls where output quality is the point.
 - [ ] **Legacy ADR-013 Proactivity levels.** Decide: promote as per-profile configuration, or reject and keep proactivity encoded as prose in each profile's `CLAUDE.md`. Trigger: when a third profile (beyond `lazy` and `flex`) is added and the difference in autonomy stops fitting in prose.
 - [x] **ADR-018 implementation.** Built — `lh doctor` exposes a Features section ([ADR-025](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/025-doctor-features-section.md)) and `lh config <feature> --init` ships wizards for `memory` and `knowledge` ([ADR-026](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/026-config-wizards.md)).
 
