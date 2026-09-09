@@ -258,6 +258,43 @@ The rules in §5 are part of this contract: `2` never appears in inference mode,
 
 The same envelope, so a consumer parses one shape: `dry_run: true`, `success: true`, `exit_code: 0`, `mode: "inference"`, `output: ""`, `error: null`. The resolved plan rides in the `harness` block — `backend`, `model`, `base_url`, and whether the `api_key_env` variable resolves (never its value). No tokens are spent.
 
+## Blast radius
+
+Measured, not estimated: every call site below was located by grep across `lazy-harness`, `lazy-ai-tools`, `dotfiles` and `~/.config`.
+
+### In this repository
+
+| File | Change |
+|---|---|
+| `knowledge/compound_loop.py:857,1275` | `invoke_llm` deleted; `process_task` calls `run_inference` |
+| `knowledge/compound_loop_worker.py:132` | `get_backend(cfg.compound_loop)` becomes role resolution |
+| `cli/memory_cmd.py:31-50,185` | `_resolve_backend_and_model` disappears |
+| `cli/doctor_cmd.py:188` | one backend check becomes a whole-table check |
+| `core/config.py:209,560,687` | the `[llm]` table, the deprecation path, serialisation |
+| `cli/exec_cmd.py` | `--role`, `mode`, exit codes, the inference `--dry-run` |
+| `plugins/builtins.py:148` | **mandatory, same commit — see below** |
+
+Tests that move with them: `test_compound_loop`, `test_registry`, `test_memory_cmd`, `test_doctor_cmd`, `test_config`, `test_capabilities`, and all four under `tests/unit/llm/`.
+
+### Outside this repository
+
+`lazy_shared_llm` is the **only** shell caller of `lh exec` anywhere on the machine. Inside `lazy-ai-tools`, exactly one module imports it — `lazy-vault/commands/helpers.py:10` — and behind that seam sit eight commands (`fetch`, `learnings_review`, `findings`, `wrapup`, `weekly_review`, `articles`, `dailies`, `helpers`) and five active launchd jobs.
+
+None of them change. `run()` gains a `role` parameter; `llm.binary` stays `"lh exec"`. The eight commands and five jobs move only if their owner chooses to route one to a local role.
+
+The harness's own scheduler jobs — `qmd-sync`, `graphify-update`, `knowledge-push`, `qmd-embed`, `qmd-context-gen` — never touch an LLM. Neither does any hook.
+
+### The capability registry must move in the same commit
+
+`plugins/builtins.py:148` registers the four LLM backends against `config_path="compound_loop.backend"`, and `plugins/capabilities.py:110-120` resolves that dotted string **dynamically**, via `getattr`. `toggle` writes back through the same path (`capabilities.py:244-247`).
+
+Leave it pointing at the deprecated field and nothing raises — the field still exists, so the guard at `capabilities.py:203` stays quiet. Instead:
+
+- `lh doctor` and the config TUI report the **deprecated** value while a different role is actually serving calls.
+- `toggle` writes to the dead field, so changing the backend from the TUI silently does nothing.
+
+A string resolved by reflection is invisible to the type checker, so the whole suite stays green while both surfaces lie. This is the "two code paths answering the same question" gate: the registry entry moves to the `[llm]` table in the same commit, and an integration test asserts that the capability registry and `run_inference` resolve the same active backend from one config.
+
 ## Migration
 
 `[compound_loop].backend` and `.model` keep working. The loader maps them to a synthetic role named `distill` and warns once. ADR-033's fields are deprecated, not removed; no existing config breaks.
@@ -276,6 +313,7 @@ Precedence when both forms are present: the explicit `[llm]` table wins, and the
 - **`--dry-run` emits the same envelope shape** as a real inference call, with the resolved plan in `harness` and the `api_key_env` value absent from the output.
 - **Wrong-type and hostile input**: a role naming an undefined backend; an unknown `type`; `api_key` and `api_key_env` together; a null or non-table `[llm.roles]`.
 - **Prove the guard guards**: removing the schema pass-through must fail a test. The assertion is the measured case — an out-of-enum value — restored by hand afterwards, never with `git checkout`, which would revert the implementation too.
+- **The capability registry and `run_inference` agree**: both are asked which backend is active, against one config, and must return the same answer. Run for a config using only the deprecated `[compound_loop]` form and for one using `[llm]`. Without this the registry can report a stale value with the suite green.
 - **The consumer parses the envelope**, not the test that wrote it. An `lh exec --role ... --dry-run` invocation is parsed by the real external client before this is considered done.
 
 ## Out of scope
