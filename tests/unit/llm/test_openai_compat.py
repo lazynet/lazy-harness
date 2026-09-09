@@ -126,3 +126,49 @@ def test_malformed_response_maps_to_llm_backend_error(
     backend = mod.OpenAICompatibleBackend(base_url="http://localhost:11434")
     with pytest.raises(LLMBackendError):
         backend.complete("p", "m", 1)
+
+
+# --- structured output (ADR-039) ---------------------------------------------
+
+
+def test_schema_becomes_a_json_schema_response_format(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Measured against a live Ollama: without this, a 7B model answers outside
+    a declared enum. The schema buys domain conformance, not JSON hygiene."""
+    from lazy_harness.llm import openai_compat as mod
+
+    captured: dict = {}
+
+    def fake_post(url, **kwargs):  # noqa: ANN001, ANN003
+        captured["json"] = kwargs.get("json")
+        return _FakeResponse(_OK_PAYLOAD)
+
+    monkeypatch.setattr(mod.httpx, "post", fake_post)
+
+    schema = {
+        "type": "object",
+        "properties": {"kind": {"type": "string", "enum": ["debug", "docs"]}},
+        "required": ["kind"],
+    }
+    mod.OpenAICompatibleBackend(base_url="http://x").complete("p", "m", 5, schema=schema)
+
+    fmt = captured["json"]["response_format"]
+    assert fmt["type"] == "json_schema"
+    assert fmt["json_schema"]["schema"] == schema
+    assert fmt["json_schema"]["strict"] is True
+
+
+def test_no_schema_sends_no_response_format(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lazy_harness.llm import openai_compat as mod
+
+    captured: dict = {}
+
+    def fake_post(url, **kwargs):  # noqa: ANN001, ANN003
+        captured["json"] = kwargs.get("json")
+        return _FakeResponse(_OK_PAYLOAD)
+
+    monkeypatch.setattr(mod.httpx, "post", fake_post)
+    mod.OpenAICompatibleBackend(base_url="http://x").complete("p", "m", 5)
+
+    assert "response_format" not in captured["json"]

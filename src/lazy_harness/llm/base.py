@@ -25,8 +25,12 @@ class LLMBackend(Protocol):
         """Model identifier to use when the config does not specify one."""
         ...
 
-    def complete(self, prompt: str, model: str, timeout: int) -> str:
+    def complete(self, prompt: str, model: str, timeout: int, *, schema: dict | None = None) -> str:
         """Run a single-turn completion and return the response text.
+
+        `schema` is a JSON Schema the provider should constrain the answer to.
+        A backend that cannot express the constraint accepts and ignores it —
+        the caller cannot know which, so it validates the result either way.
 
         Raises `LLMBackendError` on any failure (connection, timeout,
         content refusal). The caller is responsible for retry logic.

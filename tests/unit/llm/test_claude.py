@@ -112,3 +112,23 @@ def test_complete_nonzero_exit_without_stderr_reports_exit_code(
     )
     with pytest.raises(LLMBackendError, match="claude exited 2"):
         claude_mod.ClaudeBackend().complete("p", "m", 1)
+
+
+def test_claude_accepts_and_ignores_schema(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`claude -p` has no structured-output flag, so the argv must not grow one.
+    Callers keep the lenient parse_response fallback for this backend."""
+    from lazy_harness.llm import claude as mod
+
+    captured: dict = {}
+
+    def fake_run(argv, **kwargs):  # noqa: ANN001, ANN003
+        captured["argv"] = argv
+        return _FakeCompleted("{}", returncode=0)
+
+    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+    out = mod.ClaudeBackend().complete("p", "m", 5, schema={"type": "object"})
+
+    assert out == "{}"
+    joined = " ".join(captured["argv"])
+    assert "schema" not in joined
+    assert "response-format" not in joined

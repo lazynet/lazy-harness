@@ -24,11 +24,23 @@ class OpenAICompatibleBackend:
         # Sensible Ollama default; override via [compound_loop].model.
         return "llama3.2:3b"
 
-    def complete(self, prompt: str, model: str, timeout: int) -> str:
+    def complete(self, prompt: str, model: str, timeout: int, *, schema: dict | None = None) -> str:
+        payload: dict = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        if schema is not None:
+            # Ollama, MLX and LM Studio all honour this. Verified against a
+            # live Ollama: without it a 7B model answers outside a declared
+            # enum while still emitting well-formed JSON.
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": "response", "strict": True, "schema": schema},
+            }
         try:
             resp = httpx.post(
                 f"{self._base_url}/v1/chat/completions",
-                json={"model": model, "messages": [{"role": "user", "content": prompt}]},
+                json=payload,
                 headers={"Authorization": f"Bearer {self._api_key}"},
                 timeout=timeout,
             )

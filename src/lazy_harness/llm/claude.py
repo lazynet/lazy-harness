@@ -20,7 +20,12 @@ class ClaudeBackend:
     def default_model(self) -> str:
         return "claude-haiku-4-5-20251001"
 
-    def complete(self, prompt: str, model: str, timeout: int) -> str:
+    def complete(self, prompt: str, model: str, timeout: int, *, schema: dict | None = None) -> str:
+        """`schema` is accepted and ignored: `claude -p` has no equivalent flag.
+
+        Growing the argv here would pass an unknown option to the binary. The
+        caller keeps `parse_response` for this backend.
+        """
         try:
             result = subprocess.run(
                 ["claude", "-p", "--model", model, "--output-format", "text"],
