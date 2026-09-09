@@ -4,7 +4,7 @@
 **Date:** 2026-05-27
 **Implemented:** 2026-06-11 — `src/lazy_harness/llm/` (Protocol, ClaudeBackend, OpenAICompatibleBackend, registry), config fields, worker/CLI wiring, `lh doctor` check.
 **Supersedes:** —
-**Superseded by:** —
+**Superseded by:** partially, [ADR-039](039-role-routed-inference.md) — its config surface (`[compound_loop].backend` → `[llm.roles]`) and its resolution entry point (`get_backend` → `run_inference`). The `LLMBackend` Protocol and the backend implementations below remain in force.
 **Related:** ADR-004 (agent-adapter-pattern), ADR-008 (compound-loop-async-worker),
 ADR-021 (async-response-grading), ADR-032 (agent-adapter-completeness)
 
@@ -53,6 +53,11 @@ Introduce a `LLMBackend` Protocol at `src/lazy_harness/llm/base.py` and a
 registry at `src/lazy_harness/llm/registry.py`. All framework-internal LLM
 calls go through the active backend. The active backend is resolved from
 `[compound_loop].backend` in `config.toml`.
+
+> **Superseded surface (ADR-039, 2026-09-09).** The active backend is now chosen
+> per *role* from `[llm.roles]`. `[compound_loop].backend` still works and maps to
+> a synthetic `distill` role, emitting a one-time deprecation warning. The single
+> global switch described here could not express "classify cheaply, distil well".
 
 ### Protocol definition
 
@@ -225,6 +230,11 @@ Callers pass the backend instance (obtained from `get_backend(cfg.compound_loop)
 at startup) rather than calling `invoke_claude` by name. The subprocess-specific
 logic moves into `ClaudeBackend.complete`.
 
+> **Superseded by ADR-039.** Callers no longer build a backend at all: they call
+> `run_inference(prompt, role=..., cfg=..., timeout=...)`, which resolves the role
+> and never raises. `get_backend` survives only to serve the deprecated
+> `[compound_loop]` form.
+
 ### Separation from agent selection
 
 The two configs are deliberately orthogonal:
@@ -316,6 +326,9 @@ can flip only `backend` without changing their agent config.
   regression; an explicit error message guides the fix.
 
 ## Implementation
+
+> **Historical.** This sequence describes the 2026-06-11 implementation. Step 7's
+> wiring was rerouted through `run_inference` by ADR-039; the rest still stands.
 
 Recommended sequence (each step independently shippable):
 
