@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import subprocess
 
-from lazy_harness.llm.base import LLMBackendError
+from lazy_harness.llm.base import LLMBackendError, LLMTimeoutError
 
 
 class ClaudeBackend:
@@ -34,7 +34,9 @@ class ClaudeBackend:
                 text=True,
                 timeout=timeout,
             )
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+        except subprocess.TimeoutExpired as e:
+            raise LLMTimeoutError(str(e)) from e
+        except (FileNotFoundError, OSError) as e:
             raise LLMBackendError(str(e)) from e
         if result.returncode != 0:
             raise LLMBackendError(result.stderr.strip() or f"claude exited {result.returncode}")

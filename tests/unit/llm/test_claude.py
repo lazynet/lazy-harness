@@ -132,3 +132,19 @@ def test_claude_accepts_and_ignores_schema(monkeypatch: pytest.MonkeyPatch) -> N
     joined = " ".join(captured["argv"])
     assert "schema" not in joined
     assert "response-format" not in joined
+
+
+def test_subprocess_timeout_raises_a_typed_timeout_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import subprocess
+
+    from lazy_harness.llm import claude as mod
+    from lazy_harness.llm.base import LLMTimeoutError
+
+    def fake_run(argv, **kwargs):  # noqa: ANN001, ANN003
+        raise subprocess.TimeoutExpired(argv, 5)
+
+    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+    with pytest.raises(LLMTimeoutError):
+        mod.ClaudeBackend().complete("p", "m", 5)

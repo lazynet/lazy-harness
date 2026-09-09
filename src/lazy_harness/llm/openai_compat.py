@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import httpx
 
-from lazy_harness.llm.base import LLMBackendError
+from lazy_harness.llm.base import LLMBackendError, LLMTimeoutError
 
 
 class OpenAICompatibleBackend:
@@ -45,6 +45,8 @@ class OpenAICompatibleBackend:
                 timeout=timeout,
             )
             resp.raise_for_status()
+        except httpx.TimeoutException as e:
+            raise LLMTimeoutError(str(e) or f"timed out after {timeout}s") from e
         except httpx.HTTPError as e:
             raise LLMBackendError(str(e)) from e
         try:

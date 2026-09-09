@@ -172,3 +172,30 @@ def test_no_schema_sends_no_response_format(monkeypatch: pytest.MonkeyPatch) -> 
     mod.OpenAICompatibleBackend(base_url="http://x").complete("p", "m", 5)
 
     assert "response_format" not in captured["json"]
+
+
+def test_http_timeout_raises_a_typed_timeout_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`str(httpx.ReadTimeout(""))` is empty, so the kind cannot be recovered
+    from the message. The type carries it instead."""
+    from lazy_harness.llm import openai_compat as mod
+    from lazy_harness.llm.base import LLMTimeoutError
+
+    def fake_post(url, **kwargs):  # noqa: ANN001, ANN003
+        raise httpx.ReadTimeout("")
+
+    monkeypatch.setattr(mod.httpx, "post", fake_post)
+    with pytest.raises(LLMTimeoutError):
+        mod.OpenAICompatibleBackend(base_url="http://x").complete("p", "m", 5)
+
+
+def test_a_timeout_error_is_still_a_backend_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Existing ADR-033 callers catch LLMBackendError and must keep working."""
+    from lazy_harness.llm import openai_compat as mod
+    from lazy_harness.llm.base import LLMBackendError
+
+    def fake_post(url, **kwargs):  # noqa: ANN001, ANN003
+        raise httpx.ReadTimeout("")
+
+    monkeypatch.setattr(mod.httpx, "post", fake_post)
+    with pytest.raises(LLMBackendError):
+        mod.OpenAICompatibleBackend(base_url="http://x").complete("p", "m", 5)

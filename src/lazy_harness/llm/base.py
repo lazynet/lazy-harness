@@ -14,6 +14,16 @@ class LLMBackendError(Exception):
     """Raised by a backend on any completion failure (connection, timeout, refusal)."""
 
 
+class LLMTimeoutError(LLMBackendError):
+    """The call exceeded its budget.
+
+    A subclass so every ADR-033 caller catching `LLMBackendError` keeps
+    working. It exists because the kind cannot be recovered from the message:
+    `str(httpx.ReadTimeout(""))` is empty, and a timeout misreported as
+    unreachable takes exit 70 where the contract promises 124.
+    """
+
+
 @runtime_checkable
 class LLMBackend(Protocol):
     @property
