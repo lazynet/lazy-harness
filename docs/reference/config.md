@@ -394,31 +394,69 @@ Rules:
 | `lazymind_dir`                 | string / null  | `null`                        | no       | Optional override for the LazyMind-style knowledge root used by the loop. `null` disables the vault lookup. It is deliberately independent of `[knowledge].root`.                                                                    |
 | `slim_handoff_enabled`         | bool           | `true`                        | no       | When true and the loop's gates block evaluation, a deterministic fast-path still writes `handoff.md` — branch, last user prompt, files touched — with no model call. See [ADR-030](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/030-memory-stack-glue-layer.md). |
 | `max_pending_proposals`        | int            | `10`                          | no       | Pending `claude-md.proposal.md` rules above which the loop stops emitting new ones. Backpressure, not a discard: emission resumes once the queue is drained with `lh memory proposals`. A queue nobody drains crowds the session-start context budget and teaches the grader nothing. |
-| `backend`                      | string         | `"claude"`                    | no       | LLM backend for the loop's inference calls: `claude`, `ollama`, `mlx`, or `openai-compatible`. See [ADR-033](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/033-llm-backend-abstraction.md). |
-| `backend_options`              | table          | `{}`                          | no       | Options for the backend, under `[compound_loop.backend_options]`. `base_url` (required for `openai-compatible`, preset for `ollama`/`mlx`) and `api_key` (default `"none"`).                          |
+| `backend`                      | string         | `"claude"`                    | no       | **Deprecated** — replaced by `[llm.roles].distill`. Still honoured, with a one-time warning, when no `[llm]` table defines that role. See [`[llm]`](#llm). |
+| `backend_options`              | table          | `{}`                          | no       | **Deprecated** — replaced by the fields on `[llm.backends.<name>]`. Still honoured alongside `backend`.                                                    |
 
 ### Choosing an LLM backend
 
-The compound loop's inference calls are decoupled from the agent you run. The default backend shells out to the `claude` binary; any OpenAI-compatible endpoint (Ollama, MLX serve, LM Studio, OpenRouter, ...) works as a drop-in replacement:
+Inference backends are now declared in the [`[llm]`](#llm) table and selected per role. The `[compound_loop]` fields above still work — they map to a role named `distill` — but new configuration belongs in `[llm]`.
+
+## `[llm]`
+
+Which model answers which kind of work. Introduced by [ADR-039](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/039-role-routed-inference.md), superseding the single global backend of ADR-033.
+
+A **backend** is a named provider with its options. A **role** is a name for a kind of work that points at one backend. Callers ask for a role, never for a provider, so which model serves a given job is a configuration decision rather than a code change.
 
 ```toml
-[compound_loop]
-backend = "claude"                    # default, unchanged behaviour
-model   = "claude-haiku-4-5-20251001" # default, unchanged
+[llm]
+default_role = "distill"
 
-# Opt into Ollama — only these two lines change:
-# backend = "ollama"
-# model   = "llama3.2:3b"
+[llm.backends.haiku]
+type  = "claude"
+model = "claude-haiku-4-5-20251001"
 
-# Custom OpenAI-compatible endpoint:
-# backend = "openai-compatible"
-# model   = "mistral-nemo"
-# [compound_loop.backend_options]
-# base_url = "http://my-gpu-box:11434"
-# api_key  = "sk-..."
+[llm.backends.local]
+type  = "ollama"
+model = "qwen2.5-coder:7b"
+
+[llm.backends.openrouter]
+type        = "openai-compatible"
+base_url    = "https://openrouter.ai/api/v1"
+model       = "..."
+api_key_env = "OPENROUTER_API_KEY"
+
+[llm.roles]
+distill  = "haiku"      # the compound loop's own distillation
+classify = "local"      # cheap, high-volume work
 ```
 
-The `ollama` and `mlx` aliases preset `base_url` to `http://localhost:11434` and `http://localhost:8080` respectively; `backend_options.base_url` overrides the preset. `lh doctor` reports whether the configured backend is usable (binary on PATH for `claude`, endpoint reachable for the HTTP backends).
+### `[llm]`
+
+| Field          | Type   | Default | Required | Description                                                                                   |
+| -------------- | ------ | ------- | -------- | --------------------------------------------------------------------------------------------- |
+| `default_role` | string | `""`    | no       | Role used when a caller names none. Falls back to `distill`.                                    |
+| `backends`     | table  | `{}`    | no       | Named backends, under `[llm.backends.<name>]`.                                                  |
+| `roles`        | table  | `{}`    | no       | Maps a role name to a backend name, under `[llm.roles]`.                                        |
+
+### `[llm.backends.<name>]`
+
+| Field         | Type   | Default    | Required | Description                                                                                                        |
+| ------------- | ------ | ---------- | -------- | ------------------------------------------------------------------------------------------------------------------ |
+| `type`        | string | `"claude"` | no       | `claude`, `ollama`, `mlx`, or `openai-compatible`.                                                                   |
+| `model`       | string | `""`       | no       | Provider model id. Empty falls back to the backend's own default.                                                    |
+| `base_url`    | string | `""`       | no       | Required for `openai-compatible`. `ollama` presets `http://localhost:11434`, `mlx` presets `http://localhost:8080`.  |
+| `api_key`     | string | `""`       | no       | Literal key. Mutually exclusive with `api_key_env`.                                                                  |
+| `api_key_env` | string | `""`       | no       | **Preferred.** Names the environment variable holding the key; the value never appears in `config.toml`.             |
+
+`api_key` and `api_key_env` together is a hard configuration error. Prefer `api_key_env`: `config.toml` is often kept in a dotfiles repository, and a literal key committed there is a leak. The variable is read **at call time**, so a scheduled job must set it in the job definition itself — launchd `EnvironmentVariables`, systemd `EnvironmentFile` — because no scheduler reads an interactive shell's init files.
+
+### Roles in practice
+
+Nothing routes to a local model until you say so. A role that names a backend which does not exist is a hard error, reported by `lh doctor` rather than discovered at run time.
+
+There is **no automatic fallback between backends**. If the backend serving a role is down, the call fails and says so. Falling through to a billed model would turn a cost optimisation into a silent cost surprise, and would hide the fact that the local backend is broken.
+
+`lh doctor` reports every role: which backend serves it, whether the endpoint answers, and — for a backend using `api_key_env` — whether the named variable resolves, never what it resolves to.
 
 ## `[lazynorth]`
 

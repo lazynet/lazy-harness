@@ -214,6 +214,38 @@ class CompoundLoopConfig:
 
 
 @dataclass
+class LLMBackendConfig:
+    """One named inference backend (ADR-039).
+
+    `type` is a value `llm/registry.py` already knows: claude, ollama, mlx or
+    openai-compatible. The rest are the options that type needs.
+    """
+
+    type: str = "claude"
+    model: str = ""
+    base_url: str = ""
+    api_key: str = ""
+    #: Names the environment variable holding the key, never the value.
+    #: `config.toml` is a chezmoi template, so a literal lands in dotfiles.
+    #: Resolved at call time, mirroring `[metrics].url_env`.
+    api_key_env: str = ""
+
+
+@dataclass
+class LLMConfig:
+    """The `[llm]` table: named backends and the roles that select them.
+
+    A role is the routing key rather than a capability tier, because whether
+    work can run *without tools* is the axis that decides if an inference
+    backend can serve it at all. See ADR-039.
+    """
+
+    default_role: str = ""
+    backends: dict[str, LLMBackendConfig] = field(default_factory=dict)
+    roles: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
 class SinkDefinition:
     """Options for a named sink as declared under [metrics.sink_options.<name>]."""
 
@@ -268,10 +300,78 @@ class Config:
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     hooks: dict[str, HookEventConfig] = field(default_factory=dict)
     compound_loop: CompoundLoopConfig = field(default_factory=CompoundLoopConfig)
+    llm: LLMConfig = field(default_factory=LLMConfig)
     metrics: MetricsConfig = field(default_factory=MetricsConfig)
     lazynorth: LazyNorthConfig = field(default_factory=LazyNorthConfig)
     context_inject: ContextInjectConfig = field(default_factory=ContextInjectConfig)
     loops: LoopsConfig = field(default_factory=LoopsConfig)
+
+    @property
+    def active_llm_backend(self) -> str:
+        """Backend *type* serving the default inference role (ADR-039).
+
+        The capability registry addresses a knob by a dotted path, but the
+        live answer takes two hops — role to backend name, backend name to
+        type — which a path cannot express. Exposing it here keeps the
+        deciding rule in `llm/roles.py` alone, so the registry and
+        `run_inference` cannot drift into two answers.
+
+        Imported inside the body: `llm.roles` imports this module.
+        """
+        from lazy_harness.llm.roles import DEPRECATED_ROLE, RoleNotFoundError, resolve_role
+
+        try:
+            return resolve_role(self, self.llm.default_role or DEPRECATED_ROLE).type
+        except RoleNotFoundError:
+            return ""
+
+
+def _parse_llm(raw: object) -> LLMConfig:
+    """Parse the `[llm]` table (ADR-039).
+
+    Takes `object`, not `dict`: `llm = 3` is valid TOML, so the wrong-type
+    guard below is reachable at runtime and a narrower annotation would only
+    hide that from the type checker.
+
+    Error messages name the bracketed key literally so a caller can grep for
+    it, and so a test can anchor on something that cannot also appear in a
+    temporary path.
+    """
+    if not isinstance(raw, dict):
+        raise ConfigError("[llm] must be a table")
+
+    backends_raw = raw.get("backends", {})
+    if not isinstance(backends_raw, dict):
+        raise ConfigError("[llm].backends must be a table of tables")
+
+    backends: dict[str, LLMBackendConfig] = {}
+    for name, entry in backends_raw.items():
+        if not isinstance(entry, dict):
+            raise ConfigError(f"[llm].backends.{name} must be a table")
+        api_key = str(entry.get("api_key", ""))
+        api_key_env = str(entry.get("api_key_env", ""))
+        if api_key and api_key_env:
+            raise ConfigError(
+                f"[llm].backends.{name}: api_key and api_key_env are mutually exclusive; "
+                "keep api_key_env so the value never reaches config.toml"
+            )
+        backends[str(name)] = LLMBackendConfig(
+            type=str(entry.get("type", LLMBackendConfig.type)),
+            model=str(entry.get("model", "")),
+            base_url=str(entry.get("base_url", "")),
+            api_key=api_key,
+            api_key_env=api_key_env,
+        )
+
+    roles_raw = raw.get("roles", {})
+    if not isinstance(roles_raw, dict):
+        raise ConfigError("[llm].roles must be a table mapping role name to backend name")
+
+    return LLMConfig(
+        default_role=str(raw.get("default_role", "")),
+        backends=backends,
+        roles={str(k): str(v) for k, v in roles_raw.items()},
+    )
 
 
 def _parse_profiles(raw: dict[str, Any]) -> ProfilesConfig:
@@ -563,6 +663,8 @@ def load_config(path: Path) -> Config:
             ),
         )
 
+    cfg.llm = _parse_llm(raw.get("llm", {}))
+
     metrics_raw = raw.get("metrics", {})
     cfg.metrics = _parse_metrics(metrics_raw)
 
@@ -689,6 +791,22 @@ def _config_to_dict(cfg: Config) -> dict[str, Any]:
             "max_pending_proposals": cfg.compound_loop.max_pending_proposals,
         },
     }
+
+    # Empty string fields are omitted rather than written blank: a blank
+    # api_key_env would name a variable called "", and the loader would have to
+    # special-case a value this function itself produced.
+    llm_block: dict[str, Any] = {}
+    if cfg.llm.default_role:
+        llm_block["default_role"] = cfg.llm.default_role
+    if cfg.llm.backends:
+        llm_block["backends"] = {
+            name: {k: v for k, v in vars(backend).items() if v != ""}
+            for name, backend in cfg.llm.backends.items()
+        }
+    if cfg.llm.roles:
+        llm_block["roles"] = dict(cfg.llm.roles)
+    if llm_block:
+        result["llm"] = llm_block
 
     result["knowledge"]["structure"] = {
         "engine": cfg.knowledge.structure.engine,

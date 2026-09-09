@@ -14,6 +14,16 @@ class LLMBackendError(Exception):
     """Raised by a backend on any completion failure (connection, timeout, refusal)."""
 
 
+class LLMTimeoutError(LLMBackendError):
+    """The call exceeded its budget.
+
+    A subclass so every ADR-033 caller catching `LLMBackendError` keeps
+    working. It exists because the kind cannot be recovered from the message:
+    `str(httpx.ReadTimeout(""))` is empty, and a timeout misreported as
+    unreachable takes exit 70 where the contract promises 124.
+    """
+
+
 @runtime_checkable
 class LLMBackend(Protocol):
     @property
@@ -25,8 +35,12 @@ class LLMBackend(Protocol):
         """Model identifier to use when the config does not specify one."""
         ...
 
-    def complete(self, prompt: str, model: str, timeout: int) -> str:
+    def complete(self, prompt: str, model: str, timeout: int, *, schema: dict | None = None) -> str:
         """Run a single-turn completion and return the response text.
+
+        `schema` is a JSON Schema the provider should constrain the answer to.
+        A backend that cannot express the constraint accepts and ignores it —
+        the caller cannot know which, so it validates the result either way.
 
         Raises `LLMBackendError` on any failure (connection, timeout,
         content refusal). The caller is responsible for retry logic.

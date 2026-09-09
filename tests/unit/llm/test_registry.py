@@ -81,17 +81,18 @@ def test_unknown_backend_raises_not_found_with_available_list() -> None:
         assert name in msg
 
 
-def test_ollama_config_to_invoke_llm_end_to_end_without_subprocess(
+def test_ollama_config_to_run_inference_end_to_end_without_subprocess(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """ADR-033 acceptance: backend="ollama" → OpenAICompatibleBackend at
-    localhost:11434 → invoke_llm posts /v1/chat/completions and returns the
-    message content with zero subprocess involvement."""
-    from lazy_harness.knowledge.compound_loop import invoke_llm
+    """ADR-033/ADR-039 acceptance: backend="ollama" → OpenAICompatibleBackend
+    at localhost:11434 → run_inference (routed through the deprecated
+    `[compound_loop]` bridge, since no `[llm]` table is set) posts
+    /v1/chat/completions and returns the message content with zero
+    subprocess involvement."""
+    from lazy_harness.core.config import Config
     from lazy_harness.llm import claude as claude_mod
     from lazy_harness.llm import openai_compat as openai_mod
-    from lazy_harness.llm.openai_compat import OpenAICompatibleBackend
-    from lazy_harness.llm.registry import get_backend
+    from lazy_harness.llm.invoke import run_inference
 
     def _no_subprocess(*a: object, **kw: object) -> object:
         raise AssertionError("subprocess.run must not be called for the ollama backend")
@@ -115,10 +116,9 @@ def test_ollama_config_to_invoke_llm_end_to_end_without_subprocess(
 
     monkeypatch.setattr(openai_mod.httpx, "post", fake_post)
 
-    backend = get_backend(_cfg("ollama"))
-    assert isinstance(backend, OpenAICompatibleBackend)
+    cfg = Config(compound_loop=CompoundLoopConfig(backend="ollama", model="llama3.2:3b"))
+    result = run_inference("grade this session", role="distill", cfg=cfg, timeout=30)
 
-    result = invoke_llm("grade this session", backend, "llama3.2:3b", 30)
-
-    assert result == "graded locally"
+    assert result.success is True
+    assert result.output == "graded locally"
     assert captured["url"] == "http://localhost:11434/v1/chat/completions"

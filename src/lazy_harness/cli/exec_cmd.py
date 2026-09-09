@@ -26,8 +26,11 @@ from lazy_harness.agents.base import (
     SessionPinningAgent,
 )
 from lazy_harness.agents.launch import LaunchError, LaunchPlan, resolve_launch
-from lazy_harness.core.config import ConfigError, load_config
+from lazy_harness.core.config import Config, ConfigError, load_config
 from lazy_harness.core.paths import config_file, process_exec_path
+from lazy_harness.llm.invoke import run_inference
+from lazy_harness.llm.registry import _DEFAULT_URLS
+from lazy_harness.llm.roles import RoleNotFoundError, resolve_role
 
 SCHEMA = "lh.exec/v1"
 
@@ -45,6 +48,14 @@ def _emit(envelope: dict) -> None:
 def _base_envelope() -> dict:
     return {
         "schema": SCHEMA,
+        # Which kind of run produced this. Non-null in both modes: the token
+        # fields an inference call cannot fill would otherwise be bare nulls,
+        # indistinguishable from a failure that said nothing.
+        #
+        # The schema stays lh.exec/v1 under a stated invariant: an envelope
+        # carrying mode "agent" is field-for-field what v1 emitted before,
+        # with `mode` the sole addition.
+        "mode": "agent",
         "dry_run": False,
         "success": False,
         "exit_code": EXIT_HARNESS_ERROR,
@@ -171,8 +182,116 @@ def _terminate_group(proc: subprocess.Popen) -> None:
             continue
 
 
+def _inference_exit(kind: str) -> int:
+    """Map a failure kind to a process exit code.
+
+    `2` is never returned: it stays the usage-error code, raised by click
+    before any inference runs and carrying no envelope. A consumer that
+    branches on the exit before parsing stdout therefore never discards a
+    failure whose cause is in `error.kind`.
+    """
+    return EXIT_TIMEOUT if kind == "timeout" else EXIT_HARNESS_ERROR
+
+
+def _run_inference_mode(
+    role: str, timeout: float, workload: str, dry_run: bool, no_tools: bool
+) -> NoReturn:
+    """Serve `lh exec --role` through the shared inference seam.
+
+    `--no-tools` is accepted and ignored here rather than rejected: on a
+    backend with no tools it asserts a truth that already holds, and refusing
+    it would force every consumer to branch its tool tri-state on whether a
+    role was passed.
+    """
+    del no_tools
+
+    try:
+        cfg = load_config(config_file())
+    except ConfigError as e:
+        envelope = _base_envelope()
+        envelope["mode"] = "inference"
+        envelope["error"] = {"kind": "config", "message": str(e)}
+        _emit(envelope)
+        raise SystemExit(EXIT_HARNESS_ERROR) from None
+
+    if dry_run:
+        _emit_inference_plan(cfg, role)
+        raise SystemExit(0)
+
+    prompt = sys.stdin.read() if not sys.stdin.isatty() else ""
+    if not prompt.strip():
+        envelope = _base_envelope()
+        envelope["mode"] = "inference"
+        envelope["error"] = {"kind": "empty-prompt", "message": "No prompt on stdin."}
+        _emit(envelope)
+        raise SystemExit(EXIT_HARNESS_ERROR)
+
+    if workload:
+        _record_attribution(str(uuid.uuid4()), workload)
+
+    result = run_inference(prompt, role=role, cfg=cfg, timeout=int(timeout))
+
+    envelope = _base_envelope()
+    envelope.update(
+        {
+            "mode": "inference",
+            "success": result.success,
+            "exit_code": 0 if result.success else _inference_exit(result.error.kind),
+            "output": result.output,
+            "duration_ms": result.duration_ms,
+            "error": (
+                None
+                if result.error is None
+                else {"kind": result.error.kind, "message": result.error.message}
+            ),
+            "harness": {
+                "backend": result.backend,
+                "model": result.model,
+                "lh_version": __version__,
+                "role": role,
+            },
+        }
+    )
+    _emit(envelope)
+    raise SystemExit(envelope["exit_code"])
+
+
+def _emit_inference_plan(cfg: Config, role: str) -> None:
+    """Emit the resolved plan without spending tokens.
+
+    Reports whether `api_key_env` resolves, never what it resolves to.
+    """
+    envelope = _base_envelope()
+    envelope["mode"] = "inference"
+    try:
+        target = resolve_role(cfg, role)
+    except RoleNotFoundError as e:
+        envelope["error"] = {"kind": "backend-unreachable", "message": str(e)}
+        _emit(envelope)
+        raise SystemExit(EXIT_HARNESS_ERROR) from None
+
+    base_url = target.base_url or _DEFAULT_URLS.get(target.type, "")
+    harness: dict = {
+        "backend": target.type,
+        "model": target.model,
+        "base_url": base_url,
+        "lh_version": __version__,
+        "role": role,
+    }
+    if target.api_key_env:
+        harness["api_key_env"] = target.api_key_env
+        harness["api_key_resolves"] = bool(os.environ.get(target.api_key_env, ""))
+    envelope.update({"dry_run": True, "success": True, "exit_code": 0, "harness": harness})
+    _emit(envelope)
+
+
 @click.command("exec")
 @click.option("--profile", "profile_override", default=None, help="Force a specific profile")
+@click.option(
+    "--role",
+    default=None,
+    help="Inference role from [llm.roles]; runs a single completion instead of the agent",
+)
 @click.option(
     "--tier",
     type=click.Choice(HEADLESS_TIERS),
@@ -199,6 +318,7 @@ def _terminate_group(proc: subprocess.Popen) -> None:
 @click.argument("agent_args", nargs=-1, type=click.UNPROCESSED)
 def exec_cmd(
     profile_override: str | None,
+    role: str | None,
     tier: str | None,
     model: str | None,
     allow_tools: str | None,
@@ -215,6 +335,16 @@ def exec_cmd(
     """
     if tier and model:
         raise click.UsageError("--tier and --model are mutually exclusive")
+    if role:
+        # --allow-tools asks a backend with no tools for a capability it does
+        # not have: a contradiction, so it fails loudly rather than degrading.
+        if allow_tools is not None:
+            raise click.UsageError("--allow-tools and --role are mutually exclusive")
+        if tier:
+            raise click.UsageError("--tier and --role are mutually exclusive")
+        if model:
+            raise click.UsageError("--model and --role are mutually exclusive")
+        _run_inference_mode(role, timeout, workload, dry_run, no_tools)
     if allow_tools is not None and no_tools:
         raise click.UsageError("--allow-tools and --no-tools are mutually exclusive")
     if allow_tools is not None and not allow_tools.strip():

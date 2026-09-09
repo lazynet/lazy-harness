@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import subprocess
 
-from lazy_harness.llm.base import LLMBackendError
+from lazy_harness.llm.base import LLMBackendError, LLMTimeoutError
 
 
 class ClaudeBackend:
@@ -20,7 +20,12 @@ class ClaudeBackend:
     def default_model(self) -> str:
         return "claude-haiku-4-5-20251001"
 
-    def complete(self, prompt: str, model: str, timeout: int) -> str:
+    def complete(self, prompt: str, model: str, timeout: int, *, schema: dict | None = None) -> str:
+        """`schema` is accepted and ignored: `claude -p` has no equivalent flag.
+
+        Growing the argv here would pass an unknown option to the binary. The
+        caller keeps `parse_response` for this backend.
+        """
         try:
             result = subprocess.run(
                 ["claude", "-p", "--model", model, "--output-format", "text"],
@@ -29,7 +34,9 @@ class ClaudeBackend:
                 text=True,
                 timeout=timeout,
             )
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+        except subprocess.TimeoutExpired as e:
+            raise LLMTimeoutError(str(e)) from e
+        except (FileNotFoundError, OSError) as e:
             raise LLMBackendError(str(e)) from e
         if result.returncode != 0:
             raise LLMBackendError(result.stderr.strip() or f"claude exited {result.returncode}")

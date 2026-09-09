@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 
 from lazy_harness.agents.registry import get_agent
-from lazy_harness.core.config import CompoundLoopConfig, Config, ConfigError, load_config
+from lazy_harness.core.config import Config, ConfigError, load_config
 from lazy_harness.core.paths import agent_runtime_dir, config_file
 from lazy_harness.knowledge.compound_loop import (
     move_to_done,
@@ -22,7 +22,6 @@ from lazy_harness.knowledge.compound_loop import (
 )
 from lazy_harness.knowledge.directory import learnings_dir as knowledge_learnings_dir
 from lazy_harness.knowledge.marker import MarkerError, resolve_root
-from lazy_harness.llm import LLMBackend, get_backend
 
 
 def _log(log_file: Path, msg: str) -> None:
@@ -62,10 +61,9 @@ def _resolve_learnings_dir(cfg: Config) -> Path:
 
 def _drain_queue(
     queue_dir: Path,
-    cl_cfg: CompoundLoopConfig,
+    cfg: Config,
     learnings_dir: Path,
     log_file: Path,
-    backend: LLMBackend,
 ) -> None:
     while True:
         pending = sorted(queue_dir.glob("*.task"))
@@ -76,7 +74,7 @@ def _drain_queue(
                 continue
             _log(log_file, f"processing {task_file.name}")
             try:
-                outcome = process_task(task_file, cl_cfg, learnings_dir, backend=backend)
+                outcome = process_task(task_file, cfg, learnings_dir)
             except Exception as e:  # noqa: BLE001 — worker must not crash the queue
                 _log(log_file, f"error processing {task_file.name}: {e}")
                 move_to_done(queue_dir, task_file)
@@ -129,19 +127,13 @@ def main() -> int:
             return 0
 
         try:
-            backend = get_backend(cfg.compound_loop)
-        except Exception as e:  # noqa: BLE001 — misconfigured backend must not crash
-            _log(log_file, f"backend resolution failed: {e}")
-            return 0
-
-        try:
             learnings_dir = _resolve_learnings_dir(cfg)
         except MarkerError as e:
             _log(log_file, f"knowledge store unusable, nothing written: {e}")
             return 1
 
         _log(log_file, "started, checking queue")
-        _drain_queue(queue_dir, cfg.compound_loop, learnings_dir, log_file, backend)
+        _drain_queue(queue_dir, cfg, learnings_dir, log_file)
         _log(log_file, "queue empty, exiting")
         return 0
     finally:

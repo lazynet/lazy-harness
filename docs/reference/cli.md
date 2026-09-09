@@ -81,6 +81,55 @@ Three states, deliberately distinct:
 
 `--allow-tools ""` is refused: passing an empty allow-list to Claude Code is a no-op that silently leaves the default read tools enabled, so the ambiguity is rejected instead of inherited.
 
+### Inference mode: `--role`
+
+`lh exec --role <name>` runs **one completion** through the backend that role names in [`[llm.roles]`](config.md#llm), instead of launching the agent. No tools, no session, no agentic loop — the right shape for classification and other single-turn work, and the only way to reach a local model such as Ollama or MLX.
+
+```bash
+printf '%s' "$PROMPT" | lh exec --role classify --workload file-triage
+lh exec --role classify --dry-run        # resolved plan, no tokens spent
+```
+
+The envelope is the same `lh.exec/v1` document, with `mode` naming which kind of run produced it:
+
+| Field | In inference mode |
+| --- | --- |
+| `mode` | `"inference"` — non-null in both modes, so the null token fields are unambiguous |
+| `output` | Always a string, never null. `""` on every failure |
+| `error.kind` | One of the five kinds below; non-null whenever `success` is false |
+| `cost_usd` | `null` for a local backend, together with `cost_source` |
+| `harness.backend`, `harness.model` | Which one actually answered |
+| `num_turns`, `cache_*`, `session_id` | `null` — structural, not a failure |
+
+An envelope with `mode: "agent"` is field-for-field what `lh.exec/v1` emitted before this flag existed; `mode` is the only addition, so no existing consumer has to change.
+
+#### Failure kinds and exit codes
+
+| `error.kind` | Exit | What to do next |
+| --- | --- | --- |
+| `backend-unreachable` | 70 | Retry, or abandon the batch |
+| `timeout` | 124 | Retry with less input |
+| `schema-violation` | 70 | **Do not retry the same model** — it will repeat |
+| `empty` | 70 | Treat as an abstention |
+| `backend-error` | 70 | Read `error.message` |
+
+Exit **2** is never emitted for a failed inference. It stays the usage-error code — a bad flag combination, raised before anything runs and carrying no envelope — so a caller that branches on the exit status before parsing stdout never discards a failure whose cause is in `error.kind`.
+
+These five are exhaustive for `mode: "inference"`; the agent-mode kinds `no-envelope` and `agent-error` never appear here.
+
+#### Flags alongside `--role`
+
+| Flag | With `--role` |
+| --- | --- |
+| `--timeout`, `--workload`, `--profile`, `--dry-run` | Accepted, unchanged |
+| `--no-tools` | Accepted, explicit no-op |
+| `--allow-tools` | **Error** |
+| `--tier`, `--model` | **Error** — the role names the model |
+
+`--no-tools` and `--allow-tools` are not symmetric. On a backend with no tools, `--allow-tools` requests a capability that does not exist and fails loudly; `--no-tools` merely asserts what already holds, so it is accepted. A wrapper may emit it unconditionally without branching on whether it passed `--role`.
+
+`--dry-run` returns the same envelope shape — `dry_run: true`, `success: true`, `exit_code: 0`, `output: ""` — with the resolved backend, model, `base_url` and, when the backend uses `api_key_env`, whether that variable resolves. Never its value.
+
 ### Attributing a run
 
 `--workload <label>` records a free-form label against the session id `lh exec`

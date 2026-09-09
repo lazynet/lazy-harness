@@ -126,3 +126,76 @@ def test_malformed_response_maps_to_llm_backend_error(
     backend = mod.OpenAICompatibleBackend(base_url="http://localhost:11434")
     with pytest.raises(LLMBackendError):
         backend.complete("p", "m", 1)
+
+
+# --- structured output (ADR-039) ---------------------------------------------
+
+
+def test_schema_becomes_a_json_schema_response_format(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Measured against a live Ollama: without this, a 7B model answers outside
+    a declared enum. The schema buys domain conformance, not JSON hygiene."""
+    from lazy_harness.llm import openai_compat as mod
+
+    captured: dict = {}
+
+    def fake_post(url, **kwargs):  # noqa: ANN001, ANN003
+        captured["json"] = kwargs.get("json")
+        return _FakeResponse(_OK_PAYLOAD)
+
+    monkeypatch.setattr(mod.httpx, "post", fake_post)
+
+    schema = {
+        "type": "object",
+        "properties": {"kind": {"type": "string", "enum": ["debug", "docs"]}},
+        "required": ["kind"],
+    }
+    mod.OpenAICompatibleBackend(base_url="http://x").complete("p", "m", 5, schema=schema)
+
+    fmt = captured["json"]["response_format"]
+    assert fmt["type"] == "json_schema"
+    assert fmt["json_schema"]["schema"] == schema
+    assert fmt["json_schema"]["strict"] is True
+
+
+def test_no_schema_sends_no_response_format(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lazy_harness.llm import openai_compat as mod
+
+    captured: dict = {}
+
+    def fake_post(url, **kwargs):  # noqa: ANN001, ANN003
+        captured["json"] = kwargs.get("json")
+        return _FakeResponse(_OK_PAYLOAD)
+
+    monkeypatch.setattr(mod.httpx, "post", fake_post)
+    mod.OpenAICompatibleBackend(base_url="http://x").complete("p", "m", 5)
+
+    assert "response_format" not in captured["json"]
+
+
+def test_http_timeout_raises_a_typed_timeout_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`str(httpx.ReadTimeout(""))` is empty, so the kind cannot be recovered
+    from the message. The type carries it instead."""
+    from lazy_harness.llm import openai_compat as mod
+    from lazy_harness.llm.base import LLMTimeoutError
+
+    def fake_post(url, **kwargs):  # noqa: ANN001, ANN003
+        raise httpx.ReadTimeout("")
+
+    monkeypatch.setattr(mod.httpx, "post", fake_post)
+    with pytest.raises(LLMTimeoutError):
+        mod.OpenAICompatibleBackend(base_url="http://x").complete("p", "m", 5)
+
+
+def test_a_timeout_error_is_still_a_backend_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Existing ADR-033 callers catch LLMBackendError and must keep working."""
+    from lazy_harness.llm import openai_compat as mod
+    from lazy_harness.llm.base import LLMBackendError
+
+    def fake_post(url, **kwargs):  # noqa: ANN001, ANN003
+        raise httpx.ReadTimeout("")
+
+    monkeypatch.setattr(mod.httpx, "post", fake_post)
+    with pytest.raises(LLMBackendError):
+        mod.OpenAICompatibleBackend(base_url="http://x").complete("p", "m", 5)

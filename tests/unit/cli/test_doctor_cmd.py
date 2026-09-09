@@ -105,14 +105,14 @@ def test_render_llm_backend_claude_ok_when_binary_on_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from lazy_harness.cli.doctor_cmd import _render_llm_backend
-    from lazy_harness.core.config import CompoundLoopConfig
+    from lazy_harness.core.config import Config
 
     monkeypatch.setattr(
         "lazy_harness.cli.doctor_cmd.shutil.which",
         lambda name: "/opt/bin/claude" if name == "claude" else None,
     )
     console, buf = _recording_console()
-    assert _render_llm_backend(console, CompoundLoopConfig()) is True
+    assert _render_llm_backend(console, Config()) is True
     assert "claude" in buf.getvalue()
 
 
@@ -120,17 +120,17 @@ def test_render_llm_backend_claude_missing_binary_is_warning(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from lazy_harness.cli.doctor_cmd import _render_llm_backend
-    from lazy_harness.core.config import CompoundLoopConfig
+    from lazy_harness.core.config import Config
 
     monkeypatch.setattr("lazy_harness.cli.doctor_cmd.shutil.which", lambda _name: None)
     console, buf = _recording_console()
-    assert _render_llm_backend(console, CompoundLoopConfig()) is True
+    assert _render_llm_backend(console, Config()) is True
     assert "not found" in buf.getvalue()
 
 
 def test_render_llm_backend_ollama_reachable(monkeypatch: pytest.MonkeyPatch) -> None:
     from lazy_harness.cli.doctor_cmd import _render_llm_backend
-    from lazy_harness.core.config import CompoundLoopConfig
+    from lazy_harness.core.config import Config
 
     captured: dict = {}
 
@@ -141,7 +141,8 @@ def test_render_llm_backend_ollama_reachable(monkeypatch: pytest.MonkeyPatch) ->
 
     monkeypatch.setattr("lazy_harness.cli.doctor_cmd.httpx.get", fake_get)
     console, buf = _recording_console()
-    cfg = CompoundLoopConfig(backend="ollama")
+    cfg = Config()
+    cfg.compound_loop.backend = "ollama"
     assert _render_llm_backend(console, cfg) is True
     assert captured["url"] == "http://localhost:11434"
     assert captured["timeout"] == 2
@@ -154,24 +155,26 @@ def test_render_llm_backend_unreachable_is_warning_not_failure(
     import httpx
 
     from lazy_harness.cli.doctor_cmd import _render_llm_backend
-    from lazy_harness.core.config import CompoundLoopConfig
+    from lazy_harness.core.config import Config
 
     def fake_get(url, **kwargs):  # noqa: ANN001, ANN003
         raise httpx.ConnectError("refused")
 
     monkeypatch.setattr("lazy_harness.cli.doctor_cmd.httpx.get", fake_get)
     console, buf = _recording_console()
-    cfg = CompoundLoopConfig(backend="mlx")
+    cfg = Config()
+    cfg.compound_loop.backend = "mlx"
     assert _render_llm_backend(console, cfg) is True
     assert "not reachable" in buf.getvalue()
 
 
 def test_render_llm_backend_unknown_backend_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     from lazy_harness.cli.doctor_cmd import _render_llm_backend
-    from lazy_harness.core.config import CompoundLoopConfig
+    from lazy_harness.core.config import Config
 
     console, buf = _recording_console()
-    cfg = CompoundLoopConfig(backend="no-such-backend")
+    cfg = Config()
+    cfg.compound_loop.backend = "no-such-backend"
     assert _render_llm_backend(console, cfg) is False
     out = buf.getvalue()
     assert "no-such-backend" in out
@@ -188,7 +191,7 @@ def test_doctor_output_includes_llm_backend_section(
     monkeypatch.setattr("lazy_harness.cli.doctor_cmd.shutil.which", lambda _name: None)
     runner = CliRunner()
     result = runner.invoke(doctor, [])
-    assert "LLM backend" in result.output
+    assert "LLM roles" in result.output
 
 
 def _linked_worktree(tmp_path: Path) -> tuple[Path, Path]:
@@ -349,3 +352,90 @@ def test_render_memory_hygiene_warns_on_stale_pending_proposals(tmp_path: Path) 
     assert "1 pending" in out
     assert "41d" in out
     assert "lh memory proposals" in out
+
+
+# --- role table validation (ADR-039) -----------------------------------------
+
+
+def _cfg_with_roles(roles: dict[str, str], backends: dict | None = None):
+    from lazy_harness.core.config import Config, LLMBackendConfig, LLMConfig
+
+    cfg = Config()
+    cfg.llm = LLMConfig(
+        backends=backends
+        if backends is not None
+        else {"local": LLMBackendConfig(type="ollama", model="qwen2.5-coder:7b")},
+        roles=roles,
+    )
+    return cfg
+
+
+def _render(cfg, monkeypatch: pytest.MonkeyPatch) -> tuple[str, bool]:
+    import io
+
+    from rich.console import Console
+
+    from lazy_harness.cli import doctor_cmd as mod
+
+    monkeypatch.setattr(mod.httpx, "get", lambda *a, **kw: None)
+    buf = io.StringIO()
+    ok = mod._render_llm_backend(Console(file=buf, width=200), cfg)
+    return buf.getvalue(), ok
+
+
+def test_doctor_reports_every_role(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lazy_harness.core.config import LLMBackendConfig
+
+    cfg = _cfg_with_roles(
+        {"classify": "local", "distill": "haiku"},
+        {
+            "local": LLMBackendConfig(type="ollama"),
+            "haiku": LLMBackendConfig(type="claude"),
+        },
+    )
+    out, ok = _render(cfg, monkeypatch)
+    assert "classify" in out
+    assert "distill" in out
+    assert ok is True
+
+
+def test_doctor_flags_a_role_naming_an_undefined_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    out, ok = _render(_cfg_with_roles({"classify": "ghost"}, {}), monkeypatch)
+    assert ok is False
+    assert "ghost" in out
+
+
+def test_doctor_names_the_key_variable_never_its_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from lazy_harness.core.config import LLMBackendConfig
+
+    monkeypatch.setenv("SOME_LLM_KEY", "sk-secret")
+    cfg = _cfg_with_roles(
+        {"classify": "remote"},
+        {
+            "remote": LLMBackendConfig(
+                type="openai-compatible",
+                base_url="http://x/v1",
+                api_key_env="SOME_LLM_KEY",
+            )
+        },
+    )
+    out, _ = _render(cfg, monkeypatch)
+    assert "SOME_LLM_KEY" in out
+    assert "sk-secret" not in out
+
+
+def test_doctor_still_reports_the_deprecated_single_backend_form(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A config with no [llm] table must not silently report nothing."""
+    from lazy_harness.core.config import Config
+
+    cfg = Config()
+    cfg.compound_loop.backend = "ollama"
+    out, ok = _render(cfg, monkeypatch)
+    assert ok is True
+    assert "ollama" in out
