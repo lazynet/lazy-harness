@@ -1242,3 +1242,173 @@ version = "1"
 
     assert "timezone" not in config_file.read_text()
     assert load_config(config_file).scheduler.timezone is None
+
+
+# --- [llm] table (ADR-039) ---------------------------------------------------
+
+
+def test_llm_table_parses_backends_and_roles(config_dir: Path) -> None:
+    config_file = config_dir / "config.toml"
+    config_file.write_text("""
+[harness]
+version = "1"
+
+[llm]
+default_role = "distill"
+
+[llm.backends.local]
+type = "ollama"
+model = "qwen2.5-coder:7b"
+
+[llm.roles]
+classify = "local"
+""")
+    from lazy_harness.core.config import load_config
+
+    cfg = load_config(config_file)
+    assert cfg.llm.default_role == "distill"
+    assert cfg.llm.backends["local"].type == "ollama"
+    assert cfg.llm.backends["local"].model == "qwen2.5-coder:7b"
+    assert cfg.llm.roles["classify"] == "local"
+
+
+def test_llm_defaults_when_section_absent() -> None:
+    from lazy_harness.core.config import LLMConfig
+
+    assert LLMConfig().backends == {}
+    assert LLMConfig().roles == {}
+    assert LLMConfig().default_role == ""
+
+
+def test_llm_backend_carries_base_url_and_api_key_env(config_dir: Path) -> None:
+    config_file = config_dir / "config.toml"
+    config_file.write_text("""
+[harness]
+version = "1"
+
+[llm.backends.openrouter]
+type = "openai-compatible"
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+""")
+    from lazy_harness.core.config import load_config
+
+    backend = load_config(config_file).llm.backends["openrouter"]
+    assert backend.base_url == "https://openrouter.ai/api/v1"
+    assert backend.api_key_env == "OPENROUTER_API_KEY"
+    assert backend.api_key == ""
+
+
+def test_llm_backend_rejects_api_key_and_api_key_env_together(config_dir: Path) -> None:
+    config_file = config_dir / "config.toml"
+    config_file.write_text("""
+[harness]
+version = "1"
+
+[llm.backends.remote]
+type = "openai-compatible"
+base_url = "https://example.invalid/v1"
+api_key = "sk-literal"
+api_key_env = "SOME_VAR"
+""")
+    from lazy_harness.core.config import ConfigError, load_config
+
+    with pytest.raises(ConfigError, match="api_key_env"):
+        load_config(config_file)
+
+
+def test_llm_roles_must_be_a_table(config_dir: Path) -> None:
+    config_file = config_dir / "config.toml"
+    config_file.write_text('[harness]\nversion = "1"\n\n[llm]\nroles = "not-a-table"\n')
+    from lazy_harness.core.config import ConfigError, load_config
+
+    # Anchored on the literal bracketed key: pytest's tmp_path embeds the test
+    # name, so an unescaped "llm.roles" matches "test_llm_roles..." in the path
+    # of an entirely unrelated error.
+    with pytest.raises(ConfigError, match=r"\[llm\]\.roles"):
+        load_config(config_file)
+
+
+def test_llm_backends_must_be_a_table_of_tables(config_dir: Path) -> None:
+    config_file = config_dir / "config.toml"
+    config_file.write_text('[harness]\nversion = "1"\n\n[llm]\nbackends = 3\n')
+    from lazy_harness.core.config import ConfigError, load_config
+
+    with pytest.raises(ConfigError, match=r"\[llm\]\.backends"):
+        load_config(config_file)
+
+
+def test_llm_section_of_the_wrong_type_is_rejected(config_dir: Path) -> None:
+    """`llm = 3` parses as valid TOML. Validation checks schema, not parsability."""
+    config_file = config_dir / "config.toml"
+    # A bare key must precede every table header, or TOML nests it in the
+    # preceding table and the guard under test is never reached.
+    config_file.write_text('llm = 3\n\n[harness]\nversion = "1"\n')
+    from lazy_harness.core.config import ConfigError, load_config
+
+    with pytest.raises(ConfigError, match=r"\[llm\] must be a table"):
+        load_config(config_file)
+
+
+def test_llm_table_round_trips(config_dir: Path) -> None:
+    """save → load → save → load is stable.
+
+    Validation checks schema, not parsability, so a section carrying defaults
+    needs the full cycle rather than one successful write.
+    """
+    from lazy_harness.core.config import (
+        Config,
+        LLMBackendConfig,
+        LLMConfig,
+        load_config,
+        save_config,
+    )
+
+    cfg = Config()
+    cfg.llm = LLMConfig(
+        default_role="distill",
+        backends={"local": LLMBackendConfig(type="ollama", model="qwen2.5-coder:7b")},
+        roles={"classify": "local"},
+    )
+    p = config_dir / "config.toml"
+    save_config(cfg, p)
+    once = load_config(p)
+    save_config(once, p)
+    twice = load_config(p)
+    assert twice.llm == once.llm == cfg.llm
+
+
+def test_llm_survives_merge_onto_existing_document(config_dir: Path) -> None:
+    """The create path and the merge path have each skipped a field the other
+    supplied, so they are exercised separately."""
+    from lazy_harness.core.config import (
+        LLMBackendConfig,
+        LLMConfig,
+        load_config,
+        save_config,
+    )
+
+    p = config_dir / "config.toml"
+    p.write_text('[harness]\nversion = "1"\n\n[agent]\ntype = "claude-code"\n')
+    cfg = load_config(p)
+    cfg.llm = LLMConfig(
+        backends={"local": LLMBackendConfig(type="ollama")}, roles={"c": "local"}
+    )
+    save_config(cfg, p)
+    reloaded = load_config(p)
+    assert reloaded.llm.roles == {"c": "local"}
+    assert reloaded.agent.type == "claude-code"
+
+
+def test_api_key_env_is_serialised_but_never_a_literal_key(config_dir: Path) -> None:
+    from lazy_harness.core.config import Config, LLMBackendConfig, LLMConfig, save_config
+
+    cfg = Config()
+    cfg.llm = LLMConfig(
+        backends={"r": LLMBackendConfig(type="openai-compatible", api_key_env="SOME_VAR")}
+    )
+    p = config_dir / "config.toml"
+    save_config(cfg, p)
+    text = p.read_text()
+    assert "SOME_VAR" in text
+    assert "api_key =" not in text
