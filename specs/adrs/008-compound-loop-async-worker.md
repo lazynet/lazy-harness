@@ -3,6 +3,13 @@
 **Status:** accepted
 **Date:** 2026-04-13
 
+> **Mechanism note (2026-09-09).** The decision below — an async worker draining a
+> file queue — stands unchanged. How the worker *calls a model* has moved twice
+> since: [ADR-033](033-llm-backend-abstraction.md) put it behind a backend
+> Protocol, and [ADR-039](039-role-routed-inference.md) replaced the call with
+> `run_inference` resolving a named role. References to `invoke_claude` below are
+> annotated rather than rewritten, so the original reasoning stays readable.
+
 ## Context
 
 The compound loop is the feedback mechanism that turns finished sessions into persisted memory ([memory model](../../why/memory-model.md)). Every time a session ends, the harness should:
@@ -32,7 +39,7 @@ Split the compound loop into **a fast synchronous producer (the hook) and a slow
   2. Guardrails: session JSONL exists, `is_interactive_session`, `count_user_chars >= min_user_chars`, `min_messages` met.
   3. Gather existing decisions / failures / learnings via `collect_existing_*`.
   4. Build the prompt with `build_prompt` (ported verbatim from the predecessor — the prompt is calibration, not code).
-  5. `invoke_claude` calls `claude -p --model <model> --output-format text` with a configurable timeout.
+  5. `run_inference` resolves the `distill` role and calls the backend that role names, with a configurable timeout. (Originally `invoke_claude`, calling `claude -p` directly; renamed by ADR-033 and replaced by ADR-039.)
   6. `parse_response` strips fences and extracts the first balanced JSON object.
   7. `persist_results` writes atomically into `decisions.jsonl`, `failures.jsonl`, learnings markdown files, and `handoff.md`.
   8. Task file is moved to `queue/done/`.
@@ -55,8 +62,8 @@ Split the compound loop into **a fast synchronous producer (the hook) and a slow
 
 - Session close is instant from the user's perspective. The Stop hook is the fast path; the expensive LLM call is deferred.
 - Logs are split by concern: `hooks.log` for the producer, `compound-loop.log` for the worker. Both rotate by size in-place (`_rotate_log` trims to `keep_lines=500` when the file exceeds `max_bytes`).
-- The worker is unit-testable without running `claude` — `process_task` takes an `invoke` callable that tests substitute with a canned response.
+- The worker is unit-testable without a live model — tests substitute the inference call with a canned response. The property has outlived two mechanisms: originally an `invoke` callable passed to `process_task`, then a `backend` instance (ADR-033), now `run_inference`, which tests monkeypatch (ADR-039).
 - Debounce and "already processed" are belt-and-suspenders: a session that closes twice in short succession gets a single task queued (`is_debounced`) and a session whose task was already moved to `done/` is skipped on the second attempt (`is_already_processed`).
 - The prompt itself is ported verbatim from the predecessor's bash worker. The docstring in `build_prompt` flags this explicitly: the prompt is calibration developed against hundreds of real sessions, and rewording it without re-tuning would silently degrade output quality.
 - Atomic writes (`_atomic_write` — tempfile + `os.replace`) are used for all markdown learnings. This is required whenever the learnings directory lives under iCloud/Dropbox: those syncers observe the `rename` event atomically, unlike the `open-write-close` window, which can race with sync.
-- If `claude -p` is not on the PATH, `invoke_claude` returns `None` and the task is marked skipped with a logged reason. This is deliberate — the worker is "best-effort memory enrichment", not a hard requirement.
+- If the backend serving the `distill` role is unreachable, `run_inference` reports a typed failure and the task is marked skipped with a logged reason. This is deliberate — the worker is "best-effort memory enrichment", not a hard requirement. (Originally: `claude -p` absent from PATH and `invoke_claude` returning `None`.)

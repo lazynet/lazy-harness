@@ -12,7 +12,7 @@ The framework accumulated six independent ways to turn something on, across four
 - Metrics sinks: `[metrics].sinks` resolved through `plugins/registry.py:PluginRegistry`.
 - Agent adapter: `[agent].type` through `agents/registry.py:_AGENTS` (ADR-004).
 - Scheduler backend: `[scheduler].backend` through a dict literal in `scheduler/manager.py` (ADR-013).
-- LLM backend: `[compound_loop].backend` through `llm/registry.py` (ADR-033).
+- LLM backend: `active_llm_backend` through `llm/roles.py` (ADR-039, which moved it off `[compound_loop].backend`; ADR-033 established the registry it still builds on).
 - External tools: `enabled = true` plus a `shutil.which` probe, for QMD (ADR-016), Engram (ADR-022) and Graphify (ADR-023).
 
 `PluginRegistry` was built for the first of these and never acquired a second consumer — outside `plugins/` nothing imports it. ADR-018 deferred its own implementation until a second extension point existed, and `docs/roadmap.md` Theme 4 records the same gate.
