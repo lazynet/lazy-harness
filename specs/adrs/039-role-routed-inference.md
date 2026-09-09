@@ -38,13 +38,15 @@ Five properties are load-bearing:
 
 1. **The routing key is a role, not a tier.** `HEADLESS_TIERS` describes capability level; whether work can run *without tools* is an orthogonal axis, and it is the one deciding whether an inference backend can serve a call at all. Routing on the tier would let a tools-granted request land silently on a backend with no tools.
 
-2. **The envelope declares its `mode`.** Agent-shaped fields an inference call cannot fill — `num_turns`, `cache_*`, `session_id` — are otherwise ambiguous nulls, indistinguishable from a failure that said nothing. That is the exact ambiguity ADR-038 named.
+2. **The envelope declares its `mode`.** Agent-shaped fields an inference call cannot fill — `num_turns`, `cache_*`, `session_id` — are otherwise ambiguous nulls, indistinguishable from a failure that said nothing. That is the exact ambiguity ADR-038 named. The schema stays `lh.exec/v1` under a stated invariant: **an envelope carrying `mode: "agent"` is field-for-field what v1 emitted before**, the sole addition being `mode` itself. Without that invariant, changing envelope shape inside a version would demand v2; with it, no existing consumer moves.
 
 3. **No automatic fallback between backends.** A silent fall-through from a local backend to a billed one is how a cost optimisation becomes a cost surprise, and it hides a broken local backend behind an invoice. No safety net is needed in-repo: a failed call already skips the session and writes the deterministic slim handoff.
 
 4. **Secrets are named, never carried.** `api_key_env` reuses the `url_env` mechanism in `monitoring/sink_setup.py` verbatim — resolved at call time so the value never reaches disk, owner-only secrets-file fallback, and the parser rejects the literal and the variable together. This matters because `config.toml` is a chezmoi `.tmpl`.
 
 5. **Backwards compatible.** `[compound_loop].backend`/`.model` map to a synthetic `distill` role with a one-time warning. ADR-033's fields are deprecated, not removed.
+
+6. **The tool tri-state survives `--role`, and exit codes stay parseable.** `--allow-tools` on an inference backend is a hard error — it requests a capability that does not exist. `--no-tools` is an accepted no-op, because it asserts a truth that already holds; rejecting it would force every consumer to branch its tri-state on whether a role was passed, restoring the coupling the role removes. And exit code `2` is never emitted for a failed inference: it stays the usage-error code, raised before any inference runs and carrying no envelope. A consumer branching on the process exit before parsing stdout therefore never discards a failure whose cause is in `error.kind`.
 
 Because the motivating consumer lives in another repository, `lh exec --role <name> --dry-run` and a `lh doctor` check over the whole role table are part of this decision, not follow-up polish. Without them a role could be broken with the suite green — the "implemented but never wired" failure this repo has recorded before.
 

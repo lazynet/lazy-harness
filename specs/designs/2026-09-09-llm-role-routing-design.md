@@ -96,6 +96,12 @@ Non-null always. A consumer reading `mode: "inference"` knows the null token fie
 
 `cost_usd` stays null for a local backend and keeps `cost_source: null` alongside it, preserving the ADR-038 invariant that the two are non-null together.
 
+**Why this stays `lh.exec/v1`.** The schema version does not bump, and that is a contract invariant rather than a test result:
+
+> An envelope carrying `mode: "agent"` is field-for-field what `lh.exec/v1` emitted before this change. The sole addition is `mode` itself, which is non-null in both modes.
+
+A caller that never passes `--role` therefore never observes an inference envelope, and the only change it can see is one added field — which every consumer of a versioned JSON envelope already tolerates. Without stating this, the honest reading of "the envelope changes shape inside v1" is that it requires v2; with it, no consumer needs to move.
+
 ### 3. Config
 
 ```toml
@@ -143,15 +149,24 @@ The rule for callers: a schema is **required** wherever a value feeds a decision
 
 ### 5. Failure taxonomy
 
-`InferenceError.kind` names the evidence, not the symptom, because what a caller does next differs:
+`InferenceError.kind` names the evidence, not the symptom, because what a caller does next differs. There are **five**, and they are exhaustive for `mode: "inference"`:
 
-| kind | Cause | Caller's next move |
-|---|---|---|
-| `backend-unreachable` | endpoint down, binary absent | retry, or abandon the batch |
-| `timeout` | exceeded the budget | retry with less input |
-| `schema-violation` | responded, failed validation | **do not retry the same model** — it will repeat |
-| `empty` | no output | treat as an abstention |
-| `backend-error` | 4xx/5xx, or CLI exit ≠ 0 | read `message` |
+| kind | Cause | Process exit | Caller's next move |
+|---|---|---|---|
+| `backend-unreachable` | endpoint down, binary absent | 70 | retry, or abandon the batch |
+| `timeout` | exceeded the budget | 124 | retry with less input |
+| `schema-violation` | responded, failed validation | 70 | **do not retry the same model** — it will repeat |
+| `empty` | no output | 70 | treat as an abstention |
+| `backend-error` | 4xx/5xx, or CLI exit ≠ 0 | 70 | read `message` |
+
+ADR-038's `no-envelope` and `agent-error` belong to the agent path and **never appear with `mode: "inference"`**. The two sets are disjoint, so a consumer may implement the inference kinds as an exhaustive enum.
+
+**Exit codes are constrained so the envelope stays readable.** A consumer that branches on the process exit before parsing stdout — which `lazy-shared-llm` does — must never be thrown off a failure whose cause is in `error.kind`:
+
+- **`2` is never emitted for a *failed inference*.** It remains the usage-error code — a bad flag combination such as `--role` with `--allow-tools` — raised by `click` before any inference runs, carrying no envelope. A consumer reading `2` as "the invocation was rejected" is therefore right, and loses nothing by not parsing stdout: there is nothing there to parse.
+- **`124`** for `timeout`, matching the agent path so an existing `returncode == EXIT_TIMEOUT` branch keeps working.
+- **`70`** for every other failed inference. The envelope is always present and `error.kind` is authoritative.
+- **`0`** on success.
 
 ### 6. No automatic fallback between backends
 
@@ -195,22 +210,53 @@ printf '%s' "$PROMPT" | lh exec --role classify --workload file-triage
 
 - The prompt travels on **stdin**. Never in argv — these prompts inline whole files and `ARG_MAX` is a ceiling nothing checks.
 - Exactly one JSON envelope goes to stdout. The backend's stderr passes through untouched.
-- `--dry-run` returns the resolved plan without spending tokens; use it as a preflight.
 - `--workload <label>` attributes the run in `metrics.db`.
 
-Envelope fields a consumer should read:
+### Envelope fields
 
-| Field | Meaning |
+| Field | Guarantee |
 |---|---|
 | `schema` | `"lh.exec/v1"` — check it |
-| `mode` | `"inference"` here; explains why token fields are null |
-| `success` | whether output is usable |
-| `output` | the model's text |
-| `error.kind` | one of the six kinds above, non-null whenever `success` is false |
-| `cost_usd` | null for a local backend; non-null with `cost_source` |
+| `mode` | `"inference"` here; explains why the token fields are null |
+| `success` | whether `output` is usable |
+| `output` | **always a string, never null** — `""` when there is nothing to return, including on every failure |
+| `error` | null when `success` is true; otherwise an object with `kind` and `message` |
+| `error.kind` | one of the **five** inference kinds; non-null whenever `success` is false |
+| `cost_usd` | null for a local backend; non-null together with `cost_source` |
 | `backend`, `model` | which one actually answered |
 
-`--role` and `--tier` are mutually exclusive; `--role` with an inference backend and `--allow-tools` is a **hard error**, never a silent downgrade to a backend that has no tools.
+### Tools: the tri-state is preserved, not overridden
+
+`--role` does not change how a caller expresses its tool policy. The two flags are **not symmetric**, because they make opposite claims:
+
+| Caller intent | Flag | With `--role` on an inference backend |
+|---|---|---|
+| provider's own policy | *(neither flag)* | accepted — no tools exist to grant |
+| deny every tool | `--no-tools` | **accepted, explicit no-op** — asserts a truth that already holds |
+| grant specific tools | `--allow-tools A,B` | **hard error** — requests a capability the backend does not have |
+
+`--allow-tools` is a contradiction on a backend with no tools, so it fails loudly rather than downgrading silently. `--no-tools` is merely redundant there, and rejecting it would force every consumer to branch its tri-state on whether `--role` was passed — reintroducing exactly the coupling the role was introduced to remove. A wrapper may emit `--no-tools` unconditionally.
+
+### Exit codes
+
+The rules in §5 are part of this contract: `2` never appears in inference mode, `124` means `timeout`, `70` means any other failed inference with a readable envelope, `0` means success. A consumer that branches on the process exit before parsing stdout stays correct.
+
+### Flags valid alongside `--role`
+
+| Flag | With `--role` |
+|---|---|
+| `--timeout` | yes — unchanged meaning, bounds the inference call |
+| `--workload` | yes — unchanged |
+| `--dry-run` | yes — see below |
+| `--no-tools` | yes — explicit no-op |
+| `--profile` | yes — selects the config that defines the role table |
+| `--allow-tools` | **error** |
+| `--tier` | **error** — mutually exclusive with `--role` |
+| `--model` | **error** — the role names the model |
+
+### `--dry-run` shape
+
+The same envelope, so a consumer parses one shape: `dry_run: true`, `success: true`, `exit_code: 0`, `mode: "inference"`, `output: ""`, `error: null`. The resolved plan rides in the `harness` block — `backend`, `model`, `base_url`, and whether the `api_key_env` variable resolves (never its value). No tokens are spent.
 
 ## Migration
 
@@ -223,7 +269,11 @@ Precedence when both forms are present: the explicit `[llm]` table wins, and the
 - `run_inference` against a stub backend — the pattern ADR-033 established for `invoke_llm`.
 - **Config round trip** on `[llm]`: save → load → save → load. The new-document path and the merge-onto-existing path are tested separately.
 - **Deprecation path**: a config carrying only `[compound_loop].backend` resolves the synthetic `distill` role and warns once; a config carrying both warns and prefers `[llm]`.
-- **Envelope**: `mode` is non-null in both paths, and the agent path is unchanged against today's output.
+- **Envelope**: `mode` is non-null in both paths. The `mode: "agent"` invariant is asserted directly — an agent envelope is compared field-for-field against today's output, with `mode` as the only addition. That assertion is the invariant, not a proxy for it.
+- **Contract rules, one test each**: `--no-tools` with `--role` is accepted and changes nothing; `--allow-tools` with `--role` on an inference backend exits non-zero *before* spending tokens; `--tier` and `--model` with `--role` are rejected; `--timeout`, `--workload`, `--profile` and `--dry-run` are accepted.
+- **Exit codes are pinned per kind**: each of the five kinds is provoked and its process exit asserted — `124` for `timeout`, `70` for the rest, and `2` for none of them. A regression here breaks a consumer that branches before parsing, which no envelope assertion would catch.
+- **`output` is a string on every failure path**, including `empty` and `schema-violation`. Asserted per kind, not once.
+- **`--dry-run` emits the same envelope shape** as a real inference call, with the resolved plan in `harness` and the `api_key_env` value absent from the output.
 - **Wrong-type and hostile input**: a role naming an undefined backend; an unknown `type`; `api_key` and `api_key_env` together; a null or non-table `[llm.roles]`.
 - **Prove the guard guards**: removing the schema pass-through must fail a test. The assertion is the measured case — an out-of-enum value — restored by hand afterwards, never with `git checkout`, which would revert the implementation too.
 - **The consumer parses the envelope**, not the test that wrote it. An `lh exec --role ... --dry-run` invocation is parsed by the real external client before this is considered done.
