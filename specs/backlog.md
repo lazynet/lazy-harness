@@ -54,6 +54,19 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 
 ## Open — Prioridad ALTA
 
+### `stop-verify-guard` está implementado pero no se puede wirear: nada emite `verify_ran`
+
+**Por qué:** el hook mergeó el 2026-09-10 registrado en `_BUILTIN_HOOKS` y **sin** entrada en `config.toml`, a propósito. Lee `verify_ran` para decidir si bloquea, y grepeando `src/` y los skills desplegados, nada lo escribe. Wirearlo hoy no produce enforcement calibrado: produce un nag garantizado — bloquea siempre en el primer `Stop` de toda sesión que declaró goal, y pasa siempre en el segundo, sin importar si se verificó.
+
+`specs/designs/2026-08-16-loop-engineering-plan.md:32` ya lo había decidido: *"Building the guard before the thing it guards produces a hook that blocks on a condition nothing can satisfy."* El hook se construyó igual, por una lectura del design sin el plan companion. El código es correcto y está testeado; lo que falta es el emisor.
+
+**El emisor es la parte que no existe.** `verify-before-done` es un documento de procedimiento: describe qué verificar, pero no llama a `lh` ni escribe en `loop_events`. Un skill no puede emitir un evento por sí solo — hace falta un verbo que registre, del estilo `lh metrics record-verify`, que el procedimiento invoque como último paso.
+
+**Hallazgo aprovechable del mismo trabajo:** `/goal <condition>` escribe sincrónicamente una entrada `{"type":"attachment","attachment":{"type":"goal_status",...}}` al transcript JSONL en el momento en que corre. Es una señal determinística disponible durante el `Stop`, a diferencia de `goal_declared`, que es una clasificación LLM post-hoc del compound-loop. Es más angosta —solo capta el uso explícito de `/goal`, no un criterio declarado en prosa— pero no requiere inferencia.
+
+**Acción:** darle a `verify-before-done` una forma de emitir `verify_ran`, y recién entonces agregar la entrada `[hooks.session_stop]`. Hasta que eso pase, **no desplegar el hook**: el registro en `_BUILTIN_HOOKS` no lo activa, y esa inercia es la que lo mantiene inofensivo.
+
+
 ### `save_config` destruye config — 51 claves perdidas por escritura
 
 `load_config` lee 14 secciones top-level; `_config_to_dict` emite 10, varias parciales. Medido contra el config vivo: se pierden `[compound_loop]`, `[memory.engram]` y `[lazynorth]` enteras, `knowledge.structure`, los 6 `[scheduler.jobs.*]`, `hooks.pre_tool_use.allow_patterns` y `profiles.<name>.lazynorth_doc`.
