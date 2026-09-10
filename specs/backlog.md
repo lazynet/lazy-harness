@@ -72,6 +72,17 @@ No causó daño visible todavía porque el único caller en producción es `lh p
 
 ## Open — Prioridad MEDIA
 
+### `lh deploy` promete desplegar skills y no tiene código que lo haga
+
+**Por qué:** `deploy/engine.py:1` y `deploy_cmd.py:41` declaran "profiles, hooks, skills". La palabra `skill` no aparece en ninguna otra línea de `src/` fuera de `migrate/detector.py`. Lo que existe es un bucle genérico — `for item in src_dir.iterdir(): ensure_symlink(item, target_dir / item.name)` — que symlinkea cualquier cosa que encuentre en el source del profile. Los skills funcionan por esa generalidad, no porque haya una ruta de código para ellos.
+
+Es el mismo patrón que el gate de `auto_rebuild_on_commit`: un contrato declarado que nadie implementó, sostenido por un accidente feliz. Mientras el bucle siga siendo genérico no hay bug de comportamiento, pero el docstring no es una fuente de verdad sobre lo que el deploy sabe hacer.
+
+**Fuente:** medido el 2026-09-10 al decidir dónde alojar un skill nuevo.
+
+**Acción:** o el docstring se ajusta a lo que el código hace (symlinkea el contenido del profile source, sea el que sea), o `skills/` gana una ruta explícita con su propia verificación. Lo primero es más honesto y más barato. Ojo con un detalle que el bucle genérico esconde: `ensure_symlink` renombra a `.bak` cualquier target que exista como directorio real antes de symlinkearlo, así que un profile con `skills/` poblado en el destino y ausente en el source pierde el directorio entero de la vista en el próximo deploy — recuperable, pero silencioso.
+
+
 ### `project_key` colapsa repos sin `.git` propio en `local/lazynet`
 
 **Por qué:** `core/project_identity.py:project_key` camina hacia arriba buscando cualquier `.git` ancestro. El home **es** un repo (`~/.git`, dotfiles), así que un directorio sin `.git` propio bajo `~` aterriza en `/Users/lazynet` y sale keyeado `local/lazynet`. Todo repo en esa situación comparte una sola identidad de memoria.
@@ -95,15 +106,6 @@ No causó daño visible todavía porque el único caller en producción es `lh p
 **Fuente:** salió como la única diferencia entre el `find` del filesystem (35) y lo que reporta `lh memory rightsize` (34) el 2026-09-10 — el comando lo excluye correctamente por no ser legible.
 
 **Acción:** borrar el symlink, o reapuntarlo si ese router todavía cumple una función. Verificar primero si algo lo lee.
-
-
-### Skills propios del harness sin versionar
-
-**Por qué:** `audit-harness`, `recall-cowork` y `graphify` viven como directorios reales en `~/.claude-lazy/skills/`, fuera de todo repo — `git rev-parse` sobre ellos no resuelve nada. El resto del pool (`~/.agents/skills/`) tampoco está versionado; lo gobierna un `.skill-lock.json` externo. Un borrado del profile, o un `lh deploy` con la lógica de symlinks cambiada, los pierde sin traza. `lh deploy` declara en su docstring que symlinkea skills, pero no hay sección de config que declare desde dónde.
-
-**Fuente:** medido el 2026-09-10 al buscar dónde alojar un skill nuevo (`rightsize-claude-md`, track 1c del design 2026-09-10). No hay respuesta correcta hoy: versionarlo en este repo implica que `lh deploy` sepa desplegarlo, y esa capacidad no existe.
-
-**Acción:** decidir el origen canónico de los skills propios y darle a `lh deploy` una sección de config que lo declare. Hasta entonces, todo skill nuevo hereda el mismo problema.
 
 
 ### Loop engineering — fases 1 a 4 sin trackear
