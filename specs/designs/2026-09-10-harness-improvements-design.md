@@ -169,6 +169,51 @@ active is the evidence that append-only without decay does not stay useful.
 Detection 1 is deterministic and ships first. Detection 2 needs semantic
 judgement and is the reason the command is propose-only.
 
+### Track 1 result — pruned 2026-09-10
+
+Seven contracts pruned, each verified independently against `wc` rather than on
+the pruning agent's report. Over-threshold count went from 14/36 to 8/36.
+
+| Repo | Before | After |
+|---|---|---|
+| `lazy-popopen` | 987 lines / 70.4 KB | 86 / 11.9 KB |
+| `ydi-mgmt` | 347 / 18.1 KB | 166 / 11.1 KB |
+| `lazy-ansible` | 308 / 15.3 KB | 193 / 11.1 KB |
+| `tb-ydi-delivery` | 253 / 11.5 KB | 171 / 7.4 KB |
+| `supervielle-mgmt` | 232 / 10.1 KB | 194 / 8.4 KB |
+| `lazy-desktop-manager` | 223 / 16.5 KB | 157 / 10.4 KB |
+| `lazy-ai-tools` | 333 / 23.9 KB | 194 / 12.6 KB |
+
+Both profile contracts came down as a side effect: their weight is
+`_common/CLAUDE.common.md`, shared, so pruning it once moved `lazy` from
+12672 to 11530 bytes and `flex` from 12658 to 11516. Both are now under the byte
+ceiling; both remain a few lines over 200.
+
+**Where the pruning was deliberately stopped short.** `lazy-ai-tools` sits 579
+bytes over the byte ceiling on purpose. Reaching it had cost three gotchas whose
+failure mode is silence — a pass that never creates a project, `cache_*` being
+`None` and never `0`, and the `--profile lazy` pin that makes a matched profile
+distinguishable from a guessed one. They were restored. The size hook warns
+rather than blocks precisely so a contract can make this trade.
+
+The same reasoning applies to the three files left a few lines over 200 with
+their bytes already under: the hook's own comment says the context window pays
+for bytes, not newlines. Line count is the proxy; it is not worth spending a
+gotcha on.
+
+**One regression, caught and repaired.** The `ydi-mgmt` agent removed a
+phase roadmap that existed nowhere else, leaving it only in git history. It said
+so in its report rather than omitting it, and the content was restored to
+`domains/estrategia/README.md` — the location the contract itself designates for
+live domain state. This is the failure the skill warns about: deleting from one
+place without creating in the other.
+
+**Excluded on purpose.** The two `Archon` contracts (813 and 779 lines) belong
+to an external open-source project; their contract comes from upstream and
+pruning it would conflict on the next merge. The eleven contracts under
+`ydi-data-layer/.worktrees/` are copies of one branch, and confirm the
+command's worktree prune works.
+
 ## Out of scope
 
 **The false-edge test for workflows.** The Workflow tool has zero uses, and
