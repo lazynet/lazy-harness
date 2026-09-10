@@ -10,6 +10,7 @@ from pathlib import Path
 import click
 
 from lazy_harness.core.config import Config, ConfigError, load_config
+from lazy_harness.core.decay import apply_decay, find_decay_candidates
 from lazy_harness.core.paths import config_file
 from lazy_harness.core.proposals import (
     _RATIONALE_PREFIX,
@@ -18,6 +19,7 @@ from lazy_harness.core.proposals import (
     _remove_proposal,
     parse_proposals,
 )
+from lazy_harness.core.reconcile import detect_schema_drift
 from lazy_harness.llm.invoke import run_inference
 
 
@@ -683,3 +685,204 @@ def memory_migrate(do_apply: bool) -> None:
         click.echo(f"  conflict: {m.target} already holds files; left {m.source} in place")
     for m, err in result.failures:
         click.echo(f"  failed: {m.source}: {err}")
+
+
+# --- decay + reconcile (ADR-040) ---
+
+
+def _default_learnings_dir() -> Path | None:
+    """The knowledge store's global `learnings/` tree, or None with no store.
+
+    Unlike `decisions.jsonl`, learnings are not per-project: `directory.py`
+    puts every learning under one `learnings/` root regardless of `origin`,
+    so there is nothing to scope by `--memory-dir` here the way `consolidate`
+    scopes by project.
+    """
+    from lazy_harness.hooks.builtins._shared import knowledge_root_for
+    from lazy_harness.knowledge.directory import learnings_dir as store_learnings_dir
+    from lazy_harness.knowledge.marker import MarkerError
+
+    cfg = _load_config_for_consolidate()
+    root = knowledge_root_for(cfg)
+    if root is None:
+        return None
+    try:
+        return store_learnings_dir(root)
+    except MarkerError:
+        return None
+
+
+@memory.command("decay")
+@click.option(
+    "--learnings-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Learnings directory to scan. Defaults to the knowledge store's learnings/ tree.",
+)
+@click.option(
+    "--horizon-days",
+    type=int,
+    default=90,
+    show_default=True,
+    help="Mark active learnings whose origin_session is at least this old.",
+)
+@click.option("--apply", "do_apply", is_flag=True, help="Write status: superseded. Off by default.")
+def decay(learnings_dir: Path | None, horizon_days: int, do_apply: bool) -> None:
+    """Mark learnings with no reference in --horizon-days as superseded.
+
+    Nothing in the harness logs when a learning is retrieved, so
+    `origin_session` age is the deterministic proxy for "unreferenced": a
+    learning still `active` after `--horizon-days` with no newer activity is
+    a candidate. Never deletes — a learning already marked anything but
+    `active` is skipped on every later run, so decay is safe to repeat.
+    Propose-only by default; pass --apply to write.
+    """
+    target = learnings_dir if learnings_dir is not None else _default_learnings_dir()
+    if target is None:
+        click.echo("No knowledge store configured; nothing to scan.", err=True)
+        raise SystemExit(1)
+
+    today = date.today()
+    candidates = find_decay_candidates(target, horizon_days=horizon_days, today=today)
+    if not candidates:
+        click.echo(f"No active learnings older than {horizon_days} days at {target}.")
+        return
+
+    click.echo(f"{len(candidates)} learnings with no reference in {horizon_days}+ days:")
+    for c in candidates:
+        try:
+            rel = c.path.relative_to(target)
+        except ValueError:
+            rel = c.path
+        click.echo(f"  {rel}  (origin_session {c.origin_session}, {c.age_days}d) — {c.title}")
+
+    if not do_apply:
+        click.echo("")
+        click.echo("Dry run. Re-run with --apply to mark them status: superseded (never deletes).")
+        return
+
+    reason = f"no reference within {horizon_days} days"
+    written = apply_decay(candidates, reason=reason, today=today)
+    click.echo("")
+    click.echo(f"Marked {len(written)} learnings status: superseded.")
+
+
+def _all_project_memory_dirs() -> list[Path]:
+    from lazy_harness.core.memory_store import store_memory_dirs
+    from lazy_harness.hooks.builtins._shared import knowledge_root_for
+
+    cfg = _load_config_for_consolidate()
+    root = knowledge_root_for(cfg)
+    return store_memory_dirs(root)
+
+
+def _build_reconcile_prompt(entries: list[str]) -> str:
+    sections = [
+        "You are reviewing one project's distilled decisions.jsonl, an",
+        "append-only log of engineering decisions made over time. Find pairs",
+        "of entries whose summaries contradict each other — e.g. one adopts X",
+        "and a later one adopts something incompatible with X for the same",
+        "problem. Do not decide which one is current and do not rewrite",
+        "either entry. Quote both summaries verbatim for every contradicting",
+        "pair you find. If there are none, output exactly the line",
+        "'No contradictions found.' and nothing else.",
+        "\n## decisions.jsonl entries",
+    ]
+    sections.extend(entries)
+    return "\n".join(sections)
+
+
+@memory.command("reconcile")
+@click.option(
+    "--memory-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Single project's memory dir. Defaults to every project in the knowledge store.",
+)
+@click.option(
+    "--last",
+    type=int,
+    default=50,
+    show_default=True,
+    help="Tail this many decisions.jsonl entries per project for --check-contradictions.",
+)
+@click.option(
+    "--check-contradictions",
+    is_flag=True,
+    help="Also run the LLM contradiction pass (detection 2). Off by default.",
+)
+@click.option(
+    "--model",
+    default=None,
+    help="Headless model for --check-contradictions. Defaults to [compound_loop].model.",
+)
+@click.option(
+    "--timeout",
+    type=int,
+    default=120,
+    show_default=True,
+    help="LLM invocation timeout in seconds, for --check-contradictions.",
+)
+def reconcile(
+    memory_dir: Path | None,
+    last: int,
+    check_contradictions: bool,
+    model: str | None,
+    timeout: int,
+) -> None:
+    """Report decisions.jsonl schema drift and, optionally, contradictions.
+
+    Read-only: reconcile never writes and never has an --apply. Detection 1
+    (schema drift — lines that do not share the current field set) is
+    deterministic and always runs. Detection 2 (contradicting decisions) is
+    a judgement call an LLM makes and a human resolves; reconcile never picks
+    a winner, so it only runs when --check-contradictions is passed.
+    """
+    targets = [memory_dir] if memory_dir is not None else _all_project_memory_dirs()
+    if not targets:
+        click.echo("No project memory found in the knowledge store.")
+        return
+
+    any_drift = False
+    for target in targets:
+        report = detect_schema_drift(target / "decisions.jsonl")
+        if report is None or not report.has_drift:
+            continue
+        any_drift = True
+        drifted = sum(g.count for g in report.minority_groups)
+        click.echo(f"{target}")
+        click.echo(
+            f"  {report.total_lines} lines · current schema "
+            f"({report.total_lines - drifted} lines): {', '.join(report.majority_fields)}"
+        )
+        for g in report.minority_groups:
+            plural = "" if g.count == 1 else "s"
+            click.echo(
+                f"  {g.count} line{plural} on a different schema "
+                f"(e.g. line {g.example_line_numbers[0]}): {', '.join(g.fields)}"
+            )
+        click.echo("")
+    if not any_drift:
+        click.echo("No schema drift found.")
+
+    if not check_contradictions:
+        return
+
+    click.echo("")
+    click.echo("Checking for contradicting decisions (LLM, read-only)...")
+    cfg = _load_config_for_consolidate()
+    for target in targets:
+        entries = _read_jsonl_tail(target / "decisions.jsonl", last)
+        if not entries:
+            continue
+        prompt = _build_reconcile_prompt(entries)
+        result = run_inference(prompt, role="distill", cfg=cfg, timeout=timeout, model=model)
+        if not result.success:
+            error = result.error.message if result.error else "unknown error"
+            click.echo(f"{target}: LLM backend failed ({error})")
+            continue
+        output = result.output.strip()
+        if not output or output.lower().startswith("no contradictions"):
+            continue
+        click.echo(f"\n{target}")
+        click.echo(output)
