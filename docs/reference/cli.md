@@ -305,7 +305,7 @@ lh knowledge graph update
 
 ## `lh memory`
 
-Diagnostic commands for the memory stack. Read-only inspection plus a propose-only consolidator — none of these write to `MEMORY.md` directly. Pair them with `lh status memory` for per-project counts.
+Diagnostic commands for the memory stack. Read-only inspection, a propose-only consolidator, and the Reconcile/Decay stages from [ADR-040](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/040-memory-reconcile-and-decay.md) — none of these write to `MEMORY.md` directly, and only `decay --apply` writes anything at all. Pair them with `lh status memory` for per-project counts.
 
 ### `lh memory status`
 
@@ -336,6 +336,45 @@ Flags:
 ```bash
 lh memory consolidate
 lh memory consolidate --memory-dir ~/.claude/projects/-Users-me-repo/memory --last 100
+```
+
+### `lh memory decay`
+
+Marks learnings `status: superseded` when they are still `active` and their `origin_session` is at least `--horizon-days` old ([ADR-040](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/040-memory-reconcile-and-decay.md)). Nothing in the harness logs when a learning is retrieved, so age since `origin_session` is the deterministic proxy for "unreferenced" — a learning nobody has reinforced by the time the horizon closes.
+
+Dry-run by default: lists candidates with their age and title. `--apply` rewrites `status`, `deprecated_by`, `deprecated_on` and `deprecated_reason` in place — the four fields every learning already carries as `null` — and leaves everything else in the file byte-identical. The command never deletes a file, and a learning once marked is not reconsidered on a later run.
+
+Flags:
+
+- `--learnings-dir <path>` — directory to scan. Defaults to the knowledge store's `learnings/` tree.
+- `--horizon-days <n>` — age threshold in days. Default `90`.
+- `--apply` — write the marks. Off by default.
+
+```bash
+lh memory decay
+lh memory decay --horizon-days 180
+lh memory decay --apply
+```
+
+### `lh memory reconcile`
+
+Reports two kinds of drift in `decisions.jsonl`, never resolves either ([ADR-040](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/040-memory-reconcile-and-decay.md)):
+
+1. **Schema drift** — lines that do not share the field set most lines use, grouped and reported with line numbers. Deterministic, runs by default, scoped to every project in the knowledge store unless `--memory-dir` narrows it to one.
+2. **Contradicting decisions** — pairs of entries within one project whose summaries conflict, found by sending the tail of `decisions.jsonl` to the `distill` role. Off by default behind `--check-contradictions`: a bare `lh memory reconcile` fans out over every project, and an LLM pass over all of them should be a deliberate choice.
+
+There is no `--apply`. Schema drift has nothing correct to backfill; a contradiction is for a human to resolve, not the command.
+
+Flags:
+
+- `--memory-dir <path>` — one project's memory dir. Defaults to every project in the store.
+- `--last <n>` — tail this many `decisions.jsonl` entries per project for `--check-contradictions`. Default `50`.
+- `--check-contradictions` — also run the LLM contradiction pass.
+- `--model <id>` / `--timeout <seconds>` — same as `consolidate`, only used with `--check-contradictions`.
+
+```bash
+lh memory reconcile
+lh memory reconcile --memory-dir ~/.claude/projects/-Users-me-repo/memory --check-contradictions
 ```
 
 ### `lh memory legacy-check`
