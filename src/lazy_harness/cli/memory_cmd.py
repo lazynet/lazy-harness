@@ -624,6 +624,147 @@ def proposals_reject(index: int, reason: str, memory_dir: Path | None) -> None:
     click.echo("Recorded in claude-md.rejected.md — the grader will be told not to re-propose it.")
 
 
+# Never worth walking into: version control internals, this repo's own linked
+# worktrees (each carries its own CLAUDE.md that would otherwise double-count
+# the repo), and dependency trees that can be arbitrarily deep and are never a
+# checkout in their own right.
+_NOISE_DIR_NAMES = frozenset({".git", ".worktrees", "node_modules", ".venv", "graphify-out"})
+
+# A ceiling, not the discovery rule: real layouts are pruned by hitting a repo
+# root or a noise directory long before this. It only stops a pathological
+# tree (or a symlink cycle) from recursing forever.
+_MAX_ROOT_SCAN_DEPTH = 6
+
+
+def _find_claude_mds(root: Path, *, max_depth: int = _MAX_ROOT_SCAN_DEPTH) -> list[Path]:
+    """Every `CLAUDE.md` reachable under `root`, discovered by walking down to
+    wherever a repository actually is rather than assuming a fixed depth.
+
+    `~/repos/lazy` keeps checkouts one level down; `~/repos/flex` groups them
+    under `apps/`, `infra/`, `mngt/`, `spikes/`, `others/` — a fixed-depth scan
+    silently dropped every project in the second shape, including four of the
+    most expensive repos of a month. Recursion stops at a repository's own
+    root (its CLAUDE.md, if any, is the whole contract — nothing inside it,
+    submodule or linked worktree, needs walking) and at `_NOISE_DIR_NAMES`.
+    """
+    found: list[Path] = []
+
+    def walk(directory: Path, depth: int) -> None:
+        if depth > max_depth:
+            return
+        claude_md = directory / "CLAUDE.md"
+        if claude_md.is_file():
+            found.append(claude_md)
+        if (directory / ".git").exists():
+            # A repository root: everything under it belongs to this one
+            # project, worktrees and submodules included.
+            return
+        try:
+            children = sorted(p for p in directory.iterdir() if p.is_dir())
+        except OSError:
+            return
+        for child in children:
+            if child.name in _NOISE_DIR_NAMES:
+                continue
+            walk(child, depth + 1)
+
+    walk(root, 0)
+    return found
+
+
+def _project_claude_mds(cfg: Config) -> list[tuple[str, Path]]:
+    """`(label, path)` for every reachable CLAUDE.md under a configured root.
+
+    Walks the profile `roots` used for cwd-based profile routing — `roots`
+    names the directory that holds checkouts, at whatever depth they sit.
+    `core.project_identity.project_key` is the resolver this command uses
+    deliberately (see `tests/unit/hooks/builtins/test_shared.py` for the
+    integration test asserting it agrees with the other resolver on where a
+    worktree's root is) — purely to label the row, never to filter it.
+    Whether a project already has memory in the knowledge store is a separate
+    question from whether its CLAUDE.md is oversized: a repo nobody has
+    instrumented yet is exactly the kind most likely to carry an unpruned
+    contract, so a missing store entry (or a missing git remote, which falls
+    back to a `local/<name>` key) must not exclude it.
+    """
+    from lazy_harness.core.paths import expand_path
+    from lazy_harness.core.project_identity import project_key
+
+    found: list[tuple[str, Path]] = []
+    seen_paths: set[Path] = set()
+    for entry in cfg.profiles.items.values():
+        for root in entry.roots:
+            root_path = expand_path(root)
+            if not root_path.is_dir():
+                continue
+            for claude_md in _find_claude_mds(root_path):
+                candidate = claude_md.parent
+                if candidate in seen_paths:
+                    continue
+                seen_paths.add(candidate)
+                found.append((f"project:{project_key(candidate)}", claude_md))
+    return found
+
+
+@memory.command("rightsize")
+def rightsize() -> None:
+    """List every CLAUDE.md the harness can reach and which ceiling it breaches.
+
+    Read-only (ADR-030, Track 1b of the September 2026 harness improvements
+    design). Covers profile contracts — `<profile config_dir>/CLAUDE.md`,
+    loaded on every session in that profile — and the CLAUDE.md of every
+    project reachable under a configured `[profiles.*].roots` entry, whether or
+    not it has memory in the knowledge store yet. Thresholds are the same ones
+    `pre_tool_use_memory_size` warns against, read from the same
+    `[hooks.pre_tool_use]` config so the two cannot silently disagree.
+    """
+    from lazy_harness.core.profiles import list_profiles
+    from lazy_harness.hooks.builtins.pre_tool_use_memory_size import load_claude_md_thresholds
+
+    cf = config_file()
+    try:
+        cfg = load_config(cf) if cf.is_file() else Config()
+    except ConfigError as exc:
+        click.echo(f"Config invalid: {exc}", err=True)
+        raise SystemExit(1) from exc
+
+    max_lines, max_bytes = load_claude_md_thresholds(cf)
+
+    entries: list[tuple[str, Path]] = []
+    for profile in list_profiles(cfg):
+        if not profile.exists:
+            continue
+        claude_md = profile.config_dir / "CLAUDE.md"
+        if claude_md.is_file():
+            entries.append((f"profile:{profile.name}", claude_md))
+
+    entries.extend(_project_claude_mds(cfg))
+
+    if not entries:
+        click.echo("No CLAUDE.md files found.")
+        return
+
+    breach_count = 0
+    for label, path in entries:
+        text = path.read_text(errors="replace")
+        lines = len(text.splitlines())
+        size = len(text.encode("utf-8"))
+        breaches: list[str] = []
+        if lines > max_lines:
+            breaches.append(f"{lines} lines > {max_lines}")
+        if size > max_bytes:
+            breaches.append(f"{size} bytes > {max_bytes}")
+        if breaches:
+            breach_count += 1
+        breach_text = "; ".join(breaches) if breaches else "-"
+        click.echo(f"{label:<40} {lines:>6} lines  {size:>8} bytes  {breach_text}")
+
+    click.echo("")
+    click.echo(
+        f"{breach_count}/{len(entries)} over threshold ({max_lines} lines / {max_bytes} bytes)"
+    )
+
+
 @memory.command("migrate")
 @click.option("--apply", "do_apply", is_flag=True, help="Move the files. Off by default.")
 def memory_migrate(do_apply: bool) -> None:
