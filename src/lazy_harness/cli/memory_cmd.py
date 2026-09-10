@@ -622,6 +622,133 @@ def proposals_reject(index: int, reason: str, memory_dir: Path | None) -> None:
     click.echo("Recorded in claude-md.rejected.md — the grader will be told not to re-propose it.")
 
 
+def _known_project_keys(knowledge_root: Path | None) -> set[str]:
+    """Project keys with distilled memory already in the knowledge store.
+
+    Mirrors the area lookup `memory_migration.plan_migration` does before
+    building a target path — read-only, fail-soft for the same reason: an
+    unusable store means nothing is known yet, not an error.
+    """
+    if knowledge_root is None:
+        return set()
+    try:
+        from lazy_harness.knowledge.marker import read_marker
+
+        area = read_marker(knowledge_root).memory
+    except Exception:  # noqa: BLE001 — an unusable store yields no keys, not a crash
+        return set()
+    if not area:
+        return set()
+    area_root = knowledge_root / area
+
+    from lazy_harness.core.memory_store import store_memory_dirs
+
+    keys: set[str] = set()
+    for store_dir in store_memory_dirs(knowledge_root):
+        try:
+            keys.add("/".join(store_dir.relative_to(area_root).parts))
+        except ValueError:
+            continue
+    return keys
+
+
+def _project_claude_mds(cfg: Config, known_keys: set[str]) -> list[tuple[str, Path]]:
+    """`(label, path)` for every reachable CLAUDE.md of a project the memory
+    stack already knows about.
+
+    Scans the profile `roots` used for cwd-based profile routing, one level
+    deep — that is where a checkout lives, `roots` names the directory that
+    holds checkouts. `core.project_identity.project_key` is the resolver this
+    command uses deliberately (see `tests/unit/hooks/builtins/test_shared.py`
+    for the integration test asserting it agrees with the other resolver on
+    where a worktree's root is): membership in `known_keys` is checked against
+    its *real* output for each candidate, never guessed from the directory
+    name, so it is exact regardless of how the checkout is named locally.
+    """
+    from lazy_harness.core.paths import expand_path
+    from lazy_harness.core.project_identity import project_key
+
+    found: list[tuple[str, Path]] = []
+    seen_paths: set[Path] = set()
+    for entry in cfg.profiles.items.values():
+        for root in entry.roots:
+            root_path = expand_path(root)
+            if not root_path.is_dir():
+                continue
+            for candidate in sorted(root_path.iterdir()):
+                if not candidate.is_dir() or candidate in seen_paths:
+                    continue
+                seen_paths.add(candidate)
+                key = project_key(candidate)
+                if key not in known_keys:
+                    continue
+                claude_md = candidate / "CLAUDE.md"
+                if claude_md.is_file():
+                    found.append((f"project:{key}", claude_md))
+    return found
+
+
+@memory.command("rightsize")
+def rightsize() -> None:
+    """List every CLAUDE.md the harness can reach and which ceiling it breaches.
+
+    Read-only (ADR-030, Track 1b of the September 2026 harness improvements
+    design). Covers profile contracts — `<profile config_dir>/CLAUDE.md`,
+    loaded on every session in that profile — and the CLAUDE.md of every
+    project the memory stack already has distilled memory for. Thresholds are
+    the same ones `pre_tool_use_memory_size` warns against, read from the same
+    `[hooks.pre_tool_use]` config so the two cannot silently disagree.
+    """
+    from lazy_harness.core.profiles import list_profiles
+    from lazy_harness.hooks.builtins._shared import knowledge_root_for
+    from lazy_harness.hooks.builtins.pre_tool_use_memory_size import load_claude_md_thresholds
+
+    cf = config_file()
+    try:
+        cfg = load_config(cf) if cf.is_file() else Config()
+    except ConfigError as exc:
+        click.echo(f"Config invalid: {exc}", err=True)
+        raise SystemExit(1) from exc
+
+    max_lines, max_bytes = load_claude_md_thresholds(cf)
+
+    entries: list[tuple[str, Path]] = []
+    for profile in list_profiles(cfg):
+        if not profile.exists:
+            continue
+        claude_md = profile.config_dir / "CLAUDE.md"
+        if claude_md.is_file():
+            entries.append((f"profile:{profile.name}", claude_md))
+
+    known_keys = _known_project_keys(knowledge_root_for(cfg))
+    if known_keys:
+        entries.extend(_project_claude_mds(cfg, known_keys))
+
+    if not entries:
+        click.echo("No CLAUDE.md files found.")
+        return
+
+    breach_count = 0
+    for label, path in entries:
+        text = path.read_text(errors="replace")
+        lines = len(text.splitlines())
+        size = len(text.encode("utf-8"))
+        breaches: list[str] = []
+        if lines > max_lines:
+            breaches.append(f"{lines} lines > {max_lines}")
+        if size > max_bytes:
+            breaches.append(f"{size} bytes > {max_bytes}")
+        if breaches:
+            breach_count += 1
+        breach_text = "; ".join(breaches) if breaches else "-"
+        click.echo(f"{label:<40} {lines:>6} lines  {size:>8} bytes  {breach_text}")
+
+    click.echo("")
+    click.echo(
+        f"{breach_count}/{len(entries)} over threshold ({max_lines} lines / {max_bytes} bytes)"
+    )
+
+
 @memory.command("migrate")
 @click.option("--apply", "do_apply", is_flag=True, help="Move the files. Off by default.")
 def memory_migrate(do_apply: bool) -> None:
