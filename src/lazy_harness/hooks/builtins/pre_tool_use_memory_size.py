@@ -1,7 +1,13 @@
-"""PreToolUse hook: warn when MEMORY.md edits push past the curated ceiling.
+"""PreToolUse hook: warn when MEMORY.md or CLAUDE.md edits push past ceiling.
 
 ADR-030 G2 — non-blocking. Emits hookSpecificOutput.systemMessage as a warning
-banner so the write goes through and the user sees a hint to consolidate.
+banner so the write goes through and the user sees a hint to trim.
+
+CLAUDE.md gets its own threshold pair (1a of the September 2026 harness
+improvements design), separate from MEMORY.md's: the two files have different
+jobs — MEMORY.md is a curated index, CLAUDE.md is a contract that loads on
+every session in every profile. `lh memory rightsize` surfaces the same
+thresholds across every CLAUDE.md the harness can reach.
 
 Bypass with `LH_MEMORY_SIZE_BYPASS=1` (used by the consolidator pathway).
 """
@@ -11,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tomllib
 from pathlib import Path
 
 MAX_LINES = 200
@@ -23,12 +30,22 @@ MAX_LINES = 200
 # controllable slice of the prompt prefix.
 MAX_BYTES = 12_000
 
+# CLAUDE.md defaults match the literature ceiling for an always-loaded
+# contract (~200 lines / ~12KB). Overridable per profile under
+# [hooks.pre_tool_use].claude_md_max_lines / claude_md_max_bytes.
+CLAUDE_MD_MAX_LINES = 200
+CLAUDE_MD_MAX_BYTES = 12_000
+
 
 def _read_stdin_json() -> dict:
     try:
-        return json.loads(sys.stdin.read())
+        data = json.loads(sys.stdin.read())
     except (json.JSONDecodeError, ValueError):
         return {}
+    # Valid JSON that is not an object (null, a number, a list, a bare
+    # string) parses cleanly but is not the payload shape Claude Code sends —
+    # treating it as empty keeps every downstream .get() safe.
+    return data if isinstance(data, dict) else {}
 
 
 def _is_memory_md_path(file_path: str) -> bool:
@@ -36,6 +53,55 @@ def _is_memory_md_path(file_path: str) -> bool:
         return False
     normalized = file_path.replace("\\", "/")
     return normalized.endswith("/memory/MEMORY.md")
+
+
+def _is_claude_md_path(file_path: str) -> bool:
+    if not file_path:
+        return False
+    normalized = file_path.replace("\\", "/")
+    return normalized == "CLAUDE.md" or normalized.endswith("/CLAUDE.md")
+
+
+def load_claude_md_thresholds(cfg_path: Path | None = None) -> tuple[int, int]:
+    """CLAUDE.md line/byte ceilings from [hooks.pre_tool_use] in config.toml.
+
+    Same fail-soft contract as the security hook's allowlist loader: a missing
+    file, malformed TOML, missing section, or wrong-typed value falls back to
+    the module defaults rather than raising or blocking the write. Shared with
+    `lh memory rightsize` so the hook and the audit command cannot silently
+    disagree about where the ceiling is.
+    """
+    try:
+        path = cfg_path if cfg_path is not None else _config_file()
+        if path is None or not path.is_file():
+            return CLAUDE_MD_MAX_LINES, CLAUDE_MD_MAX_BYTES
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return CLAUDE_MD_MAX_LINES, CLAUDE_MD_MAX_BYTES
+
+    hooks_section = data.get("hooks", {})
+    section = hooks_section.get("pre_tool_use", {}) if isinstance(hooks_section, dict) else {}
+    if not isinstance(section, dict):
+        return CLAUDE_MD_MAX_LINES, CLAUDE_MD_MAX_BYTES
+
+    lines = section.get("claude_md_max_lines", CLAUDE_MD_MAX_LINES)
+    if not isinstance(lines, int) or isinstance(lines, bool) or lines <= 0:
+        lines = CLAUDE_MD_MAX_LINES
+
+    max_bytes = section.get("claude_md_max_bytes", CLAUDE_MD_MAX_BYTES)
+    if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or max_bytes <= 0:
+        max_bytes = CLAUDE_MD_MAX_BYTES
+
+    return lines, max_bytes
+
+
+def _config_file() -> Path | None:
+    try:
+        from lazy_harness.core.paths import config_file
+
+        return config_file()
+    except Exception:
+        return None
 
 
 def _line_count(text: str) -> int:
@@ -70,15 +136,23 @@ def _projected_text(tool_name: str, tool_input: dict) -> str | None:
     return None
 
 
-def _emit_warning(file_path: str, breach: str) -> None:
+def _emit_warning(file_path: str, breach: str, kind: str) -> None:
+    if kind == "MEMORY.md":
+        hint = (
+            "Consider running `lh memory consolidate` to distill recent JSONL "
+            "entries, or move detail out of the index into the linked note, "
+            "before adding more."
+        )
+    else:
+        hint = (
+            "Consider whether each line is a fact the agent needs or a "
+            "procedure it would already follow. `lh memory rightsize` shows "
+            "every CLAUDE.md the harness can reach and which ceiling it breaches."
+        )
     output = {
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
-            "systemMessage": (
-                f"WARN: MEMORY.md at {file_path} would be {breach}. Consider running "
-                "`lh memory consolidate` to distill recent JSONL entries, or move detail "
-                "out of the index into the linked note, before adding more."
-            ),
+            "systemMessage": f"WARN: {kind} at {file_path} would be {breach}. {hint}",
         }
     }
     print(json.dumps(output))
@@ -113,9 +187,20 @@ def main() -> None:
 
     if tool_name not in {"Edit", "Write"}:
         sys.exit(0)
+    if not isinstance(tool_input, dict):
+        sys.exit(0)
 
     file_path = tool_input.get("file_path", "")
-    if not _is_memory_md_path(file_path):
+    if not isinstance(file_path, str) or not file_path:
+        sys.exit(0)
+
+    if _is_memory_md_path(file_path):
+        kind = "MEMORY.md"
+        max_lines, max_bytes = MAX_LINES, MAX_BYTES
+    elif _is_claude_md_path(file_path):
+        kind = "CLAUDE.md"
+        max_lines, max_bytes = load_claude_md_thresholds()
+    else:
         sys.exit(0)
 
     projected = _projected_text(tool_name, tool_input)
@@ -125,13 +210,13 @@ def main() -> None:
     lines = _line_count(projected)
     size = len(projected.encode("utf-8"))
     breaches = []
-    if lines > MAX_LINES:
-        breaches.append(f"{lines} lines (threshold {MAX_LINES})")
-    if size > MAX_BYTES:
-        breaches.append(f"{size / 1000:.1f}KB (threshold {MAX_BYTES / 1000:.0f}KB)")
+    if lines > max_lines:
+        breaches.append(f"{lines} lines (threshold {max_lines})")
+    if size > max_bytes:
+        breaches.append(f"{size / 1000:.1f}KB (threshold {max_bytes / 1000:.0f}KB)")
 
     if breaches:
-        _emit_warning(file_path, " and ".join(breaches))
+        _emit_warning(file_path, " and ".join(breaches), kind)
 
     sys.exit(0)
 
