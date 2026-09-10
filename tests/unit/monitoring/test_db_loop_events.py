@@ -120,6 +120,30 @@ def test_clear_agent_dispatches_leaves_other_sessions_alone(db: MetricsDB) -> No
     assert db.loop_event_counts() == {"agent_dispatched": 1}
 
 
+def test_has_loop_event_is_true_once_the_kind_is_recorded_for_the_session(
+    db: MetricsDB,
+) -> None:
+    db.record_loop_event(session="s1", kind="verify_ran", project="p")
+
+    assert db.has_loop_event("s1", "verify_ran") is True
+
+
+def test_has_loop_event_is_false_for_an_unrecorded_kind(db: MetricsDB) -> None:
+    db.record_loop_event(session="s1", kind="verify_ran", project="p")
+
+    assert db.has_loop_event("s1", "verify_block") is False
+
+
+def test_has_loop_event_does_not_match_a_different_session(db: MetricsDB) -> None:
+    db.record_loop_event(session="s1", kind="verify_ran", project="p")
+
+    assert db.has_loop_event("s2", "verify_ran") is False
+
+
+def test_has_loop_event_on_an_empty_table_is_false(db: MetricsDB) -> None:
+    assert db.has_loop_event("s1", "verify_ran") is False
+
+
 def test_clear_agent_dispatches_on_a_session_with_no_dispatches_is_a_no_op(
     db: MetricsDB,
 ) -> None:
