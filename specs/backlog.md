@@ -50,6 +50,7 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 - [x] **Backends systemd y cron del scheduler** — ADR-013 completo. `SystemdBackend` escribe `.timer` + `.service` bajo `$XDG_CONFIG_HOME/systemd/user/` y chequea lingering; `CronBackend` escribe un bloque delimitado preservando las entradas del usuario. Traducción compartida en `scheduler/schedule.py`, que rechaza en vez de aproximar.
 - [x] **Traducción de schedule que se niega en vez de adivinar** — `scheduler/schedule.py` con `parse_cron`/`render_launchd`/`ScheduleTranslationError`; `_cron_to_calendar` y `_cron_to_interval` borrados (ADR-013 D4, PR #168, 2026-08-17). Verificado el 2026-09-10 contra las 7 formas comunes: diaria, cada N horas, semanal, mensual y cada N minutos traducen; listas y rangos levantan, porque launchd no puede expresarlos. `lh status cron` muestra el schedule real y `selftest` gana el check `units-stale`. El backlog lo listó como ALTA abierta durante tres semanas después de estar cerrado.
 - [x] **`lh deploy` default hooks merge** — `DEFAULT_HOOKS` literal in `deploy/defaults.py` + `merge_with_defaults` pure function; per-event override via config.toml (`scripts = []` opts out); framework-owned `settings.json[hooks]` with backup + warning when manual entries are clobbered (ADR-031, 11 tests TDD). Also fixed `ClaudeCodeAdapter` missing `post_compact → PostCompact` mapping. Closes the 2026-04-17 partial-config drift and makes built-ins out-of-the-box.
+- [x] **`save_config` destruía config (51 claves) + tres claves de `[context_inject]` ignoradas en silencio** — read-modify-write sobre TOML crudo (`tomlkit`) en vez de completar el serializer, per D5 de [`designs/2026-08-17-capability-registry-design.md`](designs/2026-08-17-capability-registry-design.md) (commit `56429ad`, PR #167). Selftest `check_config_round_trip` registrado. Esta entrada había quedado listada como ALTA abierta pese a estar mergeada desde el 2026-08-17; el backlog no se había actualizado. Reconciliado el 2026-09-10 agregando además `tests/unit/test_config.py::test_save_config_round_trip_preserves_every_key_of_the_live_config` y `::test_context_inject_switches_survive_round_trip_against_the_live_config`, que corren el ciclo completo contra una copia del `config.toml` real de la máquina (nunca contra el archivo real) en vez de solo contra el fixture sintético `_FULL_CONFIG`.
 
 ---
 
@@ -81,15 +82,6 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 **Acción:** darle a `verify-before-done` una forma de emitir `verify_ran`, y recién entonces agregar la entrada `[hooks.session_stop]`. Hasta que eso pase, **no desplegar el hook**: el registro en `_BUILTIN_HOOKS` no lo activa, y esa inercia es la que lo mantiene inofensivo.
 
 
-### `save_config` destruye config — 51 claves perdidas por escritura
-
-`load_config` lee 14 secciones top-level; `_config_to_dict` emite 10, varias parciales. Medido contra el config vivo: se pierden `[compound_loop]`, `[memory.engram]` y `[lazynorth]` enteras, `knowledge.structure`, los 6 `[scheduler.jobs.*]`, `hooks.pre_tool_use.allow_patterns` y `profiles.<name>.lazynorth_doc`.
-
-No causó daño visible todavía porque el único caller en producción es `lh profile`, y los wizards lo esquivan vía `wizards/_toml_merge.py`. Deja de ser esquivable en cuanto algo más escriba config. Fix elegido: read-modify-write sobre el TOML crudo, no completar el serializer. Detalle y tests en [`designs/2026-08-17-capability-registry-design.md`](designs/2026-08-17-capability-registry-design.md) D5.
-
-### Tres claves de `[context_inject]` se ignoran en silencio
-
-`ContextInjectConfig` declara `qmd_suggest_enabled`, `qmd_suggest_top_k` y `graphify_surface_enabled`; `hooks/builtins/context_inject.py` las lee en las líneas 779, 787 y 790; y el bloque de parseo de `load_config` no las puebla nunca. Verificado: pedir `qmd_suggest_enabled = false` carga `True`. Los tres switches están clavados en su default y no hay forma de apagarlos desde config. Se arregla junto con el round-trip.
 
 ---
 
