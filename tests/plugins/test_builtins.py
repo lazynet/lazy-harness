@@ -83,7 +83,13 @@ def test_the_three_any_event_hooks_are_knowingly_absent() -> None:
     declared for them anywhere in the code — they attach wherever the user puts
     them. Giving them a fixed `config_path` would invent that event and answer
     wrongly for anyone who configured them elsewhere, so they are left out
-    until the registry can express "enabled under any event"."""
+    until the registry can express "enabled under any event".
+
+    `stop-verify-guard` is absent for a different reason: it has one fixed
+    event (`Stop`), but nothing in this repo yet emits the `verify_ran` event
+    it waits for (see docs/how/hooks.md). Registering it as default-on before
+    that producer exists would deploy a guard that always blocks once and
+    never actually verifies anything."""
     from lazy_harness.hooks.loader import list_builtin_hooks
     from lazy_harness.plugins.builtins import builtin_registry
 
@@ -93,6 +99,7 @@ def test_the_three_any_event_hooks_are_knowingly_absent() -> None:
     assert missing == {
         "herdr-context-gauge",
         "post-tool-use-ansible-lint",
+        "stop-verify-guard",
         "user-prompt-goal",
     }
 

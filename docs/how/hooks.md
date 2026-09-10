@@ -537,6 +537,37 @@ Mechanics:
 scripts = ["user-prompt-goal"]
 ```
 
+### `stop-verify-guard` — runs on `Stop`
+
+Source: `src/lazy_harness/hooks/builtins/stop_verify_guard.py`.
+
+Responsibility: soft-enforce verification before a session that declared a goal closes. Once per session: if the session declared a goal and no `verify_ran` event exists for it, the first `Stop` attempt blocks with a reminder; the second closes regardless. The event is recorded either way. Gated behind the same `[loops] inject_goal_prompt` flag as `user-prompt-goal` — when it is off, the hook does nothing at all (no evaluation, no event, no block).
+
+**How "declared a goal" is detected.** Not via the compound-loop worker's `goal_declared`/`goal_absent` verdict — that is an LLM classification of the transcript made *after* the session ends and is structurally unavailable at `Stop` time. Instead, the hook scans the session's transcript JSONL for a `type: "attachment"` entry whose `attachment.type` is `"goal_status"` — the marker Claude Code's native `/goal <condition>` command writes to the transcript synchronously, the moment the command runs. This is a narrower signal than the compound-loop verdict: it only catches sessions where the user ran `/goal`, not ones where the assistant stated a prose criterion without it.
+
+Mechanics:
+
+1. If `[loops] inject_goal_prompt` is off, exit 0 immediately.
+2. Read `session_id` from stdin JSON; exit 0 if missing or not a string.
+3. Resolve the transcript path from the payload (`transcript_path` / `transcriptPath` / `input`) and scan it for a `goal_status` attachment. Exit 0 if no transcript is resolvable or no goal was declared.
+4. If a `verify_ran` event already exists for this session in `loop_events`, exit 0 — nothing to enforce.
+5. If a `verify_block` event already exists for this session (this is at least the second `Stop` attempt), record `verify_skipped` and exit 0 without blocking.
+6. Otherwise, record `verify_block` and print `{"decision": "block", "reason": "..."}` to stdout.
+7. Always exit 0, even on malformed input, an unreadable transcript, or database write failures.
+
+**Output:** `{"decision": "block", "reason": "<reminder>"}` on the first qualifying `Stop`; nothing on every other path.
+
+**Where it writes:** the `loop_events` table in `metrics.db`, resolved via `resolve_db_path()` — the same `[monitoring] db`-then-`data_dir()` resolution every reader and writer of this table uses.
+
+**A known gap:** nothing in this repo currently emits `verify_ran`. It is meant to come from the `verify-before-done` skill, which lives outside this repo (deployed under `~/.claude-<profile>/skills/`) and today is a procedure document only — it does not call `lh` or write to `loop_events`. Until it does, every session that declares a goal blocks once on its first `Stop` and then always passes on the second, regardless of whether verification actually happened.
+
+**Enabling it:** the hook is registered but not part of the default hook set — it is not yet wired into any `config.toml` in this repo. Opt in explicitly once `verify_ran` has a producer:
+
+```toml
+[hooks.session_stop]
+scripts = ["session-export", "compound-loop", "engram-persist", "stop-verify-guard"]
+```
+
 ## How the hooks complement each other
 
 The magic is the composition, not any single hook. A full session lifecycle:

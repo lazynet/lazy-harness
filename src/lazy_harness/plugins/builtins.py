@@ -59,12 +59,20 @@ _TOOLS = [
 # starts being deployed without editing that file — the "registered but
 # forgotten in the defaults" failure has no place left to happen.
 #
-# Three builtin hooks are deliberately absent: `herdr-context-gauge`,
-# `post-tool-use-ansible-lint` and `user-prompt-goal` appear in no default
-# list, so no event is declared for them anywhere in the code. They attach
-# wherever the operator puts them, and giving them a fixed `config_path` here
-# would invent that event and then answer wrongly for anyone who configured
-# them under a different one.
+# Four builtin hooks are deliberately absent. Three — `herdr-context-gauge`,
+# `post-tool-use-ansible-lint` and `user-prompt-goal` — appear in no default
+# list because no event is declared for them anywhere in the code: they
+# attach wherever the operator puts them, and giving them a fixed
+# `config_path` here would invent that event and then answer wrongly for
+# anyone who configured them under a different one.
+#
+# `stop-verify-guard` has one fixed event (`Stop`) but is absent for a
+# different reason: nothing in this repo yet emits the `verify_ran` event it
+# waits for — that is meant to come from the `verify-before-done` skill,
+# which lives outside this repo and today is a procedure document only. See
+# docs/how/hooks.md. Defaulting it on before that producer exists would
+# deploy a guard that always blocks once per session and never actually
+# verifies anything.
 _DEFAULT_ON_HOOKS: dict[str, list[str]] = {
     "session_start": ["context-inject"],
     "session_stop": ["session-export", "compound-loop", "engram-persist"],
