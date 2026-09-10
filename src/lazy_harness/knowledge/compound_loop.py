@@ -106,11 +106,15 @@ def extract_insights(session_jsonl: Path, since_index: int = 0) -> list[Insight]
 
 @dataclass(frozen=True)
 class AgentDispatch:
-    """One `Task` tool_use block found in a session transcript.
+    """One `Agent` tool_use block found in a session transcript.
 
-    `Task` is the transcript's tool name for what the UI presents as the
-    Agent tool. `model` is empty when the dispatch omitted the optional
-    `model` param (the subagent then inherits the caller's model).
+    Verified against real transcripts under `~/.claude-lazy/projects/`
+    (September 2026): the tool_use block's `name` is `Agent`, not `Task` —
+    grepping an adapter's tool-name constant is not the same as checking
+    what the agent actually wrote to disk. `model` is empty when the
+    dispatch omitted the optional `model` param (the subagent then inherits
+    the caller's model) or passed it as JSON `null`, which real dispatches
+    do for `subagent_type` too.
     """
 
     subagent_type: str
@@ -120,7 +124,7 @@ class AgentDispatch:
 def extract_agent_dispatches(session_jsonl: Path) -> list[AgentDispatch]:
     """Scan a session JSONL for Agent-tool dispatches.
 
-    Only assistant `tool_use` blocks named `Task` count — a user message
+    Only assistant `tool_use` blocks named `Agent` count — a user message
     carrying the same shape cannot fabricate a dispatch. Malformed lines and
     unexpected value shapes are skipped rather than raised: this parses
     transcript JSON whose shape is not guaranteed.
@@ -144,7 +148,7 @@ def extract_agent_dispatches(session_jsonl: Path) -> list[AgentDispatch]:
                 for block in content:
                     if not isinstance(block, dict) or block.get("type") != "tool_use":
                         continue
-                    if block.get("name") != "Task":
+                    if block.get("name") != "Agent":
                         continue
                     inp = block.get("input", {})
                     if not isinstance(inp, dict):

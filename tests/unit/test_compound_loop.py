@@ -1702,15 +1702,45 @@ def test_process_task_reprocessing_a_grown_session_reflects_the_new_dispatch_cou
 
 
 # ---------------------------------------------------------------------------
-# extract_agent_dispatches — deterministic parse of Task tool_use blocks
+# extract_agent_dispatches — deterministic parse of Agent tool_use blocks
 # ---------------------------------------------------------------------------
+
+_FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures"
 
 
 def _dispatch_message(inp: Any) -> dict[str, Any]:
     return {
         "type": "assistant",
-        "message": {"content": [{"type": "tool_use", "name": "Task", "input": inp}]},
+        "message": {"content": [{"type": "tool_use", "name": "Agent", "input": inp}]},
     }
+
+
+def test_extract_agent_dispatches_matches_a_real_anonymized_transcript() -> None:
+    """`tests/fixtures/agent-dispatch-session.jsonl` is anonymized (paths and
+    the username redacted; prompt text truncated) but otherwise real output
+    from a Claude Code session under `~/.claude-lazy/projects/` (September
+    2026) — full envelope included, not trimmed to what the implementation
+    reads. The expected dispatches were read off that file with `jq` before
+    this test was written, independently of `extract_agent_dispatches`:
+
+        jq -c 'select(.message.content) | .message.content[]?
+               | select(.type=="tool_use" and .name=="Agent") | .input
+               | {subagent_type, model}' agent-dispatch-session.jsonl
+        {"subagent_type":"general-purpose","model":"haiku"}
+        {"subagent_type":null,"model":"sonnet"}
+
+    The fixture also carries one real `Bash` tool_use line as a negative
+    control — proving the parser filters by name against real data, not just
+    against a fixture shaped to make filtering trivial.
+    """
+    fixture = _FIXTURES_DIR / "agent-dispatch-session.jsonl"
+
+    dispatches = extract_agent_dispatches(fixture)
+
+    assert dispatches == [
+        AgentDispatch(subagent_type="general-purpose", model="haiku"),
+        AgentDispatch(subagent_type="", model="sonnet"),
+    ]
 
 
 def test_extract_agent_dispatches_parses_a_single_dispatch(tmp_path: Path) -> None:
@@ -1764,7 +1794,7 @@ def test_extract_agent_dispatches_defaults_model_when_omitted(tmp_path: Path) ->
     assert dispatches == [AgentDispatch(subagent_type="general-purpose", model="")]
 
 
-def test_extract_agent_dispatches_ignores_non_task_tool_use(tmp_path: Path) -> None:
+def test_extract_agent_dispatches_ignores_non_agent_tool_use(tmp_path: Path) -> None:
     session = tmp_path / "s.jsonl"
     _write_jsonl(
         session,
@@ -1793,7 +1823,7 @@ def test_extract_agent_dispatches_ignores_user_messages(tmp_path: Path) -> None:
                     "content": [
                         {
                             "type": "tool_use",
-                            "name": "Task",
+                            "name": "Agent",
                             "input": {"subagent_type": "general-purpose"},
                         }
                     ]
