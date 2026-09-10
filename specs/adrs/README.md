@@ -49,6 +49,7 @@ Decisions that define the `lazy-harness` project itself.
 | [037](./037-metric-event-v2-host-and-workload.md) | proposed | Metric event schema v2 — `host` and `workload` as first-class dimensions | `MetricEvent` gains `host` (resolved at ingest) and a caller-supplied `workload`, carried by a session id `lh exec` pins before spawning. |
 | [038](./038-exec-envelope-cost-provenance.md) | proposed | The `lh exec` envelope — cost provenance and the mute failure | A timed-out run is priced from its own transcript, `cost_source` names which door the figure came through, and a failure that says nothing gets a typed `error.kind`. |
 | [039](./039-role-routed-inference.md) | proposed | Role-routed inference — one resolution seam, two front ends | `lh exec` and `llm/registry.py` converge on `run_inference`; a named role picks the backend, so local models serve cheap work while Claude keeps the work that needs it. |
+| [040](./040-codex-agent-adapter.md) | proposed | Codex as a second agent — agents become plural per profile | A profile declares a config dir per agent; the adapter owns its settings file and its tool-name vocabulary, closing the two leaks a second agent exposes. |
 
 ### Status values
 
