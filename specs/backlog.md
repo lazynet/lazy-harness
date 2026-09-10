@@ -55,6 +55,17 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 
 ## Open — Prioridad ALTA
 
+### `uv run` devuelve exit codes espurios cuando el rebuild de graphify corre en paralelo
+
+**Por qué importa:** el non-negotiable #4 exige que los tres checks pasen con output impecable antes de cada commit. Si uno de los tres puede devolver un código de salida que no corresponde a su resultado, el gate deja de ser confiable en las dos direcciones: puede frenar trabajo bueno, y —más grave— nadie verificó todavía si puede dejar pasar trabajo malo.
+
+**Síntoma, observado tres veces el 2026-09-10:** inmediatamente después de un `git commit` (que dispara `[graphify hook] launching background rebuild`), `uv run --group docs mkdocs build --strict` devolvió una vez `exit 2` y dos veces un mensaje suelto de uso (`For more information, try '--help'`) en lugar de su salida normal. Reejecutado unos segundos después, sin cambiar nada, el mismo comando devuelve `exit 0` y el build completo. El commit afectado quedó sano: se reverificó después.
+
+**Lo que NO se determinó:** la causa. El rebuild escribe en `graphify-out/`, no en `.venv` ni en `site/`, así que la explicación fácil —colisión de archivos— no se sostiene. Queda como hipótesis no probada la presión de recursos (el rebuild procesa 7923 nodos y 16478 aristas) o una contención sobre el cache o el lock de `uv`. No se instrumentó.
+
+**Acción:** reproducirlo a propósito antes de teorizar — lanzar el rebuild y correr los tres checks en paralelo unas cuantas veces, capturando `$?` sin pipe (un pipe devuelve el código del último comando, no del primero, y eso confundió el diagnóstico inicial). Si se confirma, la salida barata es serializar: que el hook no lance el rebuild cuando hay un check corriendo, o que `/tdd-check` espere a que termine.
+
+
 ### `stop-verify-guard` está implementado pero no se puede wirear: nada emite `verify_ran`
 
 **Por qué:** el hook mergeó el 2026-09-10 registrado en `_BUILTIN_HOOKS` y **sin** entrada en `config.toml`, a propósito. Lee `verify_ran` para decidir si bloquea, y grepeando `src/` y los skills desplegados, nada lo escribe. Wirearlo hoy no produce enforcement calibrado: produce un nag garantizado — bloquea siempre en el primer `Stop` de toda sesión que declaró goal, y pasa siempre en el segundo, sin importar si se verificó.
