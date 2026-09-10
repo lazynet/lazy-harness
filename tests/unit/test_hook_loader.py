@@ -391,3 +391,21 @@ def test_user_prompt_goal_resolves_to_concrete_file() -> None:
     assert info.is_builtin is True
     assert info.path.name == "user_prompt_goal.py"
     assert info.path.is_file()
+
+
+def test_stop_verify_guard_is_registered_as_builtin() -> None:
+    from lazy_harness.hooks.loader import _BUILTIN_HOOKS
+
+    assert "stop-verify-guard" in _BUILTIN_HOOKS
+    spec = _BUILTIN_HOOKS["stop-verify-guard"]
+    assert spec.module == "lazy_harness.hooks.builtins.stop_verify_guard"
+
+
+def test_stop_verify_guard_resolves_to_concrete_file() -> None:
+    from lazy_harness.hooks.loader import resolve_hook
+
+    info = resolve_hook("stop-verify-guard")
+    assert info is not None
+    assert info.is_builtin is True
+    assert info.path.name == "stop_verify_guard.py"
+    assert info.path.is_file()

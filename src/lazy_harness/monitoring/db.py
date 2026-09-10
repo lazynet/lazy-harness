@@ -773,6 +773,20 @@ class MetricsDB:
         )
         self._conn.commit()
 
+    def has_loop_event(self, session: str, kind: str) -> bool:
+        """True once at least one `kind` row exists for `session`.
+
+        Used by the Stop-hook soft-enforcement guard to check whether
+        verification already ran (`verify_ran`) or whether it already fired
+        its once-per-session block (`verify_block`), without loading and
+        counting every row for the session.
+        """
+        row = self._conn.execute(
+            "SELECT 1 FROM loop_events WHERE session = ? AND kind = ? LIMIT 1",
+            (session, kind),
+        ).fetchone()
+        return row is not None
+
     def loop_event_counts(self, since_ts: float | None = None) -> dict[str, int]:
         if since_ts is None:
             rows = self._conn.execute(
