@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.56.0](https://github.com/lazynet/lazy-harness/compare/v0.55.0...v0.56.0) (2026-09-10)
+
+
+### Features
+
+* September harness improvements — measurement, memory decay, contract rightsizing ([#242](https://github.com/lazynet/lazy-harness/issues/242)) ([c71b129](https://github.com/lazynet/lazy-harness/commit/c71b129821b67cd33a3026ed70ceb5d927710731))
+
+
+### Documentation
+
+* reconcile ADR-008, ADR-033 and ADR-035 with the code they describe ([#240](https://github.com/lazynet/lazy-harness/issues/240)) ([5d09907](https://github.com/lazynet/lazy-harness/commit/5d09907d1607d161128ddd02909c8cdb11ad0a2f))
+* spec the builtin-hook import-guard population fix ([6c94663](https://github.com/lazynet/lazy-harness/commit/6c9466313f1b8cdebca20c7830caac1a3e9067fd))
+
 ## [0.55.0](https://github.com/lazynet/lazy-harness/compare/v0.54.1...v0.55.0) (2026-09-09)
 
 
