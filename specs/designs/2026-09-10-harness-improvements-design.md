@@ -82,12 +82,26 @@ plus the project keys already known to the memory stack — with line count,
 byte count, and which threshold it breaches. Today there is no way to see the
 fourteen files as one set; each is discovered only when someone edits it.
 
-Resolution of the project key list reuses an existing helper, per the repo rule
-that every reader of a config-derived path resolves it the same way. Note that
-two already exist — `core/project_identity.py:project_key` and
-`hooks/builtins/_shared.py:project_key`. The command picks one deliberately and
-an integration test asserts the two agree on identical input; it does not add
-a third.
+Resolution reuses `core/project_identity.py:project_key` rather than adding a
+third resolver.
+
+An earlier draft of this section called that function and
+`hooks/builtins/_shared.py:project_key` duplicates to be reconciled. They are
+not. The first returns a portable identity — `host/owner/name`, or
+`local/<name>` with no remote; the second returns an absolute filesystem path.
+Same name, different questions. The integration test that guards them asserts
+they agree on *which directory is the project root* when called from a linked
+worktree — the real failure this repo has hit — not that they return equal
+values, which they never will.
+
+**Discovery is by filesystem, not by memory.** Every `CLAUDE.md` under a
+configured `[profiles.*].roots` enters the report. Presence in the knowledge
+store is explicitly *not* a filter: a repository with no memory yet is a new or
+lightly instrumented one, and those hold the contracts least likely to have
+been pruned. Filtering on the store finds the files someone is already tending
+and misses the abandoned ones — it inverts the command's purpose. This was
+caught in review when the first implementation, which did filter that way,
+omitted `lazy-popopen` — 987 lines, the file that motivated the track.
 
 **1c. Skill `rightsize-claude-md`.**
 Encodes the pruning criterion from *orchestrator-tax*, which is the part a
