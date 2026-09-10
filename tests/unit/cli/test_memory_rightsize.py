@@ -2,8 +2,15 @@
 
 Track 1b of `specs/designs/2026-09-10-harness-improvements-design.md`.
 Read-only. Reports profile contracts (`<profile config_dir>/CLAUDE.md`) plus
-the CLAUDE.md of every project the memory stack already knows about, with
-line count, byte count, and which threshold it breaches.
+the CLAUDE.md of every project reachable under a configured `[profiles.*].roots`
+entry, with line count, byte count, and which threshold it breaches.
+
+Deliberately NOT filtered by whether the project already has memory in the
+knowledge store: a repo with no store entry is not a repo that doesn't
+matter, it's a repo nobody has instrumented yet — exactly the kind most
+likely to carry an unpruned CLAUDE.md. `lazy-popopen` (987 lines / 70KB, the
+repo that motivated this whole track) has no git remote and no store entry at
+all, and still has to show up.
 """
 
 from __future__ import annotations
@@ -56,11 +63,27 @@ def _repo(tmp_path: Path, name: str) -> Path:
 
 
 def _known_to_store(store: Path, name: str) -> None:
-    """Give the repo `name` a memory directory in the store — the fixture that
-    makes it 'known to the memory stack'."""
+    """Give the repo `name` a memory directory in the store.
+
+    Used only to prove the *opposite* of what it sounds like: this must have
+    no bearing on whether the repo's CLAUDE.md is reported.
+    """
     target = store / "memory" / "github.com" / "o" / name
     target.mkdir(parents=True)
     (target / "decisions.jsonl").write_text('{"ts": "2026-09-01", "summary": "x"}\n')
+
+
+def _repo_without_remote(tmp_path: Path, name: str) -> Path:
+    """A checkout with no git remote — `project_key` falls back to `local/<name>`.
+
+    `lazy-popopen`, the repo that motivated this whole track, is exactly this
+    shape: no remote configured, no memory in the store.
+    """
+    root = tmp_path / name
+    root.mkdir(parents=True)
+    (root / ".git").mkdir()
+    (root / ".git" / "config").write_text("[core]\n\tbare = false\n")
+    return root
 
 
 def test_rightsize_reports_a_profile_contract_over_threshold(tmp_path: Path, monkeypatch) -> None:
@@ -87,15 +110,14 @@ def test_rightsize_stays_quiet_about_a_profile_contract_under_threshold(
     assert "0/1 over threshold" in result.output
 
 
-def test_rightsize_lists_a_project_claude_md_known_to_the_memory_stack(
+def test_rightsize_lists_a_project_claude_md_under_a_configured_root(
     tmp_path: Path, monkeypatch
 ) -> None:
     repos = tmp_path / "repos"
     repos.mkdir()
-    store, _profile = _setup(tmp_path, monkeypatch, roots=[repos])
+    _store, _profile = _setup(tmp_path, monkeypatch, roots=[repos])
     repo = _repo(repos, "widget")
     (repo / "CLAUDE.md").write_text("line\n" * 300)
-    _known_to_store(store, "widget")
 
     result = CliRunner().invoke(memory, ["rightsize"])
 
@@ -104,31 +126,47 @@ def test_rightsize_lists_a_project_claude_md_known_to_the_memory_stack(
     assert "300" in result.output
 
 
-def test_rightsize_excludes_a_project_not_known_to_the_memory_stack(
+def test_rightsize_lists_a_project_even_with_no_memory_in_the_store(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """A repo under a configured root with no memory in the store is not part
-    of 'the fourteen files' the design describes — it has not been worked in
-    through the harness yet.
-
-    A sibling repo that *is* known keeps `known_keys` non-empty, so this
-    exercises the per-candidate membership check rather than the short-circuit
-    that skips scanning roots entirely when the store has nothing in it."""
+    """Store presence is irrelevant to whether a CLAUDE.md is reported — a
+    sibling repo that *does* have store memory must not gate the one that
+    doesn't."""
     repos = tmp_path / "repos"
     repos.mkdir()
     store, _profile = _setup(tmp_path, monkeypatch, roots=[repos])
     known = _repo(repos, "widget")
     (known / "CLAUDE.md").write_text("line\n" * 5)
     _known_to_store(store, "widget")
-    unseen = _repo(repos, "unseen")
-    (unseen / "CLAUDE.md").write_text("line\n" * 300)
-    # deliberately no _known_to_store(store, "unseen")
+    unstored = _repo(repos, "unstored")
+    (unstored / "CLAUDE.md").write_text("line\n" * 300)
+    # deliberately no _known_to_store(store, "unstored")
 
     result = CliRunner().invoke(memory, ["rightsize"])
 
     assert result.exit_code == 0, result.output
     assert "project:github.com/o/widget" in result.output
-    assert "unseen" not in result.output
+    assert "project:github.com/o/unstored" in result.output
+    assert "300" in result.output
+
+
+def test_rightsize_lists_a_project_with_no_remote_and_no_store_memory(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The `lazy-popopen` case: no git remote (so `project_key` falls back to
+    `local/<name>`) and nothing in the knowledge store. Must still appear,
+    unmangled, with its real size."""
+    repos = tmp_path / "repos"
+    repos.mkdir()
+    _store, _profile = _setup(tmp_path, monkeypatch, roots=[repos])
+    repo = _repo_without_remote(repos, "lazy-popopen")
+    (repo / "CLAUDE.md").write_text("line\n" * 987)
+
+    result = CliRunner().invoke(memory, ["rightsize"])
+
+    assert result.exit_code == 0, result.output
+    assert "project:local/lazy-popopen" in result.output
+    assert "987" in result.output
 
 
 def test_rightsize_respects_configured_claude_md_thresholds(tmp_path: Path, monkeypatch) -> None:
