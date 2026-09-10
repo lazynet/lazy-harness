@@ -72,6 +72,31 @@ No causó daño visible todavía porque el único caller en producción es `lh p
 
 ## Open — Prioridad MEDIA
 
+### `project_key` colapsa repos sin `.git` propio en `local/lazynet`
+
+**Por qué:** `core/project_identity.py:project_key` camina hacia arriba buscando cualquier `.git` ancestro. El home **es** un repo (`~/.git`, dotfiles), así que un directorio sin `.git` propio bajo `~` aterriza en `/Users/lazynet` y sale keyeado `local/lazynet`. Todo repo en esa situación comparte una sola identidad de memoria.
+
+**Fuente:** detectado el 2026-09-10 al implementar `lh memory rightsize`, que por primera vez alcanza directorios sin `.git` propio. Caso concreto: `flex/apps/repo-falopa` se etiqueta `project:local/lazynet`. `memory/local/` todavía no tiene un directorio `lazynet`, así que no hay daño consumado — pero cualquier hook que escriba memoria desde uno de esos directorios lo crearía.
+
+**Acción:** decidir si `main_repo_root` debe cortar la caminata en `$HOME` en vez de aceptarlo como raíz de repo. Toca el keying de memoria real, así que no es un cambio cosmético: revisar los dos `project_key` (`core/project_identity.py` y `hooks/builtins/_shared.py`) y verificar desde un directorio sin `.git` propio antes y después.
+
+### Un test escribió en el knowledge store de producción
+
+**Por qué:** `~/repos/lazy/lazy-knowledge/memory/local/` contiene un único directorio, `test_pre_compact_empty_input0`. Es un nombre de caso de pytest parametrizado, no un proyecto. Algún test resolvió el store real en vez de un `tmp_path`.
+
+**Fuente:** visto el 2026-09-10 al verificar el fallback de `project_key`.
+
+**Acción:** encontrar el test que lo escribe — probablemente uno de `pre_compact` que no inyecta el directorio de knowledge — y darle `tmp_path`. Después borrar el residuo. Mientras exista, cualquier recuento de proyectos en el store lo cuenta como uno más.
+
+### Symlink roto a la era pre-rename
+
+**Por qué:** `~/repos/lazy/.claude/CLAUDE.md` apunta a `lazy-claudecode/workspace-routers/lazy-claude.md`, un repo que ya no existe con ese nombre. Es un router de workspace que quedó colgado del rename a `lazy-harness`.
+
+**Fuente:** salió como la única diferencia entre el `find` del filesystem (35) y lo que reporta `lh memory rightsize` (34) el 2026-09-10 — el comando lo excluye correctamente por no ser legible.
+
+**Acción:** borrar el symlink, o reapuntarlo si ese router todavía cumple una función. Verificar primero si algo lo lee.
+
+
 ### Skills propios del harness sin versionar
 
 **Por qué:** `audit-harness`, `recall-cowork` y `graphify` viven como directorios reales en `~/.claude-lazy/skills/`, fuera de todo repo — `git rev-parse` sobre ellos no resuelve nada. El resto del pool (`~/.agents/skills/`) tampoco está versionado; lo gobierna un `.skill-lock.json` externo. Un borrado del profile, o un `lh deploy` con la lógica de symlinks cambiada, los pierde sin traza. `lh deploy` declara en su docstring que symlinkea skills, pero no hay sección de config que declare desde dónde.
