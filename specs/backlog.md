@@ -2,7 +2,7 @@
 
 Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio MkDocs); el roadmap público vive en `docs/roadmap.md` y solo contiene los temas comprometidos a alto nivel.
 
-Última revisión: 2026-08-17 — análisis de los tres ejes de refactor (paridad Linux, capability registry, TUI). Tres defectos shipping promovidos a ALTA. Revisión previa: 2026-05-20, pasada de coherencia docs↔código tras release 0.20.0. Cruce previo de 18 artículos de LazyMind + weekly reviews W14/W15: [`specs/analyses/2026-04-16-harnessing-literature-review.md`](analyses/2026-04-16-harnessing-literature-review.md).
+Última revisión: 2026-09-10 — `/coherence-audit` cruzó 34 ADRs `accepted` contra su código. Cinco items que figuraban abiertos resultaron implementados: tres desde el 2026-08-17 (PRs #167 y #168) y dos del mismo día en que se anotaron. La deriva restante quedó en `failures.jsonl` bajo el tag `coherence-audit`, para revisión humana. Revisión previa: 2026-08-17 — análisis de los tres ejes de refactor (paridad Linux, capability registry, TUI).
 
 ---
 
@@ -48,6 +48,10 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 - [x] **Docs coherence pass 2026-05-20** — `lh memory` + `lh knowledge` subcommands completos en CLI reference, hooks documentados (`pre-tool-use-memory-size`, `post-tool-use-sync-claude`), `claude-md.proposal.md` + `grades.jsonl` documentados en compound-loop how page
 - [x] **Compound-loop insight capture + delta-by-index** — `★ Insight ─` blocks captured verbatim via regex pre-LLM, gate-bypass when insights present, hash-based dedup, per-session message-index cursor for delta scans (`memory/insights/.cursor.json`). 12 tests TDD. Closed both gate-out (short sessions) and tail-of-20 (long sessions) loss paths from the design [`specs/designs/2026-04-13-compound-loop-insight-capture.md`](designs/2026-04-13-compound-loop-insight-capture.md).
 - [x] **Backends systemd y cron del scheduler** — ADR-013 completo. `SystemdBackend` escribe `.timer` + `.service` bajo `$XDG_CONFIG_HOME/systemd/user/` y chequea lingering; `CronBackend` escribe un bloque delimitado preservando las entradas del usuario. Traducción compartida en `scheduler/schedule.py`, que rechaza en vez de aproximar.
+- [x] **`agent_dispatched` en `loop_events`** — emitido por el worker del compound-loop con modelo y `subagent_type` en `detail`, idempotente ante reproceso vía `clear_agent_dispatches`. Verificado end-to-end contra `jq` como fuente independiente: 153 dispatches en septiembre, 344 histórico, coincidencia exacta. Baseline al shippear: 150 dispatches en 873 sesiones, todos `general-purpose`.
+- [x] **Reconcile y Decay del stack de memoria** — ADR-040 accepted; `lh memory decay` (marca `status: superseded`, nunca borra) y `lh memory reconcile` (schema drift determinístico, contradicciones opt-in vía `--check-contradictions`), ambos propose-only por default como `consolidate`. Dry-run al shippear: 1128 de 5954 learnings candidatos, drift real en 5 repos incluido el store del propio `lazy-harness`.
+- [x] **Rightsizing del contrato del agente** — hook `pre-tool-use-memory-size` extendido a `CLAUDE.md` con umbral propio, `lh memory rightsize` (read-only, descubre por filesystem bajo `roots`, no por presencia en el store) y el skill `rightsize-claude-md`. Ejecutado sobre 7 repos el 2026-09-10: de 14/36 contratos sobre umbral a 8/36, y de esos 8 seis son decisiones deliberadas (dos `Archon` que vienen de upstream, `lazy-ai-tools` 579 bytes arriba a propósito por tres gotchas de fallo silencioso, y tres archivos con los bytes ya bajo el techo).
+- [x] **`uv` viejo de Langflow anteponiéndose en el PATH** — `~/.langflow/uv/env` exportaba `PATH="$HOME/.langflow/uv:$PATH"` con un uv 0.6.17 de abril 2025 que no entiende `uv run --group` y reescribe `uv.lock` en formato viejo. Rompía el gate de docs de forma intermitente y degradó dos `uv.lock` el 2026-09-10. Deshabilitado en `~/.config/zsh/10-darwin.zsh`, persistido con `chezmoi re-add`, verificado en ambas direcciones.
 - [x] **Traducción de schedule que se niega en vez de adivinar** — `scheduler/schedule.py` con `parse_cron`/`render_launchd`/`ScheduleTranslationError`; `_cron_to_calendar` y `_cron_to_interval` borrados (ADR-013 D4, PR #168, 2026-08-17). Verificado el 2026-09-10 contra las 7 formas comunes: diaria, cada N horas, semanal, mensual y cada N minutos traducen; listas y rangos levantan, porque launchd no puede expresarlos. `lh status cron` muestra el schedule real y `selftest` gana el check `units-stale`. El backlog lo listó como ALTA abierta durante tres semanas después de estar cerrado.
 - [x] **`lh deploy` default hooks merge** — `DEFAULT_HOOKS` literal in `deploy/defaults.py` + `merge_with_defaults` pure function; per-event override via config.toml (`scripts = []` opts out); framework-owned `settings.json[hooks]` with backup + warning when manual entries are clobbered (ADR-031, 11 tests TDD). Also fixed `ClaudeCodeAdapter` missing `post_compact → PostCompact` mapping. Closes the 2026-04-17 partial-config drift and makes built-ins out-of-the-box.
 - [x] **`save_config` destruía config (51 claves) + tres claves de `[context_inject]` ignoradas en silencio** — read-modify-write sobre TOML crudo (`tomlkit`) en vez de completar el serializer, per D5 de [`designs/2026-08-17-capability-registry-design.md`](designs/2026-08-17-capability-registry-design.md) (commit `56429ad`, PR #167). Selftest `check_config_round_trip` registrado. Esta entrada había quedado listada como ALTA abierta pese a estar mergeada desde el 2026-08-17; el backlog no se había actualizado. Reconciliado el 2026-09-10 agregando además `tests/unit/test_config.py::test_save_config_round_trip_preserves_every_key_of_the_live_config` y `::test_context_inject_switches_survive_round_trip_against_the_live_config`, que corren el ciclo completo contra una copia del `config.toml` real de la máquina (nunca contra el archivo real) en vez de solo contra el fixture sintético `_FULL_CONFIG`.
@@ -55,19 +59,6 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 ---
 
 ## Open — Prioridad ALTA
-
-### El gate de docs falla de forma intermitente por un `uv` viejo en el PATH — causa encontrada y corregida
-
-**El síntoma:** `uv run --group docs mkdocs build --strict` devolvía a veces `exit 2` con `error: unexpected argument '--group' found`, y a veces el build completo con `exit 0`, sin que cambiara nada entre una corrida y otra. Observado cuatro veces el 2026-09-10.
-
-**La causa, con evidencia:** hay dos `uv` instalados. `/opt/homebrew/bin/uv` es 0.12.10; `~/.langflow/uv/uv` es **0.6.17, de abril 2025**. El instalador de Langflow dejó un `env` que hace `export PATH="$HOME/.langflow/uv:$PATH"` — antepone — y `~/.config/zsh/10-darwin.zsh` lo sourceaba en cada shell de login. Según cómo se hubiera inicializado el shell, `uv` resolvía a uno o al otro. El de 2025 no conoce `uv run --group`.
-
-**El mismo `uv` viejo explica un segundo problema:** reescribe `uv.lock` en el formato anterior, sin `revision` ni `upload-time`. Dos `uv.lock` quedaron degradados ese día — uno perdiendo 817 líneas en este repo, otro ganando `revision = 3` en `lazy-ai-tools`, según cuál de los dos binarios corriera. El gate del `CLAUDE.md` que dice *"Never run `uv` against live profiles from a worktree... it has also degraded `uv.lock`"* atribuía el daño al worktree; la causa real era cuál `uv` estaba primero en el PATH.
-
-**Corregido** en `~/.config/zsh/10-darwin.zsh`: el sourcing quedó comentado con la explicación, y persistido con `chezmoi re-add`. Un shell de login nuevo resuelve `uv` a Homebrew 0.12.10. Langflow sigue usando su propio `uv` internamente; lo que no hace más es imponerlo al PATH del usuario.
-
-**Lo que queda por hacer:** una diagnosis previa de esto culpó al rebuild de graphify que corre tras cada commit, por pura correlación temporal — el rebuild y el fallo aparecían juntos. Era falso, y el costo de esa hipótesis fue mirar el proceso equivocado. La lección aplicable: capturar `$?` sin pipe desde el principio (un pipe devuelve el código del último comando de la cadena, no del primero) y **leer el mensaje de error antes de teorizar sobre la causa**. El error decía exactamente cuál era el problema desde la primera vez.
-
 
 ### `stop-verify-guard` está implementado pero no se puede wirear: nada emite `verify_ran`
 
@@ -129,33 +120,7 @@ Es el mismo patrón que el gate de `auto_rebuild_on_commit`: un contrato declara
 
 **Fuente:** el design citado, sección "Phase 0 result". Medición desde `loop_events` en `metrics.db`.
 
-**Acción:** fase 1 (skill `verify-before-done` + `[loops] inject_goal_prompt = true`) abre la ventana de cuatro semanas contra el 17%. Fase 4 (delegación) se reemplaza por el evento `agent_dispatched` de abajo, que mide la misma palanca sin depender de Herdr.
-
-### Delegación a subagentes sin instrumentar
-
-**Por qué:** 150 llamadas al Agent tool en 873 sesiones de septiembre (perfil lazy), todas `general-purpose`, cero `Explore`/`Plan`/`fork`. En el mismo período, 5046 invocaciones de Bash corrieron en el hilo principal. La exploración que podría delegarse a un modelo barato se paga a precio de Opus, y el output crudo queda ocupando contexto el resto de la sesión.
-
-**Fuente:** [orchestrator-tax](lazy-lazymind-resources/tech/ia/orchestrator-tax-costos-contexto-multiagente.md) — distingue tokens (se pagan una vez) de contexto (contamina cada turno). [subagent-context-modes](lazy-lazymind-resources/tech/ia/subagent-context-modes-isolated-vs-fork.md) — worker con `fork`, verifier aislado.
-
-**Acción:** emitir `agent_dispatched` en `loop_events` desde el compound-loop worker, con modelo y `subagent_type` en `detail`. Sin la medida no se puede saber si la práctica se adopta. Baseline: 150/873.
-
-### Reconcile y Decay ausentes del stack de memoria
-
-**Por qué:** 5954 learnings en el knowledge store, **el 100% en `status: active`** — nada se deprecó nunca. Agosto aportó 2959 y septiembre 1192 en diez días. `decisions.jsonl` además drifteó de schema: las líneas viejas traen `timestamp`/`fixed`/`deferred`, las nuevas `ts`/`context`/`rationale`/`alternatives`, y nada lo reconcilia.
-
-**Fuente:** [memory-engineering-five-stage-pipeline](lazy-lazymind-resources/tech/ia/memory-engineering-five-stage-pipeline.md) — Capture, Consolidate, Retrieve, **Reconcile**, **Decay**. El stack de 5 capas del ADR-027 cubre las tres primeras.
-
-**Acción:** ADR-040 más `lh memory decay` y `lh memory reconcile`, ambos propose-only por default como `lh memory consolidate`.
-
-### Rightsizing de CLAUDE.md — enforcement y medición
-
-**Por qué:** `lazy-popopen/CLAUDE.md` tiene 987 líneas y 70 KB, y es el segundo proyecto más caro del mes ($409). `lazy-ai-tools` 333, `lazy-ansible` 308, `lazy-desktop-manager` 223. El hook `pre-tool-use-memory-size` ya tiene los umbrales correctos (200 líneas / 12 KB) pero solo mira `MEMORY.md`. Se solapa con "Audit CLAUDE.md triple por context clash" de abajo: ese item mide el clash entre capas, este mide el tamaño de cada una.
-
-**Fuente:** [fable-5-1](lazy-lazymind-resources/tech/ia/fable-5-1-liderar-agentes-guia-orquestacion.md) — <200 líneas, tres secciones. [Nuevas reglas de context engineering para Claude 5](lazy-lazymind-resources/tech/ia/nuevas-reglas-de-context-engineering-para-claude-5.md) — reglas rígidas → juicio, progressive disclosure hacia skills.
-
-**Acción:** extender el hook a `CLAUDE.md` con umbral propio, agregar `lh memory rightsize` (read-only) y un skill que guíe la poda. Después ejecutar sobre los cuatro repos.
-
-
+**Acción:** fase 1 shippeó el 2026-09-10 — skill `verify-before-done` deployado y `[loops] inject_goal_prompt = true` aplicado; **la ventana de cuatro semanas cierra el 2026-10-08** contra el 17%. Falta su cuarta pieza, el `Stop` hook, que está mergeado pero sin wirear (ver el item de `verify_ran` arriba). Fase 4 queda reemplazada por `agent_dispatched`, ya en Done. Pendiente real: leer la ventana cuando cierre y aplicar las kill criteria.
 
 ### Audit CLAUDE.md triple por context clash
 
