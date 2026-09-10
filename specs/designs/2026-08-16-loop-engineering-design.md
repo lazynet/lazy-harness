@@ -147,6 +147,31 @@ The governing rule: a task is never reported complete on the strength of a succe
 
 The division of responsibility is deliberate: **the hook is the guard, the skill is the procedure, the subagent is the judge.**
 
+#### Phase 1 status — window opened 2026-09-10
+
+Two of the four pieces shipped:
+
+- **Skill `verify-before-done`** — lives in the profile source
+  (`profiles/lazy/skills/`), versioned in dotfiles. Carries the per-work-type
+  table from this section plus the three ways a check lies that the repo's
+  verification gates already record.
+- **`[loops] inject_goal_prompt = true`** — set in the config template and
+  applied. Verified in both directions against the installed binary: a
+  non-trivial prompt returns `additionalContext` asking for a verifiable
+  criterion, a trivial one returns nothing.
+
+Still open, and deliberately not bundled:
+
+- **The `Stop` soft-enforcement hook.** New code, so it gets its own TDD cycle
+  rather than riding along with a config flag.
+- **The evaluator subagent** is described in the skill as a procedure the agent
+  follows, not as harness code. That is sufficient for the window; if adoption
+  data later shows the procedure is skipped, it becomes a hook.
+
+**The four-week clock starts 2026-09-10 and closes 2026-10-08**, measured
+against the 17% baseline over graded sessions. Per the repo's calibration rule,
+neither the classifier nor the threshold moves until it closes.
+
 ### Phase 2 — Recurring loops (no new code)
 
 Inventory the streams currently prompted by hand — proposal drainage, vault maintenance, weekly review, PR babysitting, coherence audits — and move each to `/schedule` (persistent) or `/loop` (local, session-lived).
