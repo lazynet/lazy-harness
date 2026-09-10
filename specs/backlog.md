@@ -48,6 +48,7 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 - [x] **Docs coherence pass 2026-05-20** — `lh memory` + `lh knowledge` subcommands completos en CLI reference, hooks documentados (`pre-tool-use-memory-size`, `post-tool-use-sync-claude`), `claude-md.proposal.md` + `grades.jsonl` documentados en compound-loop how page
 - [x] **Compound-loop insight capture + delta-by-index** — `★ Insight ─` blocks captured verbatim via regex pre-LLM, gate-bypass when insights present, hash-based dedup, per-session message-index cursor for delta scans (`memory/insights/.cursor.json`). 12 tests TDD. Closed both gate-out (short sessions) and tail-of-20 (long sessions) loss paths from the design [`specs/designs/2026-04-13-compound-loop-insight-capture.md`](designs/2026-04-13-compound-loop-insight-capture.md).
 - [x] **Backends systemd y cron del scheduler** — ADR-013 completo. `SystemdBackend` escribe `.timer` + `.service` bajo `$XDG_CONFIG_HOME/systemd/user/` y chequea lingering; `CronBackend` escribe un bloque delimitado preservando las entradas del usuario. Traducción compartida en `scheduler/schedule.py`, que rechaza en vez de aproximar.
+- [x] **Traducción de schedule que se niega en vez de adivinar** — `scheduler/schedule.py` con `parse_cron`/`render_launchd`/`ScheduleTranslationError`; `_cron_to_calendar` y `_cron_to_interval` borrados (ADR-013 D4, PR #168, 2026-08-17). Verificado el 2026-09-10 contra las 7 formas comunes: diaria, cada N horas, semanal, mensual y cada N minutos traducen; listas y rangos levantan, porque launchd no puede expresarlos. `lh status cron` muestra el schedule real y `selftest` gana el check `units-stale`. El backlog lo listó como ALTA abierta durante tres semanas después de estar cerrado.
 - [x] **`lh deploy` default hooks merge** — `DEFAULT_HOOKS` literal in `deploy/defaults.py` + `merge_with_defaults` pure function; per-event override via config.toml (`scripts = []` opts out); framework-owned `settings.json[hooks]` with backup + warning when manual entries are clobbered (ADR-031, 11 tests TDD). Also fixed `ClaudeCodeAdapter` missing `post_compact → PostCompact` mapping. Closes the 2026-04-17 partial-config drift and makes built-ins out-of-the-box.
 
 ---
@@ -76,10 +77,6 @@ No causó daño visible todavía porque el único caller en producción es `lh p
 ### Tres claves de `[context_inject]` se ignoran en silencio
 
 `ContextInjectConfig` declara `qmd_suggest_enabled`, `qmd_suggest_top_k` y `graphify_surface_enabled`; `hooks/builtins/context_inject.py` las lee en las líneas 779, 787 y 790; y el bloque de parseo de `load_config` no las puebla nunca. Verificado: pedir `qmd_suggest_enabled = false` carga `True`. Los tres switches están clavados en su default y no hay forma de apagarlos desde config. Se arregla junto con el round-trip.
-
-### Traducción de cron en launchd reescribe schedules en silencio
-
-`_cron_to_calendar` solo entiende la forma diaria `M H * * *`; todo lo demás cae al fallback de 3600s de `_cron_to_interval`. Medido: `0 */6 * * *` (el ejemplo que usa ADR-013 en su propio texto) se instala como horario — 6x. Un job semanal `30 3 * * 0` se instala 168x por semana. Solo 2 de 7 formas comunes traducen bien, y ni `lh status cron` ni `lh selftest` lo notan porque ambos reportan sobre el label cargado, nunca sobre el schedule. Bug shipping en macOS. Fix en [`designs/2026-08-17-linux-parity-design.md`](designs/2026-08-17-linux-parity-design.md) D4.
 
 ---
 
