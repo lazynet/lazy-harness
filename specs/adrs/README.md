@@ -22,7 +22,7 @@ Decisions that define the `lazy-harness` project itself.
 | [010](./010-pre-compact-preservation.md) | accepted | Pre-compact context preservation | Back up the transcript and distill a working-state summary before compaction. |
 | [011](./011-session-export-and-classification.md) | accepted | Session export with classification | JSONL → dated markdown with project/profile frontmatter, atomic writes. |
 | [012](./012-sqlite-monitoring.md) | accepted | SQLite monitoring | Single-table idempotent store, view modules per angle. |
-| [013](./013-scheduler-unified-backends.md) | accepted | Unified scheduler backends | launchd / systemd / cron behind one protocol, declared once in config. Partially implemented: launchd only; the other two raise `NotImplementedError`. |
+| [013](./013-scheduler-unified-backends.md) | accepted | Unified scheduler backends | launchd / systemd / cron behind one protocol, declared once in config. Complete as of 2026-08-17: the three backends install, uninstall and report state. |
 | [014](./014-migration-engine-rollback.md) | accepted | Migration engine with automatic rollback | Detect → plan → execute → auto-rollback on failure. Dry-run is a first-class mode. |
 | [015](./015-strict-tdd-workflow.md) | accepted | Strict TDD as a workflow rule | No production code without a failing test first. Non-negotiable. |
 | [016](./016-knowledge-dir-qmd-optional.md) | accepted | Knowledge directory + optional QMD | Plain markdown tree; QMD is semantic search opt-in via `shutil.which`. |
@@ -49,6 +49,7 @@ Decisions that define the `lazy-harness` project itself.
 | [037](./037-metric-event-v2-host-and-workload.md) | proposed | Metric event schema v2 — `host` and `workload` as first-class dimensions | `MetricEvent` gains `host` (resolved at ingest) and a caller-supplied `workload`, carried by a session id `lh exec` pins before spawning. |
 | [038](./038-exec-envelope-cost-provenance.md) | proposed | The `lh exec` envelope — cost provenance and the mute failure | A timed-out run is priced from its own transcript, `cost_source` names which door the figure came through, and a failure that says nothing gets a typed `error.kind`. |
 | [039](./039-role-routed-inference.md) | proposed | Role-routed inference — one resolution seam, two front ends | `lh exec` and `llm/registry.py` converge on `run_inference`; a named role picks the backend, so local models serve cheap work while Claude keeps the work that needs it. |
+| [040](./040-memory-reconcile-and-decay.md) | accepted | Reconcile and Decay — the two missing memory-pipeline stages | `lh memory decay` marks unreferenced learnings `status: superseded` by age horizon, never deletes. `lh memory reconcile` reports `decisions.jsonl` schema drift (deterministic) and, opt-in, contradicting decisions (LLM). Both propose-only; reconcile has no `--apply` at all. |
 
 ### Status values
 

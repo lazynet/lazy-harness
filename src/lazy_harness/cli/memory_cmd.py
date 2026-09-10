@@ -10,6 +10,7 @@ from pathlib import Path
 import click
 
 from lazy_harness.core.config import Config, ConfigError, load_config
+from lazy_harness.core.decay import apply_decay, find_decay_candidates
 from lazy_harness.core.paths import config_file
 from lazy_harness.core.proposals import (
     _RATIONALE_PREFIX,
@@ -18,6 +19,7 @@ from lazy_harness.core.proposals import (
     _remove_proposal,
     parse_proposals,
 )
+from lazy_harness.core.reconcile import detect_schema_drift
 from lazy_harness.llm.invoke import run_inference
 
 
@@ -622,6 +624,147 @@ def proposals_reject(index: int, reason: str, memory_dir: Path | None) -> None:
     click.echo("Recorded in claude-md.rejected.md — the grader will be told not to re-propose it.")
 
 
+# Never worth walking into: version control internals, this repo's own linked
+# worktrees (each carries its own CLAUDE.md that would otherwise double-count
+# the repo), and dependency trees that can be arbitrarily deep and are never a
+# checkout in their own right.
+_NOISE_DIR_NAMES = frozenset({".git", ".worktrees", "node_modules", ".venv", "graphify-out"})
+
+# A ceiling, not the discovery rule: real layouts are pruned by hitting a repo
+# root or a noise directory long before this. It only stops a pathological
+# tree (or a symlink cycle) from recursing forever.
+_MAX_ROOT_SCAN_DEPTH = 6
+
+
+def _find_claude_mds(root: Path, *, max_depth: int = _MAX_ROOT_SCAN_DEPTH) -> list[Path]:
+    """Every `CLAUDE.md` reachable under `root`, discovered by walking down to
+    wherever a repository actually is rather than assuming a fixed depth.
+
+    `~/repos/lazy` keeps checkouts one level down; `~/repos/flex` groups them
+    under `apps/`, `infra/`, `mngt/`, `spikes/`, `others/` — a fixed-depth scan
+    silently dropped every project in the second shape, including four of the
+    most expensive repos of a month. Recursion stops at a repository's own
+    root (its CLAUDE.md, if any, is the whole contract — nothing inside it,
+    submodule or linked worktree, needs walking) and at `_NOISE_DIR_NAMES`.
+    """
+    found: list[Path] = []
+
+    def walk(directory: Path, depth: int) -> None:
+        if depth > max_depth:
+            return
+        claude_md = directory / "CLAUDE.md"
+        if claude_md.is_file():
+            found.append(claude_md)
+        if (directory / ".git").exists():
+            # A repository root: everything under it belongs to this one
+            # project, worktrees and submodules included.
+            return
+        try:
+            children = sorted(p for p in directory.iterdir() if p.is_dir())
+        except OSError:
+            return
+        for child in children:
+            if child.name in _NOISE_DIR_NAMES:
+                continue
+            walk(child, depth + 1)
+
+    walk(root, 0)
+    return found
+
+
+def _project_claude_mds(cfg: Config) -> list[tuple[str, Path]]:
+    """`(label, path)` for every reachable CLAUDE.md under a configured root.
+
+    Walks the profile `roots` used for cwd-based profile routing — `roots`
+    names the directory that holds checkouts, at whatever depth they sit.
+    `core.project_identity.project_key` is the resolver this command uses
+    deliberately (see `tests/unit/hooks/builtins/test_shared.py` for the
+    integration test asserting it agrees with the other resolver on where a
+    worktree's root is) — purely to label the row, never to filter it.
+    Whether a project already has memory in the knowledge store is a separate
+    question from whether its CLAUDE.md is oversized: a repo nobody has
+    instrumented yet is exactly the kind most likely to carry an unpruned
+    contract, so a missing store entry (or a missing git remote, which falls
+    back to a `local/<name>` key) must not exclude it.
+    """
+    from lazy_harness.core.paths import expand_path
+    from lazy_harness.core.project_identity import project_key
+
+    found: list[tuple[str, Path]] = []
+    seen_paths: set[Path] = set()
+    for entry in cfg.profiles.items.values():
+        for root in entry.roots:
+            root_path = expand_path(root)
+            if not root_path.is_dir():
+                continue
+            for claude_md in _find_claude_mds(root_path):
+                candidate = claude_md.parent
+                if candidate in seen_paths:
+                    continue
+                seen_paths.add(candidate)
+                found.append((f"project:{project_key(candidate)}", claude_md))
+    return found
+
+
+@memory.command("rightsize")
+def rightsize() -> None:
+    """List every CLAUDE.md the harness can reach and which ceiling it breaches.
+
+    Read-only (ADR-030, Track 1b of the September 2026 harness improvements
+    design). Covers profile contracts — `<profile config_dir>/CLAUDE.md`,
+    loaded on every session in that profile — and the CLAUDE.md of every
+    project reachable under a configured `[profiles.*].roots` entry, whether or
+    not it has memory in the knowledge store yet. Thresholds are the same ones
+    `pre_tool_use_memory_size` warns against, read from the same
+    `[hooks.pre_tool_use]` config so the two cannot silently disagree.
+    """
+    from lazy_harness.core.profiles import list_profiles
+    from lazy_harness.hooks.builtins.pre_tool_use_memory_size import load_claude_md_thresholds
+
+    cf = config_file()
+    try:
+        cfg = load_config(cf) if cf.is_file() else Config()
+    except ConfigError as exc:
+        click.echo(f"Config invalid: {exc}", err=True)
+        raise SystemExit(1) from exc
+
+    max_lines, max_bytes = load_claude_md_thresholds(cf)
+
+    entries: list[tuple[str, Path]] = []
+    for profile in list_profiles(cfg):
+        if not profile.exists:
+            continue
+        claude_md = profile.config_dir / "CLAUDE.md"
+        if claude_md.is_file():
+            entries.append((f"profile:{profile.name}", claude_md))
+
+    entries.extend(_project_claude_mds(cfg))
+
+    if not entries:
+        click.echo("No CLAUDE.md files found.")
+        return
+
+    breach_count = 0
+    for label, path in entries:
+        text = path.read_text(errors="replace")
+        lines = len(text.splitlines())
+        size = len(text.encode("utf-8"))
+        breaches: list[str] = []
+        if lines > max_lines:
+            breaches.append(f"{lines} lines > {max_lines}")
+        if size > max_bytes:
+            breaches.append(f"{size} bytes > {max_bytes}")
+        if breaches:
+            breach_count += 1
+        breach_text = "; ".join(breaches) if breaches else "-"
+        click.echo(f"{label:<40} {lines:>6} lines  {size:>8} bytes  {breach_text}")
+
+    click.echo("")
+    click.echo(
+        f"{breach_count}/{len(entries)} over threshold ({max_lines} lines / {max_bytes} bytes)"
+    )
+
+
 @memory.command("migrate")
 @click.option("--apply", "do_apply", is_flag=True, help="Move the files. Off by default.")
 def memory_migrate(do_apply: bool) -> None:
@@ -683,3 +826,204 @@ def memory_migrate(do_apply: bool) -> None:
         click.echo(f"  conflict: {m.target} already holds files; left {m.source} in place")
     for m, err in result.failures:
         click.echo(f"  failed: {m.source}: {err}")
+
+
+# --- decay + reconcile (ADR-040) ---
+
+
+def _default_learnings_dir() -> Path | None:
+    """The knowledge store's global `learnings/` tree, or None with no store.
+
+    Unlike `decisions.jsonl`, learnings are not per-project: `directory.py`
+    puts every learning under one `learnings/` root regardless of `origin`,
+    so there is nothing to scope by `--memory-dir` here the way `consolidate`
+    scopes by project.
+    """
+    from lazy_harness.hooks.builtins._shared import knowledge_root_for
+    from lazy_harness.knowledge.directory import learnings_dir as store_learnings_dir
+    from lazy_harness.knowledge.marker import MarkerError
+
+    cfg = _load_config_for_consolidate()
+    root = knowledge_root_for(cfg)
+    if root is None:
+        return None
+    try:
+        return store_learnings_dir(root)
+    except MarkerError:
+        return None
+
+
+@memory.command("decay")
+@click.option(
+    "--learnings-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Learnings directory to scan. Defaults to the knowledge store's learnings/ tree.",
+)
+@click.option(
+    "--horizon-days",
+    type=int,
+    default=90,
+    show_default=True,
+    help="Mark active learnings whose origin_session is at least this old.",
+)
+@click.option("--apply", "do_apply", is_flag=True, help="Write status: superseded. Off by default.")
+def decay(learnings_dir: Path | None, horizon_days: int, do_apply: bool) -> None:
+    """Mark learnings with no reference in --horizon-days as superseded.
+
+    Nothing in the harness logs when a learning is retrieved, so
+    `origin_session` age is the deterministic proxy for "unreferenced": a
+    learning still `active` after `--horizon-days` with no newer activity is
+    a candidate. Never deletes — a learning already marked anything but
+    `active` is skipped on every later run, so decay is safe to repeat.
+    Propose-only by default; pass --apply to write.
+    """
+    target = learnings_dir if learnings_dir is not None else _default_learnings_dir()
+    if target is None:
+        click.echo("No knowledge store configured; nothing to scan.", err=True)
+        raise SystemExit(1)
+
+    today = date.today()
+    candidates = find_decay_candidates(target, horizon_days=horizon_days, today=today)
+    if not candidates:
+        click.echo(f"No active learnings older than {horizon_days} days at {target}.")
+        return
+
+    click.echo(f"{len(candidates)} learnings with no reference in {horizon_days}+ days:")
+    for c in candidates:
+        try:
+            rel = c.path.relative_to(target)
+        except ValueError:
+            rel = c.path
+        click.echo(f"  {rel}  (origin_session {c.origin_session}, {c.age_days}d) — {c.title}")
+
+    if not do_apply:
+        click.echo("")
+        click.echo("Dry run. Re-run with --apply to mark them status: superseded (never deletes).")
+        return
+
+    reason = f"no reference within {horizon_days} days"
+    written = apply_decay(candidates, reason=reason, today=today)
+    click.echo("")
+    click.echo(f"Marked {len(written)} learnings status: superseded.")
+
+
+def _all_project_memory_dirs() -> list[Path]:
+    from lazy_harness.core.memory_store import store_memory_dirs
+    from lazy_harness.hooks.builtins._shared import knowledge_root_for
+
+    cfg = _load_config_for_consolidate()
+    root = knowledge_root_for(cfg)
+    return store_memory_dirs(root)
+
+
+def _build_reconcile_prompt(entries: list[str]) -> str:
+    sections = [
+        "You are reviewing one project's distilled decisions.jsonl, an",
+        "append-only log of engineering decisions made over time. Find pairs",
+        "of entries whose summaries contradict each other — e.g. one adopts X",
+        "and a later one adopts something incompatible with X for the same",
+        "problem. Do not decide which one is current and do not rewrite",
+        "either entry. Quote both summaries verbatim for every contradicting",
+        "pair you find. If there are none, output exactly the line",
+        "'No contradictions found.' and nothing else.",
+        "\n## decisions.jsonl entries",
+    ]
+    sections.extend(entries)
+    return "\n".join(sections)
+
+
+@memory.command("reconcile")
+@click.option(
+    "--memory-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Single project's memory dir. Defaults to every project in the knowledge store.",
+)
+@click.option(
+    "--last",
+    type=int,
+    default=50,
+    show_default=True,
+    help="Tail this many decisions.jsonl entries per project for --check-contradictions.",
+)
+@click.option(
+    "--check-contradictions",
+    is_flag=True,
+    help="Also run the LLM contradiction pass (detection 2). Off by default.",
+)
+@click.option(
+    "--model",
+    default=None,
+    help="Headless model for --check-contradictions. Defaults to [compound_loop].model.",
+)
+@click.option(
+    "--timeout",
+    type=int,
+    default=120,
+    show_default=True,
+    help="LLM invocation timeout in seconds, for --check-contradictions.",
+)
+def reconcile(
+    memory_dir: Path | None,
+    last: int,
+    check_contradictions: bool,
+    model: str | None,
+    timeout: int,
+) -> None:
+    """Report decisions.jsonl schema drift and, optionally, contradictions.
+
+    Read-only: reconcile never writes and never has an --apply. Detection 1
+    (schema drift — lines that do not share the current field set) is
+    deterministic and always runs. Detection 2 (contradicting decisions) is
+    a judgement call an LLM makes and a human resolves; reconcile never picks
+    a winner, so it only runs when --check-contradictions is passed.
+    """
+    targets = [memory_dir] if memory_dir is not None else _all_project_memory_dirs()
+    if not targets:
+        click.echo("No project memory found in the knowledge store.")
+        return
+
+    any_drift = False
+    for target in targets:
+        report = detect_schema_drift(target / "decisions.jsonl")
+        if report is None or not report.has_drift:
+            continue
+        any_drift = True
+        drifted = sum(g.count for g in report.minority_groups)
+        click.echo(f"{target}")
+        click.echo(
+            f"  {report.total_lines} lines · current schema "
+            f"({report.total_lines - drifted} lines): {', '.join(report.majority_fields)}"
+        )
+        for g in report.minority_groups:
+            plural = "" if g.count == 1 else "s"
+            click.echo(
+                f"  {g.count} line{plural} on a different schema "
+                f"(e.g. line {g.example_line_numbers[0]}): {', '.join(g.fields)}"
+            )
+        click.echo("")
+    if not any_drift:
+        click.echo("No schema drift found.")
+
+    if not check_contradictions:
+        return
+
+    click.echo("")
+    click.echo("Checking for contradicting decisions (LLM, read-only)...")
+    cfg = _load_config_for_consolidate()
+    for target in targets:
+        entries = _read_jsonl_tail(target / "decisions.jsonl", last)
+        if not entries:
+            continue
+        prompt = _build_reconcile_prompt(entries)
+        result = run_inference(prompt, role="distill", cfg=cfg, timeout=timeout, model=model)
+        if not result.success:
+            error = result.error.message if result.error else "unknown error"
+            click.echo(f"{target}: LLM backend failed ({error})")
+            continue
+        output = result.output.strip()
+        if not output or output.lower().startswith("no contradictions"):
+            continue
+        click.echo(f"\n{target}")
+        click.echo(output)

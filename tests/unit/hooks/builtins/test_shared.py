@@ -314,6 +314,28 @@ def test_project_key_falls_back_to_cwd_outside_a_repo(tmp_path: Path) -> None:
     assert project_key(plain) == str(plain)
 
 
+def test_the_two_project_key_resolvers_agree_on_the_repo_root_for_a_worktree(
+    tmp_path: Path,
+) -> None:
+    """`core.project_identity.project_key` (remote-keyed) and this module's
+    `project_key` (path-keyed) answer the identity question two different
+    ways, but both must collapse a worktree cwd onto the same main checkout —
+    `lh memory rightsize` (ADR-030 G7) picks the former deliberately, and this
+    is what would silently fragment a scanned project into two rows if a
+    future edit made the two resolvers disagree about the root."""
+    from lazy_harness.core.project_identity import main_repo_root
+    from lazy_harness.core.project_identity import project_key as identity_project_key
+    from lazy_harness.hooks.builtins._shared import project_key as shared_project_key
+
+    repo, worktree = _init_repo_with_worktree(tmp_path)
+    (repo / ".git" / "config").write_text(
+        '[remote "origin"]\n\turl = https://github.com/o/myrepo.git\n'
+    )
+
+    assert identity_project_key(worktree) == "github.com/o/myrepo"
+    assert Path(shared_project_key(worktree)) == main_repo_root(worktree).resolve()
+
+
 def _write_profiles_config(tmp_path: Path, **profiles: Path) -> Path:
     """Config declaring one `[profiles.<name>]` per keyword argument."""
     entries = "\n".join(

@@ -2,7 +2,7 @@
 
 Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio MkDocs); el roadmap público vive en `docs/roadmap.md` y solo contiene los temas comprometidos a alto nivel.
 
-Última revisión: 2026-08-17 — análisis de los tres ejes de refactor (paridad Linux, capability registry, TUI). Tres defectos shipping promovidos a ALTA. Revisión previa: 2026-05-20, pasada de coherencia docs↔código tras release 0.20.0. Cruce previo de 18 artículos de LazyMind + weekly reviews W14/W15: [`specs/analyses/2026-04-16-harnessing-literature-review.md`](analyses/2026-04-16-harnessing-literature-review.md).
+Última revisión: 2026-09-10 — `/coherence-audit` cruzó 34 ADRs `accepted` contra su código. Cinco items que figuraban abiertos resultaron implementados: tres desde el 2026-08-17 (PRs #167 y #168) y dos del mismo día en que se anotaron. La deriva restante quedó en `failures.jsonl` bajo el tag `coherence-audit`, para revisión humana. Revisión previa: 2026-08-17 — análisis de los tres ejes de refactor (paridad Linux, capability registry, TUI).
 
 ---
 
@@ -48,30 +48,79 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 - [x] **Docs coherence pass 2026-05-20** — `lh memory` + `lh knowledge` subcommands completos en CLI reference, hooks documentados (`pre-tool-use-memory-size`, `post-tool-use-sync-claude`), `claude-md.proposal.md` + `grades.jsonl` documentados en compound-loop how page
 - [x] **Compound-loop insight capture + delta-by-index** — `★ Insight ─` blocks captured verbatim via regex pre-LLM, gate-bypass when insights present, hash-based dedup, per-session message-index cursor for delta scans (`memory/insights/.cursor.json`). 12 tests TDD. Closed both gate-out (short sessions) and tail-of-20 (long sessions) loss paths from the design [`specs/designs/2026-04-13-compound-loop-insight-capture.md`](designs/2026-04-13-compound-loop-insight-capture.md).
 - [x] **Backends systemd y cron del scheduler** — ADR-013 completo. `SystemdBackend` escribe `.timer` + `.service` bajo `$XDG_CONFIG_HOME/systemd/user/` y chequea lingering; `CronBackend` escribe un bloque delimitado preservando las entradas del usuario. Traducción compartida en `scheduler/schedule.py`, que rechaza en vez de aproximar.
+- [x] **`agent_dispatched` en `loop_events`** — emitido por el worker del compound-loop con modelo y `subagent_type` en `detail`, idempotente ante reproceso vía `clear_agent_dispatches`. Verificado end-to-end contra `jq` como fuente independiente: 153 dispatches en septiembre, 344 histórico, coincidencia exacta. Baseline al shippear: 150 dispatches en 873 sesiones, todos `general-purpose`.
+- [x] **Reconcile y Decay del stack de memoria** — ADR-040 accepted; `lh memory decay` (marca `status: superseded`, nunca borra) y `lh memory reconcile` (schema drift determinístico, contradicciones opt-in vía `--check-contradictions`), ambos propose-only por default como `consolidate`. Dry-run al shippear: 1128 de 5954 learnings candidatos, drift real en 5 repos incluido el store del propio `lazy-harness`.
+- [x] **Rightsizing del contrato del agente** — hook `pre-tool-use-memory-size` extendido a `CLAUDE.md` con umbral propio, `lh memory rightsize` (read-only, descubre por filesystem bajo `roots`, no por presencia en el store) y el skill `rightsize-claude-md`. Ejecutado sobre 7 repos el 2026-09-10: de 14/36 contratos sobre umbral a 8/36, y de esos 8 seis son decisiones deliberadas (dos `Archon` que vienen de upstream, `lazy-ai-tools` 579 bytes arriba a propósito por tres gotchas de fallo silencioso, y tres archivos con los bytes ya bajo el techo).
+- [x] **`uv` viejo de Langflow anteponiéndose en el PATH** — `~/.langflow/uv/env` exportaba `PATH="$HOME/.langflow/uv:$PATH"` con un uv 0.6.17 de abril 2025 que no entiende `uv run --group` y reescribe `uv.lock` en formato viejo. Rompía el gate de docs de forma intermitente y degradó dos `uv.lock` el 2026-09-10. Deshabilitado en `~/.config/zsh/10-darwin.zsh`, persistido con `chezmoi re-add`, verificado en ambas direcciones.
+- [x] **Traducción de schedule que se niega en vez de adivinar** — `scheduler/schedule.py` con `parse_cron`/`render_launchd`/`ScheduleTranslationError`; `_cron_to_calendar` y `_cron_to_interval` borrados (ADR-013 D4, PR #168, 2026-08-17). Verificado el 2026-09-10 contra las 7 formas comunes: diaria, cada N horas, semanal, mensual y cada N minutos traducen; listas y rangos levantan, porque launchd no puede expresarlos. `lh status cron` muestra el schedule real y `selftest` gana el check `units-stale`. El backlog lo listó como ALTA abierta durante tres semanas después de estar cerrado.
 - [x] **`lh deploy` default hooks merge** — `DEFAULT_HOOKS` literal in `deploy/defaults.py` + `merge_with_defaults` pure function; per-event override via config.toml (`scripts = []` opts out); framework-owned `settings.json[hooks]` with backup + warning when manual entries are clobbered (ADR-031, 11 tests TDD). Also fixed `ClaudeCodeAdapter` missing `post_compact → PostCompact` mapping. Closes the 2026-04-17 partial-config drift and makes built-ins out-of-the-box.
+- [x] **`save_config` destruía config (51 claves) + tres claves de `[context_inject]` ignoradas en silencio** — read-modify-write sobre TOML crudo (`tomlkit`) en vez de completar el serializer, per D5 de [`designs/2026-08-17-capability-registry-design.md`](designs/2026-08-17-capability-registry-design.md) (commit `56429ad`, PR #167). Selftest `check_config_round_trip` registrado. Esta entrada había quedado listada como ALTA abierta pese a estar mergeada desde el 2026-08-17; el backlog no se había actualizado. Reconciliado el 2026-09-10 agregando además `tests/unit/test_config.py::test_save_config_round_trip_preserves_every_key_of_the_live_config` y `::test_context_inject_switches_survive_round_trip_against_the_live_config`, que corren el ciclo completo contra una copia del `config.toml` real de la máquina (nunca contra el archivo real) en vez de solo contra el fixture sintético `_FULL_CONFIG`.
 
 ---
 
 ## Open — Prioridad ALTA
 
-### `save_config` destruye config — 51 claves perdidas por escritura
+### `stop-verify-guard` está implementado pero no se puede wirear: nada emite `verify_ran`
 
-`load_config` lee 14 secciones top-level; `_config_to_dict` emite 10, varias parciales. Medido contra el config vivo: se pierden `[compound_loop]`, `[memory.engram]` y `[lazynorth]` enteras, `knowledge.structure`, los 6 `[scheduler.jobs.*]`, `hooks.pre_tool_use.allow_patterns` y `profiles.<name>.lazynorth_doc`.
+**Por qué:** el hook mergeó el 2026-09-10 registrado en `_BUILTIN_HOOKS` y **sin** entrada en `config.toml`, a propósito. Lee `verify_ran` para decidir si bloquea, y grepeando `src/` y los skills desplegados, nada lo escribe. Wirearlo hoy no produce enforcement calibrado: produce un nag garantizado — bloquea siempre en el primer `Stop` de toda sesión que declaró goal, y pasa siempre en el segundo, sin importar si se verificó.
 
-No causó daño visible todavía porque el único caller en producción es `lh profile`, y los wizards lo esquivan vía `wizards/_toml_merge.py`. Deja de ser esquivable en cuanto algo más escriba config. Fix elegido: read-modify-write sobre el TOML crudo, no completar el serializer. Detalle y tests en [`designs/2026-08-17-capability-registry-design.md`](designs/2026-08-17-capability-registry-design.md) D5.
+`specs/designs/2026-08-16-loop-engineering-plan.md:32` ya lo había decidido: *"Building the guard before the thing it guards produces a hook that blocks on a condition nothing can satisfy."* El hook se construyó igual, por una lectura del design sin el plan companion. El código es correcto y está testeado; lo que falta es el emisor.
 
-### Tres claves de `[context_inject]` se ignoran en silencio
+**El emisor es la parte que no existe.** `verify-before-done` es un documento de procedimiento: describe qué verificar, pero no llama a `lh` ni escribe en `loop_events`. Un skill no puede emitir un evento por sí solo — hace falta un verbo que registre, del estilo `lh metrics record-verify`, que el procedimiento invoque como último paso.
 
-`ContextInjectConfig` declara `qmd_suggest_enabled`, `qmd_suggest_top_k` y `graphify_surface_enabled`; `hooks/builtins/context_inject.py` las lee en las líneas 779, 787 y 790; y el bloque de parseo de `load_config` no las puebla nunca. Verificado: pedir `qmd_suggest_enabled = false` carga `True`. Los tres switches están clavados en su default y no hay forma de apagarlos desde config. Se arregla junto con el round-trip.
+**Hallazgo aprovechable del mismo trabajo:** `/goal <condition>` escribe sincrónicamente una entrada `{"type":"attachment","attachment":{"type":"goal_status",...}}` al transcript JSONL en el momento en que corre. Es una señal determinística disponible durante el `Stop`, a diferencia de `goal_declared`, que es una clasificación LLM post-hoc del compound-loop. Es más angosta —solo capta el uso explícito de `/goal`, no un criterio declarado en prosa— pero no requiere inferencia.
 
-### Traducción de cron en launchd reescribe schedules en silencio
+**Acción:** darle a `verify-before-done` una forma de emitir `verify_ran`, y recién entonces agregar la entrada `[hooks.session_stop]`. Hasta que eso pase, **no desplegar el hook**: el registro en `_BUILTIN_HOOKS` no lo activa, y esa inercia es la que lo mantiene inofensivo.
 
-`_cron_to_calendar` solo entiende la forma diaria `M H * * *`; todo lo demás cae al fallback de 3600s de `_cron_to_interval`. Medido: `0 */6 * * *` (el ejemplo que usa ADR-013 en su propio texto) se instala como horario — 6x. Un job semanal `30 3 * * 0` se instala 168x por semana. Solo 2 de 7 formas comunes traducen bien, y ni `lh status cron` ni `lh selftest` lo notan porque ambos reportan sobre el label cargado, nunca sobre el schedule. Bug shipping en macOS. Fix en [`designs/2026-08-17-linux-parity-design.md`](designs/2026-08-17-linux-parity-design.md) D4.
+
 
 ---
 
 ## Open — Prioridad MEDIA
 
+### `lh deploy` promete desplegar skills y no tiene código que lo haga
+
+**Por qué:** `deploy/engine.py:1` y `deploy_cmd.py:41` declaran "profiles, hooks, skills". La palabra `skill` no aparece en ninguna otra línea de `src/` fuera de `migrate/detector.py`. Lo que existe es un bucle genérico — `for item in src_dir.iterdir(): ensure_symlink(item, target_dir / item.name)` — que symlinkea cualquier cosa que encuentre en el source del profile. Los skills funcionan por esa generalidad, no porque haya una ruta de código para ellos.
+
+Es el mismo patrón que el gate de `auto_rebuild_on_commit`: un contrato declarado que nadie implementó, sostenido por un accidente feliz. Mientras el bucle siga siendo genérico no hay bug de comportamiento, pero el docstring no es una fuente de verdad sobre lo que el deploy sabe hacer.
+
+**Fuente:** medido el 2026-09-10 al decidir dónde alojar un skill nuevo.
+
+**Acción:** o el docstring se ajusta a lo que el código hace (symlinkea el contenido del profile source, sea el que sea), o `skills/` gana una ruta explícita con su propia verificación. Lo primero es más honesto y más barato. Ojo con un detalle que el bucle genérico esconde: `ensure_symlink` renombra a `.bak` cualquier target que exista como directorio real antes de symlinkearlo, así que un profile con `skills/` poblado en el destino y ausente en el source pierde el directorio entero de la vista en el próximo deploy — recuperable, pero silencioso.
+
+
+### `project_key` colapsa repos sin `.git` propio en `local/lazynet`
+
+**Por qué:** `core/project_identity.py:project_key` camina hacia arriba buscando cualquier `.git` ancestro. El home **es** un repo (`~/.git`, dotfiles), así que un directorio sin `.git` propio bajo `~` aterriza en `/Users/lazynet` y sale keyeado `local/lazynet`. Todo repo en esa situación comparte una sola identidad de memoria.
+
+**Fuente:** detectado el 2026-09-10 al implementar `lh memory rightsize`, que por primera vez alcanza directorios sin `.git` propio. Caso concreto: `flex/apps/repo-falopa` se etiqueta `project:local/lazynet`. `memory/local/` todavía no tiene un directorio `lazynet`, así que no hay daño consumado — pero cualquier hook que escriba memoria desde uno de esos directorios lo crearía.
+
+**Acción:** decidir si `main_repo_root` debe cortar la caminata en `$HOME` en vez de aceptarlo como raíz de repo. Toca el keying de memoria real, así que no es un cambio cosmético: revisar los dos `project_key` (`core/project_identity.py` y `hooks/builtins/_shared.py`) y verificar desde un directorio sin `.git` propio antes y después.
+
+### Un test escribió en el knowledge store de producción
+
+**Por qué:** `~/repos/lazy/lazy-knowledge/memory/local/` contiene un único directorio, `test_pre_compact_empty_input0`. Es un nombre de caso de pytest parametrizado, no un proyecto. Algún test resolvió el store real en vez de un `tmp_path`.
+
+**Fuente:** visto el 2026-09-10 al verificar el fallback de `project_key`.
+
+**Acción:** encontrar el test que lo escribe — probablemente uno de `pre_compact` que no inyecta el directorio de knowledge — y darle `tmp_path`. Después borrar el residuo. Mientras exista, cualquier recuento de proyectos en el store lo cuenta como uno más.
+
+### Symlink roto a la era pre-rename
+
+**Por qué:** `~/repos/lazy/.claude/CLAUDE.md` apunta a `lazy-claudecode/workspace-routers/lazy-claude.md`, un repo que ya no existe con ese nombre. Es un router de workspace que quedó colgado del rename a `lazy-harness`.
+
+**Fuente:** salió como la única diferencia entre el `find` del filesystem (35) y lo que reporta `lh memory rightsize` (34) el 2026-09-10 — el comando lo excluye correctamente por no ser legible.
+
+**Acción:** borrar el symlink, o reapuntarlo si ese router todavía cumple una función. Verificar primero si algo lo lee.
+
+
+### Loop engineering — fases 1 a 4 sin trackear
+
+**Por qué:** [`specs/designs/2026-08-16-loop-engineering-design.md`](designs/2026-08-16-loop-engineering-design.md) diseña cinco fases y solo la 0 shippeó (`user_prompt_goal.py` como sensor). El design nunca entró a este backlog, así que las fases restantes no tenían dónde vencer. Baseline cerrado el 2026-09-10: 17% de declaración (29/169 sesiones graduadas), medido sobre el 7.5% de las sesiones no triviales que el compound-loop llega a graduar.
+
+**Fuente:** el design citado, sección "Phase 0 result". Medición desde `loop_events` en `metrics.db`.
+
+**Acción:** fase 1 shippeó el 2026-09-10 — skill `verify-before-done` deployado y `[loops] inject_goal_prompt = true` aplicado; **la ventana de cuatro semanas cierra el 2026-10-08** contra el 17%. Falta su cuarta pieza, el `Stop` hook, que está mergeado pero sin wirear (ver el item de `verify_ran` arriba). Fase 4 queda reemplazada por `agent_dispatched`, ya en Done. Pendiente real: leer la ventana cuando cierre y aplicar las kill criteria.
 
 ### Audit CLAUDE.md triple por context clash
 
@@ -108,6 +157,17 @@ No causó daño visible todavía porque el único caller en producción es `lh p
 ---
 
 ## Open — Prioridad BAJA
+
+### Falso positivo del PreToolUse de seguridad con backticks de markdown
+
+**Por qué:** `_COMMAND_START` incluye el backtick como operador de shell — correcto para command substitution. Pero un backtick de markdown inline-code delante de un comando destructivo, incluso dentro de un heredoc citado donde el shell nunca lo interpreta, dispara igual. Escribir prosa *sobre* comandos destructivos queda bloqueado.
+
+**Repro medido el 2026-09-10.** Contra `BLOCK_RULES`, el mismo texto pasa o se bloquea según lleve backticks: la variante sin backticks queda `allowed`, la variante con backticks alrededor del comando devuelve `Recursive delete`. El bloqueo se disparó tres veces seguidas mientras se redactaba esta misma entrada, incluida la que intentaba documentarlo.
+
+**Por qué NO se arregla ya:** el hook falla hacia el lado seguro y el workaround (sacar los backticks) es trivial. Parsear heredocs para distinguir texto de comando no es barato, y un parser incompleto de shell es peor que el falso positivo actual — daría una falsa sensación de precisión sobre una superficie que hoy es deliberadamente conservadora.
+
+**Acción:** ninguna por ahora. Si el falso positivo se vuelve frecuente al documentar, la salida más barata es un `allow_patterns` en el config del profile, no tocar `_COMMAND_START`.
+
 
 ### QMD MCP server en homelab (remoto, shared)
 

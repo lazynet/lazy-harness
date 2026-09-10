@@ -104,6 +104,68 @@ def extract_insights(session_jsonl: Path, since_index: int = 0) -> list[Insight]
     return insights
 
 
+@dataclass(frozen=True)
+class AgentDispatch:
+    """One `Agent` tool_use block found in a session transcript.
+
+    Verified against real transcripts under `~/.claude-lazy/projects/`
+    (September 2026): the tool_use block's `name` is `Agent`, not `Task` —
+    grepping an adapter's tool-name constant is not the same as checking
+    what the agent actually wrote to disk. `model` is empty when the
+    dispatch omitted the optional `model` param (the subagent then inherits
+    the caller's model) or passed it as JSON `null`, which real dispatches
+    do for `subagent_type` too.
+    """
+
+    subagent_type: str
+    model: str
+
+
+def extract_agent_dispatches(session_jsonl: Path) -> list[AgentDispatch]:
+    """Scan a session JSONL for Agent-tool dispatches.
+
+    Only assistant `tool_use` blocks named `Agent` count — a user message
+    carrying the same shape cannot fabricate a dispatch. Malformed lines and
+    unexpected value shapes are skipped rather than raised: this parses
+    transcript JSON whose shape is not guaranteed.
+    """
+    dispatches: list[AgentDispatch] = []
+    try:
+        with open(session_jsonl) as f:
+            for line in f:
+                try:
+                    record = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                if not isinstance(record, dict) or record.get("type") != "assistant":
+                    continue
+                message = record.get("message", {})
+                if not isinstance(message, dict):
+                    continue
+                content = message.get("content", "")
+                if not isinstance(content, list):
+                    continue
+                for block in content:
+                    if not isinstance(block, dict) or block.get("type") != "tool_use":
+                        continue
+                    if block.get("name") != "Agent":
+                        continue
+                    inp = block.get("input", {})
+                    if not isinstance(inp, dict):
+                        inp = {}
+                    subagent_type = inp.get("subagent_type", "")
+                    model = inp.get("model", "")
+                    dispatches.append(
+                        AgentDispatch(
+                            subagent_type=subagent_type if isinstance(subagent_type, str) else "",
+                            model=model if isinstance(model, str) else "",
+                        )
+                    )
+    except OSError:
+        return []
+    return dispatches
+
+
 def _insight_date(timestamp: str) -> datetime:
     if timestamp:
         try:
@@ -1199,6 +1261,40 @@ def _record_goal_verdict(data: dict, *, session_id: str, cwd: str) -> None:
         pass
 
 
+def _record_agent_dispatches(session_jsonl: Path, *, session_id: str, cwd: str) -> None:
+    """Record one `agent_dispatched` loop event per Task dispatch in the transcript.
+
+    Idempotent across reprocessing the same way as `_record_goal_verdict`:
+    `MetricsDB.clear_agent_dispatches` deletes any prior dispatch rows for
+    this session before the fresh scan's rows are inserted, so a session
+    reprocessed as it grows (`should_reprocess`) still contributes exactly
+    the dispatch count of its latest scan — never a running sum across scans.
+
+    Fail-soft like every other metrics write in this codebase: a DB error
+    here must not stop the rest of process_task's persistence.
+    """
+    dispatches = extract_agent_dispatches(session_jsonl)
+    try:
+        from lazy_harness.hooks.builtins._shared import profile_name, project_key
+        from lazy_harness.monitoring.db import MetricsDB
+
+        db = MetricsDB(_db_path())
+        db.clear_agent_dispatches(session_id)
+        project = project_key(Path(cwd)) if cwd else ""
+        profile = profile_name()
+        for dispatch in dispatches:
+            detail = json.dumps({"model": dispatch.model, "subagent_type": dispatch.subagent_type})
+            db.record_loop_event(
+                session=session_id,
+                kind="agent_dispatched",
+                project=project,
+                profile=profile,
+                detail=detail,
+            )
+    except Exception:  # noqa: BLE001 — a metrics write must not break the worker
+        pass
+
+
 def process_task(
     task_file: Path,
     cfg: Config,
@@ -1218,6 +1314,8 @@ def process_task(
 
     if not is_interactive_session(session_jsonl):
         return TaskOutcome(skipped=f"non-interactive: {session_id[:8]}")
+
+    _record_agent_dispatches(session_jsonl, session_id=session_id, cwd=cwd)
 
     cursor = _read_insight_cursor(memory_dir, session_id)
     insights = extract_insights(session_jsonl, since_index=cursor + 1)
