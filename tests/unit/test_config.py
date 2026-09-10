@@ -329,8 +329,7 @@ def test_compound_loop_max_pending_proposals_survives_merge_onto_existing(
 
     config_file = config_dir / "config.toml"
     config_file.write_text(
-        '[harness]\nversion = "1"\n\n[compound_loop]\n'
-        'enabled = true\nmax_pending_proposals = 25\n'
+        '[harness]\nversion = "1"\n\n[compound_loop]\nenabled = true\nmax_pending_proposals = 25\n'
     )
 
     cfg = load_config(config_file)
@@ -991,9 +990,7 @@ def test_an_event_with_no_scripts_key_does_not_gain_an_empty_one(tmp_path: Path)
 
     cfg_path = tmp_path / "config.toml"
     cfg_path.write_text(
-        '[harness]\nversion = "1"\n\n'
-        "[hooks.permission_request]\n"
-        'external = ["moshi claude-hook"]\n'
+        '[harness]\nversion = "1"\n\n[hooks.permission_request]\nexternal = ["moshi claude-hook"]\n'
     )
 
     save_config(load_config(cfg_path), cfg_path)
@@ -1114,6 +1111,7 @@ def test_save_config_fsyncs_before_replacing(tmp_path: Path, monkeypatch) -> Non
     config_mod.save_config(cfg, cfg_path)
 
     assert len(synced) >= 2
+
 
 def test_engram_config_default_version_is_the_module_pin() -> None:
     """One number, one home.
@@ -1391,9 +1389,7 @@ def test_llm_survives_merge_onto_existing_document(config_dir: Path) -> None:
     p = config_dir / "config.toml"
     p.write_text('[harness]\nversion = "1"\n\n[agent]\ntype = "claude-code"\n')
     cfg = load_config(p)
-    cfg.llm = LLMConfig(
-        backends={"local": LLMBackendConfig(type="ollama")}, roles={"c": "local"}
-    )
+    cfg.llm = LLMConfig(backends={"local": LLMBackendConfig(type="ollama")}, roles={"c": "local"})
     save_config(cfg, p)
     reloaded = load_config(p)
     assert reloaded.llm.roles == {"c": "local"}
@@ -1412,3 +1408,83 @@ def test_api_key_env_is_serialised_but_never_a_literal_key(config_dir: Path) -> 
     text = p.read_text()
     assert "SOME_VAR" in text
     assert "api_key =" not in text
+
+
+LIVE_CONFIG_PATH = Path.home() / ".config" / "lazy-harness" / "config.toml"
+
+
+@pytest.mark.skipif(not LIVE_CONFIG_PATH.is_file(), reason="no live config.toml on this machine")
+def test_save_config_round_trip_preserves_every_key_of_the_live_config(
+    tmp_path: Path,
+) -> None:
+    """Regression net keyed on this machine's real config, not a hand-picked fixture.
+
+    `_FULL_CONFIG` above only exercises the sections someone remembered to
+    write into it. The live config is the shape that actually measured 51
+    lost keys before the read-modify-write fix (#167) — copied into tmp_path
+    so the real file is never written to.
+    """
+    import shutil
+    import tomllib
+
+    from lazy_harness.core.config import load_config, save_config
+
+    cfg_path = tmp_path / "config.toml"
+    shutil.copy(LIVE_CONFIG_PATH, cfg_path)
+    live_mtime_before = LIVE_CONFIG_PATH.stat().st_mtime
+
+    before = _flat_keys(tomllib.loads(cfg_path.read_text()))
+
+    save_config(load_config(cfg_path), cfg_path)
+    after_first = _flat_keys(tomllib.loads(cfg_path.read_text()))
+
+    save_config(load_config(cfg_path), cfg_path)
+    after_second = _flat_keys(tomllib.loads(cfg_path.read_text()))
+
+    lost_first = sorted(before - after_first)
+    lost_second = sorted(after_first - after_second)
+    assert not lost_first, f"first save dropped {len(lost_first)} keys: {lost_first}"
+    assert not lost_second, f"second save dropped {len(lost_second)} keys: {lost_second}"
+
+    # The real config was never touched by this test.
+    assert LIVE_CONFIG_PATH.stat().st_mtime == live_mtime_before
+
+
+@pytest.mark.skipif(not LIVE_CONFIG_PATH.is_file(), reason="no live config.toml on this machine")
+def test_context_inject_switches_survive_round_trip_against_the_live_config(
+    tmp_path: Path,
+) -> None:
+    """The three `[context_inject]` switches read back as set, not as their default.
+
+    Flips all three to values that differ from `ContextInjectConfig`'s
+    defaults before loading, against a copy of the real config shape, so a
+    parser that silently falls back to the default cannot pass by
+    coincidence the way it would on this machine's actual current values.
+    """
+    import re
+    import shutil
+
+    from lazy_harness.core.config import ContextInjectConfig, load_config, save_config
+
+    cfg_path = tmp_path / "config.toml"
+    shutil.copy(LIVE_CONFIG_PATH, cfg_path)
+    text = cfg_path.read_text()
+
+    assert ContextInjectConfig.qmd_suggest_enabled is True
+    assert ContextInjectConfig.qmd_suggest_top_k == 3
+    assert ContextInjectConfig.graphify_surface_enabled is True
+    text = re.sub(r"qmd_suggest_enabled = \w+", "qmd_suggest_enabled = false", text)
+    text = re.sub(r"qmd_suggest_top_k = \d+", "qmd_suggest_top_k = 99", text)
+    text = re.sub(r"graphify_surface_enabled = \w+", "graphify_surface_enabled = false", text)
+    cfg_path.write_text(text)
+
+    ci = load_config(cfg_path).context_inject
+    assert ci.qmd_suggest_enabled is False
+    assert ci.qmd_suggest_top_k == 99
+    assert ci.graphify_surface_enabled is False
+
+    save_config(load_config(cfg_path), cfg_path)
+    ci_after_save = load_config(cfg_path).context_inject
+    assert ci_after_save.qmd_suggest_enabled is False
+    assert ci_after_save.qmd_suggest_top_k == 99
+    assert ci_after_save.graphify_surface_enabled is False
