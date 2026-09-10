@@ -55,15 +55,17 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 
 ## Open — Prioridad ALTA
 
-### `uv run` devuelve exit codes espurios cuando el rebuild de graphify corre en paralelo
+### El gate de docs falla de forma intermitente por un `uv` viejo en el PATH — causa encontrada y corregida
 
-**Por qué importa:** el non-negotiable #4 exige que los tres checks pasen con output impecable antes de cada commit. Si uno de los tres puede devolver un código de salida que no corresponde a su resultado, el gate deja de ser confiable en las dos direcciones: puede frenar trabajo bueno, y —más grave— nadie verificó todavía si puede dejar pasar trabajo malo.
+**El síntoma:** `uv run --group docs mkdocs build --strict` devolvía a veces `exit 2` con `error: unexpected argument '--group' found`, y a veces el build completo con `exit 0`, sin que cambiara nada entre una corrida y otra. Observado cuatro veces el 2026-09-10.
 
-**Síntoma, observado tres veces el 2026-09-10:** inmediatamente después de un `git commit` (que dispara `[graphify hook] launching background rebuild`), `uv run --group docs mkdocs build --strict` devolvió una vez `exit 2` y dos veces un mensaje suelto de uso (`For more information, try '--help'`) en lugar de su salida normal. Reejecutado unos segundos después, sin cambiar nada, el mismo comando devuelve `exit 0` y el build completo. El commit afectado quedó sano: se reverificó después.
+**La causa, con evidencia:** hay dos `uv` instalados. `/opt/homebrew/bin/uv` es 0.12.10; `~/.langflow/uv/uv` es **0.6.17, de abril 2025**. El instalador de Langflow dejó un `env` que hace `export PATH="$HOME/.langflow/uv:$PATH"` — antepone — y `~/.config/zsh/10-darwin.zsh` lo sourceaba en cada shell de login. Según cómo se hubiera inicializado el shell, `uv` resolvía a uno o al otro. El de 2025 no conoce `uv run --group`.
 
-**Lo que NO se determinó:** la causa. El rebuild escribe en `graphify-out/`, no en `.venv` ni en `site/`, así que la explicación fácil —colisión de archivos— no se sostiene. Queda como hipótesis no probada la presión de recursos (el rebuild procesa 7923 nodos y 16478 aristas) o una contención sobre el cache o el lock de `uv`. No se instrumentó.
+**El mismo `uv` viejo explica un segundo problema:** reescribe `uv.lock` en el formato anterior, sin `revision` ni `upload-time`. Dos `uv.lock` quedaron degradados ese día — uno perdiendo 817 líneas en este repo, otro ganando `revision = 3` en `lazy-ai-tools`, según cuál de los dos binarios corriera. El gate del `CLAUDE.md` que dice *"Never run `uv` against live profiles from a worktree... it has also degraded `uv.lock`"* atribuía el daño al worktree; la causa real era cuál `uv` estaba primero en el PATH.
 
-**Acción:** reproducirlo a propósito antes de teorizar — lanzar el rebuild y correr los tres checks en paralelo unas cuantas veces, capturando `$?` sin pipe (un pipe devuelve el código del último comando, no del primero, y eso confundió el diagnóstico inicial). Si se confirma, la salida barata es serializar: que el hook no lance el rebuild cuando hay un check corriendo, o que `/tdd-check` espere a que termine.
+**Corregido** en `~/.config/zsh/10-darwin.zsh`: el sourcing quedó comentado con la explicación, y persistido con `chezmoi re-add`. Un shell de login nuevo resuelve `uv` a Homebrew 0.12.10. Langflow sigue usando su propio `uv` internamente; lo que no hace más es imponerlo al PATH del usuario.
+
+**Lo que queda por hacer:** una diagnosis previa de esto culpó al rebuild de graphify que corre tras cada commit, por pura correlación temporal — el rebuild y el fallo aparecían juntos. Era falso, y el costo de esa hipótesis fue mirar el proceso equivocado. La lección aplicable: capturar `$?` sin pipe desde el principio (un pipe devuelve el código del último comando de la cadena, no del primero) y **leer el mensaje de error antes de teorizar sobre la causa**. El error decía exactamente cuál era el problema desde la primera vez.
 
 
 ### `stop-verify-guard` está implementado pero no se puede wirear: nada emite `verify_ran`
