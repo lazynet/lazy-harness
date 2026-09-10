@@ -95,6 +95,31 @@ def test_days_filters_out_events_older_than_the_window(tmp_path: Path) -> None:
     assert "goal_declared" not in result.output
 
 
+def test_agent_dispatched_count_appears_alongside_the_declared_rate(tmp_path: Path) -> None:
+    """Track 2c: agent_dispatched is a loop_events kind like any other, so the
+    generic per-kind listing already surfaces it next to the goal-declared
+    ratio without any command-specific wiring."""
+    db_path = tmp_path / "metrics.db"
+    db = MetricsDB(db_path)
+    db.record_loop_event(
+        session="s1",
+        kind="agent_dispatched",
+        detail='{"model": "sonnet", "subagent_type": "general-purpose"}',
+    )
+    db.record_loop_event(
+        session="s1",
+        kind="agent_dispatched",
+        detail='{"model": "haiku", "subagent_type": "Explore"}',
+    )
+    db.record_loop_event(session="s1", kind="goal_declared")
+
+    result = CliRunner().invoke(metrics, ["loops", "--db", str(db_path)])
+
+    assert result.exit_code == 0
+    assert "agent_dispatched     2" in result.output
+    assert "declared rate: 100% (1/1)" in result.output
+
+
 def test_runs_with_no_parameters_at_all(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Smoke test: the default DB path must resolve without an explicit --db."""
     monkeypatch.setattr("lazy_harness.cli.metrics_cmd.data_dir", lambda: tmp_path)

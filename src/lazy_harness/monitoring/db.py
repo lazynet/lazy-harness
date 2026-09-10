@@ -147,9 +147,7 @@ class MetricsDB:
                 "ALTER TABLE session_stats ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'local'"
             )
         if "host" not in cols:
-            self._conn.execute(
-                "ALTER TABLE session_stats ADD COLUMN host TEXT NOT NULL DEFAULT ''"
-            )
+            self._conn.execute("ALTER TABLE session_stats ADD COLUMN host TEXT NOT NULL DEFAULT ''")
         if "workload" not in cols:
             self._conn.execute(
                 "ALTER TABLE session_stats ADD COLUMN workload TEXT NOT NULL DEFAULT ''"
@@ -269,9 +267,7 @@ class MetricsDB:
 
     def attribution_map(self) -> dict[str, str]:
         """session -> workload for every recorded attribution."""
-        rows = self._conn.execute(
-            "SELECT session, workload FROM session_attribution"
-        ).fetchall()
+        rows = self._conn.execute("SELECT session, workload FROM session_attribution").fetchall()
         return {r["session"]: r["workload"] for r in rows}
 
     def backfill_host(self, host: str, *, dry_run: bool = False) -> BackfillReport:
@@ -338,9 +334,9 @@ class MetricsDB:
         the rows that are *about* to be stamped rather than the ones already
         stamped — the one place the two paths cannot share a query.
         """
-        rows = self._conn.execute(
-            "SELECT COUNT(*) FROM session_stats WHERE host = ''"
-        ).fetchone()[0]
+        rows = self._conn.execute("SELECT COUNT(*) FROM session_stats WHERE host = ''").fetchone()[
+            0
+        ]
         candidates = self._conn.execute(
             """
             SELECT o.payload_json
@@ -758,6 +754,21 @@ class MetricsDB:
         self._conn.execute(
             "DELETE FROM loop_events WHERE session = ? AND kind IN "
             "('goal_declared', 'goal_absent')",
+            (session,),
+        )
+        self._conn.commit()
+
+    def clear_agent_dispatches(self, session: str) -> None:
+        """Delete any prior `agent_dispatched` rows for `session`.
+
+        Same idempotency shape as `clear_goal_verdict`, for the same reason:
+        the compound-loop worker rescans the whole transcript on every
+        reprocess (`should_reprocess`), so inserting one row per dispatch
+        found on every scan would double-count already-recorded dispatches.
+        Clearing first makes the latest scan authoritative.
+        """
+        self._conn.execute(
+            "DELETE FROM loop_events WHERE session = ? AND kind = 'agent_dispatched'",
             (session,),
         )
         self._conn.commit()

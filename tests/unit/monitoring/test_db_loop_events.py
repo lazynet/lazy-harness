@@ -87,3 +87,44 @@ def test_clear_goal_verdict_on_a_session_with_no_verdict_is_a_no_op(db: MetricsD
     db.clear_goal_verdict("s1")
 
     assert db.loop_event_counts() == {"nontrivial_prompt": 1}
+
+
+def test_clear_agent_dispatches_removes_prior_dispatched_rows_for_the_session(
+    db: MetricsDB,
+) -> None:
+    db.record_loop_event(session="s1", kind="agent_dispatched", project="p")
+    db.record_loop_event(session="s1", kind="agent_dispatched", project="p")
+
+    db.clear_agent_dispatches("s1")
+
+    assert db.loop_event_counts() == {}
+
+
+def test_clear_agent_dispatches_leaves_other_kinds_for_the_same_session_alone(
+    db: MetricsDB,
+) -> None:
+    db.record_loop_event(session="s1", kind="agent_dispatched", project="p")
+    db.record_loop_event(session="s1", kind="nontrivial_prompt", project="p")
+
+    db.clear_agent_dispatches("s1")
+
+    assert db.loop_event_counts() == {"nontrivial_prompt": 1}
+
+
+def test_clear_agent_dispatches_leaves_other_sessions_alone(db: MetricsDB) -> None:
+    db.record_loop_event(session="s1", kind="agent_dispatched", project="p")
+    db.record_loop_event(session="s2", kind="agent_dispatched", project="p")
+
+    db.clear_agent_dispatches("s1")
+
+    assert db.loop_event_counts() == {"agent_dispatched": 1}
+
+
+def test_clear_agent_dispatches_on_a_session_with_no_dispatches_is_a_no_op(
+    db: MetricsDB,
+) -> None:
+    db.record_loop_event(session="s1", kind="nontrivial_prompt", project="p")
+
+    db.clear_agent_dispatches("s1")
+
+    assert db.loop_event_counts() == {"nontrivial_prompt": 1}

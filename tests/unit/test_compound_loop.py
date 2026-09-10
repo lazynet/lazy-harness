@@ -10,6 +10,7 @@ import pytest
 
 from lazy_harness.core.config import CompoundLoopConfig, Config
 from lazy_harness.knowledge.compound_loop import (
+    AgentDispatch,
     Insight,
     build_prompt,
     collect_existing_decisions,
@@ -17,6 +18,7 @@ from lazy_harness.knowledge.compound_loop import (
     collect_existing_learnings,
     count_user_chars,
     create_task,
+    extract_agent_dispatches,
     extract_insights,
     extract_messages,
     is_debounced,
@@ -1533,6 +1535,305 @@ def test_process_task_resolves_the_project_key_like_the_prompt_sensor(
         .fetchall()
     )
     assert rows[0]["project"] == str(git_checkout.repo.resolve())
+
+
+# ---------------------------------------------------------------------------
+# agent_dispatched — recorded by process_task from the parsed transcript
+# ---------------------------------------------------------------------------
+
+
+def _interactive_session_with_dispatches(
+    tmp_path: Path, dispatches: list[dict[str, Any]], name: str = "sess.jsonl"
+) -> Path:
+    session = tmp_path / name
+    records: list[dict[str, Any]] = [
+        {"type": "permission-mode"},
+        {"type": "system", "cwd": "/tmp/proj"},
+        {"type": "user", "message": {"content": "a" * 250}},
+    ]
+    for inp in dispatches:
+        records.append(_dispatch_message(inp))
+    records.append({"type": "assistant", "message": {"content": "ok"}})
+    records.append({"type": "user", "message": {"content": "next step please"}})
+    records.append({"type": "assistant", "message": {"content": "done"}})
+    _write_jsonl(session, records)
+    return session
+
+
+def test_process_task_records_one_agent_dispatched_event_per_dispatch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from lazy_harness.knowledge import compound_loop as cl
+    from lazy_harness.monitoring.db import MetricsDB
+
+    db_path = tmp_path / "metrics.db"
+    monkeypatch.setattr(cl, "_db_path", lambda: db_path)
+
+    queue = tmp_path / "queue"
+    memory = tmp_path / "memory"
+    learnings = tmp_path / "Learnings"
+    session = _interactive_session_with_dispatches(
+        tmp_path,
+        [
+            {"subagent_type": "general-purpose", "model": "sonnet"},
+            {"subagent_type": "Explore", "model": "haiku"},
+        ],
+    )
+    task = create_task(queue, Path("/tmp/proj"), session, "abcd1234efgh", memory)
+
+    _stub_run_inference(monkeypatch, lambda *a: _response())
+    outcome = process_task(task, _cfg(), learnings)
+
+    assert outcome.was_processed
+    assert MetricsDB(db_path).loop_event_counts()["agent_dispatched"] == 2
+
+
+def test_process_task_records_model_and_subagent_type_in_detail(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from lazy_harness.knowledge import compound_loop as cl
+    from lazy_harness.monitoring.db import MetricsDB
+
+    db_path = tmp_path / "metrics.db"
+    monkeypatch.setattr(cl, "_db_path", lambda: db_path)
+
+    queue = tmp_path / "queue"
+    memory = tmp_path / "memory"
+    learnings = tmp_path / "Learnings"
+    session = _interactive_session_with_dispatches(
+        tmp_path, [{"subagent_type": "general-purpose", "model": "sonnet"}]
+    )
+    task = create_task(queue, Path("/tmp/proj"), session, "abcd1234efgh", memory)
+
+    _stub_run_inference(monkeypatch, lambda *a: _response())
+    process_task(task, _cfg(), learnings)
+
+    rows = (
+        MetricsDB(db_path)
+        ._conn.execute("SELECT detail FROM loop_events WHERE kind = 'agent_dispatched'")
+        .fetchall()
+    )
+    assert json.loads(rows[0]["detail"]) == {"model": "sonnet", "subagent_type": "general-purpose"}
+
+
+def test_process_task_records_nothing_when_transcript_has_no_dispatches(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from lazy_harness.knowledge import compound_loop as cl
+    from lazy_harness.monitoring.db import MetricsDB
+
+    db_path = tmp_path / "metrics.db"
+    monkeypatch.setattr(cl, "_db_path", lambda: db_path)
+
+    queue = tmp_path / "queue"
+    memory = tmp_path / "memory"
+    learnings = tmp_path / "Learnings"
+    session = _interactive_session(tmp_path)
+    task = create_task(queue, Path("/tmp/proj"), session, "abcd1234efgh", memory)
+
+    _stub_run_inference(monkeypatch, lambda *a: _response())
+    process_task(task, _cfg(), learnings)
+
+    assert "agent_dispatched" not in MetricsDB(db_path).loop_event_counts()
+
+
+def test_process_task_reprocessing_the_same_session_does_not_double_count_dispatches(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The worker rescans the whole transcript on every reprocess
+    (should_reprocess). A naive insert-per-scan would double the dispatch
+    count on the second processing of the same session; this is the
+    idempotency guard the task calls for (see MetricsDB.clear_agent_dispatches)."""
+    from lazy_harness.knowledge import compound_loop as cl
+    from lazy_harness.monitoring.db import MetricsDB
+
+    db_path = tmp_path / "metrics.db"
+    monkeypatch.setattr(cl, "_db_path", lambda: db_path)
+
+    queue = tmp_path / "queue"
+    memory = tmp_path / "memory"
+    learnings = tmp_path / "Learnings"
+    session = _interactive_session_with_dispatches(
+        tmp_path, [{"subagent_type": "general-purpose", "model": "sonnet"}]
+    )
+    task = create_task(queue, Path("/tmp/proj"), session, "abcd1234efgh", memory)
+    _stub_run_inference(monkeypatch, lambda *a: _response())
+
+    process_task(task, _cfg(), learnings)
+    process_task(task, _cfg(), learnings)
+
+    assert MetricsDB(db_path).loop_event_counts()["agent_dispatched"] == 1
+
+
+def test_process_task_reprocessing_a_grown_session_reflects_the_new_dispatch_count(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A later processing has strictly more transcript to scan than the
+    first — its dispatch count, not the sum, is what should be stored."""
+    from lazy_harness.knowledge import compound_loop as cl
+    from lazy_harness.monitoring.db import MetricsDB
+
+    db_path = tmp_path / "metrics.db"
+    monkeypatch.setattr(cl, "_db_path", lambda: db_path)
+
+    queue = tmp_path / "queue"
+    memory = tmp_path / "memory"
+    learnings = tmp_path / "Learnings"
+    session = _interactive_session_with_dispatches(
+        tmp_path, [{"subagent_type": "general-purpose", "model": "sonnet"}]
+    )
+    task = create_task(queue, Path("/tmp/proj"), session, "abcd1234efgh", memory)
+    _stub_run_inference(monkeypatch, lambda *a: _response())
+    process_task(task, _cfg(), learnings)
+
+    session2 = _interactive_session_with_dispatches(
+        tmp_path,
+        [
+            {"subagent_type": "general-purpose", "model": "sonnet"},
+            {"subagent_type": "Explore", "model": "haiku"},
+        ],
+        name="sess.jsonl",
+    )
+    assert session2 == session
+    task2 = create_task(queue, Path("/tmp/proj"), session, "abcd1234efgh", memory)
+    process_task(task2, _cfg(), learnings)
+
+    assert MetricsDB(db_path).loop_event_counts()["agent_dispatched"] == 2
+
+
+# ---------------------------------------------------------------------------
+# extract_agent_dispatches — deterministic parse of Task tool_use blocks
+# ---------------------------------------------------------------------------
+
+
+def _dispatch_message(inp: Any) -> dict[str, Any]:
+    return {
+        "type": "assistant",
+        "message": {"content": [{"type": "tool_use", "name": "Task", "input": inp}]},
+    }
+
+
+def test_extract_agent_dispatches_parses_a_single_dispatch(tmp_path: Path) -> None:
+    session = tmp_path / "s.jsonl"
+    _write_jsonl(
+        session,
+        [
+            {"type": "user", "message": {"content": "explorá el repo"}},
+            _dispatch_message(
+                {
+                    "subagent_type": "general-purpose",
+                    "model": "sonnet",
+                    "description": "explore",
+                    "prompt": "find X",
+                }
+            ),
+        ],
+    )
+
+    dispatches = extract_agent_dispatches(session)
+
+    assert dispatches == [AgentDispatch(subagent_type="general-purpose", model="sonnet")]
+
+
+def test_extract_agent_dispatches_parses_multiple_dispatches(tmp_path: Path) -> None:
+    session = tmp_path / "s.jsonl"
+    _write_jsonl(
+        session,
+        [
+            _dispatch_message({"subagent_type": "general-purpose", "model": "sonnet"}),
+            _dispatch_message({"subagent_type": "Explore", "model": "haiku"}),
+        ],
+    )
+
+    dispatches = extract_agent_dispatches(session)
+
+    assert dispatches == [
+        AgentDispatch(subagent_type="general-purpose", model="sonnet"),
+        AgentDispatch(subagent_type="Explore", model="haiku"),
+    ]
+
+
+def test_extract_agent_dispatches_defaults_model_when_omitted(tmp_path: Path) -> None:
+    """The Agent tool's `model` param is optional — a dispatch that inherits
+    the caller's model carries no `model` key in its input."""
+    session = tmp_path / "s.jsonl"
+    _write_jsonl(session, [_dispatch_message({"subagent_type": "general-purpose"})])
+
+    dispatches = extract_agent_dispatches(session)
+
+    assert dispatches == [AgentDispatch(subagent_type="general-purpose", model="")]
+
+
+def test_extract_agent_dispatches_ignores_non_task_tool_use(tmp_path: Path) -> None:
+    session = tmp_path / "s.jsonl"
+    _write_jsonl(
+        session,
+        [
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [{"type": "tool_use", "name": "Bash", "input": {"command": "ls"}}]
+                },
+            }
+        ],
+    )
+
+    assert extract_agent_dispatches(session) == []
+
+
+def test_extract_agent_dispatches_ignores_user_messages(tmp_path: Path) -> None:
+    """Only assistant tool_use blocks count — a user cannot fabricate a dispatch."""
+    session = tmp_path / "s.jsonl"
+    _write_jsonl(
+        session,
+        [
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "name": "Task",
+                            "input": {"subagent_type": "general-purpose"},
+                        }
+                    ]
+                },
+            }
+        ],
+    )
+
+    assert extract_agent_dispatches(session) == []
+
+
+def test_extract_agent_dispatches_skips_malformed_jsonl_lines(tmp_path: Path) -> None:
+    session = tmp_path / "s.jsonl"
+    session.write_text(
+        "not json at all\n"
+        + json.dumps(_dispatch_message({"subagent_type": "general-purpose", "model": "haiku"}))
+        + "\n"
+    )
+
+    assert extract_agent_dispatches(session) == [
+        AgentDispatch(subagent_type="general-purpose", model="haiku")
+    ]
+
+
+def test_extract_agent_dispatches_guards_a_non_dict_input(tmp_path: Path) -> None:
+    session = tmp_path / "s.jsonl"
+    _write_jsonl(session, [_dispatch_message("not a dict")])
+
+    assert extract_agent_dispatches(session) == [AgentDispatch(subagent_type="", model="")]
+
+
+def test_extract_agent_dispatches_guards_non_string_fields(tmp_path: Path) -> None:
+    session = tmp_path / "s.jsonl"
+    _write_jsonl(session, [_dispatch_message({"subagent_type": 7, "model": None})])
+
+    assert extract_agent_dispatches(session) == [AgentDispatch(subagent_type="", model="")]
+
+
+def test_extract_agent_dispatches_on_missing_file_returns_empty(tmp_path: Path) -> None:
+    assert extract_agent_dispatches(tmp_path / "nope.jsonl") == []
 
 
 # ---------------------------------------------------------------------------
