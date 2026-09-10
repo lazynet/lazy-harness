@@ -83,6 +83,49 @@ CREATE INDEX IF NOT EXISTS idx_loop_events_session ON loop_events(session, ts);
 
 This phase ships **with zero user-facing friction** and runs for two weeks to establish a baseline: in what fraction of non-trivial sessions is a success criterion declared at all. The expected answer is near zero, but proposal #9 makes the measurement a precondition, not an afterthought — without a baseline there is no way to tell later whether the enforcement worked or merely added noise.
 
+#### Phase 0 result — baseline closed 2026-09-10
+
+Shipped and measured. The sensor ran from 2026-08-16; the compound-loop worker
+began emitting per-session verdicts on 2026-08-25.
+
+| Signal | Count | Window |
+|---|---|---|
+| `nontrivial_prompt` | 2774 prompts across 2250 sessions | 08-16 → 09-10 |
+| `session_closed` | 2398 | 08-16 → 09-10 |
+| `goal_declared` | 29 | 08-25 → 09-10 |
+| `goal_absent` | 140 | 08-25 → 09-10 |
+
+**Declared rate: 17% (29/169).** The prediction of "near zero" was wrong by an
+order of magnitude, which matters: the >60% success criterion was written
+against an assumed floor of 0%, and the real floor is 17%.
+
+**The denominator is not the one this design specified.** Phase 0 states that
+`nontrivial_prompt` is the measurement's denominator. It is not what the ratio
+reports. A verdict exists only for sessions the compound-loop worker actually
+graded, and the worker gates on `min_user_chars`, `min_messages` and
+interactivity — so 169 of 2250 non-trivial sessions carry a verdict at all.
+The 17% is measured over 7.5% of the population, and that subsample is
+selected for length, not drawn at random. Long sessions are exactly the ones
+most likely to declare a goal, so 17% is an upper bound on the true rate, not
+an estimate of it.
+
+Two consequences for phase 1, both binding:
+
+1. **The success criterion is restated against the denominator that is
+   actually measurable.** ">60% of non-trivial sessions" cannot be computed
+   from `loop_events` as they stand. Phase 1 measures `goal_declared` over
+   graded sessions — the same 169-shaped population as the baseline — and the
+   comparison is 17% → target. Widening the measurement to all non-trivial
+   sessions is a separate change and must not happen mid-window, per the
+   repo's rule that a calibration is frozen until its baseline closes.
+2. **The kill criteria have not been triggered and could not have been.** They
+   read "at four weeks adoption is zero, or signal-to-noise is below 50%" and
+   are scoped to the `UserPromptSubmit` *injection*, which has never been
+   enabled: `[loops] inject_goal_prompt` still defaults to false and no config
+   sets it. 17% is the pre-injection floor this phase existed to establish, not
+   evidence that an intervention failed. The four-week clock starts when phase 1
+   ships, not when phase 0 did.
+
 ### Phase 1 — Goal-driven execution and verification
 
 **Skill `verify-before-done`.** The single highest-value piece, and the only one that pays off independently of everything else. It encodes quantitative checks per work type rather than a generic reminder:
@@ -201,7 +244,7 @@ At most ~20 lines: a table mapping work shape to loop primitive — including wh
 
 Measured from `loop_events`, four weeks after phase 1 ships:
 
-- Success criteria declared in **>60%** of non-trivial sessions (baseline expected near 0%).
+- Success criteria declared in **>60%** of *graded* sessions — the population the compound-loop worker actually emits verdicts for, matching the phase 0 baseline of 17% (29/169). The original wording said "non-trivial sessions"; that denominator is not computable from `loop_events` and is corrected here, before the window opens, per the phase 0 result.
 - Verification runs in **>80%** of sessions that declared a goal.
 - Injection signal-to-noise **>50%** — the fraction of injections on prompts that genuinely were non-trivial work.
 
@@ -212,7 +255,14 @@ For phase 4, measured separately:
 
 ## Kill criteria
 
-Binding, per proposal #15. If at four weeks adoption is zero, or signal-to-noise is below 50%, the `UserPromptSubmit` injection is **removed** rather than supplemented with additional triggers. The `verify-before-done` skill survives independently; it has value with or without the hook.
+Binding, per proposal #15. The four-week clock starts when **phase 1 ships** —
+not when phase 0 did. As of 2026-09-10 the injection has never been enabled, so
+nothing below has been triggered; see the phase 0 result for why 17% is a floor
+and not a failed intervention.
+
+If at four weeks the declared rate has not moved above the 17% baseline, or
+signal-to-noise is below 50%, the `UserPromptSubmit` injection is **removed**
+rather than supplemented with additional triggers. The `verify-before-done` skill survives independently; it has value with or without the hook.
 
 The same applies per trigger in phase 4: the multi-repository signal and the context-threshold signal are measured and killed independently. One failing does not condemn the other, and neither is rescued by adding a third.
 

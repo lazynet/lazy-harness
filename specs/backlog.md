@@ -72,6 +72,39 @@ No causó daño visible todavía porque el único caller en producción es `lh p
 
 ## Open — Prioridad MEDIA
 
+### Loop engineering — fases 1 a 4 sin trackear
+
+**Por qué:** [`specs/designs/2026-08-16-loop-engineering-design.md`](designs/2026-08-16-loop-engineering-design.md) diseña cinco fases y solo la 0 shippeó (`user_prompt_goal.py` como sensor). El design nunca entró a este backlog, así que las fases restantes no tenían dónde vencer. Baseline cerrado el 2026-09-10: 17% de declaración (29/169 sesiones graduadas), medido sobre el 7.5% de las sesiones no triviales que el compound-loop llega a graduar.
+
+**Fuente:** el design citado, sección "Phase 0 result". Medición desde `loop_events` en `metrics.db`.
+
+**Acción:** fase 1 (skill `verify-before-done` + `[loops] inject_goal_prompt = true`) abre la ventana de cuatro semanas contra el 17%. Fase 4 (delegación) se reemplaza por el evento `agent_dispatched` de abajo, que mide la misma palanca sin depender de Herdr.
+
+### Delegación a subagentes sin instrumentar
+
+**Por qué:** 150 llamadas al Agent tool en 873 sesiones de septiembre (perfil lazy), todas `general-purpose`, cero `Explore`/`Plan`/`fork`. En el mismo período, 5046 invocaciones de Bash corrieron en el hilo principal. La exploración que podría delegarse a un modelo barato se paga a precio de Opus, y el output crudo queda ocupando contexto el resto de la sesión.
+
+**Fuente:** [orchestrator-tax](lazy-lazymind-resources/tech/ia/orchestrator-tax-costos-contexto-multiagente.md) — distingue tokens (se pagan una vez) de contexto (contamina cada turno). [subagent-context-modes](lazy-lazymind-resources/tech/ia/subagent-context-modes-isolated-vs-fork.md) — worker con `fork`, verifier aislado.
+
+**Acción:** emitir `agent_dispatched` en `loop_events` desde el compound-loop worker, con modelo y `subagent_type` en `detail`. Sin la medida no se puede saber si la práctica se adopta. Baseline: 150/873.
+
+### Reconcile y Decay ausentes del stack de memoria
+
+**Por qué:** 5954 learnings en el knowledge store, **el 100% en `status: active`** — nada se deprecó nunca. Agosto aportó 2959 y septiembre 1192 en diez días. `decisions.jsonl` además drifteó de schema: las líneas viejas traen `timestamp`/`fixed`/`deferred`, las nuevas `ts`/`context`/`rationale`/`alternatives`, y nada lo reconcilia.
+
+**Fuente:** [memory-engineering-five-stage-pipeline](lazy-lazymind-resources/tech/ia/memory-engineering-five-stage-pipeline.md) — Capture, Consolidate, Retrieve, **Reconcile**, **Decay**. El stack de 5 capas del ADR-027 cubre las tres primeras.
+
+**Acción:** ADR-040 más `lh memory decay` y `lh memory reconcile`, ambos propose-only por default como `lh memory consolidate`.
+
+### Rightsizing de CLAUDE.md — enforcement y medición
+
+**Por qué:** `lazy-popopen/CLAUDE.md` tiene 987 líneas y 70 KB, y es el segundo proyecto más caro del mes ($409). `lazy-ai-tools` 333, `lazy-ansible` 308, `lazy-desktop-manager` 223. El hook `pre-tool-use-memory-size` ya tiene los umbrales correctos (200 líneas / 12 KB) pero solo mira `MEMORY.md`. Se solapa con "Audit CLAUDE.md triple por context clash" de abajo: ese item mide el clash entre capas, este mide el tamaño de cada una.
+
+**Fuente:** [fable-5-1](lazy-lazymind-resources/tech/ia/fable-5-1-liderar-agentes-guia-orquestacion.md) — <200 líneas, tres secciones. [Nuevas reglas de context engineering para Claude 5](lazy-lazymind-resources/tech/ia/nuevas-reglas-de-context-engineering-para-claude-5.md) — reglas rígidas → juicio, progressive disclosure hacia skills.
+
+**Acción:** extender el hook a `CLAUDE.md` con umbral propio, agregar `lh memory rightsize` (read-only) y un skill que guíe la poda. Después ejecutar sobre los cuatro repos.
+
+
 
 ### Audit CLAUDE.md triple por context clash
 
