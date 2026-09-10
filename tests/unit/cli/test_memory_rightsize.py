@@ -169,6 +169,90 @@ def test_rightsize_lists_a_project_with_no_remote_and_no_store_memory(
     assert "987" in result.output
 
 
+def test_rightsize_finds_a_claude_md_two_levels_under_a_root(tmp_path: Path, monkeypatch) -> None:
+    """`~/repos/flex` groups checkouts under `apps/`, `infra/`, `mngt/`, etc. —
+    a fixed one-level scan missed every one of them, including four of the
+    most expensive projects of September. Discovery has to walk down to
+    wherever a repo actually is, not assume a depth."""
+    repos = tmp_path / "repos"
+    repos.mkdir()
+    _store, _profile = _setup(tmp_path, monkeypatch, roots=[repos])
+    group = repos / "infra"
+    group.mkdir()
+    repo = _repo(group, "devops-tf-infra")
+    (repo / "CLAUDE.md").write_text("line\n" * 125)
+
+    result = CliRunner().invoke(memory, ["rightsize"])
+
+    assert result.exit_code == 0, result.output
+    assert "project:github.com/o/devops-tf-infra" in result.output
+    assert "125" in result.output
+
+
+def test_rightsize_does_not_report_a_repos_own_nested_worktree(tmp_path: Path, monkeypatch) -> None:
+    """A repo checked out with active `.worktrees/<name>` linked worktrees
+    (this repo has three) must contribute exactly one row — the repo root —
+    not one row per worktree found while recursing underneath it."""
+    repos = tmp_path / "repos"
+    repos.mkdir()
+    _store, _profile = _setup(tmp_path, monkeypatch, roots=[repos])
+    repo = _repo(repos, "lazy-harness")
+    (repo / "CLAUDE.md").write_text("line\n" * 42)
+    worktree = repo / ".worktrees" / "feat"
+    worktree.mkdir(parents=True)
+    (worktree / ".git").write_text(f"gitdir: {repo}/.git/worktrees/feat\n")
+    (worktree / "CLAUDE.md").write_text("line\n" * 999)
+
+    result = CliRunner().invoke(memory, ["rightsize"])
+
+    assert result.exit_code == 0, result.output
+    assert result.output.count("lazy-harness") == 1
+    assert "42" in result.output
+    assert "999" not in result.output
+
+
+def test_rightsize_does_not_descend_past_a_repos_own_root(tmp_path: Path, monkeypatch) -> None:
+    """Isolates the repo-root prune from the `.worktrees` noise-name skip: a
+    nested checkout under an arbitrary directory name (a submodule-style
+    vendor drop, not `.worktrees`) must still be left alone once its parent
+    is recognised as a repo root — 'no hace falta bajar más'."""
+    repos = tmp_path / "repos"
+    repos.mkdir()
+    _store, _profile = _setup(tmp_path, monkeypatch, roots=[repos])
+    repo = _repo(repos, "outer")
+    (repo / "CLAUDE.md").write_text("line\n" * 5)
+    nested = _repo(repo / "vendor", "inner")
+    (nested / "CLAUDE.md").write_text("line\n" * 999)
+
+    result = CliRunner().invoke(memory, ["rightsize"])
+
+    assert result.exit_code == 0, result.output
+    assert "inner" not in result.output
+    assert "999" not in result.output
+
+
+def test_rightsize_does_not_descend_into_a_known_noise_directory(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """`node_modules`, `.venv`, `graphify-out` etc. are never a repo — walking
+    into them wastes time and risks a stray CLAUDE.md-shaped file from a
+    dependency being reported as a project."""
+    repos = tmp_path / "repos"
+    repos.mkdir()
+    _store, _profile = _setup(tmp_path, monkeypatch, roots=[repos])
+    repo = _repo(repos, "widget")
+    (repo / "CLAUDE.md").write_text("line\n" * 5)
+    noisy = repo.parent / "node_modules" / "some-pkg"
+    noisy.mkdir(parents=True)
+    (noisy / "CLAUDE.md").write_text("line\n" * 999)
+
+    result = CliRunner().invoke(memory, ["rightsize"])
+
+    assert result.exit_code == 0, result.output
+    assert "some-pkg" not in result.output
+    assert "999" not in result.output
+
+
 def test_rightsize_respects_configured_claude_md_thresholds(tmp_path: Path, monkeypatch) -> None:
     store = tmp_path / "knowledge"
     store.mkdir()
