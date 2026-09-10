@@ -72,6 +72,15 @@ No causó daño visible todavía porque el único caller en producción es `lh p
 
 ## Open — Prioridad MEDIA
 
+### Skills propios del harness sin versionar
+
+**Por qué:** `audit-harness`, `recall-cowork` y `graphify` viven como directorios reales en `~/.claude-lazy/skills/`, fuera de todo repo — `git rev-parse` sobre ellos no resuelve nada. El resto del pool (`~/.agents/skills/`) tampoco está versionado; lo gobierna un `.skill-lock.json` externo. Un borrado del profile, o un `lh deploy` con la lógica de symlinks cambiada, los pierde sin traza. `lh deploy` declara en su docstring que symlinkea skills, pero no hay sección de config que declare desde dónde.
+
+**Fuente:** medido el 2026-09-10 al buscar dónde alojar un skill nuevo (`rightsize-claude-md`, track 1c del design 2026-09-10). No hay respuesta correcta hoy: versionarlo en este repo implica que `lh deploy` sepa desplegarlo, y esa capacidad no existe.
+
+**Acción:** decidir el origen canónico de los skills propios y darle a `lh deploy` una sección de config que lo declare. Hasta entonces, todo skill nuevo hereda el mismo problema.
+
+
 ### Loop engineering — fases 1 a 4 sin trackear
 
 **Por qué:** [`specs/designs/2026-08-16-loop-engineering-design.md`](designs/2026-08-16-loop-engineering-design.md) diseña cinco fases y solo la 0 shippeó (`user_prompt_goal.py` como sensor). El design nunca entró a este backlog, así que las fases restantes no tenían dónde vencer. Baseline cerrado el 2026-09-10: 17% de declaración (29/169 sesiones graduadas), medido sobre el 7.5% de las sesiones no triviales que el compound-loop llega a graduar.
