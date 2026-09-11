@@ -54,6 +54,7 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 - [x] **`uv` viejo de Langflow anteponiéndose en el PATH** — `~/.langflow/uv/env` exportaba `PATH="$HOME/.langflow/uv:$PATH"` con un uv 0.6.17 de abril 2025 que no entiende `uv run --group` y reescribe `uv.lock` en formato viejo. Rompía el gate de docs de forma intermitente y degradó dos `uv.lock` el 2026-09-10. Deshabilitado en `~/.config/zsh/10-darwin.zsh`, persistido con `chezmoi re-add`, verificado en ambas direcciones.
 - [x] **Traducción de schedule que se niega en vez de adivinar** — `scheduler/schedule.py` con `parse_cron`/`render_launchd`/`ScheduleTranslationError`; `_cron_to_calendar` y `_cron_to_interval` borrados (ADR-013 D4, PR #168, 2026-08-17). Verificado el 2026-09-10 contra las 7 formas comunes: diaria, cada N horas, semanal, mensual y cada N minutos traducen; listas y rangos levantan, porque launchd no puede expresarlos. `lh status cron` muestra el schedule real y `selftest` gana el check `units-stale`. El backlog lo listó como ALTA abierta durante tres semanas después de estar cerrado.
 - [x] **`lh deploy` default hooks merge** — `DEFAULT_HOOKS` literal in `deploy/defaults.py` + `merge_with_defaults` pure function; per-event override via config.toml (`scripts = []` opts out); framework-owned `settings.json[hooks]` with backup + warning when manual entries are clobbered (ADR-031, 11 tests TDD). Also fixed `ClaudeCodeAdapter` missing `post_compact → PostCompact` mapping. Closes the 2026-04-17 partial-config drift and makes built-ins out-of-the-box.
+- [x] **`stop-verify-guard` desplegado y wireado** — los cuatro pasos del gate binary-first, cerrados el 2026-09-11 en laptop y en el CT `agents`: release 0.57.1 y `uv tool install --reinstall`; `record-verify` grepeado en site-packages (`cli/metrics_cmd.py:220`) e invocable; el skill `verify-before-done` lo llama como último paso (línea 61 de los dos `SKILL.md` del profile); y recién entonces `stop-verify-guard` en `[hooks.session_stop]`, visible en el `Stop` de los cuatro `settings.json`. El guard ya no es un nag: su emisor está desplegado.
 - [x] **El guard de paths secretos estaba inerte: el matcher desplegado no lo alcanzaba** — `pre-tool-use-security` inspecciona `Bash` más `Read`/`Edit`/`Write`/`NotebookEdit`, pero su entrada en `_BUILTIN_HOOKS` no declaraba `matcher`, así que heredaba el default del evento (`Bash`) y Claude Code nunca lo invocaba en un `Read`. Cerrado declarando `matcher="Bash|Read|Edit|Write|NotebookEdit"`. Lo que faltaba de verdad era la relación entre las dos puntas: cada builtin que gatea por `tool_name` ahora publica `INSPECTED_TOOLS` y lo usa en su propio gate, y `tests/unit/test_hook_matcher_coverage.py` sostiene el matcher desplegado contra ese conjunto. Verificado en ambas direcciones: sin el matcher, dos de los tres tests fallan con `matcher 'Bash' never reaches ['Edit', 'NotebookEdit', 'Read', 'Write']`. Desplegado el 2026-09-11 en las dos máquinas: release 0.57.1, `uv tool install --reinstall`, grep a site-packages y `lh deploy`. Verificado end-to-end en laptop y en el CT `agents` — un payload de `Read` contra `**/secrets/**` sale exit 2, uno a un path normal exit 0. El CT ya tenía el matcher ancho antes del fix y la laptop no: `lh deploy` lo pisaba solo donde había corrido después de chezmoi.
 - [x] **`save_config` destruía config (51 claves) + tres claves de `[context_inject]` ignoradas en silencio** — read-modify-write sobre TOML crudo (`tomlkit`) en vez de completar el serializer, per D5 de [`designs/2026-08-17-capability-registry-design.md`](designs/2026-08-17-capability-registry-design.md) (commit `56429ad`, PR #167). Selftest `check_config_round_trip` registrado. Esta entrada había quedado listada como ALTA abierta pese a estar mergeada desde el 2026-08-17; el backlog no se había actualizado. Reconciliado el 2026-09-10 agregando además `tests/unit/test_config.py::test_save_config_round_trip_preserves_every_key_of_the_live_config` y `::test_context_inject_switches_survive_round_trip_against_the_live_config`, que corren el ciclo completo contra una copia del `config.toml` real de la máquina (nunca contra el archivo real) en vez de solo contra el fixture sintético `_FULL_CONFIG`.
 
@@ -61,39 +62,7 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 
 ## Open — Prioridad ALTA
 
-### `stop-verify-guard`: el emisor existe; falta desplegarlo y wirear
-
-**Estado:** `lh metrics record-verify` shippeó — escribe `verify_ran` con el
-mismo `session`, `project` y `profile` que el guard lee, resolviendo la DB por
-`resolve_db_path()`, la misma función que usa el guard. El session id sale de
-`--session` o de `CLAUDE_CODE_SESSION_ID`, verificado idéntico al `session_id`
-que Claude Code pasa en el payload del hook.
-
-**Por qué existía el bloqueo:** el hook mergeó el 2026-09-10 registrado en
-`_BUILTIN_HOOKS` y **sin** entrada en `config.toml`, a propósito. Leía
-`verify_ran` para decidir si bloquea y nada lo escribía, así que wirearlo
-producía un nag garantizado en vez de enforcement calibrado.
-
-**Lo que falta, en este orden** — es el gate de "deploying a hook is
-binary-first, never from a worktree":
-
-1. Que corte el release y `uv tool install --reinstall`.
-2. Grepear site-packages para confirmar que `record-verify` shippeó.
-3. Agregar la invocación a `verify-before-done` como último paso del
-   procedimiento (vive en el profile, fuera de este repo; cerrar con
-   `chezmoi re-add`).
-4. Recién entonces agregar `stop-verify-guard` a `[hooks.session_stop]`.
-
-**No wirear antes del paso 3.** Un guard cuyo emisor no está desplegado es
-exactamente el nag que el bloqueo original evitaba.
-
-**Hallazgo aprovechable del mismo trabajo:** `/goal <condition>` escribe
-sincrónicamente una entrada `{"type":"attachment","attachment":{"type":"goal_status",...}}`
-al transcript JSONL en el momento en que corre. Es una señal determinística
-disponible durante el `Stop`, a diferencia de `goal_declared`, que es una
-clasificación LLM post-hoc del compound-loop. Es más angosta —solo capta el uso
-explícito de `/goal`, no un criterio declarado en prosa— pero no requiere
-inferencia.
+_Sin items abiertos._
 
 ---
 
@@ -140,6 +109,8 @@ Es el mismo patrón que el gate de `auto_rebuild_on_commit`: un contrato declara
 **Por qué:** [`specs/designs/2026-08-16-loop-engineering-design.md`](designs/2026-08-16-loop-engineering-design.md) diseña cinco fases y solo la 0 shippeó (`user_prompt_goal.py` como sensor). El design nunca entró a este backlog, así que las fases restantes no tenían dónde vencer. Baseline cerrado el 2026-09-10: 17% de declaración (29/169 sesiones graduadas), medido sobre el 7.5% de las sesiones no triviales que el compound-loop llega a graduar.
 
 **Fuente:** el design citado, sección "Phase 0 result". Medición desde `loop_events` en `metrics.db`.
+
+**Señal determinística disponible, sin usar todavía:** `/goal <condition>` escribe sincrónicamente una entrada `{"type":"attachment","attachment":{"type":"goal_status",...}}` al transcript JSONL en el momento en que corre, así que está disponible durante el `Stop`. A diferencia de `goal_declared`, que es una clasificación LLM post-hoc del compound-loop, no requiere inferencia. Es más angosta —solo capta el uso explícito de `/goal`, no un criterio declarado en prosa— pero es exacta. Salió del trabajo de `stop-verify-guard`, ya cerrado.
 
 **Acción:** fase 1 shippeó el 2026-09-10 — skill `verify-before-done` deployado y `[loops] inject_goal_prompt = true` aplicado; **la ventana de cuatro semanas cierra el 2026-10-08** contra el 17%. Falta su cuarta pieza, el `Stop` hook, que está mergeado pero sin wirear (ver el item de `verify_ran` arriba). Fase 4 queda reemplazada por `agent_dispatched`, ya en Done. Pendiente real: leer la ventana cuando cierre y aplicar las kill criteria.
 
@@ -241,6 +212,10 @@ Dedup semántico ya funciona con inyección de títulos. Diferir.
 Pasó con `pre-tool-use-git-scope` en 0.57.0 — registrado, default-on, testeado, releasado y sin correr una sola vez hasta que se agregó a mano al `config.toml`. El síntoma es indistinguible de que el hook funcione y no encuentre nada.
 
 **Acción:** que `lh deploy` (o `lh doctor`) avise cuando un builtin default-on queda fuera de un evento declarado explícitamente. Es la diferencia entre un hook desactivado a propósito y uno olvidado.
+
+**Segunda medición, 2026-09-11.** Auditados los seis eventos del `config.toml` del CT `agents` contra `DEFAULT_HOOKS`: faltaban `pre-tool-use-git-scope` y `session-start-preflight`. El primero estaba en el template de chezmoi desde antes — al CT le faltaba el `apply`, no el renglón. El segundo **falta en el template**, así que hoy no corre en ninguna de las dos máquinas. Nada avisó en ningún caso, que es exactamente el síntoma que este item describe.
+
+La auditoría es tres líneas contra `DEFAULT_HOOKS` y el `config.toml`, comparando por evento e ignorando los extra deliberados (`herdr-context-gauge`, `post-tool-use-ansible-lint`). Es la forma que debería tomar el check de `lh doctor`.
 
 ## ADR decisions pending
 
