@@ -305,7 +305,7 @@ Responsibility: stop a `git stash` that reaches blindly into a **shared** stash 
 
 The stash stack belongs to the repository, not to the checkout. Every linked worktree and every concurrent agent session pushes onto the same stack, so `git stash pop` takes whatever happens to be on top — possibly another session's work — and `git stash clear` destroys all of it. Four such incidents were recorded before this hook existed.
 
-Scope: only `Bash`. Every other tool name is a fast exit 0, and the rule fires only when the command runs from inside a worktree checkout.
+Scope: only `Bash`. Every other tool name is a fast exit 0, and the rule fires only where the stack is actually shared — from a linked worktree, or from the main checkout of a repository that has one. A repository with no worktrees keeps its stack private and is left alone.
 
 **The safe list decides.** Anything touching the stash that is not recognised as safe blocks, rather than the reverse — a denylist ends in a silent pass for everything nobody thought of, and `(git stash pop)`, `git stash drop -q` and `git stash > /dev/null` all walked through an earlier denylist version.
 
@@ -320,13 +320,11 @@ A `git stash` is recognised in command position — at the start of a line, afte
 
 Every `git stash` in a compound command is judged, not only the first: `git stash list; git stash pop` blocks on account of its second invocation.
 
-**Worktree detection** reads the checkout's `.git`. A worktree's is a file pointing into `<main>/.git/worktrees/<name>`; a plain checkout has a directory, and a submodule's points into `.git/modules/`. Reading one file is what keeps this cheap enough to run ahead of every Bash call.
+**Shared-stack detection** reads the checkout's `.git`. A linked worktree's is a file pointing into `<main>/.git/worktrees/<name>`; the main checkout has a directory, and its `.git/worktrees/` holds one entry per linked worktree — empty or absent means nobody else is on the stack. A submodule's `.git` file points into `.git/modules/` and is out of scope. Reading the filesystem directly is what keeps this cheap enough to run ahead of every Bash call; a `git rev-parse` subprocess would not be.
 
 **Escape hatch.** `[hooks.pre_tool_use_git_scope] allow_patterns` in the profile config takes regexes matched against the whole command. It is deliberately **not** the list `pre-tool-use-security` reads: that one carries `\.worktrees/` in the reference profile, which would rescue every command this hook exists to catch.
 
 **Kill criteria.** This hook blocks, so its cost is false positives rather than non-adoption. If clearing them needs more than three `allow_patterns` entries in the first month of use, the rule is too broad and comes out rather than growing an allowlist.
-
-**Known gap.** The hook exempts the main checkout, where the same shared stack is reachable. Narrowing to worktrees keeps the first version free of false positives; widening to "this repository has worktrees at all" is the obvious next step if a main-checkout incident shows up.
 
 ### `pre-tool-use-memory-size` — runs on `PreToolUse`
 

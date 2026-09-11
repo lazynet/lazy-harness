@@ -1,9 +1,13 @@
-"""PreToolUse git-scope hook — blocks unsafe `git stash` from inside a worktree.
+"""PreToolUse git-scope hook — blocks unsafe `git stash` on a shared stack.
 
-The stash stack is shared across every worktree of a repository and across every
-agent session working in them. A `git stash pop` takes whatever sits on top,
-which may belong to somebody else; a bare `git stash` pushes an entry nobody can
+The stash stack belongs to the repository, not the checkout: every linked
+worktree, the main checkout, and every concurrent agent session in any of them
+push onto the same stack. A `git stash pop` takes whatever sits on top, which
+may belong to somebody else; a bare `git stash` pushes an entry nobody can
 later identify. Four such incidents were recorded before this hook existed.
+
+A repository with no linked worktrees keeps its stack private and is left
+alone — the hazard is other people reaching it, not stashing as such.
 
 Deliberately separate from `pre_tool_use_security`: that hook rescues a whole
 command when any `allow_patterns` entry matches it, and this profile's config
@@ -202,31 +206,71 @@ def is_unsafe_stash(command: str) -> UnsafeStash | None:
 _WORKTREE_MARKERS = ("/.git/worktrees/", "\\.git\\worktrees\\")
 
 
-def in_worktree(cwd: str) -> bool:
-    """True when `cwd` sits inside a git worktree checkout.
+def _find_dot_git(cwd: str) -> Path | None:
+    """Walk up from `cwd` to the nearest `.git`, or None.
 
-    A worktree's `.git` is a file pointing into `<main>/.git/worktrees/<name>`;
-    a plain checkout has a `.git` directory, and a submodule's `.git` file
-    points into `.git/modules/` instead. Reading that one file is what keeps
-    this cheap enough to run ahead of every Bash call — a subprocess would not
-    be.
+    Reading the filesystem directly is what keeps this cheap enough to run
+    ahead of every Bash call — a `git rev-parse` subprocess would not be.
     """
     try:
         current = Path(cwd).resolve()
     except (OSError, ValueError, TypeError):
-        return False
+        return None
 
     for directory in (current, *current.parents):
         dot_git = directory / ".git"
         try:
-            if dot_git.is_dir():
-                return False
-            if dot_git.is_file():
-                content = dot_git.read_text(encoding="utf-8")
-                return any(marker in content for marker in _WORKTREE_MARKERS)
-        except (OSError, ValueError, UnicodeDecodeError):
+            if dot_git.exists():
+                return dot_git
+        except OSError:
+            return None
+    return None
+
+
+def in_worktree(cwd: str) -> bool:
+    """True when `cwd` sits inside a linked worktree checkout.
+
+    A worktree's `.git` is a file pointing into `<main>/.git/worktrees/<name>`;
+    a plain checkout has a `.git` directory, and a submodule's `.git` file
+    points into `.git/modules/` instead.
+    """
+    dot_git = _find_dot_git(cwd)
+    if dot_git is None:
+        return False
+    try:
+        if not dot_git.is_file():
             return False
-    return False
+        content = dot_git.read_text(encoding="utf-8")
+    except (OSError, ValueError, UnicodeDecodeError):
+        return False
+    return any(marker in content for marker in _WORKTREE_MARKERS)
+
+
+def stash_stack_is_shared(cwd: str) -> bool:
+    """True when somebody other than this checkout can reach the same stash stack.
+
+    The stack belongs to the repository, not the checkout, so "am I inside a
+    worktree" is the wrong question — the main checkout of a repository that
+    has worktrees reaches exactly the same stack. Both sides count; a
+    repository with no linked worktrees keeps its stack private and is left
+    alone.
+    """
+    if in_worktree(cwd):
+        return True
+
+    dot_git = _find_dot_git(cwd)
+    if dot_git is None:
+        return False
+    try:
+        if not dot_git.is_dir():
+            # A `.git` file that is not a worktree marker is a submodule.
+            return False
+        worktrees = dot_git / "worktrees"
+        # git leaves the directory behind after the last worktree is removed,
+        # so its mere existence is not enough.
+        return worktrees.is_dir() and any(worktrees.iterdir())
+    except (OSError, ValueError):
+        return False
 
 
 def _safe_search(pattern: str, text: str) -> bool:
@@ -276,7 +320,7 @@ def should_block(
     verdict = is_unsafe_stash(command)
     if verdict is None:
         return None
-    if not in_worktree(cwd):
+    if not stash_stack_is_shared(cwd):
         return None
     if allow_patterns and any(_safe_search(ap, command) for ap in allow_patterns):
         return None
