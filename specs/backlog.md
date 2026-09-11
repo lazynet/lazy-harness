@@ -233,6 +233,36 @@ Dedup semántico ya funciona con inyección de títulos. Diferir.
 
 ---
 
+### El guard de paths secretos está inerte: el matcher desplegado no lo alcanza
+
+**Severidad: alta.** `pre-tool-use-security` inspecciona dos superficies — comandos de `Bash` contra `BLOCK_RULES`, y rutas de `Read`/`Edit`/`Write`/`NotebookEdit` contra `SECRET_PATH_GLOBS` (`.env`, `.ssh/id_*`, `.aws/credentials`, `**/secrets/**`, …). La segunda nunca se invoca.
+
+**Causa:** su entrada en `_BUILTIN_HOOKS` no declara `matcher`, así que `agents/claude_code.py` le aplica el default de su evento, `matcher_map["pre_tool_use"] = "Bash"`. El `settings.json` generado lo registra solo para `Bash`, y Claude Code no lo llama en un `Read`.
+
+**Evidencia medida el 2026-09-11 sobre el perfil desplegado:**
+
+```
+should_block_path('/tmp/…/secrets/fake.txt')  -> BLOQUEA
+hook alimentado con un payload de Read        -> exit 2
+settings.json desplegado                      -> matcher='Bash'
+```
+
+La lógica está bien y testeada. Lo que falta es que el agente la invoque.
+
+**No se puede arreglar desde `config.toml`:** `HookEventConfig.scripts` es `list[str]` y no acepta un matcher por script. El arreglo va en el registry: declarar `matcher="Bash|Read|Edit|Write|NotebookEdit"` en la entrada del hook.
+
+**El test que lo habría atrapado** — y que hay que escribir con el fix: por cada builtin, el matcher desplegado cubre todos los `tool_name` que el módulo realmente inspecciona. Hoy nada relaciona `FILE_TOOLS` dentro del hook con el matcher que el adapter le asigna afuera.
+
+Los templates `settings-<profile>.json` de chezmoi ya llevan el matcher ancho correcto, así que hoy pelean contra lo que `lh deploy` escribe. El fix alinea las dos puntas.
+
+### Un `[hooks.*] scripts` explícito ignora los defaults del registry, en silencio
+
+`_DEFAULT_ON_HOOKS` solo aplica a eventos que el `config.toml` no declara. Un perfil con `scripts = [...]` explícito congela esa lista: un builtin nuevo marcado default-on **no** aparece al actualizar.
+
+Pasó con `pre-tool-use-git-scope` en 0.57.0 — registrado, default-on, testeado, releasado y sin correr una sola vez hasta que se agregó a mano al `config.toml`. El síntoma es indistinguible de que el hook funcione y no encuentre nada.
+
+**Acción:** que `lh deploy` (o `lh doctor`) avise cuando un builtin default-on queda fuera de un evento declarado explícitamente. Es la diferencia entre un hook desactivado a propósito y uno olvidado.
+
 ## ADR decisions pending
 
 - ~~**Legacy ADR-010 Ollama backend**~~ — cerrado. Promovido por [ADR-033](adrs/033-llm-backend-abstraction.md) y hecho utilizable por [ADR-039](adrs/039-role-routed-inference.md) (ruteo por rol).
