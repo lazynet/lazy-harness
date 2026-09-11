@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.57.2](https://github.com/lazynet/lazy-harness/compare/v0.57.1...v0.57.2) (2026-09-11)
+
+
+### Documentation
+
+* **backlog:** record the security matcher deploy on both machines ([a54729b](https://github.com/lazynet/lazy-harness/commit/a54729bd93536e1700d21da2541b4f82ac1f8ea7))
+
 ## [0.57.1](https://github.com/lazynet/lazy-harness/compare/v0.57.0...v0.57.1) (2026-09-11)
 
 
