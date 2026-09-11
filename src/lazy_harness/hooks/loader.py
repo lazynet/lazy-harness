@@ -76,6 +76,9 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
     "pre-tool-use-security": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.pre_tool_use_security"
     ),
+    "session-start-preflight": BuiltinHookSpec(
+        module="lazy_harness.hooks.builtins.session_start_preflight"
+    ),
     "session-end": BuiltinHookSpec(module="lazy_harness.hooks.builtins.session_end"),
     "session-export": BuiltinHookSpec(module="lazy_harness.hooks.builtins.session_export"),
     "stop-verify-guard": BuiltinHookSpec(module="lazy_harness.hooks.builtins.stop_verify_guard"),

@@ -38,7 +38,7 @@ scripts = ["pre-compact"]
 
 | `config.toml` event | Claude Code event | When it fires | Built-ins shipped | Typical use |
 |---|---|---|---|---|
-| `session_start` | `SessionStart` | Right after Claude Code starts a session | `context-inject` | Inject additional context |
+| `session_start` | `SessionStart` | Right after Claude Code starts a session | `context-inject`, `session-start-preflight` | Inject additional context, report an expired login or a shadowed tool before work starts |
 | `session_stop` | `Stop` | After every LLM turn (not once at shutdown) | `session-export`, `compound-loop`, `engram-persist` | Export session, queue gated async work, mirror new memory entries |
 | `session_end` | `SessionEnd` | Exactly once at real session termination (`/exit`, `/clear`, logout) | `session-end` | Force final end-of-session work |
 | `pre_compact` | `PreCompact` | Immediately before Claude Code compacts conversation history | `pre-compact` | Preserve working state |
@@ -57,7 +57,7 @@ The mapping lives in `ClaudeCodeAdapter.generate_hook_config` — other agents m
 
 | Event | Default built-ins |
 |---|---|
-| `session_start` | `context-inject` |
+| `session_start` | `context-inject`, `session-start-preflight` |
 | `session_stop` | `session-export`, `compound-loop`, `engram-persist` |
 | `session_end` | `session-end` |
 | `pre_compact` | `pre-compact` |
@@ -98,6 +98,26 @@ The body is truncated to `cfg.context_inject.max_body_chars` (default 3000) by d
 **Why code structure outranks vault notes.** Both are discovery aids, but the graph summary is a compact map of the repo the session is about to edit, while vault notes are speculative matches on a branch name. Under a tight budget the map is worth more, and it is the only reason to generate the graph at all. If both keep getting dropped, raise `max_body_chars` — the default is deliberately conservative and costs well under a thousand tokens even when doubled.
 
 **Where it writes:** nowhere on disk. It only prints to stdout. Its job is read-only composition.
+
+### `session-start-preflight` — runs on `SessionStart`
+
+Source: `src/lazy_harness/hooks/builtins/session_start_preflight.py`.
+
+Responsibility: report the things that strand a session partway through, before the work is staged rather than after. It reports and never blocks — `SessionStart` has no blocking semantics — so every path exits 0 and the worst outcome is a line saying a check could not tell.
+
+| Check | Reports |
+|---|---|
+| `auth` | Remaining life of the refresh token: `fail` once expired, `warn` under 12 hours, `unknown` for a shape it does not recognise |
+| `git` | The `origin` remote and the `user.email` commits would carry |
+| `path` | Tools resolving to more than one copy on `PATH` |
+
+**The auth check reads a file and spawns nothing.** Running an auth CLI from inside a hook is exactly what an operator rule elsewhere forbids: a credential helper that cannot reach the keychain — as happens in launchd's Background domain — has deleted a credential store before now. A read cannot do that.
+
+It reads `refreshTokenExpiresAt`, **not** `expiresAt`. The access token expires constantly and is refreshed transparently: measured on a live profile, `expiresAt` sat 61 hours in the past while the session worked perfectly, because the refresh token still had 84 hours left. Reading the wrong field makes the check cry wolf every session, and a preflight nobody reads is worse than no preflight.
+
+An unrecognised credentials shape reports `unknown`, never `fail`, for the same reason: one false "your login is dead" teaches the reader to skip the whole block.
+
+**Output stays quiet when clean.** All-clear collapses to a single line; only non-passing checks get a line of their own. Median cost measured at 24 ms.
 
 ### `pre-compact` — runs on `PreCompact`
 
