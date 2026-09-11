@@ -88,10 +88,10 @@ def test_the_three_any_event_hooks_are_knowingly_absent() -> None:
     until the registry can express "enabled under any event".
 
     `stop-verify-guard` is absent for a different reason: it has one fixed
-    event (`Stop`), but nothing in this repo yet emits the `verify_ran` event
-    it waits for (see docs/how/hooks.md). Registering it as default-on before
-    that producer exists would deploy a guard that always blocks once and
-    never actually verifies anything."""
+    event (`Stop`), and the `verify_ran` event it waits for now has a producer
+    (`lh metrics record-verify`) — but the procedure that invokes it lives in
+    the profile, outside this repo. Until an operator wires that up, a
+    default-on guard blocks once per session while verifying nothing."""
     from lazy_harness.hooks.loader import list_builtin_hooks
     from lazy_harness.plugins.builtins import builtin_registry
 

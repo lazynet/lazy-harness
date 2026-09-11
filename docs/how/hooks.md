@@ -11,7 +11,7 @@ A hook is an executable that:
 1. Is invoked by the agent (not by `lazy-harness`) when a specific event fires.
 2. Reads a JSON payload describing the event from stdin.
 3. Optionally writes a JSON object with `hookSpecificOutput` on stdout.
-4. Exits with code 0. **Always**, with one deliberate exception: the `PreToolUse` security hook exits 2 when it decides to block, which is how Claude Code expects a `PreToolUse` decision to be communicated. Every other built-in is exit-0-always, including on error.
+4. Exits with code 0. **Always**, with two deliberate exceptions: the `PreToolUse` hooks that block — `pre-tool-use-security` and `pre-tool-use-git-scope` — exit 2 when they decide to block, which is how Claude Code expects a `PreToolUse` decision to be communicated. Every other built-in is exit-0-always, including on error.
 
 Built-in hooks ship inside the framework as Python scripts under `src/lazy_harness/hooks/builtins/`. User hooks live under `~/.config/lazy-harness/hooks/<name>.py` (or whatever language you prefer as long as the binary is executable and reads stdin).
 
@@ -43,7 +43,7 @@ scripts = ["pre-compact"]
 | `session_end` | `SessionEnd` | Exactly once at real session termination (`/exit`, `/clear`, logout) | `session-end` | Force final end-of-session work |
 | `pre_compact` | `PreCompact` | Immediately before Claude Code compacts conversation history | `pre-compact` | Preserve working state |
 | `post_compact` | `PostCompact` | Immediately after Claude Code compacts conversation history | — | Available for your own hooks. No built-in ships here: the event's executor returns only a user-facing message, so a hook on it cannot reach the model. |
-| `pre_tool_use` | `PreToolUse` | Before each tool call | `pre-tool-use-security`, `pre-tool-use-git-scope`, `pre-tool-use-memory-size`, `pre-tool-use-read-size` | Block destructive / exfiltration commands, block an unsafe `git stash` from inside a worktree, warn before MEMORY.md exceeds the 200-line or 12KB ceiling, warn before an unbounded read of a large file |
+| `pre_tool_use` | `PreToolUse` | Before each tool call | `pre-tool-use-security`, `pre-tool-use-git-scope`, `pre-tool-use-memory-size`, `pre-tool-use-read-size` | Block destructive / exfiltration commands, block an unsafe `git stash` on a shared stash stack, warn before MEMORY.md exceeds the 200-line or 12KB ceiling, warn before an unbounded read of a large file |
 | `post_tool_use` | `PostToolUse` | After each tool call | `post-tool-use-format`, `post-tool-use-sync-claude` | Auto-format edited files, regenerate segmented `CLAUDE.md` after profile edits |
 | `notification` | `Notification` | Ad-hoc agent notifications | — | Desktop notifications, integrations |
 | `user_prompt_submit` | `UserPromptSubmit` | When the user submits a prompt | `user-prompt-goal` (opt-in, not in the default set — see below) | Goal-declaration sensor, third-party integrations |

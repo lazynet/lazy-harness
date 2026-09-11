@@ -67,12 +67,13 @@ _TOOLS = [
 # anyone who configured them under a different one.
 #
 # `stop-verify-guard` has one fixed event (`Stop`) but is absent for a
-# different reason: nothing in this repo yet emits the `verify_ran` event it
-# waits for — that is meant to come from the `verify-before-done` skill,
-# which lives outside this repo and today is a procedure document only. See
-# docs/how/hooks.md. Defaulting it on before that producer exists would
-# deploy a guard that always blocks once per session and never actually
-# verifies anything.
+# different reason: the `verify_ran` event it waits for now has a producer,
+# `lh metrics record-verify`, but shipping a command is not the same as
+# deploying it. The verification procedure that must invoke it lives in the
+# profile, outside this repo, so on a machine where that step has not been
+# taken a default-on guard would still block once per session while verifying
+# nothing. Opt-in until the operator has wired the producer — see
+# docs/how/hooks.md and specs/backlog.md.
 _DEFAULT_ON_HOOKS: dict[str, list[str]] = {
     "session_start": ["context-inject", "session-start-preflight"],
     "session_stop": ["session-export", "compound-loop", "engram-persist"],

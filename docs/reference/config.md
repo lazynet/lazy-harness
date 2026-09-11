@@ -397,6 +397,22 @@ Rules:
 | `backend`                      | string         | `"claude"`                    | no       | **Deprecated** — replaced by `[llm.roles].distill`. Still honoured, with a one-time warning, when no `[llm]` table defines that role. See [`[llm]`](#llm). |
 | `backend_options`              | table          | `{}`                          | no       | **Deprecated** — replaced by the fields on `[llm.backends.<name>]`. Still honoured alongside `backend`.                                                    |
 
+### `[hooks.pre_tool_use_git_scope]` — git-scope hook overrides
+
+The `pre-tool-use-git-scope` hook reads its own `allow_patterns`, deliberately **not** the list above. That one carries entries like `\.worktrees/` in a real profile, which would rescue precisely the commands this hook exists to catch. Mechanics: [how hooks work — pre-tool-use-git-scope](../how/hooks.md#pre-tool-use-git-scope-runs-on-pretooluse).
+
+| Field            | Type            | Default | Required | Description                                                                                                                                 |
+| ---------------- | --------------- | ------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `allow_patterns` | list of strings | `[]`    | no       | Python `re.search` regexes. A `git stash` the hook judges unsafe is allowed through when any pattern matches the whole command. |
+
+```toml
+[hooks.pre_tool_use_git_scope]
+allow_patterns = [
+    # A scripted cleanup that manages its own stash entries by tag
+    "scripts/reset-worktrees\\.sh",
+]
+```
+
 ### Choosing an LLM backend
 
 Inference backends are now declared in the [`[llm]`](#llm) table and selected per role. The `[compound_loop]` fields above still work — they map to a role named `distill` — but new configuration belongs in `[llm]`.

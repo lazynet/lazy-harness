@@ -483,6 +483,19 @@ When `sqlite_local` is the only configured sink — the default — the command 
 
 Mechanics — sinks, outbox, drain policy, idempotency: [how the metrics ingest pipeline works](../how/metrics-ingest.md#the-sink-layer).
 
+### `lh metrics record-verify`
+
+Records a `verify_ran` event for the current session — the producer `stop-verify-guard` reads to decide whether a session that declared a goal actually verified before closing.
+
+```bash
+lh metrics record-verify              # session id from $CLAUDE_CODE_SESSION_ID
+lh metrics record-verify --session <id>
+```
+
+`--session` names the session explicitly; without it the command reads `CLAUDE_CODE_SESSION_ID`, which the agent sets in the environment of every command it runs and which carries the same value the `Stop` hook receives in its payload. With neither, the command fails rather than recording under an empty key. `--db PATH` overrides the database outright; without it the command resolves it exactly as the guard does, through `resolve_db_path()`.
+
+Invoke it as the **final** step of a verification procedure, never on its own: recording that verification happened without having verified silences the guard, which is worse than recording nothing.
+
 ### `lh metrics loops`
 
 Reports counts from the `loop_events` table, grouped by `kind` (e.g. `session_closed`, `nontrivial_prompt`, `goal_declared`, `goal_absent`), followed by the declared-goal rate. This is the phase-0 sensor data for the feedback-loop feature — see [how the hooks complement each other](../how/hooks.md#how-the-hooks-complement-each-other) for what writes to this table and when.
