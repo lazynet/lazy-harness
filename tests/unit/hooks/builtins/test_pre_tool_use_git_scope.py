@@ -114,6 +114,18 @@ def _make_main_checkout(tmp_path: Path) -> Path:
     return root
 
 
+def _make_main_checkout_with_worktrees(tmp_path: Path) -> Path:
+    """The main checkout of a repository that has linked worktrees.
+
+    Its `.git` is a directory like any plain checkout, but `.git/worktrees/`
+    holds one administrative directory per linked worktree — and the stash
+    stack under it is reachable from here too.
+    """
+    root = tmp_path / "shared"
+    (root / ".git" / "worktrees" / "feature").mkdir(parents=True)
+    return root
+
+
 def _make_submodule(tmp_path: Path) -> Path:
     """A submodule also has a `.git` file, but points into `.git/modules/`."""
     sub = tmp_path / "parent" / "vendor" / "lib"
@@ -263,13 +275,82 @@ class TestInWorktree:
         assert in_worktree(str(tmp_path / "does" / "not" / "exist")) is False
 
 
+class TestStashStackIsShared:
+    """The stack belongs to the repository, so being inside a worktree is not
+    the question — whether anyone else can reach the same stack is."""
+
+    def test_a_worktree_shares_the_stack(self, tmp_path: Path) -> None:
+        from lazy_harness.hooks.builtins.pre_tool_use_git_scope import stash_stack_is_shared
+
+        assert stash_stack_is_shared(str(_make_worktree(tmp_path))) is True
+
+    def test_the_main_checkout_of_a_repo_with_worktrees_shares_it(self, tmp_path: Path) -> None:
+        """The gap this closes: same stack, reachable from the main checkout."""
+        from lazy_harness.hooks.builtins.pre_tool_use_git_scope import stash_stack_is_shared
+
+        assert stash_stack_is_shared(str(_make_main_checkout_with_worktrees(tmp_path))) is True
+
+    def test_a_repo_without_worktrees_keeps_its_stack_private(self, tmp_path: Path) -> None:
+        """The negative control. Without it the hook would block every stash
+        everywhere, which is a different tool than the one we wanted."""
+        from lazy_harness.hooks.builtins.pre_tool_use_git_scope import stash_stack_is_shared
+
+        assert stash_stack_is_shared(str(_make_main_checkout(tmp_path))) is False
+
+    def test_an_emptied_worktrees_directory_is_not_shared(self, tmp_path: Path) -> None:
+        """git leaves `.git/worktrees/` behind after the last one is removed."""
+        from lazy_harness.hooks.builtins.pre_tool_use_git_scope import stash_stack_is_shared
+
+        root = tmp_path / "emptied"
+        (root / ".git" / "worktrees").mkdir(parents=True)
+        assert stash_stack_is_shared(str(root)) is False
+
+    def test_finds_it_from_a_nested_subdirectory_of_the_main_checkout(self, tmp_path: Path) -> None:
+        from lazy_harness.hooks.builtins.pre_tool_use_git_scope import stash_stack_is_shared
+
+        nested = _make_main_checkout_with_worktrees(tmp_path) / "src" / "deep"
+        nested.mkdir(parents=True)
+        assert stash_stack_is_shared(str(nested)) is True
+
+    def test_a_submodule_of_a_repo_with_worktrees_is_not_shared(self, tmp_path: Path) -> None:
+        from lazy_harness.hooks.builtins.pre_tool_use_git_scope import stash_stack_is_shared
+
+        assert stash_stack_is_shared(str(_make_submodule(tmp_path))) is False
+
+    def test_a_directory_outside_any_repo_is_not_shared(self, tmp_path: Path) -> None:
+        from lazy_harness.hooks.builtins.pre_tool_use_git_scope import stash_stack_is_shared
+
+        assert stash_stack_is_shared(str(tmp_path)) is False
+
+    def test_an_unreadable_worktrees_directory_is_not_shared(self, tmp_path: Path) -> None:
+        from lazy_harness.hooks.builtins.pre_tool_use_git_scope import stash_stack_is_shared
+
+        root = _make_main_checkout_with_worktrees(tmp_path)
+        wt_dir = root / ".git" / "worktrees"
+        wt_dir.chmod(0o000)
+        try:
+            assert stash_stack_is_shared(str(root)) is False
+        finally:
+            wt_dir.chmod(0o755)
+
+
 class TestShouldBlock:
     def test_blocks_unsafe_stash_inside_a_worktree(self, tmp_path: Path) -> None:
         from lazy_harness.hooks.builtins.pre_tool_use_git_scope import should_block
 
         assert should_block("git stash", str(_make_worktree(tmp_path))) is not None
 
-    def test_allows_unsafe_stash_outside_a_worktree(self, tmp_path: Path) -> None:
+    def test_blocks_unsafe_stash_from_the_main_checkout_of_a_shared_repo(
+        self, tmp_path: Path
+    ) -> None:
+        """Reaching the shared stack from the main checkout is the same hazard."""
+        from lazy_harness.hooks.builtins.pre_tool_use_git_scope import should_block
+
+        shared = str(_make_main_checkout_with_worktrees(tmp_path))
+        assert should_block("git stash pop", shared) is not None
+
+    def test_allows_unsafe_stash_where_the_stack_is_private(self, tmp_path: Path) -> None:
+        """A repo with no worktrees has nobody else on its stack."""
         from lazy_harness.hooks.builtins.pre_tool_use_git_scope import should_block
 
         assert should_block("git stash", str(_make_main_checkout(tmp_path))) is None
