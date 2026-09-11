@@ -43,7 +43,7 @@ scripts = ["pre-compact"]
 | `session_end` | `SessionEnd` | Exactly once at real session termination (`/exit`, `/clear`, logout) | `session-end` | Force final end-of-session work |
 | `pre_compact` | `PreCompact` | Immediately before Claude Code compacts conversation history | `pre-compact` | Preserve working state |
 | `post_compact` | `PostCompact` | Immediately after Claude Code compacts conversation history | — | Available for your own hooks. No built-in ships here: the event's executor returns only a user-facing message, so a hook on it cannot reach the model. |
-| `pre_tool_use` | `PreToolUse` | Before each tool call | `pre-tool-use-security`, `pre-tool-use-memory-size`, `pre-tool-use-read-size` | Block destructive / exfiltration commands, warn before MEMORY.md exceeds the 200-line or 12KB ceiling, warn before an unbounded read of a large file |
+| `pre_tool_use` | `PreToolUse` | Before each tool call | `pre-tool-use-security`, `pre-tool-use-git-scope`, `pre-tool-use-memory-size`, `pre-tool-use-read-size` | Block destructive / exfiltration commands, block an unsafe `git stash` from inside a worktree, warn before MEMORY.md exceeds the 200-line or 12KB ceiling, warn before an unbounded read of a large file |
 | `post_tool_use` | `PostToolUse` | After each tool call | `post-tool-use-format`, `post-tool-use-sync-claude` | Auto-format edited files, regenerate segmented `CLAUDE.md` after profile edits |
 | `notification` | `Notification` | Ad-hoc agent notifications | — | Desktop notifications, integrations |
 | `user_prompt_submit` | `UserPromptSubmit` | When the user submits a prompt | `user-prompt-goal` (opt-in, not in the default set — see below) | Goal-declaration sensor, third-party integrations |
@@ -62,7 +62,7 @@ The mapping lives in `ClaudeCodeAdapter.generate_hook_config` — other agents m
 | `session_end` | `session-end` |
 | `pre_compact` | `pre-compact` |
 | `post_compact` | — |
-| `pre_tool_use` | `pre-tool-use-security`, `pre-tool-use-memory-size`, `pre-tool-use-read-size` |
+| `pre_tool_use` | `pre-tool-use-security`, `pre-tool-use-git-scope`, `pre-tool-use-memory-size`, `pre-tool-use-read-size` |
 | `post_tool_use` | `post-tool-use-format`, `post-tool-use-sync-claude` |
 
 **Overriding.** Declaring `[hooks.<event>]` with `scripts = [...]` in `config.toml` replaces the default for that event. The smallest override unit is one event — there is no per-script disable. To opt out of a single event entirely, declare it with `scripts = []`. Events declared in `config.toml` that the framework does not know about (e.g. `notification`) pass through verbatim.
@@ -296,6 +296,37 @@ Rules of the allowlist:
 **Where it writes:** nowhere on disk. Logs go to the standard `~/.claude/logs/hooks.log` like every other built-in.
 
 The full rule list and the rationale behind each category live in [`specs/designs/2026-04-17-security-hooks-cluster-design.md`](https://github.com/lazynet/lazy-harness/blob/main/specs/designs/2026-04-17-security-hooks-cluster-design.md).
+
+### `pre-tool-use-git-scope` — runs on `PreToolUse`
+
+Source: `src/lazy_harness/hooks/builtins/pre_tool_use_git_scope.py`.
+
+Responsibility: stop a `git stash` that reaches blindly into a **shared** stash stack. Like `pre-tool-use-security` it exits 2 to block, and Claude Code surfaces its stderr back into the agent's turn.
+
+The stash stack belongs to the repository, not to the checkout. Every linked worktree and every concurrent agent session pushes onto the same stack, so `git stash pop` takes whatever happens to be on top — possibly another session's work — and `git stash clear` destroys all of it. Four such incidents were recorded before this hook existed.
+
+Scope: only `Bash`. Every other tool name is a fast exit 0, and the rule fires only when the command runs from inside a worktree checkout.
+
+**The safe list decides.** Anything touching the stash that is not recognised as safe blocks, rather than the reverse — a denylist ends in a silent pass for everything nobody thought of, and `(git stash pop)`, `git stash drop -q` and `git stash > /dev/null` all walked through an earlier denylist version.
+
+| Allowed | Blocked |
+|---|---|
+| `git stash push -m "<tag>"` (any form naming the entry) | `git stash` / `git stash push` / `git stash save` without `-m` |
+| `git stash apply <sha>`, `git stash drop stash@{1}` | `git stash apply` / `drop` with no ref, or with only flags (`-q`) |
+| `git stash list`, `git stash show` | `git stash pop` (removes the entry even when named), `git stash clear` |
+| `git stash --help` | `git stash branch` / `store` / `create`, and any unrecognised subcommand |
+
+A `git stash` is recognised in command position — at the start of a line, after a `;`, `&&`, `|`, `(`, `{` or newline, after a shell keyword such as `then` or `do`, through wrappers like `sudo`, `env` and `command`, and past git's own global flags. `git -C <path> stash` counts: retargeting another checkout makes it more dangerous, not less. A command that merely mentions the string, like `echo git stash pop`, is not a stash and is not blocked.
+
+Every `git stash` in a compound command is judged, not only the first: `git stash list; git stash pop` blocks on account of its second invocation.
+
+**Worktree detection** reads the checkout's `.git`. A worktree's is a file pointing into `<main>/.git/worktrees/<name>`; a plain checkout has a directory, and a submodule's points into `.git/modules/`. Reading one file is what keeps this cheap enough to run ahead of every Bash call.
+
+**Escape hatch.** `[hooks.pre_tool_use_git_scope] allow_patterns` in the profile config takes regexes matched against the whole command. It is deliberately **not** the list `pre-tool-use-security` reads: that one carries `\.worktrees/` in the reference profile, which would rescue every command this hook exists to catch.
+
+**Kill criteria.** This hook blocks, so its cost is false positives rather than non-adoption. If clearing them needs more than three `allow_patterns` entries in the first month of use, the rule is too broad and comes out rather than growing an allowlist.
+
+**Known gap.** The hook exempts the main checkout, where the same shared stack is reachable. Narrowing to worktrees keeps the first version free of false positives; widening to "this repository has worktrees at all" is the obvious next step if a main-checkout incident shows up.
 
 ### `pre-tool-use-memory-size` — runs on `PreToolUse`
 

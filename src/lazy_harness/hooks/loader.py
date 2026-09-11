@@ -61,6 +61,10 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
         matcher="Edit|Write",
     ),
     "pre-compact": BuiltinHookSpec(module="lazy_harness.hooks.builtins.pre_compact"),
+    "pre-tool-use-git-scope": BuiltinHookSpec(
+        module="lazy_harness.hooks.builtins.pre_tool_use_git_scope",
+        matcher="Bash",
+    ),
     "pre-tool-use-memory-size": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.pre_tool_use_memory_size",
         matcher="Edit|Write",

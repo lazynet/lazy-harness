@@ -46,6 +46,7 @@ def test_merge_user_overrides_one_event() -> None:
     assert result["session_start"] == ["context-inject"]
     assert result["pre_tool_use"] == [
         "pre-tool-use-security",
+        "pre-tool-use-git-scope",
         "pre-tool-use-memory-size",
         "pre-tool-use-read-size",
     ]
