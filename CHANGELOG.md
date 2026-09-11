@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.57.0](https://github.com/lazynet/lazy-harness/compare/v0.56.1...v0.57.0) (2026-09-11)
+
+
+### Features
+
+* add the verify_ran producer stop-verify-guard waits for ([#251](https://github.com/lazynet/lazy-harness/issues/251)) ([0803af4](https://github.com/lazynet/lazy-harness/commit/0803af49907059137c92bc69a56931b08304d4c2))
+* block unsafe git stash from inside a worktree ([#247](https://github.com/lazynet/lazy-harness/issues/247)) ([96f0fa5](https://github.com/lazynet/lazy-harness/commit/96f0fa5511dcadc475bb1beca77ba952d64bc85f))
+* report a dead login or a shadowed tool at session start ([#250](https://github.com/lazynet/lazy-harness/issues/250)) ([dff12ce](https://github.com/lazynet/lazy-harness/commit/dff12ce01bc6fdc532c2bfda1d959ed4b52a93d8))
+
+
+### Bug Fixes
+
+* catch an unsafe stash from the main checkout too ([#249](https://github.com/lazynet/lazy-harness/issues/249)) ([23ed430](https://github.com/lazynet/lazy-harness/commit/23ed430b9542fb81a56c3d100bef9b36c479cc20))
+
+
+### Documentation
+
+* state the contract the new hooks actually implement ([#252](https://github.com/lazynet/lazy-harness/issues/252)) ([8488d67](https://github.com/lazynet/lazy-harness/commit/8488d67b8f4d31dd1e0f51ea90f3caa5396e5d41))
+
 ## [0.56.1](https://github.com/lazynet/lazy-harness/compare/v0.56.0...v0.56.1) (2026-09-11)
 
 
