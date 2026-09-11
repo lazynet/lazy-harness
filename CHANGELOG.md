@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.57.1](https://github.com/lazynet/lazy-harness/compare/v0.57.0...v0.57.1) (2026-09-11)
+
+
+### Bug Fixes
+
+* deploy the security hook for every tool it inspects ([8959e52](https://github.com/lazynet/lazy-harness/commit/8959e524f742ab0dc2bd9c9fef795583d95af080))
+
+
+### Documentation
+
+* **backlog:** record two hooks that ship without running ([6b27e37](https://github.com/lazynet/lazy-harness/commit/6b27e37ae8ca0070c32e147868cd812a882baae1))
+
 ## [0.57.0](https://github.com/lazynet/lazy-harness/compare/v0.56.1...v0.57.0) (2026-09-11)
 
 
