@@ -16,15 +16,15 @@ The pre-commit gate defined in [`CLAUDE.md`](https://github.com/lazynet/lazy-har
 - [x] Rewrite `tests/unit/test_version.py` to compare `pyproject.toml` and `src/lazy_harness/__init__.py` against each other (no hardcoded expected value).
 - [x] Resolve 23 preexisting `ruff check src tests` findings — auto-fix the fixable, justify or exclude the rest.
 - [x] Make the pre-commit gate green on `main` and keep it green.
-- [ ] Add a GitHub Actions workflow that runs `pytest` and `ruff` on every PR and blocks merge on failure. The docs build is already enforced by [`docs.yml`](https://github.com/lazynet/lazy-harness/blob/main/.github/workflows/docs.yml); pytest and ruff still run locally only.
+- [x] Add a GitHub Actions workflow that runs `pytest` and `ruff` on every PR and blocks merge on failure. Enforced by [`tests.yml`](https://github.com/lazynet/lazy-harness/blob/main/.github/workflows/tests.yml) across four OS/Python combinations, alongside the docs build in [`docs.yml`](https://github.com/lazynet/lazy-harness/blob/main/.github/workflows/docs.yml).
 
 ## Theme 2 — Knowledge pipeline maturity
 
 The compound-loop worker is the framework's memory engine. Two known issues today cause lost learnings — they share an underlying mechanism (per-session delta tracking) and should land together.
 
-- [ ] Implement `★ Insight ─` block extraction as first-class compound-loop output. Spec: [`specs/designs/2026-04-13-compound-loop-insight-capture.md`](https://github.com/lazynet/lazy-harness/blob/main/specs/designs/2026-04-13-compound-loop-insight-capture.md).
-- [ ] Fix "learnings lost on long sessions" by tracking `last_insight_message_index` per session and re-scanning only the delta on subsequent Stop hooks.
-- [ ] Add a contract test that pins the exact marker characters the `explanatory` output style emits, so a template change forces a visible failure.
+- [x] Implement `★ Insight ─` block extraction as first-class compound-loop output. Spec: [`specs/designs/2026-04-13-compound-loop-insight-capture.md`](https://github.com/lazynet/lazy-harness/blob/main/specs/designs/2026-04-13-compound-loop-insight-capture.md).
+- [x] Fix "learnings lost on long sessions" by tracking `last_insight_message_index` per session and re-scanning only the delta on subsequent Stop hooks.
+- [x] Add a contract test that pins the exact marker characters the `explanatory` output style emits, so a template change forces a visible failure.
 
 ## Theme 3 — Open architecture decisions
 

@@ -61,8 +61,7 @@ Steps, in order:
 3. **Find the session JSONL.** Encode the cwd into Claude Code's project-dir convention (`/Users/x/repo` → `-Users-x-repo`), look under `<CLAUDE_CONFIG_DIR>/projects/<encoded>/`, pick the most recent `*.jsonl` by mtime.
 4. **Debounce.** `is_debounced(queue_dir, session_id, debounce_seconds)` — if a task for the same session was queued within the window (default 60s), skip. This is what prevents a flapping session close from queuing the same work repeatedly.
 5. **Growth gate.** `should_reprocess` — re-queue only if the session JSONL has grown past `reprocess_min_growth_seconds` (default 120) since the last `done/` task for this session. Bounds the worker cost on long active sessions where `Stop` fires after every LLM turn.
-6. **De-dup against `done/`.** `is_already_processed(queue_dir, session_id)` — if a task for this session already lives in `queue/done/`, skip. Protects against re-running the hook on the same session after a backup/restore or clock skew.
-7. **Drop the task file.** `create_task(queue_dir, cwd, session_jsonl, session_id, memory_dir)` writes a file named `<unix_ts>-<short_id>.task` with lines:
+6. **Drop the task file.** `create_task(queue_dir, cwd, session_jsonl, session_id, memory_dir)` writes a file named `<unix_ts>-<short_id>.task` with lines:
    ```
    cwd=/Users/x/repo
    session_jsonl=/Users/x/.claude/projects/.../<id>.jsonl
@@ -71,8 +70,8 @@ Steps, in order:
    timestamp=2026-04-13T18:32:45-03:00
    ```
    `session_jsonl` points at the checkout the session actually ran in, but `memory_dir` is resolved against the **main** working tree. Distilled memory outlives any one branch, so a session run inside `repo/.worktrees/feat` still appends to `repo`'s `decisions.jsonl` rather than stranding it in a project dir that disappears with the worktree.
-8. **Spawn the worker.** `subprocess.Popen` with `start_new_session=True`, stdin `/dev/null`, stdout/stderr redirected to `~/.claude/logs/compound-loop.log`. The producer does not wait for it.
-9. **Exit 0.** The whole producer phase is tens of milliseconds. Claude Code sees a clean session close.
+7. **Spawn the worker.** `subprocess.Popen` with `start_new_session=True`, stdin `/dev/null`, stdout/stderr redirected to `~/.claude/logs/compound-loop.log`. The producer does not wait for it.
+8. **Exit 0.** The whole producer phase is tens of milliseconds. Claude Code sees a clean session close.
 
 ### Why there is a second producer on `SessionEnd`
 
@@ -102,7 +101,7 @@ Steps:
       - `collect_existing_failures` — tail of `failures.jsonl`
       - `collect_existing_learnings` — the titles of the most recent 50 learnings markdown files
     - **Build the prompt.** `build_prompt` composes a headless-Claude prompt that embeds all of the above plus the session summary. The prompt is calibration — its wording was iterated against hundreds of real sessions in the predecessor, and it is documented as load-bearing.
-    - **Call the LLM backend.** `invoke_llm` runs the configured `[compound_loop].backend` (default: headless `claude -p --model <model> --output-format text`; alternatively any OpenAI-compatible endpoint such as Ollama) with `timeout=timeout_seconds`. Returns the response text, or `None` on timeout / unreachable backend / empty output.
+    - **Call the LLM backend.** `run_inference(prompt, role="distill", cfg=cfg, timeout=timeout_seconds)` resolves the `distill` role through `[llm.roles]` to a backend declared under `[llm.backends]` — headless `claude -p`, or any OpenAI-compatible endpoint such as Ollama. Returns an `InferenceResult`. There is deliberately no fallback to another backend: a silent fall-through from a local backend to a billed one hides the broken local one behind an invoice.
     - **Parse the response.** `parse_response` strips markdown fences, then does three things in order: try raw `json.loads`, then look for the first `{` and walk a balanced-brace state machine to extract a JSON object out of a prose preamble, then give up and return `None`.
     - **Persist.** `persist_results` does the writes (next section).
 5. **Move task to `done/`.** Always, even on failure. A poison task must not block the queue.
@@ -266,7 +265,7 @@ When a genuinely duplicate learning sneaks past the LLM filter, two things catch
 - **It does not block session close.** Everything heavy happens after the producer exits. A session that closed at 18:32:45 with a busy queue behind it will still close at 18:32:45.
 - **It does not write to the knowledge store's `sessions/` subtree.** That is `session-export`'s job. The loop only writes to `memory/*.jsonl`, `memory/handoff.md`, and `learnings/*.md`.
 - **It does not touch git.** The store is a git repository, but neither the hook nor the worker commits or pushes. That is `lh knowledge push`, run on a scheduler cycle, so a broken transport can never stall a session or drop a write.
-- **It does not fail the session if the LLM backend is unreachable.** `invoke_llm` timing out or returning empty just marks the task skipped and moves on. Memory enrichment is best-effort by design.
+- **It does not fail the session if the LLM backend is unreachable.** `run_inference` timing out or returning empty just marks the task skipped and moves on. Memory enrichment is best-effort by design.
 
 ## Tuning knobs
 
