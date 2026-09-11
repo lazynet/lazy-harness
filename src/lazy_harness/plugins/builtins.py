@@ -80,6 +80,7 @@ _DEFAULT_ON_HOOKS: dict[str, list[str]] = {
     "pre_compact": ["pre-compact"],
     "pre_tool_use": [
         "pre-tool-use-security",
+        "pre-tool-use-git-scope",
         "pre-tool-use-memory-size",
         "pre-tool-use-read-size",
     ],
