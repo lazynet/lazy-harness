@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 
@@ -12,7 +13,7 @@ from rich.markup import escape
 from lazy_harness.core.config import ConfigError, load_config
 from lazy_harness.core.identity import resolve_host, resolve_identity
 from lazy_harness.core.paths import config_file, data_dir, expand_path
-from lazy_harness.monitoring.db import MetricsDB
+from lazy_harness.monitoring.db import MetricsDB, resolve_db_path
 from lazy_harness.monitoring.ingest import ingest_all
 from lazy_harness.monitoring.pricing import load_pricing
 from lazy_harness.monitoring.sink_setup import build_sinks, plan_sinks
@@ -205,6 +206,49 @@ def metrics_status() -> None:
             )
     finally:
         db.close()
+
+
+def _resolve_metrics_db(db_override: Path | None) -> Path:
+    """The one answer to "which metrics DB", shared with every hook that writes one.
+
+    `resolve_db_path` is the importable rule; deriving a second copy here is
+    how a writer ends up filling a file no reader opens.
+    """
+    return db_override if db_override is not None else resolve_db_path()
+
+
+@metrics.command("record-verify")
+@click.option(
+    "--session",
+    "session",
+    default="",
+    help="Session id. Defaults to $CLAUDE_CODE_SESSION_ID.",
+)
+@click.option("--db", "db_override", type=click.Path(path_type=Path), default=None)
+def metrics_record_verify(session: str, db_override: Path | None) -> None:
+    """Record that this session verified its work before closing.
+
+    The producer `stop-verify-guard` waits for: without it the guard blocks
+    once per session on a condition nothing can satisfy, which is why it ships
+    unwired until this command is deployed. Invoke it as the final step of a
+    verification procedure, not on its own.
+    """
+    from lazy_harness.hooks.builtins._shared import profile_name, project_key
+
+    session_id = session or os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    if not session_id:
+        raise click.ClickException(
+            "No session id: pass --session, or run where CLAUDE_CODE_SESSION_ID is set."
+        )
+
+    db = MetricsDB(_resolve_metrics_db(db_override))
+    db.record_loop_event(
+        session=session_id,
+        kind="verify_ran",
+        project=project_key(Path.cwd()),
+        profile=profile_name(),
+    )
+    Console().print(f"Recorded verify_ran for session {escape(session_id)}.")
 
 
 @metrics.command("loops")
