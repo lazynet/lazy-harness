@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.56.1](https://github.com/lazynet/lazy-harness/compare/v0.56.0...v0.56.1) (2026-09-11)
+
+
+### Documentation
+
+* merge four accepted claude-md proposals into the verification gates ([#243](https://github.com/lazynet/lazy-harness/issues/243)) ([f6cc3f3](https://github.com/lazynet/lazy-harness/commit/f6cc3f3aa86a9252ccacd3036db0f249a66fd1e1))
+* reconcile the roadmap and compound-loop page with the code ([a83dae2](https://github.com/lazynet/lazy-harness/commit/a83dae28038e364217348b89da6d86aa7f62f1a9))
+* rightsize CLAUDE.md below the 12KB governance budget ([#245](https://github.com/lazynet/lazy-harness/issues/245)) ([63444fa](https://github.com/lazynet/lazy-harness/commit/63444fa6c10f4359ceff36acfe6acc1a4958c84e))
+* split the verification-gates ledger into checks and evidence ([#246](https://github.com/lazynet/lazy-harness/issues/246)) ([c5f9386](https://github.com/lazynet/lazy-harness/commit/c5f9386cc4ce95d197d25252ec0f3fe6111c2e59))
+
 ## [0.56.0](https://github.com/lazynet/lazy-harness/compare/v0.55.0...v0.56.0) (2026-09-10)
 
 
