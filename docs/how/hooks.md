@@ -608,9 +608,18 @@ Mechanics:
 
 **Where it writes:** the `loop_events` table in `metrics.db`, resolved via `resolve_db_path()` — the same `[monitoring] db`-then-`data_dir()` resolution every reader and writer of this table uses.
 
-**A known gap:** nothing in this repo currently emits `verify_ran`. It is meant to come from the `verify-before-done` skill, which lives outside this repo (deployed under `~/.claude-<profile>/skills/`) and today is a procedure document only — it does not call `lh` or write to `loop_events`. Until it does, every session that declares a goal blocks once on its first `Stop` and then always passes on the second, regardless of whether verification actually happened.
+**Its producer:** `lh metrics record-verify` writes the `verify_ran` event this hook reads. It stamps the same `session`, `project` and `profile` the guard reads back, and resolves the database through the same `resolve_db_path()`. The session id comes from `--session`, or from `CLAUDE_CODE_SESSION_ID` when the flag is absent — the variable Claude Code sets in the environment of every command it runs, carrying the same value the hook receives as `session_id` in its payload.
 
-**Enabling it:** the hook is registered but not part of the default hook set — it is not yet wired into any `config.toml` in this repo. Opt in explicitly once `verify_ran` has a producer:
+```bash
+lh metrics record-verify            # session id from the environment
+lh metrics record-verify --session <id>
+```
+
+Invoke it as the final step of a verification procedure, never on its own: recording that verification happened without having verified is worse than recording nothing, because it silences the guard.
+
+**Wire the guard only once the producer is deployed and invoked.** The command shipping in this repository is not enough — the procedure that calls it lives in the profile, outside this repo. A guard whose producer nobody invokes blocks once on every goal-declaring session and passes on the second attempt regardless, which is a nag rather than enforcement.
+
+**Enabling it:** the hook is registered but deliberately not part of the default hook set. Opt in explicitly, after confirming the deployed `lh` carries `record-verify` and the verification procedure invokes it:
 
 ```toml
 [hooks.session_stop]
