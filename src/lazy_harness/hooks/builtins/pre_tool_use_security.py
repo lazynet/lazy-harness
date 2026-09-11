@@ -181,6 +181,12 @@ SECRET_PATH_EXCEPTIONS: tuple[str, ...] = (
 # Tools that take a filesystem path instead of a command. NotebookEdit names its
 # path field differently, so both keys are read.
 FILE_TOOLS = frozenset({"Read", "Edit", "Write", "NotebookEdit"})
+COMMAND_TOOLS = frozenset({"Bash"})
+
+# The tool names this hook inspects. `tests/unit/test_hook_matcher_coverage.py`
+# asserts the matcher the registry deploys covers every one of them, so the gate
+# below and the subscription declared outside cannot drift apart.
+INSPECTED_TOOLS = COMMAND_TOOLS | FILE_TOOLS
 FILE_PATH_KEYS = ("file_path", "notebook_path")
 
 MAX_MATCH_LEN = 120
@@ -319,7 +325,7 @@ def main() -> None:
     tool = payload.get("tool_name")
     tool_input = payload.get("tool_input") or {}
     allow = _load_allowlist()
-    if tool == "Bash":
+    if tool in COMMAND_TOOLS:
         subject = str(tool_input.get("command", ""))
         decision = should_block(subject, allow)
     elif tool in FILE_TOOLS:

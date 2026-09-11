@@ -74,7 +74,8 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
         matcher="Read",
     ),
     "pre-tool-use-security": BuiltinHookSpec(
-        module="lazy_harness.hooks.builtins.pre_tool_use_security"
+        module="lazy_harness.hooks.builtins.pre_tool_use_security",
+        matcher="Bash|Read|Edit|Write|NotebookEdit",
     ),
     "session-start-preflight": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.session_start_preflight"

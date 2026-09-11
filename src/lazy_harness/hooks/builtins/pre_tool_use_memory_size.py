@@ -20,6 +20,11 @@ import sys
 import tomllib
 from pathlib import Path
 
+# The tool names this hook inspects. `tests/unit/test_hook_matcher_coverage.py`
+# asserts the matcher the registry deploys covers every one of them, so the gate
+# below and the subscription declared outside cannot drift apart.
+INSPECTED_TOOLS = frozenset({"Edit", "Write"})
+
 MAX_LINES = 200
 
 # What the context window pays for is bytes, not newlines. A curated index of
@@ -185,7 +190,7 @@ def main() -> None:
     tool_name = payload.get("tool_name", "")
     tool_input = payload.get("tool_input", {})
 
-    if tool_name not in {"Edit", "Write"}:
+    if tool_name not in INSPECTED_TOOLS:
         sys.exit(0)
     if not isinstance(tool_input, dict):
         sys.exit(0)

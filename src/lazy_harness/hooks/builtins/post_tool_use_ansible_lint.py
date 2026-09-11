@@ -14,6 +14,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
+# The tool names this hook inspects. `tests/unit/test_hook_matcher_coverage.py`
+# asserts the matcher the registry deploys covers every one of them, so the gate
+# below and the subscription declared outside cannot drift apart.
+INSPECTED_TOOLS = frozenset({"Edit", "Write"})
+
 ANSIBLE_LINT_TIMEOUT_SECS = 30
 MAX_CONTEXT_CHARS = 4000
 
@@ -80,7 +85,7 @@ def _print_context(message: str) -> None:
 
 def main() -> None:
     payload = _read_stdin_json()
-    if payload.get("tool_name") not in ("Edit", "Write"):
+    if payload.get("tool_name") not in INSPECTED_TOOLS:
         sys.exit(0)
     tool_input = payload.get("tool_input", {})
     if not isinstance(tool_input, dict):

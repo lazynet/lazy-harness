@@ -15,6 +15,11 @@ import os
 import sys
 from pathlib import Path
 
+# The tool names this hook inspects. `tests/unit/test_hook_matcher_coverage.py`
+# asserts the matcher the registry deploys covers every one of them, so the gate
+# below and the subscription declared outside cannot drift apart.
+INSPECTED_TOOLS = frozenset({"Read"})
+
 MAX_LINES = 500
 BYTES_PER_TOKEN = 4
 
@@ -76,7 +81,7 @@ def main() -> None:
         sys.exit(0)
 
     payload = _read_stdin_json()
-    if payload.get("tool_name") != "Read":
+    if payload.get("tool_name") not in INSPECTED_TOOLS:
         sys.exit(0)
 
     tool_input = payload.get("tool_input") or {}

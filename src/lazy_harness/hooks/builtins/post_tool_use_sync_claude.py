@@ -19,6 +19,11 @@ from lazy_harness.core.sync_agent_md import sync_profiles
 
 # Segment filenames are Claude Code-specific. A future adapter extension may
 # make these dynamic; for now the hook name intentionally stays claude-specific.
+# The tool names this hook inspects. `tests/unit/test_hook_matcher_coverage.py`
+# asserts the matcher the registry deploys covers every one of them, so the gate
+# below and the subscription declared outside cannot drift apart.
+INSPECTED_TOOLS = frozenset({"Edit", "Write"})
+
 SEGMENT_FILES = {"CLAUDE.head.md", "CLAUDE.tail.md", "CLAUDE.common.md"}
 
 DEFAULT_AGENT_TYPE = "claude-code"
@@ -50,7 +55,7 @@ def _profiles_dir_for(path: Path) -> Path | None:
 
 def main() -> None:
     payload = _read_stdin_json()
-    if payload.get("tool_name") not in ("Edit", "Write"):
+    if payload.get("tool_name") not in INSPECTED_TOOLS:
         sys.exit(0)
     raw_path = str(payload.get("tool_input", {}).get("file_path", ""))
     if not raw_path:

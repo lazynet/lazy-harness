@@ -53,6 +53,11 @@ class UnsafeStash:
 # what keeps `echo git stash pop` out of scope: there `git` is an argument, not
 # a command. Newline is a separator like any other — multi-line scripts are how
 # long commands actually arrive.
+# The tool names this hook inspects. `tests/unit/test_hook_matcher_coverage.py`
+# asserts the matcher the registry deploys covers every one of them, so the gate
+# below and the subscription declared outside cannot drift apart.
+INSPECTED_TOOLS = frozenset({"Bash"})
+
 _COMMAND_START = r"(?:(?<=^)|(?<=[;&|(){}`\n]))\s*"
 
 # Shell keywords introduce a command without being a separator themselves:
@@ -362,7 +367,7 @@ def main() -> None:
     try:
         payload = _read_stdin_json()
 
-        if payload.get("tool_name") != "Bash":
+        if payload.get("tool_name") not in INSPECTED_TOOLS:
             sys.exit(0)
 
         tool_input = payload.get("tool_input")

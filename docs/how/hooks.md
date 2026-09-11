@@ -236,6 +236,13 @@ Scope: two shapes of tool call are inspected, and every other tool name (Grep, M
 - **`Bash`** — the hook reads `tool_input.command` and walks an ordered list of regex rules grouped by category. The first match wins; later rules are not evaluated.
 - **`Read`, `Edit`, `Write`, `NotebookEdit`** — the hook reads `tool_input.file_path` (or `notebook_path`) and matches it against `SECRET_PATH_GLOBS`, the secret-path list described below.
 
+The subscription has to be as wide as that scope: the hook is registered with
+`matcher = "Bash|Read|Edit|Write|NotebookEdit"`, overriding the `PreToolUse`
+default of `Bash`. A narrower matcher does not weaken the guard, it removes it —
+the agent never calls the hook for the tools left out, and nothing reports the
+gap. `tests/unit/test_hook_matcher_coverage.py` holds the matcher every builtin
+is deployed with against the `INSPECTED_TOOLS` its module publishes.
+
 Categories shipped:
 
 | Category | Examples blocked |

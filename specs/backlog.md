@@ -54,6 +54,7 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 - [x] **`uv` viejo de Langflow anteponiéndose en el PATH** — `~/.langflow/uv/env` exportaba `PATH="$HOME/.langflow/uv:$PATH"` con un uv 0.6.17 de abril 2025 que no entiende `uv run --group` y reescribe `uv.lock` en formato viejo. Rompía el gate de docs de forma intermitente y degradó dos `uv.lock` el 2026-09-10. Deshabilitado en `~/.config/zsh/10-darwin.zsh`, persistido con `chezmoi re-add`, verificado en ambas direcciones.
 - [x] **Traducción de schedule que se niega en vez de adivinar** — `scheduler/schedule.py` con `parse_cron`/`render_launchd`/`ScheduleTranslationError`; `_cron_to_calendar` y `_cron_to_interval` borrados (ADR-013 D4, PR #168, 2026-08-17). Verificado el 2026-09-10 contra las 7 formas comunes: diaria, cada N horas, semanal, mensual y cada N minutos traducen; listas y rangos levantan, porque launchd no puede expresarlos. `lh status cron` muestra el schedule real y `selftest` gana el check `units-stale`. El backlog lo listó como ALTA abierta durante tres semanas después de estar cerrado.
 - [x] **`lh deploy` default hooks merge** — `DEFAULT_HOOKS` literal in `deploy/defaults.py` + `merge_with_defaults` pure function; per-event override via config.toml (`scripts = []` opts out); framework-owned `settings.json[hooks]` with backup + warning when manual entries are clobbered (ADR-031, 11 tests TDD). Also fixed `ClaudeCodeAdapter` missing `post_compact → PostCompact` mapping. Closes the 2026-04-17 partial-config drift and makes built-ins out-of-the-box.
+- [x] **El guard de paths secretos estaba inerte: el matcher desplegado no lo alcanzaba** — `pre-tool-use-security` inspecciona `Bash` más `Read`/`Edit`/`Write`/`NotebookEdit`, pero su entrada en `_BUILTIN_HOOKS` no declaraba `matcher`, así que heredaba el default del evento (`Bash`) y Claude Code nunca lo invocaba en un `Read`. Cerrado declarando `matcher="Bash|Read|Edit|Write|NotebookEdit"`. Lo que faltaba de verdad era la relación entre las dos puntas: cada builtin que gatea por `tool_name` ahora publica `INSPECTED_TOOLS` y lo usa en su propio gate, y `tests/unit/test_hook_matcher_coverage.py` sostiene el matcher desplegado contra ese conjunto. Verificado en ambas direcciones: sin el matcher, dos de los tres tests fallan con `matcher 'Bash' never reaches ['Edit', 'NotebookEdit', 'Read', 'Write']`. Falta el paso binary-first: release, `uv tool install --reinstall`, grep a site-packages y `lh deploy` — recién ahí el guard corre en la máquina.
 - [x] **`save_config` destruía config (51 claves) + tres claves de `[context_inject]` ignoradas en silencio** — read-modify-write sobre TOML crudo (`tomlkit`) en vez de completar el serializer, per D5 de [`designs/2026-08-17-capability-registry-design.md`](designs/2026-08-17-capability-registry-design.md) (commit `56429ad`, PR #167). Selftest `check_config_round_trip` registrado. Esta entrada había quedado listada como ALTA abierta pese a estar mergeada desde el 2026-08-17; el backlog no se había actualizado. Reconciliado el 2026-09-10 agregando además `tests/unit/test_config.py::test_save_config_round_trip_preserves_every_key_of_the_live_config` y `::test_context_inject_switches_survive_round_trip_against_the_live_config`, que corren el ciclo completo contra una copia del `config.toml` real de la máquina (nunca contra el archivo real) en vez de solo contra el fixture sintético `_FULL_CONFIG`.
 
 ---
@@ -232,28 +233,6 @@ R&D puro. Diferir hasta tener caso de uso concreto.
 Dedup semántico ya funciona con inyección de títulos. Diferir.
 
 ---
-
-### El guard de paths secretos está inerte: el matcher desplegado no lo alcanza
-
-**Severidad: alta.** `pre-tool-use-security` inspecciona dos superficies — comandos de `Bash` contra `BLOCK_RULES`, y rutas de `Read`/`Edit`/`Write`/`NotebookEdit` contra `SECRET_PATH_GLOBS` (`.env`, `.ssh/id_*`, `.aws/credentials`, `**/secrets/**`, …). La segunda nunca se invoca.
-
-**Causa:** su entrada en `_BUILTIN_HOOKS` no declara `matcher`, así que `agents/claude_code.py` le aplica el default de su evento, `matcher_map["pre_tool_use"] = "Bash"`. El `settings.json` generado lo registra solo para `Bash`, y Claude Code no lo llama en un `Read`.
-
-**Evidencia medida el 2026-09-11 sobre el perfil desplegado:**
-
-```
-should_block_path('/tmp/…/secrets/fake.txt')  -> BLOQUEA
-hook alimentado con un payload de Read        -> exit 2
-settings.json desplegado                      -> matcher='Bash'
-```
-
-La lógica está bien y testeada. Lo que falta es que el agente la invoque.
-
-**No se puede arreglar desde `config.toml`:** `HookEventConfig.scripts` es `list[str]` y no acepta un matcher por script. El arreglo va en el registry: declarar `matcher="Bash|Read|Edit|Write|NotebookEdit"` en la entrada del hook.
-
-**El test que lo habría atrapado** — y que hay que escribir con el fix: por cada builtin, el matcher desplegado cubre todos los `tool_name` que el módulo realmente inspecciona. Hoy nada relaciona `FILE_TOOLS` dentro del hook con el matcher que el adapter le asigna afuera.
-
-Los templates `settings-<profile>.json` de chezmoi ya llevan el matcher ancho correcto, así que hoy pelean contra lo que `lh deploy` escribe. El fix alinea las dos puntas.
 
 ### Un `[hooks.*] scripts` explícito ignora los defaults del registry, en silencio
 

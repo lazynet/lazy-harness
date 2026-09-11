@@ -175,7 +175,8 @@ def test_resolve_hook_carries_matcher_when_spec_has_one(monkeypatch) -> None:
 def test_resolve_hook_matcher_defaults_to_none_when_spec_has_no_matcher() -> None:
     from lazy_harness.hooks.loader import resolve_hook
 
-    info = resolve_hook("pre-tool-use-security")
+    # A lifecycle hook, which no tool matcher can apply to.
+    info = resolve_hook("context-inject")
     assert info is not None
     assert info.matcher is None
 

@@ -119,6 +119,11 @@ def test_deploy_writes_per_script_matcher_in_settings(home_dir: Path, monkeypatc
             matcher="Edit|Write",
         ),
     )
+    monkeypatch.setitem(
+        loader._BUILTIN_HOOKS,
+        "test-pre-tool-use-without-matcher",
+        BuiltinHookSpec(module="lazy_harness.hooks.builtins.pre_tool_use_security"),
+    )
 
     config_path = home_dir / ".config" / "lazy-harness" / "config.toml"
     target_dir = home_dir / ".claude-personal"
@@ -131,7 +136,7 @@ def test_deploy_writes_per_script_matcher_in_settings(home_dir: Path, monkeypatc
         ),
         hooks={
             "pre_tool_use": HookEventConfig(
-                scripts=["test-pre-tool-use-with-matcher", "pre-tool-use-security"]
+                scripts=["test-pre-tool-use-with-matcher", "test-pre-tool-use-without-matcher"]
             )
         },
     )
