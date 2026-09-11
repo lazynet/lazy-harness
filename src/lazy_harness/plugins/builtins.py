@@ -74,7 +74,7 @@ _TOOLS = [
 # deploy a guard that always blocks once per session and never actually
 # verifies anything.
 _DEFAULT_ON_HOOKS: dict[str, list[str]] = {
-    "session_start": ["context-inject"],
+    "session_start": ["context-inject", "session-start-preflight"],
     "session_stop": ["session-export", "compound-loop", "engram-persist"],
     "session_end": ["session-end"],
     "pre_compact": ["pre-compact"],

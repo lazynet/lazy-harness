@@ -16,7 +16,8 @@
     "session-end"
   ],
   "session_start": [
-    "context-inject"
+    "context-inject",
+    "session-start-preflight"
   ],
   "session_stop": [
     "session-export",

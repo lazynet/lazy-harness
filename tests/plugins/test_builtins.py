@@ -75,7 +75,8 @@ def test_every_default_on_hook_is_registered_with_its_event() -> None:
     assert on_by_default["context-inject"] == "hooks.session_start.scripts"
     assert on_by_default["engram-persist"] == "hooks.session_stop.scripts"
     assert on_by_default["pre-tool-use-git-scope"] == "hooks.pre_tool_use.scripts"
-    assert len(on_by_default) == 12
+    assert on_by_default["session-start-preflight"] == "hooks.session_start.scripts"
+    assert len(on_by_default) == 13
 
 
 def test_the_three_any_event_hooks_are_knowingly_absent() -> None:

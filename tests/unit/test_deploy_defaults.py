@@ -43,7 +43,7 @@ def test_merge_user_overrides_one_event() -> None:
     result = merge_with_defaults(user, _claude_agent())
 
     assert result["session_stop"] == ["my-hook"]
-    assert result["session_start"] == ["context-inject"]
+    assert result["session_start"] == ["context-inject", "session-start-preflight"]
     assert result["pre_tool_use"] == [
         "pre-tool-use-security",
         "pre-tool-use-git-scope",
@@ -58,7 +58,7 @@ def test_merge_user_empty_list_is_explicit_opt_out() -> None:
     result = merge_with_defaults(user, _claude_agent())
 
     assert result["session_stop"] == []
-    assert result["session_start"] == ["context-inject"]
+    assert result["session_start"] == ["context-inject", "session-start-preflight"]
 
 
 def test_merge_preserves_user_custom_event() -> None:
@@ -67,7 +67,7 @@ def test_merge_preserves_user_custom_event() -> None:
     result = merge_with_defaults(user, _claude_agent())
 
     assert result["notification"] == ["my-notify"]
-    assert result["session_start"] == ["context-inject"]
+    assert result["session_start"] == ["context-inject", "session-start-preflight"]
 
 
 def test_sync_claude_hook_excluded_for_null_agent() -> None:
