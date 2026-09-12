@@ -91,21 +91,27 @@ son un fix de una línea cada uno, con TDD.
 
 ### `release-please` deja `uv.lock` un release atrás
 
-**Por qué:** `extra-files` en `.github/release-please-config.json` lista sólo
-`src/lazy_harness/__init__.py`, así que el release bumpea `pyproject.toml` y
-`__init__.py` y deja el `version` del paquete raíz en `uv.lock` apuntando a la
-versión anterior. Medido el 2026-09-12: con `pyproject` en 0.58.0, `main` trae
-`uv.lock` diciendo 0.57.2.
+**Por qué:** el bump de `uv.lock` es **inconsistente entre releases consecutivos**,
+y la causa no está investigada. Medido el 2026-09-12 sobre los dos últimos:
 
-La consecuencia no es el lock en sí —una línea, sin efecto en la resolución—
-sino que **cualquier `uv run` ensucia el árbol justo después de un release**,
-incluso con `--frozen`, porque el install editable reescribe esa línea. Es ruido
-permanente en `git status` y una trampa para todo gate que exija worktree limpia.
+| Release | Commit | ¿Tocó `uv.lock`? |
+|---|---|---|
+| v0.58.0 | `227a07b` | **no** — 4 archivos; el lock quedó diciendo 0.57.2 |
+| v0.58.1 | `612f472` | **sí** — 5 archivos; el lock pasó a 0.58.1 |
 
-**Acción:** decidir el mecanismo antes de tocar nada. release-please no edita
-TOML arbitrario más allá de patrones simples, así que probablemente haga falta un
-paso `uv lock` en el workflow de release y no una entrada de `extra-files`.
-Equivocarse acá rompe releases, no docs.
+Los dos releases salieron del mismo workflow y la misma config, y en los dos el
+lock arrancaba en 0.57.2, así que la hipótesis obvia —que `extra-files` no lo
+lista, cosa que es cierta— no explica por qué uno lo actualizó y el otro no.
+
+La consecuencia cuando **no** lo bumpea no es el lock en sí —una línea, sin
+efecto en la resolución— sino que cualquier `uv run` ensucia el árbol, incluso
+con `--frozen`, porque el install editable reescribe esa línea. Eso ya costó un
+`pull` con autostash en conflicto el mismo 2026-09-12.
+
+**Acción:** primero reproducir y entender por qué difieren, mirando la versión de
+la action de release-please en cada corrida. Recién después decidir si hace falta
+un paso `uv lock` en el workflow. No tocar `extra-files` a ciegas: equivocarse acá
+rompe releases, no docs.
 
 ### `lh deploy` promete desplegar skills y no tiene código que lo haga
 
