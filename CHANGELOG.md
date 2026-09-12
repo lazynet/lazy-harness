@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.58.0](https://github.com/lazynet/lazy-harness/compare/v0.57.2...v0.58.0) (2026-09-12)
+
+
+### Features
+
+* surface cache tokens on their own row in lh status ([#255](https://github.com/lazynet/lazy-harness/issues/255)) ([56c4eda](https://github.com/lazynet/lazy-harness/commit/56c4eda3c4fe5b85fd458e0bde4a378429094cd4))
+* warn once when a session closes above the rotate threshold ([#256](https://github.com/lazynet/lazy-harness/issues/256)) ([17d9e74](https://github.com/lazynet/lazy-harness/commit/17d9e7481d05c2405acde969a224094d0522a3c7))
+
+
+### Bug Fixes
+
+* emit systemMessage at the top level, not nested ([#257](https://github.com/lazynet/lazy-harness/issues/257)) ([fffb822](https://github.com/lazynet/lazy-harness/commit/fffb822936d1ad91a94151a050aa60862e36bbe7))
+
+
+### Documentation
+
+* **backlog:** close stop-verify-guard and record the CT hook audit ([0222c1a](https://github.com/lazynet/lazy-harness/commit/0222c1a6b08db7aa11ea724cbd5c0d0af6658b47))
+
 ## [0.57.2](https://github.com/lazynet/lazy-harness/compare/v0.57.1...v0.57.2) (2026-09-11)
 
 
