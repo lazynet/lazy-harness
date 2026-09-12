@@ -593,6 +593,31 @@ Mechanics:
 scripts = ["user-prompt-goal"]
 ```
 
+### `stop-context-rotate` — runs on `Stop`
+
+Source: `src/lazy_harness/hooks/builtins/stop_context_rotate.py`.
+
+Responsibility: say once, per session, that the context window has grown past the point where rotating it is cheaper than carrying it. `herdr-context-gauge` already computes this number and paints the pane red at `ROTATE_TOKENS`, but a colour on a pane is a display, not a prompt. This hook turns the same number into a `systemMessage` and changes nothing else.
+
+**Why a second hook rather than a branch in the gauge.** The gauge's responsibility is publishing pane metadata for an orchestrator; emitting operator-facing text is a different job with a different failure mode. The threshold itself is imported from the gauge rather than restated, so the message and the pane colour cannot drift apart — a test asserts they are the same object.
+
+Mechanics:
+
+1. Read stdin JSON; exit 0 on malformed input, on a non-dict payload, or on a `transcript_path` that is missing or not a string.
+2. Compute the session's context with the gauge's `context_tokens()` — the same reader, so the same answer.
+3. Exit 0 when the total is below `ROTATE_TOKENS` (400k).
+4. Exit 0 when this session already published its notice, detected by a stamp file keyed on `session_id`. `Stop` fires every turn; without this the notice repeats for the rest of the session, which is how a warning gets tuned out.
+5. Otherwise print the `systemMessage` and write the stamp.
+6. Always exit 0. It never sets `decision`, so it cannot block a `Stop`.
+
+**Output:** `{"hookSpecificOutput": {"hookEventName": "Stop", "systemMessage": "<notice>"}}` on the first qualifying `Stop` of a session; nothing on every other path.
+
+**Kill criteria.** Declared before deployment, as behavioural automation requires:
+
+- Baseline (2026-09-12, 72h, both profiles), measured with `context_tokens` on the closing turn — the same reader the hook fires on, not the session's peak. A criterion read against a different number than the trigger uses cannot judge the trigger. 9 of 387 sessions closed at or above 400k (5 lazy, 4 flex); 0 compactions across 52 interactive sessions; highest close 824k.
+- Horizon: 15 days, re-measured the same way.
+- Remove it if sessions closing above 400k have not fallen below 6 per 72h, or if compactions are still zero. A notice nobody acts on is worse than silence, because it trains the reader to skip the next one.
+
 ### `stop-verify-guard` — runs on `Stop`
 
 Source: `src/lazy_harness/hooks/builtins/stop_verify_guard.py`.

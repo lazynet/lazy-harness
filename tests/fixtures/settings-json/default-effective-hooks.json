@@ -22,6 +22,7 @@
   "session_stop": [
     "session-export",
     "compound-loop",
-    "engram-persist"
+    "engram-persist",
+    "stop-context-rotate"
   ]
 }

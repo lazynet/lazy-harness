@@ -76,7 +76,12 @@ _TOOLS = [
 # docs/how/hooks.md and specs/backlog.md.
 _DEFAULT_ON_HOOKS: dict[str, list[str]] = {
     "session_start": ["context-inject", "session-start-preflight"],
-    "session_stop": ["session-export", "compound-loop", "engram-persist"],
+    "session_stop": [
+        "session-export",
+        "compound-loop",
+        "engram-persist",
+        "stop-context-rotate",
+    ],
     "session_end": ["session-end"],
     "pre_compact": ["pre-compact"],
     "pre_tool_use": [
