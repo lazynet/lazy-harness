@@ -55,6 +55,8 @@ def render(ctx: StatusContext, db: MetricsDB | None) -> RenderableType:
             "total": set(),
             "in": 0,
             "out": 0,
+            "cache_read": 0,
+            "cache_create": 0,
             "cost": 0.0,
         }
         for name in profile_order
@@ -72,6 +74,8 @@ def render(ctx: StatusContext, db: MetricsDB | None) -> RenderableType:
                 bucket["month"].add(r["session"])  # type: ignore[union-attr]
                 bucket["in"] = int(bucket["in"]) + r["input"]
                 bucket["out"] = int(bucket["out"]) + r["output"]
+                bucket["cache_read"] = int(bucket["cache_read"]) + (r["cache_read"] or 0)
+                bucket["cache_create"] = int(bucket["cache_create"]) + (r["cache_create"] or 0)
                 bucket["cost"] = float(bucket["cost"]) + r["cost"]
 
     month_label = datetime.now().strftime("%b")
@@ -82,13 +86,25 @@ def render(ctx: StatusContext, db: MetricsDB | None) -> RenderableType:
     def _tok_line(label: str, tin: int, tout: int, cost: float) -> str:
         return f"{label:<5} {_fmt(tin)} in · {_fmt(tout)} out · ${round(cost, 2)} ({month_label})"
 
+    # Kept off the Tokens row on purpose. That row reports raw input alone, to
+    # match how ccusage and Anthropic's billing bucket them, which leaves the
+    # resource that actually dominates a long session unreported: every turn
+    # rereads the whole context, so cache_read outruns raw input by four or
+    # five orders of magnitude. Its own row shows the cost without conflating
+    # the two numbers.
+    def _cache_line(label: str, cread: int, cwrite: int) -> str:
+        return f"{label:<5} {_fmt(cread)} read · {_fmt(cwrite)} write"
+
     session_rows: list[str] = []
     token_rows: list[str] = []
+    cache_rows: list[str] = []
     all_today: set[str] = set()
     all_month: set[str] = set()
     all_total: set[str] = set()
     all_in = 0
     all_out = 0
+    all_cache_read = 0
+    all_cache_create = 0
     all_cost = 0.0
     for name in profile_order:
         b = per_profile[name]
@@ -99,22 +115,28 @@ def render(ctx: StatusContext, db: MetricsDB | None) -> RenderableType:
             _sess_line(f"{name}:", len(today_set), len(month_set), len(total_set))  # type: ignore[arg-type]
         )
         token_rows.append(_tok_line(f"{name}:", int(b["in"]), int(b["out"]), float(b["cost"])))
+        cache_rows.append(_cache_line(f"{name}:", int(b["cache_read"]), int(b["cache_create"])))
         all_today |= today_set  # type: ignore[arg-type]
         all_month |= month_set  # type: ignore[arg-type]
         all_total |= total_set  # type: ignore[arg-type]
         all_in += int(b["in"])
         all_out += int(b["out"])
+        all_cache_read += int(b["cache_read"])
+        all_cache_create += int(b["cache_create"])
         all_cost += float(b["cost"])
 
     if len(profile_order) > 1:
         session_rows.append(_sess_line("all:", len(all_today), len(all_month), len(all_total)))
         token_rows.append(_tok_line("all:", all_in, all_out, all_cost))
+        cache_rows.append(_cache_line("all:", all_cache_read, all_cache_create))
     elif not profile_order:
         session_rows.append(_sess_line("", 0, 0, 0))
         token_rows.append(_tok_line("", 0, 0, 0.0))
+        cache_rows.append(_cache_line("", 0, 0))
 
     session_val = session_rows
     token_val = token_rows
+    cache_val = cache_rows
 
     hooks_text = Text()
     for profile in ctx.profiles:
@@ -174,6 +196,7 @@ def render(ctx: StatusContext, db: MetricsDB | None) -> RenderableType:
         ("Projects", project_val),
         ("Sessions", session_val),
         ("Tokens", token_val),
+        ("Cache", cache_val),
         ("Hooks", hooks_text),
         ("Cron", cron_text),
         ("Queue", queue_val),
@@ -183,6 +206,10 @@ def render(ctx: StatusContext, db: MetricsDB | None) -> RenderableType:
 
 
 def _fmt(n: int) -> str:
+    # Cache read reaches giga scale within days; without this the row renders
+    # "2180.0M", which reads as a typo rather than as a number.
+    if n >= 1_000_000_000:
+        return f"{n / 1_000_000_000:.1f}G"
     if n >= 1_000_000:
         return f"{n / 1_000_000:.1f}M"
     if n >= 1_000:
