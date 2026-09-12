@@ -69,6 +69,24 @@ _Sin items abiertos._
 
 ## Open — Prioridad MEDIA
 
+### `release-please` deja `uv.lock` un release atrás
+
+**Por qué:** `extra-files` en `.github/release-please-config.json` lista sólo
+`src/lazy_harness/__init__.py`, así que el release bumpea `pyproject.toml` y
+`__init__.py` y deja el `version` del paquete raíz en `uv.lock` apuntando a la
+versión anterior. Medido el 2026-09-12: con `pyproject` en 0.58.0, `main` trae
+`uv.lock` diciendo 0.57.2.
+
+La consecuencia no es el lock en sí —una línea, sin efecto en la resolución—
+sino que **cualquier `uv run` ensucia el árbol justo después de un release**,
+incluso con `--frozen`, porque el install editable reescribe esa línea. Es ruido
+permanente en `git status` y una trampa para todo gate que exija worktree limpia.
+
+**Acción:** decidir el mecanismo antes de tocar nada. release-please no edita
+TOML arbitrario más allá de patrones simples, así que probablemente haga falta un
+paso `uv lock` en el workflow de release y no una entrada de `extra-files`.
+Equivocarse acá rompe releases, no docs.
+
 ### `lh deploy` promete desplegar skills y no tiene código que lo haga
 
 **Por qué:** `deploy/engine.py:1` y `deploy_cmd.py:41` declaran "profiles, hooks, skills". La palabra `skill` no aparece en ninguna otra línea de `src/` fuera de `migrate/detector.py`. Lo que existe es un bucle genérico — `for item in src_dir.iterdir(): ensure_symlink(item, target_dir / item.name)` — que symlinkea cualquier cosa que encuentre en el source del profile. Los skills funcionan por esa generalidad, no porque haya una ruta de código para ellos.
