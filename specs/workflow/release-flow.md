@@ -11,7 +11,9 @@ On every push to `main`, release-please:
    - `feat:` → **minor** bump
    - `fix:` → **patch** bump
    - `BREAKING CHANGE:` in the commit footer (or a `!` after the type, e.g. `feat!:`) → **minor** bump while the project is pre-1.0
-   - `chore:`, `ci:`, `test:`, `docs:`, `refactor:` → no bump; hidden from the changelog by default
+   - every other conventional type — `docs:`, `refactor:`, `perf:`, `chore:`, `ci:`, `test:` → **patch** bump
+
+   Only `chore:`, `ci:` and `test:` are hidden from the changelog; `.github/release-please-config.json` gives `docs:`, `refactor:` and `perf:` a visible section apiece. **No type is a no-op.** A lone `docs:` commit cuts a release: v0.51.1 was exactly that — one `docs:` PR (#228) plus a hidden `chore:`, and release-please tagged it and filed the entry under *Documentation*. Plan a docs-only merge as a release, not as a push.
 3. Opens a PR titled `chore(main): release X.Y.Z` containing:
    - The version bump in both `pyproject.toml` and `src/lazy_harness/__init__.py`
    - A `CHANGELOG.md` entry grouped by section
@@ -21,7 +23,7 @@ On every push to `main`, release-please:
 
 ## What this means in practice
 
-- **Use conventional-commit prefixes rigorously.** A single merged `fix:` triggers a patch bump; a single `feat:` triggers a minor bump. Mislabeling a bug fix as `feat:` silently makes the next release a minor bump when it should have been a patch.
+- **Use conventional-commit prefixes rigorously.** A single merged `fix:` triggers a patch bump; a single `feat:` triggers a minor bump. Mislabeling a bug fix as `feat:` silently makes the next release a minor bump when it should have been a patch. The type never decides *whether* to release, only *how far* to bump and *where* the entry lands in the changelog.
 - **Under squash merge, the PR title is the only commit message release-please sees.** The individual commits on the branch are collapsed into one whose message is the PR title, so their types are discarded. A branch holding both a `fix:` and a `feat:` merged under a `fix:` title ships the feature as a patch, and the changelog never mentions it. v0.36.1 did exactly this. Title the PR after the *largest* change it carries, not the first one.
 - **`BREAKING CHANGE:` is for actual user-visible breakage.** Renaming an internal helper is not breaking. Removing a CLI flag is. Use sparingly.
 - **The project stays on `0.x` until it is declared stable.** `bump-minor-pre-major` in `.github/release-please-config.json` keeps breaking changes on a minor bump instead of promoting the project to `1.0.0`. Reaching `1.0.0` is a deliberate act, not a side effect of one `feat!:` commit — remove that flag when the CLI surface is stable enough to promise compatibility.
