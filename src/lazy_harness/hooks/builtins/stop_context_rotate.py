@@ -120,16 +120,14 @@ def main() -> None:
     if _already_warned(stamp):
         sys.exit(0)
 
-    print(
-        json.dumps(
-            {
-                "hookSpecificOutput": {
-                    "hookEventName": "Stop",
-                    "systemMessage": notice(tokens),
-                }
-            }
-        )
-    )
+    # Top level, not inside `hookSpecificOutput`. Claude Code's hook schema
+    # (verified against the 2.1.269 binary) lists `systemMessage` among the
+    # common "Fields:" — "Display a message to the user (all hooks)" — while
+    # `hookSpecificOutput` takes exactly four keys: additionalContext,
+    # permissionDecision, permissionDecisionReason and updatedInput. Nesting it
+    # parses fine and is then discarded, giving a hook that runs, stamps, logs,
+    # and shows nothing.
+    print(json.dumps({"systemMessage": notice(tokens)}))
     _record(stamp)
     sys.exit(0)
 

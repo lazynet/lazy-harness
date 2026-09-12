@@ -75,7 +75,16 @@ def test_warns_above_the_rotate_threshold(tmp_path, monkeypatch, capsys) -> None
     payload = json.loads(out)
     # Non-blocking: the Stop decision must not be touched.
     assert "decision" not in payload
-    msg = payload["hookSpecificOutput"]["systemMessage"]
+
+    # `systemMessage` is a TOP-LEVEL field, sibling to `hookSpecificOutput`,
+    # never nested inside it. Verified against the Claude Code 2.1.269 binary,
+    # whose hook schema lists it under "Fields:" ("Display a message to the
+    # user (all hooks)") while `hookSpecificOutput` accepts exactly four keys:
+    # additionalContext, permissionDecision, permissionDecisionReason and
+    # updatedInput. A nested systemMessage is silently discarded, which is a
+    # hook that runs, logs, and shows nothing.
+    assert "hookSpecificOutput" not in payload, "systemMessage must not be nested"
+    msg = payload["systemMessage"]
     assert "437k" in msg
     assert "/compact" in msg and "/clear" in msg
 

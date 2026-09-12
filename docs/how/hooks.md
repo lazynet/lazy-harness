@@ -39,7 +39,7 @@ scripts = ["pre-compact"]
 | `config.toml` event | Claude Code event | When it fires | Built-ins shipped | Typical use |
 |---|---|---|---|---|
 | `session_start` | `SessionStart` | Right after Claude Code starts a session | `context-inject`, `session-start-preflight` | Inject additional context, report an expired login or a shadowed tool before work starts |
-| `session_stop` | `Stop` | After every LLM turn (not once at shutdown) | `session-export`, `compound-loop`, `engram-persist` | Export session, queue gated async work, mirror new memory entries |
+| `session_stop` | `Stop` | After every LLM turn (not once at shutdown) | `session-export`, `compound-loop`, `engram-persist`, `stop-context-rotate` | Export session, queue gated async work, mirror new memory entries, flag a context window worth rotating |
 | `session_end` | `SessionEnd` | Exactly once at real session termination (`/exit`, `/clear`, logout) | `session-end` | Force final end-of-session work |
 | `pre_compact` | `PreCompact` | Immediately before Claude Code compacts conversation history | `pre-compact` | Preserve working state |
 | `post_compact` | `PostCompact` | Immediately after Claude Code compacts conversation history | — | Available for your own hooks. No built-in ships here: the event's executor returns only a user-facing message, so a hook on it cannot reach the model. |
@@ -58,7 +58,7 @@ The mapping lives in `ClaudeCodeAdapter.generate_hook_config` — other agents m
 | Event | Default built-ins |
 |---|---|
 | `session_start` | `context-inject`, `session-start-preflight` |
-| `session_stop` | `session-export`, `compound-loop`, `engram-persist` |
+| `session_stop` | `session-export`, `compound-loop`, `engram-persist`, `stop-context-rotate` |
 | `session_end` | `session-end` |
 | `pre_compact` | `pre-compact` |
 | `post_compact` | — |
@@ -610,7 +610,9 @@ Mechanics:
 5. Otherwise print the `systemMessage` and write the stamp.
 6. Always exit 0. It never sets `decision`, so it cannot block a `Stop`.
 
-**Output:** `{"hookSpecificOutput": {"hookEventName": "Stop", "systemMessage": "<notice>"}}` on the first qualifying `Stop` of a session; nothing on every other path.
+**Output:** `{"systemMessage": "<notice>"}` on the first qualifying `Stop` of a session; nothing on every other path.
+
+`systemMessage` goes at the top level, **not** inside `hookSpecificOutput`. Claude Code's hook schema (verified against the 2.1.269 binary) lists it among the common fields — "Display a message to the user (all hooks)" — while `hookSpecificOutput` accepts exactly four keys: `additionalContext`, `permissionDecision`, `permissionDecisionReason` and `updatedInput`. A nested `systemMessage` parses without error and is then discarded, producing a hook that runs, stamps, logs and displays nothing.
 
 **Kill criteria.** Declared before deployment, as behavioural automation requires:
 
