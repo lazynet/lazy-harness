@@ -13,6 +13,9 @@ Claude Code offers a `PreCompact` hook event that fires immediately before compa
 
 ## Decision
 
+> **Mechanism note (2026-09-12).** The memory directory named here moved: it now resolves into the knowledge store, keyed by the repository's git remote (`core/memory_store.py`). The path below survives as the fallback for a machine with no store, or a checkout with no remote. See ADR-027's Evolution note.
+
+
 Built-in hook at `src/lazy_harness/hooks/builtins/pre_compact.py` that runs on every `PreCompact` event. Responsibilities:
 
 1. **Back up the raw transcript.** Copy the full JSONL to `~/.claude/compact-backups/<timestamp>-<project>.jsonl`. This is a pure forensic artefact — if compaction destroys something we wanted, the raw history is still on disk.

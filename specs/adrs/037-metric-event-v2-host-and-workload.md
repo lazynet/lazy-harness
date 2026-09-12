@@ -1,7 +1,8 @@
 # ADR-037: Metric event schema v2 — `host` and `workload` as first-class dimensions
 
-**Status:** proposed
+**Status:** accepted
 **Date:** 2026-08-31
+**Implemented:** 2026-08-31 (PR #225) — `METRIC_EVENT_SCHEMA_VERSION = 2` with `host` and `workload` on `MetricEvent` (`plugins/contracts.py`), `core/identity.py:resolve_host`, the `session_attribution` table with `set_attribution` / `backfill_host` (`monitoring/db.py`), the session id `lh exec` pins before spawning, and `lh exec --workload` / `LH_WORKLOAD`.
 **Supersedes:** —
 **Superseded by:** —
 **Related:** ADR-012 (SQLite monitoring), ADR-032 (agent adapter completeness), ADR-035 (capability registry)

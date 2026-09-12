@@ -21,7 +21,7 @@ Decisions that define the `lazy-harness` project itself.
 | [009](./009-profile-symlink-deploy.md) | accepted | Profile symlink deploy | Per-file symlinks from source dotfiles into the agent target dir. |
 | [010](./010-pre-compact-preservation.md) | accepted | Pre-compact context preservation | Back up the transcript and distill a working-state summary before compaction. |
 | [011](./011-session-export-and-classification.md) | accepted | Session export with classification | JSONL → dated markdown with project/profile frontmatter, atomic writes. |
-| [012](./012-sqlite-monitoring.md) | accepted | SQLite monitoring | Single-table idempotent store, view modules per angle. |
+| [012](./012-sqlite-monitoring.md) | accepted | SQLite monitoring | Idempotent SQLite store, one view module per angle. Five tables today — `session_stats`, `session_attribution`, `ingest_meta`, `sink_outbox`, `loop_events`; see the ADR's Evolution section. |
 | [013](./013-scheduler-unified-backends.md) | accepted | Unified scheduler backends | launchd / systemd / cron behind one protocol, declared once in config. Complete as of 2026-08-17: the three backends install, uninstall and report state. |
 | [014](./014-migration-engine-rollback.md) | accepted | Migration engine with automatic rollback | Detect → plan → execute → auto-rollback on failure. Dry-run is a first-class mode. |
 | [015](./015-strict-tdd-workflow.md) | accepted | Strict TDD as a workflow rule | No production code without a failing test first. Non-negotiable. |
@@ -33,7 +33,7 @@ Decisions that define the `lazy-harness` project itself.
 | [021](./021-async-response-grading.md) | accepted | Async response grading via the compound-loop worker | One LLM call returns decisions/failures/learnings/handoff *and* a quality grade. Poor grades escalate to PRJ.md. |
 | [022](./022-engram-episodic-memory.md) | accepted | Engram as optional episodic memory backend | New `memory/engram.py` wrapper + `[memory.engram]` config + MCP deploy gating. Mirrors the ADR-016 QMD pattern. |
 | [023](./023-graphify-code-structure.md) | accepted | Graphify as optional code-structure index | New `knowledge/graphify.py` wrapper + `[knowledge.structure]` config + MCP deploy gating. Mirrors ADR-016 / ADR-022. |
-| [024](./024-mcp-server-orchestration.md) | accepted | MCP server orchestration via `lh deploy` | Single seam in deploy writes `mcpServers` to each profile's `settings.json` from detected tools (QMD today, Engram/Graphify next). |
+| [024](./024-mcp-server-orchestration.md) | accepted | MCP server orchestration via `lh deploy` | Single seam in deploy writes `mcpServers` to each profile's agent MCP file — `.claude.json` for Claude Code since ADR-032 L2 — from detected tools (QMD, Engram, Graphify). |
 | [025](./025-doctor-features-section.md) | accepted | `lh doctor` Features section for triple stack | New `lazy_harness.features` helper + Features section in `lh doctor` listing qmd/engram/graphify with state, version, and pin. First half of ADR-018 implementation. |
 | [026](./026-config-wizards.md) | accepted | `lh config <feature> --init` wizards (Fase 3b) | New `lh config` Click group + `wizards/` package with TOML deep-merge. Closes ADR-018 implementation. |
 | [027](./027-memory-stack-overview.md) | accepted | Memory stack overview — five-layer model | Names the user-facing layer model that ADR-016/022/023/024 produced. No new mechanism, only canonical vocabulary. |
@@ -44,11 +44,11 @@ Decisions that define the `lazy-harness` project itself.
 | [032](./032-agent-adapter-completeness.md) | accepted | Agent adapter completeness — closing Claude-specific leaks | Four new Protocol methods close seven locations where Claude-specific assumptions bypass the adapter seam. |
 | [033](./033-llm-backend-abstraction.md) | accepted | LLM backend abstraction — provider-agnostic inference | New `LLMBackend` Protocol decouples framework-internal inference from the agent CLI choice. Covers Ollama, MLX, and any OpenAI-compatible endpoint. Implemented 2026-06-11. Its config surface and resolution entry point are superseded by ADR-039; the Protocol and backends remain in force. |
 | [034](./034-okf-knowledge-producer.md) | proposed | OKF producer — export curated knowledge as an OKF bundle | New `knowledge/okf.py` + `lh knowledge export-okf` transform the `learnings/` layer into a conformant Open Knowledge Format v0.1 bundle. Export-only, non-invasive; episodic logs excluded. |
-| [035](./035-capability-registry.md) | proposed | Capability registry — cardinality and external dependency as the two axes | One enumerable registry over the six activation surfaces, classified by cardinality (`one`/`many`) and by whether activation needs an external binary. Explicitly not a public plugin API. |
+| [035](./035-capability-registry.md) | accepted | Capability registry — cardinality and external dependency as the two axes | One enumerable registry over the six activation surfaces, classified by cardinality (`one`/`many`) and by whether activation needs an external binary. Explicitly not a public plugin API. |
 | [036](./036-compact-hooks-use-real-channels.md) | accepted | Compact-event hooks use the channels the agent actually provides | `PostCompact` has no output channel to the model, so the built-in is removed; `pre-compact` prints plain text into `newCustomInstructions`. |
-| [037](./037-metric-event-v2-host-and-workload.md) | proposed | Metric event schema v2 — `host` and `workload` as first-class dimensions | `MetricEvent` gains `host` (resolved at ingest) and a caller-supplied `workload`, carried by a session id `lh exec` pins before spawning. |
-| [038](./038-exec-envelope-cost-provenance.md) | proposed | The `lh exec` envelope — cost provenance and the mute failure | A timed-out run is priced from its own transcript, `cost_source` names which door the figure came through, and a failure that says nothing gets a typed `error.kind`. |
-| [039](./039-role-routed-inference.md) | proposed | Role-routed inference — one resolution seam, two front ends | `lh exec` and `llm/registry.py` converge on `run_inference`; a named role picks the backend, so local models serve cheap work while Claude keeps the work that needs it. |
+| [037](./037-metric-event-v2-host-and-workload.md) | accepted | Metric event schema v2 — `host` and `workload` as first-class dimensions | `MetricEvent` gains `host` (resolved at ingest) and a caller-supplied `workload`, carried by a session id `lh exec` pins before spawning. |
+| [038](./038-exec-envelope-cost-provenance.md) | accepted | The `lh exec` envelope — cost provenance and the mute failure | A timed-out run is priced from its own transcript, `cost_source` names which door the figure came through, and a failure that says nothing gets a typed `error.kind`. |
+| [039](./039-role-routed-inference.md) | accepted | Role-routed inference — one resolution seam, two front ends | `lh exec` and `llm/registry.py` converge on `run_inference`; a named role picks the backend, so local models serve cheap work while Claude keeps the work that needs it. |
 | [040](./040-memory-reconcile-and-decay.md) | accepted | Reconcile and Decay — the two missing memory-pipeline stages | `lh memory decay` marks unreferenced learnings `status: superseded` by age horizon, never deletes. `lh memory reconcile` reports `decisions.jsonl` schema drift (deterministic) and, opt-in, contradicting decisions (LLM). Both propose-only; reconcile has no `--apply` at all. |
 
 ### Status values
@@ -59,7 +59,7 @@ Each active ADR carries one of the following statuses in its header. The column 
 |---|---|
 | `accepted` | Decision taken **and** embodied in code, config, or tests. Default state for a shipping decision. |
 | `accepted-deferred` | Decision taken and locked, but implementation is intentionally not yet scheduled. The ADR is not incomplete — its realisation is waiting for a specific trigger documented in the ADR itself. |
-| `proposed` | Written and reasoned, but not yet committed to. Open for revision. ADR-034, ADR-035, ADR-037, ADR-038 and ADR-039 currently hold this status. |
+| `proposed` | Written and reasoned, but not yet committed to. Open for revision. ADR-034 currently holds this status. |
 | `superseded-by: NNN` | Replaced by a later ADR. The record is kept for history; the pointer names its replacement. ADR-020 currently holds this status. |
 
 New decisions default to `accepted` once they ship. A decision that turns out wrong is **superseded** by a new ADR rather than edited in place.

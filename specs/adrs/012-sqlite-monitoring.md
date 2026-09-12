@@ -68,7 +68,7 @@ modules — still holds. The schema block above does not: it describes the 2026-
 and is kept as the record of what was decided, not as documentation of what exists. Read
 `src/lazy_harness/monitoring/db.py` for the current DDL.
 
-Tables now created by `MetricsDB._ensure_schema`:
+Tables now created by `MetricsDB._create_tables`:
 
 | Table | Purpose | Introduced by |
 |---|---|---|

@@ -40,7 +40,7 @@ Decisions the audit surfaced that are waiting on real evidence before being prom
 The plugin system (metrics sinks, ADR-004 agent adapters) is the framework's growth surface. The second extension point is chosen: it is not a new plugin kind but the unification of the five that already exist, specified in [ADR-035](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/035-capability-registry.md). The concrete consumer justifying it is the configuration pane of the TUI, which without a registry would need six separate code paths.
 
 - [x] **Identify the second extension point.** Chosen 2026-08-17 — the capability registry of ADR-035, driven by a real consumer rather than speculative design.
-- [ ] Ship the capability registry and migrate the five existing plugin kinds onto it.
+- [x] **Ship the capability registry and migrate the five existing plugin kinds onto it.** Landed 2026-08-17 — `plugins/capabilities.py` holds the registry and `plugins/builtins.py` registers all five kinds (tools, hooks, metrics sinks, agents, LLM backends). The sixth surface, the scheduler backend, is deliberately left out: its selection is a platform probe, not a user-facing activation.
 - [ ] Document the extension-point contract once two exist in code — three data points beats an abstract spec.
 
 ## Closed themes

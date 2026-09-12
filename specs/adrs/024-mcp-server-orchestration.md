@@ -27,6 +27,14 @@ Concretely:
 - `src/lazy_harness/deploy/engine.py` — `_collect_mcp_servers(cfg)` probes each tool's `is_<tool>_available()`. `deploy_mcp_servers(cfg)` writes the result to each profile's `settings.json`, preserving the existing `hooks` block.
 - `src/lazy_harness/cli/deploy_cmd.py` — calls `deploy_mcp_servers(cfg)` between hooks and the `~/.claude` symlink. The CLI handler is split into a thin Click wrapper plus a `_run_deploy(cfg)` helper so the orchestration is testable without a real config file.
 
+### Evolution — 2026-09-12
+
+Two claims above no longer describe the code. The decision stands; its mechanism moved.
+
+- **The block is not written to `settings.json`.** ADR-032 L2 put the file name behind the adapter: `deploy_mcp_servers` writes to `<target>/<agent.mcp_config_file()>`, which `ClaudeCodeAdapter` returns as `.claude.json`. `settings.json` carries only `hooks`. The "one file is simpler" reasoning in *Alternatives considered* was overtaken — Claude Code reads `mcpServers` from its own file, not from settings.
+- **Stale entries do survive.** `_collect_mcp_servers` does rebuild its dict from scratch, but `deploy_mcp_servers` merges it with `existing["mcpServers"].update(...)`, which adds and overwrites without removing. An entry for an uninstalled tool has to be deleted by hand. The Consequence above claiming otherwise was never true of the merge as written.
+- **The probe is not the only gate.** It is authoritative for QMD alone. Engram also requires `[memory.engram].enabled` (ADR-022) and Graphify also requires `[knowledge.structure].enabled` (ADR-023), so for those two the Consequence reads "probe **and** flag".
+
 ## Alternatives considered
 
 - **Hand-edited `mcpServers` in profile templates.** Reproducible until a tool is uninstalled — the entry stays, the agent fails to start the missing server, and the user has to remember to clean up. Rejected because the install-uninstall cycle has no obvious trigger to keep the file in sync.

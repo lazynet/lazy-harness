@@ -32,6 +32,13 @@ This ADR consolidates the model. It does not introduce new mechanism; it names w
 | Searchable semantic | QMD (MCP `qmd`) | `~/.cache/qmd/index.sqlite` (BM25 + vectors + AST chunks) | per-collection (configured in `~/.config/qmd/index.yml`) | Scheduled `lh knowledge sync` / `embed` |
 | Structural | Graphify (MCP `graphify`) | `<repo>/graphify-out/graph.json` | per-repo (commitable, multi-repo via `merge-graphs`) | Manual `/graphify` rebuild or optional `auto_rebuild_on_commit` |
 
+### Evolution — 2026-09-12
+
+The model stands; two cells in the Storage column moved after it was written.
+
+- **The two file-based layers no longer live under `<config_dir>/projects/<slug>/`.** They moved into the knowledge store, at `<store root>/<marker memory area>/<host>/<owner>/<repo>/`, keyed by the repository's normalised git remote rather than by the absolute path of the checkout — so the same repo on two machines resolves to one directory, and the store is the thing that already syncs. `core/memory_store.py:memory_dir_for` is the single source of truth for the path; `<config_dir>/projects/<encoded-cwd>/memory/` survives as the fallback for a machine with no store and for a checkout with no remote to be keyed on. `lh memory legacy-check` and `lh memory migrate` move what is left behind.
+- **`auto_rebuild_on_commit` does not exist.** The field was removed from `KnowledgeStructureConfig` rather than wired (see ADR-023's Evolution note); scheduled rebuilds run `lh knowledge graph update` over the `[knowledge.structure].repos` list instead.
+
 The five layers map cleanly to three distinct memory archetypes from the literature:
 
 - **Episodic** (what happened): "Distilled episodic" + "Raw episodic". Two layers because the distilled file is human-readable and portable; the raw store is agent-rich and queryable.

@@ -23,6 +23,14 @@ Concretely:
 - The `auto_rebuild_on_commit` flag is exposed but no code branches on it in this PR. Graphify's own `graphify hook install` writes a git `post-commit` hook directly into `.git/hooks/`; wiring that from `lh deploy` is deferred to the Fase 3 ADR.
 - The `engine` field on `KnowledgeStructureConfig` exists so a future structural backend (e.g. a ctags-based or Sourcegraph-style alternative) can plug into the same seam without breaking the namespace.
 
+### Evolution — 2026-09-12
+
+Three details above have moved. The decision — Graphify as an optional, gated, pinned structural layer — stands.
+
+- **The pin is `0.9.41`, not `0.6.9`.** `knowledge/graphify.py:PINNED_VERSION` is the live value and `config.py` imports it as `GRAPHIFY_PIN` rather than restating it, so `[knowledge.structure].version` defaults to whatever the module declares.
+- **`auto_rebuild_on_commit` was removed, not wired.** The field never had a branch, and `_parse_structure` now drops it from configs that still carry it. The Fase 3 wiring it was reserved for never happened; scheduled rebuilds went to `lh knowledge graph update` over a `[knowledge.structure].repos` list instead.
+- **The MCP gate is `is_graphify_mcp_available()`, not `is_graphify_available()`.** Graphify shipped a CLI-only entry point before 0.9, so the MCP binary is probed separately — an install with the CLI alone keeps the skill surface and gets no MCP entry.
+
 ## Alternatives considered
 
 - **Build the graph inside the harness with our own tree-sitter wrapper.** Reinvents an actively maintained tool that already supports 25 languages. Rejected on maintenance grounds.

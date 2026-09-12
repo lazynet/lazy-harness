@@ -215,7 +215,8 @@ def get_backend(cfg: CompoundLoopConfig) -> LLMBackend:
 ```
 
 `invoke_claude` in `knowledge/compound_loop.py` is renamed `invoke_llm` and
-its signature becomes:
+its signature becomes (neither name survives — see the ADR-039 note below;
+the call site is `llm/invoke.py:run_inference`):
 
 ```python
 def invoke_llm(

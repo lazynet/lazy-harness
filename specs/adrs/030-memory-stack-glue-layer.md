@@ -171,6 +171,15 @@ Without G6, this ADR reproduces the drift it is fixing.
 Add explicit, deterministic observability over what is shared across profiles
 (`lazy`, `flex`) versus isolated. New CLI command `lh memory cross-profile-check`:
 
+> **Mechanism note (2026-09-12).** The command shipped under a different name and
+> against a different problem. Memory moved into the knowledge store, keyed by the
+> project's git remote, which removed the cross-profile divergence this component
+> was built to observe — one project now resolves to one directory regardless of
+> which profile the session ran under. What survived is the "is anything still in
+> the old place" half, shipped as `lh memory legacy-check` (`cli/memory_cmd.py`),
+> with `lh memory migrate` to move it. The canonical key comes from
+> `core/project_identity.py:project_key`, not from `git rev-parse --show-toplevel`.
+
 - Lists all memory artifacts per profile under `<config_dir>/projects/`.
 - Flags inconsistencies: same project key (canonical via
   `git rev-parse --show-toplevel`) appearing in multiple profiles with

@@ -2,7 +2,7 @@
 
 Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio MkDocs); el roadmap público vive en `docs/roadmap.md` y solo contiene los temas comprometidos a alto nivel.
 
-Última revisión: 2026-09-10 — `/coherence-audit` cruzó 34 ADRs `accepted` contra su código. Cinco items que figuraban abiertos resultaron implementados: tres desde el 2026-08-17 (PRs #167 y #168) y dos del mismo día en que se anotaron. La deriva restante quedó en `failures.jsonl` bajo el tag `coherence-audit`, para revisión humana. Revisión previa: 2026-08-17 — análisis de los tres ejes de refactor (paridad Linux, capability registry, TUI).
+Última revisión: 2026-09-12 — pasada de coherencia sobre `docs/` y `specs/`: cuatro ADRs (035, 037, 038, 039) estaban `proposed` con el código shippeado y se pasaron a `accepted`; nueve claims de `docs/` describían comportamiento que el código no tiene. Revisión previa: 2026-09-10 — `/coherence-audit` cruzó 34 ADRs `accepted` contra su código. Cinco items que figuraban abiertos resultaron implementados: tres desde el 2026-08-17 (PRs #167 y #168) y dos del mismo día en que se anotaron. La deriva restante quedó en `failures.jsonl` bajo el tag `coherence-audit`, para revisión humana. Revisión previa: 2026-08-17 — análisis de los tres ejes de refactor (paridad Linux, capability registry, TUI).
 
 ---
 
@@ -26,10 +26,10 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 - [x] **Skill /audit-harness** — auditoría integral del harness en paralelo
 - [x] **recall-cowork skill** — búsqueda QMD desde Cowork via Desktop Commander
 - [x] **Quality gate verde en main** — test_version dinámico + ruff clean (PR #20, release 0.6.4)
-- [x] **PreCompact context injection** — el builtin `pre_compact.py` ya re-inyecta tasks (últimos user_msgs) + archivos (`file_path` de tool_use blocks) vía `hookSpecificOutput.additionalContext`. Los hard constraints del CLAUDE.md los re-inyecta Claude Code nativamente post-compact como system-reminder. No queda gap accionable.
+- [x] **PreCompact context injection** — el builtin `pre_compact.py` ya re-inyecta tasks (últimos user_msgs) + archivos (`file_path` de tool_use blocks). El canal es texto plano por stdout, que el ejecutor de `PreCompact` junta y le pasa al summariser como `newCustomInstructions`: no hay variante `hookSpecificOutput` para ese evento y un payload JSON falla la validación de schema, lo que marca el hook como fallado y descarta su salida (ADR-036 D2; esta línea decía `hookSpecificOutput.additionalContext` y era de antes de ese hallazgo). Los hard constraints del CLAUDE.md los re-inyecta Claude Code nativamente post-compact como system-reminder. No queda gap accionable.
 - [x] **PreToolUse security hook** — blocks destructive filesystem/git/sql/terraform commands + credentials reads + forced secret commits, with per-profile `allow_patterns` escape hatch (feat/security-hooks-cluster)
 - [x] **PostToolUse auto-format hook** — runs `ruff format` on `.py` edits/writes fail-soft (feat/security-hooks-cluster)
-- [x] **PostCompact context re-injection** — `post-compact` hook re-emits the `pre-compact` summary into the live post-compaction window with a 5-minute freshness check (ADR-020, design 2026-04-22)
+- [x] **PostCompact context re-injection** — cerrado por remoción. El hook `post-compact` de ADR-020 existió con su chequeo de frescura de 5 minutos, pero [ADR-036](adrs/036-compact-hooks-use-real-channels.md) lo borró el 2026-08-18: el ejecutor de `PostCompact` solo devuelve un mensaje al usuario, así que un hook ahí no puede alcanzar al modelo. La continuidad post-compactación vive en `context-inject`, que corre en el `SessionStart` que sigue.
 - [x] **SessionEnd handoff freshness** — `session-end` hook + `lh knowledge handoff-now` bypass the Stop-hook gates so `handoff.md` reflects the session's final state (ADR-019)
 - [x] **Async response grading** — compound-loop returns `grade` field per session; poor grades escalate to PRJ.md. Output in `memory/grades.jsonl` (ADR-021)
 - [x] **claude-md proposals via compound-loop** — worker stages rule proposals in `memory/claude-md.proposal.md`; `context-inject` surfaces them in next SessionStart under `## Proposals to review` for human merge
@@ -41,7 +41,7 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 - [x] **`lh config <feature> --init` wizards** — Click group + `wizards/` package with TOML deep-merge for `[memory]` and `[knowledge]` (ADR-026)
 - [x] **Memory stack 5-layer canonical vocabulary** — names the user-facing layer model that ADR-016/022/023/024 produced (ADR-027)
 - [x] **Configurable session classification rules** — `[[knowledge.classify_rules]]` typed config; defaults reproduce historical behaviour (ADR-028)
-- [x] **Memory stack glue layer** — `lh memory consolidate` (propose-only distiller) + `lh memory cross-profile-check` + `pre-tool-use-memory-size` warning hook (ADR-030 G1/G2/G4)
+- [x] **Memory stack glue layer** — `lh memory consolidate` (propose-only distiller) + `lh memory legacy-check` + `pre-tool-use-memory-size` warning hook (ADR-030 G1/G2/G4). G7 se escribió como `lh memory cross-profile-check`; shippeó como `legacy-check` porque el traslado de la memoria al knowledge store, keyeada por remote, eliminó la divergencia entre perfiles que ese componente iba a observar.
 - [x] **Metrics ingest pipeline + sinks** — session-rollup ingestion, `[metrics].sinks` with `sqlite_local` and `http_remote`, opportunistic outbox drain, `lh metrics drain` / `status` (design 2026-04-14)
 - [x] **PostToolUse sync-claude** — regenerates segmented `CLAUDE.md` (head/tail/common) when a profile segment is edited; fail-soft
 - [x] **Rename a lazy-harness** — repo, package (`lazy_harness`), CLI (`lh`), docs site (`lazynet.github.io/lazy-harness`)
@@ -57,6 +57,7 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 - [x] **`stop-verify-guard` desplegado y wireado** — los cuatro pasos del gate binary-first, cerrados el 2026-09-11 en laptop y en el CT `agents`: release 0.57.1 y `uv tool install --reinstall`; `record-verify` grepeado en site-packages (`cli/metrics_cmd.py:220`) e invocable; el skill `verify-before-done` lo llama como último paso (línea 61 de los dos `SKILL.md` del profile); y recién entonces `stop-verify-guard` en `[hooks.session_stop]`, visible en el `Stop` de los cuatro `settings.json`. El guard ya no es un nag: su emisor está desplegado.
 - [x] **El guard de paths secretos estaba inerte: el matcher desplegado no lo alcanzaba** — `pre-tool-use-security` inspecciona `Bash` más `Read`/`Edit`/`Write`/`NotebookEdit`, pero su entrada en `_BUILTIN_HOOKS` no declaraba `matcher`, así que heredaba el default del evento (`Bash`) y Claude Code nunca lo invocaba en un `Read`. Cerrado declarando `matcher="Bash|Read|Edit|Write|NotebookEdit"`. Lo que faltaba de verdad era la relación entre las dos puntas: cada builtin que gatea por `tool_name` ahora publica `INSPECTED_TOOLS` y lo usa en su propio gate, y `tests/unit/test_hook_matcher_coverage.py` sostiene el matcher desplegado contra ese conjunto. Verificado en ambas direcciones: sin el matcher, dos de los tres tests fallan con `matcher 'Bash' never reaches ['Edit', 'NotebookEdit', 'Read', 'Write']`. Desplegado el 2026-09-11 en las dos máquinas: release 0.57.1, `uv tool install --reinstall`, grep a site-packages y `lh deploy`. Verificado end-to-end en laptop y en el CT `agents` — un payload de `Read` contra `**/secrets/**` sale exit 2, uno a un path normal exit 0. El CT ya tenía el matcher ancho antes del fix y la laptop no: `lh deploy` lo pisaba solo donde había corrido después de chezmoi.
 - [x] **`save_config` destruía config (51 claves) + tres claves de `[context_inject]` ignoradas en silencio** — read-modify-write sobre TOML crudo (`tomlkit`) en vez de completar el serializer, per D5 de [`designs/2026-08-17-capability-registry-design.md`](designs/2026-08-17-capability-registry-design.md) (commit `56429ad`, PR #167). Selftest `check_config_round_trip` registrado. Esta entrada había quedado listada como ALTA abierta pese a estar mergeada desde el 2026-08-17; el backlog no se había actualizado. Reconciliado el 2026-09-10 agregando además `tests/unit/test_config.py::test_save_config_round_trip_preserves_every_key_of_the_live_config` y `::test_context_inject_switches_survive_round_trip_against_the_live_config`, que corren el ciclo completo contra una copia del `config.toml` real de la máquina (nunca contra el archivo real) en vez de solo contra el fixture sintético `_FULL_CONFIG`.
+- [x] **Ollama como backend para compound-loop** — cerrado. [ADR-033](adrs/033-llm-backend-abstraction.md) promovió la idea del legacy ADR-010 a un Protocol provider-agnostic (implementado 2026-06-11) y [ADR-039](adrs/039-role-routed-inference.md) la hizo utilizable: el ruteo pasa a ser por rol (`[llm.roles]` → `run_inference`), así el modelo local atiende trabajo barato sin quedarse también con el destilado y el grading. Vivió como MEDIA abierta con `**Resuelto:**` en su propio cuerpo; reconciliado el 2026-09-12.
 
 ---
 
@@ -112,7 +113,7 @@ Es el mismo patrón que el gate de `auto_rebuild_on_commit`: un contrato declara
 
 **Señal determinística disponible, sin usar todavía:** `/goal <condition>` escribe sincrónicamente una entrada `{"type":"attachment","attachment":{"type":"goal_status",...}}` al transcript JSONL en el momento en que corre, así que está disponible durante el `Stop`. A diferencia de `goal_declared`, que es una clasificación LLM post-hoc del compound-loop, no requiere inferencia. Es más angosta —solo capta el uso explícito de `/goal`, no un criterio declarado en prosa— pero es exacta. Salió del trabajo de `stop-verify-guard`, ya cerrado.
 
-**Acción:** fase 1 shippeó el 2026-09-10 — skill `verify-before-done` deployado y `[loops] inject_goal_prompt = true` aplicado; **la ventana de cuatro semanas cierra el 2026-10-08** contra el 17%. Falta su cuarta pieza, el `Stop` hook, que está mergeado pero sin wirear (ver el item de `verify_ran` arriba). Fase 4 queda reemplazada por `agent_dispatched`, ya en Done. Pendiente real: leer la ventana cuando cierre y aplicar las kill criteria.
+**Acción:** fase 1 shippeó el 2026-09-10 — skill `verify-before-done` deployado y `[loops] inject_goal_prompt = true` aplicado; **la ventana de cuatro semanas cierra el 2026-10-08** contra el 17%. La cuarta pieza, el `Stop` hook `stop-verify-guard`, quedó deployada y wireada en las dos máquinas el 2026-09-11 (ver Done). Fase 4 queda reemplazada por `agent_dispatched`, ya en Done. Pendiente real, y único: leer la ventana cuando cierre y aplicar las kill criteria.
 
 ### Audit CLAUDE.md triple por context clash
 
@@ -137,14 +138,6 @@ Es el mismo patrón que el gate de `auto_rebuild_on_commit`: un contrato declara
 **Fuente:** [W15 weekly review](lazy-lazymind-meta/weekly-reviews/wr-2026-w15.md) — "limitar MCP servers activos a 3-5 (actualmente sin auditar cuántos hay cargados)".
 
 **Acción:** auditar cuántos MCPs están activos por perfil. Desactivar los que no se usen frecuentemente.
-
-### Ollama como backend para compound-loop
-
-**Por qué:** el compound-loop-worker usa Haiku via `claude -p`. Ollama eliminaría ese costo ($0). W15 identifica cost optimization como cluster temático emergente.
-
-**Fuente:** [W15 review](lazy-lazymind-meta/weekly-reviews/wr-2026-w15.md) — advisor strategy y cost optimization. Legacy [ADR-010](specs/archive/adrs-legacy/010-ollama-local-llm-integration.md) propone este backend.
-
-**Resuelto:** [ADR-033](adrs/033-llm-backend-abstraction.md) promovió la idea a un Protocol provider-agnostic (implementado 2026-06-11) y [ADR-039](adrs/039-role-routed-inference.md) la hace utilizable: el ruteo pasa a ser por rol, así el modelo local atiende trabajo barato sin quedarse también con el destilado y el grading.
 
 ---
 
@@ -221,4 +214,4 @@ La auditoría es tres líneas contra `DEFAULT_HOOKS` y el `config.toml`, compara
 
 - ~~**Legacy ADR-010 Ollama backend**~~ — cerrado. Promovido por [ADR-033](adrs/033-llm-backend-abstraction.md) y hecho utilizable por [ADR-039](adrs/039-role-routed-inference.md) (ruteo por rol).
 - **Legacy ADR-013 Proactivity levels per profile** — promover o descartar. Criterio: si agregás un tercer perfil, promoverlo; si no, descartar.
-- **ADR-018 implementation epic** — trigger cumplido 2026-08-17. El segundo extension point no es un tipo de plugin nuevo: es la unificación de los cinco que ya existen, propuesta en [ADR-035](adrs/035-capability-registry.md). El consumidor concreto que lo justifica es el pane de configuración de la TUI ([`designs/2026-08-17-config-tui-design.md`](designs/2026-08-17-config-tui-design.md)), que sin registry necesitaría seis code paths.
+- ~~**ADR-018 implementation epic**~~ — cerrado. La implementación de ADR-018 ya había cerrado vía [ADR-025](adrs/025-doctor-features-section.md) y [ADR-026](adrs/026-config-wizards.md); el sujeto real de este item, el capability registry de [ADR-035](adrs/035-capability-registry.md), shippeó el 2026-08-17 y el ADR pasó a `accepted`. Lo que sigue abierto es su consumidor: el pane de configuración de la TUI ([`designs/2026-08-17-config-tui-design.md`](designs/2026-08-17-config-tui-design.md)).
