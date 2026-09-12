@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.58.1](https://github.com/lazynet/lazy-harness/compare/v0.58.0...v0.58.1) (2026-09-12)
+
+
+### Documentation
+
+* make the documentation describe the code that ships ([#258](https://github.com/lazynet/lazy-harness/issues/258)) ([9d9e631](https://github.com/lazynet/lazy-harness/commit/9d9e6318ad22985161c6708b59b09df94136c84a))
+
 ## [0.58.0](https://github.com/lazynet/lazy-harness/compare/v0.57.2...v0.58.0) (2026-09-12)
 
 
