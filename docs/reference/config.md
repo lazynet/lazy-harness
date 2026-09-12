@@ -208,7 +208,6 @@ The `[memory]` block configures **agent-side** memory backends — tools the age
 | `git_sync` | bool   | `true`       | no       | Whether Engram persists per-repo memory chunks under a versioned `.engram/chunks/` directory (recommended; keeps knowledge with the code).      |
 | `cloud`    | bool   | `false`      | no       | Opt-in cloud sync. Off by default — enabling it breaks the framework's local-first guarantee, so flip it deliberately.                          |
 | `version`  | string | `"1.20.0"`   | no       | Pinned Engram version. `lh doctor` flags drift. See [ADR-022](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/022-engram-episodic-memory.md) and [ADR-029](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/029-engram-persist-deterministic-mirror.md). |
-
 | `binary`   | string | `""`         | no       | Absolute path to the `engram` executable. Empty means "resolve from `PATH`", which is what a normal install wants. Set it where `PATH` is not the harness's — a hook spawned by a scheduler inherits the daemon's environment, not your shell's, and `lh doctor` points here when it cannot find the binary. Read by the `engram-persist` hook. |
 
 The interactive `lh config memory --init` wizard (see [ADR-026](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/026-config-wizards.md)) writes this block for you and merges it into an existing config preserving comments and unrelated sections.

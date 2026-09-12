@@ -79,7 +79,7 @@ Unlike `CLAUDE.md` (static, human-authored), `MEMORY.md` is written by the agent
 A single filesystem directory (`~/Documents/lazy-harness-knowledge` by default, configurable) contains:
 
 - `sessions/` — exported session transcripts (clean markdown with frontmatter).
-- `learnings/` — distilled weekly reviews and cross-session patterns.
+- `learnings/` — one markdown file per learning, distilled from a single session by the compound-loop worker. Write-once.
 - Anything else you drop there.
 
 This is the union of everything the harness has learned across every project and every profile. Without QMD, it is a plain markdown tree you can `rg`, edit and back up. With [QMD](https://github.com/tobi/qmd) installed, `lazy-harness` configures a collection pointing at the directory and the agent gains semantic recall over the whole archive — "when did I last debug a circular import in Python?" returns the specific session from six months ago.

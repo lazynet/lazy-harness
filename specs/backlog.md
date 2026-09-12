@@ -69,6 +69,26 @@ _Sin items abiertos._
 
 ## Open — Prioridad MEDIA
 
+### El chequeo de coherencia del CLI no mira flags, y dos docstrings apuntan al path viejo
+
+**Por qué:** `tests/docs/test_cli_reference_coherence.py` camina el árbol de click
+por tokens y **para en el primer token que arranca con `-`**, así que un flag
+inventado pasa verde. Medido el 2026-09-12: `lh deploy --dry-run` vivía en dos
+lugares de `docs/how/profiles-and-deploy.md` y `lh deploy` no declara ninguna
+opción. Lo cazó el `/coherence-audit`, no el test — y una de las dos apariciones
+la había escrito esa misma sesión, mientras corregía identificadores inventados.
+
+Aparte, el help de `--memory-dir` en `lh memory status` y en
+`lh memory proposals list` dice "Defaults to the agent runtime dir for this cwd".
+Es el path legacy: `memory_dir_for` resuelve al knowledge store y sólo cae ahí de
+fallback. Son docstrings en `cli/memory_cmd.py`, no prosa de `docs/`, así que
+ningún test de coherencia de docs los toca.
+
+**Acción:** extender el checker a flags tiene bordes reales — placeholders
+(`<path>`), todo lo que va después de `--` en `lh exec`, y flags de subcomando
+contra flags de grupo. Decidir el alcance antes de escribirlo. Los dos docstrings
+son un fix de una línea cada uno, con TDD.
+
 ### `release-please` deja `uv.lock` un release atrás
 
 **Por qué:** `extra-files` en `.github/release-please-config.json` lista sólo

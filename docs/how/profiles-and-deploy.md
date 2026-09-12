@@ -97,7 +97,7 @@ For each profile in config:
 
 `ensure_symlink` is idempotent: if the target already exists as a symlink pointing at the correct source, it reports `"exists"` and does nothing. If the target exists but points elsewhere (a stale link from a previous setup), it unlinks and relinks.
 
-**A real file or directory at the target is not refused — it is moved aside.** `ensure_symlink` renames it to `<name>.bak` next to itself and writes the symlink in its place. That is a single slot, not a chain: if a later deploy finds another real file at the same target, the rename overwrites the previous `.bak`. Deploying over a target directory that holds hand-written content you care about is therefore a one-shot backup, and `lh deploy --dry-run` is the way to see what is about to be moved.
+**A real file or directory at the target is not refused — it is moved aside.** `ensure_symlink` renames it to `<name>.bak` next to itself and writes the symlink in its place. That is a single slot, not a chain: if a later deploy finds another real file at the same target, the rename overwrites the previous `.bak`. Deploying over a target directory that holds hand-written content you care about is therefore a one-shot backup. `lh deploy` has no dry-run mode, so there is nothing to preview with: check the target directory yourself before the first deploy into it.
 
 The linking is **per item**, not per directory. The target ends up with a mix of:
 
@@ -206,7 +206,6 @@ Works because of `deploy_claude_symlink`. Always points at the default profile r
 ```bash
 lh profile list              # table: name, config_dir, roots, default?, exists?
 lh selftest                  # runs profile_check + hooks_check + knowledge_check
-lh deploy --dry-run          # preview what would be linked
 ```
 
 `lh profile list` reads the config and walks each profile's `config_dir` to confirm the target exists. `profile_check` inside selftest goes further: it verifies every symlink inside each target dir resolves to a real file, and flags stale links left over from source moves.
