@@ -82,6 +82,9 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
     ),
     "session-end": BuiltinHookSpec(module="lazy_harness.hooks.builtins.session_end"),
     "session-export": BuiltinHookSpec(module="lazy_harness.hooks.builtins.session_export"),
+    "stop-context-rotate": BuiltinHookSpec(
+        module="lazy_harness.hooks.builtins.stop_context_rotate"
+    ),
     "stop-verify-guard": BuiltinHookSpec(module="lazy_harness.hooks.builtins.stop_verify_guard"),
     "user-prompt-goal": BuiltinHookSpec(module="lazy_harness.hooks.builtins.user_prompt_goal"),
 }
