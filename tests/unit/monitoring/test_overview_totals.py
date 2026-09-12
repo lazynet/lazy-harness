@@ -176,3 +176,96 @@ def test_status_context_learnings_dir_follows_the_marker(tmp_path, monkeypatch) 
     cfg.knowledge.root = str(store)
     ctx = StatusContext.build(cfg)
     assert ctx.learnings_dir == store / "lessons"
+
+
+def test_cache_row_reports_read_and_write_per_profile(tmp_path: Path) -> None:
+    """Overview must surface cache tokens on their own 'Cache' row.
+
+    The 'Tokens' row deliberately reports raw input only (see
+    test_tokens_line_shows_input_only_not_cache). That leaves the expensive
+    resource invisible: a long session rereads its whole context every turn,
+    and cache_read outweighs raw input by orders of magnitude. Measured over
+    72h on this machine: 0.03M input against 2.18G cache_read. A dashboard
+    that shows only the first number misreports what the work costs.
+    """
+    from datetime import datetime
+
+    month_str = datetime.now().strftime("%Y-%m")
+    cfg = _cfg_two(tmp_path)
+    db = MetricsDB(tmp_path / "metrics.db")
+    db.upsert_stats(
+        [
+            {
+                "session": "lazy-s1",
+                "date": f"{month_str}-01",
+                "model": "claude-opus-4-6",
+                "profile": "lazy",
+                "project": "p",
+                "input": 1000,
+                "output": 500,
+                "cache_read": 2_180_000_000,
+                "cache_create": 45_300_000,
+                "cost": 1.00,
+            },
+            {
+                "session": "flex-s1",
+                "date": f"{month_str}-01",
+                "model": "claude-opus-4-6",
+                "profile": "flex",
+                "project": "p",
+                "input": 2000,
+                "output": 600,
+                "cache_read": 1_990_000_000,
+                "cache_create": 48_900_000,
+                "cost": 2.00,
+            },
+        ]
+    )
+
+    out = _render(db, cfg)
+    db.close()
+    lines = out.splitlines()
+
+    cache_idx = next(i for i, line in enumerate(lines) if "Cache" in line)
+    cache_block = "\n".join(lines[cache_idx : cache_idx + 3])
+
+    # Giga-scale counts must not render as four-digit megas.
+    assert "2.2G read" in cache_block
+    assert "45.3M write" in cache_block
+    assert "1.99G read" in cache_block or "2.0G read" in cache_block
+    # The 'all' totalizer sums both profiles.
+    assert "4.2G read" in cache_block
+
+    # The Tokens row stays raw-input-only: the cache must not leak into it.
+    tokens_line = next(line for line in lines if "Tokens" in line)
+    assert "G" not in tokens_line
+
+
+def test_cache_row_absent_when_no_cache_recorded(tmp_path: Path) -> None:
+    """A profile that never used prompt caching renders zeros, not a crash."""
+    from datetime import datetime
+
+    month_str = datetime.now().strftime("%Y-%m")
+    cfg = _cfg(tmp_path)
+    db = MetricsDB(tmp_path / "metrics.db")
+    db.upsert_stats(
+        [
+            {
+                "session": "s1",
+                "date": f"{month_str}-01",
+                "model": "claude-opus-4-6",
+                "profile": "lazy",
+                "project": "x",
+                "input": 100,
+                "output": 50,
+                "cache_read": 0,
+                "cache_create": 0,
+                "cost": 0.5,
+            }
+        ]
+    )
+
+    out = _render(db, cfg)
+    db.close()
+    cache_line = next(line for line in out.splitlines() if "Cache" in line)
+    assert "0 read" in cache_line
