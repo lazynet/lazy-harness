@@ -247,3 +247,78 @@ def test_cli_reference_commands_exist_in_the_click_tree() -> None:
 
     missing = find_missing_lh_invocations_in_docs(cli, DOCS_DIR)
     assert missing == {}
+
+
+# The lax scan above catches a doc naming a command that does not exist. It is
+# blind to the opposite drift — a command that ships and is documented nowhere —
+# which is how `lh profile sync-claude-md` and `lh memory rightsize` reached
+# users with no reference entry. This half closes that direction, and only for
+# docs/reference/cli.md, which is the page that claims to be exhaustive.
+
+CLI_MD = Path(__file__).parent.parent.parent / "docs" / "reference" / "cli.md"
+
+# Commands deliberately absent from the reference page. Each needs a reason:
+# an undocumented command is a bug unless someone decided otherwise.
+_UNDOCUMENTED_ON_PURPOSE: dict[str, str] = {
+    # Invoked by the agent through settings.json, never typed by a user. Its
+    # per-hook behaviour is documented in docs/how/hooks.md instead.
+    "lh hook": "agent-invoked dispatcher; documented per hook in docs/how/hooks.md",
+}
+
+
+def documented_command_paths(root: click.Group) -> list[str]:
+    """Every leaf command path in the click tree, as `lh a b` strings."""
+    paths: list[str] = []
+
+    def walk(node: click.Command, prefix: list[str]) -> None:
+        if isinstance(node, click.Group) and node.commands:
+            for name, child in sorted(node.commands.items()):
+                walk(child, [*prefix, name])
+        else:
+            paths.append(" ".join(["lh", *prefix]))
+
+    walk(root, [])
+    return paths
+
+
+def find_undocumented_commands(root: click.Group, doc_text: str) -> list[str]:
+    """Return every leaf command path the reference page never names."""
+    return [
+        path
+        for path in documented_command_paths(root)
+        if path not in _UNDOCUMENTED_ON_PURPOSE and path not in doc_text
+    ]
+
+
+def test_self_test_reverse_extractor_flags_the_undocumented_command() -> None:
+    """Guards the anchor: prove it can fail before trusting it to pass."""
+
+    @click.group()
+    def fake_cli() -> None:
+        pass
+
+    @fake_cli.group("foo")
+    def foo_group() -> None:
+        pass
+
+    @foo_group.command("bar")
+    def bar_cmd() -> None:
+        pass
+
+    @foo_group.command("baz")
+    def baz_cmd() -> None:
+        pass
+
+    assert find_undocumented_commands(fake_cli, "Only `lh foo bar` is here.") == ["lh foo baz"]
+
+
+def test_cli_reference_documents_every_shipped_command() -> None:
+    from lazy_harness.cli.main import cli
+
+    undocumented = find_undocumented_commands(cli, CLI_MD.read_text(encoding="utf-8"))
+
+    assert undocumented == [], (
+        "docs/reference/cli.md names none of these shipped commands: "
+        f"{undocumented}. Document them, or add an entry to "
+        "_UNDOCUMENTED_ON_PURPOSE with the reason."
+    )

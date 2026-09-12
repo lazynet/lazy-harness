@@ -1,7 +1,8 @@
 # ADR-039: Role-routed inference — one resolution seam, two front ends
 
-**Status:** proposed
+**Status:** accepted
 **Date:** 2026-09-09
+**Implemented:** 2026-09-09 (PR #238) — `llm/roles.py` (`resolve_role`, the deprecated-config latch), `llm/invoke.py:run_inference`, `lh exec --role` with `mode: "inference"` on the envelope, the role check in `cli/doctor_cmd.py`, and all four in-repo callers migrated.
 **Design:** [`specs/designs/2026-09-09-llm-role-routing-design.md`](../designs/2026-09-09-llm-role-routing-design.md)
 **Related:** ADR-033 (llm-backend-abstraction), ADR-004 (agent-adapter-pattern),
 ADR-032 (agent-adapter-completeness), ADR-038 (exec-envelope-cost-provenance),

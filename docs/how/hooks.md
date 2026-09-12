@@ -133,12 +133,12 @@ Steps when the event fires:
    - The last up to 5 non-trivial user messages (length ≥ 15 chars, truncated to 200 chars each).
    - Every file path seen inside assistant `tool_use` blocks' `input.file_path` or `input.path`. Sorted, deduplicated, last 10 kept.
 4. Build a markdown summary with `## Tasks in progress` and `## Files worked on` sections.
-5. Write it to `<CLAUDE_CONFIG_DIR>/projects/<encoded-cwd>/memory/pre-compact-summary.md` with a generation timestamp in an HTML comment.
+5. Write it to `<memory_dir>/pre-compact-summary.md` with a generation timestamp in an HTML comment — the same resolved directory every other memory writer uses (see `compound-loop` below).
 6. Print it on stdout as **plain text**, preceded by a line asking the summariser to preserve it. Claude Code's PreCompact executor collects each successful hook's raw stdout and hands the joined text to the compaction summariser as `newCustomInstructions`. There is no `hookSpecificOutput` variant for this event — a JSON payload fails schema validation, which marks the hook failed and discards its output.
 
 **Where it writes:**
 - `~/.claude/compact-backups/<ts>-<project>.jsonl` — raw transcript backup.
-- `<CLAUDE_CONFIG_DIR>/projects/<encoded-cwd>/memory/pre-compact-summary.md` — distilled summary for the next session start.
+- `<memory_dir>/pre-compact-summary.md` — distilled summary for the next session start.
 
 ### `session-export` — runs on `Stop`
 
@@ -192,7 +192,7 @@ This is the hook that does the heaviest lifting. It is split into two pieces del
 - `<memory_dir>/handoff.md` — overwritten with the current pending items, or deleted if empty.
 - `loop_events` table in `metrics.db` — one `goal_declared` or `goal_absent` row per graded session, recording whether the grading JSON's `goal_declared` field was `true`. A missing or non-boolean field records nothing. Idempotent across reprocessing: `MetricsDB.clear_goal_verdict` deletes any prior verdict for the session before inserting the new one, so a session that grows and gets re-evaluated still contributes exactly one row — the most recent processing's verdict is the one that counts. Surfaced by [`lh metrics loops`](../reference/cli.md#lh-metrics-loops).
 
-`<memory_dir>` is `<CLAUDE_CONFIG_DIR>/projects/<encoded-cwd>/memory/`. `<learnings_dir>` is the knowledge store root joined with the learnings subdirectory its `knowledge.toml` marker declares.
+`<memory_dir>` is `<store root>/memory/<host>/<owner>/<repo>/` — the knowledge store root, joined with the memory area its `knowledge.toml` marker declares, joined with the project's identity derived from its git remote. It falls back to `<CLAUDE_CONFIG_DIR>/projects/<encoded-cwd>/memory/` when there is no usable store, or when the checkout has no remote to be keyed on. `core/memory_store.py:memory_dir_for` is the only place that builds it and every hook reaches it through `hooks/builtins/_shared.py:memory_dir`. `<learnings_dir>` is that same store root joined with the learnings subdirectory the marker declares. See [the memory model](../why/memory-model.md#where-memory-lives).
 
 ### `session-end` — runs on `SessionEnd`
 

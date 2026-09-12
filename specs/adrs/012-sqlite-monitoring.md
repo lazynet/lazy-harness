@@ -55,7 +55,7 @@ Views under `monitoring/views/` each render a distinct slice (`overview`, `proje
 ## Consequences
 
 - `lh status` is instant on any reasonable history size. The indexed `date` column and single-table queries keep every view under 50ms.
-- The database file lives at `~/.config/lazy-harness/metrics.db` by default (overridable). It is user-owned and survives uninstalls, consistent with the other persistent stores ([ADR-001](001-hybrid-architecture.md)).
+- The database file lives at `~/.local/share/lazy-harness/metrics.db` by default, overridable with `[monitoring].db`. (This line said `~/.config/lazy-harness/` when the ADR was written; `core/paths.py:data_dir()` resolves `LH_DATA_DIR`, then `XDG_DATA_HOME`, then the platform data dir — never the config dir.) It is user-owned and survives uninstalls, consistent with the other persistent stores ([ADR-001](001-hybrid-architecture.md)).
 - Re-ingestion is safe. Running `lh status` (or a future scheduler job) on the same JSONLs over and over produces the same database.
 - Adding a new view = one new file in `monitoring/views/` and one registration in `dashboard.py`. No schema change, no migration. (This held for views. The schema itself later needed both — see *Evolution*.)
 - The collector filters project and profile out of the JSONL via the same decoder as `session_export` (see [ADR-011](011-session-export-and-classification.md)), sharing the calibration used for the knowledge directory.
@@ -68,7 +68,7 @@ modules — still holds. The schema block above does not: it describes the 2026-
 and is kept as the record of what was decided, not as documentation of what exists. Read
 `src/lazy_harness/monitoring/db.py` for the current DDL.
 
-Tables now created by `MetricsDB._ensure_schema`:
+Tables now created by `MetricsDB._create_tables`:
 
 | Table | Purpose | Introduced by |
 |---|---|---|

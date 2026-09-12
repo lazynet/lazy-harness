@@ -1,7 +1,8 @@
 # ADR-035: Capability registry — cardinality and external dependency as the two axes
 
-**Status:** proposed
+**Status:** accepted
 **Date:** 2026-08-17
+**Implemented:** 2026-08-17 (PR #184) — `plugins/capabilities.py` (`Capability`, `CapabilityRegistry`, `Cardinality`, `CapabilityState`), `plugins/builtins.py:builtin_registry()`, `features.py` iterating it for `lh doctor`, `deploy/defaults.py:DEFAULT_HOOKS` derived from it, and `selftest/checks/config_check.py` walking it. The scheduler backend is deliberately left unregistered — see the note in `plugins/builtins.py`.
 **Design:** [`specs/designs/2026-08-17-capability-registry-design.md`](../designs/2026-08-17-capability-registry-design.md)
 
 ## Context

@@ -1,7 +1,8 @@
 # ADR-038: The `lh exec` envelope — cost provenance and the mute failure
 
-**Status:** proposed
+**Status:** accepted
 **Date:** 2026-08-31
+**Implemented:** 2026-08-31 (PR #224) — `cost_source` on the envelope and typed `error.kind` values throughout `cli/exec_cmd.py`. The envelope schema stayed at `lh.exec/v1`: both fields are additive.
 **Supersedes:** —
 **Superseded by:** —
 **Related:** ADR-037 (metric event schema v2), ADR-032 (agent adapter completeness), ADR-012 (SQLite monitoring)

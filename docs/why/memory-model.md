@@ -8,13 +8,38 @@ The canonical model is described in [ADR-027](https://github.com/lazynet/lazy-ha
 
 | Layer | Backend | Provided by | What it answers |
 |---|---|---|---|
-| **Curated semantic** | `MEMORY.md` (file, ≤ 200 lines and ≤ 12KB) | shipped — `<config_dir>/projects/<slug>/memory/` | "What rules and patterns govern this project?" |
+| **Curated semantic** | `MEMORY.md` (file, ≤ 200 lines and ≤ 12KB) | shipped — `<store root>/memory/<host>/<owner>/<repo>/` | "What rules and patterns govern this project?" |
 | **Distilled episodic** | `decisions.jsonl` / `failures.jsonl` (append-only) | shipped — written by the compound-loop worker | "What did we decide? What broke and why?" |
 | **Raw episodic** | [Engram](https://github.com/Gentleman-Programming/engram) — SQLite + FTS5, MCP server | external CLI, auto-wired when installed | "What did we do in this project last week, and when?" |
 | **Searchable semantic** | [QMD](https://github.com/tobi/qmd) — BM25 + vectors, MCP server | external CLI, auto-wired when installed | "Where did I see this pattern across all my notes and repos?" |
 | **Structural** | [Graphify](https://github.com/safishamsi/graphify) — tree-sitter call graph (`graphify-out/graph.json`) | external CLI, detected and exposed via `lh doctor` and the `/graphify` skill | "What calls X? What does this module look like?" |
 
 The two file-based layers ship inside the framework. The three external tools are detected by `lh doctor` and, where applicable, wired into every profile's `mcpServers` block automatically by the deploy engine ([ADR-024](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/024-mcp-server-orchestration.md)) — you install them once, the agent picks them up.
+
+## Where memory lives
+
+The two file-based layers — `MEMORY.md` and the JSONL pair — share one directory, and it is **inside the knowledge store**, not inside the agent's config dir:
+
+```
+<store root>/memory/<host>/<owner>/<repo>/
+├── MEMORY.md              # curated semantic
+├── decisions.jsonl        # distilled episodic
+├── failures.jsonl         # distilled episodic
+├── grades.jsonl           # distillation self-grades
+├── handoff.md             # open items for the next session
+├── pre-compact-summary.md # written by the pre-compact hook
+├── claude-md.proposal.md  # proposals awaiting your review
+└── insights/YYYY-MM/*.md  # verbatim insight blocks
+```
+
+`<host>/<owner>/<repo>` is the project's **identity**, derived from its normalised git remote — not from the path of the checkout. That is what makes the same repository cloned to `/Users/…` on a laptop and `/home/…` on a server read and write the same memory: the store is a git repository that both machines sync, and both resolve to the same key. A session run inside a linked worktree resolves to the main repository's key too, so distilled memory outlives any one branch.
+
+Two cases fall back to the legacy location, `<agent config dir>/projects/<encoded-cwd>/memory/`:
+
+- **No usable knowledge store.** Everything keeps working, unshared.
+- **A checkout with no git remote.** The key would be `local/<name>`, and two unrelated directories on two machines would collide under it in a store that gets pushed — so unshared memory stays local rather than being published under a colliding name.
+
+`lh memory status` prints the resolved directory; `lh memory legacy-check` lists what is still sitting in a legacy location, and `lh memory migrate` moves it.
 
 ## Episodic — what happened
 
@@ -45,7 +70,7 @@ Two layers again: curated content the user authors deliberately, and searchable 
 
 ### Curated semantic — `MEMORY.md`
 
-Every project gets a `MEMORY.md` file at `<config_dir>/projects/<project-slug>/memory/MEMORY.md`. It is an index: one line per persistent fact, each line linking to a memory file with frontmatter and a body. Facts are typed (`user`, `feedback`, `project`, `reference`) and updated as Claude learns them during sessions.
+Every project gets a `MEMORY.md` file in its memory directory, `<store root>/memory/<host>/<owner>/<repo>/` (see [where memory lives](#where-memory-lives) below). It is an index: one line per persistent fact, each line linking to a memory file with frontmatter and a body. Facts are typed (`user`, `feedback`, `project`, `reference`) and updated as Claude learns them during sessions.
 
 Unlike `CLAUDE.md` (static, human-authored), `MEMORY.md` is written by the agent. It is the agent's own notepad about what it has learned about you and the project. The file is capped at 200 lines *and* 12KB because it is loaded into every session-start context: past the line cap it gets truncated, and past the byte cap it quietly becomes one of the largest recurring slices of the prompt prefix. Consolidation is part of the contract.
 
@@ -54,7 +79,7 @@ Unlike `CLAUDE.md` (static, human-authored), `MEMORY.md` is written by the agent
 A single filesystem directory (`~/Documents/lazy-harness-knowledge` by default, configurable) contains:
 
 - `sessions/` — exported session transcripts (clean markdown with frontmatter).
-- `learnings/` — distilled weekly reviews and cross-session patterns.
+- `learnings/` — one markdown file per learning, distilled from a single session by the compound-loop worker. Write-once.
 - Anything else you drop there.
 
 This is the union of everything the harness has learned across every project and every profile. Without QMD, it is a plain markdown tree you can `rg`, edit and back up. With [QMD](https://github.com/tobi/qmd) installed, `lazy-harness` configures a collection pointing at the directory and the agent gains semantic recall over the whole archive — "when did I last debug a circular import in Python?" returns the specific session from six months ago.

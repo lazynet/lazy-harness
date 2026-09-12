@@ -23,7 +23,7 @@ The pre-commit gate defined in [`CLAUDE.md`](https://github.com/lazynet/lazy-har
 The compound-loop worker is the framework's memory engine. Two known issues today cause lost learnings — they share an underlying mechanism (per-session delta tracking) and should land together.
 
 - [x] Implement `★ Insight ─` block extraction as first-class compound-loop output. Spec: [`specs/designs/2026-04-13-compound-loop-insight-capture.md`](https://github.com/lazynet/lazy-harness/blob/main/specs/designs/2026-04-13-compound-loop-insight-capture.md).
-- [x] Fix "learnings lost on long sessions" by tracking `last_insight_message_index` per session and re-scanning only the delta on subsequent Stop hooks.
+- [x] Fix "learnings lost on long sessions" by storing the last processed message index per session in `insights/.cursor.json` and re-scanning only the delta on subsequent Stop hooks.
 - [x] Add a contract test that pins the exact marker characters the `explanatory` output style emits, so a template change forces a visible failure.
 - [x] **Close the two missing memory-pipeline stages.** Built — [ADR-040](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/040-memory-reconcile-and-decay.md) adds reconcile and decay, shipped as `lh memory reconcile` and `lh memory decay`. Without them the pipeline could only append: schema drift in `decisions.jsonl` went unreported, and a learning nothing referenced stayed as current as one cited daily.
 
@@ -40,7 +40,7 @@ Decisions the audit surfaced that are waiting on real evidence before being prom
 The plugin system (metrics sinks, ADR-004 agent adapters) is the framework's growth surface. The second extension point is chosen: it is not a new plugin kind but the unification of the five that already exist, specified in [ADR-035](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/035-capability-registry.md). The concrete consumer justifying it is the configuration pane of the TUI, which without a registry would need six separate code paths.
 
 - [x] **Identify the second extension point.** Chosen 2026-08-17 — the capability registry of ADR-035, driven by a real consumer rather than speculative design.
-- [ ] Ship the capability registry and migrate the five existing plugin kinds onto it.
+- [x] **Ship the capability registry and migrate the five existing plugin kinds onto it.** Landed 2026-08-17 — `plugins/capabilities.py` holds the registry and `plugins/builtins.py` registers all five kinds (tools, hooks, metrics sinks, agents, LLM backends). The sixth surface, the scheduler backend, is deliberately left out: its selection is a platform probe, not a user-facing activation.
 - [ ] Document the extension-point contract once two exist in code — three data points beats an abstract spec.
 
 ## Closed themes

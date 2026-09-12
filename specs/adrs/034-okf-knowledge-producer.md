@@ -10,7 +10,7 @@ ADR-033 (llm-backend-abstraction)
 
 ## Context
 
-The framework's curated long-term memory ([memory model](../../why/memory-model.md))
+The framework's curated long-term memory ([memory model](../../docs/why/memory-model.md))
 is already a tree of markdown files with YAML frontmatter — one concept per file,
 written by the compound loop (ADR-021) into `<knowledge.path>/learnings/`. This is
 the same pattern that Google Cloud published in June 2026 as the **Open Knowledge
