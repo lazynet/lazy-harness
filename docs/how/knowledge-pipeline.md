@@ -15,7 +15,7 @@ See [ADR-011](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/011-s
 
 ```
 <store root>/                   # $LAZY_KNOWLEDGE_ROOT, [knowledge].root, or the default
-├── knowledge.toml              # the marker: declares the two subdirectory names
+├── knowledge.toml              # the marker: declares the three area names
 ├── sessions/                   # written by session-export hook
 │   ├── 2026-03/
 │   │   ├── 2026-03-01-a1b2c3d4.md
@@ -23,11 +23,19 @@ See [ADR-011](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/011-s
 │   │   └── ...
 │   └── 2026-04/
 │       └── 2026-04-13-9a8b7c6d.md
-└── learnings/                  # written by compound-loop worker
-    ├── 2026-03/
-    │   └── 2026-03-15-file-based-queue-is-enough.md
-    └── 2026-04/
-        └── 2026-04-13-symlinks-vs-copies-for-profile-deploy-laptop.md
+├── learnings/                  # written by compound-loop worker
+│   ├── 2026-03/
+│   │   └── 2026-03-15-file-based-queue-is-enough.md
+│   └── 2026-04/
+│       └── 2026-04-13-symlinks-vs-copies-for-profile-deploy-laptop.md
+└── memory/                     # per-project distilled memory, keyed by git remote
+    └── github.com/
+        └── <owner>/
+            └── <repo>/
+                ├── MEMORY.md
+                ├── decisions.jsonl
+                ├── failures.jsonl
+                └── ...
 ```
 
 ### The marker is the only declaration of the layout
@@ -37,7 +45,13 @@ See [ADR-011](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/011-s
 version   = 1
 sessions  = "sessions"
 learnings = "learnings"
+memory    = "memory"
 ```
+
+`sessions` and `learnings` are required — a missing one raises. `memory` is
+optional and defaults to `"memory"`: it was added after the first stores existed,
+and bumping `version` instead would have broken every one of them at once over a
+directory they did not use yet. `lh knowledge init` writes all three.
 
 Configuration resolves exactly one thing: *where* the store root is. *How* it is
 laid out inside comes from `knowledge.toml`, and from nowhere else. The split is
@@ -168,7 +182,7 @@ For the full flow, see [how the memory compound loop works](memory-compound.md).
 - Learnings are **write-once**. Existing files are not overwritten. This is intentional — a learning is a snapshot of a specific session's insight, and editing it later changes the historical record.
 - Deduplication happens in the LLM prompt, not in the filesystem. The worker passes the titles of the last 50 learnings into the prompt with explicit "do not generate semantic duplicates" instructions.
 - Learnings carry a `scope` field (`universal | backend | infra | consulting`) that lets future queries slice by applicability.
-- Weekly learnings review is a separate scheduled job that reads the learnings directory, surfaces near-duplicates, and prompts a human (or agent) to merge them. It is not part of the session-close pipeline.
+- Nothing prunes or merges near-duplicates after the fact. The tree is append-only by construction and reviewing it is a manual read — the framework ships no learnings-review job.
 
 ## Transport: the store is a git repository
 
@@ -263,7 +277,7 @@ rsync -a /backup/location/lazy-harness-knowledge ~/Documents/
 cd ~/Documents/lazy-harness-knowledge && git init
 ```
 
-Moving to a new machine is "point `config.toml`'s `[knowledge].path` at the same directory and run `qmd update`". Nothing inside the framework holds state that can diverge from the directory contents.
+Moving to a new machine is "point `[knowledge].root` in `config.toml` (or `$LAZY_KNOWLEDGE_ROOT`) at the clone and run `qmd update`". Nothing inside the framework holds state that can diverge from the directory contents — the layout comes from the store's own `knowledge.toml`, and each project's memory is keyed by its git remote rather than by where the checkout sits on this machine.
 
 ## Other consumers of the same pipeline
 
@@ -291,7 +305,7 @@ Each run, for each kind:
 1. Open the JSONL, seek to the stored offset.
 2. Read whole lines until EOF. Partial lines are deferred (the writer might still be flushing the entry).
 3. Decode each line as JSON; malformed lines advance the cursor and are counted as `skipped_malformed` — they are not retried.
-4. Call `engram save <title> <json> --type <kind> --project <project_key> --scope project`. The project key is `git rev-parse --git-common-dir`'s basename, so worktrees collapse onto the parent repo.
+4. Call `engram save <title> <json> --type <kind> --project <project_key> --scope project`. The project key is the parent of `git rev-parse --path-format=absolute --git-common-dir`, taken by name — so a linked worktree collapses onto the repository that owns it rather than registering as its own project.
 5. **On success**, advance the cursor (atomic tempfile + `os.replace`).
 6. **On failure**, leave the cursor untouched and stop processing this kind. The next run picks up from the same offset → at-least-once delivery, ordering preserved.
 

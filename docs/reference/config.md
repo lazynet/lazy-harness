@@ -159,13 +159,20 @@ there. See [The knowledge store](../how/knowledge-pipeline.md).
 | -------- | ------ | ------- | -------- | ------------------------------------------------- |
 | `engine` | string | `"qmd"` | no       | Search backend. Only `qmd` is implemented today. |
 
+`[knowledge.embed]` — how long `lh knowledge embed` gives QMD before giving up:
+
+| Field     | Type | Default | Required | Description                                                          |
+| --------- | ---- | ------- | -------- | -------------------------------------------------------------------- |
+| `timeout` | int  | `600`   | no       | Seconds. A property of the host, not of the harness — with a GPU the whole corpus embeds in under a minute, while a CPU-only machine can spend far longer and fail at the default while genuinely draining its backlog. Raise it there rather than treating the failure as a bug. `lh knowledge embed --timeout N` overrides it for one run. |
+
 `[knowledge.structure]` — code-structure layer ([Graphify](https://github.com/safishamsi/graphify)):
 
 | Field                    | Type   | Default      | Required | Description                                                                                                                              |
 | ------------------------ | ------ | ------------ | -------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | `engine`                 | string | `"graphify"` | no       | Structure backend. Only `graphify` is implemented today.                                                                                 |
-| `enabled`                | bool   | `false`      | no       | Whether `lh deploy` wires the Graphify MCP entry into each profile's `settings.json`.                                                    |
+| `enabled`                | bool   | `false`      | no       | Whether `lh deploy` wires the Graphify MCP entry into each profile's `.claude.json`. The `graphify-mcp` binary must also be present — the CLI alone is not enough. |
 | `version`                | string | `"0.9.41"`    | no       | Pinned Graphify version. `lh doctor` flags drift between this and the installed binary so upgrades are explicit. See [ADR-023](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/023-graphify-code-structure.md). |
+| `repos`                  | array  | `[]`         | no       | Absolute paths of the repositories whose code graph is kept fresh on schedule. Managed with `lh knowledge graph add` and inspected with `lh knowledge graph list` rather than edited by hand — `add` refuses a path that is not a git checkout. `lh knowledge graph update` rebuilds every registered repo's graph, which is what a scheduled job calls. |
 
 `[[knowledge.classify_rules]]` (array of tables — see [ADR-028](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/028-classify-rules-configurable.md)):
 
@@ -197,10 +204,12 @@ The `[memory]` block configures **agent-side** memory backends — tools the age
 
 | Field      | Type   | Default      | Required | Description                                                                                                                                     |
 | ---------- | ------ | ------------ | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `enabled`  | bool   | `false`      | no       | When true, `lh deploy` wires the Engram MCP server into each profile's `settings.json` and the `engram-persist` Stop hook becomes meaningful.   |
+| `enabled`  | bool   | `false`      | no       | When true, `lh deploy` wires the Engram MCP server into each profile's `.claude.json` and the `engram-persist` Stop hook becomes meaningful.    |
 | `git_sync` | bool   | `true`       | no       | Whether Engram persists per-repo memory chunks under a versioned `.engram/chunks/` directory (recommended; keeps knowledge with the code).      |
 | `cloud`    | bool   | `false`      | no       | Opt-in cloud sync. Off by default — enabling it breaks the framework's local-first guarantee, so flip it deliberately.                          |
 | `version`  | string | `"1.20.0"`   | no       | Pinned Engram version. `lh doctor` flags drift. See [ADR-022](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/022-engram-episodic-memory.md) and [ADR-029](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/029-engram-persist-deterministic-mirror.md). |
+
+| `binary`   | string | `""`         | no       | Absolute path to the `engram` executable. Empty means "resolve from `PATH`", which is what a normal install wants. Set it where `PATH` is not the harness's — a hook spawned by a scheduler inherits the daemon's environment, not your shell's, and `lh doctor` points here when it cannot find the binary. Read by the `engram-persist` hook. |
 
 The interactive `lh config memory --init` wizard (see [ADR-026](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/026-config-wizards.md)) writes this block for you and merges it into an existing config preserving comments and unrelated sections.
 

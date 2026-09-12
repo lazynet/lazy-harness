@@ -150,7 +150,7 @@ rounded once, at the end. It reconciles exactly with the database's own sum, so
 if you want to check the command against the raw table:
 
 ```bash
-sqlite3 ~/.config/lazy-harness/metrics.db \
+sqlite3 ~/.local/share/lazy-harness/metrics.db \
   'SELECT ROUND(SUM(cost), 2), COUNT(DISTINCT session) FROM session_stats'
 ```
 

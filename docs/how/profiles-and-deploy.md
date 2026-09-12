@@ -85,7 +85,7 @@ The rule matters when profiles overlap: if one profile says `roots = ["~/code"]`
 
 ## Deploy flow — what `lh deploy` actually does
 
-Module: `src/lazy_harness/deploy/engine.py`. Three functions, called in this order by `cli/deploy_cmd.py`:
+Module: `src/lazy_harness/deploy/engine.py`. Four functions, called in this order by `cli/deploy_cmd.py`:
 
 ### 1. `deploy_profiles(cfg)` — symlink profile content
 
@@ -95,7 +95,9 @@ For each profile in config:
 2. Resolve the target via `expand_path(entry.config_dir)` and `mkdir -p` it.
 3. For every item directly inside the source dir (`CLAUDE.md`, `skills/`, `agents/`, etc.), call `ensure_symlink(source_item, target_dir/item_name)`.
 
-`ensure_symlink` is idempotent: if the target already exists as a symlink pointing at the correct source, it reports `"exists"` and does nothing. If the target exists but points elsewhere (a stale link from a previous setup), it relinks. If the target exists as a real file or directory, it refuses — the deploy engine will not silently clobber real content.
+`ensure_symlink` is idempotent: if the target already exists as a symlink pointing at the correct source, it reports `"exists"` and does nothing. If the target exists but points elsewhere (a stale link from a previous setup), it unlinks and relinks.
+
+**A real file or directory at the target is not refused — it is moved aside.** `ensure_symlink` renames it to `<name>.bak` next to itself and writes the symlink in its place. That is a single slot, not a chain: if a later deploy finds another real file at the same target, the rename overwrites the previous `.bak`. Deploying over a target directory that holds hand-written content you care about is therefore a one-shot backup, and `lh deploy --dry-run` is the way to see what is about to be moved.
 
 The linking is **per item**, not per directory. The target ends up with a mix of:
 
@@ -125,7 +127,17 @@ All three coexist in the target without stepping on each other.
 
 The result is that every profile has its own `settings.json` with the exact hook wiring derived from config. Re-running `lh deploy` is safe — the generated block is always rewritten from config, so a user who changes `config.toml` and runs deploy gets a consistent update.
 
-### 3. `deploy_claude_symlink(cfg)` — the default shortcut
+### 3. `deploy_mcp_servers(cfg)` — wire the detected memory-stack tools
+
+1. Probe each external memory-stack tool the framework orchestrates and keep the ones actually installed: QMD (present on `PATH`), Engram (`[memory.engram].enabled` **and** present), and Graphify (`[knowledge.structure].enabled` **and** a `graphify-mcp` binary present — the CLI alone is not enough, older installs shipped no MCP entry point).
+2. Call `agent.generate_mcp_config(servers)` to serialize them into the agent's native shape.
+3. Merge the resulting `mcpServers` block into `<target_dir>/<agent.mcp_config_file()>` — `.claude.json` for Claude Code, a **different file from `settings.json`**, which carries only `hooks`.
+
+Two consequences worth knowing. If no tool is detected the function prints a line and writes nothing at all, rather than writing an empty block. And the merge is additive (`existing["mcpServers"].update(...)`): an entry for a tool you have since uninstalled is **not** pruned by a later deploy — remove it from `.claude.json` by hand.
+
+Design: [ADR-024](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/024-mcp-server-orchestration.md).
+
+### 4. `deploy_claude_symlink(cfg)` — the default shortcut
 
 Creates `~/.claude → <default profile's target>`. This is the fallback that lets `claude` work without any env var. If the default is `personal`, running plain `claude` in a directory outside of any profile root still gets the personal profile.
 
@@ -150,18 +162,15 @@ After a few sessions, Claude Code itself adds:
 ├── ... (the above)
 ├── projects/                               # added by Claude Code
 │   └── -Users-me-repos-lazy-lazy-harness/
-│       ├── 9a8b7c6d-...-....jsonl          # session JSONL
-│       └── memory/
-│           ├── MEMORY.md                   # written by the agent
-│           ├── decisions.jsonl             # compound loop
-│           ├── failures.jsonl              # compound loop
-│           ├── handoff.md                  # compound loop
-│           └── pre-compact-summary.md      # pre-compact hook
+│       └── 9a8b7c6d-...-....jsonl          # session JSONL
 └── logs/
-    └── hooks.log
+    ├── hooks.log
+    └── compound-loop.log
 ```
 
 The agent-written content lives under `projects/` and `logs/`. None of it is symlinked. None of it touches the source directory — the source stays read-only from Claude Code's perspective, which is the whole point of the separation.
+
+Distilled memory (`MEMORY.md`, `decisions.jsonl`, `failures.jsonl`, `handoff.md`, `pre-compact-summary.md`) is **not** here. It lives in the knowledge store, under `<store root>/memory/<host>/<owner>/<repo>/`, keyed by the repository's git remote rather than by the path of the checkout — see the [architecture overview](../architecture/overview.md#data-model-three-persistent-stores). A `projects/<encoded-cwd>/memory/` directory in a target dir is either the legacy fallback (no store, or a checkout with no remote) or a leftover; `lh memory legacy-check` tells you which.
 
 ## Launching with a specific profile
 

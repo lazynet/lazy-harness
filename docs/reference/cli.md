@@ -377,6 +377,18 @@ lh memory reconcile
 lh memory reconcile --memory-dir ~/.claude/projects/-Users-me-repo/memory --check-contradictions
 ```
 
+### `lh memory rightsize`
+
+Lists every `CLAUDE.md` the harness can reach and which ceiling, if any, it breaches. Read-only.
+
+Two populations are covered: each profile's own contract at `<profile config_dir>/CLAUDE.md`, which is loaded on **every** session in that profile, and the `CLAUDE.md` of every project reachable under a configured `[profiles.*].roots` entry — whether or not that project has memory in the knowledge store yet, since a contract can be oversized long before the project accumulates any.
+
+The thresholds are the same 200-line and 12KB ceilings `pre-tool-use-memory-size` warns against, read from the same `[hooks.pre_tool_use]` config, so the command and the hook cannot silently disagree about what counts as too big.
+
+```bash
+lh memory rightsize
+```
+
 ### `lh memory legacy-check`
 
 Reports per-project memory still sitting in a profile's `projects/` tree rather than in the knowledge store, and classifies each one:
@@ -528,11 +540,14 @@ Manages agent profiles.
 
 `lh profile move --from <a> --to <b>` relocates per-project conversation history (`<config_dir>/projects/<encoded-cwd>/`) between profiles without losing JSONL history. Useful when reclassifying a project from one profile to another. Supports `--projects a,b,c`, `--all`, `--overwrite`, and `--yes`.
 
+`lh profile sync-claude-md` recomposes every profile's `CLAUDE.md` from its segments, concatenating `<profile>/CLAUDE.head.md` + `_common/CLAUDE.common.md` + `<profile>/CLAUDE.tail.md` in that order. Only profile dirs carrying all three segments are touched; a profile with a flat, hand-written `CLAUDE.md` is skipped, never erased. The `post-tool-use-sync-claude` hook runs the same code on every edit to a segment, so this is the manual path — after a bulk edit, after pulling the profiles dir on another machine, or where that hook is not deployed.
+
 ```bash
 lh profile list
 lh profile add work --config-dir ~/.claude-work --roots ~/repos/work
 lh profile envrc
 lh profile move --from personal --to work --projects my-repo --yes
+lh profile sync-claude-md
 ```
 
 ## `lh run`
@@ -581,18 +596,20 @@ lh selftest --fix
 
 ## `lh status`
 
-Monitoring dashboard. With no subcommand, prints the overview panel. There are ten subcommand views.
+Monitoring dashboard. With no subcommand, prints the overview panel. Ten subcommand views:
 
-- `overview` — at-a-glance summary panel.
-- `sessions` — daily breakdown of sessions, tokens, cost. `--period today|week|month|all`.
-- `tokens` — token / cost breakdown across any combination of dimensions. See below.
-- `costs` — legacy cost view, kept for back-compat. `--period 7d|30d|month|all`.
-- `projects` — per-project session counts and last activity.
-- `profiles` — per-profile config, hooks count, MCPs, auth state.
-- `hooks` — last fired hooks plus log health.
-- `cron` — scheduled launchd jobs and their last runs.
-- `queue` — compound-loop queue depth and recent worker activity.
-- `memory` — per-project decisions / failures / learnings counts.
+- `lh status overview` — at-a-glance summary panel.
+- `lh status sessions` — daily breakdown of sessions, tokens, cost. `--period today|week|month|all`.
+- `lh status tokens` — token / cost breakdown across any combination of dimensions. See below.
+- `lh status costs` — legacy cost view, kept for back-compat. `--period 7d|30d|month|all`.
+- `lh status projects` — per-project session counts and last activity.
+- `lh status profiles` — per-profile config, hooks count, MCPs, auth state.
+- `lh status hooks` — last fired hooks plus log health.
+- `lh status cron` — scheduled jobs and their last runs, through whichever scheduler backend is active.
+- `lh status queue` — compound-loop queue depth and recent worker activity.
+- `lh status memory` — per-project decisions / failures / learnings counts.
+
+Every view reads the same database, resolved the same way: `[monitoring] db` from `config.toml` when set, otherwise `data_dir()/metrics.db` (`~/.local/share/lazy-harness/metrics.db` on a default install). If the numbers look stale, the fix is upstream — run `lh metrics ingest`.
 
 ```bash
 lh status

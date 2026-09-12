@@ -1,6 +1,6 @@
 # How the metrics ingest pipeline works
 
-`lh status` shows sessions, tokens, and cost by reading a SQLite database at `~/.config/lazy-harness/metrics.db` (or wherever `[monitoring].db` points). That database does not populate itself — something has to parse the agent's session JSONLs and feed it. That something is the **metrics ingest pipeline**: a standalone module (`lazy_harness.monitoring.ingest`) exposed as `lh metrics ingest`, designed to produce numbers that reconcile with `npx ccusage` without ever double-counting tokens.
+`lh status` shows sessions, tokens, and cost by reading a SQLite database at `~/.local/share/lazy-harness/metrics.db` — `data_dir()`, which honours `LH_DATA_DIR` then `XDG_DATA_HOME` — or wherever `[monitoring].db` points when that is set. That database does not populate itself — something has to parse the agent's session JSONLs and feed it. That something is the **metrics ingest pipeline**: a standalone module (`lazy_harness.monitoring.ingest`) exposed as `lh metrics ingest`, designed to produce numbers that reconcile with `npx ccusage` without ever double-counting tokens.
 
 This page explains what the pipeline does, how it guarantees precision, and how to wire it into the scheduler so `lh status` stays live.
 
@@ -15,7 +15,7 @@ Two pieces are needed on either side of the pipeline:
 
 `ingest_all(cfg, db, pricing)` iterates every configured profile via `list_profiles(cfg)`. For each profile it calls `ingest_profile(profile, db, pricing)` which:
 
-1. Resolves `<config_dir>/projects/` and skips profiles whose dir doesn't exist.
+1. Resolves the profile's own `<config_dir>/projects/` — the agent's transcript directory, unrelated to the metrics database's location — and skips profiles whose dir doesn't exist.
 2. Collects every `*.jsonl` under `projects/` **recursively** (`rglob`), including nested subagent files at `<session-uuid>/subagents/agent-*.jsonl`. Paths that sit under a `memory/` ancestor are excluded — those are user-owned episodic logs (`decisions.jsonl`, `failures.jsonl`), not agent transcripts.
 3. Sorts the collected files by `st_mtime_ns` ascending. Older files attribute their messages first, so the canonical ownership is stable across runs.
 4. Iterates the files in order, maintaining a `seen_msg_ids: set[str]` across the whole profile. Each assistant message's id is checked against the set; novel messages bump an in-memory aggregator keyed by `(session_id, model)`; already-seen messages are counted as deduped and dropped.
@@ -259,7 +259,7 @@ The legacy `[monitoring]` block (`db`, `pricing`) is independent of `[metrics]`.
 
 ```bash
 $ lh metrics status
-sqlite_local  8431 sessions  $412.87  ~/.config/lazy-harness/metrics.db
+sqlite_local  8431 sessions  $412.87  ~/.local/share/lazy-harness/metrics.db
 http_remote  pending: 12  sending: 0  sent: 8431
 ```
 
@@ -268,7 +268,7 @@ With the default sink set (`sqlite_local` only), the local line is still printed
 For deeper inspection:
 
 ```bash
-sqlite3 ~/.config/lazy-harness/metrics.db <<'SQL'
+sqlite3 ~/.local/share/lazy-harness/metrics.db <<'SQL'
 SELECT sink_name, COUNT(*) AS rows, SUM(attempts) AS retries
 FROM sink_outbox
 WHERE status = 'pending'

@@ -66,10 +66,10 @@ Steps, in order:
    cwd=/Users/x/repo
    session_jsonl=/Users/x/.claude/projects/.../<id>.jsonl
    session_id=<full-id>
-   memory_dir=/Users/x/.claude/projects/.../memory
+   memory_dir=/Users/x/repos/lazy/lazy-knowledge/memory/github.com/lazynet/lazy-harness
    timestamp=2026-04-13T18:32:45-03:00
    ```
-   `session_jsonl` points at the checkout the session actually ran in, but `memory_dir` is resolved against the **main** working tree. Distilled memory outlives any one branch, so a session run inside `repo/.worktrees/feat` still appends to `repo`'s `decisions.jsonl` rather than stranding it in a project dir that disappears with the worktree.
+   `session_jsonl` points at the checkout the session actually ran in; `memory_dir` is resolved by `core/memory_store.py` against the project's **identity** — its normalised git remote — not against the path of the checkout. Distilled memory outlives any one branch and any one machine, so a session run inside `repo/.worktrees/feat` appends to the same `decisions.jsonl` as one run from the main checkout, and so does the same repository cloned elsewhere. See [where memory lives](../why/memory-model.md#where-memory-lives).
 7. **Spawn the worker.** `subprocess.Popen` with `start_new_session=True`, stdin `/dev/null`, stdout/stderr redirected to `~/.claude/logs/compound-loop.log`. The producer does not wait for it.
 8. **Exit 0.** The whole producer phase is tens of milliseconds. Claude Code sees a clean session close.
 
@@ -257,7 +257,7 @@ Every worker invocation passes the current tail of decisions, failures, and lear
 
 This is why `collect_existing_learnings` has a `limit` parameter (default 50): the prompt has to stay bounded, but 50 entries is enough to cover the semantic neighborhood of "what was I learning in the last few weeks".
 
-When a genuinely duplicate learning sneaks past the LLM filter, two things catch it: the per-title filename de-dup (existing files are not overwritten), and weekly learnings review — which is a separate feature that reads the learnings directory and merges near-duplicates.
+When a genuinely duplicate learning sneaks past the LLM filter, the per-title filename de-dup catches it: existing files are never overwritten. Nothing merges near-duplicates after the fact — the learnings tree is append-only by design, and pruning it is a manual read of the directory.
 
 ## What the loop does NOT do
 
@@ -273,8 +273,10 @@ All in `config.toml` under `[compound_loop]`:
 
 | Field | Default | Effect |
 |---|---|---|
+This table covers the knobs that decide *whether and how often* a session is distilled. The full field list — including `backend`, `backend_options`, `grading_enabled`, `slim_handoff_enabled` and `max_pending_proposals` — is in the [config reference](../reference/config.md#compound_loop).
+
 | `enabled` | `false` | Master switch. Off by default. |
-| `model` | `claude-haiku-4-5-20251001` | Model used by the worker for distillation. Haiku is the cost/speed sweet spot; you can swap for Sonnet or Opus if you want deeper analysis per session. |
+| `model` | `claude-haiku-4-5-20251001` | Model the worker distils with, when the `distill` role routes to the `claude` backend. Haiku is the cost/speed sweet spot; swap for Sonnet or Opus for deeper analysis per session. Which backend the role resolves to is decided by `[llm.roles]` ([ADR-039](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/039-role-routed-inference.md)), so a `distill` role pointed at Ollama ignores this field entirely. |
 | `min_messages` | `4` | Sessions with fewer interactive messages are skipped. |
 | `min_user_chars` | `200` | Sessions where the user typed fewer than this many characters total are skipped — covers fast "what's the weather" prompts. |
 | `debounce_seconds` | `60` | Debounce window for repeat Stop events on the same session. |
@@ -304,8 +306,11 @@ python -m lazy_harness.knowledge.compound_loop_worker
 # Queue a forced evaluation for the current session (bypass Stop-hook gates)
 lh knowledge handoff-now
 
-# Inspect recent decisions for a project
-jq -c '.summary' ~/.claude/projects/-Users-me-repo/memory/decisions.jsonl | tail -10
+# Where is this project's memory, and what is in it?
+lh memory status
+
+# Inspect recent decisions for a project (path from `lh memory status`)
+jq -c '.summary' <memory_dir>/decisions.jsonl | tail -10
 ```
 
 If the worker is silent, check: (1) `compound_loop.enabled = true` in config, (2) the session has ≥ `min_messages` messages and ≥ `min_user_chars` chars, (3) `claude` is on the worker's PATH, (4) `claude -p --model <model>` actually works from your shell.

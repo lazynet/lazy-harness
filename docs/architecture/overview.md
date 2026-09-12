@@ -48,6 +48,7 @@ src/lazy_harness/
 ├── hooks/           # hook engine + loader + built-in hooks
 ├── knowledge/       # session export, QMD wrapper, compound loop, graphify wrapper
 ├── memory/          # engram wrapper (ADR-022 episodic backend)
+├── llm/             # inference backends + role routing (ADR-033, ADR-039)
 ├── monitoring/      # SQLite ingest, views, dashboard, engram-persist health
 ├── scheduler/       # launchd, systemd, cron backends + manager
 ├── migrate/         # detector, planner, executor, rollback, steps/
@@ -113,10 +114,10 @@ Design: [ADR-004 — Agent adapter pattern](https://github.com/lazynet/lazy-harn
 
 `hooks/engine.py` provides `execute_hook` + `run_hooks_for_event` — used by `lh hooks run` and the test suite. At runtime, the agent itself spawns hooks; the framework does not orchestrate them. The engine is for programmatic invocation only.
 
-Built-in hooks:
+Built-in hooks live under `hooks/builtins/`, one module per hook. Which of them ship **on** by default is not restated here — it is derived from `plugins/builtins.py`, and `docs/how/hooks.md` documents every one of them with a section apiece, held to the registry by `tests/docs/test_hooks_doc_coherence.py` in both directions. The four load-bearing ones:
 
-- `compound_loop.py` — Stop producer, enqueues async worker. See [how hooks work](../how/hooks.md#compound-loop-runs-on-stop).
 - `context_inject.py` — SessionStart, composes and injects context.
+- `compound_loop.py` — Stop producer, enqueues async worker. See [how hooks work](../how/hooks.md#compound-loop-runs-on-stop).
 - `session_export.py` — Stop, exports session to the knowledge store.
 - `pre_compact.py` — PreCompact, preserves working state before compaction.
 
@@ -131,6 +132,8 @@ Design: [ADR-006](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/0
 - `compound_loop.py` — pure functions for the compound loop (parse, filter, build prompt, parse response, persist). Flat module so each step is independently testable.
 - `compound_loop_worker.py` — runnable via `python -m`, drains the file-based queue under `fcntl.flock`.
 - `qmd.py` — optional QMD CLI wrapper, guarded by `shutil.which("qmd")`.
+- `graphify.py` — optional Graphify CLI wrapper and version pin.
+- `engram_persist.py` — `EngramPersister`, the cursor-based JSONL → Engram mirror.
 - `context_gen.py` — shared helpers for context composition.
 
 Detailed flow: [how the memory compound loop works](../how/memory-compound.md) and [how the knowledge pipeline works](../how/knowledge-pipeline.md).
@@ -141,12 +144,12 @@ Design decisions: [ADR-008](https://github.com/lazynet/lazy-harness/blob/main/sp
 
 `deploy/engine.py` has four top-level functions called by `lh deploy`:
 
-1. **`deploy_profiles(cfg)`** — for each profile, symlink every item from `~/.config/lazy-harness/profiles/<name>/*` into `<profile.config_dir>/`. Per-file symlinks (not whole-directory), idempotent, refuses to clobber real files.
+1. **`deploy_profiles(cfg)`** — for each profile, symlink every item from `~/.config/lazy-harness/profiles/<name>/*` into `<profile.config_dir>/`. Per-file symlinks (not whole-directory), idempotent.
 2. **`deploy_hooks(cfg)`** — resolve hooks per event, call `agent.generate_hook_config`, write the result into each profile's `settings.json`.
-3. **`deploy_mcp_servers(cfg)`** — probe each detected memory-stack tool (QMD, Engram), call `agent.generate_mcp_config`, merge the resulting `mcpServers` block into each profile's `settings.json` next to `hooks`. Uninstalled tools get no entry; removed tools have their entry pruned on the next run.
+3. **`deploy_mcp_servers(cfg)`** — probe each detected memory-stack tool (QMD, Engram, Graphify), call `agent.generate_mcp_config`, merge the resulting `mcpServers` block into each profile's `<agent.mcp_config_file()>` — `.claude.json` for Claude Code, not `settings.json`. Uninstalled tools get no entry; the merge is additive, so an entry for a tool since removed survives until deleted by hand.
 4. **`deploy_claude_symlink(cfg)`** — create `~/.claude → <default profile config_dir>`.
 
-`deploy/symlinks.py` implements `ensure_symlink` with the three states: `"created"`, `"exists"` (already points at the correct source), and `"refused"` (target is a real file or a link to somewhere else and cannot be clobbered).
+`deploy/symlinks.py` implements `ensure_symlink`, which returns `"exists"` when the target is already a symlink to the correct source and `"created"` otherwise. It does **not** refuse: a symlink pointing elsewhere is unlinked and replaced, and a real file or directory at the target is renamed to `<name>.bak` before the link is written. The `.bak` is a single slot, not a chain — a second deploy over a second real file overwrites the first backup.
 
 Design: [ADR-009 — Profile symlink deploy](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/009-profile-symlink-deploy.md), [ADR-024 — MCP server orchestration](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/024-mcp-server-orchestration.md). Mechanics: [how profiles and deploy work](../how/profiles-and-deploy.md).
 
@@ -214,7 +217,8 @@ selftest/
     ├── hooks_check.py
     ├── scheduler_check.py
     ├── knowledge_check.py
-    └── monitoring_check.py
+    ├── monitoring_check.py
+    └── loop_events_check.py
 ```
 
 Each check returns `list[CheckResult]`. The runner catches exceptions per check so a crash in one does not take down the whole report.
@@ -238,6 +242,10 @@ One file per top-level `lh` command, all based on `click`:
 - `run_cmd.py` — `lh run`, sets `CLAUDE_CONFIG_DIR` and execs `claude`.
 - `scheduler_cmd.py` — install / uninstall / status against the scheduler backend.
 - `knowledge_cmd.py` — knowledge store operations (init, path, push, sync, status).
+- `config_cmd.py` — `lh config <feature> --init` wizards (`knowledge`, `memory`) plus `lh config migrate-knowledge`, delegating to `wizards/`.
+- `memory_cmd.py` — memory-stack diagnostics (status, consolidate, decay, reconcile, proposals, rightsize, legacy-check, migrate).
+- `metrics_cmd.py` — `lh metrics ingest` / `drain` / `status` / `loops` / `record-verify`.
+- `exec_cmd.py` — `lh exec`, the role-routed inference entrypoint (ADR-038, ADR-039).
 
 Commands never contain business logic. They parse flags, load config, and delegate to the subsystem modules.
 
@@ -248,10 +256,20 @@ Every piece of state the framework persists lives in one of three places. All th
 | Store | Path | Format | Written by | Read by |
 |---|---|---|---|---|
 | Config | `~/.config/lazy-harness/config.toml` | TOML (human-edited) | `lh init`, `lh migrate`, `lh profile` | Every subsystem |
-| Metrics | `~/.config/lazy-harness/metrics.db` | SQLite | `monitoring/collector.py` | `monitoring/views/*`, `lh status` |
+| Metrics | `~/.local/share/lazy-harness/metrics.db` (`data_dir()`; `[monitoring].db` overrides) | SQLite | `monitoring/ingest.py`, `monitoring/sinks/*` | `monitoring/views/*`, `lh status`, `lh metrics` |
 | Knowledge | knowledge store root (env, `[knowledge].root`, or default) | Markdown files, layout declared by `knowledge.toml` | `session-export`, `compound-loop` worker | `context-inject`, QMD, users directly |
 
-There is a fourth semi-persistent store scoped to each deployed profile — `<CLAUDE_CONFIG_DIR>/projects/<encoded-cwd>/memory/` — which holds `decisions.jsonl`, `failures.jsonl`, `handoff.md`, `pre-compact-summary.md`, and `MEMORY.md`. This is written both by the framework's hooks and by Claude Code itself. It lives in the deployed target dir rather than the source, so version-controlled dotfiles do not accumulate ephemeral session state.
+Distilled per-project memory — `MEMORY.md`, `decisions.jsonl`, `failures.jsonl`, `grades.jsonl`, `handoff.md`, `pre-compact-summary.md`, `insights/` — is not a fourth store. It lives **inside** the knowledge store, under the area its `knowledge.toml` marker declares (`memory` by default), keyed by the project's own identity rather than by the path of the checkout:
+
+```
+<store root>/memory/<host>/<owner>/<repo>/
+```
+
+`core/project_identity.py` derives that key from the repository's normalised git remote, so the same repo on two machines resolves to one directory and a session run from a linked worktree writes to the same place as one run from the main checkout. `core/memory_store.py` is the only module that builds the path; every hook and CLI reader goes through `hooks/builtins/_shared.py:memory_dir`.
+
+Two cases fall back to the legacy location, `<CLAUDE_CONFIG_DIR>/projects/<encoded-cwd>/memory/`: no usable knowledge store, and a checkout with no git remote (the key would be `local/<name>`, which two unrelated directories on two machines would collide under in a store that gets pushed). `lh memory legacy-check` lists what is still sitting there and `lh memory migrate` moves it.
+
+Claude Code's own write-side state — session JSONLs under `projects/`, `logs/` — stays in the deployed target dir, which is why version-controlled dotfiles never accumulate ephemeral session state.
 
 ## Memory glue layer — connecting the five layers
 
