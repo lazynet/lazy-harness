@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.59.0](https://github.com/lazynet/lazy-harness/compare/v0.58.1...v0.59.0) (2026-09-13)
+
+
+### Features
+
+* **metrics:** price fable 5.1 and mythos 5.1 ([#262](https://github.com/lazynet/lazy-harness/issues/262)) ([9868a32](https://github.com/lazynet/lazy-harness/commit/9868a32ac462d6c2e15aa14ce7c7728e1535e9ea))
+
+
+### Documentation
+
+* design for extending the harness beyond Claude Code ([11d5207](https://github.com/lazynet/lazy-harness/commit/11d5207e2f488278d28e206631f1c951a0443041))
+* **design:** revise multi-agent harness design after audit against binaries and code ([708d1e5](https://github.com/lazynet/lazy-harness/commit/708d1e5c8bc063e139ac25af089d30e99f08cdc9))
+
 ## [0.58.1](https://github.com/lazynet/lazy-harness/compare/v0.58.0...v0.58.1) (2026-09-12)
 
 
