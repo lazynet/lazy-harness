@@ -45,10 +45,29 @@ DEFAULT_PRICING: dict[str, dict[str, float]] = {
         "cache_create": 12.5,
         "cache_create_1h": 20.0,
     },
+    # Fable 5.1 keeps Fable 5's $10/$50 and both write rates, but breaks the
+    # 0.1x cache-read convention every other row follows: reads bill at
+    # 0.025x base input ($0.25), the only exception in the published table.
+    # Copying the fable-5 row would over-charge reads 4x — and reads are the
+    # bulk of the tokens in a long session.
+    "claude-fable-5-1": {
+        "input": 10.0,
+        "output": 50.0,
+        "cache_read": 0.25,
+        "cache_create": 12.5,
+        "cache_create_1h": 20.0,
+    },
     "claude-mythos-5": {
         "input": 10.0,
         "output": 50.0,
         "cache_read": 1.0,
+        "cache_create": 12.5,
+        "cache_create_1h": 20.0,
+    },
+    "claude-mythos-5-1": {
+        "input": 10.0,
+        "output": 50.0,
+        "cache_read": 0.25,
         "cache_create": 12.5,
         "cache_create_1h": 20.0,
     },
