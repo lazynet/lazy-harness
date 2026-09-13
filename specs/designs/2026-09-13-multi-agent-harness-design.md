@@ -230,10 +230,9 @@ class HookEvent:
     session_id: str
     cwd: Path
     transcript_path: Path | None
-    tool_name: str | None = None
-    tool_input: dict | None = None
+    tool: ToolCall | None = None    # the canonical view; see decision 9
     tool_use_id: str | None = None
-    tool_response: dict | None = None
+    tool_response: object | None = None
     prompt: str | None = None
     permission_mode: str | None = None
     source: str | None = None       # session_start: startup|resume|clear|compact
@@ -262,13 +261,19 @@ class HookDecision:
 
 @dataclass(frozen=True)
 class HookOutput:
-    stdout: dict | str | None
+    stdout: str | None              # already serialised; the adapter owns the bytes
     stderr: str
     exit_code: int
 
 
 def format_hook_output(self, event: HookEvent, decision: HookDecision) -> HookOutput: ...
 ```
+
+`stdout` is `str`, not `dict | str`, because the design promises byte-identical
+output and a `dict` defers serialisation to whoever writes it. Today every hook
+emits `print(json.dumps(output))` — `json.dumps` defaults plus a trailing
+newline. That is reproducible only while exactly one place owns it. The adapter
+is that place; the runner writes the string it is given and never re-encodes.
 
 Two corrections the first two drafts got backwards, both load-bearing.
 
@@ -319,6 +324,16 @@ draft left out `source`, `trigger`, `stop_hook_active`, `tool_use_id` and
 that point the normalisation is a fiction. `raw` exists for adapters, not for
 hooks, and a test asserts no builtin reads it.
 
+**`tool_name` and `tool_input` are gone, replaced by `tool: ToolCall | None`.**
+The previous revision defined `ToolCall` in decision 9 and then left `HookEvent`
+carrying the native pair beside it — two representations of one thing, with
+nothing saying which is canonical, which is exactly the condition under which
+the builtins keep reading native argument names. `ToolCall` is canonical.
+`tool_response` is typed `object`, not `dict`: Copilot's compatible payload
+delivers `tool_result: {result_type, text_result_for_llm}` and the Claude SDK
+declares it unconstrained, so a `dict` annotation would be a lie that fails at
+the first `.get()`.
+
 ### 3. Hook support is declared per event, and so is the ability to block
 
 ```python
@@ -326,7 +341,6 @@ hooks, and a test asserts no builtin reads it.
 class HookSupport:
     native_name: str                # the wire name, with the agent's own casing
     verdicts: frozenset[Verdict]    # which decisions this agent honours here
-    abstain_is_safe: bool = True    # emitting nothing leaves the default flow intact
 
     @property
     def can_block(self) -> bool:
@@ -352,6 +366,39 @@ decision this hook needs and whether this agent honours it*, and the runner can
 refuse to emit a verdict the adapter has not declared rather than failing open
 silently. `native_name` carries the agent's own casing because Codex is
 PascalCase-only and Copilot is camelCase with a PascalCase compatibility mode.
+
+An earlier draft of this revision also carried `abstain_is_safe: bool = True`.
+It is removed: nothing read it, and this document's own rule is that a field
+with no reader is a promise with no implementation. Whether abstaining is safe
+is a property of the agent's default permission flow, which the harness does not
+model; if that changes, the field returns with the reader that needs it.
+
+**Refusing an unsupported verdict has to have a defined output, and today the
+default is the worst one.** `cli/hooks_cmd.py` ends every path in `sys.exit(0)`:
+
+```python
+except Exception as e:  # noqa: BLE001 — hooks must never bubble up to Claude Code
+    click.echo(f"Hook {name} raised: ...", err=True)
+sys.exit(0)
+```
+
+A runner that raises on an unsupported verdict therefore *allows the tool call*.
+The comment above it on `except SystemExit` records that this repo has already
+shipped that bug once. So the runner's failure policy is declared explicitly,
+per class of failure, and differs for blocking and informational hooks:
+
+| Failure | Blocking hook | Informational hook |
+|---|---|---|
+| Unknown profile | exit 2, reason on stderr | exit 0, warning on stderr |
+| Unparseable payload | exit 2, reason on stderr | exit 0, warning on stderr |
+| Builtin raises | exit 2, reason on stderr | exit 0, warning on stderr |
+| Verdict not in `verdicts` | **deploy-time error, never reached at runtime** | n/a |
+
+The last row is the important one: an adapter that cannot express a hook's
+verdict is a configuration the harness refuses to *deploy*, not a condition it
+discovers while a tool call is pending. `lh deploy` fails and `lh doctor`
+reports it. A blocking hook that fails open at runtime is the failure mode this
+whole design exists to make visible.
 
 `supported_hooks()` becomes `hook_events().keys()`, which also makes it honest:
 today it returns canonical names while `generate_hook_config` re-maps them in a
@@ -402,21 +449,55 @@ class ConfigArtifact:
 
 
 @dataclass(frozen=True)
-class MergeResult:
-    artifact: ConfigArtifact
-    preserved: list[str]            # foreign entries kept, for the deploy report
-    dropped: list[str]              # harness entries no longer generated
-    repaired: list[str]             # entries the agent would have rejected
+class WriteOp:
+    artifact: ConfigArtifact | None  # None = delete relative_path
+    relative_path: Path
+    preserved: list[str]             # foreign entries kept, for the deploy report
+    dropped: list[str]               # harness entries no longer generated
+    repaired: list[str]              # entries the agent would have rejected
 
 
-def hook_config(self, hooks: dict[str, list[HookEntry]], existing: str | None) -> list[MergeResult]: ...
-def mcp_config(self, servers: dict[str, dict], existing: str | None) -> list[MergeResult]: ...
+def config_targets(self) -> list[Path]:
+    """Every file this adapter may read or write, relative to the config dir."""
+
+def plan_config(
+    self,
+    hooks: dict[str, list[HookEntry]],
+    servers: dict[str, dict],
+    existing: dict[Path, str],      # every target that exists, by path
+) -> list[WriteOp]: ...
 ```
 
-The adapter receives the existing document, parses it in whatever format it
-owns, merges, and returns the final text plus the diagnostics the deploy report
-prints. The engine writes: backup, atomic replace, report. That split is the
-part that is genuinely agent-neutral; parsing never was.
+`existing: str | None` was not enough: the adapter returns *several* files, so a
+single document could not be its input, and nothing said how the engine knew
+which files to read, how a managed file gets deleted, or what happens when hooks
+and MCP both want to write `config.toml`. The cycle is therefore explicit:
+
+1. **Discover.** The engine asks for `config_targets()`.
+2. **Read.** It reads every target that exists and passes them as a mapping.
+3. **Plan.** One call produces the complete set of operations, so an adapter
+   whose hooks and MCP servers share `config.toml` emits *one* write for it and
+   cannot overwrite its own earlier result.
+4. **Apply.** The engine backs up, writes atomically, deletes what the plan says
+   to delete, and prints the diagnostics.
+
+`WriteOp` is a write or a delete, carrying the same `preserved` / `dropped` /
+`repaired` diagnostics as before. Deletion is explicit because an adapter that
+stops generating a file must be able to say so; without it, a file the harness
+wrote in an earlier release stays forever.
+
+The adapter parses in whatever format it owns and returns final text. The engine
+does I/O. That split is the part that is genuinely agent-neutral; parsing never
+was.
+
+**Atomic replace is not concurrency control.** A rename prevents a half-written
+file; it does not prevent losing an approval the agent wrote *after* step 2 read
+the document. Both agents were observed doing exactly that during a session.
+This design takes the conservative option: the engine records each target's
+mtime and size at read time and **aborts the whole plan** if any changed before
+apply, telling the user to close the agent and retry. Deploying while an agent
+is running is not a supported state, and silently winning that race is worse
+than refusing it.
 
 `deploy/engine.py:deploy_hooks` hardcodes `settings.json` and merges with a
 function shaped like Claude Code's `matcher` / `hooks[]` block. Codex wants a
@@ -486,14 +567,43 @@ So the real options are three, none of them "emit a config key":
 |---|---|
 | **(a)** Compute `hook_hash` in Python and pre-write `[hooks.state.<key>].trusted_hash` | Reimplements Codex's TOML normalisation and version hash. Silently wrong on any upstream change to either, with no signal until hooks stop firing. |
 | **(b)** Deploy untrusted; the user trusts once in the TUI; `lh doctor` reads back `trusted_hash` per hook and reports drift | One manual step per profile and after any declaration change. Nothing to keep in sync with upstream. |
-| **(c)** Wrap the launch with `--dangerously-bypass-hook-trust` | The harness does not own how Codex is launched; a shell alias is outside the deploy model and invisible to `lh doctor`. |
+| **(c)** Pass `--dangerously-bypass-hook-trust` at launch | Reaches only harness-initiated launches. `agents/launch.py:resolve_launch` backs `lh run` and `lh exec`, so this *is* implementable there — but a `codex` typed directly in a terminal bypasses it, giving two different trust regimes for the same profile depending on how the session started. Rejected on scope and on the inconsistency, not on feasibility. |
 
 **This design takes (b).** It is the only one whose failure mode is visible.
-`lh doctor` compares each generated hook against the persisted
-`[hooks.state]` and reports `trusted` / `modified` / `untrusted` per hook, and
-`lh deploy` prints the re-trust instruction when it changes a declaration.
-(a) is revisited only if the hash turns out to be stable across releases, which
-is a measurement, not an assumption.
+
+But (b) bounds what `lh doctor` may claim, and the previous revision overstated
+it. Codex decides the status by *comparing* the persisted hash with a freshly
+computed one:
+
+```rust
+// discovery.rs:794-808
+match trusted_hash {
+    Some(trusted_hash) if trusted_hash == current_hash => HookTrustStatus::Trusted,
+    Some(_) => HookTrustStatus::Modified,
+    None    => HookTrustStatus::Untrusted,
+}
+```
+
+Reading `trusted_hash` tells the harness a hash was stored. It does not tell it
+whether that hash still matches the declaration, because computing
+`current_hash` is the part (b) deliberately declines to reimplement. So
+`lh doctor` reports only what it can establish:
+
+| Reported | Established by |
+|---|---|
+| `untrusted` | no `trusted_hash` entry for this hook |
+| `trust unknown` | a `trusted_hash` exists; whether it matches is not determinable without Codex's normalisation |
+| `trust stale` | the harness changed this hook's declaration since it last deployed, so any stored hash is known to be out of date |
+
+The third row is the useful one and needs no Codex internals: the harness knows
+what it generated last time. `lh deploy` prints the re-trust instruction
+whenever it changes a declaration. Calling a hook `trusted` on the strength of a
+hash's mere presence is exactly the inference this revision exists to stop
+making.
+
+(a) is revisited only if `hook_hash` proves stable across releases — a
+measurement across two Codex versions, not an assumption. Asking Codex itself
+for its evaluation, if it ever exposes one, closes the gap properly.
 
 There is still no `post_deploy()`: the harness cannot complete trust
 programmatically, so a lifecycle method would have nothing to do.
@@ -635,24 +745,62 @@ Copilot's payload for `tool_input["command"]` and gets `toolArgs`, typed
 The fix is not a universal tool language. It is the smallest set of
 *operations* the builtins actually need, normalised onto `HookEvent`:
 
+The set is derived from what the builtins actually consume, not from what a
+tool API offers. Two hooks make the difference concrete: knowing that an
+operation modifies `MEMORY.md` does **not** let `pre_tool_use_memory_size`
+compute how large it will be afterwards, and knowing that an operation reads a
+file does not let `pre_tool_use_read_size` tell a bounded read from an unbounded
+one. Both need the arguments, normalised:
+
 ```python
 class Operation(StrEnum):
-    RUN_COMMAND = "run_command"     # → command: str
-    READ_FILE = "read_file"         # → paths: list[Path]
-    MODIFY_FILE = "modify_file"     # → paths: list[Path], is_create: bool
+    RUN_COMMAND = "run_command"
+    READ_FILE = "read_file"
+    MODIFY_FILE = "modify_file"
+
+
+@dataclass(frozen=True)
+class FileEdit:
+    path: Path
+    is_create: bool = False
+    content: str | None = None          # full replacement text, when the tool gives one
+    replacements: tuple[tuple[str, str], ...] = ()   # (old, new) pairs
+    replace_all: bool = False
+
 
 @dataclass(frozen=True)
 class ToolCall:
     native_name: str
-    operation: Operation | None     # None = an operation no builtin reasons about
-    command: str | None = None
-    paths: tuple[Path, ...] = ()
-    raw_input: dict | None = None   # adapters only
+    operation: Operation | None         # None = an operation no builtin reasons about
+    command: str | None = None          # RUN_COMMAND
+    reads: tuple[Path, ...] = ()        # READ_FILE
+    offset: int | None = None           # READ_FILE; None = unbounded
+    limit: int | None = None            # READ_FILE; None = unbounded
+    edits: tuple[FileEdit, ...] = ()    # MODIFY_FILE
+    raw_input: object | None = None     # adapters only
+
+    @property
+    def paths(self) -> tuple[Path, ...]:
+        return self.reads + tuple(e.path for e in self.edits)
 ```
 
-`paths` is plural because Codex's `apply_patch` and Copilot's `edit` can touch
-several files in one call; a singular `file_path` is a Claude Code assumption
-that `pre_tool_use_git_scope` would silently under-enforce elsewhere.
+Both collections are plural because Codex's `apply_patch` and Copilot's `edit`
+can touch several files in one call; a singular `file_path` is a Claude Code
+assumption that `pre_tool_use_git_scope` would silently under-enforce elsewhere.
+
+Where an adapter cannot supply a field — a tool that reports the file it touched
+but not the text it wrote — it leaves it `None`, and the hook that needs it is
+reported unavailable for that agent rather than run against a hole. A field the
+adapter cannot fill is the same problem as an event the agent does not deliver,
+and it is reported the same way.
+
+**Matchers are declared as operations, not as Claude tool names.** `HookEntry`
+today carries a Claude regex (`loader.py:78`:
+`matcher="Bash|Read|Edit|Write|NotebookEdit"`). A hook declares the `Operation`s
+it guards and the adapter translates that into its own matcher syntax and tool
+names. Otherwise a hook installs on Copilot and simply never fires for the
+operations it was written to protect — installed, green in `lh doctor`,
+enforcing nothing.
 
 Each builtin declares the operations it reasons about. `lh doctor` then answers
 the question that matters — *does this hook cover these operations on this
@@ -694,6 +842,36 @@ under `shared/` and is meaningless to one agent is a content problem, not a
 deploy problem; an asset under an agent directory that never reaches that agent
 is the bug this prevents.
 
+A layout change is a migration, and the four questions it raises are part of
+this decision rather than of its implementation:
+
+**Collisions.** `shared/skills/` and `claude-code/skills/` are the normal case,
+not the edge one. `ensure_symlink` links whole directories, so the second link
+*replaces* the first — it does not merge their contents. Deployment therefore
+becomes **recursive over directories and linking at the file level**: a
+directory present in both segments is walked, and its files are linked
+individually with the agent segment winning on a same-name file. A collision at
+the file level is reported, not silently resolved.
+
+**The flat layout that exists today.** Profiles currently have their assets at
+the root, and `deploy` must keep working across the change. `lh deploy` treats a
+profile with no `shared/` directory as entirely shared — the current behaviour,
+unchanged — and `lh profile migrate` moves assets into segments when the user
+asks. Nobody is required to migrate to keep a working profile.
+
+**Links the harness wrote and no longer generates.** `ensure_symlink` reports
+that a link already exists and moves on, so a stale link from the flat layout
+survives forever once the segmented deploy stops producing it. Deploy records
+the set of links it owns and removes the ones it no longer generates, leaving
+anything it did not create alone. This is `WriteOp`'s delete case from decision
+4, applied to symlinks.
+
+**`sync_agent_md.py` writes into the same tree.** It looks for segments at the
+profile root (`sync_agent_md.py:71`: `entry / f"{stem}.head.md"`) and writes the
+assembled document there. If deploy stops linking the profile root, the document
+it assembles is never deployed. The assembler and the deployer must agree on one
+layout; that agreement is part of step 7, not a later cleanup.
+
 ### 11. Transcript dependence is a hook capability, declared before the reader exists
 
 `TranscriptReader` is last in the sequence (below), and the first two drafts
@@ -712,10 +890,31 @@ So `Stop` existing on an agent, with `DENY` in its `verdicts`, does **not** mean
 there is nothing to verify, and will pass. A hook that cannot fail is worse than
 a hook that is absent, because `lh doctor` reports it green.
 
-Each builtin therefore declares `requires_transcript: bool` in the same step
-that migrates it — not when the reader is written. A profile whose agent has no
-`TranscriptReader` does not deploy the transcript-dependent hooks, and
-`lh doctor` reports them as unavailable rather than passing.
+**A boolean is not enough, and neither is "has a reader".** A future Codex
+reader could deliver messages and token counts and still have no concept of
+`/goal`; `requires_transcript: bool` would re-enable `stop_verify_guard` the
+moment that reader shipped, reintroducing exactly the silent pass this decision
+exists to prevent. So the dependency is declared as named signals:
+
+```python
+class Signal(StrEnum):
+    MESSAGES = "messages"           # turns, roles, text
+    TOOL_CALLS = "tool_calls"       # which tools ran, with what
+    TOKEN_USAGE = "token_usage"     # per-turn accounting
+    GOAL_STATUS = "goal_status"     # an explicit user-set objective
+```
+
+Each builtin declares the signals it needs; each `TranscriptReader` declares the
+signals it provides. A hook deploys only where its signals are all available,
+and `lh doctor` names the missing one rather than reporting a generic absence.
+`stop_verify_guard` needs `GOAL_STATUS`, which today only Claude Code has.
+
+**Claude Code's reader cannot wait for step 11.** Applying the rule literally
+with the reader at the end of the sequence would undeploy working Claude Code
+hooks for the length of the migration. So step 2 ships a Claude Code
+`TranscriptReader` covering the four signals the existing hooks already parse —
+it is a move of code that exists, not new capability — and step 11 becomes
+*other agents' readers*, which is where the real unknowns are.
 
 
 ## Per-agent reference
@@ -810,7 +1009,7 @@ Measured against the deployed profile sources rather than estimated:
 
 | Asset | Portable as-is | Work |
 |---|---|---|
-| Hooks (Python, invoked as `lh hook <name>`) | yes, after decision 1 | the runner migration is the work; the declaration is generated |
+| Hooks (Python, invoked as `lh hook <name>`) | conditionally | the runner (decision 1) makes them *runnable*; whether a given hook is *useful* depends on the agent supplying its operations (decision 9) and its signals (decision 11). Portability is per hook, per agent, not a property of the set |
 | MCP servers | yes | none — already declared in `config.toml` |
 | Skills (`SKILL.md` directories) | yes | placement only; `~/.agents/skills` scanned by Codex and opencode (source) |
 | Slash commands (Markdown + frontmatter) | yes | placement only |
@@ -843,9 +1042,11 @@ six lines move to an agent-specific segment. `sync_agent_md.py` assembles both.
   blocking are properties of (agent, event), and the case that matters — a
   `PreToolUse` whose deny is ignored — is invisible at agent granularity.
 
-- **`post_deploy()` for Codex hook trust.** Rejected: the binary exposes trust
-  bypass as a config key, which the adapter already serialises. A lifecycle
-  method would generalise one agent's workaround into the Protocol.
+- **`post_deploy()` for Codex hook trust.** Rejected, but not for the reason the
+  previous revision gave — it claimed the adapter could serialise a bypass
+  config key, which does not exist (decision 5). The reason is that trust cannot
+  be completed programmatically at all, so a lifecycle method would have nothing
+  to do.
 
 - **`format_hook_output -> dict`.** Rejected: cannot express exit 2, which is
   how two of the three blocking hooks block.
@@ -900,8 +1101,11 @@ six lines move to an agent-specific segment. `sync_agent_md.py` assembles both.
 
 - The ADR-004 guarantee becomes testable for the first time, against a real
   adapter rather than a `NullAdapter`.
-- The hook implementations — the bulk of the framework's value — are written once
-  and run on every agent whose `hook_events()` names the event.
+- The hook implementations — the bulk of the framework's value — are written
+  once and run on every agent that delivers the event, supplies the operations
+  the hook inspects, and provides the signals it reads. Where any of those is
+  missing the hook is not deployed and `lh doctor` names what is absent, rather
+  than running it against a hole.
 - Features degrade explicitly instead of silently. An agent without hooks is a
   reported state; a hook that cannot block is a reported state.
 - Nine hardcoded `get_agent("claude-code")`, one ad-hoc key-translation tuple,
@@ -983,48 +1187,61 @@ non-identity adapter has run against it.** Step 3 is that gate.
    format change and asserts no duplicate. This is a defect on `main` today
    (decision 1) and every later step compounds it.
 1. `HookEvent`, `HookDecision`, `Verdict`, `HookOutput`, `HookSupport`,
-   `ToolCall`, `Operation`, `ConfigArtifact`, `MergeResult` and the Protocol
-   methods in `agents/base.py`. `ClaudeCodeAdapter` implements them with today's
-   hardcoded values extracted; `parse_hook_input` and `format_hook_output` are
-   identity. Type-check only.
+   `ToolCall`, `FileEdit`, `Operation`, `Signal`, `ConfigArtifact`, `WriteOp`
+   and the Protocol methods in `agents/base.py`. `ClaudeCodeAdapter` implements
+   them with today's hardcoded values extracted; `parse_hook_input` and
+   `format_hook_output` are identity. Tests first, like everything else in this
+   repo — the previous revision said "type-check only" here, which contradicts
+   the repo's own non-negotiable that strict TDD has no exceptions.
 2. **`lh hook <name> --profile <p>` becomes the runner**, with *three* builtins
    migrated, not eighteen: `pre_tool_use_security` (deny via stderr + exit 2),
-   `stop_verify_guard` (block via stdout, and transcript-dependent) and
+   `stop_verify_guard` (block via stdout, needs `GOAL_STATUS`) and
    `context_inject` (additional context, no verdict). Both entry points move —
-   `hook_invoke` and `lh hooks run`. Golden test per hook on stdout, stderr and
-   exit code, every branch.
-3. **Contract gate: a throwaway `CodexAdapter` runs those three hooks.** Codex
-   verified with `--oss` against a local model so no account is needed. Deploy,
-   trust the hooks manually (decision 5), observe each fire, observe
-   `pre_tool_use_security` actually refuse a command, observe `stop_verify_guard`
-   find no goal marker and be reported unavailable rather than green. Anything
-   the contract cannot express is fixed **here**, while three hooks depend on it
+   `hook_invoke` and `lh hooks run` — and the runner's failure policy
+   (decision 3) lands with them. Claude Code's `TranscriptReader` moves here too,
+   since decision 11 would otherwise undeploy working hooks for the length of
+   the migration. Golden test per hook on stdout, stderr and exit code, every
+   branch.
+3. **A vertical slice of config deployment, Claude Code only.**
+   `config_targets()` / `plan_config()` and an engine that discovers, reads,
+   plans and applies. Existing `settings.json` and `.claude.json` byte-identical.
+   This has to precede the gate: without it the engine writes Claude-shaped
+   `settings.json` at any target, and step 4 could not deploy to Codex at all.
+   The previous revision put it after the gate, which made the gate
+   unperformable.
+4. **Contract gate: a throwaway `CodexAdapter` runs those three hooks.** Codex
+   verified with `--oss` against a local model so no account is needed. Deploy
+   through step 3's engine, trust the hooks manually (decision 5), observe
+   `pre_tool_use_security` and `context_inject` fire, observe
+   `pre_tool_use_security` actually refuse a command, and observe
+   `stop_verify_guard` **not deployed at all** because Codex supplies no
+   `GOAL_STATUS` — with `lh doctor` naming the missing signal. Anything the
+   contract cannot express is fixed **here**, while three hooks depend on it
    instead of eighteen.
-4. Migrate the remaining 15 builtins, each declaring its `Operation` set and
-   `requires_transcript`. Delete `profile_name()`, `_TRANSCRIPT_KEYS` and the
-   nine `get_agent("claude-code")` literals.
-5. `agent` per profile, `agent_for_profile()`, `per_profile` on `Capability`,
+5. Migrate the remaining 15 builtins, each declaring its `Operation` set and its
+   `Signal` set. Delete `profile_name()`, `_TRANSCRIPT_KEYS` and the nine
+   `get_agent("claude-code")` literals.
+6. `agent` per profile, `agent_for_profile()`, `per_profile` on `Capability`,
    the 18 `cfg.agent.type` readers. Full save/load/save/load round trip on the
    new-document and merge-on-existing paths. `CapabilityRegistry.toggle()` walks
    with `getattr`/`setattr` only (`plugins/capabilities.py:246-248`) and cannot
    reach `[profiles.<name>].agent`; decide explicitly whether the registry
    *reports* per-profile state or also *writes* it, and implement the one chosen.
-6. `hook_config()` / `mcp_config()` returning `MergeResult`; `deploy_hooks` and
-   `deploy_mcp_servers` write artifacts. Existing `settings.json` and
-   `.claude.json` byte-identical, and Codex's `[projects.*]` preserved across a
-   redeploy.
-7. `system_docs()` replaces `system_doc_name()`; update the four call sites.
-   Per-agent profile asset segments (decision 10).
-8. **`CodexAdapter` for real**, replacing the throwaway from step 3, with trust
+7. Multi-file config planning: several targets, deletes, the mtime/size abort,
+   and Codex's `[projects.*]` preserved across a redeploy.
+8. `system_docs()` replaces `system_doc_name()`; update the four call sites.
+   Per-agent profile asset segments, file-level linking, stale-link removal, and
+   `sync_agent_md.py` agreeing on the layout (decision 10).
+9. **`CodexAdapter` for real**, replacing the throwaway from step 4, with trust
    reporting in `lh doctor`.
-9. `hook_events()` surfaced in `lh doctor` per profile: honoured verdicts per
-   event, covered operations per hook, transcript availability.
-10. **`CopilotAdapter`.** The 1.0.83 session format is now known (see above), so
+10. `hook_events()` surfaced in `lh doctor` per profile: honoured verdicts per
+    event, covered operations per hook, missing signals per hook.
+11. **`CopilotAdapter`.** The 1.0.83 session format is now known (see above), so
     the remaining unknown is the hook payload, which no local hook has fired.
     The first agent where `system_docs()` returns something other than a
     repo-shaped filename.
-11. `TranscriptReader`, Claude Code first, then Codex — whose rollout format is
-    now observed rather than assumed — then the others.
+12. `TranscriptReader` for the other agents — Codex first, whose rollout format
+    is now observed rather than assumed. Claude Code's shipped in step 2.
 
 ## Verification gates
 
@@ -1069,8 +1286,10 @@ ship broken while every test passes.
   `stop_verify_guard` on an agent with no `goal_status` marker passes every test
   while enforcing nothing.
 - **A written hook file is not an installed hook.** Observe the Codex untrusted
-  case before claiming the bypass key works: change a hook's command with the
-  key absent and watch it be skipped.
+  case: deploy, start a session, and watch the hooks be skipped before anyone
+  has trusted them. Then trust them and watch them fire. `lh doctor` must not
+  report `trusted` for either state — only `untrusted`, `trust unknown` or
+  `trust stale`, which is all it can establish (decision 5).
 - **Adapters are verified against installed binaries, not docs.** Every value in
   the per-agent reference marked `source` or `none` is a claim awaiting
   confirmation. Vendor documentation lagged the binary in more than one case
