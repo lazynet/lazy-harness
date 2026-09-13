@@ -288,6 +288,50 @@ def test_default_pricing_includes_mythos_5() -> None:
     assert pricing["claude-mythos-5"] == pricing["claude-fable-5"]
 
 
+def test_default_pricing_includes_fable_5_1() -> None:
+    """claude-fable-5-1 is the model this profile actually runs on.
+
+    It shares Fable 5's $10/$50 and both write rates, so the only number
+    worth pinning is the cache read: 0.025x base input, not the 0.1x every
+    other row uses. Without the entry the sessions price at 0.0 and the
+    monthly total silently under-reports.
+    """
+    from lazy_harness.monitoring.pricing import default_pricing
+
+    pricing = default_pricing()
+    assert pricing["claude-fable-5-1"] == {
+        "input": 10.0,
+        "output": 50.0,
+        "cache_read": 0.25,
+        "cache_create": 12.5,
+        "cache_create_1h": 20.0,
+    }
+
+
+def test_fable_5_1_cache_reads_are_cheaper_than_fable_5s() -> None:
+    """The 0.025x read multiplier is Fable 5.1-only — don't copy the 5 row.
+
+    Reads dominate token volume in a long session, so pricing them at
+    Fable 5's $1 would over-charge the bucket that matters most by 4x.
+    """
+    from lazy_harness.monitoring.pricing import default_pricing
+
+    pricing = default_pricing()
+    assert pricing["claude-fable-5-1"]["cache_read"] < pricing["claude-fable-5"]["cache_read"]
+
+
+def test_default_pricing_includes_mythos_5_1() -> None:
+    """claude-mythos-5-1 carries the same rates as claude-fable-5-1.
+
+    Including the 0.025x cache read — the published table lists the two
+    models on one line.
+    """
+    from lazy_harness.monitoring.pricing import default_pricing
+
+    pricing = default_pricing()
+    assert pricing["claude-mythos-5-1"] == pricing["claude-fable-5-1"]
+
+
 def test_synthetic_is_recognised_as_a_pseudo_model() -> None:
     """Claude Code emits `<synthetic>` for messages that consumed nothing.
 
@@ -396,6 +440,7 @@ def test_the_measured_batch_totals_the_verified_amount() -> None:
         ("claude-sonnet-4-6", 6.0),
         ("claude-haiku-4-5", 2.0),
         ("claude-fable-5", 20.0),
+        ("claude-fable-5-1", 20.0),
     ],
 )
 def test_one_hour_cache_writes_bill_at_twice_the_base_input_rate(
