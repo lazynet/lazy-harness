@@ -187,6 +187,41 @@ Es el mismo patrón que el gate de `auto_rebuild_on_commit`: un contrato declara
 
 **Acción:** auditar cuántos MCPs están activos por perfil. Desactivar los que no se usen frecuentemente.
 
+### `[hooks.*].external` no puede expresar un comando por perfil
+
+**Por qué:** `external` es una lista global del `config.toml` y cada entrada es
+un string literal que `entries_for()` en `deploy/engine.py` copia **verbatim** a
+cada perfil (`HookEntry(command=ext.command, ...)`, el bloque comentado
+"Third-party commands declared in config are emitted to every profile"), sin
+expansión de paths ni de variables. Los scripts del harness sí se resuelven por
+perfil, vía `hook_command(hook, profile=profile)` — `external` es la única mitad
+que no. Un hook cuyo comando incluye el
+directorio de config del perfil no tiene forma de expresarse ahí: una sola
+entrada apuntaría al perfil equivocado en todos los demás.
+
+Medido el 2026-09-14, al hacer que `lh deploy` pasara a ser el único dueño del
+bloque `hooks` (ADR-041 step 2). El registro del hook `SessionStart` de la
+integración de herdr —cuyo comando es `bash
+~/.claude-<profile>/hooks/herdr-agent-state.sh session`— **salió de control de
+versiones** con ese cambio: vivía hardcodeado y templateado en el snapshot de
+`settings.json` que mantenía chezmoi, y al borrar ese bloque no hubo dónde
+ponerlo. Es una consecuencia aceptada, no un bug de ese cambio.
+
+El síntoma es silencioso y difiere por máquina: donde el hook ya está,
+`lh deploy` lo preserva como ajeno y todo sigue andando; una máquina nueva
+arranca sin él y nada avisa. Hoy el workaround es correr `herdr integration
+install claude` a mano una vez por perfil, con `CLAUDE_CONFIG_DIR` apuntando al
+perfil correcto.
+
+**Acción:** una de dos, y la segunda es más barata.
+
+1. Soporte per-profile en `external` — una key `profiles = [...]` por entrada, o
+   un `[profiles.<name>.hooks.*]` que se mergee sobre el bloque global.
+2. Un token de path que el deploy expanda al escribir cada perfil
+   (`{profile}`, `{profile_config_dir}`). Cubre este caso y cualquier otro
+   comando externo que necesite el directorio del perfil, sin tocar la forma de
+   la config.
+
 ---
 
 ## Open — Prioridad BAJA
