@@ -59,30 +59,11 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 - [x] **`save_config` destruía config (51 claves) + tres claves de `[context_inject]` ignoradas en silencio** — read-modify-write sobre TOML crudo (`tomlkit`) en vez de completar el serializer, per D5 de [`designs/2026-08-17-capability-registry-design.md`](designs/2026-08-17-capability-registry-design.md) (commit `56429ad`, PR #167). Selftest `check_config_round_trip` registrado. Esta entrada había quedado listada como ALTA abierta pese a estar mergeada desde el 2026-08-17; el backlog no se había actualizado. Reconciliado el 2026-09-10 agregando además `tests/unit/test_config.py::test_save_config_round_trip_preserves_every_key_of_the_live_config` y `::test_context_inject_switches_survive_round_trip_against_the_live_config`, que corren el ciclo completo contra una copia del `config.toml` real de la máquina (nunca contra el archivo real) en vez de solo contra el fixture sintético `_FULL_CONFIG`.
 - [x] **Ollama como backend para compound-loop** — cerrado. [ADR-033](adrs/033-llm-backend-abstraction.md) promovió la idea del legacy ADR-010 a un Protocol provider-agnostic (implementado 2026-06-11) y [ADR-039](adrs/039-role-routed-inference.md) la hizo utilizable: el ruteo pasa a ser por rol (`[llm.roles]` → `run_inference`), así el modelo local atiende trabajo barato sin quedarse también con el destilado y el grading. Vivió como MEDIA abierta con `**Resuelto:**` en su propio cuerpo; reconciliado el 2026-09-12.
 - [x] **`TranscriptReader` de Claude Code — shippeado en el step 2** — `Signal`, `TranscriptEvent`, `TokenUsage`, `GoalStatus` y el Protocol `TranscriptReader` viven en `agents/base.py`; `ClaudeCodeAdapter.read()` los emite y su `signals()` declara las cuatro (`agents/claude_code.py:367-369`); `_shared.transcript_reader(profile)` resuelve el reader por perfil y devuelve `None` cuando el adapter no lo implementa; y `stop_verify_guard._goal_declared` consume `Signal.GOAL_STATUS` en vez de escanear el `attachment` a mano (PR #273, 2026-09-14). Cierra el prerequisito del step 4 y deja el step 12 como lo que siempre fue: los readers de los otros agentes. Vivió como única ALTA abierta hasta el 2026-09-14 porque el PR tocó `src/` y `tests/` y ningún spec — el mismo patrón que ya habían tenido la traducción de schedule y `save_config`.
+- [x] **El chequeo de coherencia del CLI no miraba flags** — el walk paraba en el primer token con `-`, así que un flag inventado en `docs/` pasaba verde. Cerrado el 2026-09-14: las dos direcciones comparten un solo `_walk_command_path`, cuyo `stop` distingue "nombre que no resuelve" de "tokens que dejaron de ser clasificables", y `find_unknown_lh_flags` resuelve cada flag contra las opciones del comando que lo precede — **strict**, que es la semántica de click (`lh status --version` es `No such option`). Medido sobre `docs/**` antes de escribirlo: 75 invocaciones con flags, 104 tokens, 38 distintos, todos long-form; strict y lax dan idéntico hoy (97 known), así que la regla correcta no cuesta ningún falso positivo. Los tres bordes que el item pedía decidir quedaron ignorados a propósito, cada uno con su test: lo que va después del `--` de click, los flags que siguen a un `<placeholder>` que frenó el walk (`lh config <feature> --init`, donde `--init` existe pero sólo en las hojas), y los flags de un comando que no resuelve, que el scan viejo ya reporta. Verificado en las dos direcciones: con `lh deploy --dry-run` reinyectado a mano el scan nuevo falla y el viejo pasa verde. Primer hallazgo del checker: `docs/how/hooks.md` documentaba `lh hooks run my_hook --event session_start`, que sale exit 2 con `No such option: --event` — `EVENT` es posicional. Aparte, el help de `--memory-dir` apuntaba al runtime dir: era un solo `_MEMORY_DIR_OPTION` compartido por seis comandos, no dos docstrings.
 
 ---
 
 ## Open — Prioridad MEDIA
-
-### El chequeo de coherencia del CLI no mira flags, y dos docstrings apuntan al path viejo
-
-**Por qué:** `tests/docs/test_cli_reference_coherence.py` camina el árbol de click
-por tokens y **para en el primer token que arranca con `-`**, así que un flag
-inventado pasa verde. Medido el 2026-09-12: `lh deploy --dry-run` vivía en dos
-lugares de `docs/how/profiles-and-deploy.md` y `lh deploy` no declara ninguna
-opción. Lo cazó el `/coherence-audit`, no el test — y una de las dos apariciones
-la había escrito esa misma sesión, mientras corregía identificadores inventados.
-
-Aparte, el help de `--memory-dir` en `lh memory status` y en
-`lh memory proposals list` dice "Defaults to the agent runtime dir for this cwd".
-Es el path legacy: `memory_dir_for` resuelve al knowledge store y sólo cae ahí de
-fallback. Son docstrings en `cli/memory_cmd.py`, no prosa de `docs/`, así que
-ningún test de coherencia de docs los toca.
-
-**Acción:** extender el checker a flags tiene bordes reales — placeholders
-(`<path>`), todo lo que va después de `--` en `lh exec`, y flags de subcomando
-contra flags de grupo. Decidir el alcance antes de escribirlo. Los dos docstrings
-son un fix de una línea cada uno, con TDD.
 
 ### `release-please` deja `uv.lock` un release atrás
 
