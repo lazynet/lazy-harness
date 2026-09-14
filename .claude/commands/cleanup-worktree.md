@@ -32,15 +32,28 @@ You are cleaning up the worktree `.worktrees/$ARGUMENTS` and its associated bran
    unrelated work landing on `main` afterwards does not pollute the comparison:
 
    ```bash
-   FILES=$(git diff --name-only "origin/main...$BRANCH")
-   if [ -z "$FILES" ]; then
+   # merge-check
+   TOUCHED=$(git diff --name-only "origin/main...$BRANCH")
+   DIVERGED=$(git diff --name-only "origin/main...$BRANCH" | while IFS= read -r f; do
+     git diff --quiet origin/main "$BRANCH" -- "$f" || printf '%s\n' "$f"
+   done)
+   if [ -z "$TOUCHED" ]; then
      echo "MERGED: branch contributes no changes"
-   elif git diff --quiet origin/main "$BRANCH" -- $FILES; then
+   elif [ -z "$DIVERGED" ]; then
      echo "MERGED: branch content already present on origin/main"
    else
      echo "UNMERGED"
+     printf '%s\n' "$DIVERGED"
    fi
    ```
+
+   Each file is compared on its own, one `git diff` per path. A single
+   `-- $FILES` pathspec would be wrong in both shells: `zsh` does not word-split
+   an unquoted expansion, so the whole list arrives as one path that matches
+   nothing, and a pathspec matching nothing makes `--quiet` exit 0 — the branch
+   reads as merged. `bash` does split, but on every space, so it breaks on paths
+   containing one. This block is executed verbatim by
+   `tests/integration/test_cleanup_worktree_merge_check.py` under both shells.
 
    If **both** checks fail, **stop immediately** and tell the user the branch has
    unmerged commits. Do not offer to force-remove. Ask the user how they want to proceed.

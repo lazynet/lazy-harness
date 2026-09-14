@@ -29,6 +29,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The /cleanup-worktree merge check is executed by the agent's shell, so
+      # its test runs the snippet under both. The runner images carry bash;
+      # only macOS carries zsh, and a missing shell skips rather than fails.
+      - name: Install zsh
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y zsh
+
       - name: Install uv
         uses: astral-sh/setup-uv@v3
 
