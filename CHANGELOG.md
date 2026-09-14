@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.60.0](https://github.com/lazynet/lazy-harness/compare/v0.59.0...v0.60.0) (2026-09-14)
+
+
+### Features
+
+* ground the multi-agent hook contract — step 0, per-profile agents, artifact versions ([968195e](https://github.com/lazynet/lazy-harness/commit/968195e7117a4ec7363173ad8fe0f756437ae411))
+
+
+### Documentation
+
+* add the behaviour-not-names verification gate and its incident ([#264](https://github.com/lazynet/lazy-harness/issues/264)) ([c646008](https://github.com/lazynet/lazy-harness/commit/c64600806532558f5b29d632c38580d001c2b768))
+* **design:** add staging and rollback to the blast radius spec ([d3cea73](https://github.com/lazynet/lazy-harness/commit/d3cea7323218d276d2737d490faadf21e18fe828))
+* **design:** add the multi-agent blast radius outside the harness seam ([3f8dcf8](https://github.com/lazynet/lazy-harness/commit/3f8dcf8f9dfd4815ccc69773532a65d84edc9ed4))
+* **design:** close the blast radius open questions that were judgements ([202d1d2](https://github.com/lazynet/lazy-harness/commit/202d1d2eec254db30543497cc29109d25fcc161f))
+* **design:** close the contract gaps found in the second review ([3558905](https://github.com/lazynet/lazy-harness/commit/355890531192c454beb9efb782e1a5d538289aee))
+* **design:** correct both multi-agent specs after the third external review ([3218f0e](https://github.com/lazynet/lazy-harness/commit/3218f0eaee3528fc981d4a2e151c2dc2071523a3))
+* **design:** revise multi-agent design after external review ([59d3a78](https://github.com/lazynet/lazy-harness/commit/59d3a78e15d7ba5e82cb8ef9b2b0cd362168316a))
+* scope the release-flow claims to what was measured ([3c7f899](https://github.com/lazynet/lazy-harness/commit/3c7f899efa5e29dd99299f488db8858f4b08a024))
+
 ## [0.59.0](https://github.com/lazynet/lazy-harness/compare/v0.58.1...v0.59.0) (2026-09-13)
 
 
