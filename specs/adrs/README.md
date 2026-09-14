@@ -60,7 +60,7 @@ Each active ADR carries one of the following statuses in its header. The column 
 |---|---|
 | `accepted` | Decision taken **and** embodied in code, config, or tests. Default state for a shipping decision. |
 | `accepted-deferred` | Decision taken and locked, but implementation is intentionally not yet scheduled. The ADR is not incomplete — its realisation is waiting for a specific trigger documented in the ADR itself. |
-| `proposed` | Written and reasoned, but not yet committed to. Open for revision. ADR-034 currently holds this status. |
+| `proposed` | Written and reasoned, but not yet committed to. Open for revision. ADR-034 and ADR-041 currently hold this status. |
 | `superseded-by: NNN` | Replaced by a later ADR. The record is kept for history; the pointer names its replacement. ADR-020 currently holds this status. |
 
 New decisions default to `accepted` once they ship. A decision that turns out wrong is **superseded** by a new ADR rather than edited in place.

@@ -344,6 +344,36 @@ def _render_artifact_versions(
         )
 
 
+def _render_unhonoured_profile_agents(console: Console, cfg: Config) -> None:
+    """Report a `[profiles.<name>].agent` the deploy path does not honour yet.
+
+    `agent_for_profile` resolves the field for `.envrc` and for the artifact
+    version reader, but `deploy_hooks`, `deploy_mcp_servers` and
+    `deploy_claude_symlink` still resolve `cfg.agent.type` once for every
+    profile. A profile declaring a different agent therefore gets the global
+    agent's config shape written into its directory, and nothing says so.
+
+    Silent unless a profile actually diverges — declaring the same agent as the
+    global one is not a warning, it is a redundant but correct declaration.
+    """
+    divergent = [
+        (name, entry.agent)
+        for name, entry in cfg.profiles.items.items()
+        if entry.agent and entry.agent != cfg.agent.type
+    ]
+    if not divergent:
+        return
+    console.print("\n[bold]Profile agents[/bold]")
+    for name, agent_type in divergent:
+        console.print(
+            f"  [yellow]![/yellow] {name} declares agent '{agent_type}', but hook and MCP "
+            f"config are still generated for '{cfg.agent.type}' and written to every profile"
+        )
+    console.print(
+        "      [dim]`.envrc` honours the declaration; config generation does not yet.[/dim]"
+    )
+
+
 def _project_memory_dir(agent: AgentAdapter, cfg: Config | None) -> Path:
     """Memory dir for the current project, canonicalised across worktrees."""
 
@@ -468,6 +498,7 @@ def doctor() -> None:
 
     reports = collect_artifact_version_reports(cfg, config_dir() / "profiles")
     _render_artifact_versions(console, reports)
+    _render_unhonoured_profile_agents(console, cfg)
 
     console.print()
     if ok:
