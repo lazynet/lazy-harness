@@ -248,6 +248,36 @@ Pasó con `pre-tool-use-git-scope` en 0.57.0 — registrado, default-on, testead
 
 La auditoría es tres líneas contra `DEFAULT_HOOKS` y el `config.toml`, comparando por evento e ignorando los extra deliberados (`herdr-context-gauge`, `post-tool-use-ansible-lint`). Es la forma que debería tomar el check de `lh doctor`.
 
+## Multi-agente — items declarados, deliberadamente no cableados
+
+Los tres salen de [`designs/2026-09-13-multi-agent-blast-radius-design.md`](designs/2026-09-13-multi-agent-blast-radius-design.md) y están acá por el gate del `CLAUDE.md`: *un `config.toml` sin una entrada puede ser una decisión y no un olvido, así que grepeá el backlog antes de cablear*. Si encontrás alguno de estos sin implementar, **no es un descuido** — leé la condición de arranque antes de tocarlo.
+
+### Metric event v3 — dimensión `agent` y modelo de facturación plano
+
+`MetricEvent` (`plugins/contracts.py`) no tiene dimensión `agent`, y `monitoring/pricing.py` asume precio por token. De los tres agentes del diseño, dos no se facturan así: Copilot va por asiento y Codex entra por la suscripción. Reportar un costo por token para esos dos no es aproximar, es inventar.
+
+**Condición de arranque:** antes de que se reporte el primer costo no-Claude. No antes — es la decisión 3 del spec derivado y *no sobrevive* a los kill criteria, así que implementarla temprano es trabajo que se tira si el multi-agente muere.
+
+### Segmentos de perfil nombrados por rol, no por filename destino
+
+El árbol de system docs se keyea hoy por el filename de Claude (`CLAUDE.md`) a través de tres repos. `system_docs()` reemplaza a `system_doc_name()` y los segmentos pasan a nombrarse por rol.
+
+**Condición de arranque:** con el step 8 del spec padre, en el mismo release que el rename del hook de sync (decisión 5). Tampoco sobrevive a los kill criteria.
+
+### `lazy-ai-tools` — deuda de nomenclatura, registrada sin pagar
+
+`ClaudeCallLog`, `StepLog.claude_calls` y varios docstrings nombran a Claude donde el concepto es "el agente". Relevado el monorepo entero: **no necesita ningún cambio** para el multi-agente.
+
+**Condición de arranque:** ninguna. Es la decisión 8 y está explícitamente *not scheduled*. Renombrar 559 registros históricos para arreglar un nombre es justo el refactor-fuera-del-task que el `CLAUDE.md` prohíbe. Se toca solo si otra cosa ya está tocando esos archivos.
+
+### Hooks de usuario tienen el mismo bug de duplicación que tenían los builtins
+
+Cerrado para builtins (`_is_harness_owned` ahora identifica por nombre canónico dentro de `lh hook <name>`). Los hooks de usuario siguen expuestos: su comando generado es `{sys.executable} {path}`, y `sys.executable` cambia al actualizar Python — con lo cual el redeploy preserva la entrada vieja como ajena y queda duplicada.
+
+Arreglarlo requiere que la clasificación conozca los hooks configurados, o sea cambiarle la firma a `_is_harness_owned`. No se hizo en el fix del step 0 para no ampliar el alcance.
+
+**Condición de arranque:** cuando alguien reporte un hook de usuario corriendo dos veces, o junto con el step 5 (migración de los 15 builtins restantes), que ya toca esa zona.
+
 ## ADR decisions pending
 
 - ~~**Legacy ADR-010 Ollama backend**~~ — cerrado. Promovido por [ADR-033](adrs/033-llm-backend-abstraction.md) y hecho utilizable por [ADR-039](adrs/039-role-routed-inference.md) (ruteo por rol).

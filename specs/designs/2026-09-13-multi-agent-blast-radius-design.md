@@ -3,6 +3,7 @@
 **Status:** proposed (revision 4, 2026-09-13 — a third external review found ten defects, all confirmed against the code. Four were assertions drawn from a name or a docstring without exercising the path, and one of those inverted this document's central claim about how a downgrade fails)
 **Date:** 2026-09-13
 **Derives from:** [2026-09-13-multi-agent-harness-design.md](2026-09-13-multi-agent-harness-design.md) — every decision number cited as *parent decision N* refers to that document.
+**Recorded as:** [ADR-041](../adrs/041-multi-agent-hook-contract.md), jointly with the parent — one decision, two documents. The items here that are deliberately *not* scheduled are in [`../backlog.md`](../backlog.md) under *Multi-agente — items declarados*, so an absent config entry reads as a decision rather than an oversight.
 **Relates to:** [ADR-009](../adrs/009-profile-symlink-deploy.md) (profile symlink deploy), [ADR-012](../adrs/012-sqlite-monitoring.md) (SQLite monitoring), [ADR-032](../adrs/032-agent-adapter-completeness.md) (adapter completeness), [ADR-035](../adrs/035-capability-registry.md) (capability registry), [ADR-037](../adrs/037-metric-event-v2-host-and-workload.md) (metric event v2), [ADR-038](../adrs/038-exec-envelope-cost-provenance.md) (exec envelope cost provenance)
 
 ## Problem
@@ -1010,6 +1011,38 @@ sequences them. Reverting a segment rename means both, in that order.
    and the unit; the number depends on a launch-to-session ratio nobody has
    measured. It is a measurement with a defined method, not a judgement, and it
    gates the *start of the horizon*, not the start of the work.
+
+   **Attempted 2026-09-13; the ratio cannot be computed, which confirms decision
+   1 rather than answering it.** There is no numerator. `git log -S "CREATE
+   TABLE launches" --all` returns exactly one commit — `202d1d2 docs(design)`,
+   the commit that added *this document's own SQL block*. The string has never
+   existed in code, only in prose here.
+
+   Two candidate proxies were checked and both rejected:
+
+   - `session_stats` cannot stand in for either half. It holds **more** distinct
+     sessions than there are transcripts on disk (lazy: 3619 rows against 2413
+     `.jsonl` files; flex: 3532 against 1295), because rows survive the
+     transcripts they describe. Even as a denominator it needs a stated window
+     — filtering on the session `date` column rather than file presence, e.g.
+     `date >= date('now','-28 days')`, sidesteps the accumulation.
+   - `loop_events.kind = 'session_closed'` is written by the compound-loop hook,
+     not by a launcher, so it counts the wrong event to begin with. It also
+     starts only at 2026-08-16, a fraction of `session_stats`' range, and 174 of
+     its rows carry an empty `profile` label — unattributable to either profile.
+
+   The instrument in decision 1 has to be built and given a real baseline window
+   **before** the horizon clock can start, which is what that decision already
+   says. What this measurement adds is that there is no interim proxy to start
+   the clock against in the meantime, so the parent's step 9 must not be treated
+   as the clock's start until the table exists and has accumulated a window.
 2. **Copilot's real `preToolUse` payload, and whether it honours `deny`.**
-   Inherited from the parent, listed here because decision 6 and the step-4 gate
-   both depend on it. It is a measurement against a binary, not a judgement.
+   **Closed 2026-09-13 by measurement against copilot 1.0.83** — the payload is
+   the camelCase shape with `toolArgs` as a nested object, `deny` is honoured, a
+   nonzero exit fails closed, and a timeout fails **open**. Evidence and the
+   literal payload are in the parent design's *Closed by measurement* section.
+
+   The consequence lands on decision 6: a `--bypass` level that reasons about
+   what a hook will refuse is reasoning about a hook that stops refusing
+   anything the moment it runs slow. On Copilot, a deny-carrying hook's timeout
+   is part of its security contract and belongs in what `lh doctor` reports.

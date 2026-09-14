@@ -50,6 +50,7 @@ Decisions that define the `lazy-harness` project itself.
 | [038](./038-exec-envelope-cost-provenance.md) | accepted | The `lh exec` envelope — cost provenance and the mute failure | A timed-out run is priced from its own transcript, `cost_source` names which door the figure came through, and a failure that says nothing gets a typed `error.kind`. |
 | [039](./039-role-routed-inference.md) | accepted | Role-routed inference — one resolution seam, two front ends | `lh exec` and `llm/registry.py` converge on `run_inference`; a named role picks the backend, so local models serve cheap work while Claude keeps the work that needs it. |
 | [040](./040-memory-reconcile-and-decay.md) | accepted | Reconcile and Decay — the two missing memory-pipeline stages | `lh memory decay` marks unreferenced learnings `status: superseded` by age horizon, never deletes. `lh memory reconcile` reports `decisions.jsonl` schema drift (deterministic) and, opt-in, contradicting decisions (LLM). Both propose-only; reconcile has no `--apply` at all. |
+| [041](./041-multi-agent-hook-contract.md) | proposed | The multi-agent hook contract — a runner that knows its profile | `lh hook <name> --profile <p>` becomes the runner, putting the adapter on the path a hook *takes* and not only the path it deploys through. Support and verdicts are declared per event, hooks declare the signals they need, and `[profiles.<name>].agent` makes a profile an (agent, identity) pair. The contract is not frozen until a non-identity adapter has run three builtins against it. |
 
 ### Status values
 
