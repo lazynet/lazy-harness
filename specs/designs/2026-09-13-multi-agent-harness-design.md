@@ -348,6 +348,50 @@ delivers `tool_result: {result_type, text_result_for_llm}` and the Claude SDK
 declares it unconstrained, so a `dict` annotation would be a lie that fails at
 the first `.get()`.
 
+**The verdict's channel differs by agent, and that is what `format_hook_output`
+absorbs.** Codex honours the JSON verdict: a `PreToolUse` hook emitting
+`hookSpecificOutput.permissionDecision = "deny"` and exiting 0 blocked the call
+with `error=Command blocked by PreToolUse hook: <reason>` ([run], 0.154.0).
+Copilot 1.0.83 does not honour that form: the same `hookSpecificOutput`-wrapped
+JSON on stdout with exit 0 was read, logged as `[hook stdout]` text, and
+**ignored** — `echo hello` ran — while the identical hook writing its reason to
+stderr and exiting 2 produced `Denied by preToolUse hook: hook exited with code
+2` ([run], 1.0.83). (An earlier run recorded under *Closed by measurement,
+2026-09-13* passed a **top-level** `permissionDecision` rather than the
+`hookSpecificOutput` wrapper and was honoured; the two runs differ in payload
+shape and the discrepancy is not resolved here.)
+
+So for one `HookDecision`, the refusal travels on stdout for Codex and on
+(stderr, exit code) for Copilot. `HookOutput`'s three channels are not three
+ways of saying the same thing — they are three wires, and which one carries the
+refusal is a property of the adapter, asserted per agent by the golden tests.
+
+**The stdin shape differs too, and only one of the two is Claude-shaped.** Codex
+delivers snake_case with `hook_event_name` and `transcript_path` ([run],
+0.154.0):
+
+```json
+{"session_id":"01a0a0df-…","turn_id":"01a0a0df-…",
+ "transcript_path":"…/sessions/2026/09/14/rollout-….jsonl","cwd":"…",
+ "hook_event_name":"PreToolUse","model":"gemma4:latest",
+ "permission_mode":"bypassPermissions","tool_name":"Bash",
+ "tool_input":{"command":"echo hello"},"tool_use_id":"call_olq8fs47"}
+```
+
+`UserPromptSubmit` is the same envelope plus `prompt`. Copilot delivers
+camelCase with neither field ([run], 1.0.83):
+
+```json
+{"sessionId":"3ea79314-…","timestamp":1789405602106,"cwd":"…",
+ "toolName":"bash","toolArgs":{"command":"echo hello","description":"Print hello"}}
+```
+
+Two consequences for `parse_hook_input`. `HookEvent.event` cannot be read off
+the payload on Copilot — the adapter knows which event it was invoked for and
+supplies the canonical name itself — and `HookEvent.transcript_path` is `None`
+there while Codex hands the path over directly, which is the asymmetry decision
+11 and step 12 lean on.
+
 ### 3. Hook support is declared per event, and so is the ability to block
 
 ```python
@@ -423,6 +467,29 @@ The first draft declared one `HookDelivery` tier per agent (`NATIVE` /
 session logs show `postToolUse`, `userPromptSubmitted`, `notification` and
 `agentStop` firing, and its bundle names `preToolUse` — but not `postCompact`;
 opencode has no hooks at all. Support is a property of the (agent, event) pair.
+
+**Copilot's hook vocabulary is now measured, and two of the events this repo
+depends on are not in it.** Sixteen candidate names were written into a hook
+file on 1.0.83 and the binary read back for which it rejected. Eleven are
+accepted — `preToolUse`, `postToolUse`, `postToolUseFailure`, `preMcpToolCall`,
+`permissionRequest`, `sessionStart`, `sessionEnd`, `preCompact`, `notification`,
+`subagentStart`, `subagentStop` — and five are dropped at load with
+`Ignoring unknown hook event(s) in <file>: …`: **`userPromptSubmit`,
+`postCompact`, `stop`, `error`, `preResponse`** ([run], 1.0.83). The
+session-log names in the paragraph above (`userPromptSubmitted`, `agentStop`)
+belong to the transcript's event vocabulary, not the hook one; the two lists are
+not the same list and neither implies the other.
+
+**That makes non-support two distinct states, and `lh doctor` has to tell them
+apart.** `stop_verify_guard` on Codex is a hook whose *event exists* — `Stop` is
+one of Codex's twelve — and whose *signal* is missing: it would install, run,
+find no goal marker, and pass (decision 11). On Copilot it is a hook whose
+**event does not exist**: `stop` never survives config load, so nothing is
+installed and nothing runs. `hook_events()` already expresses the second as an
+absent key and decision 11's signals express the first, but one shared
+"unavailable" line collapses a missing installation into a missing field, and
+the two have different resolutions — one waits on the agent's event vocabulary,
+the other on a `TranscriptReader`. The doctor line names which of the two it is.
 
 The honoured-verdict set is the property that matters. A `PreToolUse` hook that
 runs but whose deny is ignored is worse than no hook: `pre_tool_use_security`
@@ -552,6 +619,33 @@ deserialisation for it. The evidence the earlier draft relied on — the string
 `"must be a boolean"` in the binary — belongs to the app-server's request-override
 parser.
 
+**Confirmed behaviourally, 2026-09-14.** With `bypass_hook_trust = true` in
+`$CODEX_HOME/config.toml` and no flag, the hooks did not run and nothing was
+printed; with the key removed and `--dangerously-bypass-hook-trust` passed,
+Codex emitted `warning: --dangerously-bypass-hook-trust is enabled…` and the
+same hooks fired ([run], 0.154.0). The key is a no-op, and its no-op is silent —
+which is the property that makes it dangerous to a test, not just useless to a
+deployment. The gating itself is `enabled && (bypass_hook_trust || trust_status
+∈ {Managed, Trusted})` ([src], `discovery.rs:713` @ `6b9826e`).
+
+**There is a second gate, and the previous revision does not name it.** A
+project-layer hook — `<cwd>/.codex/hooks.json`, which Codex loads as a config
+layer of its own — needs *project* trust in addition to *hook* trust. A
+`SessionStart` probe there, with `--dangerously-bypass-hook-trust` on, did not
+fire and printed no warning; adding
+
+```toml
+[projects."/tmp/codex-research-wd"]
+trust_level = "trusted"
+```
+
+to `$CODEX_HOME/config.toml` made the identical file fire ([run], 0.154.0). So
+*deployed, hook-trusted, and still not running* is a reachable state whose only
+symptom is silence. `lh deploy` writes to the user layer and does not meet this
+gate, but anything `lh doctor` reports about Codex **project** hooks has to read
+`[projects.*]` as well as `[hooks.state]`, or it reports a hook as installed
+that the agent will never load.
+
 Two further corrections to what that decision asserted about trust:
 
 **Trust does not hash the hook's content.** It hashes the *normalised
@@ -566,7 +660,12 @@ fn hook_hash(event_name, matcher, group, normalized_handler) -> String {
 ```
 
 Editing `pre_tool_use_security.py` does **not** invalidate trust. Editing the
-generated declaration does. This inverts the risk: the dangerous case is not a
+generated declaration does. `NormalizedHookIdentity` is the event name, the
+matcher, and the single normalised handler, serialised to TOML before hashing
+([src], `discovery.rs:767` @ `6b9826e`) — so a `[hooks]` table written into
+`config.toml` and a `hooks.json` entry that declare the same thing hash to the
+same identity, and a redeploy that moves a hook between the two representations
+does not untrust it. This inverts the risk: the dangerous case is not a
 modified script running untrusted, it is a *redeploy* that changes a matcher and
 silently untrusts all 18 hooks mid-flight.
 
@@ -801,6 +900,18 @@ class ToolCall:
 Both collections are plural because Codex's `apply_patch` and Copilot's `edit`
 can touch several files in one call; a singular `file_path` is a Claude Code
 assumption that `pre_tool_use_git_scope` would silently under-enforce elsewhere.
+
+**One of the two agents already does half of this, which is the trap.** Codex
+0.154.0 hands the hook `"tool_name": "Bash"` for a call the model actually made
+as `exec_command` — the normalisation to the Claude Code name happens on Codex's
+side, before the payload is written ([run]). Copilot 1.0.83 hands over
+`"toolName": "bash"`, lower-case, unnormalised ([run]). So `ToolCall` on Codex
+is reached by an adapter whose name mapping is an **identity**, and on Copilot by
+one where it is a real translation. A contract exercised only against Codex
+therefore passes with the mapping unimplemented, and the first evidence of the
+gap is a matcher that never fires on Copilot — the exact failure this decision
+exists to catch. The (adapter, event) test matrix covers name mapping per agent,
+not once.
 
 Where an adapter cannot supply a field — a tool that reports the file it touched
 but not the text it wrote — it leaves it `None`, and the hook that needs it is
@@ -1253,6 +1364,23 @@ non-identity adapter has run against it.** Step 3 is that gate.
    express is fixed **here**, while three hooks depend on it instead of
    eighteen.
 
+   **The gate asserts the hook's effect, never the run's exit code.** Codex's
+   two trust gates are both silent when they skip: `bypass_hook_trust` in
+   `config.toml` is a no-op that warns about nothing, and a project-layer hook
+   without `[projects."<path>"] trust_level = "trusted"` is skipped without a
+   line (decision 5). A throwaway adapter that writes either and then checks
+   that `codex exec` exited 0 produces a green gate in which no hook ever ran.
+   So the assertions are the effects: the file `context_inject` writes exists
+   and carries this run's marker, and the marker string of the command
+   `pre_tool_use_security` refuses is **absent** from the session's output. The
+   run's exit code is not one of them.
+
+   **Hook support is probed by feature flag, not by version comparison.**
+   `codex features list` carries a `hooks  stable  true` row at 0.154.0 ([run]),
+   which is what the throwaway adapter reads. It establishes that the subsystem
+   is on and nothing further: whether any hook is trusted, and whether the
+   project is, are the two separate gates above.
+
    **Two prerequisites this step cannot perform without, both scheduled later
    in the previous revision.** Deploying to a Codex profile needs per-profile
    agent resolution, which was step 6; naming a missing signal needs the
@@ -1294,7 +1422,18 @@ non-identity adapter has run against it.** Step 3 is that gate.
     The first agent where `system_docs()` returns something other than a
     repo-shaped filename.
 12. `TranscriptReader` for the other agents — Codex first, whose rollout format
-    is now observed rather than assumed. Claude Code's shipped in step 2.
+    is now observed rather than assumed, and whose hook payload carries
+    `transcript_path` outright (decision 2), so a reader driven from a hook has
+    no path to reconstruct and `locate_sessions` is needed only for the
+    after-the-fact scan. Copilot's reader is **generated, not reverse-engineered**:
+    1.0.83 ships the JSON Schema of its own session events alongside the binary,
+    at `schemas/session-events.schema.json` (783 KB) in the extracted package
+    tree `~/Library/Caches/copilot/pkg/<platform>/<version>/`, declaring
+    `HookStartData`, `HookEndData`, `HookEndError`, `PermissionRequestHook` and
+    the rest ([src], 1.0.83). That is a pinned machine-readable contract, which
+    also makes the *a transcript schema is only valid for the version it was
+    read from* gate satisfiable by re-extracting the schema on upgrade instead
+    of re-sampling event files. Claude Code's shipped in step 2.
 
 ## Verification gates
 
@@ -1457,6 +1596,19 @@ name alone, a **control** was run to prove the probe discriminates.
   reader may take either; `migrate-rollouts` is the subcommand that moves the
   legacy ones.
 
+### Closed by measurement, 2026-09-14
+
+- **The minimum Codex version carrying the hook system is the wrong question,
+  and the feature flag answers the right one.** `codex features list` at 0.154.0
+  returns `hooks  stable  true` and `plugin_hooks  removed  false`, out of 140
+  rows ([run]). The adapter asks that directly, so no minimum release has to be
+  established: a build with no `hooks` row, or one whose row is not effective,
+  is unsupported whatever its number, and a build that grows the row becomes
+  supported without the harness learning a new version constant. The flag
+  reports the *subsystem* and nothing downstream of it — hook trust and project
+  trust are the two gates decision 5 describes, and both can be closed while
+  this row reads `true`.
+
 ### Still open
 
 - Whether the persisted trust hash is stable enough across Codex releases to
@@ -1482,11 +1634,17 @@ name alone, a **control** was run to prove the probe discriminates.
   Measuring it requires a pinned second release installed side by side, one
   identical hook deployed and trusted under each, and the two `trusted_hash`
   values compared. It stays the (a)-versus-(b) question decision 5 frames it as.
-- The minimum Codex version carrying the hook system. One install cannot answer
-  it; the adapter should probe `codex features list` for a `hooks` row rather
-  than compare version numbers, which is what it should have done anyway.
-  `plugin_hooks: removed` hints that an earlier surface preceded the current
-  one, but that is inference, not a version.
+
+  **Narrowed, not closed, 2026-09-14.** A second pass against 0.154.0 confirmed
+  from source what the hash is computed over — `NormalizedHookIdentity`: event
+  name, matcher and the single normalised handler, serialised to TOML
+  (`discovery.rs:767`, decision 5) — so the question is now *only* whether that
+  normalisation and `version_for_toml` are stable across releases, not what
+  they consume. It remains **not measurable on this machine** for the same
+  reason and one more: every run in that pass used
+  `--dangerously-bypass-hook-trust`, so `[hooks.state]` never materialised there
+  either, and there is still no stored `trusted_hash` anywhere on this host to
+  read back.
 - Whether opencode's session storage is stable enough to read at all, or whether
   its `serve` HTTP API is the only defensible source.
 
