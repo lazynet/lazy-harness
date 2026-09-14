@@ -329,8 +329,14 @@ Both blocking hooks in this repo take the stderr path —
 drops the refusal reason the user reads. `HookOutput` carries all three, and the
 golden tests capture all three.
 
-`pre_compact` emits plain text on stdout, which is why `stdout` is
-`dict | str | None`.
+`pre_compact` emits plain text on stdout (`hooks/builtins/pre_compact.py:247`
+prints a preamble and a summary, not JSON), which is why `stdout` is
+`str | None` rather than a JSON-only type — a plain string is a valid payload,
+not an escape hatch. It is **not** `dict | str | None`: an earlier revision
+carried that form here, contradicting the dataclass sketched above, and the
+shipped code settles it — `agents/base.py:165` declares `stdout: str | None`
+and `agents/claude_code.py:289` assigns `json.dumps(body) + "\n" if body else
+None`, so a `dict` never reaches the channel ([src], this repo).
 
 `HookEvent` carries every field a Claude Code payload can name. The first
 draft left out `source`, `trigger`, `stop_hook_active`, `tool_use_id` and
