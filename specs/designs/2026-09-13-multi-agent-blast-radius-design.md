@@ -1,6 +1,6 @@
 # Multi-agent harness: the blast radius outside the seam
 
-**Status:** proposed (revision 2, 2026-09-13 — revision 1 stopped at the impacts; this one adds how the migration is staged and reversed)
+**Status:** proposed (revision 3, 2026-09-13 — revision 1 found the impacts, revision 2 added staging and rollback, this one closes every open question that was a judgement rather than a measurement)
 **Date:** 2026-09-13
 **Derives from:** [2026-09-13-multi-agent-harness-design.md](2026-09-13-multi-agent-harness-design.md) — every decision number cited as *parent decision N* refers to that document.
 **Relates to:** [ADR-009](../adrs/009-profile-symlink-deploy.md) (profile symlink deploy), [ADR-012](../adrs/012-sqlite-monitoring.md) (SQLite monitoring), [ADR-032](../adrs/032-agent-adapter-completeness.md) (adapter completeness), [ADR-035](../adrs/035-capability-registry.md) (capability registry), [ADR-037](../adrs/037-metric-event-v2-host-and-workload.md) (metric event v2), [ADR-038](../adrs/038-exec-envelope-cost-provenance.md) (exec envelope cost provenance)
@@ -263,11 +263,24 @@ right place.
 
 ### 1. The adoption metric moves off the transcript pipeline
 
-The kill criterion counts **launches**, not ingested sessions: one counter
-incremented in `agents/launch.py` where `resolve_launch` already runs, keyed by
-profile, written through the existing metrics DB. It is agent-independent by
-construction because it is recorded by the harness before the agent binary is
-executed, and it needs nothing from `TranscriptReader`.
+The kill criterion counts **launches**, not ingested sessions. `resolve_launch`
+(`agents/launch.py`) appends one row before the agent binary is executed:
+
+```sql
+CREATE TABLE launches (
+  ts      REAL NOT NULL,
+  profile TEXT NOT NULL,
+  agent   TEXT NOT NULL,
+  host    TEXT NOT NULL DEFAULT '',
+  entry   TEXT NOT NULL   -- 'run' | 'exec'
+);
+```
+
+Append-only, no primary key: an event log, not state. It is agent-independent by
+construction — recorded by the harness, before the exec, needing nothing from
+`TranscriptReader` and nothing from the agent's hook delivery. `lh run` ends in
+`os.execvpe` (`cli/run_cmd.py:101`), so the write happens before the process is
+replaced, and a failure to write must never block the launch.
 
 Rewritten criterion, replacing the parent's:
 
@@ -275,7 +288,40 @@ Rewritten criterion, replacing the parent's:
 - **Horizon:** eight weeks from the merge of the real `CodexAdapter` (parent step 9),
   not the throwaway from step 4.
 - **Adoption check:** launches on a non-Claude profile over the trailing four weeks.
-- **Kill threshold:** fewer than five in the last four weeks of the horizon.
+- **Kill threshold:** calibrated, not inherited — see the blind spot below.
+
+**The unit is launches, and it is stated once.** The previous revision inherited
+the parent's "sessions", which was measured one way and thresholded another —
+the mistake the parent corrected in its own criteria, and this decision must not
+reintroduce it one document later.
+
+**Recorded blind spot.** `core/envrc.py:5` states the `.envrc` mechanism's
+purpose as making the launcher unnecessary: *"any agent invocation inside the
+root automatically picks up the right profile — no launcher needed"*. A session
+started by typing `claude` or `codex` directly is invisible to this counter, and
+that is not an edge case — it is the workflow the `.envrc` exists to enable.
+
+So the counter **undercounts**, a threshold calibrated in sessions is stricter
+in launches, and the failure direction is killing an adapter that was in use.
+The mitigation is the repo's own rule — *a measured baseline, biased toward
+false negatives*: before the horizon opens, measure the launch-to-session ratio
+on the Claude profiles (`launches` rows against `session_stats` sessions over
+the same window) and set the threshold from the observed ratio rather than from
+the parent's five. If the ratio cannot be measured, the threshold is not set and
+the horizon does not start.
+
+Two alternatives were rejected, both because they reintroduce a dependency on
+the agent:
+
+- **A `SessionStart` hook row.** Counts real sessions and carries a genuine
+  session id, but only on an agent that delivers the event — which is exactly
+  what parent step 4 exists to verify, and `~/.copilot/hooks/` has never fired.
+  Trading a transcript dependency for a hook dependency is the same
+  structural-zero risk in a new place.
+- **Reusing `session_attribution` with a null model.** Dead on the schema:
+  `session TEXT PRIMARY KEY` (`monitoring/db.py:79-84`), written only by
+  `lh exec` (`cli/exec_cmd.py:118`) because only `lh exec` pins a session id.
+  The interactive path has none.
 
 The alternative — pull `TranscriptReader` for Codex forward from step 12 to
 before the clock starts — was rejected. The parent already gives the reason:
@@ -300,6 +346,35 @@ and it stays at step 12. Decision 2 only ensures that when the reader lands,
 ingest is already pointed at the right directory, and that until then a
 non-Claude profile is reported as unreadable rather than reported as empty.
 
+**What `lh doctor` reports is derived, not declared.** "Should this agent have a
+reader?" has no configured answer and does not need one — the question that
+matters is whether data is going unread:
+
+```python
+sessions   = config_dir / adapter.session_dirs().get("sessions", "")
+has_data   = sessions.is_dir() and any(sessions.rglob("*"))
+has_reader = isinstance(adapter, TranscriptReader)
+```
+
+| Agent | Reader | Data | Reported |
+|---|---|---|---|
+| Claude Code | yes | yes | ok |
+| Claude Code | no | yes | **degraded** — a real regression |
+| Copilot | no | yes | **degraded** — accurate; `events.jsonl` exists and is unread |
+| opencode | no | no | normal — it leaves no transcript to read |
+
+`TranscriptReader` is a `runtime_checkable` Protocol in the parent design, so
+`isinstance` is the whole test. Nothing is maintained by hand and the answer
+tracks the code rather than a table someone has to remember.
+
+Rejected: **a `transcript_reader` capability with a declared per-agent
+expectation** in ADR-035's registry — a static list maintained beside the code,
+which the repo's own gate says to derive from what it mirrors, and which would
+require an adapter that *should* have a reader to declare its own defect. Also
+rejected: **reporting the state with no verdict** — `lh doctor` exists to say
+what is wrong, and a line that is never a problem is a line that stops being
+read.
+
 **This decision survives the kill.** It is a correctness fix and a hardcoded
 literal removed.
 
@@ -318,6 +393,35 @@ Three changes, one schema bump, in one ADR:
   `cost_source = "subscription"`, and `unknown_models` does not fire for them.
   A `per_token` agent's unpriced model keeps firing it.
 
+**Rendering, which is where the distinction is either kept or thrown away.** A
+`flat_rate` profile keeps its sessions row and its tokens row — the usage is
+real. Its cost renders as `—`, never `$0.00`. And it is excluded from the `all:`
+rollup, which is relabelled *priced only*:
+
+```
+Sessions  lazy:  12 today · 88 month
+          beta:   3 today · 14 month
+          all:   15 today · 102 month
+
+Tokens    lazy:  4.2M in · 310K out · $48.10 (sep)
+          beta:  1.1M in ·  90K out · —      (sep)
+          all:   5.3M in · 400K out · $48.10 (sep, priced only)
+```
+
+This follows the precedent already documented in the same file
+(`monitoring/views/overview.py:89-94`): the cache line is kept off the tokens
+row on purpose, because two numbers that do not belong in one aggregate are not
+put in one aggregate. A flat-rate zero summed into a per-token total is that
+same conflation. In JSON the cost is `null` alongside `cost_source`, so a
+machine consumer distinguishes the cases without parsing the render.
+
+Rejected: **excluding flat-rate profiles from the cost views entirely** — it
+hides real usage, which is the opposite error to `$0.00` and no smaller. And
+**amortising the subscription fee across the month's sessions** — it is the only
+option that permits a marginal-cost comparison across agents, but the number is
+fabricated, it mutates retroactively as sessions land, and it requires the fee
+to be declared in config where the harness cannot verify it.
+
 The alternative — omit `agent` and join against config — is rejected above:
 config is mutable and rows are permanent.
 
@@ -330,20 +434,34 @@ The segment tree loses its stem:
 
 ```
 _common/common.md              shared rules
+_common/<agent>.md             agent-specific segment   (new)
 <profile>/head.md              identity
 <profile>/tail.md              per-profile context
-<profile>/<agent>.md           agent-specific segment   (new)
 ```
 
 `render_agent_md` composes `head + common + agent + tail` and the deployer writes
-the identical rendered bytes to **every** path `system_docs()` returns. The six
+the identical rendered bytes to **every** path `system_docs()` returns. The
 agent-specific lines the parent counted — `TaskCreate`/`TodoWrite`, subagent
 model routing, `/rewind` / `/compact` / `/clear` — move into
-`<profile>/claude-code.md`. A profile with no segment for its agent renders
-without one; that is the common case, not an error.
+`_common/claude-code.md`. An agent with no segment renders without one; that is
+the common case, not an error.
+
+**The agent segment is shared across profiles, not per profile**, and that is a
+measurement rather than a preference. In the deployed tree every one of those
+agent-specific lines is already in `_common/CLAUDE.common.md`; `lazy/CLAUDE.head.md`
+(4 lines), `lazy/CLAUDE.tail.md` (40), `flex/CLAUDE.head.md` (5) and
+`flex/CLAUDE.tail.md` (35) contain none. The content is identity-independent in
+practice today, so `<profile>/<agent>.md` would take something that lives in one
+file and split it into one copy per profile — a duplication introduced to serve
+no observed need.
+
+A per-profile override (`<profile>/<agent>.md`, appended after the shared one)
+is additive to this layout and costs nothing to add later. It is deferred until
+a second profile actually needs to say something different about the same agent.
+One agent and zero divergent profiles is not a pattern.
 
 This is the parent's second axis, implemented so that it costs one file per
-(profile, agent) pair rather than a duplicated tree per destination filename.
+agent rather than a duplicated tree per destination filename.
 
 Migration is a chezmoi source rename of eight plain files, `chezmoi apply`, and
 `lh deploy` to relink. The generated-header text
@@ -468,19 +586,19 @@ Mapped onto the parent's numbered steps rather than numbered independently.
 
 | Parent step | Derived work | Must land by |
 |---|---|---|
-| 0–1 (contracts) | — | |
+| **0** (fix `_is_harness_owned`) | decision 9 — the version marker | **with step 0**; without it every later round trip accumulates stale entries |
+| 1 (contracts, runner takes `--profile`) | decision 11 — `harness_binary` per profile | with the runner, or it costs a second pass over `hook_command` |
 | 2 (runner, 3 builtins) | decision 5 — the sync hook is not one of the three, but its `DEFAULT_AGENT_TYPE` is one of the nine | with the nine |
 | 3 (config deploy slice) | decision 7 (loop fix only) | before step 4 |
-| 4 (contract gate) | decision 2 — otherwise the gate cannot show a Codex session as *unreadable* rather than *absent* | **before the gate** |
+| 3 (config deploy slice) | decision 10 — `--snapshot` / `--rollback` | before the first deploy that changes an artifact's shape |
+| **4** (contract gate) | decision 2 — otherwise the gate cannot show a Codex session as *unreadable* rather than *absent* | **before the gate** |
 | 6 (per-profile agent) | decision 7 (multi-export block) | with `agent_for_profile` |
-| 8 (`system_docs()`) | decision 4, decision 5 (rename + prose) | same release |
-| 9 (real `CodexAdapter`) | decision 1 — the horizon clock starts here | **before the clock** |
+| 8 (`system_docs()`) | decisions 4 and 5 (rename + prose) | same release |
+| **9** (real `CodexAdapter`) | decision 1 — the horizon clock starts here | **before the clock**, and the threshold is calibrated before it opens |
 | 9 | decision 6 — the first profile where a forwarded flag can be wrong | with the adapter |
+| 10 (`lh doctor` per profile) | decision 2's derived transcript health | with the rest of the per-profile doctor work |
 | any | decision 3 | before the first non-Claude cost is reported |
 | — | decision 8 | not scheduled |
-| **0 (fix `_is_harness_owned`)** | decision 9 (version marker) | **with step 0** — every later round trip accumulates stale entries without it |
-| 3 (config deploy slice) | decision 10 (`--snapshot` / `--rollback`) | before the first deploy that changes an artifact's shape |
-| 1 (runner takes `--profile`) | decision 11 (`harness_binary` per profile) | with the runner, or it costs a second pass over `hook_command` |
 
 Decisions 1, 2, 6 and the loop half of 7 are correctness work for Claude Code
 alone and survive if the kill criteria fire. Decisions 3 and 4 do not.
@@ -571,6 +689,26 @@ runs far more often, is not.
 `lh deploy --rollback` replays the latest, exactly as `lh migrate --rollback`
 does. The plan-then-execute split already exists in `deploy/engine.py`; what is
 missing is that the plan is not persisted.
+
+**Unconditionally, on every deploy, pruned to the last ten by count.** The
+managed artifacts measure ~135 KB in total on this machine — `settings.json`
+14.9 KB and 15.4 KB across the two profiles, `.claude.json` 104 KB, `.envrc`
+244 bytes — so ten snapshots cost ~1.35 MB against the 8.2 MB metrics DB this
+decision already declines to copy. Triggering on a version change, or on a plan
+that differs from disk, are both optimisations of an operation that is already
+cheap, and each adds a condition that can be wrong in the direction of *no
+snapshot when one was needed*. A plan-diff trigger is also not free: it needs a
+persisted, comparable plan, and `deploy/engine.py` has neither.
+
+**The two backup namespaces must not share a parent.** `_latest_backup_dir`
+(`cli/migrate_cmd.py:29-34`) returns the newest directory under
+`~/.config/lazy-harness/backups/`, whatever wrote it. Writing deploy snapshots
+beside migration backups makes `lh migrate --rollback` replay a deploy's
+rollback log, and makes a deploy prune delete a migration backup. They split
+into `backups/migrate/<ts>/` and `backups/deploy/<ts>/`, and `_latest_backup_dir`
+takes the namespace as an argument — one function, two callers, no shared
+newest-wins directory. Existing top-level timestamped directories are migration
+backups and are read from the old location for as long as they exist.
 
 Deliberately **not** included: snapshotting the metrics DB. It is 8.2 MB, its
 migrations are additive and idempotent, and the survey found no downgrade break
@@ -664,6 +802,10 @@ sequences them. Reverting a segment rename means both, in that order.
 - **The `.envrc` block is verified by `direnv export` in a root claimed by two
   profiles with different agents**, asserting both variables present — not by
   reading the generated file.
+- **The derived transcript-health verdict is verified against all four rows of
+  its own table**, each with a fake adapter — including the two that must *not*
+  report degraded. A check that returns the same verdict for every input covers
+  nothing.
 - **The version marker is verified by a real round trip, not a mismatch
   fixture.** Deploy at version N, deploy at N+1 with a changed command format,
   deploy at N again, and assert `settings.json` holds exactly one entry per hook
@@ -682,22 +824,10 @@ sequences them. Reverting a segment rename means both, in that order.
 
 ## Open questions
 
-1. **Where does the launch counter live?** `session_stats` is keyed
-   `(session, model)` and a launch has neither at the moment it happens. A
-   separate `launches` table is the honest shape; a `session_attribution` row
-   (ADR-037) with a null model is the cheaper one. Undecided.
-2. **Does a flat-rate agent belong in the cost views at all?** Rendering a
-   subscription agent as `$0.00` alongside a per-token agent invites the wrong
-   comparison. Excluding it hides usage. `lh status` has to pick one.
-3. **Should the `<agent>.md` segment be per-profile or shared?** The six
-   Claude-specific lines are identity-independent, so `_common/<agent>.md` would
-   avoid duplicating them across `lazy` and `flex`. Deferred until a second agent
-   has a segment worth writing — one data point is not a pattern.
-4. **How long does a deploy snapshot live?** `lh migrate` writes one backup
-   directory per run and never prunes, which is tolerable for a command run
-   once. `lh deploy` runs on every profile change. Either it prunes on a count
-   or it snapshots only when the plan changes an artifact's shape — the second
-   is better and needs the plan to be comparable, which it is not yet.
-5. **Does `lh doctor` report a profile whose agent has no `TranscriptReader` as
-   degraded or as normal?** It is normal for Copilot and a defect for Claude
-   Code, and the check cannot tell them apart without a per-agent expectation.
+1. **What is the calibrated kill threshold?** Decision 1 fixes the instrument
+   and the unit; the number depends on a launch-to-session ratio nobody has
+   measured. It is a measurement with a defined method, not a judgement, and it
+   gates the *start of the horizon*, not the start of the work.
+2. **Copilot's real `preToolUse` payload, and whether it honours `deny`.**
+   Inherited from the parent, listed here because decision 6 and the step-4 gate
+   both depend on it. It is a measurement against a binary, not a judgement.
