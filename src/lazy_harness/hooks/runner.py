@@ -129,10 +129,10 @@ def _parse_payload(stdin_text: str) -> dict:
 def resolve_profile(explicit: str | None) -> str:
     """The one answer to "which profile is this hook running under".
 
-    `--profile` is optional for as long as deployed commands predate it: the
-    agent's settings file says `lh hook <name>` today and `deploy` does not
-    rewrite it in this step, so requiring the flag would break every installed
-    hook between one step and the next. When it is absent both entry points
+    `--profile` is optional for as long as deployed commands predate it:
+    `hook_command` emits the flag, but a settings file written before it does
+    not carry it until the next `lh deploy`, so requiring the flag would break
+    every installed hook in between. When it is absent both entry points
     fall back to the resolution the builtins already do for themselves, in one
     place — two resolutions would be two answers to a question the memory scope
     and the metrics label both depend on.
