@@ -7,7 +7,18 @@ import os
 import shutil
 from pathlib import Path
 
-from lazy_harness.agents.base import HeadlessResult, HookEntry
+from lazy_harness.agents.base import (
+    FileEdit,
+    HeadlessResult,
+    HookDecision,
+    HookEntry,
+    HookEvent,
+    HookOutput,
+    HookSupport,
+    Operation,
+    ToolCall,
+    Verdict,
+)
 from lazy_harness.core.paths import expand_path
 
 # Passing `--allowedTools ""` is a no-op: the CLI still grants its default read
@@ -39,6 +50,45 @@ def _as_int(*candidates: object) -> int | None:
         if isinstance(candidate, int) and not isinstance(candidate, bool):
             return candidate
     return None
+
+
+# Canonical event name -> how Claude Code delivers it. The single place the
+# native casing lives; `supported_hooks()` and `generate_hook_config()` both
+# read it rather than repeating the mapping.
+#
+# `verdicts` is deliberately gated on evidence from this repository, not on
+# what the vendor documentation names. Only two verdicts have been exercised
+# here: `pre_tool_use_security` refuses with stderr + exit 2 at `pre_tool_use`,
+# and `stop_verify_guard` emits `{"decision": "block"}` at `session_stop`. An
+# empty set says "no verdict observed", which makes deploy refuse a blocking
+# hook on that event — the safe direction. Add to a set when a verdict is
+# actually observed being honoured, not when a doc claims it.
+_HOOK_EVENTS: dict[str, HookSupport] = {
+    "session_start": HookSupport("SessionStart"),
+    "session_stop": HookSupport("Stop", frozenset({Verdict.BLOCK})),
+    "session_end": HookSupport("SessionEnd"),
+    "pre_compact": HookSupport("PreCompact"),
+    "post_compact": HookSupport("PostCompact"),
+    "pre_tool_use": HookSupport("PreToolUse", frozenset({Verdict.DENY})),
+    "post_tool_use": HookSupport("PostToolUse"),
+    "notification": HookSupport("Notification"),
+    "user_prompt_submit": HookSupport("UserPromptSubmit"),
+    "permission_request": HookSupport("PermissionRequest"),
+}
+
+# Native tool name -> the operation a builtin reasons about. A tool absent here
+# parses with `operation=None`: known to have run, but not something any hook
+# has been written to guard.
+_TOOL_OPERATIONS: dict[str, Operation] = {
+    "Bash": Operation.RUN_COMMAND,
+    "Read": Operation.READ_FILE,
+    "Edit": Operation.MODIFY_FILE,
+    "Write": Operation.MODIFY_FILE,
+    "NotebookEdit": Operation.MODIFY_FILE,
+}
+
+# Claude Code names the file differently per tool; both spellings are one path.
+_FILE_PATH_KEYS: tuple[str, ...] = ("file_path", "notebook_path")
 
 
 class ClaudeCodeAdapter:
@@ -76,18 +126,10 @@ class ClaudeCodeAdapter:
         return None
 
     def supported_hooks(self) -> list[str]:
-        return [
-            "session_start",
-            "session_stop",
-            "session_end",
-            "pre_compact",
-            "post_compact",
-            "pre_tool_use",
-            "post_tool_use",
-            "notification",
-            "user_prompt_submit",
-            "permission_request",
-        ]
+        return list(_HOOK_EVENTS)
+
+    def hook_events(self) -> dict[str, HookSupport]:
+        return dict(_HOOK_EVENTS)
 
     def generate_hook_config(self, hooks: dict[str, list[str | HookEntry]]) -> dict:
         """Generate Claude Code settings.json hooks section.
@@ -95,27 +137,16 @@ class ClaudeCodeAdapter:
         Each value can be a plain command string (uses the event's default
         matcher) or a `HookEntry` (overrides the matcher per-script).
         """
-        hook_event_map = {
-            "session_start": "SessionStart",
-            "session_stop": "Stop",
-            "session_end": "SessionEnd",
-            "pre_compact": "PreCompact",
-            "post_compact": "PostCompact",
-            "pre_tool_use": "PreToolUse",
-            "post_tool_use": "PostToolUse",
-            "notification": "Notification",
-            "user_prompt_submit": "UserPromptSubmit",
-            "permission_request": "PermissionRequest",
-        }
         matcher_map = {
             "pre_tool_use": "Bash",
             "post_tool_use": "Edit|Write",
         }
         settings_hooks: dict[str, list[dict]] = {}
         for event, scripts in hooks.items():
-            cc_event = hook_event_map.get(event)
-            if not cc_event:
+            support = _HOOK_EVENTS.get(event)
+            if support is None:
                 continue
+            cc_event = support.native_name
             default_matcher = matcher_map.get(event, "")
             matchers = []
             for script in scripts:
@@ -133,6 +164,115 @@ class ClaudeCodeAdapter:
                 )
             settings_hooks[cc_event] = matchers
         return settings_hooks
+
+    # --- the canonical hook contract (ADR-041) ---
+    #
+    # Claude Code is the agent the contract was extracted from, so both of these
+    # are pass-throughs: no field is renamed and no value is reinterpreted. They
+    # exist so that the builtins stop reading `tool_input["file_path"]` directly
+    # and a second agent has somewhere to differ.
+
+    def parse_hook_input(self, event: str, payload: dict, *, profile: str) -> HookEvent:
+        transcript = payload.get("transcript_path")
+        return HookEvent(
+            event=event,
+            profile=profile,
+            session_id=str(payload.get("session_id", "")),
+            cwd=Path(str(payload.get("cwd", ""))),
+            transcript_path=Path(str(transcript)) if transcript else None,
+            tool=self._parse_tool(payload),
+            tool_use_id=payload.get("tool_use_id"),
+            tool_response=payload.get("tool_response"),
+            prompt=payload.get("prompt"),
+            permission_mode=payload.get("permission_mode"),
+            source=payload.get("source"),
+            trigger=payload.get("trigger"),
+            stop_hook_active=bool(payload.get("stop_hook_active", False)),
+            message=payload.get("message"),
+            raw=payload,
+        )
+
+    @staticmethod
+    def _parse_tool(payload: dict) -> ToolCall | None:
+        name = payload.get("tool_name")
+        if not name:
+            return None
+        args = payload.get("tool_input")
+        if not isinstance(args, dict):
+            args = {}
+        operation = _TOOL_OPERATIONS.get(str(name))
+        path = next((args[k] for k in _FILE_PATH_KEYS if args.get(k)), None)
+        edits: tuple[FileEdit, ...] = ()
+        reads: tuple[Path, ...] = ()
+        if operation is Operation.READ_FILE and path:
+            reads = (Path(str(path)),)
+        elif operation is Operation.MODIFY_FILE and path:
+            content = args.get("content")
+            old, new = args.get("old_string"), args.get("new_string")
+            edits = (
+                FileEdit(
+                    path=Path(str(path)),
+                    # Claude Code's Write creates or replaces wholesale; Edit and
+                    # NotebookEdit always target something that exists.
+                    is_create=str(name) == "Write",
+                    content=str(content) if content is not None else None,
+                    replacements=((str(old), str(new)),) if old is not None else (),
+                    replace_all=bool(args.get("replace_all", False)),
+                ),
+            )
+        command = args.get("command")
+        return ToolCall(
+            native_name=str(name),
+            operation=operation,
+            command=str(command) if command is not None else None,
+            reads=reads,
+            offset=_as_int(args.get("offset")),
+            limit=_as_int(args.get("limit")),
+            edits=edits,
+            raw_input=args,
+        )
+
+    def format_hook_output(self, event: HookEvent, decision: HookDecision) -> HookOutput:
+        support = _HOOK_EVENTS.get(event.event)
+        verdict = decision.verdict
+        if verdict is not None and (support is None or verdict not in support.verdicts):
+            raise ValueError(
+                f"claude-code does not honour {verdict.value!r} on {event.event!r}; "
+                f"honoured here: {sorted(v.value for v in support.verdicts) if support else []}"
+            )
+        # Exit 2 is the only channel that actually refuses a tool call, and the
+        # message the user reads is the stderr text, not the JSON.
+        if verdict is Verdict.DENY:
+            return HookOutput(stdout=None, stderr=decision.reason, exit_code=2)
+
+        body: dict[str, object] = {}
+        if verdict is Verdict.BLOCK:
+            body["decision"] = "block"
+            body["reason"] = decision.reason
+        elif verdict in (Verdict.ALLOW, Verdict.ASK):
+            body["hookSpecificOutput"] = {
+                "hookEventName": support.native_name if support else event.event,
+                "permissionDecision": verdict.value,
+                "permissionDecisionReason": decision.reason,
+            }
+        if decision.additional_context:
+            nested = body.setdefault("hookSpecificOutput", {})
+            assert isinstance(nested, dict)
+            nested.setdefault("hookEventName", support.native_name if support else event.event)
+            nested["additionalContext"] = decision.additional_context
+        # Top level, never nested: nesting it under `hookSpecificOutput` is the
+        # bug fixed in v0.58.0 — Claude Code reads `systemMessage` at the root.
+        if decision.system_message:
+            body["systemMessage"] = decision.system_message
+        if decision.stop:
+            body["continue"] = False
+            if decision.reason and verdict is not Verdict.BLOCK:
+                body["stopReason"] = decision.reason
+        if decision.suppress_output:
+            body["suppressOutput"] = True
+        if not body:
+            return HookOutput(stdout=None, stderr="", exit_code=0)
+        return HookOutput(stdout=json.dumps(body), stderr="", exit_code=0)
 
     def global_config_link(self) -> Path | None:
         return Path.home() / ".claude"
