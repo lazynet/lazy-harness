@@ -12,6 +12,7 @@ them one mechanism afterwards.
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import sys
 import types
@@ -20,10 +21,10 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from lazy_harness.agents.base import HookDecision, HookEvent, Verdict
+from lazy_harness.agents.base import HookDecision, HookEvent
 from lazy_harness.cli.main import cli
 from lazy_harness.deploy.engine import hook_command
-from lazy_harness.hooks.engine import run_hooks_for_event
+from lazy_harness.hooks.engine import execute_hook, run_hooks_for_event
 from lazy_harness.hooks.loader import _BUILTIN_HOOKS, BuiltinHookSpec, HookInfo
 
 PRE_TOOL_USE = {
@@ -151,24 +152,64 @@ def test_an_unmigrated_builtin_is_still_called_with_no_arguments(
     assert calls == ["no-args"]
 
 
-def test_the_engine_runs_a_migrated_builtin_without_spawning_a_process(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The path on the `HookInfo` does not exist, so a subprocess would fail."""
-    register(
-        monkeypatch,
-        "spy",
-        lambda event: HookDecision(system_message="ran"),
-        migrated=True,
+def test_the_engine_reaches_a_migrated_builtin_through_the_deployed_command() -> None:
+    """The path on the `HookInfo` does not exist, so the file route cannot answer.
+
+    This replaces an assertion that the engine ran a migrated builtin *in this
+    process*. Nothing can impose a timeout on a synchronous in-process call, so
+    that branch became the deployed command in a subprocess; what the missing
+    path proves is now the route taken, not the absence of a process.
+
+    A real registry name rather than one registered for the test: the child
+    resolves `_BUILTIN_HOOKS` for itself, and a name monkeypatched into this
+    process does not exist on the other side of the boundary.
+    """
+    hook = HookInfo(
+        name="pre-tool-use-security",
+        path=Path("/nonexistent/guard.py"),
+        is_builtin=True,
     )
-    hook = HookInfo(name="spy", path=Path("/nonexistent/spy.py"), is_builtin=True)
 
     results = run_hooks_for_event(
         [hook], event="pre_tool_use", payload=PRE_TOOL_USE, profile="lazy"
     )
 
-    assert [r.exit_code for r in results] == [0]
-    assert json.loads(results[0].stdout) == {"systemMessage": "ran"}
+    assert [r.exit_code for r in results] == [2]
+    assert "Blocked by lazy-harness" in results[0].stderr
+
+
+def test_a_migrated_builtin_is_held_to_its_timeout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`timed_out` has to be measured, not declared.
+
+    The in-process call this branch used to make ignored `timeout` entirely and
+    returned `timed_out=False` unconditionally — a field that lies by
+    construction. A synchronous in-process call cannot be interrupted in
+    Python, so a thread would report the timeout without imposing it: only a
+    process boundary can actually stop the work.
+
+    The child is made slow without putting a sleep in production code.
+    `sitecustomize` is imported at interpreter startup, ahead of whatever `-c`
+    runs, so a copy of it on PYTHONPATH delays the real entry point itself.
+    """
+    slow = tmp_path / "slow-site"
+    slow.mkdir()
+    (slow / "sitecustomize.py").write_text("import time\n\ntime.sleep(30)\n")
+    inherited = os.environ.get("PYTHONPATH")
+    monkeypatch.setenv(
+        "PYTHONPATH", os.pathsep.join(p for p in (str(slow), inherited) if p)
+    )
+    register(monkeypatch, "spy", lambda event: HookDecision(), migrated=True)
+    hook = HookInfo(name="spy", path=Path("/nonexistent/spy.py"), is_builtin=True)
+
+    result = execute_hook(
+        hook, event="pre_tool_use", payload=PRE_TOOL_USE, timeout=1, profile="lazy"
+    )
+
+    assert result.timed_out is True
+    assert result.exit_code == -1
+    assert "timed out after 1s" in result.stderr
 
 
 def test_the_engine_still_executes_an_unmigrated_builtin_as_a_file(
@@ -196,32 +237,75 @@ def test_the_engine_still_executes_a_user_hook_as_a_file(tmp_path: Path) -> None
     assert results[0].stdout.strip() == "user hook"
 
 
+#: A `/goal` declaration as Claude Code writes it into the transcript.
+_GOAL_ATTACHMENT = json.dumps({"type": "attachment", "attachment": {"type": "goal_status"}})
+
+_STOP_CONFIG = '[harness]\nversion = "1"\n\n[loops]\ninject_goal_prompt = true\n'
+
+
+def _refused_payload(hook_name: str, tmp_path: Path) -> dict:
+    """A payload the named guard actually refuses.
+
+    The pair is chosen so that between them all three channels carry something:
+    `pre-tool-use-security` refuses on stderr with exit 2, and
+    `stop-verify-guard` refuses on *stdout* with exit 0 in Spanish — so the
+    exit code, both streams and a non-ASCII encoding are each covered by a case
+    that would notice if the wrapper dropped it.
+    """
+    if hook_name == "pre-tool-use-security":
+        return dict(PRE_TOOL_USE)
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text(_GOAL_ATTACHMENT + "\n", encoding="utf-8")
+    config = tmp_path / "config"
+    config.mkdir(parents=True, exist_ok=True)
+    (config / "config.toml").write_text(_STOP_CONFIG, encoding="utf-8")
+    return {
+        "hook_event_name": "Stop",
+        "session_id": "0193b0de-1111-2222-3333-444455556666",
+        "transcript_path": str(transcript),
+    }
+
+
+@pytest.mark.parametrize("hook_name", ["pre-tool-use-security", "stop-verify-guard"])
 def test_both_entry_points_produce_the_same_three_channels(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, hook_name: str
 ) -> None:
     """The gate: two paths answering one question are asserted to agree.
 
-    All three channels carry something — a refusal on stderr, JSON on stdout
-    and a non-zero exit — so an entry point that drops one of them fails here
-    instead of passing by writing nothing.
-    """
-    decision = HookDecision(verdict=Verdict.DENY, reason="nope", system_message="heads up")
-    register(monkeypatch, "guard", lambda event: decision, migrated=True, blocking=True)
-    payload = json.dumps(PRE_TOOL_USE)
+    `lh hooks run` now spawns `lh hook` rather than deciding for itself, so the
+    agreement is no longer between two decision mechanisms. It is between the
+    entry point and the subprocess wrapper over it, which is exactly where
+    bytes can still be lost: the stream encoding, a trailing newline, and an
+    exit code that has to survive `sys.exit` in a child instead of a return.
 
-    invoked = CliRunner().invoke(cli, ["hook", "guard", "--profile", "lazy"], input=payload)
+    Each side gets its own `LH_DATA_DIR`. `stop-verify-guard` blocks once per
+    session and records that it did, so two invocations sharing one metrics
+    store would disagree by design rather than because of the wrapper.
+    """
+    payload = _refused_payload(hook_name, tmp_path)
+    event = "pre_tool_use" if hook_name == "pre-tool-use-security" else "session_stop"
+
+    monkeypatch.setenv("LH_DATA_DIR", str(tmp_path / "data-engine"))
     engine = run_hooks_for_event(
-        [HookInfo(name="guard", path=Path("/nonexistent/guard.py"), is_builtin=True)],
-        event="pre_tool_use",
-        payload=PRE_TOOL_USE,
+        [HookInfo(name=hook_name, path=Path("/nonexistent/hook.py"), is_builtin=True)],
+        event=event,
+        payload=payload,
         profile="lazy",
     )[0]
+
+    monkeypatch.setenv("LH_DATA_DIR", str(tmp_path / "data-cli"))
+    invoked = CliRunner().invoke(
+        cli, ["hook", hook_name, "--profile", "lazy"], input=json.dumps(payload)
+    )
 
     assert (invoked.stdout, invoked.stderr, invoked.exit_code) == (
         engine.stdout,
         engine.stderr,
         engine.exit_code,
     )
-    assert invoked.exit_code == 2
-    assert invoked.stderr == "nope"
-    assert json.loads(invoked.stdout) == {"systemMessage": "heads up"}
+    if hook_name == "pre-tool-use-security":
+        assert (invoked.exit_code, invoked.stdout) == (2, "")
+        assert "Blocked by lazy-harness" in invoked.stderr
+    else:
+        assert (invoked.exit_code, invoked.stderr) == (0, "")
+        assert "verificación" in json.loads(invoked.stdout)["reason"]

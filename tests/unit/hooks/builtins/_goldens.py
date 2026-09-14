@@ -26,6 +26,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from lazy_harness.hooks.engine import CLI_BOOTSTRAP
+
 #: Committed goldens. One directory per hook, one JSON file per branch.
 GOLDEN_ROOT = Path(__file__).resolve().parents[4] / "tests" / "goldens" / "hooks"
 
@@ -126,7 +128,7 @@ def run_through_runner(hook: str, *, stdin_text: str, cwd: Path, env: dict[str, 
     has the package installed.
     """
     proc = subprocess.run(
-        [sys.executable, "-c", "from lazy_harness.cli.main import cli; cli()", "hook", hook],
+        [sys.executable, "-c", CLI_BOOTSTRAP, "hook", hook],
         input=stdin_text,
         capture_output=True,
         text=True,
