@@ -115,6 +115,42 @@ def agent_for_profile(cfg: Config, profile_name: str) -> AgentAdapter:
     return get_agent(declared or cfg.agent.type)
 
 
+# The launcher a profile's hooks reach when it declares no `harness_binary`.
+# `deploy.engine` imports it rather than retyping the name: the generator, the
+# classifier and this resolver all have to agree on it or a redeploy stops
+# recognising its own entries.
+DEFAULT_HARNESS_BINARY = "lh"
+
+
+def binary_for_profile(cfg: Config, profile_name: str) -> str:
+    """The launcher one profile's hooks run — `[profiles.<name>].harness_binary`,
+    else `DEFAULT_HARNESS_BINARY`.
+
+    Shaped after `agent_for_profile`, including the fallback for an unknown
+    profile name: callers iterate `cfg.profiles.items`, so the name is theirs,
+    and resolving to an empty string would generate a command `execvp` cannot
+    run. Unlike an agent there is no registry to validate against — the name is
+    resolved from `PATH` at hook time, and the harness cannot know what is
+    installed on the machine the settings file converges to.
+    """
+    entry = cfg.profiles.items.get(profile_name)
+    declared = entry.harness_binary if entry is not None else ""
+    return declared or DEFAULT_HARNESS_BINARY
+
+
+def declared_binaries(cfg: Config) -> set[str]:
+    """Every launcher this config can generate a hook command with.
+
+    The default is always in the set, whether or not a profile names it: it is
+    what `binary_for_profile` falls back to, and it is what a previous deploy
+    wrote before a profile declared anything. A classifier missing it would read
+    those entries as another tool's and preserve them beside the new ones.
+    """
+    return {DEFAULT_HARNESS_BINARY} | {
+        entry.harness_binary for entry in cfg.profiles.items.values() if entry.harness_binary
+    }
+
+
 def list_agents() -> list[str]:
     """Return list of registered agent type names."""
     return list(_AGENTS.keys())
