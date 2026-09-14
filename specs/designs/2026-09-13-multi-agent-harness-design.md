@@ -1099,19 +1099,19 @@ Every row is marked with how it was established:
 
 | | Claude Code | Codex 0.154.0 | Copilot CLI 1.0.83 | opencode |
 |---|---|---|---|---|
-| `env_var()` | `CLAUDE_CONFIG_DIR` | `CODEX_HOME` (binary) | `COPILOT_HOME` (binary) | `OPENCODE_CONFIG_DIR` (source) |
+| `env_var()` | `CLAUDE_CONFIG_DIR` | `CODEX_HOME` (binary) | `COPILOT_HOME` (**run, 1.0.83**) — honoured end to end: every deny-matrix run below used a throwaway `COPILOT_HOME`, and auth survived it | `OPENCODE_CONFIG_DIR` (source) |
 | config file | `settings.json` | `config.toml` (binary) | `config.json` (present on disk) | `opencode.json(c)` (source) |
 | `system_docs()` — **global destinations** | `CLAUDE.md` | `AGENTS.md` (source) | `copilot-instructions.md`, `instructions/**/*.instructions.md` (vendor docs) | `AGENTS.md` **or** `CLAUDE.md`, first match wins (source, pinned) |
 | repo-discovered names (**not** deploy targets) | `CLAUDE.md`, `.claude/CLAUDE.md` | `AGENTS.md` | `.github/copilot-instructions.md`, `AGENTS.md`, `CLAUDE.md`, `.claude/CLAUDE.md`, `GEMINI.md` (vendor docs) | `AGENTS.md`, `CLAUDE.md` |
 | hook events | 10 canonical | 12 incl. `Interrupt`, **PascalCase only** (source, pinned) | **11 camelCase, enumerated by rejection (run, 1.0.83)**: `preToolUse`, `postToolUse`, `postToolUseFailure`, `preMcpToolCall`, `permissionRequest`, `sessionStart`, `sessionEnd`, `preCompact`, `notification`, `subagentStart`, `subagentStop`. Supersedes the 12-name `binary, 1.0.40 bundle` list, whose `userPromptSubmitted`/`agentStop`/`errorOccurred` 1.0.83 rejects. A PascalCase compat mode with `tool_result` is claimed by **vendor docs only** and has never been observed firing | none (source) |
-| verdicts honoured on pre-tool | `deny`, `allow`, `ask` | `deny` only; `allow`/`ask` fail open (source, pinned) | `deny`; command hooks fail **closed** on nonzero exit, **open** on timeout (vendor docs) | n/a |
-| hook config | `settings.json:hooks` | `hooks.json` **or** `[hooks]` in `config.toml` (source, pinned) | `$COPILOT_HOME/hooks/*.json`, `.github/hooks/*.json` (vendor docs) | plugins in JS/TS (source) |
+| verdicts honoured on pre-tool | `deny`, `allow`, `ask` | `deny` only; `allow`/`ask` fail open (source, pinned) | `deny` on stdout, **top-level and unwrapped only** — the `hookSpecificOutput` wrapper is read and ignored; exit 2 is a second route; fails **closed** on nonzero exit, **open** on timeout (**run, 1.0.83**, all four envelopes varied against a control; wrapper shape corroborated [src] `copilot-sdk/types.d.ts:1052-1058`) | n/a |
+| hook config | `settings.json:hooks` | `hooks.json` **or** `[hooks]` in `config.toml` (source, pinned) | `$COPILOT_HOME/hooks/*.json` (**run, 1.0.83** — registered and fired); `.github/hooks/*.json` (vendor docs, **not** verified — the probe never loaded, gated on repository trust) | plugins in JS/TS (source) |
 | hook trust | n/a | `[hooks.state.<k>].trusted_hash` in `config.toml`, hashing the **declaration**, not the script; `User` layer is never `Managed`; bypass is invocation-only (source, pinned) | n/a | n/a |
 | MCP | `.claude.json` | `config.toml` `[mcp_servers.<id>]` (binary) | `mcp-config.json` (present on disk) | `opencode.json` `mcp` (source) |
 | transcript | `projects/**/*.jsonl` | `sessions/YYYY/MM/DD/rollout-*.jsonl`, `{type, payload, ordinal}` envelope (**log, 0.154.0**); SQLite migration staged but not active (binary) | `session-state/<uuid>/events.jsonl`, `{type, data, id, parentId}` envelope (**log, 1.0.83**) plus `session-store.db` (disk) | SQLite + JSON, undocumented (source) |
 | cost unit | tokens + cache tokens | `token_usage_record` (log, 0.154.0) | `totalNanoAiu`, `totalPremiumRequests` (log, 1.0.83) | unknown |
 | native tool names | `Bash`, `Read`, `Edit`, `Write` | `apply_patch`, shell (source) | `bash`, `view`, `rg`, `glob`, `task`, `skill`, `web_fetch` (**log, 1.0.83**) | unknown |
-| headless | `-p --output-format json` | `codex exec --json` (binary); `--oss` with ollama/lmstudio (binary) | `-p` (source) | `opencode run --format json`, `serve` (source) |
+| headless | `-p --output-format json` | `codex exec --json` (binary); `--oss` with ollama/lmstudio (binary) | `-p` (**run, 1.0.83**) — `copilot -p "…" --allow-all-tools` drove every run below | `opencode run --format json`, `serve` (source) |
 
 The 1.0.83 cask binary is a launcher — a Node SEA shim whose strings contain no
 hook vocabulary. Every `binary` mark in that column came from the application
@@ -1122,6 +1122,19 @@ when the column was first written. The 1.0.83 payload is extracted elsewhere —
 and that tree is the vendor artifact this version is now read against ([src],
 1.0.83). Rows still marked `1.0.40` are reading a bundle two versions behind the
 installed launcher and should be re-measured before they are relied on.
+
+**The Copilot column was swept against the findings section on 2026-09-14**,
+because a provenance label ages: four rows (`env_var()`, `verdicts honoured on
+pre-tool`, `hook config`, `headless`) were still marked `vendor docs`/`source`
+after the same document had already reported observing them — the 1.0.40
+failure in miniature, a stale label surviving because each revision re-read the
+table instead of the section below it. They now read `run, 1.0.83`. Three rows
+were checked and **deliberately left weaker**, having never been exercised:
+`system_docs()` and `repo-discovered names` stay vendor docs, and `config file`
+/ `MCP` stay `present on disk` — a path that exists is not a path the binary was
+seen to read. `.github/hooks/*.json` is the split case: its sibling in the same
+cell is `run`, but it alone stayed unverified because the probe was gated on
+repository trust and never loaded.
 
 ### What running both agents actually showed
 
