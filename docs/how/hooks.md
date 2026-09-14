@@ -211,13 +211,13 @@ Responsibility: force one final compound-loop evaluation when the session actual
 
 The worker is the same, the prompt is the same, the persistence layer is the same. Only the gating differs. See [ADR-019](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/019-handoff-session-end-freshness.md) for the trade-off analysis.
 
-**Opting in** — users wire the hook into their `settings.json` the same way as the others. Example:
+**Opting in** — users wire the hook into their `settings.json` the same way as the others, which is the form `lh deploy` writes: the bare launcher name, resolved against `PATH`, and the profile the hook runs under. Example:
 
 ```json
 {
   "hooks": {
     "SessionEnd": [
-      {"matcher": "", "hooks": [{"type": "command", "command": "$HOME/.local/bin/lh hook session-end"}]}
+      {"matcher": "", "hooks": [{"type": "command", "command": "lh hook session-end --profile <profile>"}]}
     ]
   }
 }

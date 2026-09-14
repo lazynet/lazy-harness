@@ -17,6 +17,7 @@ from lazy_harness.hooks.loader import (
     list_builtin_hooks,
     resolve_hooks_for_event,
 )
+from lazy_harness.hooks.runner import resolve_profile, run_hook
 
 
 @click.group()
@@ -74,16 +75,31 @@ def hooks_list() -> None:
 
 @click.command("hook")
 @click.argument("name")
-def hook_invoke(name: str) -> None:
+@click.option(
+    "--profile",
+    default=None,
+    help="Profile this hook runs under. Optional while deployed commands omit it.",
+)
+def hook_invoke(name: str, profile: str | None) -> None:
     """Invoke a built-in hook by name. Called from settings.json by Claude Code.
 
-    The command imports the builtin module and calls its `main()` directly,
-    so settings.json entries look like: `lh hook compound-loop`.
+    A migrated builtin goes through `hooks.runner.run_hook`, which parses the
+    payload through the agent adapter and serialises the decision back; an
+    unmigrated one is imported and its `main()` called with no arguments, the
+    way this command always has. `BuiltinHookSpec.migrated` is what decides,
+    and that branch disappears with the field at step 5 of the design.
     """
     spec = _BUILTIN_HOOKS.get(name)
     if spec is None:
         click.echo(f"Unknown hook: {name}", err=True)
         sys.exit(0)
+    if spec.migrated:
+        output = run_hook(name, profile=resolve_profile(profile), stdin_text=sys.stdin.read())
+        if output.stdout:
+            click.echo(output.stdout, nl=False)
+        if output.stderr:
+            click.echo(output.stderr, nl=False, err=True)
+        sys.exit(output.exit_code)
     try:
         # `_BUILTIN_HOOKS` maps to `BuiltinHookSpec`, not to a module path.
         # Passing the record straight to `import_module` raised an
@@ -110,8 +126,18 @@ def hook_invoke(name: str) -> None:
 
 @hooks.command("run")
 @click.argument("event")
-def hooks_run(event: str) -> None:
-    """Run hooks for an event (for debugging)."""
+@click.option(
+    "--profile",
+    default=None,
+    help="Profile to run the hooks under. Defaults to the running agent's.",
+)
+def hooks_run(event: str, profile: str | None) -> None:
+    """Run hooks for an event (for debugging).
+
+    The same mechanism `lh hook` uses, so what a developer debugs here is what
+    the agent will see: migrated builtins go through the runner, and the
+    profile resolves through `resolve_profile` on both paths.
+    """
     console = Console()
 
     cf = config_file()
@@ -130,7 +156,7 @@ def hooks_run(event: str) -> None:
         return
 
     console.print(f"Running {len(hooks_to_run)} hook(s) for '{event}'...")
-    results = run_hooks_for_event(hooks_to_run, event=event, payload={})
+    results = run_hooks_for_event(hooks_to_run, event=event, payload={}, profile=profile)
 
     for r in results:
         status = "[green]✓[/green]" if r.exit_code == 0 else "[red]✗[/red]"

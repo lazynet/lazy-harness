@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"decision\": \"block\", \"reason\": \"Esta sesi\\u00f3n declar\\u00f3 un goal (/goal) y todav\\u00eda no hay evidencia de que corriste la verificaci\\u00f3n (skill verify-before-done) antes de cerrar. Verific\\u00e1 antes de terminar \\u2014 este aviso no se repite en esta sesi\\u00f3n.\"}\n"
+}

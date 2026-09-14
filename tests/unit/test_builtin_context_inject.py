@@ -22,18 +22,21 @@ from lazy_harness.hooks.builtins.context_inject import (
     repo_map_context,
 )
 
+#: The command the agent runs, not the module: `context-inject` is migrated, so
+#: its `main()` takes an event and the file has no `__main__` block to reach.
+#: `-c` rather than the `lh` console script, which the pinned PATH may not have.
+_HOOK_COMMAND = [
+    sys.executable,
+    "-c",
+    "from lazy_harness.cli.main import cli; cli()",
+    "hook",
+    "context-inject",
+]
+
 
 def test_context_inject_returns_json(tmp_path: Path) -> None:
-    hook_path = (
-        Path(__file__).parent.parent.parent
-        / "src"
-        / "lazy_harness"
-        / "hooks"
-        / "builtins"
-        / "context_inject.py"
-    )
     result = subprocess.run(
-        [sys.executable, str(hook_path)],
+        _HOOK_COMMAND,
         input="{}",
         capture_output=True,
         text=True,
@@ -53,16 +56,8 @@ def test_the_banner_is_emitted_where_claude_code_reads_it(tmp_path: Path) -> Non
     landed in the payload — which is how it shipped nested inside
     `hookSpecificOutput`, parsed without error and discarded, for four releases.
     Testing a composer is not testing its wiring."""
-    hook_path = (
-        Path(__file__).parent.parent.parent
-        / "src"
-        / "lazy_harness"
-        / "hooks"
-        / "builtins"
-        / "context_inject.py"
-    )
     result = subprocess.run(
-        [sys.executable, str(hook_path)],
+        _HOOK_COMMAND,
         input="{}",
         capture_output=True,
         text=True,
@@ -93,16 +88,8 @@ def test_context_inject_includes_git_info(tmp_path: Path) -> None:
         },
     )
 
-    hook_path = (
-        Path(__file__).parent.parent.parent
-        / "src"
-        / "lazy_harness"
-        / "hooks"
-        / "builtins"
-        / "context_inject.py"
-    )
     result = subprocess.run(
-        [sys.executable, str(hook_path)],
+        _HOOK_COMMAND,
         input="{}",
         capture_output=True,
         text=True,
@@ -347,16 +334,8 @@ def test_context_inject_includes_graphify_summary_when_graph_is_fresh(
     fresh_ts = _time.time() + 5
     _os.utime(out / "graph.json", (fresh_ts, fresh_ts))
 
-    hook_path = (
-        Path(__file__).parent.parent.parent
-        / "src"
-        / "lazy_harness"
-        / "hooks"
-        / "builtins"
-        / "context_inject.py"
-    )
     result = subprocess.run(
-        [sys.executable, str(hook_path)],
+        _HOOK_COMMAND,
         input="{}",
         capture_output=True,
         text=True,
@@ -536,14 +515,6 @@ def test_context_inject_includes_qmd_suggest_section_when_qmd_returns_hits(
         '[harness]\nversion = "1"\n\n[context_inject]\nqmd_suggest_enabled = true\n'
     )
 
-    hook_path = (
-        Path(__file__).parent.parent.parent
-        / "src"
-        / "lazy_harness"
-        / "hooks"
-        / "builtins"
-        / "context_inject.py"
-    )
     env = {
         **_os.environ,
         "PATH": f"{bin_dir}:{_os.environ['PATH']}",
@@ -552,7 +523,7 @@ def test_context_inject_includes_qmd_suggest_section_when_qmd_returns_hits(
         "CLAUDE_CONFIG_DIR": str(home / ".claude"),
     }
     result = subprocess.run(
-        [sys.executable, str(hook_path)],
+        _HOOK_COMMAND,
         input="{}",
         capture_output=True,
         text=True,
@@ -718,14 +689,6 @@ def test_context_inject_surfaces_proposals_section_in_stdout(tmp_path: Path) -> 
         "  - **Rationale:** Subagent hallucinated worktree.bgIsolation as boolean\n"
     )
 
-    hook_path = (
-        Path(__file__).parent.parent.parent
-        / "src"
-        / "lazy_harness"
-        / "hooks"
-        / "builtins"
-        / "context_inject.py"
-    )
 
     import os
 
@@ -735,7 +698,7 @@ def test_context_inject_surfaces_proposals_section_in_stdout(tmp_path: Path) -> 
         "CLAUDE_CONFIG_DIR": str(claude_dir),
     }
     result = subprocess.run(
-        [sys.executable, str(hook_path)],
+        _HOOK_COMMAND,
         input="{}",
         capture_output=True,
         text=True,
@@ -914,22 +877,24 @@ def test_truncate_body_proposals_summary_survives_extreme_truncation() -> None:
     assert summary in result
 
 
-def _run_hook_in_process(
-    monkeypatch, capsys, cwd: Path, cfg_file: Path, stdin_payload: str = "{}"
-) -> str:
-    import io
-    import json as _json
-    import sys as _sys
-
+def _decide(monkeypatch, cwd: Path, cfg_file: Path, payload: dict[str, object] | None = None):  # noqa: ANN202
+    """Payload -> adapter -> hook, in process. Returns the `HookDecision`."""
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
     from lazy_harness.core import paths as paths_mod
     from lazy_harness.hooks.builtins import context_inject as hook_mod
 
     monkeypatch.setattr(paths_mod, "config_file", lambda: cfg_file)
     monkeypatch.chdir(cwd)
-    monkeypatch.setattr(_sys, "stdin", io.StringIO(stdin_payload))
-    hook_mod.main()
-    payload = _json.loads(capsys.readouterr().out)
-    return str(payload["hookSpecificOutput"]["additionalContext"])
+    event = ClaudeCodeAdapter().parse_hook_input("session_start", payload or {}, profile="")
+    return hook_mod.main(event)
+
+
+def _run_hook_in_process(
+    monkeypatch, capsys, cwd: Path, cfg_file: Path, stdin_payload: str = "{}"
+) -> str:
+    import json as _json
+
+    return str(_decide(monkeypatch, cwd, cfg_file, _json.loads(stdin_payload)).additional_context)
 
 
 def test_context_inject_reads_memory_from_agent_declared_project_dir(
@@ -1091,9 +1056,7 @@ def test_context_inject_routes_memory_dir_through_agent_adapter(
     """ADR-032 L3/L4: the memory dir must come from the configured agent
     adapter. With agent.type = "null" the handoff must be read from under
     ~/.null even when CLAUDE_CONFIG_DIR points elsewhere."""
-    import io
-    import json as _json
-    import sys as _sys
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
 
     home = tmp_path / "home"
     home.mkdir()
@@ -1114,12 +1077,9 @@ def test_context_inject_routes_memory_dir_through_agent_adapter(
 
     monkeypatch.setattr(paths_mod, "config_file", lambda: cfg_file)
     monkeypatch.chdir(cwd)
-    monkeypatch.setattr(_sys, "stdin", io.StringIO("{}"))
-    hook_mod.main()
+    event = ClaudeCodeAdapter().parse_hook_input("session_start", {}, profile="")
 
-    payload = _json.loads(capsys.readouterr().out)
-    body = payload["hookSpecificOutput"]["additionalContext"]
-    assert "resume the adapter-routing work" in body
+    assert "resume the adapter-routing work" in hook_mod.main(event).additional_context
 
 
 def test_truncate_body_keeps_code_structure_under_budget_pressure() -> None:
@@ -1327,17 +1287,9 @@ def test_truncate_body_drops_repo_map_before_handoff() -> None:
 def _run_hook(cwd: Path, env_extra: dict[str, str]) -> dict:
     import os
 
-    hook_path = (
-        Path(__file__).parent.parent.parent
-        / "src"
-        / "lazy_harness"
-        / "hooks"
-        / "builtins"
-        / "context_inject.py"
-    )
     env = {**os.environ, **env_extra}
     result = subprocess.run(
-        [sys.executable, str(hook_path)],
+        _HOOK_COMMAND,
         input="{}",
         capture_output=True,
         text=True,

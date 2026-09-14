@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"SessionStart\", \"additionalContext\": \"## LazyNorth\\n## Principios\\n- Ship before perfect.\\n- Simplicidad agresiva.\\n\\n## Goals\\n- Homelab cerrado.\"}, \"systemMessage\": \"Session context loaded (new project)\"}\n"
+}

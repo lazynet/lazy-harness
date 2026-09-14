@@ -230,12 +230,14 @@ code when the output cannot be parsed — so it carries `error: null`.
 
 ## `lh hook`
 
-Invokes a single built-in hook by name. This is what `settings.json` entries actually call — the agent runs `lh hook <name>` and the command imports the matching builtin module and calls its `main()`.
+Invokes a single built-in hook by name. This is what `settings.json` entries actually call — `lh deploy` writes `lh hook <name> --profile <profile>`, and the command reads the agent's payload on stdin, runs the builtin, and writes the agent's own output format back out.
+
+`--profile` names the profile the hook runs under, which decides its memory scope and its metrics label. It is optional: without it the profile is resolved from the agent's config-dir variable, which is how entries written before the flag existed keep working.
 
 You should rarely run this by hand. It is documented so the entries in `profiles/<name>/settings.json` make sense.
 
 ```bash
-lh hook compound-loop
+lh hook compound-loop --profile personal
 ```
 
 ## `lh hooks`

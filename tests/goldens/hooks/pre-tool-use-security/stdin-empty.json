@@ -1,0 +1,5 @@
+{
+  "exit_code": 2,
+  "stderr": "pre-tool-use-security: unparseable payload: Expecting value: line 1 column 1 (char 0)",
+  "stdout": ""
+}

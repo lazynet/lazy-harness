@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"SessionStart\", \"additionalContext\": \"## Git\\nBranch: detached\\nLast commit: <SHA> seed the repo\"}, \"systemMessage\": \"Session context loaded: on detached\"}\n"
+}

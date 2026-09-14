@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"SessionStart\", \"additionalContext\": \"## Git\\nBranch: main\\nLast commit: <SHA> seed the repo\\nUncommitted: 1 modified, 1 untracked\"}, \"systemMessage\": \"Session context loaded: on main\"}\n"
+}

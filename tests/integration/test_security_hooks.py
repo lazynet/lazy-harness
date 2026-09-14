@@ -27,9 +27,35 @@ def _run_hook(
     )
 
 
+def _run_command(
+    hook: str, payload: dict | str, env_extra: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Spawn `lh hook <name>` — what a migrated builtin's settings.json says.
+
+    `python -m <module>` stops reaching a migrated hook: its `main()` takes an
+    event, so the module has no `__main__` path left. This is the command the
+    agent actually runs, which is the only thing an integration smoke test of
+    a deployed hook is worth asserting about.
+    """
+    import os
+
+    env = os.environ.copy()
+    if env_extra:
+        env.update(env_extra)
+    stdin = payload if isinstance(payload, str) else json.dumps(payload)
+    return subprocess.run(
+        [sys.executable, "-c", "from lazy_harness.cli.main import cli; cli()", "hook", hook],
+        input=stdin,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=30,
+    )
+
+
 def test_pre_tool_use_security_blocks_rm_rf(tmp_path: Path) -> None:
-    result = _run_hook(
-        "lazy_harness.hooks.builtins.pre_tool_use_security",
+    result = _run_command(
+        "pre-tool-use-security",
         {"tool_name": "Bash", "tool_input": {"command": "rm -rf /tmp/foo"}},
         env_extra={"LH_CONFIG_DIR": str(tmp_path)},
     )
@@ -39,8 +65,8 @@ def test_pre_tool_use_security_blocks_rm_rf(tmp_path: Path) -> None:
 
 
 def test_pre_tool_use_security_allows_innocent_command(tmp_path: Path) -> None:
-    result = _run_hook(
-        "lazy_harness.hooks.builtins.pre_tool_use_security",
+    result = _run_command(
+        "pre-tool-use-security",
         {"tool_name": "Bash", "tool_input": {"command": "ls -la"}},
         env_extra={"LH_CONFIG_DIR": str(tmp_path)},
     )

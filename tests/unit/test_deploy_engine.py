@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 from pathlib import Path
 
 import pytest
@@ -294,9 +295,9 @@ def test_a_builtin_hook_deploys_as_a_stable_launcher_invocation() -> None:
     hook = resolve_hook("context-inject", event="session_start")
     assert hook is not None
 
-    command = hook_command(hook)
+    command = hook_command(hook, profile="personal")
 
-    assert command == "lh hook context-inject"
+    assert command == "lh hook context-inject --profile personal"
 
 
 def test_no_deployed_builtin_command_carries_a_home_or_a_python_version() -> None:
@@ -306,10 +307,39 @@ def test_no_deployed_builtin_command_carries_a_home_or_a_python_version() -> Non
     for name in list_builtin_hooks():
         hook = resolve_hook(name)
         assert hook is not None
-        command = hook_command(hook)
+        command = hook_command(hook, profile="personal")
         assert "/Users/" not in command and "/home/" not in command, command
         assert "python3." not in command, command
         assert "site-packages" not in command, command
+
+
+@pytest.mark.parametrize("profile", ["work laptop", "it's-mine", "cost$profile"])
+def test_a_profile_needing_quoting_survives_as_one_argument(profile: str) -> None:
+    """A profile name is user data, and `core.config` validates nothing about it.
+
+    Interpolated bare, `--profile work laptop` reaches click as two arguments:
+    it exits 2 with "Got unexpected extra argument (laptop)", and on PreToolUse
+    exit 2 is how Claude Code is told to block the tool call. A usage error in
+    a generated command would therefore block the agent's tools.
+
+    The command lands in `settings.json` as a JSON string, so the quoting is
+    asserted after a round trip through JSON rather than before it.
+    """
+    from lazy_harness.deploy.engine import hook_command
+    from lazy_harness.hooks.loader import resolve_hook
+
+    hook = resolve_hook("context-inject", event="session_start")
+    assert hook is not None
+
+    command = hook_command(hook, profile=profile)
+
+    assert shlex.split(json.loads(json.dumps(command))) == [
+        "lh",
+        "hook",
+        "context-inject",
+        "--profile",
+        profile,
+    ]
 
 
 def test_a_user_hook_keeps_an_explicit_interpreter_and_path() -> None:
@@ -323,21 +353,25 @@ def test_a_user_hook_keeps_an_explicit_interpreter_and_path() -> None:
 
     hook = HookInfo(name="mine", path=Path("/home/me/.claude/hooks/mine.py"), is_builtin=False)
 
-    assert hook_command(hook).endswith("/home/me/.claude/hooks/mine.py")
+    assert hook_command(hook, profile="personal").endswith("/home/me/.claude/hooks/mine.py")
 
 
-def _harness_entry_count(settings_path: Path) -> int:
-    """How many hook entries in a deployed settings.json the harness generated."""
-    from lazy_harness.deploy.engine import _entry_commands, _is_harness_owned
+def _hook_entry_count(settings_path: Path) -> int:
+    """How many hook entries a deployed settings.json carries, of any origin.
+
+    Deliberately not filtered through `_is_harness_owned`: that predicate is
+    what the redeploy test is exercising, and a counter built on it would report
+    a stable count while the file doubled in size.
+    """
+    from lazy_harness.deploy.engine import _entry_commands
 
     settings = json.loads(settings_path.read_text())
-    count = 0
-    for entries in settings["hooks"].values():
-        for entry in entries:
-            commands = _entry_commands(entry)
-            if commands and all(_is_harness_owned(cmd) for cmd in commands):
-                count += 1
-    return count
+    return sum(
+        1
+        for entries in settings["hooks"].values()
+        for entry in entries
+        if _entry_commands(entry)
+    )
 
 
 def test_a_generated_builtin_command_is_recognised_as_its_own() -> None:
@@ -351,7 +385,7 @@ def test_a_generated_builtin_command_is_recognised_as_its_own() -> None:
 
     hooks = resolve_script_names(["context-inject"], event="session_start")
     assert hooks, "context-inject should resolve as a builtin"
-    command = hook_command(hooks[0])
+    command = hook_command(hooks[0], profile="personal")
 
     assert _is_harness_owned(command), (
         f"the harness does not recognise its own generated command: {command!r}"
@@ -396,21 +430,27 @@ def test_redeploy_after_a_command_format_change_installs_each_hook_once(
     cfg = _cfg_with_profile(profile_dir, hooks={})
     settings_file = profile_dir / "settings.json"
 
-    deploy_hooks(cfg)
-    before = _harness_entry_count(settings_file)
-    assert before > 0, "the first deploy should install harness hooks"
-
+    # The format that shipped before `--profile`, written by the real generator
+    # so the entries are exactly what a deployed profile carries today.
     real_hook_command = engine.hook_command
     monkeypatch.setattr(
         engine,
         "hook_command",
-        lambda hook: f"{real_hook_command(hook)} --profile personal",
+        lambda hook, *, profile: real_hook_command(hook, profile=profile).removesuffix(
+            f" --profile {profile}"
+        ),
     )
+    deploy_hooks(cfg)
+    before = _hook_entry_count(settings_file)
+    assert before > 0, "the first deploy should install harness hooks"
+    assert "--profile" not in settings_file.read_text(), "the first deploy writes the old format"
+
+    monkeypatch.undo()
     capsys.readouterr()
 
     deploy_hooks(cfg)
 
-    after = _harness_entry_count(settings_file)
+    after = _hook_entry_count(settings_file)
     out = capsys.readouterr().out
 
     assert "preserved" not in out, (
@@ -418,7 +458,7 @@ def test_redeploy_after_a_command_format_change_installs_each_hook_once(
     )
     assert after == before, (
         f"redeploy after a command format change duplicated hooks: "
-        f"{before} harness entries before, {after} after"
+        f"{before} hook entries before, {after} after"
     )
 
 
@@ -471,3 +511,64 @@ def test_deploy_hooks_updates_a_stale_lh_version_on_redeploy(tmp_path: Path) -> 
 
     settings = json.loads((profile_dir / "settings.json").read_text())
     assert extract_from_settings(settings) == __version__
+
+
+def test_each_profile_gets_its_own_profile_flag(tmp_path: Path) -> None:
+    """Decision 1: the profile is the one fact a running hook needs.
+
+    It names the agent, the config dir, the memory scope and the metrics label,
+    so it cannot come from an environment variable or a global config key — two
+    profiles on one machine would then resolve to the same answer. It is written
+    into each profile's own command, which means the command is generated per
+    profile rather than once for all of them.
+    """
+    from lazy_harness.core.config import Config, HarnessConfig, ProfileEntry, ProfilesConfig
+    from lazy_harness.deploy.engine import _entry_commands
+
+    work = tmp_path / "work"
+    play = tmp_path / "play"
+    cfg = Config(
+        harness=HarnessConfig(version="1"),
+        profiles=ProfilesConfig(
+            default="work",
+            items={
+                "work": ProfileEntry(config_dir=str(work), roots=["~"]),
+                "play": ProfileEntry(config_dir=str(play), roots=["~"]),
+            },
+        ),
+        hooks={},
+    )
+
+    deploy_hooks(cfg)
+
+    for name, target in (("work", work), ("play", play)):
+        commands = [
+            cmd
+            for entries in json.loads((target / "settings.json").read_text())["hooks"].values()
+            for entry in entries
+            for cmd in _entry_commands(entry)
+            if cmd.startswith("lh hook ")
+        ]
+        assert commands, f"{name} got no builtin commands"
+        for cmd in commands:
+            assert cmd.endswith(f" --profile {name}"), cmd
+
+
+def test_a_deployed_builtin_command_names_its_profile(tmp_path: Path) -> None:
+    """The deployed bytes, not the generator in isolation."""
+    from lazy_harness.deploy.engine import _entry_commands
+
+    profile_dir = tmp_path / "profile"
+
+    deploy_hooks(_cfg_with_profile(profile_dir, hooks={}))
+
+    settings = json.loads((profile_dir / "settings.json").read_text())
+    commands = [
+        cmd
+        for entries in settings["hooks"].values()
+        for entry in entries
+        for cmd in _entry_commands(entry)
+        if cmd.startswith("lh hook ")
+    ]
+    assert commands
+    assert all(cmd.endswith(" --profile personal") for cmd in commands), commands

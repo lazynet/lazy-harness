@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"SessionStart\", \"additionalContext\": \"## Recent history\\nRecent decisions:\\n- decision 2\\n- decision 3\\n- decision 4\\nRecent failures:\\n- failure 1 \\u2192 prevent 1\\n- failure 2 \\u2192 prevent 2\\n- failure 3 \\u2192 prevent 3\"}, \"systemMessage\": \"Session context loaded (new project)\"}\n"
+}

@@ -8,7 +8,15 @@ import sys
 import time
 from dataclasses import dataclass
 
-from lazy_harness.hooks.loader import HookInfo
+from lazy_harness.hooks.loader import _BUILTIN_HOOKS, HookInfo
+from lazy_harness.hooks.runner import resolve_profile
+
+#: How to reach the installed CLI from a known interpreter. `sys.executable` is
+#: the only thing that guarantees the interpreter with the package installed,
+#: and a bare `lh` would resolve against an ambient PATH the caller does not
+#: control. Shared with the golden harness so the bytes frozen there are the
+#: bytes this engine reads.
+CLI_BOOTSTRAP = "from lazy_harness.cli.main import cli; cli()"
 
 
 @dataclass
@@ -22,9 +30,46 @@ class HookResult:
     timed_out: bool
 
 
-def execute_hook(hook: HookInfo, event: str, payload: dict, timeout: int = 30) -> HookResult:
+def execute_hook(
+    hook: HookInfo,
+    event: str,
+    payload: dict,
+    timeout: int = 30,
+    profile: str | None = None,
+) -> HookResult:
+    """Run one hook and report its three channels.
+
+    A migrated builtin is reached through the command the agent's settings file
+    invokes — `lh hook <name> --profile <profile>` — so `lh hooks run` debugs
+    the deployed path rather than a second execution mechanism. Everything else
+    is still the hook *file*: an unmigrated builtin, whose `main()` reads stdin
+    and exits by itself, and a user hook, which the registry never heard of and
+    which has no `main(event)` to call at all.
+
+    Both go through one `subprocess.run`, which is what makes `timeout` mean
+    something on either. Calling the runner in this process could not: Python
+    cannot interrupt a synchronous call, so the branch ignored `timeout` and
+    reported `timed_out=False` unconditionally.
+
+    The argument vector is a list, so the profile needs no quoting here — the
+    quoting in `deploy.engine.hook_command` exists because *that* command is a
+    string in a settings file.
+    """
+    spec = _BUILTIN_HOOKS.get(hook.name) if hook.is_builtin else None
+    if spec is not None and spec.migrated:
+        cmd = [
+            sys.executable,
+            "-c",
+            CLI_BOOTSTRAP,
+            "hook",
+            hook.name,
+            "--profile",
+            resolve_profile(profile),
+        ]
+    else:
+        cmd = [sys.executable, str(hook.path)]
+
     start = time.monotonic()
-    cmd = [sys.executable, str(hook.path)]
     input_data = json.dumps(payload)
 
     try:
@@ -66,10 +111,14 @@ def execute_hook(hook: HookInfo, event: str, payload: dict, timeout: int = 30) -
 
 
 def run_hooks_for_event(
-    hooks: list[HookInfo], event: str, payload: dict, timeout: int = 30
+    hooks: list[HookInfo],
+    event: str,
+    payload: dict,
+    timeout: int = 30,
+    profile: str | None = None,
 ) -> list[HookResult]:
     results: list[HookResult] = []
     for hook in hooks:
-        result = execute_hook(hook, event, payload, timeout)
+        result = execute_hook(hook, event, payload, timeout, profile)
         results.append(result)
     return results

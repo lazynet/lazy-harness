@@ -1,0 +1,5 @@
+{
+  "exit_code": 2,
+  "stderr": "pre-tool-use-security: unparseable payload: expected an object, got list",
+  "stdout": ""
+}

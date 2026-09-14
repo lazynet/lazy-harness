@@ -27,10 +27,18 @@ _HOOK_SUBCOMMAND = "hook"
 _LEGACY_BUILTIN_MARKER = "lazy_harness/hooks/builtins/"
 
 
-def hook_command(hook: HookInfo) -> str:
+def hook_command(hook: HookInfo, *, profile: str) -> str:
     """The command string written into the agent's settings for this hook.
 
-    Builtins go through `lh hook <name>`, which carries no path at all. The
+    Builtins go through `lh hook <name> --profile <profile>`. The profile is the
+    one fact a running hook needs and the one it cannot derive: it names the
+    agent whose wire format the runner speaks, the config dir, the memory scope
+    and the metrics label. An environment variable or a global config key would
+    give two profiles on one machine the same answer, so it is written into the
+    command — which is why the command is generated per profile rather than once
+    for all of them.
+
+    The command carries no path at all. The
     previous form, `f"{sys.executable} {hook.path}"`, baked in two
     machine-specific halves — the home directory appears in both, and the
     Python minor version appears in the site-packages path — so a
@@ -42,9 +50,18 @@ def hook_command(hook: HookInfo) -> str:
 
     A user hook keeps an explicit interpreter and path. The framework did not
     ship it and has no stable launcher for it.
+
+    The profile is quoted so that it stays one argument. Nothing validates a
+    profile name — `core.config` reads the table keys as written — and
+    interpolated bare, `--profile work laptop` reaches click as two arguments
+    and exits 2 with a usage error. On PreToolUse exit 2 is how Claude Code is
+    told to block the tool call, so the generated command would block the
+    agent's tools rather than fail visibly.
     """
     if hook.is_builtin:
-        return f"{_LAUNCHER} {_HOOK_SUBCOMMAND} {hook.name}"
+        return (
+            f"{_LAUNCHER} {_HOOK_SUBCOMMAND} {hook.name} --profile {shlex.quote(profile)}"
+        )
     return f"{sys.executable} {hook.path}"
 
 
@@ -202,38 +219,48 @@ def deploy_hooks(cfg: Config) -> None:
     agent = get_agent(cfg.agent.type)
 
     effective = merge_with_defaults(cfg.hooks, agent)
-    hook_entries: dict[str, list[str | HookEntry]] = {}
-    for event_name, script_names in effective.items():
-        if not script_names:
-            continue
-        hooks = resolve_script_names(script_names, event=event_name)
-        if hooks:
-            entries: list[str | HookEntry] = []
-            for hook in hooks:
-                command = hook_command(hook)
-                if hook.matcher is not None:
-                    entries.append(HookEntry(command=command, matcher=hook.matcher))
-                else:
-                    entries.append(command)
-            hook_entries[event_name] = entries
 
-    # Third-party commands declared in config are emitted to every profile, so a
-    # tool's hooks stop depending on which profile its installer happened to run
-    # against. Appended after the harness scripts, including on events whose
-    # scripts list is empty.
-    for event_name, event_cfg in cfg.hooks.items():
-        for ext in event_cfg.external:
-            hook_entries.setdefault(event_name, []).append(
-                HookEntry(command=ext.command, matcher=ext.matcher)
-            )
+    def entries_for(profile: str) -> dict[str, list[str | HookEntry]]:
+        """The hook entries one profile's settings file gets.
 
-    if not hook_entries:
+        Built per profile because `hook_command` names the profile: a single
+        shared list would deploy every profile's hooks under whichever one
+        happened to be generated first.
+        """
+        hook_entries: dict[str, list[str | HookEntry]] = {}
+        for event_name, script_names in effective.items():
+            if not script_names:
+                continue
+            hooks = resolve_script_names(script_names, event=event_name)
+            if hooks:
+                entries: list[str | HookEntry] = []
+                for hook in hooks:
+                    command = hook_command(hook, profile=profile)
+                    if hook.matcher is not None:
+                        entries.append(HookEntry(command=command, matcher=hook.matcher))
+                    else:
+                        entries.append(command)
+                hook_entries[event_name] = entries
+
+        # Third-party commands declared in config are emitted to every profile,
+        # so a tool's hooks stop depending on which profile its installer
+        # happened to run against. Appended after the harness scripts, including
+        # on events whose scripts list is empty.
+        for event_name, event_cfg in cfg.hooks.items():
+            for ext in event_cfg.external:
+                hook_entries.setdefault(event_name, []).append(
+                    HookEntry(command=ext.command, matcher=ext.matcher)
+                )
+        return hook_entries
+
+    # Whether there is anything to deploy does not depend on the profile: the
+    # profile decides what each command says, not which hooks resolve.
+    if not entries_for(""):
         click.echo("  No hooks to deploy.")
         return
 
-    agent_hooks = agent.generate_hook_config(hook_entries)
-
     for name, entry in cfg.profiles.items.items():
+        agent_hooks = agent.generate_hook_config(entries_for(name))
         target_dir = expand_path(entry.config_dir)
         target_dir.mkdir(parents=True, exist_ok=True)
         settings_file = target_dir / "settings.json"

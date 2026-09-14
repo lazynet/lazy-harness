@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"SessionStart\", \"additionalContext\": \"## Last session\\nLast session: 2026-09-10 (42 messages)\\nWorking on: \\\"Capture the goldens before migrating the runner, please.\\\"\"}, \"systemMessage\": \"Session context loaded: Last session: 2026-09-10 (42 messages)\"}\n"
+}

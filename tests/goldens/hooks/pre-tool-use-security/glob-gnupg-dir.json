@@ -1,0 +1,5 @@
+{
+  "exit_code": 2,
+  "stderr": "Blocked by lazy-harness PreToolUse: Secret path (**/.gnupg/**) (credentials).\nMatched: /srv/app/.gnupg/pubring.kbx\nIf this is intentional, add a regex pattern to [hooks.pre_tool_use] allow_patterns in your profile config.toml.\nSee specs/designs/2026-04-17-security-hooks-cluster-design.md for the full rule list.\n",
+  "stdout": ""
+}

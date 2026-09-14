@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"SessionStart\", \"additionalContext\": \"## Handoff from last session\\n\\u26a0\\ufe0f Handoff may be stale.\\nLast written for session 0193c0de. Most recent session on disk: 7fffabcd.\\nDo NOT trust the items below as current. Ask the user what's actually pending.\\n\\n--- stale content below ---\\nPendiente:\\n- close the runner slice\\n- capture the goldens\"}, \"systemMessage\": \"Session context loaded: has handoff notes\"}\n"
+}

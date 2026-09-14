@@ -63,7 +63,11 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 
 ## Open — Prioridad ALTA
 
-_Sin items abiertos._
+### El `TranscriptReader` de Claude Code quedó fuera del step 2 y es prerequisito del step 4
+
+La decisión 11 de [`designs/2026-09-13-multi-agent-harness-design.md`](designs/2026-09-13-multi-agent-harness-design.md) lo pone en el step 2 para que la regla de señales no desplegara de menos hooks que hoy funcionan. Del step 2 salió solo la mitad declarativa: `stop_verify_guard` declara `signals=frozenset({Signal.GOAL_STATUS})` y nadie todavía lo consume. Es aceptable hoy porque el gateo de deploy por señales no existe hasta el step 4 — sin él no hay nada que desplegar de menos — y porque `TranscriptEvent` no tiene forma definida en ningún lado.
+
+**Acción:** shippear el reader de Claude Code sobre las cuatro señales que los hooks ya parsean, **antes** del step 4. El gate del step 4 observa `stop_verify_guard` *no desplegado* en Codex por `GOAL_STATUS` faltante; con el gateo vivo y sin reader, esa misma regla lo deja no desplegable también en Claude Code, que es exactamente el daño que la decisión 11 quería evitar. No se va al final de la secuencia: el step 12 son los readers de los otros agentes.
 
 ---
 

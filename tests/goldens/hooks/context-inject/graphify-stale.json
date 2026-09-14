@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"SessionStart\", \"additionalContext\": \"## Git\\nBranch: main\\nLast commit: <SHA> seed the repo\\nUncommitted: 1 untracked\\n\\n## Notice\\ngraphify-out/ is stale (last built 2026-01-01, HEAD 2026-01-02). Run /graphify to refresh.\"}, \"systemMessage\": \"Session context loaded: on main\"}\n"
+}

@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"SessionStart\", \"additionalContext\": \"## Proposals to review\\n\\u26a0 3 claude-md proposal(s) pending (oldest 2026-09-01) \\u2014 the queue is full, so no new ones are being recorded. Drain it: lh memory proposals\\n\\n## 2026-09-01\\n- **Rule:** proposal 1\\n- **Rationale:** because of reason 1\\n\\n## 2026-09-02\\n- **Rule:** proposal 2\\n- **Rationale:** because of reason 2\\n\\n## 2026-09-03\\n- **Rule:** proposal 3\\n- **Rationale:** because of reason 3\"}, \"systemMessage\": \"Session context loaded (new project)\"}\n"
+}

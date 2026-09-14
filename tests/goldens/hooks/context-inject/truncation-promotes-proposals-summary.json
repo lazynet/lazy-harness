@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"SessionStart\", \"additionalContext\": \"[truncated: dropped Recent history, Proposals to review to fit 120-char budget]\\n\\u26a0 2 claude-md proposal(s) pending (oldest 2026-09-01) \\u2014 review: lh memory proposals\\n\\n## Handoff from last session\\nPendiente:\\n- close the runner slice\\n- capture the goldens\"}, \"systemMessage\": \"Session context loaded: has handoff notes\"}\n"
+}

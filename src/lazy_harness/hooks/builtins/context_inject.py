@@ -19,8 +19,9 @@ import json
 import os
 import re
 import subprocess
-import sys
 from pathlib import Path
+
+from lazy_harness.agents.base import HookDecision, HookEvent
 
 # --------------------------------------------------------------------------- #
 # Helpers
@@ -725,12 +726,15 @@ def qmd_suggest_context(query_text: str, top_k: int = 3, timeout: int = 5) -> st
 # --------------------------------------------------------------------------- #
 
 
-def main() -> None:
-    payload: object = None
-    try:
-        payload = json.load(sys.stdin)
-    except (json.JSONDecodeError, EOFError, ValueError):
-        pass
+def main(event: HookEvent) -> HookDecision:
+    # `_shared`'s project-dir helpers read a transcript path out of a payload
+    # mapping, and three of the 15 unmigrated builtins still hand them the raw
+    # stdin dict. Rebuilding the one key they consume keeps them on one code
+    # path until step 5 retypes them; `event.raw` is for adapters, so the
+    # declaration is reconstructed rather than forwarded.
+    payload: object = (
+        {"transcript_path": str(event.transcript_path)} if event.transcript_path else {}
+    )
 
     try:
         from lazy_harness.agents.registry import get_agent
@@ -744,7 +748,7 @@ def main() -> None:
         from lazy_harness.hooks.builtins._shared import memory_dir as shared_memory_dir
     except ImportError:
         # Broken/uninstalled package: silently no-op, never block the agent.
-        return
+        return HookDecision()
 
     _log = make_log("session-context")
 
@@ -753,7 +757,10 @@ def main() -> None:
     # historical CLAUDE_CONFIG_DIR read). Re-resolved below once config is in.
     boot_dir = agent_runtime_dir(get_agent("claude-code"))
     log_file = boot_dir / "logs" / "hooks.log"
-    cwd = Path.cwd()
+    # A payload with no `cwd` parses as `Path(".")`. The process directory is
+    # what this hook read before the runner, and it is the same directory the
+    # agent declares whenever it declares one at all.
+    cwd = event.cwd if event.cwd != Path(".") else Path.cwd()
     _log(log_file, f"fired cwd={cwd}")
 
     cf = config_file()
@@ -889,19 +896,9 @@ def main() -> None:
 
     banner = _compose_banner(git_ctx, last_session_ctx, handoff_ctx)
 
-    # `hookSpecificOutput` keeps `additionalContext`, which it does accept. The
-    # banner is a top-level field: nested, it parsed and was discarded, so the
-    # body arrived and the banner never did.
-    output = {
-        "hookSpecificOutput": {
-            "hookEventName": "SessionStart",
-            "additionalContext": body,
-        },
-        "systemMessage": banner,
-    }
-    print(json.dumps(output))
     _log(log_file, f"injected {len(body)} chars, banner={banner[:80]}")
-
-
-if __name__ == "__main__":
-    main()
+    # The banner is a top-level `systemMessage` and the body is nested under
+    # `additionalContext`; which field goes where is the adapter's knowledge
+    # now, and it is not guesswork — nested, the banner parsed and was
+    # discarded, so the body arrived and the banner never did.
+    return HookDecision(additional_context=body, system_message=banner)
