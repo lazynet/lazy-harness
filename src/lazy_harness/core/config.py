@@ -32,6 +32,11 @@ class ProfileEntry:
     # `agents.registry.agent_for_profile`, never by reading this field directly:
     # a second reader is how the deploy and run paths drift apart.
     agent: str = ""
+    # The installed launcher whose `hook` subcommand this profile's generated
+    # commands name. Empty means "inherit `DEFAULT_HARNESS_BINARY`", and the
+    # same rule applies: resolve it through `agents.registry.binary_for_profile`.
+    # A bare name, never a path — `deploy.engine.hook_command` explains why.
+    harness_binary: str = ""
 
 
 @dataclass
@@ -391,6 +396,7 @@ def _parse_profiles(raw: dict[str, Any]) -> ProfilesConfig:
                 roots=value.get("roots", []),
                 lazynorth_doc=value.get("lazynorth_doc", ""),
                 agent=value.get("agent", ""),
+                harness_binary=value.get("harness_binary", ""),
             )
     return ProfilesConfig(default=default, items=items)
 
@@ -726,6 +732,7 @@ def _config_to_dict(cfg: Config) -> dict[str, Any]:
             "roots": entry.roots,
             "lazynorth_doc": entry.lazynorth_doc,
             "agent": entry.agent,
+            "harness_binary": entry.harness_binary,
         }
 
     result: dict[str, Any] = {
