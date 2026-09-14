@@ -11,9 +11,14 @@ On every push to `main`, release-please:
    - `feat:` → **minor** bump
    - `fix:` → **patch** bump
    - `BREAKING CHANGE:` in the commit footer (or a `!` after the type, e.g. `feat!:`) → **minor** bump while the project is pre-1.0
-   - every other conventional type — `docs:`, `refactor:`, `perf:`, `chore:`, `ci:`, `test:` → **patch** bump
+   - `docs:`, `refactor:`, `perf:` → **patch** bump, with a visible changelog section each
+   - `chore:`, `ci:`, `test:` → hidden from the changelog
 
-   Only `chore:`, `ci:` and `test:` are hidden from the changelog; `.github/release-please-config.json` gives `docs:`, `refactor:` and `perf:` a visible section apiece. **No type is a no-op.** A lone `docs:` commit cuts a release: v0.51.1 was exactly that — one `docs:` PR (#228) plus a hidden `chore:`, and release-please tagged it and filed the entry under *Documentation*. Plan a docs-only merge as a release, not as a push.
+   `.github/release-please-config.json` is what decides the visible/hidden split; read it rather than assuming the release-please defaults.
+
+   **A docs-only merge is a release, not a push.** Measured twice: v0.51.1 came from one `docs:` PR (#228) plus a hidden `chore:`, and v0.58.1 from a single `docs:` PR (#258). Both were tagged, both filed the entry under *Documentation*. Plan the merge accordingly — if you do not want a release yet, do not merge yet.
+
+   What is **not** measured: whether a push carrying only hidden types (`chore:` / `ci:` / `test:` and nothing else) cuts a release. Every observed release so far has had at least one visible-type commit in it, so the hidden-only case has never been exercised here. Do not assume either answer.
 3. Opens a PR titled `chore(main): release X.Y.Z` containing:
    - The version bump in both `pyproject.toml` and `src/lazy_harness/__init__.py`
    - A `CHANGELOG.md` entry grouped by section
