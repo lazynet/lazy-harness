@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.63.0](https://github.com/lazynet/lazy-harness/compare/v0.62.0...v0.63.0) (2026-09-14)
+
+
+### Features
+
+* **agents:** TranscriptReader, and stop-verify-guard consumes GOAL_STATUS ([#273](https://github.com/lazynet/lazy-harness/issues/273)) ([4955c48](https://github.com/lazynet/lazy-harness/commit/4955c480068ef90dbd7ad7ad77d17eab2f831e43))
+
+
+### Bug Fixes
+
+* warn on the ADR-033 backend form only when a config declares it ([#274](https://github.com/lazynet/lazy-harness/issues/274)) ([9591b23](https://github.com/lazynet/lazy-harness/commit/9591b23e53beda3786380831029c26358ef09251))
+
+
+### Documentation
+
+* **adr:** note that the ADR-033 deprecation warning is gated on declaration ([#275](https://github.com/lazynet/lazy-harness/issues/275)) ([9a6bbdd](https://github.com/lazynet/lazy-harness/commit/9a6bbdd188430e936fff590ff863ad577000f1e9))
+* **backlog:** move the Claude Code TranscriptReader item to Done ([7521084](https://github.com/lazynet/lazy-harness/commit/7521084f4ba96d4f007ce35d09d89d9ea8818548))
+* **backlog:** record that [hooks.*].external cannot express a per-profile command ([d43e50c](https://github.com/lazynet/lazy-harness/commit/d43e50c46d62fa79de573104ef490679c525645a))
+* **backlog:** record the ensure_ascii mismatch between deploy and the settings merge ([132dcd2](https://github.com/lazynet/lazy-harness/commit/132dcd2e065fdd81195d9f549c5c5ae363f54b66))
+* **config:** scope the [compound_loop] deprecation warning to declared keys ([8d2c908](https://github.com/lazynet/lazy-harness/commit/8d2c90865a9888f62994182090fa5f40ef12b742))
+* **design:** align HookOutput.stdout to the shipped str | None ([fa4ef2d](https://github.com/lazynet/lazy-harness/commit/fa4ef2d61094f25b035de2f698ad49fbe8e79791))
+* **design:** correct the step and the count for deleting the claude-code literals ([11dd203](https://github.com/lazynet/lazy-harness/commit/11dd203d12909559efb804a5fe416bf92455f197))
+* **design:** fold the 2026-09-14 binary research into the multi-agent design ([23b5607](https://github.com/lazynet/lazy-harness/commit/23b5607af1ba3e5aef9cfe57f3fffa1a417f2d1a))
+* **design:** name the prior label of every swept Copilot row ([647586e](https://github.com/lazynet/lazy-harness/commit/647586e97ae808466cd10eae292cb1231d22206e))
+* **design:** re-pin decision 11 to the shipped TranscriptReader ([240cf67](https://github.com/lazynet/lazy-harness/commit/240cf67db7809665139f15ee1ec76a7afb4ca7dc))
+* **design:** record the measured session directories in the blast-radius design ([b3d1d7a](https://github.com/lazynet/lazy-harness/commit/b3d1d7a8079344f875f3b82cf9120eaf67e10ffd))
+* **design:** relabel the measured rows of the Copilot 1.0.83 matrix column ([8e37b5c](https://github.com/lazynet/lazy-harness/commit/8e37b5c5dec5249f5837347f89fb81d125eac433))
+* **design:** repin Copilot's hook events to the measured 1.0.83 list ([43d456d](https://github.com/lazynet/lazy-harness/commit/43d456dbca97baadfa7880ec138a9ad12484803e))
+* **design:** resolve the Copilot deny contradiction — top-level verdict only ([a0bf55a](https://github.com/lazynet/lazy-harness/commit/a0bf55ae8aa9138c0f9ff67720290be82784e887))
+* **design:** withdraw the unverified Copilot compat-mode tool mapping ([d27e83d](https://github.com/lazynet/lazy-harness/commit/d27e83d8c445ba06582094b23b58a26b56a42ae8))
+* **hooks:** describe stop-verify-guard goal detection through TranscriptReader ([bbcdaa3](https://github.com/lazynet/lazy-harness/commit/bbcdaa3b7ef70697b8dde25b64a9b1e94a0296b7))
+* **roadmap:** restate the extension-point contract trigger ([7d860af](https://github.com/lazynet/lazy-harness/commit/7d860afbf550bbdfa3ca87a435fa52dc42095e75))
+
 ## [0.62.0](https://github.com/lazynet/lazy-harness/compare/v0.61.0...v0.62.0) (2026-09-14)
 
 
