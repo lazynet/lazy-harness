@@ -292,7 +292,9 @@ _MEMORY_DIR_OPTION = click.option(
     "--memory-dir",
     type=click.Path(file_okay=False, path_type=Path),
     default=None,
-    help="Project memory directory. Defaults to the agent runtime dir for this cwd.",
+    help="Project memory directory. Defaults to this project's directory in the "
+    "knowledge store, falling back to the agent runtime dir when there is no "
+    "usable store.",
 )
 
 

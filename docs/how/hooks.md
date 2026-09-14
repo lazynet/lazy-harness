@@ -772,7 +772,7 @@ Then:
 ```bash
 lh deploy         # regenerates the agent's hook config
 lh hooks list     # confirms your hook resolved
-lh hooks run my_hook --event session_start    # dry-run it with a fake payload
+lh hooks run session_start    # runs the event's hooks, my_hook included
 ```
 
 Hooks are ordered within an event. They run sequentially in the order you declared. A hook cannot cancel the ones after it — there is no hook-abort semantic, by design.

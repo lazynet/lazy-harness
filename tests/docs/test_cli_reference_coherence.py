@@ -14,12 +14,22 @@ Doc anchors this test depends on (a doc restructure that breaks these should fai
 loudly, not silently extract nothing):
 - fenced ```bash code blocks whose lines start with "lh "
 - inline code spans of the shape `` `lh ...` ``
+
+Unmarked prose is out of scope on purpose: `lh deploy --dry-run` written with
+neither a fence nor backticks is not extracted, and no scan here sees it. Both
+anchors require the author to have marked the text up as a command, which is
+what makes the extraction unambiguous — over running prose the extractor would
+have to guess where the invocation ends, and would read "run lh deploy first" as
+a command taking the argument `first`. Marking commands up is already the house
+style across docs/, so an unmarked one is a docs-style miss rather than a hole
+this file should paper over with a heuristic.
 """
 
 from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import NamedTuple
 
 import click
 
@@ -50,6 +60,55 @@ def _extract_lh_invocations(doc_text: str) -> list[str]:
     return invocations
 
 
+class _Walk(NamedTuple):
+    """Where a doc invocation's tokens land in the click tree.
+
+    One traversal, consumed by both directions of the scan: the command check
+    asks whether the walk broke on a name that does not exist, the flag check
+    asks which command the remaining tokens were written against. Two walks
+    would be two subtly different answers to the same question.
+    """
+
+    node: click.Command
+    path: list[str]
+    rest: list[str]
+    stop: str
+
+
+def _walk_command_path(root: click.Group, tokens: list[str]) -> _Walk:
+    """Descend through click.Group nodes for as long as the tokens name one.
+
+    `stop` records why the descent ended, which is the whole point: `unknown`
+    means a doc named a subcommand that does not exist, while `placeholder`,
+    `shape` and `comment` mean the tokens stopped being classifiable at all.
+    """
+    node: click.Command = root
+    path: list[str] = []
+    for index, token in enumerate(tokens):
+        if not isinstance(node, click.Group):
+            return _Walk(node, path, tokens[index:], "leaf")
+        if token.startswith("-"):
+            return _Walk(node, path, tokens[index:], "flag")
+        if token.startswith("#"):
+            return _Walk(node, path, tokens[index:], "comment")
+        if "<" in token or ">" in token:
+            # Placeholder syntax (e.g. `lh <command> --help`), not a real
+            # subcommand name — cannot confidently classify, so skip it.
+            return _Walk(node, path, tokens[index:], "placeholder")
+        if not _COMMAND_TOKEN_SHAPE.match(token):
+            # Catch-all conservatism for shapes the checks above don't name
+            # explicitly: entry-point syntax (`lh = "pkg:cli"`), slash
+            # shorthand (`lh profile add/remove`), and anything else that
+            # isn't a plausible lowercase-hyphenated subcommand name.
+            return _Walk(node, path, tokens[index:], "shape")
+        child = node.commands.get(token)
+        if child is None:
+            return _Walk(node, path, tokens[index:], "unknown")
+        node = child
+        path.append(token)
+    return _Walk(node, path, [], "exhausted")
+
+
 def find_missing_lh_invocations(root: click.Group, doc_text: str) -> list[str]:
     """Return every extracted invocation whose command path does not exist.
 
@@ -58,36 +117,11 @@ def find_missing_lh_invocations(root: click.Group, doc_text: str) -> list[str]:
     remaining tokens are arguments/flags, not subcommands) or a token looks like
     a flag/comment. A missing subcommand along the walked path is a failure.
     """
-    missing: list[str] = []
-
-    for invocation in _extract_lh_invocations(doc_text):
-        tokens = invocation.split()[1:]  # drop the leading "lh"
-        node: click.Command = root
-        broken = False
-        for token in tokens:
-            if not isinstance(node, click.Group):
-                break
-            if token.startswith("-") or token.startswith("#"):
-                break
-            if "<" in token or ">" in token:
-                # Placeholder syntax (e.g. `lh <command> --help`), not a real
-                # subcommand name — cannot confidently classify, so skip it.
-                break
-            if not _COMMAND_TOKEN_SHAPE.match(token):
-                # Catch-all conservatism for shapes the checks above don't name
-                # explicitly: entry-point syntax (`lh = "pkg:cli"`), slash
-                # shorthand (`lh profile add/remove`), and anything else that
-                # isn't a plausible lowercase-hyphenated subcommand name.
-                break
-            next_node = node.commands.get(token)
-            if next_node is None:
-                broken = True
-                break
-            node = next_node
-        if broken:
-            missing.append(invocation)
-
-    return missing
+    return [
+        invocation
+        for invocation in _extract_lh_invocations(doc_text)
+        if _walk_command_path(root, invocation.split()[1:]).stop == "unknown"
+    ]
 
 
 def find_missing_lh_invocations_in_docs(root: click.Group, docs_dir: Path) -> dict[str, list[str]]:
@@ -322,3 +356,346 @@ def test_cli_reference_documents_every_shipped_command() -> None:
         f"{undocumented}. Document them, or add an entry to "
         "_UNDOCUMENTED_ON_PURPOSE with the reason."
     )
+
+
+# Both scans above walk tokens only far enough to name a command, then stop at
+# the first token starting with `-`. That blindness is what let `lh deploy
+# --dry-run` live in docs/how/profiles-and-deploy.md twice while `lh deploy`
+# declared no options at all (measured 2026-09-12; caught by /coherence-audit,
+# not by this file). This third scan checks the flags themselves.
+#
+# Strict by design: a flag is resolved against the options declared on the
+# command it is written after, never against an ancestor group's. That is
+# click's own semantics — group options parse at the group's position, so
+# `lh --version` works and `lh status --version` is `No such option`. Measured
+# against docs/** as it stands, strict and lax agree exactly (97 known, 1
+# unknown), so the stricter rule costs nothing today and stays correct when a
+# doc eventually does write one in the wrong place.
+
+
+def _accepted_options(command: click.Command) -> set[str]:
+    """Every option string `command` itself accepts, `--help` included.
+
+    `secondary_opts` carries the `--no-x` half of a boolean pair; reading only
+    `opts` would report every negated flag as unknown.
+    """
+    accepted = {"--help"}
+    for param in command.params:
+        if isinstance(param, click.Option):
+            accepted.update(param.opts)
+            accepted.update(param.secondary_opts)
+    return accepted
+
+
+def _attributable_flags(
+    root: click.Group, doc_text: str
+) -> list[tuple[str, str, click.Command]]:
+    """Every (invocation, flag, command) the flag scan can attribute.
+
+    A flag is attributable only when the walk ended somewhere that names a real
+    command: on a leaf, on the flag itself, or with the tokens exhausted. A walk
+    halted by a placeholder, an unclassifiable token shape or a subcommand that
+    does not exist leaves the owning command unknown, so its flags are
+    unverifiable rather than wrong — and an unresolved command is already
+    reported by `find_missing_lh_invocations`.
+    """
+    attributable: list[tuple[str, str, click.Command]] = []
+
+    for invocation in _extract_lh_invocations(doc_text):
+        walk = _walk_command_path(root, invocation.split()[1:])
+        if walk.stop not in ("leaf", "flag", "exhausted"):
+            continue
+        for token in walk.rest:
+            if token == "--":
+                # click's end-of-options marker: the rest belongs to whatever
+                # process the command forwards to, not to `lh`.
+                break
+            if token.startswith("#"):
+                break
+            if not token.startswith("-") or token == "-":
+                continue
+            attributable.append((invocation, token.split("=", 1)[0], walk.node))
+
+    return attributable
+
+
+def checked_lh_flags(root: click.Group, doc_text: str) -> list[tuple[str, str]]:
+    """Every (invocation, flag) pair this scan actually looks up.
+
+    Exposed so the real-docs test can guard its own anchor: a doc restructure
+    that stops flags resolving must fail loudly, not check nothing.
+    """
+    return [(invocation, flag) for invocation, flag, _ in _attributable_flags(root, doc_text)]
+
+
+def find_unknown_lh_flags(root: click.Group, doc_text: str) -> list[tuple[str, str]]:
+    """Return every (invocation, flag) whose command does not declare that flag."""
+    return [
+        (invocation, flag)
+        for invocation, flag, command in _attributable_flags(root, doc_text)
+        if flag not in _accepted_options(command)
+    ]
+
+
+def find_unknown_lh_flags_in_docs(
+    root: click.Group, docs_dir: Path
+) -> dict[str, list[tuple[str, str]]]:
+    """Run `find_unknown_lh_flags` over every markdown file under `docs_dir`."""
+    result: dict[str, list[tuple[str, str]]] = {}
+    for path in sorted(docs_dir.rglob("*.md")):
+        unknown = find_unknown_lh_flags(root, path.read_text(encoding="utf-8"))
+        if unknown:
+            result[str(path.relative_to(docs_dir.parent))] = unknown
+    return result
+
+
+def test_self_test_flag_checker_flags_only_the_invented_flag() -> None:
+    """Prove the flag scan can fail before we trust it passing against docs/."""
+
+    @click.group()
+    def fake_cli() -> None:
+        pass
+
+    @fake_cli.command("foo")
+    @click.option("--real", is_flag=True)
+    def foo_cmd() -> None:
+        pass
+
+    doc = """
+```bash
+lh foo --real
+lh foo --invented
+```
+"""
+
+    assert find_unknown_lh_flags(fake_cli, doc) == [("lh foo --invented", "--invented")]
+
+
+def test_flags_after_the_end_of_options_marker_are_not_checked() -> None:
+    """`--` is click's end-of-options marker: everything after it belongs to the
+    forwarded process, not to `lh`. `lh run --dry-run -- --resume` in
+    docs/reference/cli.md is exactly this shape, and `--resume` is a flag of the
+    agent binary `run_cmd` execs, not one `lh run` declares."""
+
+    @click.group()
+    def fake_cli() -> None:
+        pass
+
+    @fake_cli.command("foo")
+    @click.option("--real", is_flag=True)
+    def foo_cmd() -> None:
+        pass
+
+    doc = "Run `lh foo --real -- --resume --not-ours` to forward them."
+
+    assert find_unknown_lh_flags(fake_cli, doc) == []
+
+
+def test_flags_after_a_placeholder_are_not_checked() -> None:
+    """A placeholder halts the walk, so the command the flag belongs to is
+    unknown and the flag is unverifiable — not wrong. `lh config <feature>
+    --init` appears in four docs and `--init` is real, but only on the leaves
+    (`lh config memory --init`), never on the `lh config` group itself."""
+
+    @click.group()
+    def fake_cli() -> None:
+        pass
+
+    @fake_cli.group("config")
+    def config_group() -> None:
+        pass
+
+    @config_group.command("memory")
+    @click.option("--init", is_flag=True)
+    def memory_cmd() -> None:
+        pass
+
+    doc = "Run `lh config <feature> --init` for any feature."
+
+    assert find_unknown_lh_flags(fake_cli, doc) == []
+
+
+def test_flag_value_syntax_is_tokenised_before_lookup() -> None:
+    """`--profile=lazy` is one token carrying a declared option. Looking the
+    whole token up verbatim would report a real flag as unknown — a false
+    positive, which is the failure mode that makes a checker untrustworthy."""
+
+    @click.group()
+    def fake_cli() -> None:
+        pass
+
+    @fake_cli.command("foo")
+    @click.option("--profile", default=None)
+    def foo_cmd() -> None:
+        pass
+
+    doc = """
+```bash
+lh foo --profile=lazy
+lh foo --invented=lazy
+```
+"""
+
+    assert find_unknown_lh_flags(fake_cli, doc) == [("lh foo --invented=lazy", "--invented")]
+
+
+def test_short_flags_resolve_against_the_declared_option() -> None:
+    """A short flag is an entry in the same `opts` list as its long form."""
+
+    @click.group()
+    def fake_cli() -> None:
+        pass
+
+    @fake_cli.command("foo")
+    @click.option("-p", "--profile", default=None)
+    def foo_cmd() -> None:
+        pass
+
+    doc = """
+```bash
+lh foo -p lazy
+lh foo -q lazy
+```
+"""
+
+    assert find_unknown_lh_flags(fake_cli, doc) == [("lh foo -q lazy", "-q")]
+
+
+def test_negated_boolean_flags_are_accepted() -> None:
+    """`--no-tools` is in `secondary_opts`, not `opts`."""
+
+    @click.group()
+    def fake_cli() -> None:
+        pass
+
+    @fake_cli.command("foo")
+    @click.option("--tools/--no-tools", default=True)
+    def foo_cmd() -> None:
+        pass
+
+    doc = "Deny everything with `lh foo --no-tools`."
+
+    assert find_unknown_lh_flags(fake_cli, doc) == []
+
+
+def test_group_options_do_not_carry_into_subcommands() -> None:
+    """The strict rule, stated as a test: `--version` on the root group is
+    valid at the root's own position and invalid after a subcommand, which is
+    what click itself does."""
+
+    @click.group()
+    @click.option("--version", is_flag=True)
+    def fake_cli() -> None:
+        pass
+
+    @fake_cli.command("foo")
+    def foo_cmd() -> None:
+        pass
+
+    doc = """
+```bash
+lh --version
+lh foo --version
+```
+"""
+
+    assert find_unknown_lh_flags(fake_cli, doc) == [("lh foo --version", "--version")]
+
+
+def test_help_is_accepted_on_every_command() -> None:
+    """click adds `--help` itself, so it is never in a command's own params."""
+
+    @click.group()
+    def fake_cli() -> None:
+        pass
+
+    @fake_cli.command("foo")
+    def foo_cmd() -> None:
+        pass
+
+    doc = "Run `lh foo --help`."
+
+    assert find_unknown_lh_flags(fake_cli, doc) == []
+
+
+def test_flags_after_a_trailing_comment_are_not_checked() -> None:
+    """A `#` starts shell prose. Whatever follows is not an invocation."""
+
+    @click.group()
+    def fake_cli() -> None:
+        pass
+
+    @fake_cli.command("foo")
+    def foo_cmd() -> None:
+        pass
+
+    doc = """
+```bash
+lh foo # pass --invented here later
+```
+"""
+
+    assert find_unknown_lh_flags(fake_cli, doc) == []
+
+
+def test_flags_on_an_unresolved_command_are_not_double_reported() -> None:
+    """A doc naming a command that does not exist is already a failure of
+    `find_missing_lh_invocations`. Reporting its flags too would bury the real
+    finding under noise, and the flags cannot be attributed to anything."""
+
+    @click.group()
+    def fake_cli() -> None:
+        pass
+
+    @fake_cli.group("foo")
+    def foo_group() -> None:
+        pass
+
+    doc = "Run `lh foo nonexistent --whatever`."
+
+    assert find_missing_lh_invocations(fake_cli, doc) == ["lh foo nonexistent --whatever"]
+    assert find_unknown_lh_flags(fake_cli, doc) == []
+
+
+def test_cli_reference_flags_exist_on_the_commands_they_follow() -> None:
+    from lazy_harness.cli.main import cli
+
+    doc_files = sorted(DOCS_DIR.rglob("*.md"))
+    total_checked = sum(
+        len(checked_lh_flags(cli, path.read_text(encoding="utf-8"))) for path in doc_files
+    )
+
+    # Same anchor guard as the command scan: a doc restructure that stops the
+    # flag tokens resolving must fail loudly rather than check almost nothing.
+    # 97 flag tokens were attributable when this was written, out of 104 present
+    # (6 sit after a `<placeholder>`, 1 after a `--`).
+    assert total_checked > 80
+
+    unknown = find_unknown_lh_flags_in_docs(cli, DOCS_DIR)
+    assert unknown == {}
+
+
+def test_unmarked_prose_is_deliberately_not_extracted() -> None:
+    """The documented limit of the anchor set, made executable.
+
+    Both marked-up shapes are covered; bare prose is not. Locked in so that
+    widening the extractor is a deliberate act with a test to update, not a
+    silent change of what the whole file is understood to guarantee.
+    """
+
+    @click.group()
+    def fake_cli() -> None:
+        pass
+
+    @fake_cli.command("foo")
+    def foo_cmd() -> None:
+        pass
+
+    fenced = "```bash\nlh foo --invented\n```"
+    inline = "Run `lh foo --invented` first."
+    prose = "Run lh foo --invented first."
+
+    assert find_unknown_lh_flags(fake_cli, fenced) == [("lh foo --invented", "--invented")]
+    assert find_unknown_lh_flags(fake_cli, inline) == [("lh foo --invented", "--invented")]
+    assert find_unknown_lh_flags(fake_cli, prose) == []
+    assert find_missing_lh_invocations(fake_cli, "Run lh nonexistent first.") == []
