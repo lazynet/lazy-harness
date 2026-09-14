@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"SessionStart\", \"additionalContext\": \"## Handoff from last session\\nPendiente:\\n- close the runner slice\\n- capture the goldens\\n\\nPre-compact context:\\n## Recent decisions\\n- keep the runner thin\"}, \"systemMessage\": \"Session context loaded: has handoff notes\"}\n"
+}

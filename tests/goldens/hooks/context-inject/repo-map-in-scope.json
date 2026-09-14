@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"SessionStart\", \"additionalContext\": \"## Repo map\\n# Repos\\n\\n- lazy-harness \\u2014 the harness itself\\n- lazy-knowledge \\u2014 the store\"}, \"systemMessage\": \"Session context loaded (new project)\"}\n"
+}

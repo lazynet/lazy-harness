@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"SessionStart\", \"additionalContext\": \"## Proposals to review\\n## 2026-09-01\\n- **Rule:** proposal 1\\n- **Rationale:** because of reason 1\"}, \"systemMessage\": \"Session context loaded (new project)\"}\n"
+}
