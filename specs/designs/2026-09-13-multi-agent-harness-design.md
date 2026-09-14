@@ -1041,13 +1041,21 @@ layout; that agreement is part of step 7, not a later cleanup.
 
 ### 11. Transcript dependence is a hook capability, declared before the reader exists
 
+> **Shipped (2026-09-14, PR #273).** Claude Code's `TranscriptReader` landed with
+> step 2, exactly as the closing paragraph of this decision prescribes. The
+> reasoning below is left as written — it is what decided the shape — but the
+> table's `stop_verify_guard` citation now describes the pre-migration file: the
+> guard consumes `Signal.GOAL_STATUS` through `_shared.transcript_reader()` and no
+> longer knows what the marker looks like on disk. Only the row's line reference
+> is re-pinned. Step 12, not step 11, is the other agents' readers.
+
 `TranscriptReader` is last in the sequence (below), and the first two drafts
 paired that with a claim that hooks are portable once the runner lands. Both
 cannot be true. Verified:
 
 | Hook | Claude-specific structure it parses |
 |---|---|
-| `stop_verify_guard` | `entry["type"] == "attachment"` and `attachment["type"] == "goal_status"` — Claude Code's native `/goal` marker (`:49-52`) |
+| `stop_verify_guard` | `entry["type"] == "attachment"` and `attachment["type"] == "goal_status"` — Claude Code's native `/goal` marker (was `hooks/builtins/stop_verify_guard.py:49-52`; moved by PR #273 to `agents/claude_code.py:436-453`) |
 | `herdr_context_gauge` | `usage.input_tokens` / `cache_read_input_tokens` / `cache_creation_input_tokens` — the Anthropic API usage schema (`:44-52`) |
 | `pre_compact` | `role == "assistant"`, `content` as a list of blocks, `block["type"] == "tool_use"` (`:63-77`) |
 | `compound_loop`, `session_end` | resolve a path only; the `knowledge/compound_loop.py` they hand to parses the same Claude message schema (`:57-354`) |
@@ -1080,7 +1088,7 @@ and `lh doctor` names the missing one rather than reporting a generic absence.
 with the reader at the end of the sequence would undeploy working Claude Code
 hooks for the length of the migration. So step 2 ships a Claude Code
 `TranscriptReader` covering the four signals the existing hooks already parse —
-it is a move of code that exists, not new capability — and step 11 becomes
+it is a move of code that exists, not new capability — and step 12 becomes
 *other agents' readers*, which is where the real unknowns are.
 
 
