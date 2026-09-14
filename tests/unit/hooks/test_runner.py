@@ -215,3 +215,39 @@ def test_a_declared_profile_runs(
 
     assert result.exit_code == 0
     assert json.loads(result.stdout or "{}") == {"systemMessage": "hi"}
+
+
+def test_an_unresolved_profile_falls_back_to_the_configured_agent(
+    monkeypatch: pytest.MonkeyPatch, configured_profiles: None
+) -> None:
+    """`profile_name()` returns "" whenever it cannot match a config dir.
+
+    That is reachable on a machine with profiles declared -- no
+    `CLAUDE_CONFIG_DIR`, or one pointing somewhere the table does not name --
+    and refusing there would take every hook down with it, which is the same
+    reasoning `_adapter_for` already applies to an empty table.
+    """
+    register(monkeypatch, "guard", lambda event: HookDecision(system_message="ran"), blocking=True)
+
+    result = runner.run_hook("guard", profile="", stdin_text=json.dumps(PRE_TOOL_USE))
+
+    assert result.exit_code == 0
+    assert result.stderr == ""
+    assert json.loads(result.stdout or "{}") == {"systemMessage": "ran"}
+
+
+def test_a_named_profile_that_is_not_declared_still_refuses(
+    monkeypatch: pytest.MonkeyPatch, configured_profiles: None
+) -> None:
+    """The fallback must not swallow the typo it was added to name.
+
+    An empty profile is "nothing resolved"; a non-empty one that no profile
+    declares is a wrong `--profile` in a deployed command, and a hook running
+    under the wrong scope writes memory and metrics to the wrong place.
+    """
+    register(monkeypatch, "guard", lambda event: HookDecision(), blocking=True)
+
+    result = runner.run_hook("guard", profile="lazyy", stdin_text=json.dumps(PRE_TOOL_USE))
+
+    assert result.exit_code == 2
+    assert "lazyy" in result.stderr

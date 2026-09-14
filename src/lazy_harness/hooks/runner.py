@@ -54,7 +54,18 @@ def _adapter_for(profile: str) -> AgentAdapter:
     declared = cfg.profiles.items
     # An empty table is a machine that has not run `lh init`, not a wrong
     # profile: refusing there would take every hook down with it.
-    if declared and profile not in declared:
+    #
+    # An unresolved profile is the same case for the same reason, and it is
+    # reachable on a fully configured machine: `resolve_profile(None)` falls
+    # back to `profile_name()`, which returns "" whenever the agent's config
+    # dir variable is unset or names a directory no profile declares. Refusing
+    # an empty profile against a populated table would take every hook down
+    # with it on exactly the machines that did run `lh init`.
+    #
+    # A *named* profile absent from the table stays a refusal: that is a typo
+    # in a deployed command, and a hook running under the wrong scope writes
+    # its memory and its metrics somewhere the profile does not own.
+    if profile and declared and profile not in declared:
         raise RunnerError(f"unknown profile {profile!r}; declared: {sorted(declared)}")
     return get_agent(cfg.agent.type)
 
