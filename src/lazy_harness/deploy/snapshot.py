@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from lazy_harness import __version__
+from lazy_harness.core.config import Config
 
 MANIFEST_FORMAT = "manifest"
 MANIFEST_VERSION = 1
@@ -74,3 +75,41 @@ def take_snapshot(targets: list[Path], snapshot_dir: Path) -> Path:
     path = snapshot_dir / ROLLBACK_LOG_NAME
     path.write_text(json.dumps(manifest, indent=2) + "\n")
     return path
+
+
+def snapshot_targets(cfg: Config) -> list[Path]:
+    """Every path a deploy owns, derived once so the rollback cannot miss one.
+
+    Mirrors what `deploy/engine.py` writes: the per-profile symlinks named by
+    the profile source tree, each profile's `settings.json` and MCP config, and
+    the agent's global config link. An integration test invokes this and a real
+    deploy and asserts they agree — two readers of one config-derived answer.
+    """
+    from lazy_harness.agents.registry import get_agent
+    from lazy_harness.core.paths import config_dir, expand_path
+
+    agent = get_agent(cfg.agent.type)
+    mcp_file_name = agent.mcp_config_file()
+    profiles_src = config_dir() / "profiles"
+
+    targets: list[Path] = []
+    for name, entry in cfg.profiles.items.items():
+        target_dir = expand_path(entry.config_dir)
+        src_dir = profiles_src / name
+        if src_dir.is_dir():
+            targets.extend(target_dir / item.name for item in sorted(src_dir.iterdir()))
+        targets.append(target_dir / "settings.json")
+        if mcp_file_name:
+            targets.append(target_dir / mcp_file_name)
+
+    link_path = agent.global_config_link()
+    if link_path is not None:
+        targets.append(link_path)
+
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for path in targets:
+        if path not in seen:
+            seen.add(path)
+            unique.append(path)
+    return unique
