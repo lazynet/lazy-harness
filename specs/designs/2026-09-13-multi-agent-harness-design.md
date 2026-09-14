@@ -1125,8 +1125,8 @@ installed launcher and should be re-measured before they are relied on.
 
 **The Copilot column was swept against the findings section on 2026-09-14**,
 because a provenance label ages: four rows (`env_var()`, `verdicts honoured on
-pre-tool`, `hook config`, `headless`) were still marked `vendor docs`/`source`
-after the same document had already reported observing them — the 1.0.40
+pre-tool`, `hook config`, `headless`) were still marked `binary`, `vendor docs`
+or `source` after the same document had already reported observing them — the 1.0.40
 failure in miniature, a stale label surviving because each revision re-read the
 table instead of the section below it. They now read `run, 1.0.83`. Three rows
 were checked and **deliberately left weaker**, having never been exercised:
