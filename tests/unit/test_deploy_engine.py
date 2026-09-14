@@ -379,16 +379,25 @@ def test_a_generated_builtin_command_is_recognised_as_its_own() -> None:
 
     The two drifted apart: the classifier matches on a builtins path that the
     generator stopped emitting when it moved to `lh hook <name>`.
+
+    Decision 11 widens the generator to any binary a profile declares, so the
+    classifier is checked against both ends of that range rather than only the
+    default launcher.
     """
     from lazy_harness.deploy.engine import _is_harness_owned, hook_command
     from lazy_harness.hooks.loader import resolve_script_names
 
     hooks = resolve_script_names(["context-inject"], event="session_start")
     assert hooks, "context-inject should resolve as a builtin"
-    command = hook_command(hooks[0], profile="personal")
 
-    assert _is_harness_owned(command), (
-        f"the harness does not recognise its own generated command: {command!r}"
+    default_command = hook_command(hooks[0], profile="personal")
+    assert _is_harness_owned(default_command), (
+        f"the harness does not recognise its own generated command: {default_command!r}"
+    )
+
+    beta_command = hook_command(hooks[0], profile="beta", binary="lh-beta")
+    assert _is_harness_owned(beta_command, binaries={"lh", "lh-beta"}), (
+        f"the harness does not recognise a declared binary's command: {beta_command!r}"
     )
 
 
@@ -414,6 +423,22 @@ def test_a_foreign_command_is_not_claimed_by_the_harness() -> None:
     assert not _is_harness_owned("echo 'lh hook context-inject'")
 
 
+def test_an_undeclared_binary_is_not_claimed_by_the_harness() -> None:
+    """Widening the launcher to a config field must not widen it to any word.
+
+    The allow-list is what the config declares plus the default; a `hook`
+    subcommand alone is not a harness fingerprint, or every tool that models
+    hooks the same way would be adopted and then pruned.
+    """
+    from lazy_harness.deploy.engine import _is_harness_owned
+
+    binaries = {"lh", "lh-beta"}
+    assert _is_harness_owned("lh-beta hook context-inject --profile beta", binaries=binaries)
+    assert not _is_harness_owned("lh-other hook context-inject --profile beta", binaries=binaries)
+    assert not _is_harness_owned("other-tool hook context-inject --profile beta", binaries=binaries)
+    assert not _is_harness_owned("lh-beta hook context-inject --profile beta")
+
+
 def test_redeploy_after_a_command_format_change_installs_each_hook_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -436,9 +461,9 @@ def test_redeploy_after_a_command_format_change_installs_each_hook_once(
     monkeypatch.setattr(
         engine,
         "hook_command",
-        lambda hook, *, profile: real_hook_command(hook, profile=profile).removesuffix(
-            f" --profile {profile}"
-        ),
+        lambda hook, *, profile, **kwargs: real_hook_command(
+            hook, profile=profile, **kwargs
+        ).removesuffix(f" --profile {profile}"),
     )
     deploy_hooks(cfg)
     before = _hook_entry_count(settings_file)
@@ -460,6 +485,85 @@ def test_redeploy_after_a_command_format_change_installs_each_hook_once(
         f"redeploy after a command format change duplicated hooks: "
         f"{before} hook entries before, {after} after"
     )
+
+
+def test_deploy_hooks_names_the_binary_each_profile_declares(tmp_path: Path) -> None:
+    """Decision 11: the beta unit is a profile, so the binary is resolved inside
+    the profile loop. Resolved once above it, every profile would get whichever
+    binary was read first — the defect `agent_for_profile` was added to fix."""
+    daily_dir = tmp_path / "daily"
+    beta_dir = tmp_path / "beta"
+    cfg = Config(
+        harness=HarnessConfig(version="1"),
+        profiles=ProfilesConfig(
+            default="personal",
+            items={
+                "personal": ProfileEntry(config_dir=str(daily_dir), roots=["~"]),
+                "beta": ProfileEntry(
+                    config_dir=str(beta_dir), roots=["~"], harness_binary="lh-beta"
+                ),
+            },
+        ),
+        hooks={},
+    )
+
+    deploy_hooks(cfg)
+
+    daily = (daily_dir / "settings.json").read_text()
+    beta = (beta_dir / "settings.json").read_text()
+
+    assert "lh hook context-inject --profile personal" in daily
+    assert "lh-beta" not in daily
+    assert "lh-beta hook context-inject --profile beta" in beta
+    assert '"lh hook' not in beta, "the beta profile must not reach the daily binary"
+
+
+def test_redeploy_after_a_profile_changes_its_binary_installs_each_hook_once(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Switching a profile's launcher changes every generated command it owns.
+
+    A classifier that only knows the default binary reads the entries it wrote
+    itself on the previous deploy as another tool's and preserves them beside
+    the new ones — the duplication shape `--profile` already caused once.
+    """
+    profile_dir = tmp_path / "profile"
+    settings_file = profile_dir / "settings.json"
+
+    def _cfg(binary: str) -> Config:
+        return Config(
+            harness=HarnessConfig(version="1"),
+            profiles=ProfilesConfig(
+                default="personal",
+                items={
+                    "personal": ProfileEntry(
+                        config_dir=str(profile_dir), roots=["~"], harness_binary=binary
+                    )
+                },
+            ),
+            hooks={},
+        )
+
+    deploy_hooks(_cfg(""))
+    before = _hook_entry_count(settings_file)
+    assert before > 0, "the first deploy should install harness hooks"
+    capsys.readouterr()
+
+    deploy_hooks(_cfg("lh-beta"))
+
+    after = _hook_entry_count(settings_file)
+    out = capsys.readouterr().out
+    text = settings_file.read_text()
+
+    assert "preserved" not in out, (
+        f"the harness classified its own previous-binary entries as foreign:\n{out}"
+    )
+    assert after == before, (
+        f"redeploy after a binary change duplicated hooks: "
+        f"{before} hook entries before, {after} after"
+    )
+    assert '"lh hook' not in text, "the previous binary's commands survived the redeploy"
+    assert "lh-beta hook context-inject --profile personal" in text
 
 
 def test_deploy_hooks_writes_the_writing_version(tmp_path: Path) -> None:
