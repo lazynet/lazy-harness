@@ -179,8 +179,20 @@ Builtins change signature from `main() -> None` to
 Claude Code sees do not change; that identity is the acceptance test for the
 migration (see verification gates).
 
-`_shared.py:profile_name()`, `_TRANSCRIPT_KEYS`, and the nine
-`get_agent("claude-code")` literals are deleted by this step, not worked around.
+`_shared.py:profile_name()`, `_TRANSCRIPT_KEYS`, and the
+`get_agent("claude-code")` literals are deleted rather than worked around, but
+by **step 5**, not by this one: the 15 builtins this step leaves unmigrated
+still depend on all three, so deleting them here would break every hook the step
+does not touch.
+
+The literals number **ten**, not nine, and step 5 accounts for only seven of
+them. `knowledge/compound_loop_worker.py:100` is not a builtin and never reaches
+the runner. The other two — `pre_tool_use_security.py:298` and
+`context_inject.py:758` — sit inside hooks *this* step migrates, and still
+cannot go at step 5: replacing them with `agent_for_profile()` moves that hook's
+agent resolution from global to per-profile, which is the behaviour change
+scheduled at **step 6**. Migrating a hook to the runner and re-scoping how it
+resolves its agent are two changes, and only the first belongs here.
 
 **There are two callers of `main()`, not one, and neither passes arguments.**
 Verified in the code:
@@ -1258,8 +1270,9 @@ non-identity adapter has run against it.** Step 3 is that gate.
    `flex`. That is the derived design's decision 11 and it is what keeps a
    failing gate from taking a daily profile with it.
 5. Migrate the remaining 15 builtins, each declaring its `Operation` set and its
-   `Signal` set. Delete `profile_name()`, `_TRANSCRIPT_KEYS` and the nine
-   `get_agent("claude-code")` literals.
+   `Signal` set. Delete `profile_name()`, `_TRANSCRIPT_KEYS` and seven of the
+   ten `get_agent("claude-code")` literals (decision 1 names the three that
+   cannot move here).
 6. `per_profile` on `Capability` and the 18 `cfg.agent.type` readers
    (`agent_for_profile()` itself landed at step 3, for the gate). Full save/load/save/load round trip on the
    new-document and merge-on-existing paths. `CapabilityRegistry.toggle()` walks
