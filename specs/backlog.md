@@ -222,6 +222,38 @@ perfil correcto.
    comando externo que necesite el directorio del perfil, sin tocar la forma de
    la config.
 
+### `deploy` serializa `settings.json` con `ensure_ascii=True` y hace rebotar los bytes en cada ciclo
+
+**Por qué:** `deploy/engine.py:323` escribe
+`json.dumps(settings, indent=2)`, y `ensure_ascii` por default es `True`, así
+que todo carácter no-ASCII sale escapado (`—` → `—`). Claude Code, que
+reescribe ese mismo archivo en runtime, serializa con `ensure_ascii=False`. El
+merge de chezmoi que gestiona el archivo en el destino replica el formato de
+Claude Code a propósito.
+
+Resultado: las keys con prosa no-ASCII —hoy `autoMode`, que guarda
+`soft_deny` y `environment` en lenguaje natural— rebotan de formato en cada
+ciclo. `lh deploy` las deja escapadas, el `apply` siguiente las desescapa, y
+vuelta a empezar. El contenido es idéntico en las dos puntas; lo que cambia son
+los bytes.
+
+Eso es exactamente el drift que el merge existe para evitar, y no es cosmético:
+un `settings.json` con contenido igual pero bytes distintos hace que
+`chezmoi update` **frene a preguntar** si sobrescribe. En un destino headless
+no puede abrir `/dev/tty`, el apply entero aborta, y todo lo demás de esa
+pasada se saltea en silencio — scripts incluidos. Ya pasó una vez por esta vía
+y bloqueó el upgrade de una herramienta que no tenía nada que ver con el
+archivo.
+
+Medido el 2026-09-14: 11 líneas de diff por este motivo en un profile,
+persistentes entre un `deploy` y el `apply` que lo sigue.
+
+**Acción:** `json.dumps(settings, indent=2, ensure_ascii=False)` en
+`deploy/engine.py:323`. Va con worktree y test — el test es el que fija el
+contrato de formato, que hoy no está cubierto en ningún lado. Revisar de paso
+el `json.dumps` del bloque MCP (misma función, `.claude.json`), que tiene el
+mismo default y el mismo consumidor en runtime.
+
 ---
 
 ## Open — Prioridad BAJA
