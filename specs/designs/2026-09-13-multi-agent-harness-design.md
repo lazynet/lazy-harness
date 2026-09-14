@@ -34,10 +34,29 @@ Claude Code's hook wire format has been adopted, unmodified, by competitors:
 | Agent | Evidence |
 |---|---|
 | **Codex CLI** | Ships the identical payload field names (`session_id`, `turn_id`, `transcript_path`, `hook_event_name`, `tool_name`, `tool_input`, `tool_use_id`, `tool_response`, `permission_mode`, `stop_hook_active`) and the identical response field *names* (`hookSpecificOutput`, `permissionDecision`, `permissionDecisionReason`, `additionalContext`, `systemMessage`, `continue`, `stopReason`, `suppressOutput`). Also defines `CLAUDE_PLUGIN_ROOT` / `CLAUDE_PLUGIN_DATA` and bundles an importer for `.claude/settings.json`, `CLAUDE.md` and `.claude.json`. |
-| **Copilot CLI** | The 1.0.40 application bundle carries `permissionDecision`, `permissionDecisionReason`, `additionalContext`, `systemMessage` and `"deny"`/`"ask"` literals. The *response* vocabulary is Claude Code's; the event names differ (`preToolUse`, `postToolUse`, `userPromptSubmitted`, `sessionStart`, `sessionEnd`, `agentStop`, `preCompact`, `subagentStart`, `subagentStop`, `permissionRequest`, `errorOccurred`, `notification`), and a PascalCase event name selects a separate Claude-compatible payload shape. |
+| **Copilot CLI** | The 1.0.40 application bundle carries `permissionDecision`, `permissionDecisionReason`, `additionalContext`, `systemMessage` and `"deny"`/`"ask"` literals. The *response* vocabulary is Claude Code's; the event names differ. On **1.0.83** the accepted set is `preToolUse`, `postToolUse`, `postToolUseFailure`, `preMcpToolCall`, `permissionRequest`, `sessionStart`, `sessionEnd`, `preCompact`, `notification`, `subagentStart`, `subagentStop` — eleven, established by writing sixteen candidates into a hook file and reading back which the binary dropped ([run], 1.0.83). A PascalCase event name is said to select a separate Claude-compatible payload shape ([docs]; never observed firing — see below). |
 | **Qwen Code** | A fork of gemini-cli that *abandoned its own upstream's* event names (`BeforeTool`/`AfterTool`) to adopt `PreToolUse`/`PostToolUse`/`UserPromptSubmit`/`SubagentStart`/`SubagentStop`/`PreCompact`/`PostCompact`. |
 | **Crush** | Implements exactly one hook event, and named it `PreToolUse`. |
 | **DeepSeek Harness (`dsh`)** | Defines no hook vocabulary of its own. Ships a plugin that executes an unmodified Claude Code `hooks.json`. |
+
+**The superseded 1.0.40 list, and why it is worth keeping.** Until 2026-09-14
+the Copilot row above read `userPromptSubmitted`, `sessionStart`, `sessionEnd`,
+`agentStop`, `preCompact`, `subagentStart`, `subagentStop`, `permissionRequest`,
+`errorOccurred`, `notification` — twelve names lifted from `strings` over the
+1.0.40 `app.js`. Three of them (`userPromptSubmitted`, `agentStop`,
+`errorOccurred`) are **not hook events at all**: none appears in 1.0.83's
+accepted set, and the first two belong to the *transcript* event vocabulary,
+which the session logs write and which nothing ever registers a hook against.
+
+That list survived three revisions of this document unchallenged, and the reason
+is the failure mode this section exists to name: a name in a bundle proves the
+string is in the bundle. Every later revision cited the earlier one rather than
+the binary, so the provenance mark (`binary, 1.0.40 bundle`) stayed accurate
+while the claim it carried drifted from true to false underneath it. **A
+provenance label ages; it does not expire on its own.** The measurement that
+replaced it varied one input — the event name — against a fixed file and read
+the binary's own rejections, which is why it discriminates where `strings` could
+not.
 
 The harness's own canonical vocabulary — `session_start`, `session_stop`,
 `session_end`, `pre_compact`, `post_compact`, `pre_tool_use`, `post_tool_use`,
@@ -1057,7 +1076,11 @@ it is a move of code that exists, not new capability — and step 11 becomes
 
 Every row is marked with how it was established:
 
-- `binary` — read from the installed binary's strings, on this machine.
+- `run` — established by running the binary and reading what it did, with the
+  version that ran. Strongest mark: it is the only one that can falsify a name.
+- `binary` — read from the installed binary's strings, on this machine. Proves a
+  string is present and **nothing about whether it is live** — the 1.0.40 hook
+  event list is the worked example of how that goes wrong.
 - `log` — observed in a session log on this machine, with the version that wrote it.
 - `source` — vendor docs or source, **not confirmed against a running binary**.
 - `none` — not observed at all; the first draft's `local` label was wrong.
@@ -1068,7 +1091,7 @@ Every row is marked with how it was established:
 | config file | `settings.json` | `config.toml` (binary) | `config.json` (present on disk) | `opencode.json(c)` (source) |
 | `system_docs()` — **global destinations** | `CLAUDE.md` | `AGENTS.md` (source) | `copilot-instructions.md`, `instructions/**/*.instructions.md` (vendor docs) | `AGENTS.md` **or** `CLAUDE.md`, first match wins (source, pinned) |
 | repo-discovered names (**not** deploy targets) | `CLAUDE.md`, `.claude/CLAUDE.md` | `AGENTS.md` | `.github/copilot-instructions.md`, `AGENTS.md`, `CLAUDE.md`, `.claude/CLAUDE.md`, `GEMINI.md` (vendor docs) | `AGENTS.md`, `CLAUDE.md` |
-| hook events | 10 canonical | 12 incl. `Interrupt`, **PascalCase only** (source, pinned) | 12 camelCase incl. `errorOccurred` (binary, 1.0.40 bundle) + a PascalCase compat mode with `tool_result` (vendor docs); 4 seen firing (log, 1.0.40) | none (source) |
+| hook events | 10 canonical | 12 incl. `Interrupt`, **PascalCase only** (source, pinned) | **11 camelCase, enumerated by rejection (run, 1.0.83)**: `preToolUse`, `postToolUse`, `postToolUseFailure`, `preMcpToolCall`, `permissionRequest`, `sessionStart`, `sessionEnd`, `preCompact`, `notification`, `subagentStart`, `subagentStop`. Supersedes the 12-name `binary, 1.0.40 bundle` list, whose `userPromptSubmitted`/`agentStop`/`errorOccurred` 1.0.83 rejects. A PascalCase compat mode with `tool_result` is claimed by **vendor docs only** and has never been observed firing | none (source) |
 | verdicts honoured on pre-tool | `deny`, `allow`, `ask` | `deny` only; `allow`/`ask` fail open (source, pinned) | `deny`; command hooks fail **closed** on nonzero exit, **open** on timeout (vendor docs) | n/a |
 | hook config | `settings.json:hooks` | `hooks.json` **or** `[hooks]` in `config.toml` (source, pinned) | `$COPILOT_HOME/hooks/*.json`, `.github/hooks/*.json` (vendor docs) | plugins in JS/TS (source) |
 | hook trust | n/a | `[hooks.state.<k>].trusted_hash` in `config.toml`, hashing the **declaration**, not the script; `User` layer is never `Managed`; bypass is invocation-only (source, pinned) | n/a | n/a |
@@ -1078,9 +1101,15 @@ Every row is marked with how it was established:
 | native tool names | `Bash`, `Read`, `Edit`, `Write` | `apply_patch`, shell (source) | `bash`, `view`, `rg`, `glob`, `task`, `skill`, `web_fetch` (**log, 1.0.83**) | unknown |
 | headless | `-p --output-format json` | `codex exec --json` (binary); `--oss` with ollama/lmstudio (binary) | `-p` (source) | `opencode run --format json`, `serve` (source) |
 
-The 1.0.83 cask binary is a launcher: its strings contain no hook vocabulary,
-and the application is `~/.copilot/pkg/universal/1.0.40/app.js`, which is where
-every `binary` mark in that column comes from.
+The 1.0.83 cask binary is a launcher — a Node SEA shim whose strings contain no
+hook vocabulary. Every `binary` mark in that column came from the application
+bundle beside it, which on this machine was `~/.copilot/pkg/universal/1.0.40/app.js`
+when the column was first written. The 1.0.83 payload is extracted elsewhere —
+`~/Library/Caches/copilot/pkg/darwin-arm64/1.0.83/` (`app.js`,
+`schemas/session-events.schema.json`, `prebuilds/darwin-arm64/runtime.node`) —
+and that tree is the vendor artifact this version is now read against ([src],
+1.0.83). Rows still marked `1.0.40` are reading a bundle two versions behind the
+installed launcher and should be re-measured before they are relied on.
 
 ### What running both agents actually showed
 
