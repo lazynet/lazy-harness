@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.61.0](https://github.com/lazynet/lazy-harness/compare/v0.60.0...v0.61.0) (2026-09-14)
+
+
+### Features
+
+* freeze the canonical hook contract in agents/base.py ([30d0954](https://github.com/lazynet/lazy-harness/commit/30d09545f4001e899363d491aaa1077025df61f0))
+
+
+### Bug Fixes
+
+* emit systemMessage at the top level in the last three builtins ([f7a2432](https://github.com/lazynet/lazy-harness/commit/f7a2432e01b2ae9736da4ced470aa618a60048a8))
+
 ## [0.60.0](https://github.com/lazynet/lazy-harness/compare/v0.59.0...v0.60.0) (2026-09-14)
 
 
