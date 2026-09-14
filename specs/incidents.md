@@ -121,3 +121,19 @@ Scheduler backends read `getattr(proc, "stdout", "")` and `getattr(proc, "return
 Two token-cost hypotheses in this repo — deferred tool schemas, and a disconnected connector — were both disproved the moment they were instrumented.
 
 A token accounting report showing 18x subscription spend was independently recounted from raw JSONL and confirmed within 1%: the suspicion was reasonable, the estimate was not evidence either way.
+
+## A claim about behaviour is verified by running the path, not by reading the name
+
+Four defects in one design document, all found by an external reviewer, all a single command away from being caught.
+
+`--allow-dangerously-skip-permissions` was read as the flag that turns off permission checks. `claude --help` distinguishes two: that one reads *"Enable bypassing all permission checks"*, and `--dangerously-skip-permissions` reads *"Bypass all permission checks."* The design mapped the daily alias onto the second, which would have activated a bypass the user had only made available.
+
+An old binary receiving a newly-added `--profile` was said to reach the broad `except` in `hook_invoke` and exit 0 — a blocking hook failing open. `lh hook context-inject --zzz` exits **2**: Click raises during parameter parsing, before the callback the `try` lives in. The real failure was the opposite one, fail-closed, with a usage string offered as the reason a tool call was denied.
+
+`config_dir / adapter.session_dirs().get("sessions", "")` was written as the location of an agent's transcripts. `Path(x) / ""` is `x`, so the check globbed the whole config directory and reported every agent without a sessions directory as degraded.
+
+A billing model was assigned per agent. `~/.codex/auth.json` on the machine the document was written on carries `auth_mode`, `OPENAI_API_KEY` and subscription `tokens` at once — one agent, two billing modes, decided per profile.
+
+The shape is one step short of the existing grep gate above it. That gate asks whether an identifier exists; these four all existed. What none of them had was anyone running the path to see what it did — reading a help string, a docstring, a flag name or a config key and recording the reading as the behaviour.
+
+It is also the second time this class was recorded against the same document. An earlier review of it found six provider claims wrong "by reading a name out of a binary and inferring behaviour", the document wrote that lesson down as its own evidence standard, and the next revision committed four more instances of it. A gate that is stated but not run is not a gate.
