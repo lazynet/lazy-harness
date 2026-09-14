@@ -1,6 +1,6 @@
 # Multi-agent harness: the blast radius outside the seam
 
-**Status:** proposed (revision 1, 2026-09-13)
+**Status:** proposed (revision 2, 2026-09-13 — revision 1 stopped at the impacts; this one adds how the migration is staged and reversed)
 **Date:** 2026-09-13
 **Derives from:** [2026-09-13-multi-agent-harness-design.md](2026-09-13-multi-agent-harness-design.md) — every decision number cited as *parent decision N* refers to that document.
 **Relates to:** [ADR-009](../adrs/009-profile-symlink-deploy.md) (profile symlink deploy), [ADR-012](../adrs/012-sqlite-monitoring.md) (SQLite monitoring), [ADR-032](../adrs/032-agent-adapter-completeness.md) (adapter completeness), [ADR-035](../adrs/035-capability-registry.md) (capability registry), [ADR-037](../adrs/037-metric-event-v2-host-and-workload.md) (metric event v2), [ADR-038](../adrs/038-exec-envelope-cost-provenance.md) (exec envelope cost provenance)
@@ -442,6 +442,8 @@ overstates the blast radius.
 - The system-document tree stops multiplying by destination filename. One
   rendered document, N destinations, one segment per (profile, agent).
 - The single riskiest forwarded flag stops being forwarded blind.
+- A twelve-step migration across several sessions becomes reversible at each
+  step, and the beta surface is bounded by a profile rather than by a machine.
 
 **Negative**
 
@@ -452,6 +454,13 @@ overstates the blast radius.
 - Decision 4 changes a file layout that a human edits by hand, and the muscle
   memory is `CLAUDE.head.md`.
 - `--yolo` is a new user-facing flag on the most-used command.
+- `lh deploy` gains a snapshot on every run, which is a write it did not make
+  before, and a rollback log that can itself go stale.
+- `harness_binary` is a config key whose only consumer is a beta workflow. It is
+  the config-promise-with-no-implementation shape the parent design rejects
+  twice, and it is justified here only because the alternative — a path in
+  `hook_command` — breaks chezmoi convergence. If the beta profile is not used
+  within one release cycle, the key comes out.
 
 ## Sequence
 
@@ -469,9 +478,163 @@ Mapped onto the parent's numbered steps rather than numbered independently.
 | 9 | decision 6 — the first profile where a forwarded flag can be wrong | with the adapter |
 | any | decision 3 | before the first non-Claude cost is reported |
 | — | decision 8 | not scheduled |
+| **0 (fix `_is_harness_owned`)** | decision 9 (version marker) | **with step 0** — every later round trip accumulates stale entries without it |
+| 3 (config deploy slice) | decision 10 (`--snapshot` / `--rollback`) | before the first deploy that changes an artifact's shape |
+| 1 (runner takes `--profile`) | decision 11 (`harness_binary` per profile) | with the runner, or it costs a second pass over `hook_command` |
 
 Decisions 1, 2, 6 and the loop half of 7 are correctness work for Claude Code
 alone and survive if the kill criteria fire. Decisions 3 and 4 do not.
+
+## Staging and rollback
+
+The parent design is twelve steps across several sessions, and step 4 is a gate
+that can fail. Neither document says how a half-migrated machine gets back to a
+working one. This section is the mechanism, and it is scoped to what the survey
+found is actually at risk rather than to rollback in general.
+
+### The binary half is already solved
+
+`lh` is installed through `uv tool install` pinned to a git tag:
+
+```toml
+# ~/.local/share/uv/tools/lazy-harness/uv-receipt.toml
+requirements = [{ name = "lazy-harness", git = "https://github.com/lazynet/lazy-harness?rev=v0.59.0" }]
+```
+
+Reverting the binary is one command against a different tag. Nothing in this
+section is about that.
+
+### The deployed state is not versioned with the binary
+
+`lh deploy` writes artifacts — `settings.json` hook entries, profile symlinks,
+`.envrc` blocks, MCP config — and none of them records which version wrote them.
+Reverting the binary under artifacts a newer one wrote is undefined behaviour
+today. Measured, per surface:
+
+| Surface | On downgrade | Severity |
+|---|---|---|
+| `settings.json` hook entries | Parent decision 1 changes the command from `lh hook <name>` to `lh hook <name> --profile <p>`. The old binary rejects the flag, and `hook_invoke` exits 0 on exception — so a **blocking hook fails open** | **Dangerous and silent** |
+| Segment filenames (decision 4) | The old `sync_agent_md` looks for `CLAUDE.head.md`, finds `head.md`, and `sync_profiles` becomes a no-op. The deployed document stays at its last generated content — stale but valid | Silent |
+| `session_stats` (decision 3) | Safe. `db.py` migrations are idempotent `ALTER TABLE … ADD COLUMN … DEFAULT`, and the read path selects by explicit column name (`db.py:417`), so an extra `agent` column is invisible to the old reader. `MetricEvent.from_dict` has no caller in `src/` | None |
+| Remote sink | Already holds v3 payloads. This is the remote's forward-compatibility problem, not a local downgrade | None locally |
+| `config.toml` | Plain dataclasses over `tomllib`; unknown keys are ignored, so `[profiles.<name>].agent` falls back to the global `agent.type` | Tolerable |
+
+One row is dangerous, and it is dangerous in the direction that matters: a
+security hook that stops enforcing without saying so.
+
+### The defect at parent step 0 is what makes a round trip accumulate garbage
+
+`_is_harness_owned` (`deploy/engine.py:86`) matches on the substring
+`lazy_harness/hooks/builtins/`, while `hook_command` (`:33`) generates
+`lh hook <name>`. It never matches. Today that is masked: the merge's *second*
+guard skips an existing entry whose command is in this run's generated set
+(`:149`), and the two strings are identical, so no duplicate appears.
+
+It stops being masked the moment the command format changes — which is exactly
+what parent decision 1 does. Deploy the new format and the old entry is
+preserved beside the new one, because guard 1 is broken and guard 2 no longer
+matches. Roll the binary back, deploy again, and the *new*-format entry is
+preserved beside the restored old one. **Every change of direction leaves one
+more stale entry, and each one runs the hook again.**
+
+This is why parent step 0 is step 0. It is also why rollback cannot be built on
+top of the merge as it stands.
+
+### Decision 9: a deployed artifact declares the version that wrote it
+
+Every managed block and generated file carries the writing version —
+`lh_version` in the `settings.json` managed section, in the `.envrc` block
+notice, and in `GENERATED_HEADER_TMPL`. On startup, any command that reads a
+managed artifact compares it against `lazy_harness.__version__` and reports a
+newer artifact through `lh doctor`.
+
+Reporting, not refusing. A hard refusal turns a stale artifact into an
+unusable machine, and the failure this closes is silence, not the mismatch
+itself. The one exception is a **blocking** hook: the runner (parent decision 1)
+refuses to run against an artifact written by a newer version and exits 2 with
+the reason, because for a blocking hook the safe default is to block. That
+inversion is the repo's own rule for blocking hooks, applied to a new input.
+
+This is the cheapest of the three and it closes the only dangerous row above.
+
+### Decision 10: `lh deploy --snapshot` and `lh deploy --rollback`
+
+Modelled on `lh migrate`, which already has every piece: a timestamped backup
+directory under `~/.config/lazy-harness/backups/<ts>/`, a plan built before
+anything is written, a **rollback log** replayed by `apply_rollback_log`, and a
+`record_dry_run` / `check_dry_run_gate` pair that requires a dry run within the
+hour before a real one. `lh deploy` has none of it, and the asymmetry between
+the two commands is the defect — a migration is reversible and a deploy, which
+runs far more often, is not.
+
+`lh deploy` takes a snapshot before writing and appends a rollback log.
+`lh deploy --rollback` replays the latest, exactly as `lh migrate --rollback`
+does. The plan-then-execute split already exists in `deploy/engine.py`; what is
+missing is that the plan is not persisted.
+
+Deliberately **not** included: snapshotting the metrics DB. It is 8.2 MB, its
+migrations are additive and idempotent, and the survey found no downgrade break
+in it. Backing it up on every deploy would be the expensive half of a rollback
+that protects nothing.
+
+### Decision 11: the beta unit is a profile, not an installation
+
+A profile already carries its own `config_dir`, its own deployed artifacts, its
+own symlinks, and — after parent decision 7 — its own agent. It is the natural
+blast-radius boundary, and the harness already knows how to deploy to exactly
+one.
+
+A `beta` profile is deployed from the branch build; `lazy` and `flex` stay on
+the released tag. Rollback for the beta is deleting the profile, which touches
+nothing the daily profiles read. The parent's own gate — *deploying a hook is
+binary-first, never from a worktree* — is satisfied, because the beta profile
+still points at an installed binary, just a different one.
+
+That last part is the constraint that makes this real work rather than a
+convention: `hook_command` writes a bare `lh` with no path, deliberately, so
+that a chezmoi-managed `settings.json` converges across machines. A beta profile
+needs its hooks to reach a *different* binary than the daily profiles do, and no
+current mechanism can express that.
+
+The resolution is not to put a path back in the command. It is that the runner
+introduced by parent decision 1 already takes `--profile`, and a profile can
+declare which installed binary serves it:
+
+```toml
+[profiles.beta]
+config_dir = "~/.agent-beta"
+agent = "claude-code"
+harness_binary = "lh-beta"     # resolved from PATH, like `lh`
+```
+
+`hook_command` becomes `f"{binary_for_profile(cfg, name)} hook {hook.name}"` —
+still a bare name resolved by `execvp`, still machine-independent, still
+convergent under chezmoi. **The beta capability falls out of parent decision 1
+rather than being added on top of it**, which is the whole reason it is
+affordable.
+
+`uv tool install --from git+…@<branch> --with-executables-from lazy-harness` is
+what installs `lh-beta`; the branch rev is the same install mechanism already in
+use for the tag, so there is no new channel to maintain.
+
+### Why not a release-please prerelease channel
+
+`.github/release-please-config.json` declares no prerelease type, and adding one
+means a release branch, prerelease tags, and a second changelog stream —
+permanent process for a temporary need. Installing from a branch rev is the same
+`uv tool install` already in the receipt, produces no artifacts to clean up, and
+reverts by pointing at the tag again.
+
+If a second person ever installs this framework, the prerelease channel becomes
+worth its cost. Today it is not.
+
+### What this section does not cover
+
+Chezmoi. The segment rename in decision 4 is a `chezmoi` source rename, and
+chezmoi's own history is the rollback for it. Rebuilding that inside `lh` would
+be a second home for a mechanism that already exists — with the caveat that
+`chezmoi apply` and `lh deploy --rollback` are two operations and nothing
+sequences them. Reverting a segment rename means both, in that order.
 
 ## Verification gates
 
@@ -501,6 +664,21 @@ alone and survive if the kill criteria fire. Decisions 3 and 4 do not.
 - **The `.envrc` block is verified by `direnv export` in a root claimed by two
   profiles with different agents**, asserting both variables present — not by
   reading the generated file.
+- **The version marker is verified by a real round trip, not a mismatch
+  fixture.** Deploy at version N, deploy at N+1 with a changed command format,
+  deploy at N again, and assert `settings.json` holds exactly one entry per hook
+  at each point. This is the test parent step 0 is missing, extended to the
+  direction that actually happens during a staged migration.
+- **The blocking-hook refusal is exercised with the marker newer than the
+  binary**, asserting exit 2 and the reason on stderr — the inverted gate: for a
+  blocking hook, exit 0 is the failure.
+- **`lh deploy --rollback` is verified by diffing the artifacts, not by its exit
+  code.** Snapshot, deploy a change, roll back, and assert every managed file is
+  byte-identical to the snapshot. A tool's exit code is not proof of its effect.
+- **The beta profile is verified by observing a hook fire from the beta binary
+  while a daily profile's hook fires from the released one**, in the same
+  session on the same machine. Two binaries is the claim; one `lh doctor` per
+  profile is not evidence for it.
 
 ## Open questions
 
@@ -515,6 +693,11 @@ alone and survive if the kill criteria fire. Decisions 3 and 4 do not.
    Claude-specific lines are identity-independent, so `_common/<agent>.md` would
    avoid duplicating them across `lazy` and `flex`. Deferred until a second agent
    has a segment worth writing — one data point is not a pattern.
-4. **Does `lh doctor` report a profile whose agent has no `TranscriptReader` as
+4. **How long does a deploy snapshot live?** `lh migrate` writes one backup
+   directory per run and never prunes, which is tolerable for a command run
+   once. `lh deploy` runs on every profile change. Either it prunes on a count
+   or it snapshots only when the plan changes an artifact's shape — the second
+   is better and needs the plan to be comparable, which it is not yet.
+5. **Does `lh doctor` report a profile whose agent has no `TranscriptReader` as
    degraded or as normal?** It is normal for Copilot and a defect for Claude
    Code, and the check cannot tell them apart without a per-agent expectation.
