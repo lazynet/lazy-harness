@@ -36,7 +36,7 @@ Detected:
   - QMD with 5 collections
 
 Plan:
-  1. Backup → ~/.config/lazy-harness/backups/<ts>/
+  1. Backup → ~/.config/lazy-harness/backups/migrate/<ts>/
   2. Generate config.toml with 2 profiles
   3. Relocate profiles to ~/.config/lazy-harness/profiles/
   4. Translate hooks from settings.json

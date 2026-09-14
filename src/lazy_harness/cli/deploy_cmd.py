@@ -2,8 +2,18 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+from pathlib import Path
+
 import click
 
+from lazy_harness.core.backups import (
+    DEPLOY_NAMESPACE,
+    backups_root,
+    latest_backup_dir,
+    namespace_dir,
+    prune_backups,
+)
 from lazy_harness.core.config import Config, ConfigError, load_config
 from lazy_harness.core.paths import config_file
 from lazy_harness.deploy.engine import (
@@ -12,6 +22,31 @@ from lazy_harness.deploy.engine import (
     deploy_mcp_servers,
     deploy_profiles,
 )
+from lazy_harness.deploy.snapshot import snapshot_targets, take_snapshot
+from lazy_harness.migrate.rollback import apply_rollback_log
+
+# Ten snapshots of a ~135 KB artifact set cost about 1.35 MB. Pruning by count
+# keeps the cheap operation cheap without a condition that could decide wrong.
+KEEP_SNAPSHOTS = 10
+
+
+def _take_snapshot(cfg: Config) -> Path:
+    """Record the pre-deploy state of every managed artifact.
+
+    Unconditional: a version-change or plan-diff trigger is an optimisation of
+    an operation that is already cheap, and each condition can be wrong in the
+    direction of no snapshot when one was needed.
+    """
+    root = backups_root()
+    # Microseconds, not seconds: two deploys inside one second would resolve to
+    # one directory, and the second `take_snapshot` would overwrite the first
+    # one's manifest with post-deploy state. Still lexically ordered, which is
+    # what `latest_backup_dir` and the prune both sort on.
+    stamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S.%f")
+    snapshot_dir = namespace_dir(root, DEPLOY_NAMESPACE) / stamp
+    take_snapshot(snapshot_targets(cfg), snapshot_dir)
+    prune_backups(root, DEPLOY_NAMESPACE, keep=KEEP_SNAPSHOTS)
+    return snapshot_dir
 
 
 def _run_deploy(cfg: Config) -> None:
@@ -37,13 +72,46 @@ def _run_deploy(cfg: Config) -> None:
 
 
 @click.command("deploy")
-def deploy() -> None:
+@click.option(
+    "--snapshot",
+    "snapshot_only",
+    is_flag=True,
+    help="Snapshot the managed artifacts and exit without deploying. "
+    "Every deploy snapshots anyway; this only skips the deploy.",
+)
+@click.option(
+    "--rollback",
+    "rollback",
+    is_flag=True,
+    help="Restore the managed artifacts from the most recent deploy snapshot.",
+)
+def deploy(snapshot_only: bool, rollback: bool) -> None:
     """Deploy profiles, hooks, and skills."""
+    if snapshot_only and rollback:
+        click.echo("Error: --snapshot and --rollback are mutually exclusive.", err=True)
+        raise SystemExit(1)
+
+    if rollback:
+        latest = latest_backup_dir(backups_root(), DEPLOY_NAMESPACE)
+        if latest is None:
+            click.echo("No deploy snapshot found to roll back.", err=True)
+            raise SystemExit(1)
+        click.echo(f"Rolling back using {latest}")
+        for message in apply_rollback_log(latest):
+            click.echo(f"  {message}")
+        click.echo("Rollback complete.")
+        return
+
     cf = config_file()
     try:
         cfg = load_config(cf)
     except ConfigError as e:
         click.echo(f"Error: {e}", err=True)
         raise SystemExit(1)
+
+    snapshot_dir = _take_snapshot(cfg)
+    click.echo(f"Snapshot: {snapshot_dir}\n")
+    if snapshot_only:
+        return
 
     _run_deploy(cfg)

@@ -14,6 +14,33 @@ It is idempotent: re-running on a clean tree is a no-op.
 lh deploy
 ```
 
+### Snapshots and rollback
+
+Every deploy first records the current state of every artifact it manages into
+`~/.config/lazy-harness/backups/deploy/<ts>/`, and keeps the last ten. This is
+unconditional — there is no flag to enable it and no version check that decides
+whether it is worth doing.
+
+The snapshot is a manifest rather than a directory of copied files: one entry per
+artifact, carrying its absolute destination, its kind (`file`, `symlink`,
+`directory`, or `absent` for a path that did not exist yet) and a content path
+unique per destination. Keying on the destination is what lets two profiles'
+`settings.json` be restored to their own profile instead of both receiving
+whichever copy was written last.
+
+```bash
+lh deploy --snapshot   # record a snapshot and exit, without deploying
+lh deploy --rollback   # restore every managed artifact from the newest snapshot
+```
+
+`--rollback` repoints symlinks that still exist, restores file contents, and
+deletes artifacts that were absent when the snapshot was taken — so rolling back
+a first deploy on a clean machine leaves nothing behind.
+
+Migration backups (`lh migrate`) live under `backups/migrate/` and are a separate
+namespace: a deploy's prune cannot reach them, and `lh migrate --rollback` never
+replays a deploy's log.
+
 ## `lh doctor`
 
 Checks environment health and reports the status of optional features. Use it as the first thing after install and any time something feels off. `doctor` is read-only — it never mutates anything.

@@ -226,6 +226,59 @@ contrato de formato, que hoy no está cubierto en ningún lado. Revisar de paso
 el `json.dumps` del bloque MCP (misma función, `.claude.json`), que tiene el
 mismo default y el mismo consumidor en runtime.
 
+### El backup de `lh migrate` colapsa dos artefactos que comparten basename
+
+`migrate/steps/backup.py:35` escribe cada target como `dest = backup_dir / t.name`.
+Dos artefactos con un mismo basename — `~/.claude-lazy/settings.json` y
+`~/.claude-flex/settings.json` son el caso vivo — resuelven al mismo archivo de
+backup, y el segundo pisa al primero **al escribir**, antes de que nadie intente
+restaurar. El consumidor tiene la mitad simétrica del bug:
+`migrate/rollback.py:39-40` hace `src = backup_dir / Path(payload["path"]).name`.
+
+Es pérdida de datos silenciosa: el backup de la migración queda incompleto y
+`lh migrate --rollback` reporta `restored` para los dos paths.
+
+Repro, contra el paquete instalado:
+
+```python
+import json, tempfile
+from pathlib import Path
+from lazy_harness.migrate.rollback import apply_rollback_log
+
+tmp = Path(tempfile.mkdtemp()); bd = tmp / "bk"; bd.mkdir()
+(tmp/"lazy").mkdir(); (tmp/"flex").mkdir()
+(bd/"settings.json").write_text("BACKUP-CONTENT-ONE-COPY")
+(tmp/"lazy"/"settings.json").write_text("new-lazy")
+(tmp/"flex"/"settings.json").write_text("new-flex")
+(bd/"rollback.json").write_text(json.dumps([
+    {"step":"s","kind":"restore_file","payload":{"path":str(tmp/"lazy"/"settings.json")}},
+    {"step":"s","kind":"restore_file","payload":{"path":str(tmp/"flex"/"settings.json")}},
+]))
+apply_rollback_log(bd)
+# ambos quedan en "BACKUP-CONTENT-ONE-COPY", ambos reportan restored
+```
+
+Nota relacionada del mismo archivo: `migrate/rollback.py:47` actúa solo
+`if not link.exists()`, así que **nunca repunta un symlink existente**. Hoy es
+correcto por accidente — su único productor, `migrate/steps/scripts_step.py:38`,
+hace `unlink()` antes de registrar la op, así que el link siempre está ausente
+cuando se replaya. No reusar ese op kind para un relink: `lh deploy` no lo hace,
+tiene su propia rama de manifest con `_restore_symlink`, que desvincula y
+revincula incondicionalmente.
+
+**Por qué no se arregló acá:** el PR del snapshot de deploy
+([decision 10](designs/2026-09-13-multi-agent-blast-radius-design.md)) reusa
+`apply_rollback_log` agregándole una rama de manifest y deja la rama de
+migración intacta a propósito — reescribirla cambiaría un camino que funciona
+para un comando que nadie está tocando.
+
+**Condición de arranque:** cuando se toque `lh migrate` por cualquier otro
+motivo, o si aparece un caso real de migración con dos artefactos de igual
+basename. El arreglo es el mismo que ya vive en `deploy/snapshot.py`: un content
+path único por destino en vez de por basename.
+
+---
+
 ---
 
 ## Open — Prioridad BAJA
