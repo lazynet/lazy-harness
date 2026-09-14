@@ -47,6 +47,16 @@ Five properties are load-bearing:
 
 5. **Backwards compatible.** `[compound_loop].backend`/`.model` map to a synthetic `distill` role with a one-time warning. ADR-033's fields are deprecated, not removed.
 
+   > **Mechanism note (2026-09-14, PR #274).** The mapping is unconditional; the
+   > warning is not. `CompoundLoopConfig` defaults `backend` to `"claude"` and
+   > `model` to a Haiku id, so the shim is also the path a config that declares
+   > neither table takes — and warning there named two keys the operator never
+   > wrote. `llm/roles.py:_declares_deprecated_form` now gates the notice on the
+   > fields differing from their dataclass defaults, which is what "deprecates
+   > *declaring* the ADR-033 fields" meant all along. Compared against the
+   > defaults rather than a parse-time flag because `to_dict` writes both keys
+   > back out unconditionally, so any config saved once would read as declared.
+
 6. **The tool tri-state survives `--role`, and exit codes stay parseable.** `--allow-tools` on an inference backend is a hard error — it requests a capability that does not exist. `--no-tools` is an accepted no-op, because it asserts a truth that already holds; rejecting it would force every consumer to branch its tri-state on whether a role was passed, restoring the coupling the role removes. And exit code `2` is never emitted for a failed inference: it stays the usage-error code, raised before any inference runs and carrying no envelope. A consumer branching on the process exit before parsing stdout therefore never discards a failure whose cause is in `error.kind`.
 
 Because the motivating consumer lives in another repository, `lh exec --role <name> --dry-run` and a `lh doctor` check over the whole role table are part of this decision, not follow-up polish. Without them a role could be broken with the suite green — the "implemented but never wired" failure this repo has recorded before.
