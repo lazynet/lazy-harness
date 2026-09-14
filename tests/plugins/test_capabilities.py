@@ -503,7 +503,9 @@ def test_llm_capability_no_longer_points_at_the_deprecated_field() -> None:
     assert all(cap.config_path != "compound_loop.backend" for cap in caps)
 
 
-def test_registry_and_run_inference_agree_on_the_active_backend() -> None:
+def test_registry_and_run_inference_agree_on_the_active_backend(
+    expects_deprecated_compound_loop: None,
+) -> None:
     """Two code paths answering the same question, over one config each."""
     from lazy_harness.llm.roles import resolve_role
 

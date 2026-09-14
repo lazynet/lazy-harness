@@ -11,7 +11,7 @@ from __future__ import annotations
 import warnings
 from dataclasses import dataclass
 
-from lazy_harness.core.config import Config
+from lazy_harness.core.config import CompoundLoopConfig, Config
 
 #: The role the deprecated `[compound_loop].backend` form maps onto.
 DEPRECATED_ROLE = "distill"
@@ -63,7 +63,8 @@ def resolve_role(cfg: Config, role: str) -> ResolvedRole:
         )
 
     if role == DEPRECATED_ROLE:
-        _warn_deprecated_once()
+        if _declares_deprecated_form(cfg):
+            _warn_deprecated_once()
         options = cfg.compound_loop.backend_options
         return ResolvedRole(
             role=role,
@@ -76,6 +77,24 @@ def resolve_role(cfg: Config, role: str) -> ResolvedRole:
 
     known = ", ".join(sorted(cfg.llm.roles)) or "none"
     raise RoleNotFoundError(f"role {role!r} is not defined in [llm.roles] (defined: {known})")
+
+
+def _declares_deprecated_form(cfg: Config) -> bool:
+    """Whether `[compound_loop]` carries a *chosen* backend, not an inherited default.
+
+    ADR-039 deprecates **declaring** the ADR-033 fields, but a config that
+    declares neither table still reaches the shim below — `[llm.roles]` is
+    empty by default, and `backend`/`model` are not. Warning there names two
+    keys the operator never wrote.
+
+    Compared against the dataclass defaults rather than a parse-time flag
+    because `to_dict` writes both keys back out unconditionally, so any config
+    that has been saved once would otherwise read as declared.
+    """
+    return (
+        cfg.compound_loop.backend != CompoundLoopConfig.backend
+        or cfg.compound_loop.model != CompoundLoopConfig.model
+    )
 
 
 def _warn_deprecated_once() -> None:

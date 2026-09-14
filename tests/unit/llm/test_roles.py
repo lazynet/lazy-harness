@@ -60,7 +60,9 @@ def test_undefined_role_names_the_roles_that_exist() -> None:
         resolve_role(cfg, "nope")
 
 
-def test_compound_loop_backend_maps_to_synthetic_distill_role() -> None:
+def test_compound_loop_backend_maps_to_synthetic_distill_role(
+    expects_deprecated_compound_loop: None,
+) -> None:
     """The ADR-033 form keeps working with no [llm] table at all."""
     from lazy_harness.llm.roles import resolve_role
 
@@ -72,7 +74,9 @@ def test_compound_loop_backend_maps_to_synthetic_distill_role() -> None:
     assert resolved.model == "llama3.2:3b"
 
 
-def test_deprecated_backend_options_carry_base_url() -> None:
+def test_deprecated_backend_options_carry_base_url(
+    expects_deprecated_compound_loop: None,
+) -> None:
     from lazy_harness.llm.roles import resolve_role
 
     cfg = Config()
@@ -120,3 +124,49 @@ def test_llm_table_form_does_not_warn() -> None:
         warnings.simplefilter("always")
         roles_mod.resolve_role(cfg, "distill")
     assert [w for w in caught if "compound_loop" in str(w.message)] == []
+
+
+def test_a_config_declaring_neither_form_does_not_warn(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ADR-039 deprecates *declaring* `[compound_loop].backend`, not omitting `[llm]`.
+
+    A stock config declares neither table, so it reaches the shim on defaults
+    alone. Warning there tells an operator to migrate a key they never wrote.
+    """
+    import warnings
+
+    from lazy_harness.llm import roles as roles_mod
+
+    monkeypatch.setattr(roles_mod, "_warned", False)
+    cfg = Config()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        resolved = roles_mod.resolve_role(cfg, "distill")
+    assert [w for w in caught if "[compound_loop].backend" in str(w.message)] == []
+    # The shim still serves the default — silence must not cost resolution.
+    assert resolved.type == "claude"
+
+
+def test_a_declared_non_default_backend_still_warns(
+    expects_deprecated_compound_loop: None,
+) -> None:
+    """The guard silences inherited defaults, never the deprecation itself.
+
+    Without this the guard could skip the notice outright and every other
+    test would still pass, since the rest of the suite declares neither form.
+    """
+    from lazy_harness.llm.roles import resolve_role
+
+    cfg = Config()
+    cfg.compound_loop.backend = "ollama"
+    assert resolve_role(cfg, "distill").type == "ollama"
+
+
+def test_a_declared_non_default_model_alone_still_warns(
+    expects_deprecated_compound_loop: None,
+) -> None:
+    """`model` is deprecated on its own, so it arms the notice on its own."""
+    from lazy_harness.llm.roles import resolve_role
+
+    cfg = Config()
+    cfg.compound_loop.model = "llama3.2:3b"
+    assert resolve_role(cfg, "distill").model == "llama3.2:3b"

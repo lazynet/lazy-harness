@@ -157,7 +157,9 @@ class _RecordingBackend:
         return "ok"
 
 
-def test_consolidate_resolves_backend_from_config(tmp_path: Path, monkeypatch) -> None:
+def test_consolidate_resolves_backend_from_config(
+    tmp_path: Path, monkeypatch, expects_deprecated_compound_loop: None
+) -> None:
     """ADR-039: consolidate resolves the `distill` role, which falls back to
     [compound_loop].backend from config.toml via the deprecated bridge."""
     from lazy_harness.cli import memory_cmd as mod
@@ -193,7 +195,9 @@ backend = "ollama"
     assert built["type"] == "ollama"
 
 
-def test_consolidate_model_defaults_to_compound_loop_config(tmp_path: Path, monkeypatch) -> None:
+def test_consolidate_model_defaults_to_compound_loop_config(
+    tmp_path: Path, monkeypatch, expects_deprecated_compound_loop: None
+) -> None:
     """No --model flag → model resolves from [compound_loop].model, like the worker."""
     from lazy_harness.cli import memory_cmd as mod
 
@@ -228,7 +232,9 @@ model = "llama3.2:3b"
     assert captured["model"] == "llama3.2:3b"
 
 
-def test_consolidate_model_flag_overrides_config(tmp_path: Path, monkeypatch) -> None:
+def test_consolidate_model_flag_overrides_config(
+    tmp_path: Path, monkeypatch, expects_deprecated_compound_loop: None
+) -> None:
     from lazy_harness.cli import memory_cmd as mod
 
     cfg_file = tmp_path / "config.toml"
