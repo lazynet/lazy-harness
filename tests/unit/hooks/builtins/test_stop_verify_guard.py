@@ -18,6 +18,13 @@ import pytest
 from lazy_harness.hooks.builtins.stop_verify_guard import _goal_declared
 
 
+def _reader():
+    """The real Claude Code reader — the guard's collaborator, not a stub."""
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    return ClaudeCodeAdapter()
+
+
 def _write_transcript(path: Path, lines: list[dict[str, object]]) -> Path:
     import json
 
@@ -42,7 +49,7 @@ def test_true_when_a_goal_status_attachment_is_present(tmp_path: Path) -> None:
         ],
     )
 
-    assert _goal_declared(transcript) is True
+    assert _goal_declared(transcript, _reader()) is True
 
 
 def test_false_when_no_goal_status_attachment_exists(tmp_path: Path) -> None:
@@ -54,18 +61,18 @@ def test_false_when_no_goal_status_attachment_exists(tmp_path: Path) -> None:
         ],
     )
 
-    assert _goal_declared(transcript) is False
+    assert _goal_declared(transcript, _reader()) is False
 
 
 def test_false_for_an_empty_transcript(tmp_path: Path) -> None:
     transcript = tmp_path / "session.jsonl"
     transcript.write_text("")
 
-    assert _goal_declared(transcript) is False
+    assert _goal_declared(transcript, _reader()) is False
 
 
 def test_false_when_the_transcript_file_does_not_exist(tmp_path: Path) -> None:
-    assert _goal_declared(tmp_path / "missing.jsonl") is False
+    assert _goal_declared(tmp_path / "missing.jsonl", _reader()) is False
 
 
 def test_skips_malformed_lines_and_still_finds_the_marker(tmp_path: Path) -> None:
@@ -75,7 +82,7 @@ def test_skips_malformed_lines_and_still_finds_the_marker(tmp_path: Path) -> Non
         '{"type": "attachment", "attachment": {"type": "goal_status", "condition": "x"}}\n'
     )
 
-    assert _goal_declared(transcript) is True
+    assert _goal_declared(transcript, _reader()) is True
 
 
 @pytest.mark.parametrize(
@@ -88,7 +95,7 @@ def test_ignores_a_wrong_type_attachment_field(tmp_path: Path, attachment: objec
     transcript = tmp_path / "session.jsonl"
     transcript.write_text(json.dumps({"type": "attachment", "attachment": attachment}) + "\n")
 
-    assert _goal_declared(transcript) is False
+    assert _goal_declared(transcript, _reader()) is False
 
 
 def test_ignores_an_attachment_of_a_different_type(tmp_path: Path) -> None:
@@ -97,7 +104,74 @@ def test_ignores_an_attachment_of_a_different_type(tmp_path: Path) -> None:
         [{"type": "attachment", "attachment": {"type": "something_else"}}],
     )
 
-    assert _goal_declared(transcript) is False
+    assert _goal_declared(transcript, _reader()) is False
+
+
+def test_a_reader_that_delivers_no_goal_signal_reports_no_goal(tmp_path: Path) -> None:
+    """The marker is in the file and the guard still says no.
+
+    This is what proves the guard *consumes* `GOAL_STATUS` rather than declaring
+    it: with the hand-rolled scan this replaced, the bytes were read directly
+    and no reader was ever asked, so the assertion below could not fail. An
+    agent that has a transcript but no concept of an explicit goal is exactly
+    the case decision 11 refuses to let pass silently.
+    """
+    transcript = _write_transcript(
+        tmp_path / "session.jsonl",
+        [{"type": "attachment", "attachment": {"type": "goal_status", "condition": "x"}}],
+    )
+
+    class _NoGoalSignal:
+        """A reader that delivers messages and tokens, and no goal."""
+
+        def locate_sessions(self, config_dir, since):
+            return iter(())
+
+        def read(self, path):
+            return iter(())
+
+        def signals(self):
+            from lazy_harness.agents.base import Signal
+
+            return {Signal.MESSAGES, Signal.TOKEN_USAGE}
+
+    assert _goal_declared(transcript, _NoGoalSignal()) is False
+
+
+def test_no_reader_at_all_reports_no_goal(tmp_path: Path) -> None:
+    """`None` is the answer `transcript_reader` gives for an unreadable agent."""
+    transcript = _write_transcript(
+        tmp_path / "session.jsonl",
+        [{"type": "attachment", "attachment": {"type": "goal_status"}}],
+    )
+
+    assert _goal_declared(transcript, None) is False
+
+
+def test_it_stops_at_the_first_goal_marker_instead_of_reading_on(tmp_path: Path) -> None:
+    """Short-circuiting is why `read()` is an iterator rather than a list.
+
+    A session transcript runs to hundreds of megabytes by the time a `Stop`
+    hook sees it, and the guard needs one bit out of it.
+    """
+    from lazy_harness.agents.base import GoalStatus, Signal, TranscriptEvent
+
+    consumed = []
+
+    class _Counting:
+        def locate_sessions(self, config_dir, since):
+            return iter(())
+
+        def read(self, path):
+            for index in range(100):
+                consumed.append(index)
+                yield TranscriptEvent(signal=Signal.GOAL_STATUS, goal=GoalStatus())
+
+        def signals(self):
+            return {Signal.GOAL_STATUS}
+
+    assert _goal_declared(tmp_path / "anything.jsonl", _Counting()) is True
+    assert consumed == [0], "the guard read past the marker it was looking for"
 
 
 # --- main() -----------------------------------------------------------------

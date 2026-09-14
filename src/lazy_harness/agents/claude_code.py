@@ -5,10 +5,13 @@ from __future__ import annotations
 import json
 import os
 import shutil
+from collections.abc import Iterator
+from datetime import datetime
 from pathlib import Path
 
 from lazy_harness.agents.base import (
     FileEdit,
+    GoalStatus,
     HeadlessResult,
     HookDecision,
     HookEntry,
@@ -16,7 +19,10 @@ from lazy_harness.agents.base import (
     HookOutput,
     HookSupport,
     Operation,
+    Signal,
+    TokenUsage,
     ToolCall,
+    TranscriptEvent,
     Verdict,
 )
 from lazy_harness.core.paths import expand_path
@@ -89,6 +95,46 @@ _TOOL_OPERATIONS: dict[str, Operation] = {
 
 # Claude Code names the file differently per tool; both spellings are one path.
 _FILE_PATH_KEYS: tuple[str, ...] = ("file_path", "notebook_path")
+
+# Transcript entry types that carry a turn. Everything else Claude Code writes
+# into the JSONL — `mode`, `ai-title`, `worktree-state`, `file-history-delta`
+# and a dozen more — is UI bookkeeping no signal is defined over.
+_TURN_TYPES: frozenset[str] = frozenset({"user", "assistant"})
+
+
+def _iso_timestamp(value: object) -> datetime | None:
+    """`timestamp` as a datetime, or None for anything that is not one.
+
+    Never raises: a transcript written by a future release is allowed to change
+    this field, and losing the time of one entry must not lose the entry.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _message_text(content: object) -> str:
+    """The turn's text, with every non-text block dropped.
+
+    `content` is a bare string on most user turns and a list of typed blocks on
+    assistant turns. Thinking, tool_use and tool_result blocks are not text and
+    are not joined in: a consumer counting words or matching a phrase would
+    otherwise be reading the model's scratchpad as though the user had seen it.
+    """
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    return "\n".join(
+        block["text"]
+        for block in content
+        if isinstance(block, dict)
+        and block.get("type") == "text"
+        and isinstance(block.get("text"), str)
+    )
 
 
 class ClaudeCodeAdapter:
@@ -310,6 +356,156 @@ class ClaudeCodeAdapter:
 
     def process_name(self) -> str:
         return "claude"
+
+    # --- transcript reading (TranscriptReader) ---
+    #
+    # A move of code that already existed rather than new capability: five hooks
+    # and fifteen other modules parse this same JSONL by hand today. The design
+    # puts Claude Code's reader at step 2 precisely so decision 11 does not
+    # undeploy working hooks for the length of the migration.
+
+    def signals(self) -> set[Signal]:
+        """All four. Claude Code is where the vocabulary was derived from."""
+        return {Signal.MESSAGES, Signal.TOOL_CALLS, Signal.TOKEN_USAGE, Signal.GOAL_STATUS}
+
+    def locate_sessions(self, config_dir: Path, since: datetime | None) -> Iterator[Path]:
+        """`<config_dir>/projects/**/*.jsonl`, filtered by modification time.
+
+        Order is the filesystem's and is not promised: a caller that needs one
+        sorts. Yielding as the walk proceeds is what keeps a config dir holding
+        thousands of sessions from being materialised to answer "any since
+        Monday".
+        """
+        root = config_dir / (self.session_dirs()["sessions"] or "projects")
+        cutoff = since.timestamp() if since is not None else None
+        try:
+            candidates = root.glob("**/*.jsonl")
+            for path in candidates:
+                try:
+                    if not path.is_file():
+                        continue
+                    if cutoff is not None and path.stat().st_mtime < cutoff:
+                        continue
+                except OSError:
+                    continue
+                yield path
+        except OSError:
+            return
+
+    def read(self, path: Path) -> Iterator[TranscriptEvent]:
+        """One transcript, line by line, yielding only what a signal is defined over.
+
+        Lazy on purpose, and the laziness is load-bearing twice. `read()` opens
+        nothing until the first `next()`, so a hook that builds its reader when
+        it starts still judges the transcript as of the moment it decides. And
+        a consumer looking for one marker — `stop_verify_guard` looking for a
+        goal — stops at the first hit instead of parsing a session that can run
+        to hundreds of megabytes.
+
+        `errors="replace"` rather than a strict decode: one byte the agent
+        failed to write cleanly would otherwise raise mid-iteration and cost
+        every line after it, which on this hook reads as "no goal was declared".
+        """
+        try:
+            handle = path.open("r", encoding="utf-8", errors="replace")
+        except OSError:
+            return
+        with handle:
+            for raw_line in handle:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    # A corrupt line, or the half-written last one of a live
+                    # session. Both are ordinary; neither ends the read.
+                    continue
+                if isinstance(entry, dict):
+                    yield from self._events_from(entry)
+
+    def _events_from(self, entry: dict) -> Iterator[TranscriptEvent]:
+        """Every event one transcript line carries — there can be several.
+
+        An assistant turn with text, two tool calls and a usage record is one
+        line and four events, which is why the unit is the signal occurrence.
+        """
+        when = _iso_timestamp(entry.get("timestamp"))
+        kind = entry.get("type")
+
+        if kind == "attachment":
+            attachment = entry.get("attachment")
+            if not isinstance(attachment, dict) or attachment.get("type") != "goal_status":
+                return
+            condition = attachment.get("condition")
+            met = attachment.get("met")
+            yield TranscriptEvent(
+                signal=Signal.GOAL_STATUS,
+                timestamp=when,
+                goal=GoalStatus(
+                    condition=condition if isinstance(condition, str) else None,
+                    # `isinstance(met, bool)` and not `bool(met)`: an absent
+                    # flag must arrive absent, not as "the goal is not met".
+                    met=met if isinstance(met, bool) else None,
+                ),
+                raw=entry,
+            )
+            return
+
+        if kind not in _TURN_TYPES:
+            return
+        message = entry.get("message")
+        if not isinstance(message, dict):
+            return
+
+        role = message.get("role")
+        if not isinstance(role, str) or not role:
+            role = str(kind)
+        content = message.get("content")
+
+        text = _message_text(content)
+        if text:
+            # A turn built entirely of tool_use blocks is not a message: it
+            # yields its tool calls below and nothing here, so a consumer
+            # counting turns does not count empty ones.
+            yield TranscriptEvent(
+                signal=Signal.MESSAGES, timestamp=when, role=role, text=text, raw=entry
+            )
+
+        if isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict) or block.get("type") != "tool_use":
+                    continue
+                name = block.get("name")
+                if not isinstance(name, str) or not name:
+                    continue
+                use_id = block.get("id")
+                yield TranscriptEvent(
+                    signal=Signal.TOOL_CALLS,
+                    timestamp=when,
+                    role=role,
+                    # The same normalisation `parse_hook_input` performs, in
+                    # the same place: a transcript tool call and a PreToolUse
+                    # tool call are one concept, and two mappings would drift.
+                    tool=self._parse_tool({"tool_name": name, "tool_input": block.get("input")}),
+                    tool_use_id=use_id if isinstance(use_id, str) else None,
+                    raw=entry,
+                )
+
+        usage = message.get("usage")
+        if isinstance(usage, dict):
+            yield TranscriptEvent(
+                signal=Signal.TOKEN_USAGE,
+                timestamp=when,
+                role=role,
+                usage=TokenUsage(
+                    input_tokens=_as_int(usage.get("input_tokens")),
+                    output_tokens=_as_int(usage.get("output_tokens")),
+                    cache_read_tokens=_as_int(usage.get("cache_read_input_tokens")),
+                    cache_creation_tokens=_as_int(usage.get("cache_creation_input_tokens")),
+                ),
+                raw=entry,
+            )
 
     # --- headless invocation (HeadlessAgent) ---
 
