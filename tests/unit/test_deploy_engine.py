@@ -324,3 +324,99 @@ def test_a_user_hook_keeps_an_explicit_interpreter_and_path() -> None:
     hook = HookInfo(name="mine", path=Path("/home/me/.claude/hooks/mine.py"), is_builtin=False)
 
     assert hook_command(hook).endswith("/home/me/.claude/hooks/mine.py")
+
+
+def _harness_entry_count(settings_path: Path) -> int:
+    """How many hook entries in a deployed settings.json the harness generated."""
+    from lazy_harness.deploy.engine import _entry_commands, _is_harness_owned
+
+    settings = json.loads(settings_path.read_text())
+    count = 0
+    for entries in settings["hooks"].values():
+        for entry in entries:
+            commands = _entry_commands(entry)
+            if commands and all(_is_harness_owned(cmd) for cmd in commands):
+                count += 1
+    return count
+
+
+def test_a_generated_builtin_command_is_recognised_as_its_own() -> None:
+    """`_is_harness_owned` must recognise what `hook_command` emits.
+
+    The two drifted apart: the classifier matches on a builtins path that the
+    generator stopped emitting when it moved to `lh hook <name>`.
+    """
+    from lazy_harness.deploy.engine import _is_harness_owned, hook_command
+    from lazy_harness.hooks.loader import resolve_script_names
+
+    hooks = resolve_script_names(["context-inject"], event="session_start")
+    assert hooks, "context-inject should resolve as a builtin"
+    command = hook_command(hooks[0])
+
+    assert _is_harness_owned(command), (
+        f"the harness does not recognise its own generated command: {command!r}"
+    )
+
+
+def test_a_legacy_builtin_path_command_is_still_recognised() -> None:
+    """Entries written by an older harness carry the interpreter+path form."""
+    from lazy_harness.deploy.engine import _is_harness_owned
+
+    legacy = (
+        "/usr/bin/python3 /opt/lib/python3.11/site-packages/"
+        "lazy_harness/hooks/builtins/context_inject.py"
+    )
+    assert _is_harness_owned(legacy)
+
+
+def test_a_foreign_command_is_not_claimed_by_the_harness() -> None:
+    """The fix must not over-match: another tool's hook stays foreign."""
+    from lazy_harness.deploy.engine import _is_harness_owned
+
+    assert not _is_harness_owned("/usr/local/bin/my-manual-hook")
+    assert not _is_harness_owned("npx some-other-tool hook pre-tool-use")
+    assert not _is_harness_owned("other-tool hook context-inject")
+    assert not _is_harness_owned("lh status")
+    assert not _is_harness_owned("echo 'lh hook context-inject'")
+
+
+def test_redeploy_after_a_command_format_change_installs_each_hook_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A redeploy after the generated command format changes must not duplicate.
+
+    This is the round trip that step 1 of the multi-agent design performs: the
+    runner gains `--profile <name>`, so every generated command changes shape.
+    A classifier that matches on command text cannot recognise the entries the
+    previous format wrote, and preserves them as foreign alongside the new ones.
+    """
+    from lazy_harness.deploy import engine
+
+    profile_dir = tmp_path / "profile"
+    cfg = _cfg_with_profile(profile_dir, hooks={})
+    settings_file = profile_dir / "settings.json"
+
+    deploy_hooks(cfg)
+    before = _harness_entry_count(settings_file)
+    assert before > 0, "the first deploy should install harness hooks"
+
+    real_hook_command = engine.hook_command
+    monkeypatch.setattr(
+        engine,
+        "hook_command",
+        lambda hook: f"{real_hook_command(hook)} --profile personal",
+    )
+    capsys.readouterr()
+
+    deploy_hooks(cfg)
+
+    after = _harness_entry_count(settings_file)
+    out = capsys.readouterr().out
+
+    assert "preserved" not in out, (
+        f"the harness classified its own previous-format entries as foreign:\n{out}"
+    )
+    assert after == before, (
+        f"redeploy after a command format change duplicated hooks: "
+        f"{before} harness entries before, {after} after"
+    )
