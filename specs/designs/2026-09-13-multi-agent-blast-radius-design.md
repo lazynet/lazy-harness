@@ -369,6 +369,28 @@ and it stays at step 12. Decision 2 only ensures that when the reader lands,
 ingest is already pointed at the right directory, and that until then a
 non-Claude profile is reported as unreadable rather than reported as empty.
 
+**The directories `session_dirs()` returns are measured, not assumed — including
+one that does not exist.** Copilot 1.0.83 writes
+`<copilot home>/session-state/<sessionId>/events.jsonl`, one JSON object per
+line (`{"type":"session.start","data":{…},"id":…,"timestamp":…,"parentId":null}`),
+95 such files present on this host, the newest self-identifying as
+`copilotVersion: "1.0.83"` ([run], 2026-09-14). `history-session-state/`, the name this directory
+has been referred to by elsewhere, **does not exist at that version** — verified
+on disk 2026-09-14, and named here so it is not reintroduced. An entry pointing
+at it would resolve to a missing path, which
+`TranscriptHealth.NO_LOCATION` above does *not* cover, because the agent does
+declare a location and the location is simply wrong. `session-store.db` sits
+beside it and is not the transcript.
+
+Codex 0.154.0 writes `<codex home>/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl`
+as the complete append-only log — 13 records for a one-turn session, including
+`session_meta`, `response_item` and `token_usage_record` ([run]). The SQLite
+stores **reference it rather than replace it**: `state_5.sqlite` holds index
+rows whose `threads.rollout_path` points at that JSONL, and
+`thread_history_1.sqlite` holds a projection of its items. So `session_dirs()`
+for Codex names the rollout directory, and the parent's step-12 reader reads
+JSONL for both non-Claude agents rather than one of each.
+
 **What `lh doctor` reports is derived, not declared.** "Should this agent have a
 reader?" has no configured answer and does not need one — the question that
 matters is whether data is going unread:
