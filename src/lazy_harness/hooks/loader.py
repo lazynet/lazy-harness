@@ -26,6 +26,15 @@ class BuiltinHookSpec:
 
     module: str
     matcher: str | Mapping[str, str] | None = None
+    blocking: bool = False
+    """Whether this hook refuses actions, which decides its failure policy.
+
+    A blocking hook that cannot run exits 2 rather than 0: exit 0 with no
+    output is how a hook says "no objection", so degrading there would turn
+    every crash of a guard into an approval. An informational hook degrades
+    the other way, since refusing a tool call it was never meant to judge is
+    worse than losing its output.
+    """
 
     def matcher_for(self, event: str | None) -> str | None:
         if isinstance(self.matcher, Mapping):
