@@ -2,7 +2,7 @@
 description: Read-only audit of semantic drift between ADRs/backlog and the code they describe
 ---
 
-You are running a **read-only** audit of the semantic drift that no exact rule can decide: ADRs and `specs/backlog.md` describing behavior the code no longer has, or carrying stale status. This is Piece B of the coherence audit — the deterministic half already runs as pytest tests under `tests/docs/` on every `uv run pytest`; this command covers what those tests deliberately do not (prose claims, ADR status, backlog freshness), not command/hook/config-field identity.
+You are running a **read-only** audit of the semantic drift that no exact rule can decide: ADRs and `specs/backlog.md` describing behavior the code no longer has, or carrying stale status. This is Piece B of the coherence audit — the deterministic half already runs as pytest tests under `tests/docs/` on every `uv run --frozen pytest`; this command covers what those tests deliberately do not (prose claims, ADR status, backlog freshness), not command/hook/config-field identity.
 
 Do not edit any ADR, design, the backlog, or any file under `docs/`. This command reports and records. Fixing drift stays a human-reviewed action.
 
