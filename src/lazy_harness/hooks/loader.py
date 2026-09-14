@@ -36,6 +36,22 @@ class BuiltinHookSpec:
     worse than losing its output.
     """
 
+    migrated: bool = False
+    """Whether this builtin's `main()` takes a `HookEvent` and returns a decision.
+
+    TRANSITIONAL. The runner and the eighteen builtins cannot move in one
+    commit, so both entry points route on this field: `True` goes through
+    `hooks.runner.run_hook`, `False` through the pre-runner path that calls
+    `main()` with no arguments and lets it own stdin, both channels and the
+    exit code.
+
+    Declared here rather than inferred from the module — a signature check
+    would read the same today and lie the moment a migrated `main()` grows a
+    default. Step 5 of
+    `specs/designs/2026-09-13-multi-agent-harness-design.md` migrates the last
+    builtin and deletes this field along with the branches that read it.
+    """
+
     def matcher_for(self, event: str | None) -> str | None:
         if isinstance(self.matcher, Mapping):
             return self.matcher.get(event) if event else None
