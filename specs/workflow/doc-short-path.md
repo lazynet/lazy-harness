@@ -25,7 +25,7 @@ A change qualifies for the short-path only when **every** item below is true:
    - `pyproject.toml`, `uv.lock`
    - `.github/**`
 3. **Commit type is `docs(...)` or `chore(...)`** — both are ignored by release-please, so no accidental version bump can originate from a short-path commit.
-4. **If `docs/**` is touched, `uv run --group docs mkdocs build --strict` passes locally.**
+4. **If `docs/**` is touched, `uv run --frozen --group docs mkdocs build --strict` passes locally.**
 5. **The diff is self-contained** — no paired code change lives in another uncommitted edit. Mixed changes always take the full flow.
 
 If any item fails, the change takes the full worktree + PR flow.
@@ -39,7 +39,7 @@ git switch main
 git pull --ff-only origin main
 # edit the file(s)
 # if docs/** was touched:
-uv run --group docs mkdocs build --strict
+uv run --frozen --group docs mkdocs build --strict
 git add <files>
 git commit -m "docs(scope): short description"
 git push origin main
