@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from lazy_harness.agents.base import AgentAdapter
 from lazy_harness.agents.claude_code import ClaudeCodeAdapter
 from lazy_harness.core.paths import expand_path
+
+if TYPE_CHECKING:
+    from lazy_harness.core.config import Config
 
 
 class AgentNotFoundError(Exception):
@@ -66,6 +70,23 @@ def get_agent(agent_type: str) -> AgentAdapter:
     if cls is None:
         raise AgentNotFoundError(f"Agent '{agent_type}' not found. Available: {', '.join(_AGENTS)}")
     return cls()
+
+
+def agent_for_profile(cfg: Config, profile_name: str) -> AgentAdapter:
+    """The agent a single profile runs — `[profiles.<name>].agent`, else `[agent].type`.
+
+    Every path that needs to know which agent a profile runs resolves it here.
+    The deploy loops previously resolved `cfg.agent.type` once, above their own
+    profile loop, so a per-profile agent could never take effect: each root got
+    the global agent's env var and the global agent's config shape.
+
+    An unknown profile name falls back to the global agent rather than raising.
+    Callers iterate `cfg.profiles.items`, so the name is theirs; the failure that
+    matters is an *unregistered agent*, which `get_agent` refuses loudly.
+    """
+    entry = cfg.profiles.items.get(profile_name)
+    declared = entry.agent if entry is not None else ""
+    return get_agent(declared or cfg.agent.type)
 
 
 def list_agents() -> list[str]:
