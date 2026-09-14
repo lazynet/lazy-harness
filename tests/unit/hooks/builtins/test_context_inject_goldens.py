@@ -502,12 +502,22 @@ def test_golden(case: Case, tmp_path: Path) -> None:
     assert_golden(HOOK, case.id, _run(world, case))
 
 
+#: The payloads the runner cannot use. `context_inject` is informational, so
+#: decision 3's table gives it exit 0 with a warning on stderr — and no stdout.
+#: That is a real loss on this branch: both cases used to emit the full
+#: injection, because the hook reads nothing from the payload it cannot do
+#: without. The table does not carve out a hook that would have coped.
+UNUSABLE_PAYLOAD_CASE_IDS: frozenset[str] = frozenset({"stdin-empty", "stdin-malformed-json"})
+
+
 def test_case_ids_are_unique() -> None:
     ids = [c.id for c in CASES]
     assert len(ids) == len(set(ids))
 
 
-@pytest.mark.parametrize("case_id", [c.id for c in CASES])
+@pytest.mark.parametrize(
+    "case_id", [c.id for c in CASES if c.id not in UNUSABLE_PAYLOAD_CASE_IDS]
+)
 def test_every_branch_emits_one_json_object_on_stdout_and_exits_0(case_id: str) -> None:
     """This hook has no verdict: it always answers, always on stdout, always 0."""
     golden = json.loads(golden_path(HOOK, case_id).read_text())
@@ -519,7 +529,9 @@ def test_every_branch_emits_one_json_object_on_stdout_and_exits_0(case_id: str) 
     assert payload["hookSpecificOutput"]["hookEventName"] == "SessionStart"
 
 
-@pytest.mark.parametrize("case_id", [c.id for c in CASES])
+@pytest.mark.parametrize(
+    "case_id", [c.id for c in CASES if c.id not in UNUSABLE_PAYLOAD_CASE_IDS]
+)
 def test_the_banner_stays_at_the_top_level(case_id: str) -> None:
     """`systemMessage` nested inside `hookSpecificOutput` parses and is discarded.
 
@@ -595,3 +607,20 @@ def test_the_three_staleness_verdicts_are_distinguishable() -> None:
 def test_the_fresh_handoff_carries_no_staleness_warning() -> None:
     assert "may be stale" not in _body("handoff-fresh")
     assert "may be stale" in _body("handoff-stale-session-grew")
+
+
+@pytest.mark.parametrize("case_id", sorted(UNUSABLE_PAYLOAD_CASE_IDS))
+def test_an_unusable_payload_emits_no_injection_at_all(case_id: str) -> None:
+    """Decision 3's table, informational column: exit 0, warning, empty stdout.
+
+    Both goldens used to carry the whole banner. `context_inject` reads almost
+    nothing off the payload, so it was one of the hooks that genuinely coped
+    with an empty one — and the injection it emitted there is what the table
+    costs. Named rather than hidden: the alternative is a per-hook exception to
+    a policy whose value is that it has none.
+    """
+    golden = json.loads(golden_path(HOOK, case_id).read_text())
+
+    assert golden["exit_code"] == 0
+    assert golden["stdout"] == ""
+    assert "unparseable payload" in golden["stderr"]

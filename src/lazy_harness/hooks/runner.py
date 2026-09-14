@@ -98,23 +98,32 @@ def _load_main(module_path: str) -> Callable[[HookEvent], HookDecision]:
 
 
 def _parse_payload(stdin_text: str) -> dict:
-    """Payload as an object, with an unreadable one degrading to an empty one.
+    """The payload as an object, or a failure the policy in `run_hook` resolves.
 
-    Not a failure the policy below resolves, because it does not stop the hook
-    from running: every builtin already reads stdin through a helper that
-    returns `{}` on empty, whitespace, malformed JSON or a non-object, and the
-    byte goldens freeze what each one then decides. A guard handed `{}` sees no
-    tool call and abstains -- which is not failing open, it is having nothing
-    to judge. Refusing here instead would block every tool call on a payload
-    the guard was never shown, and `lh hooks run` passes `{}` by construction.
+    Empty stdin, whitespace, bytes that are not JSON, and JSON that parses into
+    something other than an object are one class: the runner has no payload it
+    can hand a builtin. Decision 3's table puts that class in a single row —
+    exit 2 for a blocking hook, exit 0 with a warning for an informational one —
+    because a blocking hook that cannot run must refuse, and exiting 0 with no
+    output is how a caller says "no objection".
+
+    Degrading to `{}` instead is a change of behaviour on the shipped hooks, not
+    an accident of the migration: each one used to read stdin through a helper
+    that returned `{}` here, and the byte goldens froze what it then decided. A
+    guard handed `{}` sees no tool call and abstains, which on the wire is
+    indistinguishable from having looked. Decision 3 trades that silence for a
+    named refusal deliberately.
+
+    (`lh hooks run` handing over `{}` is not an argument either way: `{}` is a
+    parsed object and never reaches this path.)
     """
-    if not stdin_text.strip():
-        return {}
     try:
         payload = json.loads(stdin_text)
-    except json.JSONDecodeError:
-        return {}
-    return payload if isinstance(payload, dict) else {}
+    except json.JSONDecodeError as exc:
+        raise RunnerError(f"unparseable payload: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise RunnerError(f"unparseable payload: expected an object, got {type(payload).__name__}")
+    return payload
 
 
 def resolve_profile(explicit: str | None) -> str:

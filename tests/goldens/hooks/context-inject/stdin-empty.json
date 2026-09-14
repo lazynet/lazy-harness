@@ -1,5 +1,5 @@
 {
   "exit_code": 0,
-  "stderr": "",
-  "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"SessionStart\", \"additionalContext\": \"New project, no prior context.\"}, \"systemMessage\": \"Session context loaded (new project)\"}\n"
+  "stderr": "context-inject: unparseable payload: Expecting value: line 1 column 1 (char 0)",
+  "stdout": ""
 }

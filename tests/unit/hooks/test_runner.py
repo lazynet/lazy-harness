@@ -91,18 +91,22 @@ def test_abstention_emits_no_permission_decision(monkeypatch: pytest.MonkeyPatch
     assert result.stderr == ""
 
 
-@pytest.mark.parametrize(
-    "stdin_text", ["", "   \n", "not json at all", "[]", "null", "42", '"a string"']
-)
-def test_an_unreadable_payload_still_runs_the_hook(
+#: The four shapes of "the runner has no payload it can use": nothing on stdin,
+#: nothing but whitespace, bytes that are not JSON, and JSON that parses into
+#: something other than an object. One class, one policy row.
+UNUSABLE_PAYLOADS = ["", "   \n", "not json at all", "[]", "null", "42", '"a string"']
+
+
+@pytest.mark.parametrize("stdin_text", UNUSABLE_PAYLOADS)
+def test_unparseable_payload_refuses_for_a_blocking_hook(
     monkeypatch: pytest.MonkeyPatch, stdin_text: str
 ) -> None:
-    """An empty payload is not a hook that cannot run, so it is not a refusal.
+    """Decision 3's table, row "Unparseable payload": exit 2, reason on stderr.
 
-    Every builtin already reads stdin through a helper that returns `{}` here,
-    and the byte goldens freeze what each then decides. Refusing instead would
-    make a blocking hook block every tool call on a payload it was never shown
-    -- and `lh hooks run` hands the runner `{}` by construction.
+    A blocking hook exists to be consulted before a tool call. Handing it an
+    empty event and exiting 0 is indistinguishable, on the wire, from the guard
+    having looked and found nothing to object to -- which is the failure mode
+    the whole design exists to make visible.
     """
     seen: list[HookEvent] = []
 
@@ -114,11 +118,28 @@ def test_an_unreadable_payload_still_runs_the_hook(
 
     result = runner.run_hook("guard", profile="lazy", stdin_text=stdin_text)
 
-    assert result.exit_code == 0
-    assert result.stderr == ""
+    assert result.exit_code == 2
+    assert "payload" in result.stderr
     assert result.stdout is None
-    assert len(seen) == 1
-    assert seen[0].tool is None
+    assert seen == [], "the builtin must not run on a payload the runner cannot read"
+
+
+@pytest.mark.parametrize("stdin_text", UNUSABLE_PAYLOADS)
+def test_unparseable_payload_lets_an_informational_hook_through(
+    monkeypatch: pytest.MonkeyPatch, stdin_text: str
+) -> None:
+    """Same row, informational column: exit 0, warning on stderr, no stdout.
+
+    The hook did not run, so it has nothing to say on stdout -- and an agent
+    that reads stdout as the hook's output must not be handed a partial one.
+    """
+    register(monkeypatch, "notes", lambda event: HookDecision(), blocking=False)
+
+    result = runner.run_hook("notes", profile="lazy", stdin_text=stdin_text)
+
+    assert result.exit_code == 0
+    assert "payload" in result.stderr
+    assert result.stdout is None
 
 
 def test_a_payload_with_no_event_falls_back_to_the_declared_one(

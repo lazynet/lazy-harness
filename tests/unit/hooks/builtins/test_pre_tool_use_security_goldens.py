@@ -71,11 +71,18 @@ def _read(path: str, *, case_id: str, **kw: bool) -> Case:
 
 # --- payload shape -------------------------------------------------------- #
 
-SHAPE_CASES: list[Case] = [
+#: The four shapes of a payload the runner cannot use. Not abstentions: this
+#: hook is blocking, and decision 3's table gives the row exit 2 with a reason
+#: on stderr. A guard handed an empty event and exiting 0 is indistinguishable,
+#: on the wire, from one that looked and found nothing.
+UNUSABLE_PAYLOAD_CASES: list[Case] = [
     Case(id="stdin-empty", stdin=""),
     Case(id="stdin-whitespace-only", stdin="   \n"),
     Case(id="stdin-malformed-json", stdin="not json at all"),
     Case(id="stdin-json-array-not-object", stdin="[1, 2, 3]"),
+]
+
+SHAPE_CASES: list[Case] = [
     Case(id="tool-not-inspected", stdin=_payload("WebFetch", url="https://example.com")),
     Case(id="tool-name-absent", stdin=json.dumps({"hook_event_name": "PreToolUse"})),
 ]
@@ -202,6 +209,7 @@ ABSTENTION_CASES: list[Case] = [
 ]
 
 CASES: list[Case] = [
+    *UNUSABLE_PAYLOAD_CASES,
     *SHAPE_CASES,
     *RULE_CASES,
     *ALLOWLIST_CASES,
@@ -374,3 +382,19 @@ def test_every_refusal_goes_out_on_stderr_with_exit_2(case_id: str) -> None:
     assert golden["exit_code"] == 2
     assert golden["stdout"] == ""
     assert golden["stderr"].startswith("Blocked by lazy-harness PreToolUse: ")
+
+
+@pytest.mark.parametrize("case_id", [c.id for c in UNUSABLE_PAYLOAD_CASES])
+def test_an_unusable_payload_refuses_rather_than_abstaining(case_id: str) -> None:
+    """Decision 3's table, blocking column: exit 2 and a reason on stderr.
+
+    These four goldens used to record an abstention, because every builtin read
+    stdin through a helper that returned `{}`. That silence is what the table
+    removes: a blocking hook that cannot run has to say so, or the agent reads
+    its exit 0 as consent.
+    """
+    golden = json.loads(golden_path(HOOK, case_id).read_text())
+
+    assert golden["exit_code"] == 2
+    assert golden["stdout"] == ""
+    assert "unparseable payload" in golden["stderr"]

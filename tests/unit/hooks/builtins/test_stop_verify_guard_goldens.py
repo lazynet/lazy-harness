@@ -132,6 +132,14 @@ CASES: list[Case] = [
     ),
 ]
 
+#: The payloads the runner cannot use. `stop_verify_guard` is informational —
+#: it blocks through stdout with exit 0, not through exit 2 — so decision 3's
+#: table gives it the right-hand column: exit 0, a warning on stderr, and no
+#: stdout at all, because the hook never ran and has no verdict to report.
+UNUSABLE_PAYLOAD_CASE_IDS: frozenset[str] = frozenset(
+    {"stdin-empty", "stdin-malformed-json"}
+)
+
 #: The branches that actually refuse. Everything else must stay silent.
 BLOCKING_CASE_IDS: frozenset[str] = frozenset(
     {
@@ -232,7 +240,14 @@ def test_the_block_goes_out_on_stdout_with_exit_0(case_id: str) -> None:
     assert json.loads(golden["stdout"])["decision"] == "block"
 
 
-@pytest.mark.parametrize("case_id", [c.id for c in CASES if c.id not in BLOCKING_CASE_IDS])
+@pytest.mark.parametrize(
+    "case_id",
+    [
+        c.id
+        for c in CASES
+        if c.id not in BLOCKING_CASE_IDS and c.id not in UNUSABLE_PAYLOAD_CASE_IDS
+    ],
+)
 def test_abstention_emits_nothing_at_all(case_id: str) -> None:
     """Every non-blocking branch says nothing — including the second Stop.
 
@@ -242,6 +257,22 @@ def test_abstention_emits_nothing_at_all(case_id: str) -> None:
     golden = json.loads(golden_path(HOOK, case_id).read_text())
 
     assert golden == {"exit_code": 0, "stderr": "", "stdout": ""}
+
+
+@pytest.mark.parametrize("case_id", sorted(UNUSABLE_PAYLOAD_CASE_IDS))
+def test_an_unusable_payload_warns_instead_of_abstaining(case_id: str) -> None:
+    """Decision 3's table, informational column: exit 0, warning, no stdout.
+
+    The distinction that keeps the flag at `blocking=False`: this hook's refusal
+    travels on stdout, so an exit 2 here would change its wire contract rather
+    than express the table. What the table does buy is that a payload the runner
+    could not read leaves a trace on stderr instead of passing as a clean run.
+    """
+    golden = json.loads(golden_path(HOOK, case_id).read_text())
+
+    assert golden["exit_code"] == 0
+    assert golden["stdout"] == ""
+    assert "unparseable payload" in golden["stderr"]
 
 
 def test_the_block_reason_is_the_hooks_own_constant() -> None:
