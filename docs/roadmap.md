@@ -41,7 +41,7 @@ The plugin system (metrics sinks, ADR-004 agent adapters) is the framework's gro
 
 - [x] **Identify the second extension point.** Chosen 2026-08-17 — the capability registry of ADR-035, driven by a real consumer rather than speculative design.
 - [x] **Ship the capability registry and migrate the five existing plugin kinds onto it.** Landed 2026-08-17 — `plugins/capabilities.py` holds the registry and `plugins/builtins.py` registers all five kinds (tools, hooks, metrics sinks, agents, LLM backends). The sixth surface, the scheduler backend, is deliberately left out: its selection is a platform probe, not a user-facing activation.
-- [ ] Document the extension-point contract once two exist in code — three data points beats an abstract spec.
+- [ ] Document the extension-point contract. The original trigger — "once two exist in code" — was met and passed: `plugins/builtins.py` registers five kinds against one registry, so the data points the contract was waiting on are already there. What is left is the writing, and it is no longer gated on anything.
 
 ## Closed themes
 
