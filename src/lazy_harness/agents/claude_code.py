@@ -452,7 +452,12 @@ class ClaudeCodeAdapter:
             )
             return
 
-        if kind not in _TURN_TYPES:
+        # `isinstance` before the membership test, not just for tidiness: a
+        # `"type"` of `[]` or `{}` is valid JSON, and `in` hashes its left
+        # operand, so the lookup alone raises `TypeError` out of this generator
+        # and ends the read. Skipping the entry costs one line; raising costs
+        # every line after it.
+        if not isinstance(kind, str) or kind not in _TURN_TYPES:
             return
         message = entry.get("message")
         if not isinstance(message, dict):

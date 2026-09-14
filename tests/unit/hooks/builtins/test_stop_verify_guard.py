@@ -235,6 +235,37 @@ def test_blocks_the_first_stop_attempt_when_goal_declared_and_unverified(
     assert _recorded(db_path) == [("verify_block", "s1", "")]
 
 
+@pytest.mark.parametrize("kind", [[], {}])
+def test_still_blocks_when_an_unhashable_type_precedes_the_goal_marker(
+    monkeypatch, tmp_path: Path, kind: object
+) -> None:
+    """A regression the `!=` scan on `main` could not have: `kind not in` hashes.
+
+    The old scan compared `entry.get("type") != "attachment"`, which is safe
+    for any JSON value. The reader tests membership against a frozenset, so a
+    `"type"` of `[]` or `{}` raised `TypeError` out of the generator, ended the
+    iteration before the marker, and left the guard silently off — no block and
+    no `verify_block` row, so the metric did not even count the failure.
+    """
+    from lazy_harness.hooks.builtins import stop_verify_guard as mod
+
+    db_path = tmp_path / "m.db"
+    monkeypatch.setattr(mod, "_db_path", lambda: db_path)
+    monkeypatch.setattr(mod, "_injection_enabled", lambda: True)
+    transcript = _write_transcript(
+        tmp_path / "session.jsonl",
+        [
+            {"type": kind, "message": {"role": "user", "content": "hola"}},
+            {"type": "attachment", "attachment": {"type": "goal_status", "condition": "x"}},
+        ],
+    )
+
+    out = _run(monkeypatch, {"session_id": "s1", "transcript_path": str(transcript)})
+
+    assert json.loads(out)["decision"] == "block"
+    assert _recorded(db_path) == [("verify_block", "s1", "")]
+
+
 def test_lets_the_second_stop_attempt_close_without_blocking(
     monkeypatch, tmp_path: Path
 ) -> None:

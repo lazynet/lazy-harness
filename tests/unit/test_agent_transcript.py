@@ -474,6 +474,27 @@ def test_an_entry_of_an_unknown_type_yields_nothing(tmp_path: Path) -> None:
     assert _read(path) == []
 
 
+@pytest.mark.parametrize("kind", [[], {}, [1], {"a": 1}])
+def test_an_unhashable_type_is_skipped_and_the_rest_still_arrives(
+    tmp_path: Path, kind: object
+) -> None:
+    """`type` is JSON, so it can be a list or a dict, and both are unhashable.
+
+    `kind not in _TURN_TYPES` hashes its left operand, so such an entry raised
+    `TypeError` out of the generator and killed the iteration — costing every
+    line after it, which for `stop_verify_guard` reads as "no goal declared".
+    """
+    from lazy_harness.agents.base import Signal
+
+    path = tmp_path / "s.jsonl"
+    path.write_text(
+        _lines({"type": kind, "message": {"content": "ignored"}})
+        + _lines({"type": "attachment", "attachment": {"type": "goal_status"}})
+    )
+
+    assert len(_by_signal(path, Signal.GOAL_STATUS)) == 1
+
+
 def test_an_empty_transcript_yields_nothing(tmp_path: Path) -> None:
     path = tmp_path / "s.jsonl"
     path.write_text("")
