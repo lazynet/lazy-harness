@@ -14,6 +14,15 @@ Doc anchors this test depends on (a doc restructure that breaks these should fai
 loudly, not silently extract nothing):
 - fenced ```bash code blocks whose lines start with "lh "
 - inline code spans of the shape `` `lh ...` ``
+
+Unmarked prose is out of scope on purpose: `lh deploy --dry-run` written with
+neither a fence nor backticks is not extracted, and no scan here sees it. Both
+anchors require the author to have marked the text up as a command, which is
+what makes the extraction unambiguous — over running prose the extractor would
+have to guess where the invocation ends, and would read "run lh deploy first" as
+a command taking the argument `first`. Marking commands up is already the house
+style across docs/, so an unmarked one is a docs-style miss rather than a hole
+this file should paper over with a heuristic.
 """
 
 from __future__ import annotations
@@ -664,3 +673,29 @@ def test_cli_reference_flags_exist_on_the_commands_they_follow() -> None:
 
     unknown = find_unknown_lh_flags_in_docs(cli, DOCS_DIR)
     assert unknown == {}
+
+
+def test_unmarked_prose_is_deliberately_not_extracted() -> None:
+    """The documented limit of the anchor set, made executable.
+
+    Both marked-up shapes are covered; bare prose is not. Locked in so that
+    widening the extractor is a deliberate act with a test to update, not a
+    silent change of what the whole file is understood to guarantee.
+    """
+
+    @click.group()
+    def fake_cli() -> None:
+        pass
+
+    @fake_cli.command("foo")
+    def foo_cmd() -> None:
+        pass
+
+    fenced = "```bash\nlh foo --invented\n```"
+    inline = "Run `lh foo --invented` first."
+    prose = "Run lh foo --invented first."
+
+    assert find_unknown_lh_flags(fake_cli, fenced) == [("lh foo --invented", "--invented")]
+    assert find_unknown_lh_flags(fake_cli, inline) == [("lh foo --invented", "--invented")]
+    assert find_unknown_lh_flags(fake_cli, prose) == []
+    assert find_missing_lh_invocations(fake_cli, "Run lh nonexistent first.") == []
