@@ -39,7 +39,7 @@ jobs:
         run: uv sync --group docs
 
       - name: Build site
-        run: uv run mkdocs build --strict
+        run: uv run --frozen mkdocs build --strict
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

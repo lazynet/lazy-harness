@@ -46,10 +46,10 @@ jobs:
         run: uv sync --group dev --python ${{ matrix.python-version }}
 
       - name: Run tests
-        run: uv run --python ${{ matrix.python-version }} pytest
+        run: uv run --frozen --python ${{ matrix.python-version }} pytest
 
       - name: Run ruff
-        run: uv run --python ${{ matrix.python-version }} ruff check src tests
+        run: uv run --frozen --python ${{ matrix.python-version }} ruff check src tests
 
   # Third leg of the pre-commit gate. docs.yml only runs on push to main, so
   # without this no pull request would ever build the docs.
@@ -68,4 +68,4 @@ jobs:
         run: uv sync --group docs --python 3.11
 
       - name: Build site
-        run: uv run --python 3.11 mkdocs build --strict
+        run: uv run --frozen --python 3.11 mkdocs build --strict

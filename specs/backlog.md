@@ -8,6 +8,7 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 
 ## Done
 
+- [x] **`uv run` sin `--frozen` descartaba el lockfile entero** — medido el 2026-09-14: un `uv run` posterior a cualquier edición bajo `src/` descarta `uv.lock` y escribe uno reducido, de 54 paquetes a 16, sin `revision = 3` y sin ningún `upload-time` (817 líneas borradas). `uv run -v` lo dice: `Ignoring existing lockfile due to mismatched dev dependencies`. Editar un fuente y correr los tests **es** el ciclo TDD de este repo, así que todo worktree acumulaba un lock degradado que el próximo commit podía arrastrar: tres agentes lo dejaron sucio en una sola sesión y ninguno lo reportó. Cerrado poniendo `--frozen` en las 14 invocaciones que prescriben las superficies de automatización (`.claude/commands/`, los dos workflows, el PR template) y sosteniéndolo con `tests/docs/test_uv_frozen_coherence.py`, que falla en las dos direcciones. `--group dev` también lo evita; declarar `[tool.uv] default-groups` **no** — medido, no supuesto. Es un defecto distinto del de `release-please` más abajo, que describe la línea de versión atrasada ensuciando el árbol *incluso con* `--frozen` vía el install editable: ese reescribe una línea, este descartaba el archivo.
 - [x] **Profile isolation via CLAUDE_CONFIG_DIR** — wrapper `lcc`, aislamiento completo por perfil (ADR-009)
 - [x] **CLAUDE.md como router IF-ELSE** — carga condicional de docs/ on-demand (ADR-004)
 - [x] **Compound loop async** — `claude -p` headless, 100% de evaluaciones (ADR-005 v2)

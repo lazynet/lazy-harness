@@ -4,26 +4,26 @@ description: Run the full pre-commit verification suite — pytest, ruff, mkdocs
 
 You are running the complete verification suite that must pass before any commit in this repo. Run the three checks in sequence, reporting each one's result clearly. If any check fails, stop and report the failure — do not try to fix it automatically.
 
-## 1. Tests — `uv run pytest`
+## 1. Tests — `uv run --frozen pytest`
 
 ```bash
-uv run pytest
+uv run --frozen pytest
 ```
 
 Pass criteria: exit code 0, zero warnings, zero deprecation notices, zero skipped tests without an explicit `@pytest.mark.skip` reason. If the output is noisy even on pass, treat that as a failure and report it.
 
-## 2. Lint — `uv run ruff check src tests`
+## 2. Lint — `uv run --frozen ruff check src tests`
 
 ```bash
-uv run ruff check src tests
+uv run --frozen ruff check src tests
 ```
 
 Pass criteria: exit code 0, no findings.
 
-## 3. Docs build — `uv run --group docs mkdocs build --strict`
+## 3. Docs build — `uv run --frozen --group docs mkdocs build --strict`
 
 ```bash
-uv run --group docs mkdocs build --strict
+uv run --frozen --group docs mkdocs build --strict
 ```
 
 Pass criteria: exit code 0, no broken links, no unrecognised config, no nav warnings. `--strict` escalates warnings to errors, so this is the authoritative check.

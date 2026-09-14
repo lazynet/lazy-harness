@@ -21,9 +21,9 @@ new code should come with tests that failed before the implementation
 existed — mention the tests here. Include manual verification for any
 user-visible behaviour. -->
 
-- [ ] `uv run pytest` passes with pristine output
-- [ ] `uv run ruff check src tests` passes
-- [ ] `uv run --group docs mkdocs build --strict` passes (for docs changes)
+- [ ] `uv run --frozen pytest` passes with pristine output
+- [ ] `uv run --frozen ruff check src tests` passes
+- [ ] `uv run --frozen --group docs mkdocs build --strict` passes (for docs changes)
 - [ ] Manual end-to-end check of the user-facing behaviour (for CLI/hook/config changes)
 
 ## Followups (optional)
