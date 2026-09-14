@@ -91,7 +91,7 @@ Sections composed, in the order they appear in the body (which is **not** the or
 8. **`## Relevant vault notes`** — QMD hits for the current branch name, when `qmd_suggest_enabled` is set.
 9. **`## Recent history`** — the last 3 entries from `decisions.jsonl` and the last 3 from `failures.jsonl`, with failures including their prevention field.
 
-The body is truncated to `cfg.context_inject.max_body_chars` (default 3000) by dropping sections in the order `episodic → vault notes → proposals → lazynorth → code structure → repo map → handoff`. A compact banner is also emitted as `systemMessage` so the agent can surface "Session context loaded: on main | Last session: 2026-04-12 18:32 | has handoff notes" without printing the full body.
+The body is truncated to `cfg.context_inject.max_body_chars` (default 3000) by dropping sections in the order `episodic → vault notes → proposals → lazynorth → code structure → repo map → handoff`. A compact banner is also emitted as a top-level `systemMessage` — a sibling of `hookSpecificOutput`, not a key inside it — so the agent can surface "Session context loaded: on main | Last session: 2026-04-12 18:32 | has handoff notes" without printing the full body.
 
 **Why the repo map is capped rather than left to the drop order.** It is the only section whose source is a hand-written document of unbounded length, and it sits second-to-last in the drop order — so an uncapped map survives while every other section is dropped to make room for it, and then gets dropped itself, leaving a body with nothing in it. `repo_map_max_chars` bounds the section before the budget is ever consulted. Raise it if your map is genuinely worth the room; the cap is in characters because that is the unit `max_body_chars` spends.
 
@@ -366,7 +366,7 @@ Mechanics:
 1. Scope check — the hook only acts on `Edit` / `Write` tool calls whose `file_path` ends in `/memory/MEMORY.md`. Every other tool / path: instant exit 0.
 2. Project the post-operation content from the tool input: `Write` uses `content` directly; `Edit` reads the current file and applies `old_string` → `new_string` (honouring `replace_all`) in memory.
 3. Measure both the line count and the UTF-8 byte size of that projection.
-4. If either ceiling is breached, emit a `hookSpecificOutput.systemMessage` naming the breach — both, when both apply — and suggesting `lh memory consolidate`, or moving detail out of the index into the linked note.
+4. If either ceiling is breached, emit a top-level `systemMessage` naming the breach — both, when both apply — and suggesting `lh memory consolidate`, or moving detail out of the index into the linked note.
 5. Always exit 0. This is a warning hook, not a guard.
 
 Bypass for tooling that legitimately rewrites `MEMORY.md` (the consolidator pathway): set `LH_MEMORY_SIZE_BYPASS=1` in the subprocess environment.
@@ -382,7 +382,7 @@ Mechanics:
 1. Scope check — only `Read` tool calls. Every other tool: instant exit 0.
 2. If the call already carries `offset` or `limit`, the caller has bounded the read; exit 0.
 3. Size the target file. Missing, unreadable, or empty files exit 0 — this hook never speaks about a read that is going to fail anyway.
-4. Above 500 lines, emit a `hookSpecificOutput.systemMessage` reporting the line count and an estimated token cost, and suggesting `offset`/`limit` or `Grep` to locate the region first.
+4. Above 500 lines, emit a top-level `systemMessage` reporting the line count and an estimated token cost, and suggesting `offset`/`limit` or `Grep` to locate the region first.
 5. Always exit 0. This is a warning hook, not a guard.
 
 Every warning is also appended to `hooks.log`, so the rate of unbounded large reads is measurable over time rather than a matter of impression.

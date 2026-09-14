@@ -93,9 +93,12 @@ def test_main_warns_when_write_pushes_memory_md_over_threshold(
 
     captured = capsys.readouterr()
     output = json.loads(captured.out)
-    assert output["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
-    assert "MEMORY.md" in output["hookSpecificOutput"]["systemMessage"]
-    assert "200" in output["hookSpecificOutput"]["systemMessage"]
+    assert "hookSpecificOutput" not in output, (
+        "the warning is the only output; a hookSpecificOutput carrying nothing "
+        "Claude Code reads is noise"
+    )
+    assert "MEMORY.md" in output["systemMessage"]
+    assert "200" in output["systemMessage"]
 
 
 def test_main_silent_when_write_keeps_memory_md_under_threshold(
@@ -146,7 +149,7 @@ def test_main_warns_when_edit_pushes_existing_memory_md_over_threshold(
     captured = capsys.readouterr()
     assert captured.out, "expected warning JSON on stdout"
     output = json.loads(captured.out)
-    assert "MEMORY.md" in output["hookSpecificOutput"]["systemMessage"]
+    assert "MEMORY.md" in output["systemMessage"]
 
 
 def test_bypass_env_var_silences_warning(
@@ -248,9 +251,12 @@ def test_main_warns_when_write_pushes_claude_md_over_threshold(
 
     captured = capsys.readouterr()
     output = json.loads(captured.out)
-    assert output["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
-    assert "CLAUDE.md" in output["hookSpecificOutput"]["systemMessage"]
-    assert "200" in output["hookSpecificOutput"]["systemMessage"]
+    assert "hookSpecificOutput" not in output, (
+        "the warning is the only output; a hookSpecificOutput carrying nothing "
+        "Claude Code reads is noise"
+    )
+    assert "CLAUDE.md" in output["systemMessage"]
+    assert "200" in output["systemMessage"]
 
 
 def test_main_silent_when_write_keeps_claude_md_under_threshold(
@@ -301,7 +307,7 @@ def test_claude_md_threshold_is_configurable_via_config_toml(
 
     captured = capsys.readouterr()
     output = json.loads(captured.out)
-    assert "10" in output["hookSpecificOutput"]["systemMessage"]
+    assert "10" in output["systemMessage"]
 
 
 def test_claude_md_threshold_falls_back_to_default_on_malformed_config(
@@ -328,7 +334,7 @@ def test_claude_md_threshold_falls_back_to_default_on_malformed_config(
 
     captured = capsys.readouterr()
     output = json.loads(captured.out)
-    assert "200" in output["hookSpecificOutput"]["systemMessage"]
+    assert "200" in output["systemMessage"]
 
 
 def test_main_silent_for_a_file_that_merely_ends_in_claude_md(

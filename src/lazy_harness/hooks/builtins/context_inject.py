@@ -889,12 +889,15 @@ def main() -> None:
 
     banner = _compose_banner(git_ctx, last_session_ctx, handoff_ctx)
 
+    # `hookSpecificOutput` keeps `additionalContext`, which it does accept. The
+    # banner is a top-level field: nested, it parsed and was discarded, so the
+    # body arrived and the banner never did.
     output = {
         "hookSpecificOutput": {
             "hookEventName": "SessionStart",
             "additionalContext": body,
-            "systemMessage": banner,
-        }
+        },
+        "systemMessage": banner,
     }
     print(json.dumps(output))
     _log(log_file, f"injected {len(body)} chars, banner={banner[:80]}")

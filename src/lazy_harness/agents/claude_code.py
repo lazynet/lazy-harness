@@ -261,8 +261,10 @@ class ClaudeCodeAdapter:
             assert isinstance(nested, dict)
             nested.setdefault("hookEventName", support.native_name if support else event.event)
             nested["additionalContext"] = decision.additional_context
-        # Top level, never nested: nesting it under `hookSpecificOutput` is the
-        # bug fixed in v0.58.0 — Claude Code reads `systemMessage` at the root.
+        # Top level, never nested. `hookSpecificOutput` accepts exactly
+        # additionalContext, permissionDecision, permissionDecisionReason and
+        # updatedInput (verified against the 2.1.269 binary) and discards the
+        # rest, so a nested systemMessage parses and displays nothing.
         if decision.system_message:
             body["systemMessage"] = decision.system_message
         if decision.stop:

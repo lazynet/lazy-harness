@@ -33,9 +33,12 @@ def test_warns_on_a_whole_file_read_of_a_large_file(
 
     assert out.strip(), "hook stayed silent on a 3000-line whole-file read"
     payload = json.loads(out)
-    message = payload["hookSpecificOutput"]["systemMessage"]
+    message = payload["systemMessage"]
     assert "3000" in message
-    assert payload["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
+    assert "hookSpecificOutput" not in payload, (
+        "the warning is the only output; a hookSpecificOutput carrying nothing "
+        "Claude Code reads is noise"
+    )
 
 
 def test_stays_silent_when_the_read_is_already_bounded(

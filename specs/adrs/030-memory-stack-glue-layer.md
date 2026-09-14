@@ -76,8 +76,8 @@ New config: `compound_loop.slim_handoff_enabled = true` (default on).
 ### G2 — `MEMORY.md` size warning + opt-in consolidator
 
 **Validator (deterministic, non-blocking).** New `PreToolUse` hook matching
-`Edit|Write` on paths under `**/memory/MEMORY.md` that emits a warning via
-`hookSpecificOutput.systemMessage` when the resulting file would exceed 200
+`Edit|Write` on paths under `**/memory/MEMORY.md` that emits a warning via a
+top-level `systemMessage` when the resulting file would exceed 200
 lines. The write is **allowed**; the user receives a banner suggesting
 consolidation. Implemented as `pre_tool_use_memory_size.py`. Fail-open if the
 target path does not exist.
