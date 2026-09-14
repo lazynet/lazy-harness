@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.62.0](https://github.com/lazynet/lazy-harness/compare/v0.61.0...v0.62.0) (2026-09-14)
+
+
+### Features
+
+* **hooks:** lh hook becomes the runner, three builtins on the event contract ([#271](https://github.com/lazynet/lazy-harness/issues/271)) ([b2864b1](https://github.com/lazynet/lazy-harness/commit/b2864b1ed37b3e2cc0025653b09163450b937dd2))
+
+
+### Bug Fixes
+
+* compare merged-branch files one at a time in /cleanup-worktree ([#269](https://github.com/lazynet/lazy-harness/issues/269)) ([c82fd93](https://github.com/lazynet/lazy-harness/commit/c82fd93a28f919bd9dd3ab0a2d69b22f673f5eb7))
+
 ## [0.61.0](https://github.com/lazynet/lazy-harness/compare/v0.60.0...v0.61.0) (2026-09-14)
 
 
