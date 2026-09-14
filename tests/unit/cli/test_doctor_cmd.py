@@ -128,7 +128,9 @@ def test_render_llm_backend_claude_missing_binary_is_warning(
     assert "not found" in buf.getvalue()
 
 
-def test_render_llm_backend_ollama_reachable(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_render_llm_backend_ollama_reachable(
+    monkeypatch: pytest.MonkeyPatch, expects_deprecated_compound_loop: None
+) -> None:
     from lazy_harness.cli.doctor_cmd import _render_llm_backend
     from lazy_harness.core.config import Config
 
@@ -150,7 +152,7 @@ def test_render_llm_backend_ollama_reachable(monkeypatch: pytest.MonkeyPatch) ->
 
 
 def test_render_llm_backend_unreachable_is_warning_not_failure(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, expects_deprecated_compound_loop: None
 ) -> None:
     import httpx
 
@@ -168,7 +170,9 @@ def test_render_llm_backend_unreachable_is_warning_not_failure(
     assert "not reachable" in buf.getvalue()
 
 
-def test_render_llm_backend_unknown_backend_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_render_llm_backend_unknown_backend_fails(
+    monkeypatch: pytest.MonkeyPatch, expects_deprecated_compound_loop: None
+) -> None:
     from lazy_harness.cli.doctor_cmd import _render_llm_backend
     from lazy_harness.core.config import Config
 
@@ -500,7 +504,7 @@ def test_doctor_names_the_key_variable_never_its_value(
 
 
 def test_doctor_still_reports_the_deprecated_single_backend_form(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, expects_deprecated_compound_loop: None
 ) -> None:
     """A config with no [llm] table must not silently report nothing."""
     from lazy_harness.core.config import Config

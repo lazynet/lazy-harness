@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -182,3 +183,20 @@ def _never_reach_the_real_knowledge_store(monkeypatch, tmp_path_factory):
     monkeypatch.setattr(
         marker, "DEFAULT_ROOT", str(tmp_path_factory.mktemp("knowledge-store-guard"))
     )
+
+
+@pytest.fixture
+def expects_deprecated_compound_loop(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Assert the ADR-039 notice for a test that declares the ADR-033 form.
+
+    Two things this has to do that `pytest.warns` alone cannot. It disarms the
+    once-per-process latch in `llm/roles.py`, without which only the first such
+    test in a run would see the warning and the rest would fail on run order.
+    And it anchors the match on the bracketed config key rather than a loose
+    substring, so a `tmp_path` or a traceback cannot satisfy it by accident.
+    """
+    from lazy_harness.llm import roles
+
+    monkeypatch.setattr(roles, "_warned", False)
+    with pytest.warns(DeprecationWarning, match=r"\[compound_loop\]\.backend"):
+        yield

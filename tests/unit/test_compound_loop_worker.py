@@ -149,7 +149,7 @@ backend = "ollama"
 
 
 def test_worker_logs_and_exits_zero_when_role_cannot_resolve(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, expects_deprecated_compound_loop: None
 ) -> None:
     """run_inference never raises: a misconfigured backend must surface as a
     per-task skip logged by the drain loop, not crash the worker."""

@@ -82,7 +82,7 @@ def test_unknown_backend_raises_not_found_with_available_list() -> None:
 
 
 def test_ollama_config_to_run_inference_end_to_end_without_subprocess(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, expects_deprecated_compound_loop: None
 ) -> None:
     """ADR-033/ADR-039 acceptance: backend="ollama" → OpenAICompatibleBackend
     at localhost:11434 → run_inference (routed through the deprecated
