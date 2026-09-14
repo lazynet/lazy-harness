@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 from pathlib import Path
 
 import pytest
@@ -310,6 +311,35 @@ def test_no_deployed_builtin_command_carries_a_home_or_a_python_version() -> Non
         assert "/Users/" not in command and "/home/" not in command, command
         assert "python3." not in command, command
         assert "site-packages" not in command, command
+
+
+@pytest.mark.parametrize("profile", ["work laptop", "it's-mine", "cost$profile"])
+def test_a_profile_needing_quoting_survives_as_one_argument(profile: str) -> None:
+    """A profile name is user data, and `core.config` validates nothing about it.
+
+    Interpolated bare, `--profile work laptop` reaches click as two arguments:
+    it exits 2 with "Got unexpected extra argument (laptop)", and on PreToolUse
+    exit 2 is how Claude Code is told to block the tool call. A usage error in
+    a generated command would therefore block the agent's tools.
+
+    The command lands in `settings.json` as a JSON string, so the quoting is
+    asserted after a round trip through JSON rather than before it.
+    """
+    from lazy_harness.deploy.engine import hook_command
+    from lazy_harness.hooks.loader import resolve_hook
+
+    hook = resolve_hook("context-inject", event="session_start")
+    assert hook is not None
+
+    command = hook_command(hook, profile=profile)
+
+    assert shlex.split(json.loads(json.dumps(command))) == [
+        "lh",
+        "hook",
+        "context-inject",
+        "--profile",
+        profile,
+    ]
 
 
 def test_a_user_hook_keeps_an_explicit_interpreter_and_path() -> None:

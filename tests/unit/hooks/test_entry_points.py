@@ -12,6 +12,7 @@ them one mechanism afterwards.
 from __future__ import annotations
 
 import json
+import shlex
 import sys
 import types
 from pathlib import Path
@@ -21,6 +22,7 @@ from click.testing import CliRunner
 
 from lazy_harness.agents.base import HookDecision, HookEvent, Verdict
 from lazy_harness.cli.main import cli
+from lazy_harness.deploy.engine import hook_command
 from lazy_harness.hooks.engine import run_hooks_for_event
 from lazy_harness.hooks.loader import _BUILTIN_HOOKS, BuiltinHookSpec, HookInfo
 
@@ -78,6 +80,35 @@ def test_hook_invoke_passes_an_explicit_profile_to_the_runner(
 
     assert result.exit_code == 0, result.output
     assert seen == ["flex"]
+
+
+@pytest.mark.parametrize("profile", ["work laptop", "it's-mine", "cost$profile"])
+def test_the_deployed_command_invokes_cleanly_for_an_awkward_profile(
+    monkeypatch: pytest.MonkeyPatch, profile: str
+) -> None:
+    """What `deploy` writes has to parse back into the arguments click expects.
+
+    The generator and this entry point are the two halves of one contract, and
+    only a test that runs the generated string through the parser covers the
+    seam: `--profile work laptop` is a usage error, and click's exit code for a
+    usage error is 2 — which on PreToolUse is Claude Code's "block this tool
+    call".
+    """
+    seen: list[str] = []
+
+    def main(event: HookEvent) -> HookDecision:
+        seen.append(event.profile)
+        return HookDecision()
+
+    register(monkeypatch, "spy", main, migrated=True)
+    hook = HookInfo(name="spy", path=Path("/nonexistent/spy.py"), is_builtin=True)
+
+    argv = shlex.split(hook_command(hook, profile=profile))
+
+    result = CliRunner().invoke(cli, argv[1:], input=json.dumps(PRE_TOOL_USE))
+
+    assert result.exit_code == 0, result.output
+    assert seen == [profile]
 
 
 def test_hook_invoke_falls_back_to_todays_profile_resolution(

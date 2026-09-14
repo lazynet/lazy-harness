@@ -50,9 +50,18 @@ def hook_command(hook: HookInfo, *, profile: str) -> str:
 
     A user hook keeps an explicit interpreter and path. The framework did not
     ship it and has no stable launcher for it.
+
+    The profile is quoted so that it stays one argument. Nothing validates a
+    profile name — `core.config` reads the table keys as written — and
+    interpolated bare, `--profile work laptop` reaches click as two arguments
+    and exits 2 with a usage error. On PreToolUse exit 2 is how Claude Code is
+    told to block the tool call, so the generated command would block the
+    agent's tools rather than fail visibly.
     """
     if hook.is_builtin:
-        return f"{_LAUNCHER} {_HOOK_SUBCOMMAND} {hook.name} --profile {profile}"
+        return (
+            f"{_LAUNCHER} {_HOOK_SUBCOMMAND} {hook.name} --profile {shlex.quote(profile)}"
+        )
     return f"{sys.executable} {hook.path}"
 
 
