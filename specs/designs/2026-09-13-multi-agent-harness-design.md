@@ -94,7 +94,7 @@ reading a *name* out of a binary and inferring a *behaviour*.
 | Exiting 0 silently is an `allow` | "Exit code 0 with no output means the hook has no decision to report… The hook can deny the call, but **staying silent doesn't approve it**." |
 | Several agents read `AGENTS.md` *and* `CLAUDE.md`; "the formats stack rather than compete" | opencode takes the **first match and breaks**, globally and per project: `for (const file of globalFiles) { if (exists) { paths.add(...); break } }` — with the comment *"so we don't stack AGENTS.md/CLAUDE.md from every ancestor"* (`packages/opencode/src/session/instruction.ts:114-131`). Copilot *does* combine, with no defined precedence. Stacking is per-agent, not a property of the format. |
 | Copilot's bundle names `CLAUDE.md`, so it is a deployable target | Copilot's only user-level instruction destinations are `$COPILOT_HOME/copilot-instructions.md` and `$COPILOT_HOME/instructions/**/*.instructions.md`. `.github/copilot-instructions.md`, `AGENTS.md`, `CLAUDE.md` and `GEMINI.md` are **repository-discovered**. Writing them into a config dir installs nothing. |
-| Copilot's compatible payload is Claude's payload | `PostToolUse` compat delivers `tool_result: {result_type, text_result_for_llm}`, not `tool_response`; `tool_input` is typed `unknown`, not an object. The compat layer also *maps* runtime tool names to Claude's (`view`→`Read`, `create`→`Write`, `apply_patch`→`Edit`) — version-sensitive translation, not recasing. |
+| Copilot's compatible payload is Claude's payload | `PostToolUse` compat delivers `tool_result: {result_type, text_result_for_llm}`, not `tool_response`; `tool_input` is typed `unknown`, not an object ([docs]). An earlier revision added that the compat layer also *maps* runtime tool names to Claude's (`view`→`Read`, `create`→`Write`, `apply_patch`→`Edit`). **That claim is withdrawn**: no source was ever recorded for it, and two of its three inputs (`create`, `apply_patch`) are not in Copilot's measured tool set at all — 1.0.83 runs show `bash`, `view`, `rg`, `glob`, `task`, `skill`, `web_fetch` ([run], 1.0.83). See the compat-mode entry below. |
 
 **The generalisable failure:** a string present in a binary proves a *name*
 exists. It proves nothing about semantics, persistence, or destination. The
@@ -368,10 +368,11 @@ The previous revision defined `ToolCall` in decision 9 and then left `HookEvent`
 carrying the native pair beside it — two representations of one thing, with
 nothing saying which is canonical, which is exactly the condition under which
 the builtins keep reading native argument names. `ToolCall` is canonical.
-`tool_response` is typed `object`, not `dict`: Copilot's compatible payload
-delivers `tool_result: {result_type, text_result_for_llm}` and the Claude SDK
-declares it unconstrained, so a `dict` annotation would be a lie that fails at
-the first `.get()`.
+`tool_response` is typed `object`, not `dict`: Copilot's compatible payload is
+documented to deliver `tool_result: {result_type, text_result_for_llm}`
+([docs]) and the Claude SDK declares it unconstrained, so a `dict` annotation
+would be a lie that fails at the first `.get()`. The widening survives even if
+the compat payload never materialises, since the SDK half stands on its own.
 
 **The verdict's envelope differs by agent, and that is what `format_hook_output`
 absorbs.** Both honour a JSON verdict on stdout with exit 0; what differs is the
@@ -453,7 +454,10 @@ log and the tool runs. With `verdicts` declared, `lh doctor` can say *which
 decision this hook needs and whether this agent honours it*, and the runner can
 refuse to emit a verdict the adapter has not declared rather than failing open
 silently. `native_name` carries the agent's own casing because Codex is
-PascalCase-only and Copilot is camelCase with a PascalCase compatibility mode.
+PascalCase-only and Copilot is camelCase. Copilot is *documented* to also accept
+a PascalCase compatibility mode ([docs]), but it has never been observed firing
+and `native_name` must be populated from the camelCase set that 1.0.83 actually
+accepts ([run], 1.0.83).
 
 An earlier draft of this revision also carried `abstain_is_safe: bool = True`.
 It is removed: nothing read it, and this document's own rule is that a field
@@ -959,11 +963,19 @@ enforcing nothing.
 
 Each builtin declares the operations it reasons about. `lh doctor` then answers
 the question that matters — *does this hook cover these operations on this
-agent* — instead of the weaker *does this event exist*. Copilot's PascalCase
-compatibility mode already maps its runtime names onto Claude's
-(`view`→`Read`, `create`→`Write`, `apply_patch`→`Edit`), which the adapter can
-lean on for names; it does not map argument fields, which is the half that
-matters.
+agent* — instead of the weaker *does this event exist*.
+
+**The adapter owns the tool-name translation; there is nothing to lean on.** An
+earlier revision routed this through Copilot's PascalCase compatibility mode,
+claiming it already maps runtime names onto Claude's. That is withdrawn — see
+the claims table above. What is measured is the opposite: a `preToolUse` hook on
+1.0.83 receives `"toolName":"bash"`, lowercase, so Copilot does **not** normalise
+to Claude Code's names ([run], 1.0.83). Codex does — a hook fired for
+`exec_command` receives `"tool_name":"Bash"` ([run], 0.154.0). So normalisation
+is real on Codex and absent on Copilot, and `CopilotAdapter` must carry the
+mapping itself rather than delegate it. It must also map argument fields, which
+was always the half that mattered and which no compat mode was ever claimed to
+cover.
 
 ### 10. Profile assets are deployed per agent, not wholesale
 
@@ -1609,10 +1621,25 @@ name alone, a **control** was run to prove the probe discriminates.
    "toolName":"bash","toolArgs":{"command":"echo …","description":"Echo test string"}}
   ```
 
-  So: the camelCase shape, not the PascalCase compat mode — which never fired
-  and remains unverified. **`toolArgs` is a nested JSON object, not a
-  JSON-encoded string**, contradicting the secondary documentation this design
-  drew it from.
+  So: the camelCase shape, not the PascalCase compat mode. **`toolArgs` is a
+  nested JSON object, not a JSON-encoded string**, contradicting the secondary
+  documentation this design drew it from.
+- **The compat mode has no switch, and the field named like one is inert.**
+  `_vsCodeCompat` is the only candidate the bundle offers, and it is a *string*
+  on the matcher group — supplying a non-string is the one thing it rejects
+  (`hooks.preToolUse[0]._vsCodeCompat: Expected string — hook will be skipped`).
+  An arbitrary value (`"zzz"`) is accepted with no error and **no observable
+  effect**: re-running the deny matrix below with a compat string set on the
+  group changed nothing, payload or verdict ([run], 1.0.83). So it is not a
+  Claude-Code-compatibility switch, and the PascalCase payload shape — including
+  its `tool_result` field and the tool-name mapping an earlier revision credited
+  to it — rests on **vendor docs alone ([docs])**, never on an observed run.
+  Nothing in this design may depend on it until something fires it.
+
+  This is the gate *a test that varies nothing is a test of one input* applied
+  to a config key: accepting `"zzz"` without complaint looks like tolerance, but
+  it is indistinguishable from the field being unread. Only varying the value
+  and watching the output stay identical separates the two.
 - **Copilot honours `deny`, fails closed on error, and fails OPEN on timeout.**
   All three observed on 1.0.83, and the third is the one that matters.
   A hook emitting `{"permissionDecision":"deny","permissionDecisionReason":…}`
