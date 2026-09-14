@@ -59,6 +59,15 @@ calls go through the active backend. The active backend is resolved from
 > a synthetic `distill` role, emitting a one-time deprecation warning. The single
 > global switch described here could not express "classify cheaply, distil well".
 
+> **Mechanism note (2026-09-14, PR #274).** The one-time warning quoted above
+> fires only when a config *declares* `[compound_loop].backend` or `.model` with
+> a value other than its default. A config that declares neither table still
+> reaches the shim, because these fields carry defaults and `[llm.roles]` does
+> not; warning there reported a migration the operator had nothing to migrate.
+> See the note on decision 5 of
+> [ADR-039](039-role-routed-inference.md) for the guard and why it compares
+> against the dataclass defaults.
+
 ### Protocol definition
 
 ```python
