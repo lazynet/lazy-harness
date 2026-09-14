@@ -83,12 +83,24 @@ def test_hook_output_is_three_channels_not_two() -> None:
     assert out.exit_code == 2
 
 
-def test_hook_output_stdout_is_already_serialised_text() -> None:
-    """The adapter owns the bytes; the runner writes the string it is given."""
-    from lazy_harness.agents.base import HookOutput
+def test_stdout_leaves_the_adapter_already_serialised() -> None:
+    """The adapter owns the bytes; the runner writes the string it is given and
+    never re-encodes. Asserted on what `format_hook_output` actually returns —
+    an `isinstance` check on a `str` literal fed to the constructor would hold
+    just as well with a `dict` in the annotation, and this repo runs no type
+    checker to catch that."""
+    import json
 
-    out = HookOutput(stdout='{"a": 1}', stderr="", exit_code=0)
-    assert isinstance(out.stdout, str)
+    from lazy_harness.agents.base import HookDecision
+    from lazy_harness.agents.registry import get_agent
+
+    adapter = get_agent("claude-code")
+    event = adapter.parse_hook_input(
+        "session_start", {"session_id": "s", "cwd": "/r"}, profile="lazy"
+    )
+    out = adapter.format_hook_output(event, HookDecision(additional_context="ctx"))
+    assert isinstance(out.stdout, str), "the runner must not have to serialise"
+    assert json.loads(out.stdout)
 
 
 # --- HookSupport ---------------------------------------------------------
@@ -211,17 +223,14 @@ def test_hook_event_has_no_native_tool_name_beside_the_canonical_tool() -> None:
 def test_tool_response_is_unconstrained() -> None:
     """Copilot delivers `{result_type, text_result_for_llm}`; the Claude SDK
     declares it unconstrained. A `dict` annotation fails at the first `.get()`."""
-    from lazy_harness.agents.base import HookEvent
+    from lazy_harness.agents.registry import get_agent
 
-    event = HookEvent(
-        event="post_tool_use",
+    event = get_agent("claude-code").parse_hook_input(
+        "post_tool_use",
+        {"session_id": "s", "cwd": "/r", "tool_response": "a bare string"},
         profile="lazy",
-        session_id="s1",
-        cwd=Path("/tmp"),
-        transcript_path=None,
-        tool_response="a bare string",
     )
-    assert event.tool_response == "a bare string"
+    assert event.tool_response == "a bare string", "parsing must not coerce it to a mapping"
 
 
 # --- ClaudeCodeAdapter: hook_events --------------------------------------
@@ -344,24 +353,6 @@ def test_an_edit_payload_carries_its_replacement_pair() -> None:
     assert event.tool.operation is Operation.MODIFY_FILE
     assert event.tool.edits[0].path == Path("/repo/a.py")
     assert event.tool.edits[0].replacements == (("x", "y"),)
-
-
-def test_a_write_payload_is_a_create_carrying_its_full_content() -> None:
-    from lazy_harness.agents.registry import get_agent
-
-    event = get_agent("claude-code").parse_hook_input(
-        "pre_tool_use",
-        {
-            "session_id": "s",
-            "cwd": "/repo",
-            "tool_name": "Write",
-            "tool_input": {"file_path": "/repo/new.py", "content": "print(1)"},
-        },
-        profile="lazy",
-    )
-    assert event.tool is not None
-    assert event.tool.edits[0].is_create is True
-    assert event.tool.edits[0].content == "print(1)"
 
 
 def test_a_tool_the_builtins_do_not_reason_about_parses_with_no_operation() -> None:
@@ -499,7 +490,27 @@ def test_refusing_a_verdict_the_agent_does_not_honour_raises() -> None:
         )
 
 
-def test_stop_and_suppress_output_travel_beside_a_verdict() -> None:
+def test_stop_reason_yields_to_a_block_reason() -> None:
+    """`decision.reason` already carries the block's reason; repeating it under
+    `stopReason` would emit the same text twice under two different keys."""
+    import json
+
+    from lazy_harness.agents.base import HookDecision, Verdict
+    from lazy_harness.agents.registry import get_agent
+
+    adapter = get_agent("claude-code")
+    out = adapter.format_hook_output(
+        _event(adapter, "session_stop"),
+        HookDecision(verdict=Verdict.BLOCK, reason="goal unverified", stop=True),
+    )
+    assert out.stdout is not None
+    body = json.loads(out.stdout)
+    assert body["reason"] == "goal unverified"
+    assert body["continue"] is False
+    assert "stopReason" not in body
+
+
+def test_stop_and_suppress_output_travel_beside_no_verdict() -> None:
     import json
 
     from lazy_harness.agents.base import HookDecision
@@ -514,3 +525,78 @@ def test_stop_and_suppress_output_travel_beside_a_verdict() -> None:
     assert body["continue"] is False
     assert body["suppressOutput"] is True
     assert body["stopReason"] == "done"
+
+
+# --- corrections found in review -----------------------------------------
+
+
+def test_an_absent_new_string_is_a_deletion_not_the_text_None() -> None:
+    """`pre_tool_use_memory_size` projects the post-edit size by applying the
+    replacement. `str(None)` would project the four characters "None" into the
+    file and flip the breach verdict."""
+    from lazy_harness.agents.registry import get_agent
+
+    event = get_agent("claude-code").parse_hook_input(
+        "pre_tool_use",
+        {
+            "session_id": "s",
+            "cwd": "/r",
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "/r/MEMORY.md", "old_string": "x"},
+        },
+        profile="lazy",
+    )
+    assert event.tool is not None
+    assert event.tool.edits[0].replacements == (("x", ""),), "missing new_string deletes"
+
+
+def test_a_write_is_not_claimed_to_be_a_create() -> None:
+    """Claude Code's `Write` creates *or* overwrites, and the payload does not
+    say which. Claiming `is_create` would make an overwrite of an existing
+    MEMORY.md read as a new file to any guard that asks."""
+    from lazy_harness.agents.registry import get_agent
+
+    event = get_agent("claude-code").parse_hook_input(
+        "pre_tool_use",
+        {
+            "session_id": "s",
+            "cwd": "/r",
+            "tool_name": "Write",
+            "tool_input": {"file_path": "/r/exists.py", "content": "x"},
+        },
+        profile="lazy",
+    )
+    assert event.tool is not None
+    assert event.tool.edits[0].is_create is False
+    assert event.tool.edits[0].content == "x", "the full replacement text is what is actionable"
+
+
+def test_a_denial_still_carries_the_channels_beside_it() -> None:
+    """Claude Code reads valid JSON on stdout whether or not the hook exits 2.
+    Returning early on DENY drops a system message the agent would have shown."""
+    import json
+
+    from lazy_harness.agents.base import HookDecision, Verdict
+    from lazy_harness.agents.registry import get_agent
+
+    adapter = get_agent("claude-code")
+    out = adapter.format_hook_output(
+        _event(adapter),
+        HookDecision(verdict=Verdict.DENY, reason="refused", system_message="warn"),
+    )
+    assert out.exit_code == 2
+    assert out.stderr == "refused", "the reason the user reads still travels on stderr"
+    assert out.stdout is not None
+    assert json.loads(out.stdout) == {"systemMessage": "warn"}
+
+
+def test_a_bare_denial_still_emits_no_stdout() -> None:
+    """The shape `pre_tool_use_security` ships today, unchanged."""
+    from lazy_harness.agents.base import HookDecision, Verdict
+    from lazy_harness.agents.registry import get_agent
+
+    adapter = get_agent("claude-code")
+    out = adapter.format_hook_output(
+        _event(adapter), HookDecision(verdict=Verdict.DENY, reason="refused")
+    )
+    assert out.stdout is None

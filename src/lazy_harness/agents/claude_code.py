@@ -212,11 +212,17 @@ class ClaudeCodeAdapter:
             edits = (
                 FileEdit(
                     path=Path(str(path)),
-                    # Claude Code's Write creates or replaces wholesale; Edit and
-                    # NotebookEdit always target something that exists.
-                    is_create=str(name) == "Write",
+                    # Left False for every Claude Code tool. `Write` creates or
+                    # overwrites and the payload does not say which, so claiming
+                    # a create would make an overwrite of an existing file read
+                    # as a new one. The field is for agents that disclose it.
                     content=str(content) if content is not None else None,
-                    replacements=((str(old), str(new)),) if old is not None else (),
+                    # An absent `new_string` is a deletion, matching what
+                    # `pre_tool_use_memory_size` projects today. `str(None)`
+                    # would project the literal text "None" into the file.
+                    replacements=((str(old), "" if new is None else str(new)),)
+                    if old is not None
+                    else (),
                     replace_all=bool(args.get("replace_all", False)),
                 ),
             )
@@ -240,11 +246,6 @@ class ClaudeCodeAdapter:
                 f"claude-code does not honour {verdict.value!r} on {event.event!r}; "
                 f"honoured here: {sorted(v.value for v in support.verdicts) if support else []}"
             )
-        # Exit 2 is the only channel that actually refuses a tool call, and the
-        # message the user reads is the stderr text, not the JSON.
-        if verdict is Verdict.DENY:
-            return HookOutput(stdout=None, stderr=decision.reason, exit_code=2)
-
         body: dict[str, object] = {}
         if verdict is Verdict.BLOCK:
             body["decision"] = "block"
@@ -270,9 +271,15 @@ class ClaudeCodeAdapter:
                 body["stopReason"] = decision.reason
         if decision.suppress_output:
             body["suppressOutput"] = True
-        if not body:
-            return HookOutput(stdout=None, stderr="", exit_code=0)
-        return HookOutput(stdout=json.dumps(body), stderr="", exit_code=0)
+        stdout = json.dumps(body) if body else None
+        # Exit 2 is the only channel that actually refuses a tool call, and the
+        # message the user reads is the stderr text rather than the JSON. The
+        # JSON still travels: Claude Code reads valid stdout whether or not the
+        # hook exited 2, so returning early here would silently drop a system
+        # message the agent would have shown.
+        if verdict is Verdict.DENY:
+            return HookOutput(stdout=stdout, stderr=decision.reason, exit_code=2)
+        return HookOutput(stdout=stdout, stderr="", exit_code=0)
 
     def global_config_link(self) -> Path | None:
         return Path.home() / ".claude"
