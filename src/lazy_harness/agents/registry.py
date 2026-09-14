@@ -5,7 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from lazy_harness.agents.base import AgentAdapter
+from lazy_harness.agents.base import (
+    AgentAdapter,
+    HookDecision,
+    HookEvent,
+    HookOutput,
+    HookSupport,
+)
 from lazy_harness.agents.claude_code import ClaudeCodeAdapter
 from lazy_harness.core.paths import expand_path
 
@@ -35,6 +41,26 @@ class NullAdapter:
 
     def supported_hooks(self) -> list[str]:
         return []
+
+    def hook_events(self) -> dict[str, HookSupport]:
+        return {}
+
+    def parse_hook_input(self, event: str, payload: dict, *, profile: str) -> HookEvent:
+        return HookEvent(
+            event=event,
+            profile=profile,
+            session_id="",
+            cwd=Path(),
+            transcript_path=None,
+            raw=payload,
+        )
+
+    def format_hook_output(self, event: HookEvent, decision: HookDecision) -> HookOutput:
+        """Delivers no event, so honours no verdict — and says so rather than
+        emitting nothing, which on a blocking hook would read as approval."""
+        if decision.verdict is not None:
+            raise ValueError(f"null honours no verdict on {event.event!r}")
+        return HookOutput(stdout=None, stderr="", exit_code=0)
 
     def generate_hook_config(self, hooks: dict) -> dict:
         return {}

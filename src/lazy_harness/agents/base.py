@@ -2,9 +2,217 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 from typing import Protocol, runtime_checkable
+
+# --- the canonical hook contract (ADR-041) ------------------------------
+#
+# Every adapter translates its agent's native payload into these types and back.
+# They are the only vocabulary a builtin hook is allowed to reason about; an
+# adapter that cannot fill a field leaves it `None`, and the hook that needs it
+# is reported unavailable for that agent rather than run against a hole.
+
+
+class Verdict(StrEnum):
+    """A permission decision, in the four states the agents between them speak."""
+
+    ALLOW = "allow"
+    """Explicit approval, skipping the prompt. Must be reached deliberately."""
+    DENY = "deny"
+    ASK = "ask"
+    BLOCK = "block"
+    """Stop-class events: keep the agent working rather than ending the turn."""
+
+
+class Operation(StrEnum):
+    """What a tool call does, in the terms the builtins actually reason about.
+
+    Derived from what the hooks consume, not from what a tool API offers:
+    knowing that an operation modifies a file does not let a size guard compute
+    how large it will be afterwards, which is why `ToolCall` carries the
+    normalised arguments beside the operation.
+    """
+
+    RUN_COMMAND = "run_command"
+    READ_FILE = "read_file"
+    MODIFY_FILE = "modify_file"
+
+
+class Signal(StrEnum):
+    """A named thing a hook needs to read out of a transcript.
+
+    Declared rather than reduced to `requires_transcript: bool`, so a reader
+    that delivers messages and tokens but has no concept of an explicit goal
+    cannot silently re-enable a guard that would then always pass.
+    """
+
+    MESSAGES = "messages"
+    TOOL_CALLS = "tool_calls"
+    TOKEN_USAGE = "token_usage"
+    GOAL_STATUS = "goal_status"
+
+
+@dataclass(frozen=True)
+class FileEdit:
+    """One file a tool call modifies, with whatever the tool disclosed about how.
+
+    `content` and `replacements` are both present because the agents disclose
+    different halves: a whole-file write gives text, a patch gives pairs.
+    """
+
+    path: Path
+    is_create: bool = False
+    content: str | None = None
+    replacements: tuple[tuple[str, str], ...] = ()
+    replace_all: bool = False
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    """One tool call, normalised away from the agent's own argument names.
+
+    Both collections are plural because Codex's `apply_patch` and Copilot's
+    `edit` can touch several files in one call; a singular `file_path` is a
+    Claude Code assumption a path guard would silently under-enforce elsewhere.
+    """
+
+    native_name: str
+    operation: Operation | None
+    """`None` for an operation no builtin reasons about."""
+    command: str | None = None
+    reads: tuple[Path, ...] = ()
+    offset: int | None = None
+    """`None` means unbounded — not 0, which is a legitimate start offset."""
+    limit: int | None = None
+    edits: tuple[FileEdit, ...] = ()
+    raw_input: object | None = None
+    """Adapters only. A builtin reading this is a normalisation that failed."""
+
+    @property
+    def paths(self) -> tuple[Path, ...]:
+        return self.reads + tuple(edit.path for edit in self.edits)
+
+
+@dataclass(frozen=True)
+class HookEvent:
+    """One hook invocation, normalised across providers.
+
+    Carries every field a payload can name so that no builtin has to reach into
+    `raw`; the moment one does, the normalisation is a fiction.
+    """
+
+    event: str
+    """Canonical event name, not the agent's wire name."""
+    profile: str
+    session_id: str
+    cwd: Path
+    transcript_path: Path | None
+    tool: ToolCall | None = None
+    """The canonical view of the tool call. There is deliberately no
+    `tool_name`/`tool_input` beside it: two representations of one thing is how
+    builtins keep reading native argument names."""
+    tool_use_id: str | None = None
+    tool_response: object | None = None
+    """Unconstrained on purpose. Copilot delivers a `{result_type, ...}` mapping
+    and the Claude SDK declares it untyped, so `dict` would be a lie that fails
+    at the first `.get()`."""
+    prompt: str | None = None
+    permission_mode: str | None = None
+    source: str | None = None
+    """session_start: startup | resume | clear | compact."""
+    trigger: str | None = None
+    """pre_compact: manual | auto."""
+    stop_hook_active: bool = False
+    message: str | None = None
+    """notification."""
+    raw: dict | None = None
+    """The untranslated payload. Adapters only."""
+
+
+@dataclass(frozen=True)
+class HookDecision:
+    """What a hook decided, before any agent's serialisation touches it."""
+
+    verdict: Verdict | None = None
+    """`None` abstains: no permission decision at all.
+
+    Not `ALLOW`. A hook that merely fails to object must not thereby approve —
+    that would turn every command a security guard does not recognise into an
+    explicit, prompt-skipping approval.
+    """
+    reason: str = ""
+    additional_context: str = ""
+    system_message: str = ""
+    stop: bool = False
+    suppress_output: bool = False
+
+
+@dataclass(frozen=True)
+class HookOutput:
+    """The three channels an agent actually reads, already serialised.
+
+    `stdout` is `str`, not a mapping: the design promises byte-identical output,
+    and a mapping defers serialisation to whoever writes it. The adapter owns
+    the bytes; the runner writes the string it is given and never re-encodes.
+
+    `stderr` is a channel of its own because a blocking hook's reason reaches
+    the user through it — both blocking builtins write there and exit 2, and a
+    two-channel pair would drop the refusal silently.
+    """
+
+    stdout: str | None
+    stderr: str
+    exit_code: int
+
+
+@dataclass(frozen=True)
+class HookSupport:
+    """How one agent delivers one event, and which decisions it honours there.
+
+    `verdicts` is declared rather than reduced to a `can_block` field because a
+    verdict an agent does not honour does not fail loudly: Codex logs
+    `unsupported permissionDecision:ask` and runs the tool anyway. With the set
+    declared, deploy can refuse the configuration instead of discovering it
+    while a tool call is pending.
+    """
+
+    native_name: str
+    """The wire name, with the agent's own casing."""
+    verdicts: frozenset[Verdict] = field(default_factory=frozenset)
+
+    @property
+    def can_block(self) -> bool:
+        return bool(self.verdicts & {Verdict.DENY, Verdict.BLOCK})
+
+
+@dataclass(frozen=True)
+class ConfigArtifact:
+    """A fully merged config document, ready for the engine to write."""
+
+    relative_path: Path
+    content: str
+
+
+@dataclass(frozen=True)
+class WriteOp:
+    """One write or delete in a deploy plan, with its diagnostics.
+
+    Deletion is explicit — `artifact is None` — because an adapter that stops
+    generating a file must be able to say so. Without it, a file the harness
+    wrote in an earlier release stays forever.
+    """
+
+    artifact: ConfigArtifact | None
+    relative_path: Path
+    preserved: list[str] = field(default_factory=list)
+    """Foreign entries kept, for the deploy report."""
+    dropped: list[str] = field(default_factory=list)
+    """Harness entries no longer generated."""
+    repaired: list[str] = field(default_factory=list)
+    """Entries the agent would have rejected."""
+
 
 HEADLESS_TIERS: tuple[str, ...] = ("fast", "balanced", "deep")
 """Provider-neutral capability tiers a caller may ask for.
@@ -116,7 +324,34 @@ class AgentAdapter(Protocol):
         ...
 
     def supported_hooks(self) -> list[str]:
-        """Return list of hook events this agent supports."""
+        """Canonical hook event names this agent supports.
+
+        Derived from `hook_events()`, never declared separately: the mapping
+        from canonical to native names must exist in exactly one place.
+        """
+        ...
+
+    def hook_events(self) -> dict[str, HookSupport]:
+        """Canonical event name -> how this agent delivers it.
+
+        An absent key means the agent does not deliver that event at all,
+        which is a different statement from delivering it and ignoring the
+        verdict — `HookSupport.verdicts` carries the second.
+        """
+        ...
+
+    def parse_hook_input(self, event: str, payload: dict, *, profile: str) -> HookEvent:
+        """Translate this agent's native hook payload into the canonical event."""
+        ...
+
+    def format_hook_output(self, event: HookEvent, decision: HookDecision) -> HookOutput:
+        """Serialise a decision into the three channels this agent reads.
+
+        Raises ValueError for a verdict this agent does not honour on this
+        event. Deploy refuses that configuration up front, so the runner never
+        reaches it — but it must raise rather than silently emit nothing, which
+        on a blocking hook would read as approval.
+        """
         ...
 
     def generate_hook_config(self, hooks: dict[str, list[str]]) -> dict:
@@ -183,5 +418,34 @@ class AgentAdapter(Protocol):
         Lets process-detection tools recognize the agent by name even when
         `resolve_binary()` resolves to a versioned install path. Return empty
         string to fall back to the resolved binary path as argv[0].
+        """
+        ...
+
+
+@runtime_checkable
+class ConfigPlanner(Protocol):
+    """Optional capability: an adapter that plans its own config documents.
+
+    Separate from `AgentAdapter` for the same reason `HeadlessAgent` is: an
+    adapter that has not been taught to merge its native config yet should be
+    refused up front, not discovered mid-deploy. Merging is an adapter
+    operation because parsing never was agent-neutral; writing is the engine's.
+    """
+
+    def config_targets(self) -> list[Path]:
+        """Every file this adapter may read or write, relative to the config dir."""
+        ...
+
+    def plan_config(
+        self,
+        hooks: dict[str, list[HookEntry]],
+        servers: dict[str, dict],
+        existing: dict[Path, str],
+    ) -> list[WriteOp]:
+        """One call produces the complete set of operations.
+
+        `existing` holds every target that exists, by path, so an adapter whose
+        hooks and MCP servers share one file emits a single write for it and
+        cannot overwrite its own earlier result.
         """
         ...
