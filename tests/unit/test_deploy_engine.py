@@ -426,9 +426,9 @@ def test_a_foreign_command_is_not_claimed_by_the_harness() -> None:
 def test_an_undeclared_binary_is_not_claimed_by_the_harness() -> None:
     """Widening the launcher to a config field must not widen it to any word.
 
-    The allow-list is what the config declares plus the default; a `hook`
-    subcommand alone is not a harness fingerprint, or every tool that models
-    hooks the same way would be adopted and then pruned.
+    The owned set is what the artefact records plus the binary being written
+    plus the default; a `hook` subcommand alone is not a harness fingerprint, or
+    every tool that models hooks the same way would be adopted and then pruned.
     """
     from lazy_harness.deploy.engine import _is_harness_owned
 
@@ -518,14 +518,30 @@ def test_deploy_hooks_names_the_binary_each_profile_declares(tmp_path: Path) -> 
     assert '"lh hook' not in beta, "the beta profile must not reach the daily binary"
 
 
-def test_redeploy_after_a_profile_changes_its_binary_installs_each_hook_once(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize(
+    ("label", "sequence"),
+    [
+        # The two movements decision 11 exists for. Rolling a beta back is what
+        # the design sells as its safety net, and promoting between betas is the
+        # only way a beta is ever replaced.
+        ("rollback to the default binary", ["", "lh-beta", ""]),
+        ("promotion between two betas", ["lh-beta", "lh-gamma"]),
+        # The control: a binary that never changes must stay idempotent too, or
+        # a fix for the other two could pass by claiming everything in sight.
+        ("no change of binary", ["", "", ""]),
+    ],
+)
+def test_a_profile_changing_its_binary_installs_each_hook_once(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], label: str, sequence: list[str]
 ) -> None:
-    """Switching a profile's launcher changes every generated command it owns.
+    """Ownership must not depend on what the config declares *now*.
 
-    A classifier that only knows the default binary reads the entries it wrote
-    itself on the previous deploy as another tool's and preserves them beside
-    the new ones — the duplication shape `--profile` already caused once.
+    Deriving the allow-list from the live config made the only passing direction
+    the one the default binary is permanently in: a profile that stops declaring
+    `lh-beta` loses it from the set, and the entries the previous deploy wrote
+    are read as another tool's and preserved beside the new ones. Both sequences
+    above duplicated every hook — 14 entries became 28 — while the test that
+    claimed to cover this only ever walked `"" -> "lh-beta"`.
     """
     profile_dir = tmp_path / "profile"
     settings_file = profile_dir / "settings.json"
@@ -534,9 +550,95 @@ def test_redeploy_after_a_profile_changes_its_binary_installs_each_hook_once(
         return Config(
             harness=HarnessConfig(version="1"),
             profiles=ProfilesConfig(
-                default="personal",
+                default="beta",
                 items={
-                    "personal": ProfileEntry(
+                    "beta": ProfileEntry(
+                        config_dir=str(profile_dir), roots=["~"], harness_binary=binary
+                    )
+                },
+            ),
+            hooks={},
+        )
+
+    counts: list[int] = []
+    for binary in sequence:
+        deploy_hooks(_cfg(binary))
+        counts.append(_hook_entry_count(settings_file))
+        out = capsys.readouterr().out
+        assert "preserved" not in out, (
+            f"{label}: the harness classified its own entries as foreign "
+            f"after deploying {binary or 'the default binary'!r}:\n{out}"
+        )
+
+    assert counts[0] > 0, f"{label}: the first deploy should install harness hooks"
+    assert len(set(counts)) == 1, (
+        f"{label}: redeploying duplicated hooks — entry counts across "
+        f"{sequence} were {counts}"
+    )
+
+    # Only the binary from the final deploy may still appear: a surviving
+    # command from an earlier one is a duplicate the count alone can miss if
+    # a future change ever prunes on a different axis.
+    text = settings_file.read_text()
+    final = sequence[-1] or "lh"
+    for earlier in {b or "lh" for b in sequence} - {final}:
+        assert f'"{earlier} hook' not in text, (
+            f"{label}: commands for the retired binary {earlier!r} survived"
+        )
+    assert f"{final} hook context-inject --profile beta" in text
+
+
+def test_a_deployed_settings_file_declares_the_binary_that_wrote_it(tmp_path: Path) -> None:
+    """The generator's half of the ownership contract.
+
+    The classifier reads this back rather than re-deriving the answer from the
+    config, which is the only way the two cannot drift apart: a binary the
+    harness stopped declaring is still a binary the harness wrote.
+    """
+    from lazy_harness.core.artifact_version import extract_binary_from_settings
+
+    profile_dir = tmp_path / "profile"
+    cfg = Config(
+        harness=HarnessConfig(version="1"),
+        profiles=ProfilesConfig(
+            default="beta",
+            items={
+                "beta": ProfileEntry(
+                    config_dir=str(profile_dir), roots=["~"], harness_binary="lh-beta"
+                )
+            },
+        ),
+        hooks={},
+    )
+
+    deploy_hooks(cfg)
+
+    settings = json.loads((profile_dir / "settings.json").read_text())
+    assert extract_binary_from_settings(settings) == "lh-beta"
+
+
+def test_a_settings_file_written_before_the_stamp_existed_is_still_recognised(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The upgrade path: a profile deployed by a version that never wrote the
+    stamp, then moved onto a declared binary.
+
+    Its entries say `lh` and the file records nothing, so the only thing that
+    can claim them is the default being permanently in the owned set. Without
+    it they go foreign on the very first deploy after the upgrade — and the
+    first version able to declare a binary is also the first one to stamp it,
+    so this is the one window where the file is silent.
+    """
+    profile_dir = tmp_path / "profile"
+    settings_file = profile_dir / "settings.json"
+
+    def _cfg(binary: str) -> Config:
+        return Config(
+            harness=HarnessConfig(version="1"),
+            profiles=ProfilesConfig(
+                default="beta",
+                items={
+                    "beta": ProfileEntry(
                         config_dir=str(profile_dir), roots=["~"], harness_binary=binary
                     )
                 },
@@ -546,24 +648,20 @@ def test_redeploy_after_a_profile_changes_its_binary_installs_each_hook_once(
 
     deploy_hooks(_cfg(""))
     before = _hook_entry_count(settings_file)
-    assert before > 0, "the first deploy should install harness hooks"
+
+    # Strip the stamp the way an older harness left the file: commands written
+    # by the default launcher, and nothing recording that it wrote them.
+    settings = json.loads(settings_file.read_text())
+    del settings["lh_harness_binary"]
+    settings_file.write_text(json.dumps(settings, indent=2) + "\n")
     capsys.readouterr()
 
     deploy_hooks(_cfg("lh-beta"))
 
-    after = _hook_entry_count(settings_file)
     out = capsys.readouterr().out
-    text = settings_file.read_text()
-
-    assert "preserved" not in out, (
-        f"the harness classified its own previous-binary entries as foreign:\n{out}"
-    )
-    assert after == before, (
-        f"redeploy after a binary change duplicated hooks: "
-        f"{before} hook entries before, {after} after"
-    )
-    assert '"lh hook' not in text, "the previous binary's commands survived the redeploy"
-    assert "lh-beta hook context-inject --profile personal" in text
+    assert "preserved" not in out, f"pre-stamp entries were read as foreign:\n{out}"
+    assert _hook_entry_count(settings_file) == before
+    assert '"lh hook' not in settings_file.read_text()
 
 
 def test_deploy_hooks_writes_the_writing_version(tmp_path: Path) -> None:

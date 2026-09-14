@@ -11,10 +11,10 @@ from pathlib import PurePosixPath
 import click
 
 from lazy_harness import __version__
-from lazy_harness.agents.registry import (
-    DEFAULT_HARNESS_BINARY,
-    binary_for_profile,
-    declared_binaries,
+from lazy_harness.agents.registry import DEFAULT_HARNESS_BINARY, binary_for_profile
+from lazy_harness.core.artifact_version import (
+    SETTINGS_BINARY_KEY,
+    extract_binary_from_settings,
 )
 from lazy_harness.core.config import Config
 from lazy_harness.core.paths import config_dir, expand_path
@@ -135,16 +135,16 @@ def _is_harness_owned(
     classifier keyed on text would then read its own previous output as another
     tool's hook and preserve it alongside the new one.
 
-    `binaries` is the allow-list `declared_binaries` derives from the config: the
-    default launcher plus every `harness_binary` any profile declares. It has to
-    be the whole config's set rather than one profile's, or the deploy that moves
-    a profile onto a new binary would fail to recognise the entries its own
-    previous deploy wrote. A `hook` subcommand alone is deliberately not enough —
-    another tool modelling hooks the same way would be adopted and then pruned.
+    `binaries` is what `_owned_binaries` reads off the artifact being merged —
+    the launcher the file itself records as having written it, plus the one this
+    deploy is about to write, plus the default. Deriving it from the live config
+    instead is the defect this replaced: a profile rolled back off `lh-beta`
+    dropped `lh-beta` from the set, so the entries the harness's own previous
+    deploy had written became foreign and were preserved beside the new ones.
+    A config cannot answer "did I write this" — only the artifact can.
 
-    The consequence of an allow-list is that retiring a binary no config names
-    any more leaves its entries behind, reported as preserved rather than
-    removed. The alternative is guessing, which is how the predecessor got here.
+    A `hook` subcommand alone is deliberately not enough to claim a command:
+    another tool modelling hooks the same way would be adopted and then pruned.
 
     The predecessor matched on a builtins path, which `hook_command` stopped
     emitting when it moved to the launcher: it had been classifying every
@@ -185,6 +185,27 @@ def _normalize_entry(entry: dict) -> tuple[dict, list[str]]:
         fixed["matcher"] = ""
         repairs.append(f'matcher: {type(matcher).__name__} -> ""')
     return fixed, repairs
+
+
+def _owned_binaries(settings: dict, binary: str) -> set[str]:
+    """The launchers whose commands this settings file may legitimately carry.
+
+    Three sources, none of them the live config:
+
+    - the launcher the file records as having written it, so entries survive
+      their binary being retired from every profile;
+    - the launcher this deploy is writing, so a first deploy onto a file that
+      records nothing still recognises what it is about to generate;
+    - the default, which is what every settings.json written before the stamp
+      existed necessarily used — no released version could emit another.
+
+    The set stays closed: a launcher nobody ever deployed is never claimed.
+    """
+    owned = {DEFAULT_HARNESS_BINARY, binary}
+    recorded = extract_binary_from_settings(settings)
+    if recorded:
+        owned.add(recorded)
+    return owned
 
 
 def _merge_hook_blocks(
@@ -252,14 +273,13 @@ def deploy_hooks(cfg: Config) -> None:
 
     effective = merge_with_defaults(cfg.hooks, agent)
 
-    def entries_for(profile: str) -> dict[str, list[str | HookEntry]]:
+    def entries_for(profile: str, binary: str) -> dict[str, list[str | HookEntry]]:
         """The hook entries one profile's settings file gets.
 
-        Built per profile because `hook_command` names the profile and resolves
-        its binary: a single shared list would deploy every profile's hooks under
+        Built per profile because `hook_command` names the profile and takes its
+        binary: a single shared list would deploy every profile's hooks under
         whichever one happened to be generated first.
         """
-        binary = binary_for_profile(cfg, profile)
         hook_entries: dict[str, list[str | HookEntry]] = {}
         for event_name, script_names in effective.items():
             if not script_names:
@@ -288,12 +308,13 @@ def deploy_hooks(cfg: Config) -> None:
 
     # Whether there is anything to deploy does not depend on the profile: the
     # profile decides what each command says, not which hooks resolve.
-    if not entries_for(""):
+    if not entries_for("", DEFAULT_HARNESS_BINARY):
         click.echo("  No hooks to deploy.")
         return
 
     for name, entry in cfg.profiles.items.items():
-        agent_hooks = agent.generate_hook_config(entries_for(name))
+        binary = binary_for_profile(cfg, name)
+        agent_hooks = agent.generate_hook_config(entries_for(name, binary))
         target_dir = expand_path(entry.config_dir)
         target_dir.mkdir(parents=True, exist_ok=True)
         settings_file = target_dir / "settings.json"
@@ -311,7 +332,7 @@ def deploy_hooks(cfg: Config) -> None:
             settings = {}
         existing_hooks = settings.get("hooks", {})
         merged, preserved, repaired = _merge_hook_blocks(
-            existing_hooks, agent_hooks, binaries=declared_binaries(cfg)
+            existing_hooks, agent_hooks, binaries=_owned_binaries(settings, binary)
         )
 
         if repaired:
@@ -354,6 +375,11 @@ def deploy_hooks(cfg: Config) -> None:
         # property of the document, not a hook entry, so it is written next
         # to `hooks`, not inside it.
         settings["lh_version"] = __version__
+        # Declared, not inferred: the next deploy asks the file which launcher
+        # wrote these commands instead of asking the config which launchers it
+        # currently names. Retiring a binary from the config must not turn the
+        # harness's own entries into another tool's.
+        settings[SETTINGS_BINARY_KEY] = binary
         settings["hooks"] = merged
         settings_file.write_text(json.dumps(settings, indent=2) + "\n")
         click.echo(f"  ✓ {name}/settings.json (hooks updated)")

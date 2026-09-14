@@ -59,25 +59,14 @@ def test_an_unknown_profile_falls_back_to_the_default_launcher() -> None:
     assert binary_for_profile(cfg, "nonexistent") == "lh"
 
 
-def test_declared_binaries_always_carries_the_default() -> None:
-    """The classifier's allow-list. The default belongs in it even when no
-    profile names it, so entries a previous deploy wrote under `lh` are still
-    recognised as the harness's own after a profile switches binaries."""
-    from lazy_harness.agents.registry import declared_binaries
+def test_ownership_is_not_derivable_from_the_config() -> None:
+    """The resolver answers "what should this profile run", never "did the
+    harness write this". `declared_binaries` used to answer the second question
+    from the config and got it wrong the moment a profile stopped declaring a
+    binary — ownership is recorded in the deployed artifact instead, by
+    `core.artifact_version.extract_binary_from_settings`. Keeping a
+    config-derived answer importable is what let the two be confused.
+    """
+    from lazy_harness.agents import registry
 
-    cfg = _cfg({"beta": ProfileEntry(config_dir="~/.agent-beta", harness_binary="lh-beta")})
-
-    assert declared_binaries(cfg) == {"lh", "lh-beta"}
-
-
-def test_declared_binaries_of_an_all_default_config_is_just_the_default() -> None:
-    from lazy_harness.agents.registry import declared_binaries
-
-    cfg = _cfg(
-        {
-            "personal": ProfileEntry(config_dir="~/.claude-x"),
-            "work": ProfileEntry(config_dir="~/.claude-w"),
-        }
-    )
-
-    assert declared_binaries(cfg) == {"lh"}
+    assert not hasattr(registry, "declared_binaries")

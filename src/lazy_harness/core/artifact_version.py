@@ -81,6 +81,32 @@ def extract_from_settings(settings: dict) -> str | None:
     return version if isinstance(version, str) else None
 
 
+# The managed section's record of which launcher generated this file's hook
+# commands. `deploy_hooks` writes it and `_owned_binaries` reads it, both
+# through this module, so the name of the key has one home.
+SETTINGS_BINARY_KEY = "lh_harness_binary"
+
+
+def extract_binary_from_settings(settings: dict) -> str | None:
+    """Pull the writing launcher back out of a parsed settings.json document.
+
+    Ownership of a generated hook command is *declared by the artifact*, not
+    inferred from the config that happens to be loaded now. Inferring it is
+    what broke: the allow-list came from `[profiles.*].harness_binary`, so a
+    profile rolled back off `lh-beta` dropped `lh-beta` from the set and read
+    the entries its own previous deploy had written as another tool's —
+    duplicating every hook on exactly the two movements (beta rollback, beta
+    promotion) decision 11 exists to make safe.
+
+    None means the stamp is absent or not a string. Every settings.json written
+    before this key existed was written with the default launcher, since no
+    released version could emit anything else, so the caller reads None as
+    `DEFAULT_HARNESS_BINARY` rather than as "unknown".
+    """
+    binary = settings.get(SETTINGS_BINARY_KEY)
+    return binary if isinstance(binary, str) and binary else None
+
+
 @dataclass
 class ArtifactVersionReport:
     profile: str

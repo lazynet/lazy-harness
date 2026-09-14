@@ -138,19 +138,6 @@ def binary_for_profile(cfg: Config, profile_name: str) -> str:
     return declared or DEFAULT_HARNESS_BINARY
 
 
-def declared_binaries(cfg: Config) -> set[str]:
-    """Every launcher this config can generate a hook command with.
-
-    The default is always in the set, whether or not a profile names it: it is
-    what `binary_for_profile` falls back to, and it is what a previous deploy
-    wrote before a profile declared anything. A classifier missing it would read
-    those entries as another tool's and preserve them beside the new ones.
-    """
-    return {DEFAULT_HARNESS_BINARY} | {
-        entry.harness_binary for entry in cfg.profiles.items.values() if entry.harness_binary
-    }
-
-
 def list_agents() -> list[str]:
     """Return list of registered agent type names."""
     return list(_AGENTS.keys())
