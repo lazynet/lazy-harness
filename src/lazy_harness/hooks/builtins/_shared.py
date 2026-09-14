@@ -12,6 +12,10 @@ import os
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover - imported for typing only
+    from lazy_harness.agents.base import TranscriptReader
 
 _TRANSCRIPT_KEYS = ("transcript_path", "transcriptPath", "input")
 
@@ -225,3 +229,43 @@ def knowledge_root_for(cfg: object) -> Path | None:
     except Exception:  # noqa: BLE001 — hooks degrade, they do not raise
         return None
     return root if root.is_dir() else None
+
+
+def transcript_reader(profile: str) -> TranscriptReader | None:
+    """The `TranscriptReader` for the agent this profile runs, or None.
+
+    One importable answer to "can this session's transcript be read, and by
+    what". Decision 11 of
+    `specs/designs/2026-09-13-multi-agent-harness-design.md` makes transcript
+    dependence a declared capability, and a hook that needs a signal has to be
+    able to learn that the signal is *absent* — `None` is that answer. A reader
+    that yielded nothing instead would be indistinguishable from a session that
+    genuinely carries no goal, which is the silent pass the decision exists to
+    prevent.
+
+    Resolved per profile rather than globally, because `[profiles.<name>].agent`
+    is what decides whose wire format a session speaks.
+
+    An unreadable config degrades to the defaults rather than to `None`: the
+    runner resolves an absent config the same way and for the same reason — a
+    machine that has not run `lh init` still has an agent whose transcript its
+    hooks can read.
+
+    The Protocol is imported under `TYPE_CHECKING` so that this module keeps
+    every runtime import inside a function — a hook's import cost is paid on
+    every tool call.
+    """
+    try:
+        from lazy_harness.agents.base import TranscriptReader
+        from lazy_harness.agents.registry import agent_for_profile
+        from lazy_harness.core.config import Config, ConfigError, load_config
+        from lazy_harness.core.paths import config_file
+
+        try:
+            cfg = load_config(config_file())
+        except (ConfigError, OSError):
+            cfg = Config()
+        adapter = agent_for_profile(cfg, profile)
+    except Exception:  # noqa: BLE001 — hooks degrade, they do not raise
+        return None
+    return adapter if isinstance(adapter, TranscriptReader) else None

@@ -12,10 +12,15 @@ Fail-soft: every path abstains. A hook that raises takes down the chain.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
-from lazy_harness.agents.base import HookDecision, HookEvent, Verdict
+from lazy_harness.agents.base import (
+    HookDecision,
+    HookEvent,
+    Signal,
+    TranscriptReader,
+    Verdict,
+)
 
 _BLOCK_REASON = (
     "Esta sesión declaró un goal (/goal) y todavía no hay evidencia de que "
@@ -24,37 +29,36 @@ _BLOCK_REASON = (
 )
 
 
-def _goal_declared(transcript_path: Path) -> bool:
-    """True if the transcript carries a native `/goal` declaration.
+def _goal_declared(transcript_path: Path, reader: TranscriptReader | None) -> bool:
+    """True if the transcript carries an explicit, user-set goal.
 
-    `/goal <condition>` appends a `type: "attachment"` message whose
-    `attachment.type` is `"goal_status"` to the transcript the moment the
-    command runs — verified against Claude Code 2.1.266's own source and
-    against real transcripts in this repo. That marker is written
-    synchronously, well before any later `Stop` event, so it is safe to read
-    here. This is a different, narrower signal than the compound-loop
-    worker's `goal_declared`/`goal_absent` verdict: that one judges prose
-    success criteria via an LLM classification made *after* the session ends
-    and is structurally unavailable at `Stop` time.
+    This is the hook's half of decision 11: `stop-verify-guard` *declares*
+    `Signal.GOAL_STATUS` in the builtin registry, and here it consumes exactly
+    that — the declaration and the read are the same word. What the marker
+    looks like on disk is the reader's business, so the guard no longer knows
+    that Claude Code writes an `attachment` whose `type` is `"goal_status"`.
+
+    `reader is None` is "this agent's transcript cannot be read at all", and it
+    reports no goal, which is the only thing the guard can do at runtime: the
+    deploy-time answer — refusing to install a hook whose signals an agent does
+    not supply — is step 4's, not this function's.
+
+    A reader that delivers messages and tokens but no `GOAL_STATUS` lands in
+    the same place by a different route, and that is the whole point of naming
+    signals rather than carrying a `requires_transcript` boolean: such a reader
+    must not silently re-enable a guard that would then always pass.
+
+    This stays a different, narrower signal than the compound-loop worker's
+    `goal_declared`/`goal_absent` verdict: that one judges prose success
+    criteria via an LLM classification made *after* the session ends, and is
+    structurally unavailable at `Stop` time.
     """
-    try:
-        with transcript_path.open("r", encoding="utf-8") as f:
-            for raw_line in f:
-                line = raw_line.strip()
-                if not line:
-                    continue
-                try:
-                    entry = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if not isinstance(entry, dict) or entry.get("type") != "attachment":
-                    continue
-                attachment = entry.get("attachment")
-                if isinstance(attachment, dict) and attachment.get("type") == "goal_status":
-                    return True
-    except OSError:
+    if reader is None:
         return False
-    return False
+    # `any` over the iterator rather than a list: the read stops at the first
+    # marker instead of parsing a transcript that can run to hundreds of
+    # megabytes by the time a Stop hook sees it.
+    return any(event.signal is Signal.GOAL_STATUS for event in reader.read(transcript_path))
 
 
 def _db_path() -> Path:
@@ -87,12 +91,14 @@ def main(event: HookEvent) -> HookDecision:
         if not event.session_id:
             return HookDecision()
 
-        from lazy_harness.hooks.builtins._shared import project_key
+        from lazy_harness.hooks.builtins._shared import project_key, transcript_reader
 
         transcript_path = event.transcript_path
         if transcript_path is None or not transcript_path.is_file():
             return HookDecision()
-        if not _goal_declared(transcript_path):
+        # Resolved per invocation rather than held: `HookEvent.profile` is what
+        # says whose agent — and so whose transcript format — this session runs.
+        if not _goal_declared(transcript_path, transcript_reader(event.profile)):
             return HookDecision()
 
         # A payload with no `cwd` parses as `Path(".")`, and a project key

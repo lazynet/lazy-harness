@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -294,6 +296,113 @@ class SessionPinningAgent(Protocol):
 
     def session_argv(self, session_id: str) -> list[str]:
         """Argv fragment that pins the conversation to `session_id`."""
+        ...
+
+
+@dataclass(frozen=True)
+class TokenUsage:
+    """Per-turn accounting, in the terms every provider can be made to answer.
+
+    Every field is `int | None` for `HeadlessResult`'s reason: a provider that
+    reported no cache field and a turn that cached nothing are different facts,
+    and a 0 merges them into the second.
+    """
+
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cache_read_tokens: int | None = None
+    cache_creation_tokens: int | None = None
+
+
+@dataclass(frozen=True)
+class GoalStatus:
+    """An explicit, user-set objective as the agent recorded it.
+
+    `condition` and `met` are both optional because the *presence* of the
+    record is the signal `stop_verify_guard` reads; an agent that marks a goal
+    without restating its text still delivers `GOAL_STATUS`.
+    """
+
+    condition: str | None = None
+    met: bool | None = None
+
+
+@dataclass(frozen=True)
+class TranscriptEvent:
+    """One thing read out of a transcript, tagged with the signal it carries.
+
+    Tagged with `Signal` rather than with a parallel `kind` enum on purpose:
+    decision 11 makes transcript dependence a declaration in that exact
+    vocabulary, and a second enum would let a reader declare `GOAL_STATUS` and
+    yield events no consumer of that declaration recognises. With one
+    vocabulary, `signals()` is checkable against what `read()` actually emits.
+
+    One transcript line can yield several events — an assistant turn with two
+    tool calls and a usage record is one line and four events — so the unit is
+    the signal occurrence, not the line.
+
+    Field-per-concept, like `HookEvent`, so that no consumer has to reach into
+    `raw`. The fields a signal does not carry stay `None`.
+    """
+
+    signal: Signal
+    timestamp: datetime | None = None
+    role: str | None = None
+    """messages: 'user' | 'assistant' | whatever the provider names its turns."""
+    text: str | None = None
+    """messages: the turn's text with non-text blocks dropped."""
+    tool: ToolCall | None = None
+    """tool_calls: the same normalised call `HookEvent.tool` carries."""
+    tool_use_id: str | None = None
+    """tool_calls: the provider's own id, which pairs a call with its result."""
+    usage: TokenUsage | None = None
+    """token_usage."""
+    goal: GoalStatus | None = None
+    """goal_status."""
+    raw: dict | None = None
+    """The untranslated entry. Adapters only."""
+
+
+@runtime_checkable
+class TranscriptReader(Protocol):
+    """Optional capability: an agent whose transcript we can read.
+
+    Modelled on `HeadlessAgent`, and separate from `AgentAdapter` for the same
+    reason: an agent with no readable transcript does not implement this, and a
+    caller refuses it up front rather than parsing a shape it is guessing.
+    """
+
+    def locate_sessions(self, config_dir: Path, since: datetime | None) -> Iterator[Path]:
+        """Transcripts under `config_dir`, most useful first-come.
+
+        `config_dir` is a parameter rather than adapter state because adapters
+        are constructed with no arguments (`registry.py`: a bare `cls()`), so
+        one instance serves every profile — and a profile is exactly what
+        disambiguates two config dirs served by the same agent.
+
+        `since` filters by last modification; `None` means no filter.
+        """
+        ...
+
+    def read(self, path: Path) -> Iterator[TranscriptEvent]:
+        """Every signal occurrence in one transcript, in file order.
+
+        A transcript is read while the agent is still writing it, so an absent
+        file, an unopenable one, a half-written last line, a line corrupted by
+        an interrupted write and a byte that is not valid UTF-8 are all
+        ordinary rather than exceptional: each is skipped, reading continues,
+        and none of them raises.
+        """
+        ...
+
+    def signals(self) -> set[Signal]:
+        """Which signals this reader can actually deliver.
+
+        Lives on the reader, not only on the hook, because decision 11 makes
+        transcript dependence a *declared* capability — and a declaration that
+        lives only in the hook cannot be checked against the reader that is
+        supposed to satisfy it.
+        """
         ...
 
 

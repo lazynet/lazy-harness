@@ -410,3 +410,55 @@ def test_stop_verify_guard_resolves_to_concrete_file() -> None:
     assert info.is_builtin is True
     assert info.path.name == "stop_verify_guard.py"
     assert info.path.is_file()
+
+
+# --- declared signals (decision 11) ----------------------------------------
+#
+# `BuiltinHookSpec.signals` was landed as a declaration with no consumer, and a
+# declaration nothing reads is a declaration nothing keeps honest. These are the
+# first checks against it: not the deploy-time gate (that is step 4 of
+# `specs/designs/2026-09-13-multi-agent-harness-design.md`), but the invariant
+# that gate will rest on — every signal a shipped builtin asks for is a signal
+# the reader of the agent it ships on can actually deliver.
+
+
+def test_every_declared_signal_is_one_claude_code_can_deliver() -> None:
+    """Otherwise the hook is undeployable on the only agent it ships on today.
+
+    That is the damage decision 11 names from the other side: `stop-verify-guard`
+    declaring a signal nothing supplies would be silently withheld rather than
+    silently passing, and `lh doctor` would report the absence as generic.
+    """
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+    from lazy_harness.hooks.loader import _BUILTIN_HOOKS
+
+    available = ClaudeCodeAdapter().signals()
+    missing = {
+        name: sorted(spec.signals - available)
+        for name, spec in _BUILTIN_HOOKS.items()
+        if spec.signals - available
+    }
+
+    assert missing == {}
+
+
+def test_the_check_would_see_a_signal_no_reader_supplies() -> None:
+    """The check itself, against a reader that supplies less than it is asked.
+
+    Without this, the assertion above passes just as happily when `signals()`
+    returns everything unconditionally.
+    """
+    from lazy_harness.agents.base import Signal
+    from lazy_harness.hooks.loader import BuiltinHookSpec
+
+    spec = BuiltinHookSpec(module="x", signals=frozenset({Signal.GOAL_STATUS}))
+
+    assert spec.signals - {Signal.MESSAGES, Signal.TOKEN_USAGE} == {Signal.GOAL_STATUS}
+
+
+def test_stop_verify_guard_declares_the_signal_it_reads() -> None:
+    """The declaration and the consumption are the same word, or neither works."""
+    from lazy_harness.agents.base import Signal
+    from lazy_harness.hooks.loader import _BUILTIN_HOOKS
+
+    assert _BUILTIN_HOOKS["stop-verify-guard"].signals == frozenset({Signal.GOAL_STATUS})

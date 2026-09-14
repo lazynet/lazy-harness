@@ -409,3 +409,111 @@ def test_profile_name_is_empty_when_the_config_cannot_be_read(tmp_path: Path, mo
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
 
     assert _shared.profile_name() == ""
+
+
+# --- transcript_reader ------------------------------------------------------
+#
+# Decision 11 of `specs/designs/2026-09-13-multi-agent-harness-design.md` makes
+# transcript dependence a declared capability. A builtin that needs a signal has
+# to ask *someone* for it, and this is the one place that answers — resolved
+# per profile, because `[profiles.<name>].agent` is what decides whose wire
+# format the session is speaking.
+
+
+def _profile_config(tmp_path: Path, agent: str) -> Path:
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        '[harness]\nversion = "1"\n\n[agent]\ntype = "claude-code"\n\n'
+        '[profiles]\ndefault = "lazy"\n\n'
+        f'[profiles.lazy]\nconfig_dir = "{tmp_path / "cc"}"\nagent = "{agent}"\n'
+    )
+    return cfg
+
+
+def test_transcript_reader_resolves_the_adapter_of_the_profiles_own_agent(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from lazy_harness.agents.base import TranscriptReader
+    from lazy_harness.hooks.builtins._shared import transcript_reader
+
+    monkeypatch.setattr(
+        "lazy_harness.core.paths.config_file", lambda: _profile_config(tmp_path, "claude-code")
+    )
+
+    assert isinstance(transcript_reader("lazy"), TranscriptReader)
+
+
+def test_transcript_reader_is_none_when_the_profiles_agent_cannot_be_read(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The case decision 11 exists for: a hook must learn the signal is absent.
+
+    Returning a reader that yields nothing would be indistinguishable from a
+    session that declared no goal, which is the silent pass the decision names.
+    """
+    from lazy_harness.hooks.builtins._shared import transcript_reader
+
+    monkeypatch.setattr(
+        "lazy_harness.core.paths.config_file", lambda: _profile_config(tmp_path, "null")
+    )
+
+    assert transcript_reader("lazy") is None
+
+
+def test_transcript_reader_falls_back_to_the_global_agent_without_a_config(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """No config is a machine that has not run `lh init`, not an agent change.
+
+    The runner resolves an absent config the same way, for the same reason:
+    refusing there would take every hook down with it.
+    """
+    from lazy_harness.agents.base import TranscriptReader
+    from lazy_harness.hooks.builtins._shared import transcript_reader
+
+    monkeypatch.setattr("lazy_harness.core.paths.config_file", lambda: tmp_path / "absent.toml")
+
+    assert isinstance(transcript_reader(""), TranscriptReader)
+
+
+def test_transcript_reader_is_none_for_an_unregistered_agent(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A typo in `[profiles.<name>].agent` leaves the hook without a signal."""
+    from lazy_harness.hooks.builtins._shared import transcript_reader
+
+    monkeypatch.setattr(
+        "lazy_harness.core.paths.config_file", lambda: _profile_config(tmp_path, "codex")
+    )
+
+    assert transcript_reader("lazy") is None
+
+
+def test_transcript_reader_rejects_an_adapter_that_only_half_implements_it(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A reader missing one Protocol method is refused, not called and crashed.
+
+    `_goal_declared` calls `read()` on whatever comes back, so an adapter that
+    grew `signals()` and not `read()` would raise `AttributeError` inside the
+    guard. The `isinstance` check against a `runtime_checkable` Protocol is
+    what makes that a `None` instead.
+    """
+    from lazy_harness.hooks.builtins._shared import transcript_reader
+
+    class _HalfReader:
+        """Declares signals, cannot read — the shape a half-done port has."""
+
+        def signals(self):
+            return set()
+
+    monkeypatch.setattr(
+        "lazy_harness.core.paths.config_file", lambda: _profile_config(tmp_path, "half")
+    )
+    monkeypatch.setitem(
+        __import__("lazy_harness.agents.registry", fromlist=["_AGENTS"])._AGENTS,
+        "half",
+        _HalfReader,
+    )
+
+    assert transcript_reader("lazy") is None
