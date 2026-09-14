@@ -1,7 +1,8 @@
 # Multi-agent harness: what actually has to be abstracted
 
-**Status:** proposed (revision 3, 2026-09-13 — after external review by Codex CLI and Copilot CLI; every provider claim below re-verified against pinned vendor source, and every claim about this repo against the code)
+**Status:** proposed (revision 4, 2026-09-13 — a third external review found an ordering contradiction in the sequence, an under-specified `TranscriptReader`, and a kill criterion superseded by the derived design; all three corrected below)
 **Date:** 2026-09-13
+**Derived design:** [2026-09-13-multi-agent-blast-radius-design.md](2026-09-13-multi-agent-blast-radius-design.md) — the impacts outside this seam, and the staging and rollback mechanism for this sequence.
 **Relates to:** [ADR-004](../adrs/004-agent-adapter-pattern.md) (agent adapter pattern), [ADR-032](../adrs/032-agent-adapter-completeness.md) (adapter completeness), [ADR-035](../adrs/035-capability-registry.md) (capability registry), [ADR-009](../adrs/009-profile-symlink-deploy.md) (profile symlink deploy), [ADR-031](../adrs/031-default-hooks-merge.md) (default hooks merge)
 
 ## Problem
@@ -1137,14 +1138,17 @@ This is infrastructure for agents that are not yet in daily use: Codex is
 installed without a subscription, Copilot only in the work profile. ADR-035's
 argument against machinery with no consumer applies here with the same force.
 
-- **Baseline:** zero sessions on any non-Claude agent through the harness.
-- **Horizon:** eight weeks after the Codex adapter merges.
-- **Adoption check:** total sessions on a non-Claude profile over the trailing
-  four weeks, from the metrics store's `profile` label. The previous revision
-  measured this per week and thresholded it per four weeks; one unit, stated
-  once.
-- **Kill threshold:** fewer than five such sessions in the last four weeks of
-  the horizon. Below it, the adapters are removed and the runner (decision 1)
+**The criteria are defined in the derived design, not here.** This revision's
+version read the adoption check off the metrics store's `profile` label, and
+that store is filled by a pipeline that hardcodes Claude Code's transcript
+layout — so the number it returns for a non-Claude profile is structurally zero
+for the whole horizon, and the adapters would be killed by an instrument never
+wired to them. The instrument, the unit and the threshold are therefore stated
+once, in
+[the derived design's decision 1](2026-09-13-multi-agent-blast-radius-design.md),
+and not restated here. What survives unchanged is the consequence:
+
+- Below the threshold the adapters are removed and the runner (decision 1)
   stays — it is a correctness improvement for Claude Code on its own.
 
 ## `TranscriptReader` as a separate optional Protocol
@@ -1156,9 +1160,26 @@ shape it is guessing.
 ```python
 @runtime_checkable
 class TranscriptReader(Protocol):
-    def locate_sessions(self, since: datetime | None) -> Iterator[Path]: ...
+    def locate_sessions(
+        self, config_dir: Path, since: datetime | None
+    ) -> Iterator[Path]: ...
     def read(self, path: Path) -> Iterator[TranscriptEvent]: ...
+    def signals(self) -> set[Signal]: ...
 ```
+
+**`config_dir` is a parameter, not adapter state.** The previous revision wrote
+`locate_sessions(since)` and left the reader with no way to know *whose*
+sessions to locate. Adapters are constructed with no arguments —
+`registry.py:68` is a bare `cls()` — so an adapter cannot carry a profile, and
+under decision 7 a profile is exactly what disambiguates two config dirs served
+by the same agent. Passing the directory keeps the adapter stateless, which is
+what makes one instance reusable across profiles.
+
+`signals()` is here rather than only on the hook side because decision 11 makes
+transcript dependence a *declared* capability, and a declaration that lives only
+in the hook cannot be checked against the reader that is supposed to satisfy it.
+It has to exist before step 2, which is where the first three hooks start
+reading signals.
 
 The on-disk formats share nothing. The *concepts* — turn, tool call, tokens,
 cost — are common, and that is what `TranscriptEvent` normalises. Twenty
@@ -1215,14 +1236,31 @@ non-identity adapter has run against it.** Step 3 is that gate.
    `pre_tool_use_security` and `context_inject` fire, observe
    `pre_tool_use_security` actually refuse a command, and observe
    `stop_verify_guard` **not deployed at all** because Codex supplies no
-   `GOAL_STATUS` — with `lh doctor` naming the missing signal. Anything the
-   contract cannot express is fixed **here**, while three hooks depend on it
-   instead of eighteen.
+   `GOAL_STATUS`, named as a missing signal. Anything the contract cannot
+   express is fixed **here**, while three hooks depend on it instead of
+   eighteen.
+
+   **Two prerequisites this step cannot perform without, both scheduled later
+   in the previous revision.** Deploying to a Codex profile needs per-profile
+   agent resolution, which was step 6; naming a missing signal needs the
+   per-profile `lh doctor` surface, which was step 10. A gate that depends on
+   two later steps is not a gate.
+
+   The minimum of each moves forward rather than the whole step: step 3's
+   vertical slice gains `agent_for_profile(cfg, name)` and the
+   `[profiles.<name>].agent` read — not `per_profile` on `Capability`, not the
+   18 `cfg.agent.type` readers, which stay at step 6 — and step 4 gains a single
+   `lh doctor` line listing each deployed hook's missing signals, not the full
+   `hook_events()` surface, which stays at step 10.
+
+   The gate is run against a **throwaway profile**, not against `lazy` or
+   `flex`. That is the derived design's decision 11 and it is what keeps a
+   failing gate from taking a daily profile with it.
 5. Migrate the remaining 15 builtins, each declaring its `Operation` set and its
    `Signal` set. Delete `profile_name()`, `_TRANSCRIPT_KEYS` and the nine
    `get_agent("claude-code")` literals.
-6. `agent` per profile, `agent_for_profile()`, `per_profile` on `Capability`,
-   the 18 `cfg.agent.type` readers. Full save/load/save/load round trip on the
+6. `per_profile` on `Capability` and the 18 `cfg.agent.type` readers
+   (`agent_for_profile()` itself landed at step 3, for the gate). Full save/load/save/load round trip on the
    new-document and merge-on-existing paths. `CapabilityRegistry.toggle()` walks
    with `getattr`/`setattr` only (`plugins/capabilities.py:246-248`) and cannot
    reach `[profiles.<name>].agent`; decide explicitly whether the registry
@@ -1235,7 +1273,8 @@ non-identity adapter has run against it.** Step 3 is that gate.
 9. **`CodexAdapter` for real**, replacing the throwaway from step 4, with trust
    reporting in `lh doctor`.
 10. `hook_events()` surfaced in `lh doctor` per profile: honoured verdicts per
-    event, covered operations per hook, missing signals per hook.
+    event, covered operations per hook, missing signals per hook — the full
+    surface, of which step 4 shipped only the missing-signals line.
 11. **`CopilotAdapter`.** The 1.0.83 session format is now known (see above), so
     the remaining unknown is the hook payload, which no local hook has fired.
     The first agent where `system_docs()` returns something other than a

@@ -1,6 +1,6 @@
 # Multi-agent harness: the blast radius outside the seam
 
-**Status:** proposed (revision 3, 2026-09-13 — revision 1 found the impacts, revision 2 added staging and rollback, this one closes every open question that was a judgement rather than a measurement)
+**Status:** proposed (revision 4, 2026-09-13 — a third external review found ten defects, all confirmed against the code. Four were assertions drawn from a name or a docstring without exercising the path, and one of those inverted this document's central claim about how a downgrade fails)
 **Date:** 2026-09-13
 **Derives from:** [2026-09-13-multi-agent-harness-design.md](2026-09-13-multi-agent-harness-design.md) — every decision number cited as *parent decision N* refers to that document.
 **Relates to:** [ADR-009](../adrs/009-profile-symlink-deploy.md) (profile symlink deploy), [ADR-012](../adrs/012-sqlite-monitoring.md) (SQLite monitoring), [ADR-032](../adrs/032-agent-adapter-completeness.md) (adapter completeness), [ADR-035](../adrs/035-capability-registry.md) (capability registry), [ADR-037](../adrs/037-metric-event-v2-host-and-workload.md) (metric event v2), [ADR-038](../adrs/038-exec-envelope-cost-provenance.md) (exec envelope cost provenance)
@@ -25,7 +25,7 @@ order.
 
 ### 1. The kill criterion measures a number the pipeline cannot produce
 
-The parent design's kill criteria read:
+The parent design's kill criteria read, before this document superseded them:
 
 > **Adoption check:** total sessions on a non-Claude profile over the trailing
 > four weeks, from the metrics store's `profile` label.
@@ -195,13 +195,23 @@ The coupling is one line further in:
 exec_args = [argv0, *args]
 ```
 
-Everything after `lh run` is forwarded verbatim. `--allow-dangerously-skip-permissions`
-is Claude Code's spelling; Codex spells the same intent
-`--dangerously-bypass-approvals-and-sandbox`, Copilot `--allow-all-tools`. On a
-Codex profile `lcca` fails at argv parse — which is the *good* outcome. The bad
-outcome is any agent that accepts an unknown flag, or accepts a similarly-spelled
-one with a narrower meaning, and starts a session the user believes is unsandboxed
-when it is not, or the reverse.
+Everything after `lh run` is forwarded verbatim. These are not one intent
+under three spellings, and reading them as one is how a translation layer
+silently widens a permission. Claude Code's own help distinguishes two flags:
+
+```
+--allow-dangerously-skip-permissions  Enable bypassing all permission checks
+--dangerously-skip-permissions        Bypass all permission checks.
+```
+
+`lcca` uses the **first**: it makes bypass available, it does not turn it on.
+The second turns it on. Codex's `--dangerously-bypass-approvals-and-sandbox`
+turns it on *and* removes the sandbox — a third thing again. Copilot's
+`--allow-all-tools` is a fourth point on the same axis.
+
+On a Codex profile `lcca` fails at argv parse today, which is the *good*
+outcome. The bad outcome is a mapping that treats all four as "the yolo flag"
+and hands the user an activated bypass where they had only enabled one.
 
 The parent design normalises the hook event, the tool arguments and the config
 artifact. The command line is the fourth wire format between the harness and the
@@ -277,10 +287,22 @@ CREATE TABLE launches (
 ```
 
 Append-only, no primary key: an event log, not state. It is agent-independent by
-construction — recorded by the harness, before the exec, needing nothing from
-`TranscriptReader` and nothing from the agent's hook delivery. `lh run` ends in
-`os.execvpe` (`cli/run_cmd.py:101`), so the write happens before the process is
-replaced, and a failure to write must never block the launch.
+construction — recorded by the harness, needing nothing from `TranscriptReader`
+and nothing from the agent's hook delivery.
+
+**The row is written at the launch, not at the resolution.** `resolve_launch`
+is the wrong place despite being where the profile and agent become known: both
+callers invoke it *before* they honour `--dry-run` (`cli/run_cmd.py`, and
+`cli/exec_cmd.py:217`), and `lh exec` also invokes it before rejecting an empty
+prompt (`:221-227`). A counter there is incremented by rehearsals and by runs
+that never happened, which for a five-event threshold is not a rounding error —
+it is most of the signal.
+
+So `resolve_launch` returns the plan and writes nothing; the write happens after
+every validation and after the dry-run diversion, immediately before
+`os.execvpe` (`cli/run_cmd.py:101`) and before the subprocess spawn in
+`lh exec`. **The unit is a launch actually started**, not a launch attempted.
+A failure to write must never block the launch.
 
 Rewritten criterion, replacing the parent's:
 
@@ -351,10 +373,22 @@ reader?" has no configured answer and does not need one — the question that
 matters is whether data is going unread:
 
 ```python
-sessions   = config_dir / adapter.session_dirs().get("sessions", "")
-has_data   = sessions.is_dir() and any(sessions.rglob("*"))
+subdir = adapter.session_dirs().get("sessions") or ""
+if not subdir:
+    return TranscriptHealth.NO_LOCATION      # the agent declares none
+sessions   = config_dir / subdir
+has_data   = sessions.is_dir() and any(sessions.rglob("*.jsonl"))
 has_reader = isinstance(adapter, TranscriptReader)
 ```
+
+The absence of a location is handled **first**, and it has to be: `Path(x) / ""`
+evaluates to `x` itself, so the obvious one-liner silently probes the whole
+config directory and finds `settings.json` — every agent without a sessions
+directory reported as degraded, on the strength of files that are not
+transcripts. That is the same fallback-shaped fail-open this decision deletes
+from `ingest`, and the previous revision reintroduced it two paragraphs after
+deleting it. Matching session artifacts (`*.jsonl`) rather than any directory
+entry is the second half of the same fix.
 
 | Agent | Reader | Data | Reported |
 |---|---|---|---|
@@ -388,10 +422,23 @@ Three changes, one schema bump, in one ADR:
   is unchanged.
 - `cost_source` gains `"subscription"`. `None` returns to meaning exactly one
   thing: *we tried to price this and could not*.
-- Pricing declares a **billing model** per agent, not per model: `per_token` or
-  `flat_rate`. A `flat_rate` agent's rows carry `cost = 0.0` with
-  `cost_source = "subscription"`, and `unknown_models` does not fire for them.
-  A `per_token` agent's unpriced model keeps firing it.
+- Pricing declares a **billing model** — `per_token` or `flat_rate` — resolved
+  **per profile, from its execution context**, and persisted on every row
+  alongside `cost_source`. A `flat_rate` row carries `cost = 0.0` with
+  `cost_source = "subscription"` and does not fire `unknown_models`; a
+  `per_token` row with no rate keeps firing it.
+
+  Not per agent, which was the previous revision's answer and is wrong on this
+  machine's own evidence: `~/.codex/auth.json` carries `auth_mode`,
+  `OPENAI_API_KEY` **and** `tokens` at once. The same agent bills by
+  subscription under a ChatGPT sign-in, per token under an API key, and nothing
+  at all under `--oss` against a local model — the mode the parent's step 4 gate
+  uses. Stamping `flat_rate` on "codex" would report an API-key profile's real
+  spend as zero, which is the failure this decision exists to prevent, relocated
+  one level up.
+
+  It is persisted rather than recomputed because the auth mode is mutable and
+  the row is permanent — the same argument that puts `agent` on the event.
 
 **Rendering, which is where the distinction is either kept or thrown away.** A
 `flat_rate` profile keeps its sessions row and its tokens row — the usage is
@@ -486,19 +533,33 @@ in the blast radius where the reader of the prose is a person who will act on it
 
 ### 6. Permission-bypass is a declared intent, not a forwarded flag
 
-`AgentAdapter` gains one method:
+The axis has three positions, not one, and the adapter declares each
+separately:
 
 ```python
-def bypass_permissions_argv(self) -> list[str] | None:
-    """The flags that disable this agent's approval gate, or None if it has none."""
+class Bypass(StrEnum):
+    ENABLE   = "enable"    # make bypass available; do not turn it on
+    ACTIVATE = "activate"  # turn it on
+    NO_SANDBOX = "no_sandbox"  # also remove the sandbox, where one exists
+
+def bypass_argv(self, level: Bypass) -> list[str] | None:
+    """Flags for this level, or None if this agent has no such level."""
 ```
 
-`lh run --yolo` expands it; `lcca` becomes `lh run --yolo`. An adapter returning
-`None` makes `--yolo` an error naming the agent, rather than a flag forwarded to
-a parser that may or may not reject it.
+`lh run --bypass=enable|activate|no-sandbox` expands one of them. **`lcca`
+becomes `lh run --bypass=enable`**, which is what
+`--allow-dangerously-skip-permissions` means today — the migration preserves the
+alias's semantics exactly, and that is the point. A single `--yolo` was the
+previous revision's proposal and it is withdrawn: it collapses three positions
+into one, and the direction it collapses them in is *more* permissive.
 
-Every other argument stays a passthrough. This is deliberately **one** flag, not
-a general argv translation layer: it is the only forwarded flag whose
+An adapter returning `None` for a level makes that level an error naming the
+agent, rather than a flag forwarded to a parser that may or may not reject it.
+An agent with no sandbox has no `NO_SANDBOX`; that is a reported state, not a
+silent alias for `ACTIVATE`.
+
+Every other argument stays a passthrough. This is deliberately one axis, not a
+general argv translation layer: it is the only forwarded flag whose
 misinterpretation is a safety property rather than a usability one, and a
 general translator would be the "unified model that lies in every direction" the
 parent rejected for permissions.
@@ -517,6 +578,29 @@ claiming that root, in one managed block.
 Two profiles with the **same** agent claiming the same root remains an error —
 it is genuinely ambiguous, direnv cannot express it, and it is reported by
 `lh doctor` rather than resolved by last-write-wins.
+
+**The exports are only half the problem.** `.envrc` tells each binary which
+config dir to read; it does not tell `lh run` which binary to start.
+`resolve_profile_with_source` picks the longest matching root with
+`len(root_str) > best_len` (`core/profiles.py:101`) — strictly greater, so two
+profiles sharing a root resolve to whichever appears **first** in
+`cfg.profiles.items`, which is TOML document order. The agent you launch would
+depend on the order of your config file, silently.
+
+The tie is therefore not broken, it is refused: with two profiles claiming a
+root, `lh run` without `--profile` exits with an error naming both, unless the
+root declares a default. That declaration is the new field:
+
+```toml
+[profiles.lazy]
+roots = ["~/repos/lazy"]
+root_default = true      # this profile answers a bare `lh run` in a shared root
+```
+
+Exactly one profile per root may set it; two is the same error, reported by
+`lh doctor` before it is ever hit. Refusing beats guessing here because the
+guess is invisible in the output — `lh run` announces the profile only when it
+differs from the default (`cli/run_cmd.py:96-99`).
 
 **This decision survives the kill** as far as the loop fix; the multi-export
 block only matters with a second agent.
@@ -571,7 +655,13 @@ overstates the blast radius.
   land in the same release or the sync silently stops firing.
 - Decision 4 changes a file layout that a human edits by hand, and the muscle
   memory is `CLAUDE.head.md`.
-- `--yolo` is a new user-facing flag on the most-used command.
+- `--bypass=<level>` is a new user-facing flag on the most-used command, and
+  `lcca` changes shape even though its meaning is deliberately preserved.
+- Decision 11 acquires two prerequisites that did not exist when it was written
+  — a profile-scoped `lh deploy` and a second installable entry point — and the
+  second is still undecided.
+- The rollback log gains a manifest format, and `apply_rollback_log` gains a
+  branch, so two restore contracts coexist.
 - `lh deploy` gains a snapshot on every run, which is a write it did not make
   before, and a rollback log that can itself go stale.
 - `harness_binary` is a config key whose only consumer is a beta workflow. It is
@@ -588,6 +678,7 @@ Mapped onto the parent's numbered steps rather than numbered independently.
 |---|---|---|
 | **0** (fix `_is_harness_owned`) | decision 9 — the version marker | **with step 0**; without it every later round trip accumulates stale entries |
 | 1 (contracts, runner takes `--profile`) | decision 11 — `harness_binary` per profile | with the runner, or it costs a second pass over `hook_command` |
+| 3 (config deploy slice) | decision 11's prerequisite — `lh deploy --profile <name>` scoping all four deploy steps | **before any beta claim**; the engine is already being rewritten there |
 | 2 (runner, 3 builtins) | decision 5 — the sync hook is not one of the three, but its `DEFAULT_AGENT_TYPE` is one of the nine | with the nine |
 | 3 (config deploy slice) | decision 7 (loop fix only) | before step 4 |
 | 3 (config deploy slice) | decision 10 — `--snapshot` / `--rollback` | before the first deploy that changes an artifact's shape |
@@ -595,7 +686,7 @@ Mapped onto the parent's numbered steps rather than numbered independently.
 | 6 (per-profile agent) | decision 7 (multi-export block) | with `agent_for_profile` |
 | 8 (`system_docs()`) | decisions 4 and 5 (rename + prose) | same release |
 | **9** (real `CodexAdapter`) | decision 1 — the horizon clock starts here | **before the clock**, and the threshold is calibrated before it opens |
-| 9 | decision 6 — the first profile where a forwarded flag can be wrong | with the adapter |
+| 9 | decision 6 — `--bypass` levels; the first profile where a forwarded flag can be wrong | with the adapter |
 | 10 (`lh doctor` per profile) | decision 2's derived transcript health | with the rest of the per-profile doctor work |
 | any | decision 3 | before the first non-Claude cost is reported |
 | — | decision 8 | not scheduled |
@@ -631,14 +722,34 @@ today. Measured, per surface:
 
 | Surface | On downgrade | Severity |
 |---|---|---|
-| `settings.json` hook entries | Parent decision 1 changes the command from `lh hook <name>` to `lh hook <name> --profile <p>`. The old binary rejects the flag, and `hook_invoke` exits 0 on exception — so a **blocking hook fails open** | **Dangerous and silent** |
+| `settings.json` hook entries | Parent decision 1 changes the command from `lh hook <name>` to `lh hook <name> --profile <p>`. Click rejects the unknown option *before* the callback, so `hook_invoke`'s `try/except` is never reached: measured, `lh hook context-inject --zzz` exits **2** with a usage message on stderr. On `PreToolUse` exit 2 means **deny**, so every tool call is refused with Click's usage text | **Loud and total** — a work stoppage, not a hole |
 | Segment filenames (decision 4) | The old `sync_agent_md` looks for `CLAUDE.head.md`, finds `head.md`, and `sync_profiles` becomes a no-op. The deployed document stays at its last generated content — stale but valid | Silent |
 | `session_stats` (decision 3) | Safe. `db.py` migrations are idempotent `ALTER TABLE … ADD COLUMN … DEFAULT`, and the read path selects by explicit column name (`db.py:417`), so an extra `agent` column is invisible to the old reader. `MetricEvent.from_dict` has no caller in `src/` | None |
 | Remote sink | Already holds v3 payloads. This is the remote's forward-compatibility problem, not a local downgrade | None locally |
 | `config.toml` | Plain dataclasses over `tomllib`; unknown keys are ignored, so `[profiles.<name>].agent` falls back to the global `agent.type` | Tolerable |
 
-One row is dangerous, and it is dangerous in the direction that matters: a
-security hook that stops enforcing without saying so.
+**The previous revision had this row exactly backwards**, and the correction is
+worth keeping rather than quietly fixing. It claimed the old binary would reject
+the flag inside `hook_invoke`, hit the broad `except`, and exit 0 — a blocking
+hook failing *open*. Running it settles it: Click raises `UsageError` during
+parameter parsing, before the command callback is entered, and exits 2. The
+`try/except` at `cli/hooks_cmd.py:87-108` sits inside the callback and never
+sees it.
+
+So the failure is **fail-closed and loud**: on `PreToolUse`, exit 2 is Claude
+Code's block verdict, and the refusal reason shown is a Click usage string. The
+machine does not quietly lose its safety net; it stops working, visibly, on the
+first tool call.
+
+That is a better failure than the one this document claimed, and it changes what
+the mitigation is for. The risk is no longer a silent security regression — it
+is that the reason on screen is a usage error that names an option, and nothing
+tells the user their artifacts are newer than their binary. Decision 9 survives,
+with diagnosability rather than safety as its justification.
+
+The error class is worth naming, because it is the same one the parent's second
+review found: a behavioural conclusion drawn from reading code rather than
+running it. Four of this revision's ten corrections are that class.
 
 ### The defect at parent step 0 is what makes a round trip accumulate garbage
 
@@ -673,7 +784,9 @@ refuses to run against an artifact written by a newer version and exits 2 with
 the reason, because for a blocking hook the safe default is to block. That
 inversion is the repo's own rule for blocking hooks, applied to a new input.
 
-This is the cheapest of the three and it closes the only dangerous row above.
+This is the cheapest of the three, and it converts the one genuinely confusing
+row above — a Click usage error offered as the reason a tool call was denied —
+into a sentence that names the actual cause.
 
 ### Decision 10: `lh deploy --snapshot` and `lh deploy --rollback`
 
@@ -689,6 +802,27 @@ runs far more often, is not.
 `lh deploy --rollback` replays the latest, exactly as `lh migrate --rollback`
 does. The plan-then-execute split already exists in `deploy/engine.py`; what is
 missing is that the plan is not persisted.
+
+**The rollback log needs a new contract before it can be reused.**
+`apply_rollback_log` restores a file by basename — `src = backup_dir / Path(payload["path"]).name`
+(`migrate/rollback.py`) — which was sufficient for a migration touching one of
+each file and is not sufficient here: `~/.claude-lazy/settings.json` and
+`~/.claude-flex/settings.json` are two different files with one basename, and
+the second restore would overwrite the first profile's artifact with the
+second's.
+
+A second defect in the same function is closer to silent: `restore_symlink`
+acts only `if not link.exists()`, so it recreates a *deleted* symlink and never
+repoints an existing one. Every profile artifact under ADR-009 is an existing
+symlink, so a rollback of a relink would report success and change nothing.
+
+So the snapshot writes a **manifest**, not a directory of loose files: one entry
+per artifact carrying its absolute destination, its kind (file, symlink,
+managed-block-in-a-foreign-file), the symlink target where that applies, and a
+content path inside the snapshot that is unique per destination rather than per
+basename. `apply_rollback_log` gains a manifest branch; the migration branch
+stays as it is, because rewriting it would change a path that works for a
+command nobody is changing.
 
 **Unconditionally, on every deploy, pruned to the last ten by count.** The
 managed artifacts measure ~135 KB in total on this machine — `settings.json`
@@ -719,8 +853,17 @@ that protects nothing.
 
 A profile already carries its own `config_dir`, its own deployed artifacts, its
 own symlinks, and — after parent decision 7 — its own agent. It is the natural
-blast-radius boundary, and the harness already knows how to deploy to exactly
-one.
+blast-radius boundary.
+
+**It is not yet a deployable one, and the previous revision asserted otherwise.**
+`lh deploy` (`cli/deploy_cmd.py:39`) takes no options, and `_run_deploy` calls
+`deploy_profiles`, `deploy_hooks` and `deploy_mcp_servers`, each of which walks
+every profile in the config. There is no way today to deploy one profile and
+leave the others untouched, so "deploy the beta profile" is not a thing the
+harness can do. `lh deploy --profile <name>`, scoping all four steps, is a
+prerequisite of this decision rather than a convenience alongside it — and it
+belongs with step 3's vertical slice, where the engine is already being
+rewritten.
 
 A `beta` profile is deployed from the branch build; `lazy` and `flex` stay on
 the released tag. Rollback for the beta is deleting the profile, which touches
@@ -745,15 +888,38 @@ agent = "claude-code"
 harness_binary = "lh-beta"     # resolved from PATH, like `lh`
 ```
 
-`hook_command` becomes `f"{binary_for_profile(cfg, name)} hook {hook.name}"` —
+`hook_command` becomes
+`f"{binary_for_profile(cfg, p)} hook {hook.name} --profile {p}"` — the
+`--profile` is parent decision 1's and is not optional; the previous revision's
+example dropped it —
 still a bare name resolved by `execvp`, still machine-independent, still
 convergent under chezmoi. **The beta capability falls out of parent decision 1
 rather than being added on top of it**, which is the whole reason it is
 affordable.
 
-`uv tool install --from git+…@<branch> --with-executables-from lazy-harness` is
-what installs `lh-beta`; the branch rev is the same install mechanism already in
-use for the tag, so there is no new channel to maintain.
+**How `lh-beta` gets installed is also unsettled, and the previous revision's
+answer does not work.** `[project.scripts]` declares exactly one entry point,
+`lh = "lazy_harness.cli.main:cli"`, so no invocation of `uv tool install`
+produces a binary called `lh-beta`: `--with-executables-from` selects which
+package's existing entry points to install, it does not rename them, and two
+`uv tool install` runs of the same package name replace each other rather than
+coexisting.
+
+Two workable shapes, neither free:
+
+- **A second entry point.** `pyproject.toml` declares `lh-beta` alongside `lh`,
+  both pointing at the same `cli`. Every install then carries both names, which
+  is a public surface added for a private workflow — but it is three lines and
+  `uv tool install --from git+…@<branch>` then genuinely produces it.
+- **A separate tool name.** Publish the branch under a distinct project name so
+  `uv tool` treats it as a different tool. Cleaner isolation, and it means a
+  branch build cannot be installed without editing `pyproject.toml` on that
+  branch — which is arguably the right amount of friction for a beta.
+
+The second is preferable and neither is decided here. What matters for the
+sequence is that **decision 11 is blocked on both prerequisites**, and claiming
+the beta profile as an isolation guarantee before they exist would be the
+config-promise-with-no-implementation shape this document criticises twice.
 
 ### Why not a release-please prerelease channel
 
@@ -796,9 +962,9 @@ sequences them. Reverting a segment rename means both, in that order.
 - **The prose half of decision 5 is grepped in both directions.** Every filename
   the deployed system document names must exist in the segment tree, and every
   segment role must be named there.
-- **`bypass_permissions_argv` is tested with an adapter returning `None`**, and
-  the `--yolo` error asserted to name the agent. A duck-typed capability is
-  tested with the capability absent.
+- **`bypass_argv` is tested with an adapter returning `None` for a level**, and
+  the error asserted to name both the agent and the level. A duck-typed
+  capability is tested with the capability absent.
 - **The `.envrc` block is verified by `direnv export` in a root claimed by two
   profiles with different agents**, asserting both variables present — not by
   reading the generated file.
@@ -820,7 +986,23 @@ sequences them. Reverting a segment rename means both, in that order.
 - **The beta profile is verified by observing a hook fire from the beta binary
   while a daily profile's hook fires from the released one**, in the same
   session on the same machine. Two binaries is the claim; one `lh doctor` per
-  profile is not evidence for it.
+  profile is not evidence for it. `lh deploy --profile beta` is asserted to
+  leave every other profile's artifacts byte-identical — the isolation claim,
+  tested as an isolation claim.
+- **Each `Bypass` level is verified against the agent's own help output**, not
+  against the adapter's table: assert the flag `bypass_argv` returns is a flag
+  the installed binary documents, and that `ENABLE` and `ACTIVATE` map to
+  different strings wherever both exist. The defect this replaces was two flags
+  read as one intent, and only the binary can refute that.
+- **The launch counter is asserted to stay at zero across a `--dry-run` and an
+  empty-prompt rejection**, on both `lh run` and `lh exec`. A counter tested
+  only on the happy path cannot show that it counts the wrong things.
+- **The billing model is exercised with one agent under two auth modes**, the
+  same adapter resolving `per_token` for one profile and `flat_rate` for
+  another in a single run — the case a per-agent table cannot represent.
+- **The rollback manifest is verified with two profiles whose artifacts share a
+  basename**, and with an existing symlink that must be repointed rather than
+  created. Both are the cases the current `apply_rollback_log` gets wrong.
 
 ## Open questions
 
