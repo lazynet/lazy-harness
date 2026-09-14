@@ -8,7 +8,12 @@ import click
 from rich.console import Console
 from rich.markup import escape
 
-from lazy_harness.core.paths import config_dir as lh_config_dir
+from lazy_harness.core.backups import (
+    MIGRATE_NAMESPACE,
+    backups_root,
+    latest_backup_dir,
+    namespace_dir,
+)
 from lazy_harness.core.paths import config_file
 from lazy_harness.migrate.detector import detect_state
 from lazy_harness.migrate.executor import execute_plan
@@ -22,17 +27,6 @@ def _home() -> Path:
     return Path(os.path.expanduser("~"))
 
 
-def _backups_parent() -> Path:
-    return lh_config_dir() / "backups"
-
-
-def _latest_backup_dir(parent: Path) -> Path | None:
-    if not parent.is_dir():
-        return None
-    subs = sorted([p for p in parent.iterdir() if p.is_dir()], reverse=True)
-    return subs[0] if subs else None
-
-
 @click.command("migrate")
 @click.option(
     "--dry-run", "dry_run", is_flag=True, help="Analyze and print the plan without executing."
@@ -43,10 +37,12 @@ def _latest_backup_dir(parent: Path) -> Path | None:
 def migrate(dry_run: bool, rollback: bool) -> None:
     """Migrate an existing Claude Code / lazy-claudecode setup to lazy-harness."""
     console = Console()
-    backups_parent = _backups_parent()
+    backups_parent = backups_root()
 
     if rollback:
-        latest = _latest_backup_dir(backups_parent)
+        # Legacy included: timestamped directories sitting directly in the root
+        # predate the namespace split and are migration backups.
+        latest = latest_backup_dir(backups_parent, MIGRATE_NAMESPACE, include_legacy=True)
         if latest is None:
             console.print("[red]No backup directory found to roll back.[/red]")
             raise SystemExit(1)
@@ -60,7 +56,7 @@ def migrate(dry_run: bool, rollback: bool) -> None:
     state = detect_state(home=_home())
 
     timestamp = time.strftime("%Y-%m-%dT%H-%M-%S")
-    backup_dir = backups_parent / timestamp
+    backup_dir = namespace_dir(backups_parent, MIGRATE_NAMESPACE) / timestamp
     plan = build_plan(
         state,
         backup_dir=backup_dir,
