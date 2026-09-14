@@ -113,3 +113,28 @@ def test_write_envrc_works_for_arbitrary_env_var(tmp_path: Path) -> None:
     write_envrc(root, "OPENAI_HOME", Path("/openai"))
     content = (root / ".envrc").read_text()
     assert 'export OPENAI_HOME="/openai"' in content
+
+
+def test_notice_carries_the_writing_version() -> None:
+    """Decision 9: a deployed artifact declares the lazy-harness version that
+    wrote it, so a stale `.envrc` can be told apart from a fresh one."""
+    from lazy_harness import __version__
+    from lazy_harness.core.envrc import render_envrc
+
+    out = render_envrc("CLAUDE_CONFIG_DIR", Path("/p"))
+    assert f"lazy-harness {__version__}" in out
+
+
+def test_redeploy_at_same_version_is_byte_identical(tmp_path: Path) -> None:
+    """Embedding lh_version must not break idempotence within one version."""
+    from lazy_harness.core.envrc import write_envrc
+
+    root = tmp_path / "repo"
+    write_envrc(root, "CLAUDE_CONFIG_DIR", Path("/x"))
+    first = (root / ".envrc").read_text()
+
+    second_result = write_envrc(root, "CLAUDE_CONFIG_DIR", Path("/x"))
+    second = (root / ".envrc").read_text()
+
+    assert second_result.action == "unchanged"
+    assert first == second

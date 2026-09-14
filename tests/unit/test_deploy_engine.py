@@ -420,3 +420,54 @@ def test_redeploy_after_a_command_format_change_installs_each_hook_once(
         f"redeploy after a command format change duplicated hooks: "
         f"{before} harness entries before, {after} after"
     )
+
+
+def test_deploy_hooks_writes_the_writing_version(tmp_path: Path) -> None:
+    """Decision 9: the settings.json managed section declares the
+    lazy-harness version that wrote it — at the document's top level, not
+    inside `hooks` (a `{event: [entry, ...]}` contract the version is not
+    an entry of; measurement showed Claude Code tolerates the key in
+    either position, so that axis did not decide the placement)."""
+    from lazy_harness import __version__
+    from lazy_harness.core.artifact_version import extract_from_settings
+
+    profile_dir = tmp_path / "profile"
+    cfg = _cfg_with_profile(profile_dir, hooks={})
+
+    deploy_hooks(cfg)
+
+    settings = json.loads((profile_dir / "settings.json").read_text())
+    assert extract_from_settings(settings) == __version__
+
+
+def test_deploy_hooks_redeploy_at_same_version_is_byte_identical(tmp_path: Path) -> None:
+    """Embedding lh_version must not break idempotence within one version."""
+    profile_dir = tmp_path / "profile"
+    cfg = _cfg_with_profile(profile_dir, hooks={})
+
+    deploy_hooks(cfg)
+    first = (profile_dir / "settings.json").read_text()
+
+    deploy_hooks(cfg)
+    second = (profile_dir / "settings.json").read_text()
+
+    assert first == second
+    assert not (profile_dir / "settings.json.bak").exists()
+
+
+def test_deploy_hooks_updates_a_stale_lh_version_on_redeploy(tmp_path: Path) -> None:
+    """A redeploy overwrites a previously written lh_version, not just hooks."""
+    from lazy_harness import __version__
+    from lazy_harness.core.artifact_version import extract_from_settings
+
+    profile_dir = tmp_path / "profile"
+    cfg = _cfg_with_profile(profile_dir, hooks={})
+    profile_dir.mkdir(parents=True)
+    (profile_dir / "settings.json").write_text(
+        json.dumps({"lh_version": "0.0.1", "hooks": {}}, indent=2) + "\n"
+    )
+
+    deploy_hooks(cfg)
+
+    settings = json.loads((profile_dir / "settings.json").read_text())
+    assert extract_from_settings(settings) == __version__

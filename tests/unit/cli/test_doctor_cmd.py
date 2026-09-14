@@ -194,6 +194,77 @@ def test_doctor_output_includes_llm_backend_section(
     assert "LLM roles" in result.output
 
 
+# --- Artifact versions section (decision 9) ---
+
+
+def test_render_artifact_versions_silent_when_nothing_newer() -> None:
+    """No section printed when every artifact matches the running binary —
+    same rule as `_render_sink_freshness`: an absent problem is silent."""
+    from lazy_harness.cli.doctor_cmd import _render_artifact_versions
+    from lazy_harness.core.artifact_version import ArtifactVersionReport
+
+    console, buf = _recording_console()
+    reports = [
+        ArtifactVersionReport("p1", "settings.json", Path("/x/settings.json"), "0.1.0"),
+    ]
+    _render_artifact_versions(console, reports, installed_version="99.0.0")
+    assert buf.getvalue() == ""
+
+
+def test_render_artifact_versions_reports_a_newer_artifact() -> None:
+    from lazy_harness.cli.doctor_cmd import _render_artifact_versions
+    from lazy_harness.core.artifact_version import ArtifactVersionReport
+
+    console, buf = _recording_console()
+    reports = [
+        ArtifactVersionReport("p1", "settings.json", Path("/x/settings.json"), "99.0.0"),
+    ]
+    _render_artifact_versions(console, reports, installed_version="0.1.0")
+    out = buf.getvalue()
+    assert "p1" in out
+    assert "settings.json" in out
+    assert "99.0.0" in out
+    assert "0.1.0" in out
+
+
+def test_doctor_reports_a_settings_json_newer_than_installed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """End-to-end: `lh doctor` surfaces a settings.json written by a newer
+    lazy-harness than the one currently running. Reporting, not refusing —
+    the command still exits 0."""
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    agent_cfg_dir = tmp_path / "agentcfg"
+    agent_cfg_dir.mkdir()
+    (agent_cfg_dir / "settings.json").write_text('{"lh_version": "9999.0.0", "hooks": {}}')
+
+    toml = (
+        '[harness]\nversion = "1"\n'
+        '[agent]\ntype = "claude-code"\n'
+        f'[profiles]\ndefault = "p1"\n\n[profiles.p1]\nconfig_dir = "{agent_cfg_dir}"\n'
+        '[knowledge]\nroot = ""\n'
+    )
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(toml)
+
+    profiles_dir = tmp_path / "harness-config" / "profiles"
+    profiles_dir.mkdir(parents=True)
+
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
+    monkeypatch.setattr(
+        "lazy_harness.cli.doctor_cmd.config_dir", lambda: tmp_path / "harness-config"
+    )
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.shutil.which", lambda _name: None)
+
+    runner = CliRunner()
+    result = runner.invoke(doctor, [])
+
+    assert "Artifact versions" in result.output
+    assert "9999.0.0" in result.output
+    assert result.exit_code == 0
+
+
 def _linked_worktree(tmp_path: Path) -> tuple[Path, Path]:
     """Build a main checkout plus a linked worktree; return (repo_root, worktree)."""
     repo = tmp_path / "repo"

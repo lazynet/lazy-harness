@@ -9,6 +9,7 @@ from pathlib import PurePosixPath
 
 import click
 
+from lazy_harness import __version__
 from lazy_harness.core.config import Config
 from lazy_harness.core.paths import config_dir, expand_path
 from lazy_harness.deploy.symlinks import ensure_symlink
@@ -45,6 +46,7 @@ def hook_command(hook: HookInfo) -> str:
     if hook.is_builtin:
         return f"{_LAUNCHER} {_HOOK_SUBCOMMAND} {hook.name}"
     return f"{sys.executable} {hook.path}"
+
 
 def deploy_profiles(cfg: Config) -> None:
     """Deploy profile content as symlinks to agent config dirs."""
@@ -270,6 +272,26 @@ def deploy_hooks(cfg: Config) -> None:
             for event, cmd in preserved:
                 click.echo(f"      {event:<20} {cmd[:60]}")
 
+        # Decision 9 (2026-09-13 multi-agent blast radius design): the
+        # managed section declares the version that wrote it, so a reader can
+        # tell a settings.json newer than the running binary apart from a
+        # stale one — see `lazy_harness.core.artifact_version`.
+        #
+        # Written at the document's top level, not inside the hooks block.
+        # Measured directly (a `PreToolUse` hook that denies with a unique
+        # reason string, fired via `claude -p` against a real settings file):
+        # Claude Code parses and honours a settings file carrying an unknown
+        # top-level key exactly as it does one carrying the same key inside
+        # `hooks` — both are tolerated, so that axis does not decide it.
+        # `settings["hooks"]` does: it is a `{event: [entry, ...]}` contract,
+        # and every generic reader of that shape (this repo's own
+        # `_harness_entry_count` test helper included) iterates every value
+        # as a list of entries — a scalar there breaks the harness's own
+        # readers first, which is exactly what smuggling this in as
+        # `merged["lh_version"]` did. The version of the document is a
+        # property of the document, not a hook entry, so it is written next
+        # to `hooks`, not inside it.
+        settings["lh_version"] = __version__
         settings["hooks"] = merged
         settings_file.write_text(json.dumps(settings, indent=2) + "\n")
         click.echo(f"  ✓ {name}/settings.json (hooks updated)")
