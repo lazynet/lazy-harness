@@ -348,23 +348,28 @@ delivers `tool_result: {result_type, text_result_for_llm}` and the Claude SDK
 declares it unconstrained, so a `dict` annotation would be a lie that fails at
 the first `.get()`.
 
-**The verdict's channel differs by agent, and that is what `format_hook_output`
-absorbs.** Codex honours the JSON verdict: a `PreToolUse` hook emitting
-`hookSpecificOutput.permissionDecision = "deny"` and exiting 0 blocked the call
-with `error=Command blocked by PreToolUse hook: <reason>` ([run], 0.154.0).
-Copilot 1.0.83 does not honour that form: the same `hookSpecificOutput`-wrapped
-JSON on stdout with exit 0 was read, logged as `[hook stdout]` text, and
-**ignored** — `echo hello` ran — while the identical hook writing its reason to
-stderr and exiting 2 produced `Denied by preToolUse hook: hook exited with code
-2` ([run], 1.0.83). (An earlier run recorded under *Closed by measurement,
-2026-09-13* passed a **top-level** `permissionDecision` rather than the
-`hookSpecificOutput` wrapper and was honoured; the two runs differ in payload
-shape and the discrepancy is not resolved here.)
+**The verdict's envelope differs by agent, and that is what `format_hook_output`
+absorbs.** Both honour a JSON verdict on stdout with exit 0; what differs is the
+wrapper. Codex takes it nested: a `PreToolUse` hook emitting
+`hookSpecificOutput.permissionDecision = "deny"` blocked the call with
+`error=Command blocked by PreToolUse hook: <reason>` ([run], 0.154.0). Copilot
+1.0.83 takes it **top-level and unwrapped**: `{"permissionDecision":"deny",
+"permissionDecisionReason":"<reason>"}` produced `✗ … Denied by preToolUse hook:
+<reason>` and the command did not run ([run], 1.0.83). The same verdict wrapped
+in `hookSpecificOutput` on Copilot is read, logged as `[hook stdout]` text and
+**ignored** — `echo hello` runs ([run], 1.0.83). Copilot's shipped SDK types
+agree: `PreToolUseHookOutput` is `{permissionDecision?, permissionDecisionReason?,
+modifiedArgs?, additionalContext?, suppressOutput?}` with no wrapper
+([src], `copilot-sdk/types.d.ts:1052-1058` @ 1.0.83).
 
-So for one `HookDecision`, the refusal travels on stdout for Codex and on
-(stderr, exit code) for Copilot. `HookOutput`'s three channels are not three
-ways of saying the same thing — they are three wires, and which one carries the
-refusal is a property of the adapter, asserted per agent by the golden tests.
+Exit 2 with the reason on stderr is Copilot's *second* route, not its only one —
+it produces `Denied by preToolUse hook: hook exited with code 2` ([run], 1.0.83).
+
+So for one `HookDecision`, the refusal travels on stdout for both agents but in
+different envelopes, and on Copilot it may travel on (stderr, exit code)
+instead. `HookOutput`'s three channels are not three ways of saying the same
+thing — they are three wires, and which one carries the refusal, in what shape,
+is a property of the adapter, asserted per agent by the golden tests.
 
 **The stdin shape differs too, and only one of the two is Claude-shaped.** Codex
 delivers snake_case with `hook_event_name` and `transcript_path` ([run],
@@ -1608,6 +1613,49 @@ name alone, a **control** was run to prove the probe discriminates.
   reports the *subsystem* and nothing downstream of it — hook trust and project
   trust are the two gates decision 5 describes, and both can be closed while
   this row reads `true`.
+- **Copilot honours a `deny` verdict on stdout — top-level only. The
+  "it ignores JSON" claim was a mis-guessed envelope, and is withdrawn.** Four
+  payload forms were run against 1.0.83 in a throwaway `COPILOT_HOME`, same
+  prompt (`Run the shell command: echo hello`), same hook, exit 0 every time,
+  varying **only** the hook's stdout ([run], 1.0.83):
+
+  | stdout | outcome |
+  |---|---|
+  | `{"permissionDecision":"deny","permissionDecisionReason":"…"}` | **blocked** — `✗ … Denied by preToolUse hook: <reason>` |
+  | `{"hookSpecificOutput":{"hookEventName":"preToolUse","permissionDecision":"deny",…}}` | ran |
+  | `{"decision":"block","reason":"…"}` (Claude Code's legacy form) | ran |
+  | `{"continue":false,"stopReason":"…"}` | ran |
+
+  The **control** is what makes the three negatives readable: the hook wrote its
+  stdin to a marker file on every one of the four runs, and the debug log
+  carries `[rust:hooks] [hook stdout] <the payload>` for each — so "verdict
+  ignored" is distinguished from "hook never fired". The positive run echoed the
+  reason string back into the refusal, which is what proves the JSON was parsed
+  as a verdict rather than fail-closed on a parse error.
+
+  Corroborated at the source, pinned to the version: the vendor artifact extracted
+  at `~/Library/Caches/copilot/pkg/darwin-arm64/1.0.83/` declares
+  `PreToolUseHookOutput` as `{permissionDecision?: "allow"|"deny"|"ask",
+  permissionDecisionReason?, modifiedArgs?, additionalContext?, suppressOutput?}`
+  — flat, no wrapper ([src], `copilot-sdk/types.d.ts:1052-1058`). The literal
+  `hookSpecificOutput` appears nowhere in the SDK types or its docs; it occurs
+  only in `prebuilds/darwin-arm64/runtime.node`, in the string region belonging
+  to `src/runtime/src/hooks/declarative.rs` ([src]) — which, per this document's
+  first gate, establishes that the name exists there and nothing about what it
+  does.
+
+  **Why it got recorded wrong, which is the reusable part.** The 2026-09-13 entry
+  and the 2026-09-14 research pass each ran one form and generalised to "JSON
+  verdicts". Neither was wrong about its own run; both were wrong to call the
+  result *Copilot's* behaviour, because the variable that decided the outcome —
+  the envelope — was held fixed and unexamined in each. The gate this adds:
+  **a probe that varies nothing is a probe of one input, and the claim it
+  licenses is about that input.** A negative result about a *class* of payloads
+  needs the class enumerated, or the parser read.
+
+  Decision 3 needs no change: `HookSupport.verdicts` already declares per-event
+  what an agent honours, and `can_block` is derived from it. Decision 2's
+  verdict-channel paragraph did, and has been rewritten above.
 
 ### Still open
 
