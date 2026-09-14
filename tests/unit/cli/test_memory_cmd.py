@@ -821,3 +821,20 @@ def test_proposals_apply_leaves_the_untouched_proposals_intact(tmp_path: Path) -
     assert [p.rule for p in remaining] == ["Verify persistence with explicit file output"]
     assert remaining[0].rationale == "A write was claimed that never happened"
     assert remaining[0].timestamp == "2026-05-27T09:30:00-03:00"
+
+
+def test_memory_dir_help_names_the_knowledge_store_not_the_runtime_dir() -> None:
+    """`--memory-dir` defaults to `memory_dir_for`, which prefers the store.
+
+    The shared option is applied to six commands, so one wrong sentence
+    mis-documents all of them. `memory_dir_for` only reaches the agent runtime
+    dir as a fallback — no usable knowledge store, or a `local/` project key.
+    """
+    from lazy_harness.cli.memory_cmd import memory
+
+    for command in (["status", "--help"], ["proposals", "list", "--help"]):
+        result = CliRunner().invoke(memory, command)
+        assert result.exit_code == 0, result.output
+        help_text = " ".join(result.output.split())
+        assert "knowledge store" in help_text, help_text
+        assert "Defaults to the agent runtime dir for this cwd" not in help_text, help_text
