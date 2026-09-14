@@ -9,8 +9,13 @@ glob rather than maintained by hand.
 
 from __future__ import annotations
 
+import importlib
+import inspect
+import typing
 from pathlib import Path
 
+from lazy_harness.agents.base import HookDecision, HookEvent
+from lazy_harness.agents.claude_code import ClaudeCodeAdapter
 from lazy_harness.hooks.loader import _BUILTIN_HOOKS
 
 _BUILTINS_DIR = Path(__file__).resolve().parents[3] / "src" / "lazy_harness" / "hooks" / "builtins"
@@ -42,12 +47,51 @@ def test_each_registered_name_maps_to_a_module_of_its_own() -> None:
     assert len(_modules_in_registry()) == len(_BUILTIN_HOOKS)
 
 
-def test_no_builtin_is_migrated_yet() -> None:
-    """The runner is wired in this step; the three hooks migrate in the next.
+#: Step 2 of `specs/designs/2026-09-13-multi-agent-harness-design.md` migrates
+#: exactly these, chosen because between them they cover all three ways a hook
+#: answers: deny via stderr and exit 2, block via stdout, and context with no
+#: verdict at all. Step 5 migrates the remaining fifteen.
+_MIGRATED_IN_STEP_2 = ["context-inject", "pre-tool-use-security", "stop-verify-guard"]
 
-    Flipping `migrated` without migrating the module sends a `main()` that
-    takes no arguments an event object, so this asserts the transitional state
-    rather than merely reading the field.
+
+def test_exactly_the_step_two_builtins_are_migrated() -> None:
+    """Flipping `migrated` and changing the signature are one change, both ways.
+
+    `True` on a module whose `main()` still takes no arguments hands it an
+    event object; `False` on one that takes an event calls it with nothing. The
+    field is what both entry points route on, so either mismatch is a hook that
+    raises on its first real invocation and nowhere earlier.
     """
     migrated = sorted(name for name, spec in _BUILTIN_HOOKS.items() if spec.migrated)
-    assert migrated == [], f"migrated before their main() changed signature: {migrated}"
+    assert migrated == _MIGRATED_IN_STEP_2
+
+
+def test_every_migrated_builtin_takes_an_event_and_returns_a_decision() -> None:
+    """The signature itself, read off the module the registry names."""
+    for name in _MIGRATED_IN_STEP_2:
+        module = importlib.import_module(_BUILTIN_HOOKS[name].module)
+        signature = inspect.signature(module.main)
+        assert list(signature.parameters) == ["event"], name
+        hints = typing.get_type_hints(module.main)
+        assert hints["event"] is HookEvent, name
+        assert hints["return"] is HookDecision, name
+
+
+def test_every_migrated_builtin_declares_the_event_it_is_wired_to() -> None:
+    """The runner's fallback when a payload does not name one — see `loader`.
+
+    `lh hook <name>` has no event flag, so a migrated hook with no declared
+    event cannot be parsed or serialised at all on that path.
+    """
+    undeclared = sorted(
+        name for name, spec in _BUILTIN_HOOKS.items() if spec.migrated and not spec.event
+    )
+    assert undeclared == []
+
+
+def test_a_declared_event_is_one_the_agent_delivers() -> None:
+    """A canonical name no adapter knows would fail only at hook time."""
+    supported = set(ClaudeCodeAdapter().hook_events())
+    for name, spec in _BUILTIN_HOOKS.items():
+        if spec.event is not None:
+            assert spec.event in supported, f"{name}: {spec.event}"

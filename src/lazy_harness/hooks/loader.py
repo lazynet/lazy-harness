@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from lazy_harness.agents.base import Operation, Signal
 from lazy_harness.core.config import Config
 from lazy_harness.core.paths import config_dir
 
@@ -26,6 +27,18 @@ class BuiltinHookSpec:
 
     module: str
     matcher: str | Mapping[str, str] | None = None
+    event: str | None = None
+    """Canonical event this hook is wired to, for a payload that does not say.
+
+    `lh hook <name>` carries no event flag and `lh hooks run` hands the runner
+    `{}`, so `hook_event_name` is not always there to read — and without an
+    event the adapter can neither parse the payload nor name the event back in
+    its output. The wiring is static (`plugins/builtins.py`), so the answer is
+    known without the payload. A payload that *does* name an event still wins,
+    and a name no adapter recognises is still a refusal rather than a fallback:
+    that is a typo, not an absence.
+    """
+
     blocking: bool = False
     """Whether this hook refuses actions, which decides its failure policy.
 
@@ -34,6 +47,25 @@ class BuiltinHookSpec:
     every crash of a guard into an approval. An informational hook degrades
     the other way, since refusing a tool call it was never meant to judge is
     worse than losing its output.
+    """
+
+    operations: frozenset[Operation] = frozenset()
+    """Tool operations this hook reasons about (decision 9 of the design).
+
+    Declared rather than left to the `matcher` regex, which names Claude Code's
+    own tools: a hook installed on another agent with a translated matcher
+    still has to be asked whether the operations it guards exist there. Empty
+    means a hook that does not look at tool calls at all.
+    """
+
+    signals: frozenset[Signal] = frozenset()
+    """Transcript signals this hook needs (decision 11 of the design).
+
+    Declared before any `TranscriptReader` exists, which is the point: a
+    boolean `requires_transcript` would re-enable `stop-verify-guard` the
+    moment some reader shipped messages and tokens, and it would then find no
+    `/goal` marker, conclude there is nothing to verify, and pass — a hook that
+    cannot fail, reported green.
     """
 
     migrated: bool = False
@@ -68,7 +100,11 @@ class HookInfo:
 
 _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
     "compound-loop": BuiltinHookSpec(module="lazy_harness.hooks.builtins.compound_loop"),
-    "context-inject": BuiltinHookSpec(module="lazy_harness.hooks.builtins.context_inject"),
+    "context-inject": BuiltinHookSpec(
+        module="lazy_harness.hooks.builtins.context_inject",
+        event="session_start",
+        migrated=True,
+    ),
     "engram-persist": BuiltinHookSpec(module="lazy_harness.hooks.builtins.engram_persist"),
     "herdr-context-gauge": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.herdr_context_gauge",
@@ -101,6 +137,10 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
     "pre-tool-use-security": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.pre_tool_use_security",
         matcher="Bash|Read|Edit|Write|NotebookEdit",
+        event="pre_tool_use",
+        blocking=True,
+        operations=frozenset({Operation.RUN_COMMAND, Operation.READ_FILE, Operation.MODIFY_FILE}),
+        migrated=True,
     ),
     "session-start-preflight": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.session_start_preflight"
@@ -110,7 +150,12 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
     "stop-context-rotate": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.stop_context_rotate"
     ),
-    "stop-verify-guard": BuiltinHookSpec(module="lazy_harness.hooks.builtins.stop_verify_guard"),
+    "stop-verify-guard": BuiltinHookSpec(
+        module="lazy_harness.hooks.builtins.stop_verify_guard",
+        event="session_stop",
+        signals=frozenset({Signal.GOAL_STATUS}),
+        migrated=True,
+    ),
     "user-prompt-goal": BuiltinHookSpec(module="lazy_harness.hooks.builtins.user_prompt_goal"),
 }
 

@@ -7,14 +7,15 @@ blocks with a reminder; the second closes regardless. The event is recorded
 either way. Gated behind `[loops] inject_goal_prompt`, the same flag its
 sibling `user_prompt_goal.py` uses — when it is off this hook does nothing.
 
-Fail-soft: every path exits 0. A hook that raises takes down the chain.
+Fail-soft: every path abstains. A hook that raises takes down the chain.
 """
 
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
+
+from lazy_harness.agents.base import HookDecision, HookEvent, Verdict
 
 _BLOCK_REASON = (
     "Esta sesión declaró un goal (/goal) y todavía no hay evidencia de que "
@@ -56,20 +57,6 @@ def _goal_declared(transcript_path: Path) -> bool:
     return False
 
 
-def _read_stdin_json() -> dict[str, object]:
-    try:
-        data = sys.stdin.read()
-    except (OSError, ValueError):
-        return {}
-    if not data.strip():
-        return {}
-    try:
-        parsed = json.loads(data)
-    except json.JSONDecodeError:
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
-
-
 def _db_path() -> Path:
     from lazy_harness.monitoring.db import resolve_db_path
 
@@ -86,59 +73,58 @@ def _injection_enabled() -> bool:
         return False
 
 
-def _emit_block(reason: str) -> None:
-    print(json.dumps({"decision": "block", "reason": reason}))
+def main(event: HookEvent) -> HookDecision:
+    """Block the first Stop of a session that declared a goal and never verified.
 
-
-def main() -> None:
+    `Verdict.BLOCK` rather than `DENY`: on a stop-class event the agent is
+    asked to keep working, not refused a tool call, and the adapter is what
+    knows those serialise differently.
+    """
     try:
         if not _injection_enabled():
-            sys.exit(0)
+            return HookDecision()
 
-        payload = _read_stdin_json()
-        session = payload.get("session_id")
-        session_id = session if isinstance(session, str) and session else ""
-        if not session_id:
-            sys.exit(0)
+        if not event.session_id:
+            return HookDecision()
 
-        from lazy_harness.hooks.builtins._shared import (
-            profile_name,
-            project_key,
-            transcript_from_payload,
-        )
+        from lazy_harness.hooks.builtins._shared import project_key
 
-        transcript_path = transcript_from_payload(payload)
-        if transcript_path is None or not _goal_declared(transcript_path):
-            sys.exit(0)
+        transcript_path = event.transcript_path
+        if transcript_path is None or not transcript_path.is_file():
+            return HookDecision()
+        if not _goal_declared(transcript_path):
+            return HookDecision()
 
-        cwd = payload.get("cwd")
-        project = project_key(Path(cwd)) if isinstance(cwd, str) and cwd else ""
-        profile = profile_name()
+        # A payload with no `cwd` parses as `Path(".")`, and a project key
+        # derived from that would label the metric with whatever directory the
+        # agent happened to spawn the hook from rather than with the project.
+        project = project_key(event.cwd) if event.cwd != Path(".") else ""
 
         from lazy_harness.monitoring.db import MetricsDB
 
         db = MetricsDB(_db_path())
 
-        if db.has_loop_event(session_id, "verify_ran"):
-            sys.exit(0)
+        if db.has_loop_event(event.session_id, "verify_ran"):
+            return HookDecision()
 
-        if db.has_loop_event(session_id, "verify_block"):
+        if db.has_loop_event(event.session_id, "verify_block"):
             db.record_loop_event(
-                session=session_id, kind="verify_skipped", project=project, profile=profile
+                session=event.session_id,
+                kind="verify_skipped",
+                project=project,
+                profile=event.profile,
             )
-            sys.exit(0)
+            return HookDecision()
 
         db.record_loop_event(
-            session=session_id, kind="verify_block", project=project, profile=profile
+            session=event.session_id,
+            kind="verify_block",
+            project=project,
+            profile=event.profile,
         )
-        _emit_block(_BLOCK_REASON)
     except Exception:
         # A hook must degrade, never crash the chain: any failure here (bad
         # payload shape, an unreadable transcript, an unwritable metrics
         # store) is swallowed so the session continues uninterrupted.
-        pass
-    sys.exit(0)
-
-
-if __name__ == "__main__":
-    main()
+        return HookDecision()
+    return HookDecision(verdict=Verdict.BLOCK, reason=_BLOCK_REASON)

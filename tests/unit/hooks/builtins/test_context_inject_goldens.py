@@ -44,11 +44,10 @@ from tests.unit.hooks.builtins._goldens import (
     golden_path,
     normalise_run,
     pinned_env,
-    run_builtin,
+    run_through_runner,
 )
 
 HOOK = "context-inject"
-MODULE = "lazy_harness.hooks.builtins.context_inject"
 
 SESSION = "0193c0de-aaaa-bbbb-cccc-ddddeeeeffff"
 OTHER_SESSION = "7fffabcd-9999-8888-7777-666655554444"
@@ -482,7 +481,7 @@ def _run(world: World, case: Case):  # noqa: ANN202 - HookRun, imported for typi
     # not another; the pinned PATH is what keeps that out of the goldens.
     assert shutil.which("qmd", path=env["PATH"]) is None
 
-    run = run_builtin(MODULE, stdin_text=stdin, cwd=world.work, env=env)
+    run = run_through_runner(HOOK, stdin_text=stdin, cwd=world.work, env=env)
 
     rules: list[tuple[str, str]] = []
     head = world.git("log", "-1", "--format=%h", check=False)

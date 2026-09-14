@@ -32,11 +32,10 @@ from tests.unit.hooks.builtins._goldens import (
     golden_path,
     normalise_run,
     pinned_env,
-    run_builtin,
+    run_through_runner,
 )
 
 HOOK = "stop-verify-guard"
-MODULE = "lazy_harness.hooks.builtins.stop_verify_guard"
 
 SESSION = "0193b0de-1111-2222-3333-444455556666"
 
@@ -201,7 +200,7 @@ def _prepare(tmp_path: Path, case: Case) -> tuple[str, dict[str, str], Path]:
 def test_golden(case: Case, tmp_path: Path) -> None:
     stdin, env, work = _prepare(tmp_path, case)
 
-    run = run_builtin(MODULE, stdin_text=stdin, cwd=work, env=env)
+    run = run_through_runner(HOOK, stdin_text=stdin, cwd=work, env=env)
 
     # The tmp tree never reaches the output, so nothing is normalised here —
     # a rule that fires would mean the hook started leaking a path.

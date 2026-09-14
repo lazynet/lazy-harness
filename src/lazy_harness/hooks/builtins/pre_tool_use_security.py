@@ -1,22 +1,21 @@
 """PreToolUse security hook — blocks destructive / exfiltration commands.
 
-Deliberately diverges from ADR-006's "exit 0 always" contract: exits 2 on
-block per Claude Code PreToolUse semantics. See spec
-`specs/designs/2026-04-17-security-hooks-cluster-design.md`.
+Deliberately diverges from ADR-006's "exit 0 always" contract: refuses with
+`Verdict.DENY`, which Claude Code's adapter serialises as stderr plus exit 2.
+See spec `specs/designs/2026-04-17-security-hooks-cluster-design.md`.
 """
 
 from __future__ import annotations
 
 import fnmatch
-import json
 import os
 import re
-import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
+from lazy_harness.agents.base import HookDecision, HookEvent, Operation, Verdict
 from lazy_harness.core.paths import config_file
 
 Category = Literal["filesystem", "sql", "terraform", "credentials", "git"]
@@ -192,21 +191,6 @@ FILE_PATH_KEYS = ("file_path", "notebook_path")
 MAX_MATCH_LEN = 120
 
 
-def _read_stdin_json() -> dict[str, Any]:
-    """Read and parse stdin as JSON; return {} on any parse error or empty input."""
-    try:
-        data = sys.stdin.read()
-    except (OSError, ValueError):
-        return {}
-    if not data.strip():
-        return {}
-    try:
-        parsed = json.loads(data)
-    except json.JSONDecodeError:
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
-
-
 def _format_block_message(decision: BlockDecision) -> str:
     """Format the stderr message surfaced back to the agent by Claude Code."""
     matched = decision.matched_text
@@ -319,29 +303,31 @@ def _log_block(decision: BlockDecision, command: str) -> None:
         pass
 
 
-def main() -> None:
-    """Entry point invoked by Claude Code as a PreToolUse hook command."""
-    payload = _read_stdin_json()
-    tool = payload.get("tool_name")
-    tool_input = payload.get("tool_input") or {}
-    allow = _load_allowlist()
-    if tool in COMMAND_TOOLS:
-        subject = str(tool_input.get("command", ""))
-        decision = should_block(subject, allow)
-    elif tool in FILE_TOOLS:
-        subject = next(
-            (str(tool_input[k]) for k in FILE_PATH_KEYS if tool_input.get(k)),
-            "",
-        )
+def main(event: HookEvent) -> HookDecision:
+    """Judge one tool call, in the operations the adapter normalised it into.
+
+    Dispatching on `Operation` rather than on Claude Code's tool names is what
+    makes the guard portable: a renamed tool on another agent still runs a
+    command or still touches a path, and the names this hook used to compare
+    against are only one agent's spelling of that.
+
+    Abstention is a bare `HookDecision()`, never `Verdict.ALLOW`: exit 0 with
+    no output is how a hook says "no objection", and approving every command
+    this guard merely fails to recognise would be the opposite statement.
+    """
+    tool = event.tool
+    if tool is None:
+        return HookDecision()
+    if tool.operation is Operation.RUN_COMMAND:
+        subject = tool.command or ""
+        decision = should_block(subject, _load_allowlist())
+    elif tool.operation in (Operation.READ_FILE, Operation.MODIFY_FILE):
+        paths = tool.paths
+        subject = str(paths[0]) if paths else ""
         decision = should_block_path(subject)
     else:
-        sys.exit(0)
+        return HookDecision()
     if decision is None:
-        sys.exit(0)
+        return HookDecision()
     _log_block(decision, subject)
-    sys.stderr.write(_format_block_message(decision))
-    sys.exit(2)
-
-
-if __name__ == "__main__":
-    main()
+    return HookDecision(verdict=Verdict.DENY, reason=_format_block_message(decision))

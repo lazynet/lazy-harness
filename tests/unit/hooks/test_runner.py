@@ -33,7 +33,8 @@ def register(
     name: str,
     main: object,
     *,
-    blocking: bool,
+    blocking: bool = False,
+    event: str | None = None,
 ) -> None:
     """Register a builtin backed by a module built for this test."""
     module_name = f"lazy_harness_test_builtin_{name.replace('-', '_')}"
@@ -43,7 +44,7 @@ def register(
     monkeypatch.setitem(
         _BUILTIN_HOOKS,
         name,
-        BuiltinHookSpec(module=module_name, blocking=blocking),
+        BuiltinHookSpec(module=module_name, blocking=blocking, event=event),
     )
 
 
@@ -91,30 +92,64 @@ def test_abstention_emits_no_permission_decision(monkeypatch: pytest.MonkeyPatch
 
 
 @pytest.mark.parametrize(
-    ("stdin_text", "reason"),
-    [("not json at all", "payload"), ("[]", "payload"), ("null", "payload")],
+    "stdin_text", ["", "   \n", "not json at all", "[]", "null", "42", '"a string"']
 )
-def test_unparseable_payload_refuses_for_a_blocking_hook(
-    monkeypatch: pytest.MonkeyPatch, stdin_text: str, reason: str
+def test_an_unreadable_payload_still_runs_the_hook(
+    monkeypatch: pytest.MonkeyPatch, stdin_text: str
 ) -> None:
-    register(monkeypatch, "guard", lambda event: HookDecision(), blocking=True)
+    """An empty payload is not a hook that cannot run, so it is not a refusal.
+
+    Every builtin already reads stdin through a helper that returns `{}` here,
+    and the byte goldens freeze what each then decides. Refusing instead would
+    make a blocking hook block every tool call on a payload it was never shown
+    -- and `lh hooks run` hands the runner `{}` by construction.
+    """
+    seen: list[HookEvent] = []
+
+    def main(event: HookEvent) -> HookDecision:
+        seen.append(event)
+        return HookDecision()
+
+    register(monkeypatch, "guard", main, blocking=True, event="pre_tool_use")
 
     result = runner.run_hook("guard", profile="lazy", stdin_text=stdin_text)
 
-    assert result.exit_code == 2
-    assert reason in result.stderr
+    assert result.exit_code == 0
+    assert result.stderr == ""
+    assert result.stdout is None
+    assert len(seen) == 1
+    assert seen[0].tool is None
 
 
-@pytest.mark.parametrize("stdin_text", ["not json at all", "[]", "null"])
-def test_unparseable_payload_lets_an_informational_hook_through(
-    monkeypatch: pytest.MonkeyPatch, stdin_text: str
+def test_a_payload_with_no_event_falls_back_to_the_declared_one(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    register(monkeypatch, "notes", lambda event: HookDecision(), blocking=False)
+    """`lh hook <name>` carries no event flag, so the registry has to answer."""
+    seen: list[HookEvent] = []
 
-    result = runner.run_hook("notes", profile="lazy", stdin_text=stdin_text)
+    def main(event: HookEvent) -> HookDecision:
+        seen.append(event)
+        return HookDecision()
+
+    register(monkeypatch, "wired", main, event="session_start")
+
+    result = runner.run_hook("wired", profile="lazy", stdin_text=json.dumps({"session_id": "s1"}))
 
     assert result.exit_code == 0
-    assert result.stderr != ""
+    assert seen[0].event == "session_start"
+
+
+def test_a_declared_event_does_not_override_one_the_payload_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The fallback fills an absence; it must not paper over a wrong name."""
+    register(monkeypatch, "notes", lambda event: HookDecision(), event="session_start")
+    payload = dict(PRE_TOOL_USE, hook_event_name="NotAnEvent")
+
+    result = runner.run_hook("notes", profile="lazy", stdin_text=json.dumps(payload))
+
+    assert result.exit_code == 0
+    assert "NotAnEvent" in result.stderr
 
 
 def test_a_raising_blocking_builtin_refuses(monkeypatch: pytest.MonkeyPatch) -> None:

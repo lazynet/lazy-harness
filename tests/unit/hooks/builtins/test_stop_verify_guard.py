@@ -9,7 +9,6 @@ event is recorded either way.
 
 from __future__ import annotations
 
-import io
 import json
 import sqlite3
 from pathlib import Path
@@ -118,14 +117,21 @@ def _no_goal_transcript(tmp_path: Path, name: str = "session.jsonl") -> Path:
     )
 
 
-def _run(monkeypatch, payload: object, capsys) -> str:
-    from lazy_harness.hooks.builtins import stop_verify_guard as mod
+def _run(monkeypatch, payload: dict[str, object]) -> str:
+    """Payload -> adapter -> guard -> adapter, and back to the bytes on stdout.
 
-    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
-    with pytest.raises(SystemExit) as exc:
-        mod.main()
-    assert exc.value.code == 0
-    return capsys.readouterr().out
+    The guard returns a `HookDecision` now, but what the agent reads is what
+    the adapter makes of it, so the assertions below stay about stdout. The
+    profile resolves the way `run_hook` resolves it, which is what carries the
+    scope into the metrics row.
+    """
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+    from lazy_harness.hooks.builtins import stop_verify_guard as mod
+    from lazy_harness.hooks.runner import resolve_profile
+
+    adapter = ClaudeCodeAdapter()
+    event = adapter.parse_hook_input("session_stop", payload, profile=resolve_profile(None))
+    return adapter.format_hook_output(event, mod.main(event)).stdout or ""
 
 
 def _recorded(db_path: Path) -> list[tuple[str, str, str]]:
@@ -135,7 +141,7 @@ def _recorded(db_path: Path) -> list[tuple[str, str, str]]:
 
 
 def test_blocks_the_first_stop_attempt_when_goal_declared_and_unverified(
-    monkeypatch, tmp_path: Path, capsys
+    monkeypatch, tmp_path: Path
 ) -> None:
     from lazy_harness.hooks.builtins import stop_verify_guard as mod
 
@@ -147,7 +153,6 @@ def test_blocks_the_first_stop_attempt_when_goal_declared_and_unverified(
     out = _run(
         monkeypatch,
         {"session_id": "s1", "transcript_path": str(transcript)},
-        capsys,
     )
 
     payload = json.loads(out)
@@ -157,7 +162,7 @@ def test_blocks_the_first_stop_attempt_when_goal_declared_and_unverified(
 
 
 def test_lets_the_second_stop_attempt_close_without_blocking(
-    monkeypatch, tmp_path: Path, capsys
+    monkeypatch, tmp_path: Path
 ) -> None:
     from lazy_harness.hooks.builtins import stop_verify_guard as mod
     from lazy_harness.monitoring.db import MetricsDB
@@ -168,15 +173,15 @@ def test_lets_the_second_stop_attempt_close_without_blocking(
     transcript = _goal_transcript(tmp_path)
     payload = {"session_id": "s1", "cwd": "/tmp", "transcript_path": str(transcript)}
 
-    first = _run(monkeypatch, payload, capsys)
-    second = _run(monkeypatch, payload, capsys)
+    first = _run(monkeypatch, payload)
+    second = _run(monkeypatch, payload)
 
     assert json.loads(first)["decision"] == "block"
     assert second == "", "the second attempt must close silently, not block again"
     assert MetricsDB(db_path).loop_event_counts() == {"verify_block": 1, "verify_skipped": 1}
 
 
-def test_never_blocks_a_third_time_either(monkeypatch, tmp_path: Path, capsys) -> None:
+def test_never_blocks_a_third_time_either(monkeypatch, tmp_path: Path) -> None:
     from lazy_harness.hooks.builtins import stop_verify_guard as mod
     from lazy_harness.monitoring.db import MetricsDB
 
@@ -186,16 +191,16 @@ def test_never_blocks_a_third_time_either(monkeypatch, tmp_path: Path, capsys) -
     transcript = _goal_transcript(tmp_path)
     payload = {"session_id": "s1", "cwd": "/tmp", "transcript_path": str(transcript)}
 
-    _run(monkeypatch, payload, capsys)
-    _run(monkeypatch, payload, capsys)
-    third = _run(monkeypatch, payload, capsys)
+    _run(monkeypatch, payload)
+    _run(monkeypatch, payload)
+    third = _run(monkeypatch, payload)
 
     assert third == ""
     assert MetricsDB(db_path).loop_event_counts() == {"verify_block": 1, "verify_skipped": 2}
 
 
 def test_stays_silent_when_verify_ran_is_already_recorded(
-    monkeypatch, tmp_path: Path, capsys
+    monkeypatch, tmp_path: Path
 ) -> None:
     from lazy_harness.hooks.builtins import stop_verify_guard as mod
     from lazy_harness.monitoring.db import MetricsDB
@@ -209,14 +214,13 @@ def test_stays_silent_when_verify_ran_is_already_recorded(
     out = _run(
         monkeypatch,
         {"session_id": "s1", "cwd": "/tmp", "transcript_path": str(transcript)},
-        capsys,
     )
 
     assert out == ""
     assert MetricsDB(db_path).loop_event_counts() == {"verify_ran": 1}
 
 
-def test_stays_silent_when_no_goal_was_declared(monkeypatch, tmp_path: Path, capsys) -> None:
+def test_stays_silent_when_no_goal_was_declared(monkeypatch, tmp_path: Path) -> None:
     from lazy_harness.hooks.builtins import stop_verify_guard as mod
     from lazy_harness.monitoring.db import MetricsDB
 
@@ -228,7 +232,6 @@ def test_stays_silent_when_no_goal_was_declared(monkeypatch, tmp_path: Path, cap
     out = _run(
         monkeypatch,
         {"session_id": "s1", "cwd": "/tmp", "transcript_path": str(transcript)},
-        capsys,
     )
 
     assert out == ""
@@ -236,7 +239,7 @@ def test_stays_silent_when_no_goal_was_declared(monkeypatch, tmp_path: Path, cap
 
 
 def test_stays_silent_when_the_transcript_is_unresolvable(
-    monkeypatch, tmp_path: Path, capsys
+    monkeypatch, tmp_path: Path
 ) -> None:
     """No transcript_path/transcriptPath/input key, or one pointing nowhere."""
     from lazy_harness.hooks.builtins import stop_verify_guard as mod
@@ -246,13 +249,13 @@ def test_stays_silent_when_the_transcript_is_unresolvable(
     monkeypatch.setattr(mod, "_db_path", lambda: db_path)
     monkeypatch.setattr(mod, "_injection_enabled", lambda: True)
 
-    out = _run(monkeypatch, {"session_id": "s1", "cwd": "/tmp"}, capsys)
+    out = _run(monkeypatch, {"session_id": "s1", "cwd": "/tmp"})
 
     assert out == ""
     assert MetricsDB(db_path).loop_event_counts() == {}
 
 
-def test_stays_silent_when_the_flag_is_off(monkeypatch, tmp_path: Path, capsys) -> None:
+def test_stays_silent_when_the_flag_is_off(monkeypatch, tmp_path: Path) -> None:
     from lazy_harness.hooks.builtins import stop_verify_guard as mod
     from lazy_harness.monitoring.db import MetricsDB
 
@@ -264,7 +267,6 @@ def test_stays_silent_when_the_flag_is_off(monkeypatch, tmp_path: Path, capsys) 
     out = _run(
         monkeypatch,
         {"session_id": "s1", "cwd": "/tmp", "transcript_path": str(transcript)},
-        capsys,
     )
 
     assert out == "", "inject_goal_prompt=false must never block"
@@ -272,7 +274,7 @@ def test_stays_silent_when_the_flag_is_off(monkeypatch, tmp_path: Path, capsys) 
 
 
 def test_records_the_repo_root_when_launched_from_an_artifact_subdirectory(
-    monkeypatch, tmp_path: Path, capsys, git_checkout
+    monkeypatch, tmp_path: Path, git_checkout
 ) -> None:
     from lazy_harness.hooks.builtins import stop_verify_guard as mod
 
@@ -288,14 +290,13 @@ def test_records_the_repo_root_when_launched_from_an_artifact_subdirectory(
             "cwd": str(git_checkout.subdir),
             "transcript_path": str(transcript),
         },
-        capsys,
     )
 
     assert _recorded(db_path) == [("verify_block", "s1", str(git_checkout.repo))]
 
 
 def test_records_the_profile_the_agent_runs_under(
-    monkeypatch, tmp_path: Path, capsys, active_profile: str
+    monkeypatch, tmp_path: Path, active_profile: str
 ) -> None:
     from lazy_harness.hooks.builtins import stop_verify_guard as mod
 
@@ -307,7 +308,6 @@ def test_records_the_profile_the_agent_runs_under(
     _run(
         monkeypatch,
         {"session_id": "s1", "cwd": "/tmp", "transcript_path": str(transcript)},
-        capsys,
     )
 
     with sqlite3.connect(db_path) as conn:
@@ -315,9 +315,14 @@ def test_records_the_profile_the_agent_runs_under(
 
 
 @pytest.mark.parametrize("session_id", [None, 42, ["s1"], {"nested": "dict"}])
-def test_exits_zero_on_valid_json_wrong_type_session_id(
-    monkeypatch, tmp_path: Path, capsys, session_id: object
+def test_stays_silent_on_a_session_id_that_is_not_a_string(
+    monkeypatch, tmp_path: Path, session_id: object
 ) -> None:
+    """A non-string session id arrives absent, never coerced.
+
+    `str(42)` would be a session key that looks real, and the guard would then
+    record a `verify_block` against it and block a session it cannot track.
+    """
     from lazy_harness.hooks.builtins import stop_verify_guard as mod
     from lazy_harness.monitoring.db import MetricsDB
 
@@ -329,38 +334,13 @@ def test_exits_zero_on_valid_json_wrong_type_session_id(
     out = _run(
         monkeypatch,
         {"session_id": session_id, "cwd": "/tmp", "transcript_path": str(transcript)},
-        capsys,
     )
 
     assert out == ""
     assert MetricsDB(db_path).loop_event_counts() == {}
 
 
-@pytest.mark.parametrize("payload", [None, 42, ["a"], "a string"])
-def test_exits_zero_on_valid_json_wrong_type_payload(
-    monkeypatch, tmp_path: Path, capsys, payload: object
-) -> None:
-    from lazy_harness.hooks.builtins import stop_verify_guard as mod
-
-    monkeypatch.setattr(mod, "_db_path", lambda: tmp_path / "m.db")
-    monkeypatch.setattr(mod, "_injection_enabled", lambda: True)
-
-    _run(monkeypatch, payload, capsys)
-
-
-def test_exits_zero_on_malformed_json(monkeypatch, tmp_path: Path, capsys) -> None:
-    from lazy_harness.hooks.builtins import stop_verify_guard as mod
-
-    monkeypatch.setattr(mod, "_db_path", lambda: tmp_path / "m.db")
-    monkeypatch.setattr(mod, "_injection_enabled", lambda: True)
-    monkeypatch.setattr("sys.stdin", io.StringIO("{not json at all"))
-
-    with pytest.raises(SystemExit) as exc:
-        mod.main()
-    assert exc.value.code == 0
-
-
-def test_exits_zero_when_the_database_is_unwritable(monkeypatch, tmp_path: Path, capsys) -> None:
+def test_exits_zero_when_the_database_is_unwritable(monkeypatch, tmp_path: Path) -> None:
     """A broken metrics store must never take down the session."""
     from lazy_harness.hooks.builtins import stop_verify_guard as mod
 
@@ -373,7 +353,6 @@ def test_exits_zero_when_the_database_is_unwritable(monkeypatch, tmp_path: Path,
     _run(
         monkeypatch,
         {"session_id": "s1", "cwd": "/tmp", "transcript_path": str(transcript)},
-        capsys,
     )
 
 

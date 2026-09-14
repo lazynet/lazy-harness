@@ -33,12 +33,11 @@ from tests.unit.hooks.builtins._goldens import (
     golden_path,
     normalise_run,
     pinned_env,
-    run_builtin,
+    run_through_runner,
     short_temp_root,
 )
 
 HOOK = "pre-tool-use-security"
-MODULE = "lazy_harness.hooks.builtins.pre_tool_use_security"
 
 
 @dataclass(frozen=True)
@@ -274,7 +273,7 @@ def _machine(tmp_path: Path, case: Case) -> Machine:
 
 def _run(base: Path, case: Case):  # noqa: ANN202 - HookRun, imported for typing only
     machine = _machine(base, case)
-    run = run_builtin(MODULE, stdin_text=case.stdin, cwd=machine.cwd, env=machine.env)
+    run = run_through_runner(HOOK, stdin_text=case.stdin, cwd=machine.cwd, env=machine.env)
     if case.short_paths:
         assert "\u2026" not in run.stderr, (
             "the message was truncated, so the golden would encode this "

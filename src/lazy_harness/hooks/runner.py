@@ -70,8 +70,19 @@ def _adapter_for(profile: str) -> AgentAdapter:
     return get_agent(cfg.agent.type)
 
 
-def _canonical_event(adapter: AgentAdapter, payload: dict) -> str:
+def _canonical_event(adapter: AgentAdapter, payload: dict, declared: str | None) -> str:
+    """Canonical event for this invocation: the payload first, the registry next.
+
+    A payload that names an event decides, including when the name is one this
+    adapter does not deliver -- that is a typo or a version skew, and resolving
+    it to the hook's wiring would hide it. A payload that names none is the
+    ordinary case on two live paths: `lh hook <name>` has no event flag, and
+    `lh hooks run` hands over `{}`. There the registry answers, because the
+    event a builtin is wired to is static.
+    """
     native = payload.get("hook_event_name")
+    if native is None and declared:
+        return declared
     for canonical, support in adapter.hook_events().items():
         if support.native_name == native:
             return canonical
@@ -87,13 +98,23 @@ def _load_main(module_path: str) -> Callable[[HookEvent], HookDecision]:
 
 
 def _parse_payload(stdin_text: str) -> dict:
+    """Payload as an object, with an unreadable one degrading to an empty one.
+
+    Not a failure the policy below resolves, because it does not stop the hook
+    from running: every builtin already reads stdin through a helper that
+    returns `{}` on empty, whitespace, malformed JSON or a non-object, and the
+    byte goldens freeze what each one then decides. A guard handed `{}` sees no
+    tool call and abstains -- which is not failing open, it is having nothing
+    to judge. Refusing here instead would block every tool call on a payload
+    the guard was never shown, and `lh hooks run` passes `{}` by construction.
+    """
+    if not stdin_text.strip():
+        return {}
     try:
         payload = json.loads(stdin_text)
-    except json.JSONDecodeError as exc:
-        raise RunnerError(f"unparseable payload: {exc}") from exc
-    if not isinstance(payload, dict):
-        raise RunnerError(f"unparseable payload: expected an object, got {type(payload).__name__}")
-    return payload
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def resolve_profile(explicit: str | None) -> str:
@@ -131,7 +152,7 @@ def run_hook(name: str, *, profile: str, stdin_text: str) -> HookOutput:
         adapter = _adapter_for(profile)
         payload = _parse_payload(stdin_text)
         event = adapter.parse_hook_input(
-            _canonical_event(adapter, payload), payload, profile=profile
+            _canonical_event(adapter, payload, spec.event), payload, profile=profile
         )
         decision = _load_main(spec.module)(event)
         return adapter.format_hook_output(event, decision)

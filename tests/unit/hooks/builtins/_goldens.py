@@ -111,6 +111,34 @@ def run_builtin(module: str, *, stdin_text: str, cwd: Path, env: dict[str, str])
     return HookRun(stdout=proc.stdout, stderr=proc.stderr, exit_code=proc.returncode)
 
 
+def run_through_runner(hook: str, *, stdin_text: str, cwd: Path, env: dict[str, str]) -> HookRun:
+    """Execute the deployed command — `lh hook <name>` — and capture three channels.
+
+    `python -m <module>` stops reaching a migrated builtin: once `main()` takes
+    a `HookEvent` the module's `__main__` block dies on the missing argument.
+    The bytes that matter were never the module's anyway — they are the ones
+    the command in `settings.json` writes, and that command is this one. It is
+    also the only path on which the adapter's `format_hook_output` reaches
+    stdout, which is exactly what the identity assertion is about.
+
+    Invoked through `-c` rather than a console script: the pinned PATH has no
+    `lh` on it, and `sys.executable` is what guarantees the interpreter that
+    has the package installed.
+    """
+    proc = subprocess.run(
+        [sys.executable, "-c", "from lazy_harness.cli.main import cli; cli()", "hook", hook],
+        input=stdin_text,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        cwd=str(cwd),
+        env=env,
+        timeout=60,
+        check=False,
+    )
+    return HookRun(stdout=proc.stdout, stderr=proc.stderr, exit_code=proc.returncode)
+
+
 def normalise_run(run: HookRun, rules: NormalisationRules) -> HookRun:
     """Apply each rule to stdout and stderr, in the order given."""
 

@@ -6,6 +6,9 @@ import re
 
 import pytest
 
+from lazy_harness.agents.base import HookDecision, Verdict
+from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
 
 def test_block_rule_is_frozen_and_has_category_pattern_reason() -> None:
     from lazy_harness.hooks.builtins.pre_tool_use_security import BlockRule
@@ -144,26 +147,6 @@ def test_should_block_invalid_allow_pattern_is_ignored() -> None:
     assert decision.rule.category == "filesystem"
 
 
-def test_read_stdin_json_returns_dict_when_valid(monkeypatch: pytest.MonkeyPatch) -> None:
-    import io
-
-    from lazy_harness.hooks.builtins.pre_tool_use_security import _read_stdin_json
-
-    monkeypatch.setattr("sys.stdin", io.StringIO('{"tool_name": "Bash"}'))
-    assert _read_stdin_json() == {"tool_name": "Bash"}
-
-
-def test_read_stdin_json_returns_empty_dict_on_invalid(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import io
-
-    from lazy_harness.hooks.builtins.pre_tool_use_security import _read_stdin_json
-
-    monkeypatch.setattr("sys.stdin", io.StringIO("not json at all"))
-    assert _read_stdin_json() == {}
-
-
 def test_format_block_message_contains_reason_category_and_hint() -> None:
     import re as _re
 
@@ -249,71 +232,50 @@ def test_load_allowlist_returns_empty_on_malformed_toml(
     assert _load_allowlist() == []
 
 
-def test_main_exits_zero_when_tool_is_not_bash(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    import io
+def _decide(payload: dict[str, object]) -> HookDecision:
+    """Drive `main()` the way the runner does: payload -> adapter -> event.
 
+    Going through the real adapter rather than hand-building a `HookEvent` is
+    the point of these tests now — the guard reads normalised operations, and a
+    hand-built event would assert against the normalisation this asserts.
+    """
     from lazy_harness.hooks.builtins import pre_tool_use_security as mod
 
-    monkeypatch.setattr("sys.stdin", io.StringIO('{"tool_name": "Read", "tool_input": {}}'))
-    with pytest.raises(SystemExit) as exc_info:
-        mod.main()
-    assert exc_info.value.code == 0
+    event = ClaudeCodeAdapter().parse_hook_input("pre_tool_use", payload, profile="")
+    return mod.main(event)
 
 
-def test_main_exits_zero_for_allowed_bash_command(
+def test_abstains_when_the_tool_reads_a_file_it_does_not_object_to(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
-    import io
-
-    from lazy_harness.hooks.builtins import pre_tool_use_security as mod
-
     monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
-    monkeypatch.setattr(
-        "sys.stdin",
-        io.StringIO('{"tool_name": "Bash", "tool_input": {"command": "ls -la"}}'),
-    )
-    with pytest.raises(SystemExit) as exc_info:
-        mod.main()
-    assert exc_info.value.code == 0
+    assert _decide({"tool_name": "Read", "tool_input": {}}).verdict is None
 
 
-def test_main_exits_two_and_writes_stderr_on_block(
-    monkeypatch: pytest.MonkeyPatch, tmp_path, capsys: pytest.CaptureFixture[str]
+def test_abstains_for_an_allowed_bash_command(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    payload = {"tool_name": "Bash", "tool_input": {"command": "ls -la"}}
+    assert _decide(payload).verdict is None
+
+
+def test_denies_with_the_block_message_as_the_reason(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
-    import io
-
-    from lazy_harness.hooks.builtins import pre_tool_use_security as mod
-
+    """The reason is the stderr bytes: the adapter writes it there on `DENY`."""
     monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
-    monkeypatch.setattr(
-        "sys.stdin",
-        io.StringIO('{"tool_name": "Bash", "tool_input": {"command": "rm -rf /tmp/foo"}}'),
-    )
-    with pytest.raises(SystemExit) as exc_info:
-        mod.main()
-    assert exc_info.value.code == 2
-    captured = capsys.readouterr()
-    assert "Blocked by lazy-harness PreToolUse" in captured.err
-    assert "filesystem" in captured.err
+    decision = _decide({"tool_name": "Bash", "tool_input": {"command": "rm -rf /tmp/foo"}})
+    assert decision.verdict is Verdict.DENY
+    assert "Blocked by lazy-harness PreToolUse" in decision.reason
+    assert "filesystem" in decision.reason
 
 
-def test_main_logs_the_block_to_hooks_log(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+def test_logs_the_block_to_hooks_log(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     """An unlogged guardrail cannot be audited — blocks must leave a trace."""
-    import io
-
-    from lazy_harness.hooks.builtins import pre_tool_use_security as mod
-
     claude_dir = tmp_path / "claude"
     monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_dir))
-    monkeypatch.setattr(
-        "sys.stdin",
-        io.StringIO('{"tool_name": "Bash", "tool_input": {"command": "rm -rf /tmp/foo"}}'),
-    )
-    with pytest.raises(SystemExit):
-        mod.main()
+
+    _decide({"tool_name": "Bash", "tool_input": {"command": "rm -rf /tmp/foo"}})
 
     log = (claude_dir / "logs" / "hooks.log").read_text()
     assert "pre-tool-use-security" in log
@@ -321,35 +283,23 @@ def test_main_logs_the_block_to_hooks_log(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert "filesystem" in log
 
 
-def test_main_does_not_log_allowed_commands(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+def test_does_not_log_allowed_commands(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     """Every Bash call passes through here; logging them all would drown the log."""
-    import io
-
-    from lazy_harness.hooks.builtins import pre_tool_use_security as mod
-
     claude_dir = tmp_path / "claude"
     monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_dir))
-    monkeypatch.setattr(
-        "sys.stdin",
-        io.StringIO('{"tool_name": "Bash", "tool_input": {"command": "ls -la"}}'),
-    )
-    with pytest.raises(SystemExit):
-        mod.main()
+
+    _decide({"tool_name": "Bash", "tool_input": {"command": "ls -la"}})
 
     assert not (claude_dir / "logs" / "hooks.log").exists()
 
 
-def test_main_exits_zero_on_empty_stdin(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-    import io
-
-    from lazy_harness.hooks.builtins import pre_tool_use_security as mod
-
+def test_abstains_when_the_payload_carries_no_tool_call(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """What an empty or unreadable payload becomes by the time it gets here."""
     monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
-    monkeypatch.setattr("sys.stdin", io.StringIO(""))
-    with pytest.raises(SystemExit) as exc_info:
-        mod.main()
-    assert exc_info.value.code == 0
+    assert _decide({}).verdict is None
 
 
 # --- file-tool path guard (moved here from permissions.deny) -----------------
@@ -433,71 +383,39 @@ def test_should_block_path_ignores_command_allow_patterns() -> None:
 
 
 @pytest.mark.parametrize("tool", ["Read", "Edit", "Write"])
-def test_main_blocks_secret_path_for_file_tools(
+def test_denies_a_secret_path_for_file_tools(
     tool: str, monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
-    import io
-    import json as _json
-
-    from lazy_harness.hooks.builtins import pre_tool_use_security as mod
-
     monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
-    payload = _json.dumps({"tool_name": tool, "tool_input": {"file_path": "/Users/x/proj/.env"}})
-    monkeypatch.setattr("sys.stdin", io.StringIO(payload))
-    with pytest.raises(SystemExit) as exc_info:
-        mod.main()
-    assert exc_info.value.code == 2
+    payload = {"tool_name": tool, "tool_input": {"file_path": "/Users/x/proj/.env"}}
+    assert _decide(payload).verdict is Verdict.DENY
 
 
-def test_main_reads_notebook_path_key(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-    import io
-    import json as _json
-
-    from lazy_harness.hooks.builtins import pre_tool_use_security as mod
-
+def test_reads_the_notebook_path_key(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """`NotebookEdit` names its path differently; both spellings are one path."""
     monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
-    payload = _json.dumps(
-        {
-            "tool_name": "NotebookEdit",
-            "tool_input": {"notebook_path": "/Users/x/secrets/nb.ipynb"},
-        }
-    )
-    monkeypatch.setattr("sys.stdin", io.StringIO(payload))
-    with pytest.raises(SystemExit) as exc_info:
-        mod.main()
-    assert exc_info.value.code == 2
+    payload = {
+        "tool_name": "NotebookEdit",
+        "tool_input": {"notebook_path": "/Users/x/secrets/nb.ipynb"},
+    }
+    assert _decide(payload).verdict is Verdict.DENY
 
 
-def test_main_allows_ordinary_path_for_file_tools(
+def test_abstains_on_an_ordinary_path_for_file_tools(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
-    import io
-    import json as _json
-
-    from lazy_harness.hooks.builtins import pre_tool_use_security as mod
-
     monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
-    payload = _json.dumps(
-        {"tool_name": "Read", "tool_input": {"file_path": "/Users/x/proj/main.py"}}
-    )
-    monkeypatch.setattr("sys.stdin", io.StringIO(payload))
-    with pytest.raises(SystemExit) as exc_info:
-        mod.main()
-    assert exc_info.value.code == 0
+    payload = {"tool_name": "Read", "tool_input": {"file_path": "/Users/x/proj/main.py"}}
+    assert _decide(payload).verdict is None
 
 
-def test_main_ignores_unrelated_tools(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-    import io
-    import json as _json
-
-    from lazy_harness.hooks.builtins import pre_tool_use_security as mod
-
+def test_abstains_on_a_tool_whose_operation_it_does_not_guard(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """`Grep` parses with `operation=None` — known to have run, nothing to judge."""
     monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
-    payload = _json.dumps({"tool_name": "Grep", "tool_input": {"pattern": ".env"}})
-    monkeypatch.setattr("sys.stdin", io.StringIO(payload))
-    with pytest.raises(SystemExit) as exc_info:
-        mod.main()
-    assert exc_info.value.code == 0
+    payload = {"tool_name": "Grep", "tool_input": {"pattern": ".env"}}
+    assert _decide(payload).verdict is None

@@ -18,9 +18,15 @@ import pytest
 BUILTINS_DIR = Path(__file__).parents[4] / "src" / "lazy_harness" / "hooks" / "builtins"
 
 # Hooks whose ImportError guard must cover every lazy_harness import.
+#
+# A *migrated* hook is not on this list and cannot be: it is no longer invoked
+# as a bare script at all. `lh hook <name>` imports it through the runner, so a
+# lazy_harness that will not import means there is no `lh` to run in the first
+# place, and the guarantee the guard carried moves to the runner's failure
+# policy. `context_inject` left this list when it migrated; the rest follow at
+# step 5 of `specs/designs/2026-09-13-multi-agent-harness-design.md`.
 GUARDED_HOOKS = [
     "compound_loop",
-    "context_inject",
     "pre_compact",
     "session_end",
     "session_export",

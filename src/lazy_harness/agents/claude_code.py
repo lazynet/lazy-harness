@@ -173,13 +173,21 @@ class ClaudeCodeAdapter:
     # and a second agent has somewhere to differ.
 
     def parse_hook_input(self, event: str, payload: dict, *, profile: str) -> HookEvent:
+        # The three string fields are read with `isinstance` rather than `str()`
+        # because `str()` on a list or an int yields something that *looks* like
+        # a session id or a path and is not one. These are what the hooks key
+        # their metrics, their memory scope and their transcript reads on, so a
+        # malformed value has to arrive as absent, not as plausible.
+        session = payload.get("session_id")
+        cwd = payload.get("cwd")
         transcript = payload.get("transcript_path")
+        declared = transcript if isinstance(transcript, str) and transcript else ""
         return HookEvent(
             event=event,
             profile=profile,
-            session_id=str(payload.get("session_id", "")),
-            cwd=Path(str(payload.get("cwd", ""))),
-            transcript_path=Path(str(transcript)) if transcript else None,
+            session_id=session if isinstance(session, str) else "",
+            cwd=Path(cwd) if isinstance(cwd, str) else Path(""),
+            transcript_path=Path(declared) if declared else None,
             tool=self._parse_tool(payload),
             tool_use_id=payload.get("tool_use_id"),
             tool_response=payload.get("tool_response"),
@@ -273,7 +281,12 @@ class ClaudeCodeAdapter:
                 body["stopReason"] = decision.reason
         if decision.suppress_output:
             body["suppressOutput"] = True
-        stdout = json.dumps(body) if body else None
+        # The trailing newline is part of the bytes, not decoration. Every hook
+        # emitted `print(json.dumps(...))` before the runner, and the design
+        # puts serialisation in exactly one place so that stays reproducible;
+        # without it here the byte goldens differ from the shipped hooks by a
+        # single character that nothing else would ever account for.
+        stdout = json.dumps(body) + "\n" if body else None
         # Exit 2 is the only channel that actually refuses a tool call, and the
         # message the user reads is the stderr text rather than the JSON. The
         # JSON still travels: Claude Code reads valid stdout whether or not the
