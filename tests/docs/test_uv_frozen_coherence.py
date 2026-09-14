@@ -32,13 +32,23 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # The surfaces that prescribe the command a human or an agent then runs: the
-# slash commands, CI, and the PR checklist. `specs/` is deliberately absent —
-# design documents and plans record what was run at the time, and rewriting
-# history to satisfy a present-day rule would be the opposite of a record.
+# slash commands, CI, the PR checklist, and the workflow rules.
+#
+# `specs/workflow/` belongs here and the first revision of this file missed it,
+# which let `doc-short-path.md` keep prescribing a gate command that rewrites
+# the lockfile. `specs/designs/` and `specs/adrs/` stay out for a reason that
+# does not apply to workflow rules: they record what was decided and run at the
+# time, and editing them to satisfy a present-day rule would be the opposite of
+# a record.
+#
+# `CLAUDE.md` is also out, and deliberately: its one mention names `uv run` as
+# the tool the project uses rather than prescribing an invocation, so matching
+# it would be a false positive.
 AUTOMATION_GLOBS = (
     ".claude/commands/*.md",
     ".github/workflows/*.yml",
     ".github/PULL_REQUEST_TEMPLATE.md",
+    "specs/workflow/*.md",
 )
 
 _UV_RUN = re.compile(r"uv run(?P<flags>(?:\s+--?[\w-]+(?:[= ][^\s`]+)?)*)")
