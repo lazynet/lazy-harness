@@ -13,10 +13,18 @@ import httpx
 from rich.console import Console
 from rich.markup import escape
 
+from lazy_harness import __version__
 from lazy_harness.agents.base import AgentAdapter
 from lazy_harness.agents.registry import AgentNotFoundError, get_agent
+from lazy_harness.core.artifact_version import ArtifactVersionReport, is_newer
 from lazy_harness.core.config import Config, ConfigError, load_config
-from lazy_harness.core.paths import agent_runtime_dir, config_file, contract_path, expand_path
+from lazy_harness.core.paths import (
+    agent_runtime_dir,
+    config_dir,
+    config_file,
+    contract_path,
+    expand_path,
+)
 from lazy_harness.core.profiles import list_profiles
 from lazy_harness.llm import LLMBackendError, LLMBackendNotFoundError
 from lazy_harness.llm.openai_compat import OpenAICompatibleBackend
@@ -310,6 +318,62 @@ def _render_memory_hygiene(console: Console, memory_dir: Path, now: datetime | N
     return ok
 
 
+def _render_artifact_versions(
+    console: Console,
+    reports: list[ArtifactVersionReport],
+    installed_version: str = __version__,
+) -> None:
+    """Report a deployed artifact written by a newer lazy-harness (decision 9).
+
+    Reporting, not refusing — a hard failure here would turn a stale artifact
+    into an unusable machine, which is exactly the silent failure this check
+    replaces. Silent when nothing is newer, same rule as
+    `_render_sink_freshness`: an absent problem prints nothing.
+    """
+    newer = [
+        r for r in reports if r.lh_version is not None and is_newer(r.lh_version, installed_version)
+    ]
+    if not newer:
+        return
+    console.print("\n[bold]Artifact versions[/bold]")
+    for r in newer:
+        console.print(
+            f"  [yellow]![/yellow] {r.profile}/{r.kind} was written by lazy-harness "
+            f"{r.lh_version}, newer than the installed {installed_version} "
+            f"— {contract_path(r.path)}"
+        )
+
+
+def _render_unhonoured_profile_agents(console: Console, cfg: Config) -> None:
+    """Report a `[profiles.<name>].agent` the deploy path does not honour yet.
+
+    `agent_for_profile` resolves the field for `.envrc` and for the artifact
+    version reader, but `deploy_hooks`, `deploy_mcp_servers` and
+    `deploy_claude_symlink` still resolve `cfg.agent.type` once for every
+    profile. A profile declaring a different agent therefore gets the global
+    agent's config shape written into its directory, and nothing says so.
+
+    Silent unless a profile actually diverges — declaring the same agent as the
+    global one is not a warning, it is a redundant but correct declaration.
+    """
+    divergent = [
+        (name, entry.agent)
+        for name, entry in cfg.profiles.items.items()
+        if entry.agent and entry.agent != cfg.agent.type
+    ]
+    if not divergent:
+        return
+    console.print("\n[bold]Profile agents[/bold]")
+    for name, agent_type in divergent:
+        console.print(
+            f"  [yellow]![/yellow] {name} declares agent '{agent_type}', but hook and MCP "
+            f"config are still generated for '{cfg.agent.type}' and written to every profile"
+        )
+    console.print(
+        "      [dim]`.envrc` honours the declaration; config generation does not yet.[/dim]"
+    )
+
+
 def _project_memory_dir(agent: AgentAdapter, cfg: Config | None) -> Path:
     """Memory dir for the current project, canonicalised across worktrees."""
 
@@ -429,6 +493,12 @@ def doctor() -> None:
 
     if not _render_memory_hygiene(console, _project_memory_dir(agent, cfg)):
         ok = False
+
+    from lazy_harness.core.artifact_version import collect_artifact_version_reports
+
+    reports = collect_artifact_version_reports(cfg, config_dir() / "profiles")
+    _render_artifact_versions(console, reports)
+    _render_unhonoured_profile_agents(console, cfg)
 
     console.print()
     if ok:

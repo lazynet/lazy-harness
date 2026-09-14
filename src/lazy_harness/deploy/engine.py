@@ -3,14 +3,28 @@
 from __future__ import annotations
 
 import json
+import shlex
 import sys
+from pathlib import PurePosixPath
 
 import click
 
+from lazy_harness import __version__
 from lazy_harness.core.config import Config
 from lazy_harness.core.paths import config_dir, expand_path
 from lazy_harness.deploy.symlinks import ensure_symlink
 from lazy_harness.hooks.loader import HookInfo
+
+# The launcher invocation every generated builtin command takes. `hook_command`
+# builds it and `_is_harness_owned` recognises it; both derive from these names
+# so the generator and the classifier cannot drift apart again.
+_LAUNCHER = "lh"
+_HOOK_SUBCOMMAND = "hook"
+
+# Written by harness versions before the launcher existed, when a generated
+# command was `{sys.executable} {path-under-builtins}`. Still recognised so a
+# redeploy prunes those entries instead of preserving them as foreign.
+_LEGACY_BUILTIN_MARKER = "lazy_harness/hooks/builtins/"
 
 
 def hook_command(hook: HookInfo) -> str:
@@ -30,8 +44,9 @@ def hook_command(hook: HookInfo) -> str:
     ship it and has no stable launcher for it.
     """
     if hook.is_builtin:
-        return f"lh hook {hook.name}"
+        return f"{_LAUNCHER} {_HOOK_SUBCOMMAND} {hook.name}"
     return f"{sys.executable} {hook.path}"
+
 
 def deploy_profiles(cfg: Config) -> None:
     """Deploy profile content as symlinks to agent config dirs."""
@@ -79,11 +94,31 @@ def _entry_commands(entry: dict) -> list[str]:
 def _is_harness_owned(command: str) -> bool:
     """Whether the harness generated this command.
 
-    Every generated command points at a builtin under
-    `lazy_harness/hooks/builtins/`, so the marker survives a change of install
-    prefix or interpreter — matching on the current `sys.executable` would not.
+    Identity is the canonical hook name inside the launcher invocation — `lh
+    hook <name>` — not the text of the command as a whole. Flags the harness
+    adds later (`--profile <name>`) change that text on every entry, and a
+    classifier keyed on text would then read its own previous output as another
+    tool's hook and preserve it alongside the new one.
+
+    The predecessor matched on a builtins path, which `hook_command` stopped
+    emitting when it moved to the launcher: it had been classifying every
+    harness hook as foreign, masked only by the separate byte-identical check
+    in `_merge_hook_blocks`.
     """
-    return "lazy_harness/hooks/builtins/" in command.replace("\\", "/")
+    normalised = command.replace("\\", "/")
+    if _LEGACY_BUILTIN_MARKER in normalised:
+        return True
+    try:
+        argv = shlex.split(normalised)
+    except ValueError:
+        return False
+    if len(argv) < 3:
+        return False
+    if PurePosixPath(argv[0]).name != _LAUNCHER:
+        return False
+    if argv[1] != _HOOK_SUBCOMMAND:
+        return False
+    return not argv[2].startswith("-")
 
 
 def _normalize_entry(entry: dict) -> tuple[dict, list[str]]:
@@ -237,6 +272,26 @@ def deploy_hooks(cfg: Config) -> None:
             for event, cmd in preserved:
                 click.echo(f"      {event:<20} {cmd[:60]}")
 
+        # Decision 9 (2026-09-13 multi-agent blast radius design): the
+        # managed section declares the version that wrote it, so a reader can
+        # tell a settings.json newer than the running binary apart from a
+        # stale one — see `lazy_harness.core.artifact_version`.
+        #
+        # Written at the document's top level, not inside the hooks block.
+        # Measured directly (a `PreToolUse` hook that denies with a unique
+        # reason string, fired via `claude -p` against a real settings file):
+        # Claude Code parses and honours a settings file carrying an unknown
+        # top-level key exactly as it does one carrying the same key inside
+        # `hooks` — both are tolerated, so that axis does not decide it.
+        # `settings["hooks"]` does: it is a `{event: [entry, ...]}` contract,
+        # and every generic reader of that shape (this repo's own
+        # `_harness_entry_count` test helper included) iterates every value
+        # as a list of entries — a scalar there breaks the harness's own
+        # readers first, which is exactly what smuggling this in as
+        # `merged["lh_version"]` did. The version of the document is a
+        # property of the document, not a hook entry, so it is written next
+        # to `hooks`, not inside it.
+        settings["lh_version"] = __version__
         settings["hooks"] = merged
         settings_file.write_text(json.dumps(settings, indent=2) + "\n")
         click.echo(f"  ✓ {name}/settings.json (hooks updated)")

@@ -1488,3 +1488,90 @@ def test_context_inject_switches_survive_round_trip_against_the_live_config(
     assert ci_after_save.qmd_suggest_enabled is False
     assert ci_after_save.qmd_suggest_top_k == 99
     assert ci_after_save.graphify_surface_enabled is False
+
+
+def test_per_profile_agent_survives_a_full_round_trip_on_a_new_document(tmp_path: Path) -> None:
+    """Config schema gate: a new field is proven by save -> load -> save -> load,
+    not by a write that returned zero. The new-document path writes every key,
+    including the ones equal to their default."""
+    from lazy_harness.core.config import (
+        AgentConfig,
+        Config,
+        HarnessConfig,
+        ProfileEntry,
+        ProfilesConfig,
+        load_config,
+        save_config,
+    )
+
+    path = tmp_path / "config.toml"
+    cfg = Config(
+        harness=HarnessConfig(version="1"),
+        agent=AgentConfig(type="claude-code"),
+        profiles=ProfilesConfig(
+            default="personal",
+            items={
+                "personal": ProfileEntry(config_dir="~/.claude-x", roots=["~/a"]),
+                "experiment": ProfileEntry(config_dir="~/.other-x", roots=["~/b"], agent="null"),
+            },
+        ),
+    )
+
+    save_config(cfg, path)
+    first = load_config(path)
+    assert first.profiles.items["experiment"].agent == "null"
+    assert first.profiles.items["personal"].agent == ""
+
+    save_config(first, path)
+    second_text = path.read_text()
+    second = load_config(path)
+
+    assert second.profiles.items["experiment"].agent == "null"
+    assert second.profiles.items["personal"].agent == ""
+
+    save_config(second, path)
+    assert path.read_text() == second_text, "the third write is not a fixed point"
+
+
+def test_per_profile_agent_merges_into_an_existing_document(tmp_path: Path) -> None:
+    """Merge-on-existing is a separate path: it skips values equal to their
+    default, so an untouched config must not grow an empty `agent` key."""
+    from lazy_harness.core.config import load_config, save_config
+
+    path = tmp_path / "config.toml"
+    path.write_text(
+        "\n".join(
+            [
+                "[harness]",
+                'version = "1"',
+                "",
+                "[agent]",
+                'type = "claude-code"',
+                "",
+                "[profiles]",
+                'default = "personal"',
+                "",
+                "# a comment the user wrote",
+                "[profiles.personal]",
+                'config_dir = "~/.claude-x"',
+                'roots = ["~/a"]',
+                "",
+            ]
+        )
+    )
+
+    cfg = load_config(path)
+    assert cfg.profiles.items["personal"].agent == ""
+
+    save_config(cfg, path)
+    after = path.read_text()
+    assert "agent" not in after.split("[profiles.personal]")[1], (
+        f"an inherited agent should not be written into the user's file:\n{after}"
+    )
+    assert "# a comment the user wrote" in after
+
+    cfg.profiles.items["personal"].agent = "null"
+    save_config(cfg, path)
+    reloaded = load_config(path)
+    assert reloaded.profiles.items["personal"].agent == "null"
+    assert "# a comment the user wrote" in path.read_text()

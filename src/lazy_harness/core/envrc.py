@@ -12,9 +12,18 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from lazy_harness import __version__
+
 BEGIN_MARKER = "# >>> lazy-harness >>>"
 END_MARKER = "# <<< lazy-harness <<<"
-NOTICE = "# Managed by `lh profile envrc` — do not edit this block by hand."
+# The version is embedded so a reader can tell a block written by an older
+# or newer harness apart from one matching the running binary (decision 9,
+# 2026-09-13 multi-agent blast radius design). `lazy_harness.core.artifact_version`
+# parses it back out with the same "lazy-harness <version>" marker text used
+# in the generated system-doc header.
+NOTICE = (
+    "# Managed by `lh profile envrc` (lazy-harness {version}) — do not edit this block by hand."
+)
 
 
 @dataclass
@@ -27,7 +36,7 @@ def _build_block(env_var: str, config_dir: Path) -> str:
     return "\n".join(
         [
             BEGIN_MARKER,
-            NOTICE,
+            NOTICE.format(version=__version__),
             f'export {env_var}="{config_dir}"',
             END_MARKER,
         ]

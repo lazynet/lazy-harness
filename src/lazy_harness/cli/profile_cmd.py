@@ -7,7 +7,7 @@ from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
 
-from lazy_harness.agents.registry import AgentNotFoundError, get_agent
+from lazy_harness.agents.registry import AgentNotFoundError, agent_for_profile, get_agent
 from lazy_harness.core.config import Config, ConfigError, load_config, save_config
 from lazy_harness.core.envrc import EnvrcResult, write_envrc
 from lazy_harness.core.move_projects import (
@@ -29,10 +29,11 @@ def deploy_envrc_for_all_profiles(cfg: Config) -> list[EnvrcResult]:
     them however they like. Raises AgentNotFoundError if cfg.agent.type is
     not registered.
     """
-    adapter = get_agent(cfg.agent.type)
-    env_var = adapter.env_var()
     results: list[EnvrcResult] = []
-    for entry in cfg.profiles.items.values():
+    for name, entry in cfg.profiles.items.items():
+        # Resolved per profile, not once above the loop: a profile declaring its
+        # own agent otherwise had every root bound to the global agent's env var.
+        env_var = agent_for_profile(cfg, name).env_var()
         config_dir = expand_path(entry.config_dir)
         for root in entry.roots:
             results.append(write_envrc(expand_path(root), env_var, config_dir))
@@ -245,13 +246,14 @@ def profile_envrc(dry_run: bool) -> None:
         raise SystemExit(1)
 
     if dry_run:
-        try:
-            adapter = get_agent(cfg.agent.type)
-        except AgentNotFoundError as e:
-            console.print(f"[red]{escape(str(e))}[/red]")
-            raise SystemExit(1)
-        env_var = adapter.env_var()
-        for entry in cfg.profiles.items.values():
+        for name, entry in cfg.profiles.items.items():
+            # Resolved the same way the real write resolves it. A dry run that
+            # names a different env var than the deploy is worse than no dry run.
+            try:
+                env_var = agent_for_profile(cfg, name).env_var()
+            except AgentNotFoundError as e:
+                console.print(f"[red]{escape(str(e))}[/red]")
+                raise SystemExit(1) from e
             config_dir = expand_path(entry.config_dir)
             for root in entry.roots:
                 root_path = expand_path(root)

@@ -28,6 +28,10 @@ class ProfileEntry:
     config_dir: str = ""
     roots: list[str] = field(default_factory=list)
     lazynorth_doc: str = ""
+    # Empty means "inherit `[agent].type`". Resolve it through
+    # `agents.registry.agent_for_profile`, never by reading this field directly:
+    # a second reader is how the deploy and run paths drift apart.
+    agent: str = ""
 
 
 @dataclass
@@ -386,6 +390,7 @@ def _parse_profiles(raw: dict[str, Any]) -> ProfilesConfig:
                 config_dir=value.get("config_dir", ""),
                 roots=value.get("roots", []),
                 lazynorth_doc=value.get("lazynorth_doc", ""),
+                agent=value.get("agent", ""),
             )
     return ProfilesConfig(default=default, items=items)
 
@@ -720,6 +725,7 @@ def _config_to_dict(cfg: Config) -> dict[str, Any]:
             "config_dir": entry.config_dir,
             "roots": entry.roots,
             "lazynorth_doc": entry.lazynorth_doc,
+            "agent": entry.agent,
         }
 
     result: dict[str, Any] = {

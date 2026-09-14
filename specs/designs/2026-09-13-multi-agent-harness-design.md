@@ -3,6 +3,7 @@
 **Status:** proposed (revision 4, 2026-09-13 — a third external review found an ordering contradiction in the sequence, an under-specified `TranscriptReader`, and a kill criterion superseded by the derived design; all three corrected below)
 **Date:** 2026-09-13
 **Derived design:** [2026-09-13-multi-agent-blast-radius-design.md](2026-09-13-multi-agent-blast-radius-design.md) — the impacts outside this seam, and the staging and rollback mechanism for this sequence.
+**Recorded as:** [ADR-041](../adrs/041-multi-agent-hook-contract.md) — the decision this document argues for, in the form the ADR index carries. `proposed`, and it stays that way until the step-4 gate runs.
 **Relates to:** [ADR-004](../adrs/004-agent-adapter-pattern.md) (agent adapter pattern), [ADR-032](../adrs/032-agent-adapter-completeness.md) (adapter completeness), [ADR-035](../adrs/035-capability-registry.md) (capability registry), [ADR-009](../adrs/009-profile-symlink-deploy.md) (profile symlink deploy), [ADR-031](../adrs/031-default-hooks-merge.md) (default hooks merge)
 
 ## Problem
@@ -1352,28 +1353,127 @@ still writes rollout JSONL (it does, at 0.154.0), and whether Copilot 1.0.83
 writes the same `events.jsonl` shape as 1.0.40 (it does, self-identifying its
 version).
 
-Still open:
+### Closed by measurement, 2026-09-13
 
-- Whether `codex exec` lets the caller pin a new session id, or only resume an
-  existing one. Determines whether `CodexAdapter` can implement
-  `SessionPinningAgent` or must reconcile the id after the fact.
-- Whether `hook_hash` is stable enough across Codex releases to compute in
-  Python — the difference between option (a) and option (b) in decision 5. This
-  is a measurement across two releases, not a judgement.
-- The minimum Codex version carrying the hook system. The adapter should probe
-  rather than assume; the previous revision's second half of this question
-  (the `bypass_hook_trust` key) is void, as no such key exists.
-- Where Codex's transcript lands once the staged SQLite migration activates, and
-  whether `state_5` is stable enough to read.
-- Copilot's actual `preToolUse` payload. The docs give two shapes, camelCase
-  (`toolName`, `toolArgs: unknown`) and a PascalCase compat mode (`tool_name`,
-  `tool_input`, and `tool_result` on post). No hook has fired locally;
-  `~/.copilot/hooks/` is still empty.
-- Whether Copilot honours `permissionDecision: "deny"` on `preToolUse` in
-  practice. Docs say command hooks fail closed on nonzero exit and **open** on
-  timeout — so a slow hook is a hook that does not protect.
-- Whether `~/.agents/skills` is genuinely scanned by Codex. `~/.codex/skills/`
-  is empty and the claim remains `source`-only.
+Each was run against the installed binary. Where a probe could be satisfied by a
+name alone, a **control** was run to prove the probe discriminates.
+
+- **`codex exec` cannot pin a new session id.** `codex exec --help` at 0.154.0
+  offers no `--session-id`; the only id-taking forms are the `resume` and `fork`
+  subcommands, whose `[SESSION_ID]` is a *previous* session. Six candidate flag
+  spellings were rejected by the argument parser (exit 2), `ConfigToml`'s 101
+  fields carry no `thread_id`/`session_id` so there is no `-c` route either, and
+  the decisive run is behavioural: `CODEX_SESSION_ID=<fixed uuid> codex exec
+  ... --json` exits 0 but the `thread.started` event carries a UUIDv7 **Codex
+  generated**, ignoring the variable. The id is born on Codex's side.
+  `CodexAdapter` therefore cannot implement `SessionPinningAgent` and must
+  reconcile the id after the fact. (`--ephemeral` exists, and suppresses session
+  files entirely.)
+
+  *Unexercised path:* the `app-server` protocol's `ThreadStartParams` was read
+  from the binary but never called. If a later design leans on `thread/start`,
+  that route needs its own live run before it is claimed.
+- **`~/.agents/skills` is genuinely scanned.** Verified in both directions with
+  `codex debug prompt-input "test"`, which renders the prompt as the model
+  receives it **without invoking the model** — deterministic and free, and the
+  right instrument for any future claim of this shape. Its
+  `<skills_instructions>` block lists `r0 = ~/.agents/skills` as a first-class
+  skill root, ahead of `~/.codex/skills/.system`. Creating
+  `~/.agents/skills/zzz-throwaway-probe/SKILL.md` made it appear in the rendered
+  listing immediately, with no restart; deleting it made it disappear while `r0`
+  remained a root. Corroborated by a live run: `codex exec -s read-only "List
+  the exact names of every skill available to you"` returned
+  `ansible-automation`, `c4-architecture`, `find-skills` and the whole `gws-*`
+  family — exactly the contents of `~/.agents/skills/`, while `~/.codex/skills/`
+  is empty. `codex features list` carries `skip_host_skill_discovery` (under
+  development, false), the switch that would turn this off.
+- **Hooks are stable at 0.154.0, and the event vocabulary is nearly ours.**
+  `codex features list` reports `hooks` as stage `stable`, effective `true`, and
+  `plugin_hooks` as `removed` — a hook design keyed on the plugin surface is
+  targeting something already withdrawn. The event names in the binary are
+  `PreToolUse`, `PermissionRequest`, `PostToolUse`, `PreCompact`, `PostCompact`,
+  `SessionStart`, `SessionEnd`, `SubagentStart`, `SubagentStop`, `Interrupt`
+  (28–84 occurrences each). Two of those, `PermissionRequest` and `Interrupt`,
+  have no Claude Code counterpart, and `SubagentStart`/`SubagentStop` do. Per
+  this document's own first gate, these are *names*: they establish that the
+  event exists, never what payload it carries or what it honours.
+- **Decision 5's "none of them emit a config key" is confirmed behaviourally.**
+  `codex exec --strict-config -c dangerously_bypass_hook_trust=true` exits 1
+  with `unknown configuration field`, while the control
+  (`-c model_reasoning_effort="low"`, same flags) exits 0 — so the rejection
+  discriminates rather than blanket-failing, and `--strict-config` is the
+  instrument for testing any future claim that a Codex config key exists. The
+  CLI flag `--dangerously-bypass-hook-trust` does exist, which decision 5
+  already records as option (c) and rejects on scope; nothing here reopens that
+  choice. Running it with no hooks configured emits a real runtime warning
+  event, so the flag is live rather than vestigial.
+- **Copilot's `preToolUse` payload is camelCase, and one documented detail is
+  wrong.** A hook registered at `~/.copilot/hooks/` on 1.0.83 and fired by
+  `copilot -p "Run the shell command: echo ..." --allow-all-tools` received,
+  literally:
+
+  ```json
+  {"sessionId":"24b1a21c-…","timestamp":1789351752544,"cwd":"…",
+   "toolName":"bash","toolArgs":{"command":"echo …","description":"Echo test string"}}
+  ```
+
+  So: the camelCase shape, not the PascalCase compat mode — which never fired
+  and remains unverified. **`toolArgs` is a nested JSON object, not a
+  JSON-encoded string**, contradicting the secondary documentation this design
+  drew it from.
+- **Copilot honours `deny`, fails closed on error, and fails OPEN on timeout.**
+  All three observed on 1.0.83, and the third is the one that matters.
+  A hook emitting `{"permissionDecision":"deny","permissionDecisionReason":…}`
+  produced `✗ … Denied by preToolUse hook: <reason>` and the command's marker
+  string never appeared anywhere — it genuinely did not run. A hook exiting 1
+  with no output produced `Denied by preToolUse hook from "<file>" (hook
+  errored)`. A hook with `timeoutSec: 2` that slept 6s was **abandoned and the
+  command executed**: the marker string is in stdout.
+
+  The consequence for this design: on Copilot, a hook's timeout budget is a
+  security parameter, not a convenience. A `pre_tool_use_security` deployed
+  there protects nothing whenever it runs slow, and `lh doctor` should report a
+  deny-carrying hook's timeout alongside its verdicts rather than treating the
+  hook as enforced because it is installed.
+- **The transcript is dual-written at 0.154.0.** The three `codex exec` runs
+  above produced both a rollout JSONL under
+  `~/.codex/sessions/2026/09/13/rollout-<ts>-<uuid>.jsonl` *and* rows in
+  `state_5.sqlite`'s `threads` table carrying the same UUIDs, with the item
+  detail in `thread_history_1.sqlite` (`thread_items`, `thread_turns`). The
+  SQLite migration is already active and the JSONL has not been withdrawn, so a
+  reader may take either; `migrate-rollouts` is the subcommand that moves the
+  legacy ones.
+
+### Still open
+
+- Whether the persisted trust hash is stable enough across Codex releases to
+  compute in Python — the difference between option (a) and option (b) in
+  decision 5.
+
+  A terminology note, since a probe over the binary raised it as a discrepancy
+  and it is not one: `hook_hash` is the **Rust function** decision 5 cites from
+  vendor source (`discovery.rs:775-791`); `trusted_hash` is the **persisted TOML
+  field** it writes, under `hooks.state."<key>".trusted_hash`. Both appear in
+  this document already and both are correct. A `strings` sweep of the 0.154.0
+  binary finds `trusted_hash` and `hooks.state.` and zero occurrences of
+  `hook_hash`, which is what a Rust function name that is never a string literal
+  looks like — absence there is not evidence the name is wrong.
+
+  **Not measurable on this machine**: only 0.154.0 is installed and the brew
+  cask retains a single version, so there is no second release to hash the same
+  declaration against. `~/.codex/config.toml` has no `[hooks]` section here — no
+  hook has ever been trusted, so `hooks.state` has never materialised and there
+  is no real value to read back. What the hash is computed *over* is documented
+  in decision 5 from source, and was not re-derived from the binary.
+
+  Measuring it requires a pinned second release installed side by side, one
+  identical hook deployed and trusted under each, and the two `trusted_hash`
+  values compared. It stays the (a)-versus-(b) question decision 5 frames it as.
+- The minimum Codex version carrying the hook system. One install cannot answer
+  it; the adapter should probe `codex features list` for a `hooks` row rather
+  than compare version numbers, which is what it should have done anyway.
+  `plugin_hooks: removed` hints that an earlier surface preceded the current
+  one, but that is inference, not a version.
 - Whether opencode's session storage is stable enough to read at all, or whether
   its `serve` HTTP API is the only defensible source.
 

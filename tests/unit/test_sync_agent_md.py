@@ -132,6 +132,35 @@ def test_sync_profiles_noop_for_null_adapter(tmp_path: Path) -> None:
     assert not (profiles_dir / "lazy" / "CLAUDE.md").exists()
 
 
+def test_generated_header_carries_the_writing_version(tmp_path: Path) -> None:
+    """Decision 9: a generated doc declares the lazy-harness version that
+    wrote it, so a stale CLAUDE.md can be told apart from a fresh one."""
+    from lazy_harness import __version__
+    from lazy_harness.core.sync_agent_md import render_agent_md
+
+    out = render_agent_md("CLAUDE", "head", "common", "tail")
+    assert f"lazy-harness {__version__}" in out
+
+
+def test_sync_profiles_redeploy_at_same_version_is_byte_identical(tmp_path: Path) -> None:
+    """Embedding lh_version must not break idempotence within one version."""
+    from lazy_harness.core.sync_agent_md import sync_profiles
+
+    profiles_dir = tmp_path / "profiles"
+    profiles_dir.mkdir()
+    _seed_common(profiles_dir)
+    _seed_profile(profiles_dir, "lazy")
+
+    sync_profiles(profiles_dir, _adapter())
+    first = (profiles_dir / "lazy" / "CLAUDE.md").read_text()
+
+    results = sync_profiles(profiles_dir, _adapter())
+    second = (profiles_dir / "lazy" / "CLAUDE.md").read_text()
+
+    assert [r.action for r in results] == ["unchanged"]
+    assert first == second
+
+
 def test_generated_header_names_a_registered_command() -> None:
     """The header tells the reader how to regenerate; it must name a real command."""
     from click import Group
