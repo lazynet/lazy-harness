@@ -85,7 +85,22 @@ The rule matters when profiles overlap: if one profile says `roots = ["~/code"]`
 
 ## Deploy flow — what `lh deploy` actually does
 
-Module: `src/lazy_harness/deploy/engine.py`. Four functions, called in this order by `cli/deploy_cmd.py`:
+Module: `src/lazy_harness/deploy/engine.py`. Four functions, called in this order by `cli/deploy_cmd.py` — preceded by a snapshot.
+
+### 0. The snapshot — taken before anything is written
+
+Every deploy snapshots first. Not on a version change, not when the plan differs from disk: unconditionally, because each of those conditions can be wrong in the direction of *no snapshot when one was needed*, and the operation is cheap enough that guarding it costs more than running it. The managed artifacts total roughly 135 KB, so the ten kept snapshots are about 1.35 MB.
+
+`deploy/snapshot.py` writes a **manifest** rather than a directory of loose files. One entry per artifact, carrying:
+
+- its absolute destination path;
+- its kind — `file`, `symlink`, or `absent` for something that does not exist yet and that a rollback must therefore **delete** rather than restore;
+- the symlink target, where that applies;
+- for a file, a content path unique **per destination**, not per basename. `~/.claude-lazy/settings.json` and `~/.claude-flex/settings.json` are two different files with one basename, so a basename-keyed backup would restore the second over the first.
+
+Snapshots land in `~/.config/lazy-harness/backups/deploy/<ts>/`, pruned to the newest ten. That namespace is separate from `backups/migrate/<ts>/` on purpose: sharing a newest-wins parent would let `lh migrate --rollback` replay a deploy's log, and let a deploy's prune delete a migration's history.
+
+`lh deploy --snapshot` records one and exits without deploying. `lh deploy --rollback` replays the newest: it restores file contents, repoints symlinks that still exist, and removes the artifacts the deploy created. The repoint is unconditional — under [ADR-009](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/009-profile-symlink-deploy.md) every profile artifact is an existing symlink, so a rollback that only recreated *missing* links would report success and change nothing.
 
 ### 1. `deploy_profiles(cfg)` — symlink profile content
 
@@ -97,7 +112,7 @@ For each profile in config:
 
 `ensure_symlink` is idempotent: if the target already exists as a symlink pointing at the correct source, it reports `"exists"` and does nothing. If the target exists but points elsewhere (a stale link from a previous setup), it unlinks and relinks.
 
-**A real file or directory at the target is not refused — it is moved aside.** `ensure_symlink` renames it to `<name>.bak` next to itself and writes the symlink in its place. That is a single slot, not a chain: if a later deploy finds another real file at the same target, the rename overwrites the previous `.bak`. Deploying over a target directory that holds hand-written content you care about is therefore a one-shot backup. `lh deploy` has no dry-run mode, so there is nothing to preview with: check the target directory yourself before the first deploy into it.
+**A real file or directory at the target is not refused — it is moved aside.** `ensure_symlink` renames it to `<name>.bak` next to itself and writes the symlink in its place. That is a single slot, not a chain: if a later deploy finds another real file at the same target, the rename overwrites the previous `.bak`. Deploying over a target directory that holds hand-written content you care about is therefore a one-shot backup. `lh deploy` still has no dry-run mode, so there is nothing to *preview* with — but the deploy snapshot above is taken before any of this runs, so `lh deploy --rollback` undoes it. The `.bak` slot and the snapshot are separate mechanisms: the snapshot restores what the harness manages, the `.bak` is what `ensure_symlink` did with a real file it found in the way.
 
 The linking is **per item**, not per directory. The target ends up with a mix of:
 

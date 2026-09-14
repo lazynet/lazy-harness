@@ -142,6 +142,8 @@ Design decisions: [ADR-008](https://github.com/lazynet/lazy-harness/blob/main/sp
 
 ## Deploy engine — `deploy/`
 
+Every `lh deploy` snapshots first. `deploy/snapshot.py` writes a manifest of the artifacts the four functions below are about to touch — one entry per destination, carrying its absolute path, its kind (`file`, `symlink`, or `absent` for something the deploy is about to create), and for a file a content path unique per destination rather than per basename, because `~/.claude-lazy/settings.json` and `~/.claude-flex/settings.json` share one. `core/backups.py` decides where it lands: `~/.config/lazy-harness/backups/deploy/<ts>/`, pruned to the newest ten, in a namespace `lh migrate --rollback` cannot reach and a deploy's prune cannot delete from. `lh deploy --rollback` replays the newest through `migrate/rollback.py`.
+
 `deploy/engine.py` has four top-level functions called by `lh deploy`:
 
 1. **`deploy_profiles(cfg)`** — for each profile, symlink every item from `~/.config/lazy-harness/profiles/<name>/*` into `<profile.config_dir>/`. Per-file symlinks (not whole-directory), idempotent.
@@ -187,7 +189,9 @@ migrate/
 ├── detector.py          — scans the system → DetectedState
 ├── planner.py           — DetectedState → MigrationPlan (ordered list of Steps)
 ├── executor.py          — runs plan with backup + automatic rollback on failure
-├── rollback.py          — serializes and replays the rollback log
+├── rollback.py          — serializes and replays the rollback log, in two
+│                          formats: a JSON list is a migration's, a dict with
+│                          `format: manifest` is a deploy snapshot's
 ├── state.py             — DetectedState, MigrationPlan, StepResult dataclasses
 ├── gate.py              — dry-run gate, user confirmation layer
 └── steps/
@@ -232,7 +236,7 @@ One file per top-level `lh` command, all based on `click`:
 - `main.py` — entrypoint + root group, maps to `lh = "lazy_harness.cli.main:cli"` in `pyproject.toml`.
 - `init_cmd.py` — interactive wizard delegating to `init/`.
 - `migrate_cmd.py` — `lh migrate`, `--dry-run`, `--rollback`.
-- `deploy_cmd.py` — `lh deploy`, triggers the three deploy functions.
+- `deploy_cmd.py` — `lh deploy`, `--snapshot`, `--rollback`; triggers the four deploy functions.
 - `hooks_cmd.py` — `lh hooks list` / `lh hooks run` / dry-run.
 - `profile_cmd.py` — `lh profile list/add/remove`.
 - `status_cmd.py` — monitoring dashboard.
