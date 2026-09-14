@@ -2,7 +2,7 @@
 
 Non-blocking. A `Read` without `offset`/`limit` pulls the entire file into
 context; on large files that is the single biggest context expense in a
-session. Emits `hookSpecificOutput.systemMessage` so the read still goes
+session. Emits a top-level `systemMessage` so the read still goes
 through and the caller sees what it is about to spend.
 
 Bypass with `LH_READ_SIZE_BYPASS=1`.
@@ -44,15 +44,16 @@ def _measure(path: Path) -> tuple[int, int] | None:
 
 
 def _emit_warning(file_path: str, lines: int, tokens: int) -> None:
+    # Top level, not inside `hookSpecificOutput`: that object accepts exactly
+    # additionalContext, permissionDecision, permissionDecisionReason and
+    # updatedInput, and discards anything else. Nested, this warning parsed
+    # without error and displayed nothing.
     output = {
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "systemMessage": (
-                f"WARN: {file_path} is {lines} lines (~{tokens} tokens) and this Read "
-                "is unbounded. Pass offset/limit for the region you need, or use Grep "
-                "to locate it first."
-            ),
-        }
+        "systemMessage": (
+            f"WARN: {file_path} is {lines} lines (~{tokens} tokens) and this Read "
+            "is unbounded. Pass offset/limit for the region you need, or use Grep "
+            "to locate it first."
+        )
     }
     print(json.dumps(output))
     _log_warning(file_path, lines, tokens)

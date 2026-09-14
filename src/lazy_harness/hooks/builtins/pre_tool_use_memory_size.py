@@ -1,6 +1,6 @@
 """PreToolUse hook: warn when MEMORY.md or CLAUDE.md edits push past ceiling.
 
-ADR-030 G2 — non-blocking. Emits hookSpecificOutput.systemMessage as a warning
+ADR-030 G2 — non-blocking. Emits a top-level systemMessage as a warning
 banner so the write goes through and the user sees a hint to trim.
 
 CLAUDE.md gets its own threshold pair (1a of the September 2026 harness
@@ -154,12 +154,8 @@ def _emit_warning(file_path: str, breach: str, kind: str) -> None:
             "procedure it would already follow. `lh memory rightsize` shows "
             "every CLAUDE.md the harness can reach and which ceiling it breaches."
         )
-    output = {
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "systemMessage": f"WARN: {kind} at {file_path} would be {breach}. {hint}",
-        }
-    }
+    # Top level, not inside `hookSpecificOutput` — see pre_tool_use_read_size.
+    output = {"systemMessage": f"WARN: {kind} at {file_path} would be {breach}. {hint}"}
     print(json.dumps(output))
     _log_warning(file_path, breach)
 

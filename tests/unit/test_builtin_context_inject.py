@@ -48,6 +48,36 @@ def test_context_inject_returns_json(tmp_path: Path) -> None:
     assert "additionalContext" in hso
 
 
+def test_the_banner_is_emitted_where_claude_code_reads_it(tmp_path: Path) -> None:
+    """`_compose_banner` was unit-tested, but nothing asserted where the banner
+    landed in the payload — which is how it shipped nested inside
+    `hookSpecificOutput`, parsed without error and discarded, for four releases.
+    Testing a composer is not testing its wiring."""
+    hook_path = (
+        Path(__file__).parent.parent.parent
+        / "src"
+        / "lazy_harness"
+        / "hooks"
+        / "builtins"
+        / "context_inject.py"
+    )
+    result = subprocess.run(
+        [sys.executable, str(hook_path)],
+        input="{}",
+        capture_output=True,
+        text=True,
+        cwd=str(tmp_path),
+        timeout=10,
+    )
+    assert result.returncode == 0
+    output = json.loads(result.stdout)
+    assert output["systemMessage"], "the banner must be a top-level field"
+    assert "systemMessage" not in output["hookSpecificOutput"], (
+        "hookSpecificOutput accepts exactly additionalContext, permissionDecision, "
+        "permissionDecisionReason and updatedInput; anything else is discarded"
+    )
+
+
 def test_context_inject_includes_git_info(tmp_path: Path) -> None:
     subprocess.run(["git", "init"], cwd=str(tmp_path), capture_output=True)
     subprocess.run(

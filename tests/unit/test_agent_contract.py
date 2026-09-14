@@ -465,7 +465,8 @@ def test_additional_context_is_nested_under_the_native_event_name() -> None:
 
 
 def test_system_message_stays_at_the_top_level() -> None:
-    """Nesting it under `hookSpecificOutput` is the bug fixed in v0.58.0."""
+    """Nested, it parses without error and is discarded — the bug four builtins
+    shipped, fixed one at a time between v0.58.0 and the systemMessage sweep."""
     import json
 
     from lazy_harness.agents.base import HookDecision
