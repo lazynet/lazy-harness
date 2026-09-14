@@ -1575,3 +1575,94 @@ def test_per_profile_agent_merges_into_an_existing_document(tmp_path: Path) -> N
     reloaded = load_config(path)
     assert reloaded.profiles.items["personal"].agent == "null"
     assert "# a comment the user wrote" in path.read_text()
+
+
+def test_per_profile_harness_binary_survives_a_full_round_trip_on_a_new_document(
+    tmp_path: Path,
+) -> None:
+    """Config schema gate for decision 11's `harness_binary`: save -> load ->
+    save -> load, not a write that returned zero. The new-document path writes
+    every key, including the ones equal to their default."""
+    from lazy_harness.core.config import (
+        AgentConfig,
+        Config,
+        HarnessConfig,
+        ProfileEntry,
+        ProfilesConfig,
+        load_config,
+        save_config,
+    )
+
+    path = tmp_path / "config.toml"
+    cfg = Config(
+        harness=HarnessConfig(version="1"),
+        agent=AgentConfig(type="claude-code"),
+        profiles=ProfilesConfig(
+            default="personal",
+            items={
+                "personal": ProfileEntry(config_dir="~/.claude-x", roots=["~/a"]),
+                "beta": ProfileEntry(
+                    config_dir="~/.agent-beta", roots=["~/b"], harness_binary="lh-beta"
+                ),
+            },
+        ),
+    )
+
+    save_config(cfg, path)
+    first = load_config(path)
+    assert first.profiles.items["beta"].harness_binary == "lh-beta"
+    assert first.profiles.items["personal"].harness_binary == ""
+
+    save_config(first, path)
+    second_text = path.read_text()
+    second = load_config(path)
+
+    assert second.profiles.items["beta"].harness_binary == "lh-beta"
+    assert second.profiles.items["personal"].harness_binary == ""
+
+    save_config(second, path)
+    assert path.read_text() == second_text, "the third write is not a fixed point"
+
+
+def test_per_profile_harness_binary_merges_into_an_existing_document(tmp_path: Path) -> None:
+    """Merge-on-existing is a separate path: it skips values equal to their
+    default, so an untouched config must not grow an empty `harness_binary`."""
+    from lazy_harness.core.config import load_config, save_config
+
+    path = tmp_path / "config.toml"
+    path.write_text(
+        "\n".join(
+            [
+                "[harness]",
+                'version = "1"',
+                "",
+                "[agent]",
+                'type = "claude-code"',
+                "",
+                "[profiles]",
+                'default = "personal"',
+                "",
+                "# a comment the user wrote",
+                "[profiles.personal]",
+                'config_dir = "~/.claude-x"',
+                'roots = ["~/a"]',
+                "",
+            ]
+        )
+    )
+
+    cfg = load_config(path)
+    assert cfg.profiles.items["personal"].harness_binary == ""
+
+    save_config(cfg, path)
+    after = path.read_text()
+    assert "harness_binary" not in after.split("[profiles.personal]")[1], (
+        f"an inherited harness_binary should not be written into the user's file:\n{after}"
+    )
+    assert "# a comment the user wrote" in after
+
+    cfg.profiles.items["personal"].harness_binary = "lh-beta"
+    save_config(cfg, path)
+    reloaded = load_config(path)
+    assert reloaded.profiles.items["personal"].harness_binary == "lh-beta"
+    assert "# a comment the user wrote" in path.read_text()

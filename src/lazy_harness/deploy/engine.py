@@ -5,11 +5,17 @@ from __future__ import annotations
 import json
 import shlex
 import sys
+from collections.abc import Collection
 from pathlib import PurePosixPath
 
 import click
 
 from lazy_harness import __version__
+from lazy_harness.agents.registry import DEFAULT_HARNESS_BINARY, binary_for_profile
+from lazy_harness.core.artifact_version import (
+    SETTINGS_BINARY_KEY,
+    extract_binary_from_settings,
+)
 from lazy_harness.core.config import Config
 from lazy_harness.core.paths import config_dir, expand_path
 from lazy_harness.deploy.symlinks import ensure_symlink
@@ -17,8 +23,9 @@ from lazy_harness.hooks.loader import HookInfo
 
 # The launcher invocation every generated builtin command takes. `hook_command`
 # builds it and `_is_harness_owned` recognises it; both derive from these names
-# so the generator and the classifier cannot drift apart again.
-_LAUNCHER = "lh"
+# so the generator and the classifier cannot drift apart again. The launcher
+# itself is per profile since decision 11 — `DEFAULT_HARNESS_BINARY` is only
+# what a profile that declares nothing gets.
 _HOOK_SUBCOMMAND = "hook"
 
 # Written by harness versions before the launcher existed, when a generated
@@ -27,10 +34,21 @@ _HOOK_SUBCOMMAND = "hook"
 _LEGACY_BUILTIN_MARKER = "lazy_harness/hooks/builtins/"
 
 
-def hook_command(hook: HookInfo, *, profile: str) -> str:
+def hook_command(
+    hook: HookInfo, *, profile: str, binary: str = DEFAULT_HARNESS_BINARY
+) -> str:
     """The command string written into the agent's settings for this hook.
 
-    Builtins go through `lh hook <name> --profile <profile>`. The profile is the
+    Builtins go through `<binary> hook <name> --profile <profile>`. The binary is
+    the one `binary_for_profile` resolves for this profile: a beta profile points
+    its hooks at a separately installed launcher without any other profile
+    noticing, which is what makes a profile the blast-radius boundary rather than
+    an installation (decision 11, 2026-09-13 multi-agent design).
+
+    It stays a bare name for the same reason the rest of the command does — see
+    below — so declaring one is a promise that it is on `PATH`, not a path.
+
+    The profile is the
     one fact a running hook needs and the one it cannot derive: it names the
     agent whose wire format the runner speaks, the config dir, the memory scope
     and the metrics label. An environment variable or a global config key would
@@ -59,9 +77,7 @@ def hook_command(hook: HookInfo, *, profile: str) -> str:
     agent's tools rather than fail visibly.
     """
     if hook.is_builtin:
-        return (
-            f"{_LAUNCHER} {_HOOK_SUBCOMMAND} {hook.name} --profile {shlex.quote(profile)}"
-        )
+        return f"{binary} {_HOOK_SUBCOMMAND} {hook.name} --profile {shlex.quote(profile)}"
     return f"{sys.executable} {hook.path}"
 
 
@@ -108,14 +124,27 @@ def _entry_commands(entry: dict) -> list[str]:
     return commands
 
 
-def _is_harness_owned(command: str) -> bool:
+def _is_harness_owned(
+    command: str, *, binaries: Collection[str] = (DEFAULT_HARNESS_BINARY,)
+) -> bool:
     """Whether the harness generated this command.
 
-    Identity is the canonical hook name inside the launcher invocation — `lh
+    Identity is the canonical hook name inside a launcher invocation — `<binary>
     hook <name>` — not the text of the command as a whole. Flags the harness
     adds later (`--profile <name>`) change that text on every entry, and a
     classifier keyed on text would then read its own previous output as another
     tool's hook and preserve it alongside the new one.
+
+    `binaries` is what `_owned_binaries` reads off the artifact being merged —
+    the launcher the file itself records as having written it, plus the one this
+    deploy is about to write, plus the default. Deriving it from the live config
+    instead is the defect this replaced: a profile rolled back off `lh-beta`
+    dropped `lh-beta` from the set, so the entries the harness's own previous
+    deploy had written became foreign and were preserved beside the new ones.
+    A config cannot answer "did I write this" — only the artifact can.
+
+    A `hook` subcommand alone is deliberately not enough to claim a command:
+    another tool modelling hooks the same way would be adopted and then pruned.
 
     The predecessor matched on a builtins path, which `hook_command` stopped
     emitting when it moved to the launcher: it had been classifying every
@@ -131,7 +160,7 @@ def _is_harness_owned(command: str) -> bool:
         return False
     if len(argv) < 3:
         return False
-    if PurePosixPath(argv[0]).name != _LAUNCHER:
+    if PurePosixPath(argv[0]).name not in binaries:
         return False
     if argv[1] != _HOOK_SUBCOMMAND:
         return False
@@ -158,8 +187,32 @@ def _normalize_entry(entry: dict) -> tuple[dict, list[str]]:
     return fixed, repairs
 
 
+def _owned_binaries(settings: dict, binary: str) -> set[str]:
+    """The launchers whose commands this settings file may legitimately carry.
+
+    Three sources, none of them the live config:
+
+    - the launcher the file records as having written it, so entries survive
+      their binary being retired from every profile;
+    - the launcher this deploy is writing, so a first deploy onto a file that
+      records nothing still recognises what it is about to generate;
+    - the default, which is what every settings.json written before the stamp
+      existed necessarily used — no released version could emit another.
+
+    The set stays closed: a launcher nobody ever deployed is never claimed.
+    """
+    owned = {DEFAULT_HARNESS_BINARY, binary}
+    recorded = extract_binary_from_settings(settings)
+    if recorded:
+        owned.add(recorded)
+    return owned
+
+
 def _merge_hook_blocks(
-    existing: object, generated: dict
+    existing: object,
+    generated: dict,
+    *,
+    binaries: Collection[str] = (DEFAULT_HARNESS_BINARY,),
 ) -> tuple[dict, list[tuple[str, str]], list[tuple[str, str, str]]]:
     """Merge harness-generated hooks over an existing settings.json hooks block.
 
@@ -194,7 +247,7 @@ def _merge_hook_blocks(
             commands = _entry_commands(entry)
             if not commands:
                 continue
-            if all(_is_harness_owned(cmd) for cmd in commands):
+            if all(_is_harness_owned(cmd, binaries=binaries) for cmd in commands):
                 continue
             # Already emitted this run — the tool's own installer wrote it and
             # config declares it too. Keeping both would run the hook twice.
@@ -220,12 +273,12 @@ def deploy_hooks(cfg: Config) -> None:
 
     effective = merge_with_defaults(cfg.hooks, agent)
 
-    def entries_for(profile: str) -> dict[str, list[str | HookEntry]]:
+    def entries_for(profile: str, binary: str) -> dict[str, list[str | HookEntry]]:
         """The hook entries one profile's settings file gets.
 
-        Built per profile because `hook_command` names the profile: a single
-        shared list would deploy every profile's hooks under whichever one
-        happened to be generated first.
+        Built per profile because `hook_command` names the profile and takes its
+        binary: a single shared list would deploy every profile's hooks under
+        whichever one happened to be generated first.
         """
         hook_entries: dict[str, list[str | HookEntry]] = {}
         for event_name, script_names in effective.items():
@@ -235,7 +288,7 @@ def deploy_hooks(cfg: Config) -> None:
             if hooks:
                 entries: list[str | HookEntry] = []
                 for hook in hooks:
-                    command = hook_command(hook, profile=profile)
+                    command = hook_command(hook, profile=profile, binary=binary)
                     if hook.matcher is not None:
                         entries.append(HookEntry(command=command, matcher=hook.matcher))
                     else:
@@ -255,12 +308,13 @@ def deploy_hooks(cfg: Config) -> None:
 
     # Whether there is anything to deploy does not depend on the profile: the
     # profile decides what each command says, not which hooks resolve.
-    if not entries_for(""):
+    if not entries_for("", DEFAULT_HARNESS_BINARY):
         click.echo("  No hooks to deploy.")
         return
 
     for name, entry in cfg.profiles.items.items():
-        agent_hooks = agent.generate_hook_config(entries_for(name))
+        binary = binary_for_profile(cfg, name)
+        agent_hooks = agent.generate_hook_config(entries_for(name, binary))
         target_dir = expand_path(entry.config_dir)
         target_dir.mkdir(parents=True, exist_ok=True)
         settings_file = target_dir / "settings.json"
@@ -277,7 +331,9 @@ def deploy_hooks(cfg: Config) -> None:
         if not isinstance(settings, dict):
             settings = {}
         existing_hooks = settings.get("hooks", {})
-        merged, preserved, repaired = _merge_hook_blocks(existing_hooks, agent_hooks)
+        merged, preserved, repaired = _merge_hook_blocks(
+            existing_hooks, agent_hooks, binaries=_owned_binaries(settings, binary)
+        )
 
         if repaired:
             backup = settings_file.with_suffix(".json.bak")
@@ -319,6 +375,11 @@ def deploy_hooks(cfg: Config) -> None:
         # property of the document, not a hook entry, so it is written next
         # to `hooks`, not inside it.
         settings["lh_version"] = __version__
+        # Declared, not inferred: the next deploy asks the file which launcher
+        # wrote these commands instead of asking the config which launchers it
+        # currently names. Retiring a binary from the config must not turn the
+        # harness's own entries into another tool's.
+        settings[SETTINGS_BINARY_KEY] = binary
         settings["hooks"] = merged
         settings_file.write_text(json.dumps(settings, indent=2) + "\n")
         click.echo(f"  ✓ {name}/settings.json (hooks updated)")
