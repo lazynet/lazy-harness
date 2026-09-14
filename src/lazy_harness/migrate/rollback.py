@@ -4,6 +4,7 @@ import json
 import shutil
 from pathlib import Path
 
+from lazy_harness.deploy.snapshot import MANIFEST_FORMAT
 from lazy_harness.migrate.state import StepResult
 
 
@@ -24,7 +25,10 @@ def apply_rollback_log(backup_dir: Path) -> list[str]:
     path = backup_dir / "rollback.json"
     if not path.is_file():
         return ["no rollback log found"]
-    ops = json.loads(path.read_text())
+    log = json.loads(path.read_text())
+    if isinstance(log, dict) and log.get("format") == MANIFEST_FORMAT:
+        return _apply_manifest(backup_dir, log)
+    ops = log
     messages: list[str] = []
     for op in ops:
         kind = op["kind"]
@@ -65,4 +69,76 @@ def apply_rollback_log(backup_dir: Path) -> list[str]:
                 messages.append(f"unknown op kind: {kind}")
         except Exception as e:  # noqa: BLE001
             messages.append(f"rollback op {kind} failed: {e}")
+    return messages
+
+
+def _restore_symlink(link: Path, target: str) -> str:
+    """Point `link` at `target`, whatever `link` is right now.
+
+    Unconditional, unlike the `restore_symlink` op above. That one acts only
+    `if not link.exists()`, which is correct for its sole producer — the script
+    removal step unlinks before recording it — and wrong for a relink, where the
+    link is still there. Under ADR-009 every profile artifact is an existing
+    symlink, so the relink is the case a deploy rollback is made of.
+    """
+    if link.is_symlink() or link.exists():
+        link.unlink()
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(target)
+    return f"relinked {link} -> {target}"
+
+
+def _restore_file(dest: Path, src: Path) -> str:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.is_symlink():
+        dest.unlink()
+    shutil.copy2(src, dest)
+    return f"restored {dest}"
+
+
+def _restore_directory(dest: Path, src: Path) -> str:
+    _clear(dest)
+    shutil.copytree(src, dest, symlinks=True)
+    return f"restored directory {dest}"
+
+
+def _remove(dest: Path) -> str:
+    if not (dest.is_symlink() or dest.exists()):
+        return f"already absent {dest}"
+    _clear(dest)
+    return f"removed {dest}"
+
+
+def _clear(path: Path) -> None:
+    """Remove whatever occupies `path`, symlink or directory or file."""
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+    elif path.is_dir():
+        shutil.rmtree(path)
+
+
+def _apply_manifest(backup_dir: Path, log: dict) -> list[str]:
+    """Replay a deploy snapshot manifest.
+
+    Separate from the migration branch above on purpose: that branch works for
+    a command nobody is changing, and its basename-keyed restore is the reason
+    this format exists.
+    """
+    messages: list[str] = []
+    for entry in log.get("entries", []):
+        dest = Path(entry["path"])
+        kind = entry.get("kind")
+        try:
+            if kind == "symlink":
+                messages.append(_restore_symlink(dest, entry["target"]))
+            elif kind == "file":
+                messages.append(_restore_file(dest, backup_dir / entry["content"]))
+            elif kind == "directory":
+                messages.append(_restore_directory(dest, backup_dir / entry["content"]))
+            elif kind == "absent":
+                messages.append(_remove(dest))
+            else:
+                messages.append(f"unknown manifest kind: {kind}")
+        except Exception as e:  # noqa: BLE001
+            messages.append(f"restore of {dest} failed: {e}")
     return messages
