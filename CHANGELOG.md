@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.64.0](https://github.com/lazynet/lazy-harness/compare/v0.63.0...v0.64.0) (2026-09-14)
+
+
+### Features
+
+* **deploy:** snapshot and rollback for lh deploy ([#279](https://github.com/lazynet/lazy-harness/issues/279)) ([47e536c](https://github.com/lazynet/lazy-harness/commit/47e536c1720ec98f47af191d4efeea96fd1b6577))
+* per-profile harness binary ([#276](https://github.com/lazynet/lazy-harness/issues/276)) ([d844ca7](https://github.com/lazynet/lazy-harness/commit/d844ca7a48d0f5ceb835c679ce9beac5103d6ae6))
+
+
+### Bug Fixes
+
+* **build:** hold specs/workflow to the --frozen rule too ([#281](https://github.com/lazynet/lazy-harness/issues/281)) ([707be70](https://github.com/lazynet/lazy-harness/commit/707be7089afc84cfb5a194dad21adb5fa9a61cb0))
+* **build:** pass --frozen to every prescribed uv run ([#280](https://github.com/lazynet/lazy-harness/issues/280)) ([35778ea](https://github.com/lazynet/lazy-harness/commit/35778eaae8ac2563acc5409fed6451b6da7240b7))
+* check doc flags against the click tree, and point --memory-dir help at the store ([#278](https://github.com/lazynet/lazy-harness/issues/278)) ([1d26e67](https://github.com/lazynet/lazy-harness/commit/1d26e67e7baaaab856ad57a7152f7d6165ebd982))
+
+
+### Documentation
+
+* **deploy:** describe the snapshot that precedes every deploy ([f620dcc](https://github.com/lazynet/lazy-harness/commit/f620dcc90e31a63dd840dcdcec24bea656720fc7))
+
 ## [0.63.0](https://github.com/lazynet/lazy-harness/compare/v0.62.0...v0.63.0) (2026-09-14)
 
 
