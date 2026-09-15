@@ -219,7 +219,7 @@ def _planner_for(cfg: Config, profile: str) -> ConfigPlanner:
     """
     agent = agent_for_profile(cfg, profile)
     if not isinstance(agent, ConfigPlanner):
-        raise ConfigPlannerRequiredError(profile, agent.name())
+        raise ConfigPlannerRequiredError(profile, agent.name)
     return agent
 
 
