@@ -121,17 +121,17 @@ It took three runs, and **the pass is composite** — no single binary passed
 every property in one run, and saying otherwise would be the exact failure this
 ADR's own *Evidence standard* names:
 
-- **Run 1**, against 0.66.0: a hook fires and a blocking hook refuses; the
+- **Run 1**, against the installed 0.66.0 binary: a hook fires and a blocking hook refuses; the
   third question — a hook whose declared signals the agent cannot supply —
   fails. Three production defects (#292). Recorded in
   `/tmp/step4-gate-result.md`.
-- **Run 2**, against 0.67.0: the full gate. A hook fires, a blocking hook
+- **Run 2**, against the installed 0.67.0 binary: the full gate. A hook fires, a blocking hook
   refuses, and an unsupported hook is omitted from the artifact, named in the
   deploy output and named again by `lh doctor` — all through a real `codex
-  exec`. It fails on the rule the first two runs never looked at: each hook's
+  exec`. It fails on the rule no run had looked at yet: each hook's
   log line landing in the profile that invoked it. Two more defects (#300).
   Recorded in `/tmp/step4-gate-rerun.md`.
-- **Run 3**, against the installed 0.67.1 binary rather than a worktree: the
+- **Run 3**, against the installed 0.67.1 binary: the
   isolation half only, with the first three assertions explicitly not re-run.
   Pass, exit 0, `/tmp/f7-gate/run-0.67.1.log`.
 
@@ -162,8 +162,10 @@ the part worth carrying forward:
   `main_fn()` with no arguments, so the `--profile` value is parsed and
   discarded — but only eight of them write `hooks.log` at all, and the gate's
   known-gap list names seven of those eight, which leaked 28 lines in the
-  passing run. The eighth, `pre-compact`, is absent from the count because no
-  fixture scenario fires it, not because it is fixed. That is the known gap,
+  passing run. The eighth, `pre-compact`, is absent from that list because the
+  gate never invokes it at all — not because it is fixed and not because
+  anything about it is hard to fire: `pre_compact.py:185` writes its `fired`
+  line unconditionally, as `session-export` does. That is the known gap,
   tracked to step 5 in `specs/backlog.md`, and a `PASS` does not mean nothing
   leaks — it means the *migrated* hooks are isolated.
 - **The gate discriminates.** It exits 1 against 0.67.0, and it also exits 1

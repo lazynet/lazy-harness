@@ -1494,8 +1494,8 @@ against a version that will not ship.
 > its reason on every run. Of the fifteen unmigrated builtins, the eight that
 > resolve `hooks.log` globally are counted rather than failed — the gate's
 > known-gap list names seven of those eight, which leaked 28 lines in the
-> passing run, `pre-compact` being absent only because no fixture scenario
-> fires it — because
+> passing run; the eighth, `pre-compact`, is simply never invoked by the gate,
+> and writes its `fired` line unconditionally when it is — because
 > `cli/hooks_cmd.py` calls `main_fn()` with no arguments on that branch and the
 > `--profile` value dies in the dispatch. That is step 5's, and it is a
 > *contract* defect rather than a hook defect, which is exactly why a gate
@@ -1805,11 +1805,17 @@ ship broken while every test passes.
     threw it away. `_shared.agent_dir_for` is now the one importable place that
     joins the adapter and the directory.
 
-  Two adjacent surfaces are *not* covered by these fixes and stay open: the four
-  pre-runner builtins (`session_export`, `session_end`, `compound_loop`,
-  `engram_persist`) and `pre_compact` still resolve `cfg.agent.type` globally,
-  because they take no `HookEvent` and so have no profile to resolve against —
-  they are the same defect awaiting the runner migration, not a decision.
+  What these fixes do *not* cover stays open, and the count is by mechanism
+  rather than by grep: eight unmigrated builtins still resolve their
+  `hooks.log` directory globally — `session_export`, `session_end`,
+  `compound_loop`, `pre_compact`, `pre_tool_use_memory_size`,
+  `pre_tool_use_read_size`, `post_tool_use_format` and
+  `post_tool_use_ansible_lint` — plus `knowledge/compound_loop_worker.py`
+  outside the hook process. They take no `HookEvent` and so have no profile to
+  resolve against: the same defect awaiting the runner migration, not a
+  decision. `engram_persist` and `post_tool_use_sync_claude` resolve the global
+  agent too but write no `hooks.log`, so they are not on this list.
+  `specs/backlog.md` carries the per-site inventory.
 - **The kill criteria are measured at the horizon**, from the metrics store,
   not from memory.
 
