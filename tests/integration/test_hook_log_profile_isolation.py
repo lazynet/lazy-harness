@@ -400,3 +400,64 @@ def test_session_start_preflight_reads_the_invoked_profiles_credentials(
     body = json.loads(result.output)["hookSpecificOutput"]["additionalContext"]
     assert "- **auth** [FAIL] — refresh token expired" in body
     assert "All clear" not in body
+#: Long enough to clear `_MIN_CHARS` and carrying an action verb, so
+#: `is_non_trivial` admits it through the verb branch.
+_WORK_PROMPT = "implementá el hook y agregá el test"
+
+
+def _user_prompt_goal_payload(cwd: Path) -> dict[str, object]:
+    return {
+        "hook_event_name": "UserPromptSubmit",
+        "session_id": "isolation-test",
+        "prompt": _WORK_PROMPT,
+        "cwd": str(cwd),
+    }
+
+
+def test_user_prompt_goal_labels_its_loop_event_with_the_invoked_profile(
+    harness_config: Path, metrics_elsewhere: Path, tmp_path: Path
+) -> None:
+    """This hook's whole per-profile surface is one column, not a directory.
+
+    `user-prompt-goal` writes nowhere under the agent's runtime dir — no log,
+    no cursor, no export — so the `hooks.log` half of this gate has nothing to
+    say about it. What it does write is a `loop_events` row, and that row used
+    to be labelled with `profile_name()`, which reads the *ambient*
+    `CLAUDE_CONFIG_DIR` and answers `""` when it is unset. Every hook invoked
+    under an explicit `--profile` therefore recorded an unattributed row into a
+    store both profiles share. `event.profile` is the flag the command carries.
+    """
+    import sqlite3
+
+    exit_code = _run_hook("user-prompt-goal", "gate", _user_prompt_goal_payload(tmp_path))
+
+    assert exit_code == 0
+    with sqlite3.connect(metrics_elsewhere / "metrics.db") as conn:
+        rows = conn.execute(
+            "SELECT profile FROM loop_events WHERE session = ? AND kind = 'nontrivial_prompt'",
+            ("isolation-test",),
+        ).fetchall()
+    assert rows == [("gate",)]
+
+
+def test_user_prompt_goal_writes_nothing_outside_the_invoked_profile(
+    harness_config: Path, metrics_elsewhere: Path, home_dir: Path, tmp_path: Path
+) -> None:
+    """A guard rather than a witness, and the difference is worth naming.
+
+    The test above fails against the unmigrated hook; this one does not, and
+    cannot — the hook resolves no agent directory at all today, so there is no
+    leak for it to catch. It is here because the migration is what first hands
+    this hook a profile, and the cheapest way for a later change to spend that
+    profile is to start writing a log line with it. Then this assertion is the
+    one that notices.
+    """
+    other = tmp_path / "other-home"
+    before_home = _files_under(home_dir)
+    before_other = _files_under(other) if other.exists() else set()
+
+    exit_code = _run_hook("user-prompt-goal", "gate", _user_prompt_goal_payload(tmp_path))
+
+    assert exit_code == 0
+    assert _files_under(home_dir) == before_home
+    assert (_files_under(other) if other.exists() else set()) == before_other

@@ -224,6 +224,12 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
     "user-prompt-goal": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.user_prompt_goal",
         event="user_prompt_submit",
+        # No `signals`: this hook reads `event.prompt` and nothing else. The
+        # goal *verdict* it feeds -- `goal_declared`/`goal_absent` -- is graded
+        # by the compound-loop worker from the transcript, out of process, so
+        # declaring one here would make `deploy` omit a working sensor on any
+        # agent whose reader cannot supply a signal the hook never touches.
+        migrated=True,
     ),
 }
 

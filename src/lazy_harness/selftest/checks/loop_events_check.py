@@ -1,9 +1,9 @@
 """Post-release check: drive the loop-event hooks and read back what they wrote.
 
 Unit tests import the hooks and call their functions. The agent instead runs
-them as scripts, in a different interpreter, against a real repository — and
-two attribution bugs reached a release through exactly that gap. This check
-closes it: it builds a throwaway git repo, runs the hook files the installed
+them in a different interpreter, against a real repository — and two
+attribution bugs reached a release through exactly that gap. This check
+closes it: it builds a throwaway git repo, drives the hooks the installed
 package actually ships, and asserts on the rows in the resulting store.
 """
 
@@ -15,20 +15,20 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 from lazy_harness.selftest.result import CheckResult, CheckStatus
 
 GROUP = "loop-events"
+
+#: How the check drives one hook: `(name, payload, env)`, returning "" on
+#: success and the failure text otherwise. The one seam a test can stand in
+#: for now that both hooks here are migrated — see `_run_hook`.
+HookInvoker = Callable[[str, dict[str, str], dict[str, str]], str]
+
 _PROMPT = "implementá el hook y agregá el test"
 _PROFILE = "selftest"
-
-
-def _builtin_hooks_dir() -> Path:
-    """Directory of the hook scripts in the package that is running."""
-    from lazy_harness.hooks import builtins
-
-    return Path(builtins.__file__).parent
 
 
 def _fail(name: str, message: str) -> CheckResult:
@@ -67,43 +67,30 @@ def _write_config(root: Path, db_path: Path, profile_dir: Path) -> None:
     )
 
 
-def _invocation(hook: Path, name: str) -> list[str] | str:
-    """How the agent runs this hook today, or why it cannot be run.
+def _run_hook(name: str, payload: dict[str, str], env: dict[str, str]) -> str:
+    """Run a hook the way the agent does. Returns '' on success.
 
-    Two shapes, and the registry is what decides between them. A pre-runner
-    builtin is still a bare script the agent executes by path. A migrated one
-    is not a script at all: its `main()` takes a `HookEvent` and the module has
-    no `__main__` block, so `python session_end.py` reads stdin from nobody,
-    calls nothing and exits 0 — a check that kept doing that would report a
-    green run against a hook it never invoked, which is what this whole check
-    exists to prevent.
+    One shape, because every hook this check drives is migrated: a migrated
+    builtin is not a script at all. Its `main()` takes a `HookEvent` and the
+    module has no `__main__` block, so `python user_prompt_goal.py` reads stdin
+    from nobody, calls nothing and exits 0 — the same exit code the working
+    hook returns, which is how a check that kept executing files would report a
+    green run against hooks it never invoked.
+
+    `--profile` is passed explicitly: it is what the deployed command carries
+    and what the `profile-recorded` expectation below is about.
     """
-    from lazy_harness.hooks.loader import _BUILTIN_HOOKS
+    from lazy_harness.hooks.engine import CLI_BOOTSTRAP
 
-    spec = _BUILTIN_HOOKS.get(name)
-    if spec is not None and spec.migrated:
-        from lazy_harness.hooks.engine import CLI_BOOTSTRAP
-
-        return [sys.executable, "-c", CLI_BOOTSTRAP, "hook", name, "--profile", _PROFILE]
-    if not hook.is_file():
-        return f"{hook.name} not found in {hook.parent}"
-    return [sys.executable, str(hook)]
-
-
-def _run_hook(hook: Path, name: str, payload: dict[str, str], env: dict[str, str]) -> str:
-    """Run a hook the way the agent does. Returns '' on success."""
-    argv = _invocation(hook, name)
-    if isinstance(argv, str):
-        return argv
     proc = subprocess.run(
-        argv,
+        [sys.executable, "-c", CLI_BOOTSTRAP, "hook", name, "--profile", _PROFILE],
         input=json.dumps(payload),
         capture_output=True,
         text=True,
         env=env,
     )
     if proc.returncode != 0:
-        return f"{hook.name} exited {proc.returncode}: {proc.stderr.strip()[:200]}"
+        return f"{name} exited {proc.returncode}: {proc.stderr.strip()[:200]}"
     return ""
 
 
@@ -116,18 +103,21 @@ def _rows(db_path: Path, kind: str) -> list[tuple[str, str]]:
         ).fetchall()
 
 
-def check_loop_events(*, hooks_dir: Path | None = None) -> list[CheckResult]:
+def check_loop_events(*, invoke: HookInvoker | None = None) -> list[CheckResult]:
     """Verify loop-event attribution end to end against the running package.
 
-    `hooks_dir` overrides where the *pre-runner* hook scripts are read from; a
-    migrated builtin is reached through `lh hook <name>` and ignores it, because
-    that is the only path the agent has left to it.
+    `invoke` replaces how each hook is run, and exists so that a test can feed
+    this checker a case it must *fail* as well as one it must pass. It replaced
+    a `hooks_dir` override that named a directory of hook scripts: once both
+    hooks here were migrated nothing read that directory any more, so passing
+    it changed nothing and the red test it existed for went green against a
+    checker that was working fine.
     """
-    hooks = hooks_dir if hooks_dir is not None else _builtin_hooks_dir()
+    run = invoke if invoke is not None else _run_hook
 
     try:
         with tempfile.TemporaryDirectory(prefix="lh-loop-events-") as tmp:
-            return _probe(Path(tmp), hooks)
+            return _probe(Path(tmp), run)
     except FileNotFoundError:
         return [
             CheckResult(
@@ -143,7 +133,7 @@ def check_loop_events(*, hooks_dir: Path | None = None) -> list[CheckResult]:
         return [_fail("probe", f"{type(e).__name__}: {e}")]
 
 
-def _probe(root: Path, hooks: Path) -> list[CheckResult]:
+def _probe(root: Path, run: HookInvoker) -> list[CheckResult]:
     repo, subdir, worktree = _build_repo(root)
     db_path = root / "metrics.db"
     profile_dir = root / "agent-config"
@@ -155,23 +145,13 @@ def _probe(root: Path, hooks: Path) -> list[CheckResult]:
     env["CLAUDE_CONFIG_DIR"] = str(profile_dir)
 
     results: list[CheckResult] = []
-    prompt_hook = hooks / "user_prompt_goal.py"
-    end_hook = hooks / "session_end.py"
 
-    for hook, name, payload in (
-        (
-            prompt_hook,
-            "user-prompt-goal",
-            {"session_id": "s1", "prompt": _PROMPT, "cwd": str(subdir)},
-        ),
-        (
-            prompt_hook,
-            "user-prompt-goal",
-            {"session_id": "s2", "prompt": _PROMPT, "cwd": str(worktree)},
-        ),
-        (end_hook, "session-end", {"session_id": "s3", "cwd": str(subdir)}),
+    for name, payload in (
+        ("user-prompt-goal", {"session_id": "s1", "prompt": _PROMPT, "cwd": str(subdir)}),
+        ("user-prompt-goal", {"session_id": "s2", "prompt": _PROMPT, "cwd": str(worktree)}),
+        ("session-end", {"session_id": "s3", "cwd": str(subdir)}),
     ):
-        error = _run_hook(hook, name, payload, env)
+        error = run(name, payload, env)
         if error:
             results.append(_fail("hook-run", error))
 
