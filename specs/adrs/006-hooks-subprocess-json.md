@@ -33,7 +33,7 @@ Wiring:
   ```
 - **Deployment.** `lh deploy` walks the config, resolves each declared hook to a path, and writes the agent-native hook config. For Claude Code that means generating the `hooks` section of `settings.json` with entries like `{"type": "command", "command": "<python> <hook-path>"}`. See `src/lazy_harness/deploy/engine.py` and `ClaudeCodeAdapter.generate_hook_config`.
 - **Execution.** At runtime the agent itself spawns the hook. The framework never runs hooks in-process. `src/lazy_harness/hooks/engine.py` exists for programmatic testing (`lh hooks run`, test suite) and is not on the normal execution path.
-- **Output shape.** Hooks that inject additional context print a JSON object with `hookSpecificOutput.additionalContext` and optional `systemMessage` (see `context-inject` and `pre-compact`). Hooks that only perform side effects print nothing and exit 0. Hooks **always exit 0** — any failure is logged to `~/.claude/logs/hooks.log` but never propagates to the agent.
+- **Output shape.** Hooks that inject additional context print a JSON object with `hookSpecificOutput.additionalContext` and optional `systemMessage` (see `context-inject` and `pre-compact`). Hooks that only perform side effects print nothing and exit 0. Hooks **always exit 0** — any failure is logged to the profile's own `logs/hooks.log` but never propagates to the agent.
 
 ## Alternatives considered
 
@@ -47,7 +47,7 @@ Wiring:
 
 - Writing a user hook is trivial: any script that reads `sys.stdin`, does its work, and optionally prints JSON. Tests live under `tests/hooks/` and invoke the script file directly with a fake payload.
 - Built-in and user hooks are indistinguishable at the execution layer. The only difference is the lookup in `resolve_hook()`.
-- Each hook owns its own error handling and logging. The built-ins write to `~/.claude/logs/hooks.log` via a small helper pattern; failures there are still swallowed, because the contract is "always exit 0".
+- Each hook owns its own error handling and logging. The built-ins write to `logs/hooks.log` under the runtime directory of the profile they ran under, via a small helper pattern; failures there are still swallowed, because the contract is "always exit 0".
 - Because hooks are independent subprocess invocations, they cannot share in-memory state. State that needs to persist across events goes through the filesystem: `compound-loop` drops task files in `~/.claude/queue/`, `pre-compact` writes `memory/pre-compact-summary.md`, `session-export` writes into the knowledge directory.
 - The JSON protocol is the interoperability hinge. Adding a second agent ([ADR-004](004-agent-adapter-pattern.md)) does not require touching any hook — the adapter translates `cfg.hooks` events to that agent's native format.
 

@@ -320,7 +320,7 @@ Rules of the allowlist:
 - If `config.toml` cannot be read or the section is missing, the allowlist is empty. This is fail-safe: stricter blocking, never weaker.
 - Matching is per-command, not per-rule. One pattern can rescue any block rule it covers.
 
-**Where it writes:** nowhere on disk. Logs go to the standard `~/.claude/logs/hooks.log` like every other built-in.
+**Where it writes:** nowhere on disk. Blocks are logged to `logs/hooks.log` inside the runtime directory of the profile the hook ran under, like every other built-in.
 
 The full rule list and the rationale behind each category live in [`specs/designs/2026-04-17-security-hooks-cluster-design.md`](https://github.com/lazynet/lazy-harness/blob/main/specs/designs/2026-04-17-security-hooks-cluster-design.md).
 
@@ -779,6 +779,6 @@ Hooks are ordered within an event. They run sequentially in the order you declar
 
 ## Observability
 
-Every built-in hook appends a line to `~/.claude/logs/hooks.log` with its name, the cwd, and what it did (or why it skipped). The compound-loop worker logs to `~/.claude/logs/compound-loop.log`. Both files rotate in place once they exceed 100 KB, keeping the last 500 lines.
+Every built-in hook appends a line to `logs/hooks.log` with its name, the cwd, and what it did (or why it skipped), and the compound-loop worker logs to `compound-loop.log` beside it. Both live in the agent runtime directory of the profile the hook ran under, not at a fixed path: that is `~/.claude/` on a single-profile Claude Code install, and each profile's own `config_dir` once you declare profiles — see [profiles and deploy](profiles-and-deploy.md). Both files rotate in place once they exceed 100 KB, keeping the last 500 lines.
 
 `lh status hooks` surfaces a summary view over `hooks.log` so you do not have to tail it by hand.

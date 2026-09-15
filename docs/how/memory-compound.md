@@ -288,7 +288,7 @@ Changes take effect on the next session — the producer and worker both reload 
 ## Debugging
 
 ```bash
-# Is the producer firing?
+# Is the producer firing?  (swap ~/.claude for the profile's own config_dir)
 tail -f ~/.claude/logs/hooks.log
 
 # Is the worker running?
