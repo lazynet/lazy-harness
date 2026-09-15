@@ -163,3 +163,37 @@ def test_envrc_dry_run_names_the_same_env_var_the_real_write_uses(
 
     assert "OTHER_CONFIG_DIR" in written
     assert ("CLAUDE_CONFIG_DIR" in result.output) == ("CLAUDE_CONFIG_DIR" in written)
+
+
+@pytest.mark.parametrize("profile", ["daily", "gate"])
+def test_the_deploy_and_the_runner_resolve_one_profile_to_the_same_agent(
+    profile: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two paths answer one question, so a test invokes both and asserts they agree.
+
+    Deploy writes a profile's config in the shape `_planner_for` resolves; the
+    runner speaks the wire format `_adapter_for` resolves into that same config
+    dir. The step 4 contract gate found them disagreeing — deploy wrote Codex's
+    `hooks.json` for a `agent = "codex"` profile while the runner emitted Claude
+    Code's refusal — by running both halves and comparing bytes, because no test
+    invoked both.
+    """
+    from lazy_harness.core.config import load_config
+    from lazy_harness.deploy.engine import _planner_for
+    from lazy_harness.hooks.runner import _adapter_for
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        '[harness]\nversion = "1"\n\n[agent]\ntype = "claude-code"\n\n'
+        '[profiles]\ndefault = "daily"\n\n'
+        f'[profiles.daily]\nconfig_dir = "{tmp_path / "daily"}"\nroots = ["~"]\n\n'
+        f'[profiles.gate]\nconfig_dir = "{tmp_path / "gate"}"\nroots = ["~"]\n'
+        'agent = "codex"\n'
+    )
+    monkeypatch.setattr("lazy_harness.core.paths.config_file", lambda: cfg_file)
+    cfg = load_config(cfg_file)
+
+    deploy_side = _planner_for(cfg, profile)
+    runner_side = _adapter_for(profile)
+
+    assert runner_side.name == deploy_side.name
