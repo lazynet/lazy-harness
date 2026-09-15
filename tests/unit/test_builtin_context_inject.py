@@ -1407,3 +1407,54 @@ def test_hook_omits_repo_map_when_scope_unconfigured(tmp_path: Path) -> None:
     ]["additionalContext"]
 
     assert "## Repo map" not in body
+
+
+def test_the_hook_logs_under_the_profile_it_was_invoked_with(tmp_path: Path) -> None:
+    """The step 4 contract gate's F4, run end to end.
+
+    `context-inject` deployed to a Codex profile wrote its log into the user's
+    real `~/.codex`: `CODEX_HOME` is not in a hook subprocess's environment,
+    `CodexAdapter.global_config_link()` returns `None` to keep a throwaway
+    profile from reaching a daily one, and resolution fell through to
+    `~/.<agent name>` — the directory that `None` was protecting.
+    """
+    import os as _os
+
+    home = tmp_path / "home"
+    home.mkdir()
+    lh_config = tmp_path / "lh-config"
+    lh_config.mkdir()
+    codex_home = tmp_path / "codex-home"
+    (lh_config / "config.toml").write_text(
+        '[harness]\nversion = "1"\n\n[agent]\ntype = "claude-code"\n\n'
+        '[profiles]\ndefault = "daily"\n\n'
+        f'[profiles.daily]\nconfig_dir = "{tmp_path / "claude-daily"}"\n\n'
+        f'[profiles.gate]\nconfig_dir = "{codex_home}"\nagent = "codex"\n'
+    )
+
+    env = {
+        **_os.environ,
+        "HOME": str(home),
+        "LH_CONFIG_DIR": str(lh_config),
+    }
+    env.pop("CLAUDE_CONFIG_DIR", None)
+    env.pop("CODEX_HOME", None)
+
+    result = subprocess.run(
+        [*_HOOK_COMMAND, "--profile", "gate"],
+        input="{}",
+        capture_output=True,
+        text=True,
+        cwd=str(tmp_path),
+        timeout=30,
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stderr
+    real_codex = home / ".codex"
+    strays = sorted(str(p) for p in real_codex.rglob("*")) if real_codex.exists() else []
+    assert not strays, f"the hook wrote outside the profile: {strays}"
+    assert (codex_home / "logs" / "hooks.log").is_file(), (
+        f"no log under the profile's own config_dir; home holds "
+        f"{sorted(p.name for p in home.iterdir())}"
+    )
