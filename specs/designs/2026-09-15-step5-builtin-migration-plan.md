@@ -12,7 +12,8 @@
 
 ## Global Constraints
 
-- **Byte identity is the acceptance test.** `parse_hook_input` and `format_hook_output` are identity for Claude Code, so the wire bytes Claude Code sees must not change. Every migrated builtin gets a golden under `tests/goldens/hooks/<name>/` captured **before** its `main()` is touched.
+- **Byte identity is the acceptance test, with exactly one declared exception.** `parse_hook_input` and `format_hook_output` are identity for Claude Code, so the wire bytes Claude Code sees must not change. Every migrated builtin gets a golden captured **before** its `main()` is touched.
+  - **The exception is unparseable stdin.** Decision 3 (`runner.py:119-124`) makes the runner refuse before the builtin is reached: exit 2 for a blocking hook, exit 0 with a warning otherwise. Today every builtin degrades to `{}` and exits 0. That changes the verdict channel for `pre-tool-use-git-scope` and the stderr text for the rest, deliberately — a guard handed `{}` abstains, which on the wire is indistinguishable from having looked. No other divergence is licensed by this bullet; a golden that differs for any other reason is a regression.
 - **Strict TDD, no exceptions** (`CLAUDE.md` non-negotiable 2). Write the failing test, watch it fail, implement, watch it pass.
 - **One worktree per task group**, via `/new-worktree` (non-negotiable 1). Commits are conventional, no AI trailers, no `--no-verify`.
 - **`/tdd-check` passes before every commit**, all four checks pristine.
@@ -58,7 +59,11 @@ The mapping every task below applies. Every row was checked against all fifteen 
 
 **Trap 2 — `hook_event_name` carries the agent's wire name, `event.event` carries the canonical one.** `herdr_context_gauge.py:166` reads it and compares against `"PostToolUse"` (`:172`) and `"SessionEnd"` (`:175`). `HookEvent.event` holds `post_tool_use` and `session_end`. A direct swap leaves both comparisons permanently false: the hook stops throttling on every tool call and stops retracting a dead session's gauge, and nothing fails.
 
-**Trap 3 — `MODIFY_FILE` is wider than `INSPECTED_TOOLS`, and it is inert here by luck.** `_TOOL_OPERATIONS` maps `NotebookEdit` to `MODIFY_FILE` alongside `Edit` and `Write` (`claude_code.py:97`), while four builtins gate on `frozenset({"Edit", "Write"})`. Switching those gates to the operation admits notebooks for the first time — and all four then reject them anyway on a later check: `.py` (`post_tool_use_format.py:45`), `.yml`/`.yaml` (`post_tool_use_ansible_lint.py:94`), `SEGMENT_FILES` by name (`post_tool_use_sync_claude.py:64`), and `MEMORY.md`/`CLAUDE.md` by name (`pre_tool_use_memory_size.py:198-205`). No `.ipynb` reaches any of them. Record that it is inert **and why**: the protection is an incidental suffix check, not an intent, so the next hook that gates on the operation without one inherits the widening. Deleting `INSPECTED_TOOLS` outright also drops the hook from `tests/unit/test_hook_matcher_coverage.py:83-88` with no failure.
+**Trap 3 — `MODIFY_FILE` is wider than `INSPECTED_TOOLS`, and the widening is real.** `_TOOL_OPERATIONS` maps `NotebookEdit` to `MODIFY_FILE` alongside `Edit` and `Write` (`claude_code.py:97`), while **four** builtins gate on `frozenset({"Edit", "Write"})`: `post_tool_use_format.py:18`, `post_tool_use_sync_claude.py:25`, `post_tool_use_ansible_lint.py:20`, `pre_tool_use_memory_size.py:26`.
+
+An earlier draft called the widening inert because each of the four re-checks a suffix or a filename afterwards — `.py`, `.yml`/`.yaml`, `SEGMENT_FILES`, `MEMORY.md`/`CLAUDE.md`. **That reasoning assumed a notebook's path ends in `.ipynb`, and nothing in `ToolCall` enforces it.** A `NotebookEdit` whose normalised path is `notebook.py` clears `post_tool_use_format.py:45` and runs Ruff on a file that was never a Python source. So: **keep the native-name narrowing.** Check `event.tool.native_name` against the same set, or add an explicit `.ipynb` exclusion; do not replace the tool gate with the operation gate and call it a normalisation.
+
+Deleting `INSPECTED_TOOLS` outright also drops the hook from `tests/unit/test_hook_matcher_coverage.py:83-88` with no failure.
 
 ### What the design's step 5 text gets wrong
 
@@ -397,7 +402,7 @@ Each is one TDD cycle and one commit, and each depends only on tasks 1–3.
 
 **They are not file-independent, and the plan does not pretend otherwise.** Every migration edits `hooks/loader.py`'s `_BUILTIN_HOOKS` (`loader.py:101`) to add its `operations`, `signals`, `event` and `migrated` — one shared dict, fifteen times. There is a second: `tests/unit/hooks/test_abstention.py:41-75` derives `_NO_OBJECTION` from the registry and fails when a migrated hook wired to a blockable event has no entry. With `session_stop` honouring `BLOCK` and `pre_tool_use` honouring `DENY`, that reaches seven of the fifteen — tasks 4, 6, 7, 11, 16, 17 and 18. Both conflicts are appends and resolve mechanically, but a task that does not know about the second one lands red. Two workable orders, pick one and say which in the PR:
 
-- **Serialise the registry.** Land one commit first that gives all fifteen specs their final `event`, `operations`, `signals` and `blocking`, leaving `migrated=False`. The declarations are a fact about each hook and are true before its `main()` moves. Then the fifteen migrations touch only their own module and genuinely parallelise.
+- **Serialise the registry.** Land one commit first that gives all fifteen specs their final `event`, `operations`, `signals` and `blocking`, leaving `migrated=False`. The declarations are a fact about each hook and are true before its `main()` moves. **This does not make the migrations file-independent** — each still flips its own `migrated=True` in the same dict — but it reduces the shared edit to a one-token change per task instead of a multi-line block, and it puts the reviewable half in one diff. Full independence needs task 19 first, which is not possible while the branch it deletes is what keeps the unmigrated ones running.
 - **Accept the rebases.** Each task rebases on `main` before pushing. Cheaper to start, and the cost lands on whoever merges last.
 
 The first is preferred: it makes the declaration table reviewable in one diff, which is where a wrong `signals` set is actually visible.
@@ -430,7 +435,7 @@ That distinction decides two rows. `session-end` (`session_end.py:115`, `:152`) 
 | 9 | `session-start-preflight` | `session_start` | — | — | no | `additionalContext` |
 | 10 | `user-prompt-goal` | `user_prompt_submit` | — | — | no | `additionalContext` |
 | 11 | `stop-context-rotate` | `session_stop` | — | `TOKEN_USAGE` | no | `systemMessage` |
-| 12 | `herdr-context-gauge` | **unset** — see below | — | `TOKEN_USAGE` — see below | no | none |
+| 12 | `herdr-context-gauge` | **unset** — see below | — | **unresolved** — see below | no | none |
 | 13 | `post-tool-use-format` | `post_tool_use` | `MODIFY_FILE` | — | no | none |
 | 14 | `post-tool-use-sync-claude` | `post_tool_use` | `MODIFY_FILE` | — | no | none |
 | 15 | `post-tool-use-ansible-lint` | `post_tool_use` | `MODIFY_FILE` | — | no | `additionalContext` |
@@ -446,9 +451,11 @@ That distinction decides two rows. `session-end` (`session_end.py:115`, `:152`) 
 
   The fix is `agent_dir_for(cfg, event.profile)` and the adapter's own credentials location, but **note the scope**: this hook reads a Claude Code credentials file by name, so the per-profile fix and the per-agent one are different changes. Task 9 does the first and records the second.
 
-**Row 12 does not fit the table and task 12 has to resolve it.** `herdr-context-gauge` runs on **four** events, not the three its own docstring claims (`:12-13`): `main` branches on `PostToolUse` (`:172`) and `SessionEnd` (`:175`) and falls through for Stop and SessionStart. `BuiltinHookSpec.event` is a single canonical name, so `event=` is left **unset** rather than guessed at `post_tool_use`; that is safe at runtime because a payload naming its own event wins over the registry (`runner._canonical_event`), and this hook's payloads always do.
+**Row 12 is left unresolved on purpose, and task 12's first job is to resolve it.** The table asserts nothing it knows to be wrong.
 
-  Two further decisions belong to task 12. `TOKEN_USAGE` makes `deploy` omit the hook *entirely* on an agent lacking that signal — including the SessionEnd retract, which reads no transcript at all and would leave a dead session's gauge on the pane forever. And trap 2 above applies here first: the two comparisons are against wire names. Decide between a narrower signal set and splitting the retract out, and record which.
+  `herdr-context-gauge` *handles* four events and special-cases two: `main` branches on `PostToolUse` (`:172`) and `SessionEnd` (`:175`) and falls through for everything else. Its docstring claims three (`:12-13`) and `docs/how/hooks.md:486` names four. But which events it actually receives is the operator's placement, not the code's: `BuiltinHookSpec.event` is already unset (`loader.py:109`) and `plugins/builtins.py:62` says so. So `event=` **stays unset** — not a guess at `post_tool_use` — and that is safe because a payload naming its own event wins over the registry (`runner._canonical_event`).
+
+  The signal set has no correct single value, which is why the row says so. `signals` applies to every placement of one spec, and this hook's placements disagree: the Stop path reads token usage, while the SessionEnd path deliberately reads no transcript at all (`:175`) because its whole job is retracting a dead session's gauge. Declaring `TOKEN_USAGE` makes `deploy` omit *both* on an adapter lacking the signal, leaving the gauge on the pane forever. Task 12 chooses — split the retract into its own builtin, or model the capability per placement — and records which. Trap 2 above applies here first, before either.
 
 - **Wave C** (tasks 9–12): the context-emitting hooks. `stop-context-rotate` imports `context_tokens` from `herdr_context_gauge` (`stop_context_rotate.py:39`), so those two land together or task 11 goes second.
 - **Wave D** (tasks 13–15): PostToolUse. Each reads `event.tool.edits` where it used to read `tool_input["file_path"]`.
@@ -664,15 +671,37 @@ Only once all fifteen are `migrated=True`. The field, the constant and both bran
 def test_no_transitional_migration_field_survives() -> None:
     """The field, the constant and the branches reading them die together.
 
-    Asserted on the source rather than on behaviour: a leftover `migrated=True`
-    on every spec is inert and would never fail a behavioural test, while still
-    being the forked answer the design set out to remove.
+    Asserted on the declaration rather than on behaviour: a leftover
+    `migrated=True` on every spec is inert and would never fail a behavioural
+    test, while still being the forked answer the design set out to remove.
+
+    Asserted on the dataclass fields and the call graph rather than on the
+    source text, because a substring check over a file passes or fails on the
+    comments explaining the removal as readily as on the removal itself.
     """
-    loader = (SRC / "hooks" / "loader.py").read_text(encoding="utf-8")
-    assert "migrated" not in loader
-    assert "PRE_RUNNER_AGENT" not in loader
-    cmd = (SRC / "cli" / "hooks_cmd.py").read_text(encoding="utf-8")
-    assert "importlib" not in cmd, "the unmigrated import path is still reachable"
+    import ast
+    import dataclasses
+
+    from lazy_harness.hooks.loader import BuiltinHookSpec, _BUILTIN_HOOKS
+
+    # The field, not the word: `"migrated" not in source` also matches the
+    # prose explaining why it is gone, so it passes on a file that still
+    # declares it under a comment and fails on one that merely mentions it.
+    fields = {f.name for f in dataclasses.fields(BuiltinHookSpec)}
+    assert "migrated" not in fields, fields
+    assert not hasattr(loader_module, "PRE_RUNNER_AGENT")
+    assert not hasattr(loader_module, "builtin_migrated")
+
+    # The dispatch, not the import: `importlib` may return to `hooks_cmd.py`
+    # for an unrelated reason, and its absence would then read as proof of
+    # something it never established. Assert on the call graph instead.
+    tree = ast.parse((SRC / "cli" / "hooks_cmd.py").read_text(encoding="utf-8"))
+    called = {
+        node.func.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    }
+    assert "import_module" not in called, "the pre-runner dispatch still imports a builtin"
 ```
 
 - [ ] **Step 2: Run to verify it fails**
@@ -810,9 +839,9 @@ git add -A && git commit -m "refactor: dispatch builtins on is_builtin rather th
 
 ```python
 def test_no_builtin_resolves_its_agent_globally() -> None:
-    """Nine literals, by mechanism rather than by spelling.
+    """Ten global resolutions, by mechanism rather than by spelling.
 
-    A grep for `get_agent("claude-code")` finds seven of the nine and misses
+    A grep for `get_agent("claude-code")` finds seven of the ten and misses
     `engram_persist.py:75` and `pre_compact.py:158`, which write
     `get_agent(cfg.agent.type if cfg is not None else "claude-code")` -- the
     exact difference the CLAUDE.md gate is written for, and the one an earlier
@@ -852,11 +881,12 @@ It is not deleted. Add to its docstring:
     them a builtin: one in `cli/metrics_cmd.py`, two in
     `knowledge/compound_loop.py`, and one in `hooks/runner.py:resolve_profile`.
 
-    That last is the fallback for a deployed command written before `--profile`
-    existed. Both live callers pass a resolved profile, so it is compatibility
-    for settings files not yet redeployed rather than a mechanism anything
-    depends on -- but it is a caller, and it is why the symbol stays. The
-    design's step 5 text says "delete"; the code says "remove from the
+    That last is `resolve_profile`'s fallback, and it is live behaviour on the
+    ordinary path rather than compatibility for stale settings files: both
+    entry points declare `--profile` with `default=None` and hand it straight
+    through, so every flagless invocation lands here. Two tests pin it.
+
+    The design's step 5 text says "delete"; the code says "remove from the
     builtins", and this is the difference.
     """
 ```
@@ -876,22 +906,29 @@ The step 4 gate lives in `/tmp/f7-gate/`, outside the repo, and CI cannot reprod
 - [ ] **Step 1: Merge, let release-please cut, and install the tag explicitly**
 
 ```bash
-uv tool install --reinstall "git+https://github.com/lazynet/lazy-harness@v<tag>"
+TAG=$(gh release view --json tagName --jq .tagName)   # resolve it, do not type it
+uv tool install --reinstall "git+https://github.com/lazynet/lazy-harness@${TAG}"
 ```
 
-`--reinstall` alone reinstalls the **pinned** rev from `uv-receipt.toml`. Pass `git+<url>@<tag>` explicitly.
+`--reinstall` alone reinstalls the **pinned** rev from `uv-receipt.toml` and its exit code proves nothing about which revision landed, so the tag is passed explicitly and resolved from the release rather than written by hand.
 
 - [ ] **Step 2: Grep site-packages for a changed signature, not a version**
 
 ```bash
-grep -rn "PRE_RUNNER_AGENT" "$(uv tool dir)/lazy-harness/lib/python3*/site-packages/lazy_harness/" ; echo "exit=$?"
+SP=$(uv tool dir)/lazy-harness/lib/python3*/site-packages/lazy_harness
+test -d $SP || { echo "site-packages not found at $SP"; exit 1; }
+grep -rn 'PRE_RUNNER_AGENT' $SP; echo "grep exit=$?"
 ```
+
+**Unquoted on purpose, and the `test -d` is the point.** `python3*` is a glob and does not expand inside double quotes — quoted, `grep` is handed a literal `python3*` directory, reports it missing, and a missing directory reads exactly like a missing symbol. The absence proves the fix shipped only once the directory is proven to exist.
 
 Expected: no hits. **The absence of a symbol that used to be there is the cheap proof the fix shipped.** A version number is not — it moves whether or not the code did.
 
 - [ ] **Step 3: Run the gate with all fifteen in scope**
 
-`KNOWN_GAP_HOOKS` should be empty, and `pre-compact` must be **invoked** rather than skipped — it is absent from the step 4 counts only because the gate never called it, not because it was clean. Add the invoke.
+`KNOWN_GAP_HOOKS` should be empty, and `pre-compact` must be **invoked** rather than skipped — it is absent from the step 4 counts only because the gate never called it, not because it was clean.
+
+**This step is not executable from the repository and that is a decision, not an oversight.** The gate lives in `/tmp/f7-gate/`, is unversioned and mutable, and its invoke list is a shell array inside a script no commit contains. A fresh executor cannot run it and CI cannot reproduce it. Before running anything here, **copy the gate into the repository under `specs/gates/f7/` and commit it** — then "add the invoke" names a file and a line instead of a directory that may not exist tomorrow. If versioning it is refused, this task stops being a gate and the plan should say so rather than prescribing a ritual nobody else can perform.
 
 - [ ] **Step 4: Record the result**
 
@@ -903,7 +940,7 @@ A single run that exercises all four properties at once. The step 4 pass was **c
 
 ## Self-review
 
-**Spec coverage.** Step 5's four clauses: migrate the fifteen (tasks 4–18) ✓; declare `Operation` and `Signal` per builtin (the table, and step 5 of each recipe) ✓; delete `profile_name()` (task 21 — **narrowed, with evidence**, and the divergence recorded) ✓; delete `_TRANSCRIPT_KEYS` (task 3) ✓; the literals (task 21 — **nine, not the seven the step text implies**, counted by AST rather than by grep) ✓. The design's two displaced prerequisites — the second entry point and the transitional field — are tasks 20 and 19.
+**Spec coverage.** Step 5's four clauses: migrate the fifteen (tasks 4–18) ✓; declare `Operation` and `Signal` per builtin (the table, and step 5 of each recipe) ✓; delete `profile_name()` (task 21 — **narrowed, with evidence**, and the divergence recorded) ✓; delete `_TRANSCRIPT_KEYS` (task 3) ✓; the literals (task 21 — **ten, not the seven the step text implies**; no syntactic criterion found them all, see the count's own history above) ✓. The design's two displaced prerequisites — the second entry point and the transitional field — are tasks 20 and 19.
 
 **Gaps this plan opens deliberately.** Whether `/tmp/f7-gate/` gets versioned is unresolved and stays that way; task 22 runs it from where it lives. `_shared.py:258`, `knowledge/compound_loop_worker.py:98` and `:100`, `cli/memory_cmd.py:237` and `:264`, and `monitoring/statusline.py:44` stay global by decision, not oversight; none is a builtin, and task 21's test excludes `_shared.py` explicitly because it is the one inside the replacement helper itself.
 
