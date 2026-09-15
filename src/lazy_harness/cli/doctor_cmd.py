@@ -26,6 +26,7 @@ from lazy_harness.core.paths import (
     expand_path,
 )
 from lazy_harness.core.profiles import list_profiles
+from lazy_harness.hooks.signal_gaps import HookSignalGap, collect_hook_signal_gaps
 from lazy_harness.llm import LLMBackendError, LLMBackendNotFoundError
 from lazy_harness.llm.openai_compat import OpenAICompatibleBackend
 from lazy_harness.llm.registry import build_backend
@@ -33,7 +34,6 @@ from lazy_harness.monitoring.engram_persist_health import (
     EngramPersistHealth,
     collect_engram_persist_health,
 )
-from lazy_harness.monitoring.hook_signals import HookSignalGap, collect_hook_signal_gaps
 from lazy_harness.monitoring.sink_freshness import SinkFreshness, collect_sinks_freshness
 from lazy_harness.monitoring.sink_setup import plan_sinks
 
@@ -378,9 +378,14 @@ def _render_unhonoured_profile_agents(console: Console, cfg: Config) -> None:
 def _render_hook_signals(console: Console, gaps: list[HookSignalGap]) -> None:
     """Name each deployed hook's missing signals, per profile (design step 4).
 
-    Reporting, not failing: the hook is installed and the agent is running, so
-    this is a capability gap to close, not a broken machine. Silent when there
-    is nothing to say, the same rule as `_render_artifact_versions`.
+    Reporting, not failing: the agent is running and the rest of its hooks are
+    deployed, so this is a capability gap to close, not a broken machine. Silent
+    when there is nothing to say, the same rule as `_render_artifact_versions`.
+
+    The hook itself is *not* installed — `deploy.engine._hook_entries_for` acts
+    on this same `gaps_for_profile` answer and leaves it out, naming it as it
+    goes. This line is the standing account of why, which the deploy output
+    scrolls away.
 
     The line says the *event is delivered* on purpose. `hook_events()` not
     carrying the event at all is the other unsupported state, and the design
@@ -404,8 +409,9 @@ def _render_hook_signals(console: Console, gaps: list[HookSignalGap]) -> None:
             f"{missing} and {cause}"
         )
     console.print(
-        "      [dim]Missing signal, not a missing event: the hook installs, runs, "
-        "finds nothing and passes. Closed by a TranscriptReader.[/dim]"
+        "      [dim]Missing signal, not a missing event: deploy leaves the hook out "
+        "rather than installing one that would find nothing and pass. "
+        "Closed by a TranscriptReader.[/dim]"
     )
 
 

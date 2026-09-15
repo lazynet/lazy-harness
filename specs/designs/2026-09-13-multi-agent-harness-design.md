@@ -1454,16 +1454,18 @@ against a version that will not ship.
 > production defects of one shape — an answer derived from the global agent
 > where the profile's agent is the source. They are fixed and their gate is in
 > *Verification gates* above. The step stays `in progress` regardless: the gate
-> has not *passed*, and assertion C turns on a design question — whether a
+> has not *passed*. The design question assertion C turned on — whether a
 > deploy should skip a hook whose declared signals the profile's agent cannot
-> deliver — that is not decided.
+> deliver — **is decided, and it does**; step 4's note below records what
+> shipped. Whether that makes assertion C pass is the gate re-run's answer.
 >
 > Step 4's two displaced prerequisites are tracked here rather than in the
 > step text, which is not edited as things land: per-profile agent
 > resolution arrived with step 3, and the `lh doctor` line naming each
 > deployed hook's missing signals — the half of step 10 the gate cannot be
-> performed without — landed ahead of the gate as
-> `monitoring/hook_signals.py`. It reports the *signal* state only; an event
+> performed without — landed ahead of the gate as `monitoring/hook_signals.py`,
+> since moved to `hooks/signal_gaps.py` because the deploy became its second
+> reader. It reports the *signal* state only; an event
 > absent from `hook_events()` is skipped rather than relabelled, and stays
 > step 10's to surface.
 >
@@ -1598,6 +1600,38 @@ non-identity adapter has run against it.** Step 4 is that gate.
    > run through this adapter, no `lh doctor` line names Codex's missing
    > signals, and MCP is out of scope for the throwaway — `mcp_config_file()`
    > returns `""` and `plan_config` ignores `servers`.
+
+   > **What made "not deployed at all" true.** The 2026-09-15 gate run recorded
+   > that the sentence above described an outcome no shipped code path could
+   > produce: `_hook_entries_for` built from `merge_with_defaults` and filtered
+   > on an empty script list alone, so `BuiltinHookSpec.signals` was a
+   > declaration with no enforcing reader. `collect_hook_signal_gaps` named the
+   > gap in `lh doctor` *after* the hook had already been written.
+   >
+   > `_hook_entries_for` now skips a hook whose declared `Signal`s the profile's
+   > agent cannot deliver. The rule itself did not move to the deploy side — it
+   > moved *out* of `monitoring/`, to `hooks/signal_gaps.py`, so that doctor's
+   > report and the deploy's refusal are the same `gaps_for_profile` call. An
+   > integration test invokes both commands and asserts no hook doctor names
+   > survives into the artifact, and that one it does not name does.
+   >
+   > **The omission is a line of output before it is an absence.** A hook that
+   > vanishes from a deploy unannounced is the same silence this step set out to
+   > remove, wearing the other mask, so the deploy prints
+   > `stop-verify-guard omitted in '<profile>': agent 'codex' does not deliver
+   > goal_status` and a test asserts that text rather than the artifact.
+   >
+   > **A second hazard the gate found in passing, now a warning.** A default
+   > deploy to a Codex profile writes six events, four of them builtins with
+   > `migrated=False` — they route through the pre-runner path, which reads
+   > Claude Code-shaped stdin and owns its own exit code, on an agent that is
+   > not Claude Code. Deploying one to a non-`claude-code` profile now names it.
+   > A warning and not a refusal: step 5 below migrates the remaining fifteen,
+   > and refusing first would leave a Codex profile with almost no hooks.
+   >
+   > This note records what changed, not a verdict. Step 4 stays `in progress`
+   > and ADR-041 stays `proposed`: whether assertion C passes is the re-run's
+   > answer, not this change's.
 5. Migrate the remaining 15 builtins, each declaring its `Operation` set and its
    `Signal` set. Delete `profile_name()`, `_TRANSCRIPT_KEYS` and seven of the
    ten `get_agent("claude-code")` literals (decision 1 names the three that

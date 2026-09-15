@@ -19,6 +19,7 @@ from lazy_harness.core.config import Config, ProfileEntry
 from lazy_harness.core.paths import config_dir, expand_path
 from lazy_harness.deploy.symlinks import ensure_symlink
 from lazy_harness.hooks.loader import HookInfo
+from lazy_harness.hooks.signal_gaps import HookSignalGap
 
 # The launcher invocation every generated builtin command takes. `hook_command`
 # builds it; the classifier that recognises it lives with the merge, in the
@@ -169,6 +170,69 @@ def _plural(count: int, singular: str, plural: str) -> str:
     return singular if count == 1 else plural
 
 
+def _report_omitted(
+    script_names: list[str],
+    event: str,
+    profile: str,
+    undeliverable: dict[tuple[str, str], HookSignalGap],
+) -> list[str]:
+    """Drop the hooks this agent cannot feed, naming each one as it goes.
+
+    The naming is the point, not a courtesy. A hook that vanishes from a deploy
+    without a word is the same class of defect as the one this filter removes —
+    a silence the operator cannot distinguish from a hook that installed and
+    stayed quiet. Swapping one silence for the other would be no fix at all, so
+    the omission is a line of output before it is an absence in the artifact.
+
+    Printed per event rather than once per profile because a hook wired to two
+    events is omitted from both, and collapsing that to one line would leave the
+    second event looking untouched.
+    """
+    kept: list[str] = []
+    for name in script_names:
+        gap = undeliverable.get((event, name))
+        if gap is None:
+            kept.append(name)
+            continue
+        missing = ", ".join(signal.value for signal in gap.missing)
+        click.echo(
+            f"  · {gap.hook} omitted in '{profile}': agent '{gap.agent}' does not deliver {missing}"
+        )
+    return kept
+
+
+def _warn_unmigrated(hooks: list[HookInfo], profile: str, agent_name: str) -> None:
+    """Name each pre-runner builtin this deploy is about to hand a foreign agent.
+
+    TRANSITIONAL, and it disappears with `BuiltinHookSpec.migrated` at step 5.
+    An unmigrated `main()` reads stdin in Claude Code's shape, writes both
+    channels and owns its exit code; another agent may format its payload
+    differently and read its exit code differently, and the hook has no way to
+    say so. A default `lh deploy` to a Codex profile ships four of these.
+
+    A warning rather than a refusal on purpose. Fifteen builtins are still on
+    this path, so refusing would leave a non-Claude-Code profile with almost no
+    hooks — trading an unverified hook for no hook at all, which is the worse
+    end of the step 5 transition, not the safer one.
+
+    Builtins only. A user hook takes the same path and gets no warning: the
+    harness did not ship it, `migrated` does not describe it, and telling
+    someone their own script is not migrated to an internal runner names nothing
+    they can act on.
+    """
+    from lazy_harness.hooks.loader import PRE_RUNNER_AGENT, builtin_migrated
+
+    if agent_name == PRE_RUNNER_AGENT:
+        return
+    for hook in hooks:
+        if not hook.is_builtin or builtin_migrated(hook.name):
+            continue
+        click.echo(
+            f"  ⚠  {hook.name} in '{profile}': not migrated to the runner, so it reads "
+            f"Claude Code-shaped stdin and owns its own exit code on agent '{agent_name}'"
+        )
+
+
 def _hook_entries_for(cfg: Config, profile: str, binary: str) -> dict[str, list[HookEntry]]:
     """The hook entries one profile's config gets, as agent-neutral records.
 
@@ -180,19 +244,33 @@ def _hook_entries_for(cfg: Config, profile: str, binary: str) -> dict[str, list[
     tool's hooks stop depending on which profile its installer happened to run
     against. Appended after the harness scripts, including on events whose
     scripts list is empty.
+
+    A hook whose declared `Signal`s this profile's agent cannot deliver is left
+    out, and said out loud. `BuiltinHookSpec.signals` was introduced precisely
+    so `stop-verify-guard` could not install on such an agent, run, find no goal
+    marker, conclude there was nothing to verify and pass — green because it
+    cannot fail. Until this filter existed only `lh doctor` knew, and it knew
+    after the fact. The gap itself is `gaps_for_profile`'s answer, not a second
+    reading of the same fields here: doctor reports what deploy acts on, and the
+    two would drift the first time either learned something new.
     """
     from lazy_harness.deploy.defaults import merge_with_defaults
     from lazy_harness.hooks.loader import resolve_script_names
+    from lazy_harness.hooks.signal_gaps import gaps_for_profile
 
-    effective = merge_with_defaults(cfg.hooks, agent_for_profile(cfg, profile))
+    agent = agent_for_profile(cfg, profile)
+    effective = merge_with_defaults(cfg.hooks, agent)
+    undeliverable = {(gap.event, gap.hook): gap for gap in gaps_for_profile(cfg, profile)}
 
     entries: dict[str, list[HookEntry]] = {}
     for event_name, script_names in effective.items():
+        script_names = _report_omitted(script_names, event_name, profile, undeliverable)
         if not script_names:
             continue
         hooks = resolve_script_names(script_names, event=event_name)
         if not hooks:
             continue
+        _warn_unmigrated(hooks, profile, agent.name)
         entries[event_name] = [
             HookEntry(
                 command=hook_command(hook, profile=profile, binary=binary),

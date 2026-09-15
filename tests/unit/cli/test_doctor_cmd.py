@@ -647,6 +647,30 @@ def test_doctor_hook_signal_line_names_the_signal_state_not_the_event_state(
     assert "Missing signal, not a missing event" in output
 
 
+def test_doctor_hook_signal_hint_says_the_hook_is_left_out_of_the_deploy(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The hint describes what deploy now does, not what it used to do.
+
+    It read "the hook installs, runs, finds nothing and passes" while nothing
+    stopped that from happening. `_hook_entries_for` now skips the hook, so the
+    old sentence describes a behaviour the code no longer has — a diagnostic
+    that outlived the defect it reported.
+    """
+    from lazy_harness.agents import registry
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(_SIGNAL_GAP_TOML)
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
+    monkeypatch.setitem(registry._AGENTS, "no-reader", _NoReaderAdapter)
+
+    output = _unwrapped(CliRunner().invoke(doctor, []).output)
+
+    assert "deploy leaves the hook out" in output
+    assert "installs, runs, finds nothing and passes" not in output
+
+
 def test_doctor_omits_hook_signals_when_the_agent_delivers_everything(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
