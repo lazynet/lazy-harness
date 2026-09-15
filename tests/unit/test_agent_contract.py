@@ -406,8 +406,9 @@ def test_transcript_path_is_the_only_spelling_the_adapter_reads() -> None:
     observed sending one: Claude Code 2.1.272 declares the hook payload's base
     fields as `["hook_event_name", "session_id", "transcript_path", "cwd",
     "scratchpad_dir", "prompt_id", "permission_mode", "agent_id", "agent_type",
-    "served_call", "caller_session_id", "effort"]`, and every `transcriptPath`
-    in that binary is internal resume/summary plumbing, never a hook field.
+    "served_call", "caller_session_id", "effort"]`, carried by the one base
+    schema that all 33 of its event schemas extend. Every `transcriptPath` in
+    that binary is internal resume/summary plumbing, never a hook field.
 
     Both halves of the rule live on payloads that disagree, because the half
     that a widening breaks is the *absence* one: honouring `transcript_path`

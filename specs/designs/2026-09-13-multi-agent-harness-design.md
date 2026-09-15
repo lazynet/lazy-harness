@@ -1592,12 +1592,15 @@ against a version that will not ship.
 > - The shipped agent decides it. Claude Code 2.1.272 declares the hook
 >   payload's base fields as `["hook_event_name", "session_id",
 >   "transcript_path", "cwd", "scratchpad_dir", "prompt_id", "permission_mode",
->   "agent_id", "agent_type", "served_call", "caller_session_id", "effort"]`,
->   and its base schema for every event is `{session_id, transcript_path, cwd,
->   ...}`. The 61 occurrences of `transcriptPath` in that binary are internal
->   resume, summary and respawn plumbing; none falls inside a hook payload.
->   There is no top-level `input` field at all — tool arguments arrive as
->   `tool_input`.
+>   "agent_id", "agent_type", "served_call", "caller_session_id", "effort"]`.
+>   That is not one event's shape extrapolated to the rest: the binary declares
+>   a single base schema `{session_id, transcript_path, cwd, ...}` and all
+>   **33** event schemas are built as `base().and({hook_event_name: ..., ...})`
+>   on top of it — `PreToolUse`, `SessionStart`, `PreCompact`, `Stop` and the
+>   twenty-nine others. Every one therefore carries `transcript_path`, and none
+>   declares a top-level `input`; tool arguments arrive as `tool_input`. The 61
+>   occurrences of `transcriptPath` in that binary are internal resume, summary
+>   and respawn plumbing, none inside a hook payload.
 > - `codex.py:148` already records the same observation for the second agent:
 >   its payload is Claude-shaped snake_case, and it too reads one key.
 >
