@@ -11,8 +11,17 @@ The MCP wiring step ([ADR-024](https://github.com/lazynet/lazy-harness/blob/main
 It is idempotent: re-running on a clean tree is a no-op.
 
 ```bash
-lh deploy
+lh deploy                      # every profile
+lh deploy --profile <name>     # only that profile
 ```
+
+`--profile` narrows the run to one profile: its symlinks, its `settings.json`
+and its MCP config are written, and no other profile is touched. The agent's
+global config link (`~/.claude`) points at the **default** profile, so it is
+rewritten only when the named profile *is* the default — deploying any other
+profile leaves it alone. An unknown name fails without writing anything. The
+snapshot below is still taken, and its manifest lists only the artifacts of the
+profile that was deployed.
 
 ### Snapshots and rollback
 
