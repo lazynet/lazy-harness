@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "Preserve the following working context in the summary:\n\n## Tasks in progress\n- migrate the pre-compact hook onto the event contract\n\n## Files worked on\n- /srv/app/loader.py\n- /srv/app/pre_compact.py\n\n## Recent decisions\n- resolve the profile in the writer\n- keep the plain-text channel\n\n## Recent failures\n- the reader stayed global\n"
+}

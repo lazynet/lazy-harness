@@ -284,6 +284,54 @@ def test_compound_loop_logs_into_the_invoked_profile(harness_config: Path, tmp_p
     assert "compound-loop: fired cwd=" in log
 
 
+def test_pre_compact_logs_into_the_invoked_profile(harness_config: Path, tmp_path: Path) -> None:
+    """`pre-compact` is an addition to this gate, not a fix to an entry in it.
+
+    It is absent from the step-4 leak counts because the gate **never invoked
+    it** — it is in no skip list and had no case here — not because it was
+    clean: `pre_compact.py:186` wrote its `fired` line unconditionally, from a
+    directory resolved through `get_agent(...)` plus `agent_runtime_dir(agent)`
+    with no profile. Eight hooks leaked by mechanism; seven were measured.
+    """
+    exit_code = _run_hook(
+        "pre-compact",
+        "gate",
+        {"hook_event_name": "PreCompact", "cwd": str(tmp_path), "session_id": "isolation-test"},
+    )
+
+    assert exit_code == 0
+    log = (harness_config / "logs" / "hooks.log").read_text()
+    assert "pre-compact: fired cwd=" in log
+
+
+def test_pre_compact_writes_nothing_outside_the_invoked_profile(
+    harness_config: Path, home_dir: Path, tmp_path: Path
+) -> None:
+    """The half that fails before the migration.
+
+    This hook writes three things — the log line, the memory dir and, when a
+    transcript exists, a `compact-backups/` copy — and every one of them landed
+    in `~/.claude`, which is `agent_runtime_dir`'s last resort once
+    `CLAUDE_CONFIG_DIR` is unset. Presence alone passes either way: that
+    directory is one the hook is entitled to create, so the leak looks exactly
+    like a first run.
+    """
+    other = tmp_path / "other-home"
+    before_home = _files_under(home_dir)
+    before_other = _files_under(other) if other.exists() else set()
+
+    exit_code = _run_hook(
+        "pre-compact",
+        "gate",
+        {"hook_event_name": "PreCompact", "cwd": str(tmp_path), "session_id": "isolation-test"},
+    )
+
+    assert exit_code == 0
+    assert "pre-compact: fired cwd=" in (harness_config / "logs" / "hooks.log").read_text()
+    assert _files_under(home_dir) == before_home
+    assert (_files_under(other) if other.exists() else set()) == before_other
+
+
 def test_compound_loop_writes_nothing_outside_the_invoked_profile(
     harness_config: Path, home_dir: Path, tmp_path: Path
 ) -> None:

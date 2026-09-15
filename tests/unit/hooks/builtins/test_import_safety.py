@@ -23,11 +23,16 @@ BUILTINS_DIR = Path(__file__).parents[4] / "src" / "lazy_harness" / "hooks" / "b
 # as a bare script at all. `lh hook <name>` imports it through the runner, so a
 # lazy_harness that will not import means there is no `lh` to run in the first
 # place, and the guarantee the guard carried moves to the runner's failure
-# policy. `context_inject`, `session_export` and `session_end` left this list
-# when they migrated; the rest follow at step 5 of
+# policy. `context_inject`, `session_export`, `session_end` and `pre_compact`
+# left this list when they migrated; the rest follow at step 5 of
 # `specs/designs/2026-09-13-multi-agent-harness-design.md`.
+#
+# `pre_compact` was the last one that really was a bare script — it carried
+# `_bootstrap_log` and `_bootstrap_project_dir` stand-ins for `_shared` behind
+# an `except ImportError`. Its migration deletes them, and a migrated module
+# imports `agents.base` at module level, so the poisoned-import subprocess
+# below starts exiting non-zero for it.
 GUARDED_HOOKS = [
-    "pre_compact",
     "user_prompt_goal",
 ]
 

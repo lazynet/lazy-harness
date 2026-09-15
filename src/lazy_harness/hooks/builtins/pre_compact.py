@@ -1,50 +1,34 @@
 #!/usr/bin/env python3
 """PreCompact hook: preserve context before compaction.
 
-Reads transcript path from stdin JSON, backs up transcript,
-extracts working context summary, writes to memory dir.
-Always exits 0.
+Backs up the session transcript, extracts a working-context summary, writes it
+to the project's memory dir, and returns it for the compaction summariser.
+Always abstains — there is no verdict to form on this event.
 
 Output is **plain text, never JSON**. Claude Code's `hookSpecificOutput` union
 has no PreCompact variant (verified against 2.1.234), so a JSON payload fails
 schema validation, marks the hook failed, and its output is discarded. The
 PreCompact executor instead collects each successful hook's raw stdout and
 hands the joined text to the compaction summariser as `newCustomInstructions`.
+`ClaudeCodeAdapter.format_hook_output` special-cases `pre_compact` and writes
+`HookDecision.additional_context` as raw text for exactly that reason, which is
+why this hook returns it there rather than printing.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import shutil
-import sys
 from datetime import datetime
 from pathlib import Path
+
+from lazy_harness.agents.base import HookDecision, HookEvent
 
 # Claude Code's PreCompact executor collects each successful hook's raw stdout
 # and passes the joined text as `newCustomInstructions` to the compaction
 # summariser. That is a directive channel, not a context channel, so the
 # summary needs framing or it reads as a wall of unexplained assertions.
 SUMMARY_PREAMBLE = "Preserve the following working context in the summary:"
-
-
-def _bootstrap_log(log_file: Path, msg: str) -> None:
-    """Stand-in for `_shared.make_log` when lazy_harness is not importable."""
-    try:
-        log_file.parent.mkdir(parents=True, exist_ok=True)
-        ts = datetime.now().astimezone().isoformat(timespec="seconds")
-        with open(log_file, "a") as f:
-            f.write(f"{ts} pre-compact: {msg}\n")
-    except OSError:
-        pass
-
-
-def _bootstrap_project_dir(
-    transcript: Path | None, *, agent_dir: Path, sessions_subdir: str, cwd: Path
-) -> Path:
-    """Stand-in for `_shared.resolve_project_dir` when lazy_harness is not importable."""
-    encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
-    return agent_dir / (sessions_subdir or "projects") / encoded
 
 
 def parse_transcript(path: Path) -> tuple[list[str], list[str]]:
@@ -130,125 +114,123 @@ def build_memory_tails(memory_dir: Path) -> str:
     return "\n".join(parts)
 
 
-def _resolve_agent_dirs() -> tuple[Path, dict[str, str], Path | None]:
-    """(runtime_dir, session_dirs, knowledge_root) for the configured agent.
+def main(event: HookEvent) -> HookDecision:
+    """Preserve this compaction's working context and hand it back as text.
 
-    The knowledge root is returned rather than resolved again at the call site:
-    it comes from the same `Config` this already loads, and two readers
-    resolving one config-derived path differently is how one of them ends up
-    writing where nothing reads.
+    Three deletions this migration makes deliberately, all of them the same
+    thing: the fallbacks that let this module run as a bare script. Its
+    docstring used to say "this hook has to run as a bare script, so nothing
+    outside this guard may import from the package", and that stopped being
+    true. `deploy/engine.py:136` emits `{binary} hook {name} --profile
+    {profile}` for every builtin, so the agent reaches this through `lh hook`;
+    `lh hook` reaches `main` only through `hooks.runner`, which imports the
+    module from inside the package. A `lazy_harness` that will not import means
+    there is no `lh` to run in the first place, and the guarantee those
+    fallbacks carried moves to the runner's failure policy (`runner.py:177`),
+    which returns exit 0 with a warning for a non-blocking hook. Gone with them:
+    `_bootstrap_log`, `_bootstrap_project_dir`, and the `shared_memory_dir is
+    None` branch that computed a project dir without `_shared`.
 
-    Bootstrap fallback: when lazy_harness is not importable (hook run as a
-    bare script) read the Claude Code env var directly, as before ADR-032.
+    `parse_transcript` is left exactly as it is. Both of its loops read `role`
+    and `content` at the top level of a JSONL line and Claude Code nests both
+    under `message`, so they have never matched — measured at zero across 3215
+    production lines. Repairing that changes what this hook emits and every
+    golden captured before it, so it is its own commit; `specs/backlog.md:125`
+    owns it. That dead read is also why the registry declares **no** signals
+    here: naming `MESSAGES` would let `deploy` omit the hook on an agent whose
+    reader lacks it, losing `build_memory_tails` — the part that works — over a
+    transcript read that does not.
     """
-    try:
-        from lazy_harness.agents.registry import get_agent
-        from lazy_harness.core.config import ConfigError, load_config
-        from lazy_harness.core.paths import agent_runtime_dir, config_file
-    except ImportError:
-        return Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude")), {}, None
+    from lazy_harness.core.config import Config, ConfigError, load_config
+    from lazy_harness.core.paths import config_file
+    from lazy_harness.hooks.builtins._shared import (
+        agent_dir_for,
+        existing_transcript,
+        knowledge_root_for,
+        make_log,
+    )
+    from lazy_harness.hooks.builtins._shared import memory_dir as shared_memory_dir
 
-    cfg = None
+    _log = make_log("pre-compact")
+
     cf = config_file()
+    cfg: Config | None = None
     if cf.is_file():
         try:
             cfg = load_config(cf)
         except ConfigError:
             cfg = None
-    agent = get_agent(cfg.agent.type if cfg is not None else "claude-code")
-    from lazy_harness.hooks.builtins._shared import knowledge_root_for
 
-    return agent_runtime_dir(agent), agent.session_dirs(), knowledge_root_for(cfg)
-
-
-def main() -> None:
-    try:
-        input_data = json.load(sys.stdin)
-    except (json.JSONDecodeError, EOFError, ValueError):
-        input_data = {}
-
-    try:
-        from lazy_harness.hooks.builtins._shared import _declared_transcript, make_log
-        from lazy_harness.hooks.builtins._shared import memory_dir as shared_memory_dir
-
-        _log = make_log("pre-compact")
-    except ImportError:
-        # Bootstrap fallback, same contract as _resolve_agent_dirs: this hook
-        # has to run as a bare script, so nothing outside this guard may import
-        # from the package.
-        _log = _bootstrap_log
-        shared_memory_dir = None
-        _declared_transcript = None
-
-    cwd = Path.cwd()
-    agent_dir, subdirs, knowledge_root = _resolve_agent_dirs()
+    # Config first, then the directories, then the first log line: every path
+    # below is keyed by the agent *this profile* runs, and writing `fired`
+    # before that resolves is what sent `context-inject`'s log to the global
+    # agent's directory (PR #300). The knowledge root comes from the same
+    # `Config` rather than being resolved again — two readers resolving one
+    # config-derived path differently is how one of them ends up writing where
+    # nothing reads.
+    agent, agent_dir = agent_dir_for(cfg, event.profile)
+    subdirs = agent.session_dirs()
     log_file = agent_dir / (subdirs.get("logs") or "logs") / "hooks.log"
+
+    # `parse_hook_input` yields `Path("")` — which is `Path(".")`, and truthy —
+    # for a payload that names no cwd. This hook encodes the cwd into a
+    # directory *name*, so `Path(".")` would make the memory dir `projects/-.`
+    # and every checkout on the machine would share one.
+    cwd = event.cwd if event.cwd != Path(".") else Path.cwd()
     _log(log_file, f"fired cwd={cwd}")
 
-    transcript_path_str = ""
-    for key in ("transcript_path", "transcriptPath", "input"):
-        if key in input_data:
-            transcript_path_str = input_data[key]
-            break
-
-    if shared_memory_dir is not None:
-        memory_dir = shared_memory_dir(
-            _declared_transcript(input_data),
-            agent_dir=agent_dir,
-            sessions_subdir=subdirs.get("sessions") or "projects",
-            cwd=cwd,
-            knowledge_root=knowledge_root,
-        )
-    else:
-        memory_dir = (
-            _bootstrap_project_dir(
-                None,
-                agent_dir=agent_dir,
-                sessions_subdir=subdirs.get("sessions") or "projects",
-                cwd=cwd,
-            )
-            / "memory"
-        )
+    # The *declared* transcript, not `existing_transcript` of it:
+    # `resolve_project_dir` stats only its parent, so filtering a transcript the
+    # agent has named but not yet written would silently fall back to encoding
+    # the cwd and read memory from a directory nothing wrote to.
+    memory_dir = shared_memory_dir(
+        event.transcript_path,
+        agent_dir=agent_dir,
+        sessions_subdir=subdirs.get("sessions") or "projects",
+        cwd=cwd,
+        knowledge_root=knowledge_root_for(cfg),
+    )
     memory_dir.mkdir(parents=True, exist_ok=True)
 
     summary = ""
 
-    if transcript_path_str:
-        transcript_path = Path(transcript_path_str)
-        if transcript_path.is_file():
-            backup_dir = agent_dir / "compact-backups"
-            backup_dir.mkdir(parents=True, exist_ok=True)
-            ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-            proj_name = cwd.name
-            backup_file = backup_dir / f"{ts}-{proj_name}.jsonl"
-            try:
-                shutil.copy2(transcript_path, backup_file)
-                _log(log_file, f"backed up transcript to {backup_file.name}")
-            except OSError as e:
-                _log(log_file, f"backup failed: {e}")
+    # Filtered here, where the file is opened. `HookEvent.transcript_path` is
+    # what the payload named, not what exists; the pre-runner code stat'd it as
+    # part of reading the payload, so without this the check would disappear
+    # and `shutil.copy2` would raise into the handler below on every compaction
+    # of a session whose transcript the agent had not written yet.
+    transcript_path = existing_transcript(event.transcript_path)
+    if transcript_path is not None:
+        backup_dir = agent_dir / "compact-backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        proj_name = cwd.name
+        backup_file = backup_dir / f"{ts}-{proj_name}.jsonl"
+        try:
+            shutil.copy2(transcript_path, backup_file)
+            _log(log_file, f"backed up transcript to {backup_file.name}")
+        except OSError as e:
+            _log(log_file, f"backup failed: {e}")
 
-            user_msgs, files = parse_transcript(transcript_path)
-            summary = build_summary(user_msgs, files)
+        user_msgs, files = parse_transcript(transcript_path)
+        summary = build_summary(user_msgs, files)
 
     memory_tails = build_memory_tails(memory_dir)
     if memory_tails:
         summary = f"{summary}\n\n{memory_tails}" if summary else memory_tails
 
-    if summary:
-        summary_file = memory_dir / "pre-compact-summary.md"
-        ts = datetime.now().isoformat()
-        try:
-            summary_file.write_text(
-                f"<!-- auto-generated by pre-compact hook at {ts} -->\n{summary}\n"
-            )
-            _log(log_file, f"summary written ({len(summary)} chars)")
-        except OSError as e:
-            _log(log_file, f"summary write failed: {e}")
-
-        print(f"{SUMMARY_PREAMBLE}\n\n{summary}")
-    else:
+    if not summary:
         _log(log_file, "no summary extracted")
+        return HookDecision()
 
+    summary_file = memory_dir / "pre-compact-summary.md"
+    ts = datetime.now().isoformat()
+    try:
+        summary_file.write_text(f"<!-- auto-generated by pre-compact hook at {ts} -->\n{summary}\n")
+        _log(log_file, f"summary written ({len(summary)} chars)")
+    except OSError as e:
+        _log(log_file, f"summary write failed: {e}")
 
-if __name__ == "__main__":
-    main()
+    # The adapter appends the trailing newline `print` used to add, so these
+    # are the same bytes the summariser received before the migration.
+    return HookDecision(additional_context=f"{SUMMARY_PREAMBLE}\n\n{summary}")
