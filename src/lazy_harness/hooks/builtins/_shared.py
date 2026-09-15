@@ -18,8 +18,6 @@ if TYPE_CHECKING:  # pragma: no cover - imported for typing only
     from lazy_harness.agents.base import AgentAdapter, TranscriptReader
     from lazy_harness.core.config import Config
 
-_TRANSCRIPT_KEYS = ("transcript_path", "transcriptPath", "input")
-
 
 def make_log(hook_name: str) -> Callable[[Path, str], None]:
     """Build a fail-soft logger that prefixes lines with `<ts> <hook_name>:`."""
@@ -47,41 +45,49 @@ def find_latest_session(sessions_dir: Path) -> Path | None:
 
 
 def _declared_transcript(payload: object) -> Path | None:
-    """Transcript path as declared in the payload, without touching the filesystem."""
+    """Transcript path as declared in a raw stdin payload, without stat'ing it.
+
+    The payload-reading half, kept for the builtins that have not moved onto
+    `HookEvent` yet. A migrated hook has `event.transcript_path` instead and
+    never calls this.
+    """
     if not isinstance(payload, Mapping):
         return None
-    for key in _TRANSCRIPT_KEYS:
+    for key in ("transcript_path", "transcriptPath", "input"):
         raw = payload.get(key)
         if isinstance(raw, str) and raw:
             return Path(raw)
     return None
 
 
-def transcript_from_payload(payload: object) -> Path | None:
-    """Session JSONL the agent declared on stdin, or None if absent/not yet written."""
-    declared = _declared_transcript(payload)
-    if declared is None:
-        return None
-    return declared if declared.is_file() else None
+def existing_transcript(declared: Path | None) -> Path | None:
+    """The declared transcript if it is on disk, else None.
+
+    `HookEvent.transcript_path` is what the payload named, not what exists:
+    at `SessionStart` the file is routinely not written yet. The pre-runner
+    helper this replaces stat'd it as part of reading the payload, so without
+    this the check disappears silently at every call site at once.
+    """
+    return declared if declared is not None and declared.is_file() else None
 
 
-def project_dir_from_payload(payload: object) -> Path | None:
-    """Agent-owned per-project session dir, read from the declared transcript.
+def _project_dir_of(transcript: Path | None) -> Path | None:
+    """Agent-owned per-project session dir the transcript sits in.
 
     The agent encodes the cwd into this directory name with a scheme that has
-    changed across releases, so it is read here rather than recomputed. At
-    SessionStart the transcript is not written yet, so only its parent is
-    required to exist.
+    changed across releases, so it is read here rather than recomputed. Only
+    the parent is required to exist: at SessionStart the transcript is not
+    written yet, which is why this takes the declared path rather than
+    `existing_transcript` of it.
     """
-    declared = _declared_transcript(payload)
-    if declared is None:
+    if transcript is None:
         return None
-    parent = declared.parent
+    parent = transcript.parent
     return parent if parent.is_dir() else None
 
 
 def resolve_project_dir(
-    payload: object, *, agent_dir: Path, sessions_subdir: str, cwd: Path
+    transcript: Path | None, *, agent_dir: Path, sessions_subdir: str, cwd: Path
 ) -> Path:
     """Per-project session dir: the agent's own, else one derived from `cwd`.
 
@@ -90,7 +96,7 @@ def resolve_project_dir(
     matches agents whose encoding is a plain slash-to-dash rewrite.
     """
     sessions_root = agent_dir / (sessions_subdir or "projects")
-    declared = project_dir_from_payload(payload)
+    declared = _project_dir_of(transcript)
     if declared is not None and declared.parent == sessions_root:
         return declared
     encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
@@ -172,7 +178,7 @@ def profile_name() -> str:
 
 
 def resolve_memory_dir(
-    payload: object, *, agent_dir: Path, sessions_subdir: str, cwd: Path
+    transcript: Path | None, *, agent_dir: Path, sessions_subdir: str, cwd: Path
 ) -> Path:
     """Project dir that owns distilled memory, canonicalised across worktrees.
 
@@ -183,14 +189,14 @@ def resolve_memory_dir(
     root = _main_repo_root(cwd)
     if root is None or root == cwd:
         return resolve_project_dir(
-            payload, agent_dir=agent_dir, sessions_subdir=sessions_subdir, cwd=cwd
+            transcript, agent_dir=agent_dir, sessions_subdir=sessions_subdir, cwd=cwd
         )
     sessions_root = agent_dir / (sessions_subdir or "projects")
     return sessions_root / ("-" + str(root).replace("/", "-").lstrip("-"))
 
 
 def memory_dir(
-    payload: object,
+    transcript: Path | None,
     *,
     agent_dir: Path,
     sessions_subdir: str,
@@ -211,7 +217,7 @@ def memory_dir(
     from lazy_harness.core.memory_store import memory_dir_for
 
     legacy = resolve_memory_dir(
-        payload, agent_dir=agent_dir, sessions_subdir=sessions_subdir, cwd=cwd
+        transcript, agent_dir=agent_dir, sessions_subdir=sessions_subdir, cwd=cwd
     )
     return memory_dir_for(cwd, knowledge_root=knowledge_root, legacy_project_dir=legacy)
 

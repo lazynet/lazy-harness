@@ -71,10 +71,11 @@ def _enqueue_compound_loop(payload: object) -> None:
         from lazy_harness.core.config import Config, ConfigError, load_config
         from lazy_harness.core.paths import agent_runtime_dir, config_file
         from lazy_harness.hooks.builtins._shared import (
+            _declared_transcript,
+            existing_transcript,
             find_latest_session,
             make_log,
             resolve_project_dir,
-            transcript_from_payload,
         )
         from lazy_harness.knowledge.compound_loop import create_task, should_queue_task
     except ImportError:
@@ -112,10 +113,11 @@ def _enqueue_compound_loop(payload: object) -> None:
     queue_dir = agent_dir / (subdirs.get("queue") or "queue")
 
     cwd = Path.cwd()
-    session_jsonl = transcript_from_payload(payload)
+    declared = _declared_transcript(payload)
+    session_jsonl = existing_transcript(declared)
     if session_jsonl is None:
         sessions_dir = resolve_project_dir(
-            payload,
+            declared,
             agent_dir=agent_dir,
             sessions_subdir=subdirs.get("sessions") or "projects",
             cwd=cwd,
@@ -143,7 +145,7 @@ def _enqueue_compound_loop(payload: object) -> None:
     from lazy_harness.hooks.builtins._shared import memory_dir as shared_memory_dir
 
     memory_dir = shared_memory_dir(
-        payload,
+        declared,
         agent_dir=agent_dir,
         sessions_subdir=subdirs.get("sessions") or "projects",
         cwd=cwd,

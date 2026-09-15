@@ -28,7 +28,7 @@ import time
 from collections.abc import Mapping
 from pathlib import Path
 
-from lazy_harness.hooks.builtins._shared import transcript_from_payload
+from lazy_harness.hooks.builtins._shared import _declared_transcript, existing_transcript
 
 WARN_TOKENS = 200_000
 ROTATE_TOKENS = 400_000
@@ -151,7 +151,7 @@ def _read_stdin_json() -> dict[str, object]:
 
 
 def _tokens_of(payload: dict[str, object]) -> int | None:
-    transcript = transcript_from_payload(payload)
+    transcript = existing_transcript(_declared_transcript(payload))
     return None if transcript is None else context_tokens(transcript)
 
 

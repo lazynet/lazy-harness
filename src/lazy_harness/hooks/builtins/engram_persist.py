@@ -54,6 +54,7 @@ def main() -> None:
         from lazy_harness.core.paths import agent_runtime_dir, config_file
         from lazy_harness.core.project_identity import project_key as identity_key
         from lazy_harness.hooks.builtins._shared import (
+            _declared_transcript,
             knowledge_root_for,
         )
         from lazy_harness.hooks.builtins._shared import memory_dir as shared_memory_dir
@@ -76,7 +77,7 @@ def main() -> None:
     agent_dir = agent_runtime_dir(agent)
     subdirs = agent.session_dirs()
     memory_dir = shared_memory_dir(
-        payload,
+        _declared_transcript(payload),
         agent_dir=agent_dir,
         sessions_subdir=subdirs.get("sessions") or "projects",
         cwd=cwd,
