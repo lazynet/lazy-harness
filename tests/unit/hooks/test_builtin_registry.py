@@ -47,31 +47,28 @@ def test_each_registered_name_maps_to_a_module_of_its_own() -> None:
     assert len(_modules_in_registry()) == len(_BUILTIN_HOOKS)
 
 
-#: Step 2 of `specs/designs/2026-09-13-multi-agent-harness-design.md` migrates
-#: exactly these, chosen because between them they cover all three ways a hook
-#: answers: deny via stderr and exit 2, block via stdout, and context with no
-#: verdict at all. Step 5 migrates the remaining fifteen.
-_MIGRATED_IN_STEP_2 = ["context-inject", "pre-tool-use-security", "stop-verify-guard"]
-
-
-def test_exactly_the_step_two_builtins_are_migrated() -> None:
+def test_migrated_agrees_with_the_signature_in_both_directions() -> None:
     """Flipping `migrated` and changing the signature are one change, both ways.
 
     `True` on a module whose `main()` still takes no arguments hands it an
     event object; `False` on one that takes an event calls it with nothing. The
     field is what both entry points route on, so either mismatch is a hook that
     raises on its first real invocation and nowhere earlier.
+
+    Read off every registered module rather than checked against a literal
+    list. A list has to be appended to by each of step 5's fifteen migrations —
+    fifteen edits to one line, in fifteen branches — and it only ever restates
+    what `inspect.signature` can be asked directly.
     """
-    migrated = sorted(name for name, spec in _BUILTIN_HOOKS.items() if spec.migrated)
-    assert migrated == _MIGRATED_IN_STEP_2
-
-
-def test_every_migrated_builtin_takes_an_event_and_returns_a_decision() -> None:
-    """The signature itself, read off the module the registry names."""
-    for name in _MIGRATED_IN_STEP_2:
-        module = importlib.import_module(_BUILTIN_HOOKS[name].module)
-        signature = inspect.signature(module.main)
-        assert list(signature.parameters) == ["event"], name
+    for name, spec in _BUILTIN_HOOKS.items():
+        module = importlib.import_module(spec.module)
+        takes_event = list(inspect.signature(module.main).parameters) == ["event"]
+        assert spec.migrated == takes_event, (
+            f"{name}: migrated={spec.migrated} but main() "
+            f"{'takes' if takes_event else 'does not take'} an event"
+        )
+        if not spec.migrated:
+            continue
         hints = typing.get_type_hints(module.main)
         assert hints["event"] is HookEvent, name
         assert hints["return"] is HookDecision, name
@@ -87,6 +84,41 @@ def test_every_migrated_builtin_declares_the_event_it_is_wired_to() -> None:
         name for name, spec in _BUILTIN_HOOKS.items() if spec.migrated and not spec.event
     )
     assert undeclared == []
+
+
+def test_no_unmigrated_builtin_declares_a_signal() -> None:
+    """`signals` is the one spec field that is live before the migration.
+
+    `event`, `operations` and `blocking` are inert while `migrated` is False:
+    `runner.run_hook` is the only reader of the first and third and both entry
+    points reach it only for a migrated spec (`engine.py:59`,
+    `cli/hooks_cmd.py:96`), and `operations` has no reader in `src/` at all.
+    So step 5 can declare those early, in one reviewable diff.
+
+    `signals` cannot travel with them, and not because migration changes what
+    it does -- measured, it changes nothing. `signal_gaps.gaps_for_profile`
+    reads it through `loader.builtin_signals` without consulting `migrated`,
+    and `deploy.engine` leaves a hook with an undeliverable signal out of the
+    generated settings. Against a profile whose agent supplies no
+    `TranscriptReader` -- `codex.py` ships none today, so it delivers the empty
+    set -- `session-export` declaring `MESSAGES` produces the same omission at
+    `migrated=False` and at `migrated=True`.
+
+    That symmetry is the reason for the gate rather than an argument against
+    it. The other three fields are inert, so declaring them early costs
+    nothing if a row is wrong. `signals` is live in both states, so a wrong row
+    silently undeploys a working hook the moment any profile runs a reader-less
+    agent -- and a bulk commit declaring fourteen of them carries evidence for
+    none. Hence: a builtin's `signals` lands in the commit that migrates it,
+    beside the golden and the isolation assertion that show what that hook
+    actually reads.
+    """
+    early = sorted(
+        name for name, spec in _BUILTIN_HOOKS.items() if spec.signals and not spec.migrated
+    )
+    assert early == [], (
+        f"signals declared before migration, undeployable on a reader-less agent: {early}"
+    )
 
 
 def test_a_declared_event_is_one_the_agent_delivers() -> None:

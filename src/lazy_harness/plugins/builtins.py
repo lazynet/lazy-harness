@@ -61,10 +61,19 @@ _TOOLS = [
 #
 # Four builtin hooks are deliberately absent. Three — `herdr-context-gauge`,
 # `post-tool-use-ansible-lint` and `user-prompt-goal` — appear in no default
-# list because no event is declared for them anywhere in the code: they
-# attach wherever the operator puts them, and giving them a fixed
-# `config_path` here would invent that event and then answer wrongly for
+# list because they attach wherever the operator puts them, and giving them a
+# fixed `config_path` here would invent that event and then answer wrongly for
 # anyone who configured them under a different one.
+#
+# Absent here is not the same as undeclared. `post-tool-use-ansible-lint` and
+# `user-prompt-goal` each declare a `BuiltinHookSpec.event`, which is only the
+# runner's fallback for an invocation carrying no `hook_event_name`
+# (`runner._canonical_event`: a payload that names an event always wins). Each
+# handles exactly one event, so that fallback has one right answer and the
+# operator's placement still decides what actually arrives.
+# `herdr-context-gauge` declares none, and that is the difference: it branches
+# on the event it receives and is wired to four, so no single fallback is
+# right. Step 5's task 12 resolves it.
 #
 # `stop-verify-guard` has one fixed event (`Stop`) but is absent for a
 # different reason: the `verify_ran` event it waits for now has a producer,

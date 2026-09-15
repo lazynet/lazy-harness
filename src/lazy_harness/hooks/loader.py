@@ -33,10 +33,12 @@ class BuiltinHookSpec:
     `lh hook <name>` carries no event flag and `lh hooks run` hands the runner
     `{}`, so `hook_event_name` is not always there to read — and without an
     event the adapter can neither parse the payload nor name the event back in
-    its output. The wiring is static (`plugins/builtins.py`), so the answer is
-    known without the payload. A payload that *does* name an event still wins,
-    and a name no adapter recognises is still a refusal rather than a fallback:
-    that is a typo, not an absence.
+    its output. For a hook that handles one event the answer is known without
+    the payload — from `plugins/builtins.py` where the wiring is static, and
+    from the hook itself where the operator places it. A hook that branches on
+    several leaves this unset rather than naming one of them. A payload that
+    *does* name an event still wins, and a name no adapter recognises is still
+    a refusal rather than a fallback: that is a typo, not an absence.
     """
 
     blocking: bool = False
@@ -99,13 +101,19 @@ class HookInfo:
 
 
 _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
-    "compound-loop": BuiltinHookSpec(module="lazy_harness.hooks.builtins.compound_loop"),
+    "compound-loop": BuiltinHookSpec(
+        module="lazy_harness.hooks.builtins.compound_loop",
+        event="session_stop",
+    ),
     "context-inject": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.context_inject",
         event="session_start",
         migrated=True,
     ),
-    "engram-persist": BuiltinHookSpec(module="lazy_harness.hooks.builtins.engram_persist"),
+    "engram-persist": BuiltinHookSpec(
+        module="lazy_harness.hooks.builtins.engram_persist",
+        event="session_stop",
+    ),
     "herdr-context-gauge": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.herdr_context_gauge",
         matcher={"post_tool_use": "*"},
@@ -113,26 +121,42 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
     "post-tool-use-ansible-lint": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.post_tool_use_ansible_lint",
         matcher="Edit|Write",
+        event="post_tool_use",
+        operations=frozenset({Operation.MODIFY_FILE}),
     ),
     "post-tool-use-format": BuiltinHookSpec(
-        module="lazy_harness.hooks.builtins.post_tool_use_format"
+        module="lazy_harness.hooks.builtins.post_tool_use_format",
+        event="post_tool_use",
+        operations=frozenset({Operation.MODIFY_FILE}),
     ),
     "post-tool-use-sync-claude": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.post_tool_use_sync_claude",
         matcher="Edit|Write",
+        event="post_tool_use",
+        operations=frozenset({Operation.MODIFY_FILE}),
     ),
-    "pre-compact": BuiltinHookSpec(module="lazy_harness.hooks.builtins.pre_compact"),
+    "pre-compact": BuiltinHookSpec(
+        module="lazy_harness.hooks.builtins.pre_compact",
+        event="pre_compact",
+    ),
     "pre-tool-use-git-scope": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.pre_tool_use_git_scope",
         matcher="Bash",
+        event="pre_tool_use",
+        blocking=True,
+        operations=frozenset({Operation.RUN_COMMAND}),
     ),
     "pre-tool-use-memory-size": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.pre_tool_use_memory_size",
         matcher="Edit|Write",
+        event="pre_tool_use",
+        operations=frozenset({Operation.MODIFY_FILE}),
     ),
     "pre-tool-use-read-size": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.pre_tool_use_read_size",
         matcher="Read",
+        event="pre_tool_use",
+        operations=frozenset({Operation.READ_FILE}),
     ),
     "pre-tool-use-security": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.pre_tool_use_security",
@@ -143,12 +167,20 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
         migrated=True,
     ),
     "session-start-preflight": BuiltinHookSpec(
-        module="lazy_harness.hooks.builtins.session_start_preflight"
+        module="lazy_harness.hooks.builtins.session_start_preflight",
+        event="session_start",
     ),
-    "session-end": BuiltinHookSpec(module="lazy_harness.hooks.builtins.session_end"),
-    "session-export": BuiltinHookSpec(module="lazy_harness.hooks.builtins.session_export"),
+    "session-end": BuiltinHookSpec(
+        module="lazy_harness.hooks.builtins.session_end",
+        event="session_end",
+    ),
+    "session-export": BuiltinHookSpec(
+        module="lazy_harness.hooks.builtins.session_export",
+        event="session_stop",
+    ),
     "stop-context-rotate": BuiltinHookSpec(
-        module="lazy_harness.hooks.builtins.stop_context_rotate"
+        module="lazy_harness.hooks.builtins.stop_context_rotate",
+        event="session_stop",
     ),
     "stop-verify-guard": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.stop_verify_guard",
@@ -156,7 +188,10 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
         signals=frozenset({Signal.GOAL_STATUS}),
         migrated=True,
     ),
-    "user-prompt-goal": BuiltinHookSpec(module="lazy_harness.hooks.builtins.user_prompt_goal"),
+    "user-prompt-goal": BuiltinHookSpec(
+        module="lazy_harness.hooks.builtins.user_prompt_goal",
+        event="user_prompt_submit",
+    ),
 }
 
 
