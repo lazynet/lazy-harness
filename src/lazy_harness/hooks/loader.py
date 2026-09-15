@@ -215,6 +215,29 @@ def resolve_hooks_for_event(
     return resolve_script_names(event_cfg.scripts, user_hooks_dir, event)
 
 
+PRE_RUNNER_AGENT = "claude-code"
+"""The agent whose wire format the unmigrated `main()` path assumes.
+
+TRANSITIONAL, and paired with `BuiltinHookSpec.migrated`. A builtin that has not
+moved to the runner reads stdin itself, in Claude Code's shape, and exits with
+its own code — so deploying one to any other agent is a guess. Named here rather
+than spelled in the deploy path so that step 5 deletes the field, this constant
+and the branches reading either, together.
+"""
+
+
+def builtin_migrated(name: str) -> bool:
+    """Whether a builtin goes through the runner, False for anything unregistered.
+
+    The read side of `BuiltinHookSpec.migrated`, for the same reason
+    `builtin_signals` exists: callers stop reaching into `_BUILTIN_HOOKS`. A
+    user hook answers False because the pre-runner path is exactly what it gets
+    — the registry never heard of it and it has no `main(event)` to call.
+    """
+    spec = _BUILTIN_HOOKS.get(name)
+    return spec.migrated if spec is not None else False
+
+
 def builtin_signals(name: str) -> frozenset[Signal]:
     """Transcript signals a builtin declares, empty for anything unregistered.
 

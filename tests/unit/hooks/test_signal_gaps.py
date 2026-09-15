@@ -71,7 +71,7 @@ def _register(monkeypatch: pytest.MonkeyPatch, name: str, cls: type) -> None:
 
 
 def test_adapter_delivering_every_signal_reports_no_gap() -> None:
-    from lazy_harness.monitoring.hook_signals import collect_hook_signal_gaps
+    from lazy_harness.hooks.signal_gaps import collect_hook_signal_gaps
 
     assert collect_hook_signal_gaps(_cfg("claude-code")) == []
 
@@ -79,7 +79,7 @@ def test_adapter_delivering_every_signal_reports_no_gap() -> None:
 def test_adapter_without_a_transcript_reader_is_missing_every_declared_signal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from lazy_harness.monitoring.hook_signals import collect_hook_signal_gaps
+    from lazy_harness.hooks.signal_gaps import collect_hook_signal_gaps
 
     _register(monkeypatch, "no-reader", _NoReaderAdapter)
     gaps = collect_hook_signal_gaps(_cfg("no-reader"))
@@ -97,7 +97,7 @@ def test_adapter_without_a_transcript_reader_is_missing_every_declared_signal(
 def test_reader_delivering_other_signals_still_reports_the_one_it_lacks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from lazy_harness.monitoring.hook_signals import collect_hook_signal_gaps
+    from lazy_harness.hooks.signal_gaps import collect_hook_signal_gaps
 
     _register(monkeypatch, "partial-reader", _PartialReaderAdapter)
     gaps = collect_hook_signal_gaps(_cfg("partial-reader"))
@@ -116,14 +116,14 @@ def test_hook_whose_event_the_agent_lacks_is_not_reported_as_a_missing_signal(
     nothing runs; that waits on the agent's event vocabulary, not on a
     `TranscriptReader`, so this collector does not speak for it.
     """
-    from lazy_harness.monitoring.hook_signals import collect_hook_signal_gaps
+    from lazy_harness.hooks.signal_gaps import collect_hook_signal_gaps
 
     _register(monkeypatch, "no-stop-event", _NoStopEventAdapter)
     assert collect_hook_signal_gaps(_cfg("no-stop-event")) == []
 
 
 def test_hook_declaring_no_signals_reports_no_gap(monkeypatch: pytest.MonkeyPatch) -> None:
-    from lazy_harness.monitoring.hook_signals import collect_hook_signal_gaps
+    from lazy_harness.hooks.signal_gaps import collect_hook_signal_gaps
 
     _register(monkeypatch, "no-reader", _NoReaderAdapter)
     cfg = _cfg("no-reader")
@@ -133,7 +133,7 @@ def test_hook_declaring_no_signals_reports_no_gap(monkeypatch: pytest.MonkeyPatc
 
 
 def test_each_profile_is_resolved_against_its_own_agent(monkeypatch: pytest.MonkeyPatch) -> None:
-    from lazy_harness.monitoring.hook_signals import collect_hook_signal_gaps
+    from lazy_harness.hooks.signal_gaps import collect_hook_signal_gaps
 
     _register(monkeypatch, "no-reader", _NoReaderAdapter)
     cfg = _cfg("claude-code")
