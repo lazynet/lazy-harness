@@ -146,3 +146,47 @@ def test_context_inject_writes_nothing_outside_the_invoked_profile(
     assert "session-context: fired cwd=" in (harness_config / "logs" / "hooks.log").read_text()
     assert _files_under(home_dir) == before_home
     assert (_files_under(other) if other.exists() else set()) == before_other
+
+
+def test_compound_loop_logs_into_the_invoked_profile(harness_config: Path, tmp_path: Path) -> None:
+    """`compound-loop` resolved both halves globally, and logged before config.
+
+    Its bootstrap dir was `agent_runtime_dir(get_agent("claude-code"))` with the
+    agent name written out as a literal, so the `fired` line landed in whatever
+    directory the global agent named even when the hook ran under `--profile
+    gate`. The session lookup below it then read that same wrong directory's
+    `projects/`, which is how a profile's Stop stopped queueing anything.
+    """
+    exit_code = _run_hook(
+        "compound-loop",
+        "gate",
+        {"hook_event_name": "Stop", "cwd": str(tmp_path), "session_id": "isolation-test"},
+    )
+
+    assert exit_code == 0
+    log = (harness_config / "logs" / "hooks.log").read_text()
+    assert "compound-loop: fired cwd=" in log
+
+
+def test_compound_loop_writes_nothing_outside_the_invoked_profile(
+    harness_config: Path, home_dir: Path, tmp_path: Path
+) -> None:
+    """The half that fails before the fix.
+
+    Presence alone passes either way: `~/.claude` is a directory the hook is
+    entitled to create, so the leak looks exactly like a first run.
+    """
+    other = tmp_path / "other-home"
+    before_home = _files_under(home_dir)
+    before_other = _files_under(other) if other.exists() else set()
+
+    exit_code = _run_hook(
+        "compound-loop",
+        "gate",
+        {"hook_event_name": "Stop", "cwd": str(tmp_path), "session_id": "isolation-test"},
+    )
+
+    assert exit_code == 0
+    assert "compound-loop: fired cwd=" in (harness_config / "logs" / "hooks.log").read_text()
+    assert _files_under(home_dir) == before_home
+    assert (_files_under(other) if other.exists() else set()) == before_other

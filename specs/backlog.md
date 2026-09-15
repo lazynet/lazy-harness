@@ -462,13 +462,15 @@ Inventario por **mecanismo**, no por grafía: diez builtins escriben `hooks.log`
 | Builtin | Sitios | Grafía |
 |---|---|---|
 | `session-export` | `:44` boot, `:59-60` post-config | literal + `cfg.agent.type` |
-| `compound-loop` | `:62` boot, `:81-82` post-config | literal + `cfg.agent.type` |
+| ~~`compound-loop`~~ | cerrado — ver la actualización debajo de la tabla | — |
 | `session-end` | `:89` boot, `:107-108` post-config | literal + `cfg.agent.type` |
 | `pre-compact` | `:158` resolución, `:184` escritura | `cfg.agent.type if cfg is not None else "claude-code"` |
 | `pre-tool-use-memory-size` | `:170` | literal |
 | `pre-tool-use-read-size` | `:69` | literal |
 | `post-tool-use-format` | `:67` | literal |
 | `post-tool-use-ansible-lint` | `:140` | literal |
+
+**Actualización 2026-09-15 — quedan siete.** `compound-loop` sale del inventario con su migración (task 6 del step 5): `main(event)` resuelve `agent_dir_for(cfg, event.profile)` y carga config **antes** de la primera línea de log, así que las dos grafías desaparecen juntas. Cubierto por `tests/integration/test_hook_log_profile_isolation.py`, que afirma presencia en el dir del profile y **ausencia** fuera de él. La medición de 0.67.1 que sigue más abajo no se re-corrió: es el registro de lo que se midió entonces, no un conteo vivo.
 
 Más `knowledge/compound_loop_worker.py`, fuera del proceso del hook: el camino normal es `:98` con `cfg.agent.type` (`:100` es solo el fallback del `except`) y `:101` resuelve sin profile. Global sí, hardcodeado incondicionalmente no.
 

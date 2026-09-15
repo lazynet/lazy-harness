@@ -2,16 +2,27 @@
 
 from __future__ import annotations
 
-import io
-import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
+from lazy_harness.agents.base import HookDecision, HookEvent
+
 # Project dir name as the agent encodes it: the space and the `~` in the real
 # cwd both collapse to `-`, which a naive `str(cwd).replace("/", "-")` misses.
 AGENT_PROJECT_DIR = "-tmp-Mobile-Documents-iCloud-md-obsidian-LazyMind"
+
+
+def _event(*, cwd: Path, transcript: Path | None = None, profile: str = "") -> HookEvent:
+    """A Stop event as the adapter hands it over."""
+    return HookEvent(
+        event="session_stop",
+        profile=profile,
+        session_id="0197f0de-cafe-4bad-9001-000000000001",
+        cwd=cwd,
+        transcript_path=transcript,
+    )
 
 
 @pytest.fixture
@@ -52,13 +63,10 @@ def test_queues_task_for_transcript_declared_in_payload(
     fake_create_task = MagicMock(return_value=Path("task-1.task"))
     monkeypatch.setattr(knowledge, "create_task", fake_create_task)
     monkeypatch.setattr(mod.subprocess, "Popen", MagicMock())
-    monkeypatch.setattr(
-        "sys.stdin",
-        io.StringIO(json.dumps({"transcript_path": str(harness["transcript"])})),
-    )
 
-    mod.main()
+    decision = mod.main(_event(cwd=harness["cwd"], transcript=harness["transcript"]))
 
+    assert decision == HookDecision()
     fake_create_task.assert_called_once()
     kwargs = fake_create_task.call_args.kwargs
     assert kwargs["session_jsonl"] == harness["transcript"]
@@ -82,12 +90,48 @@ def test_falls_back_to_newest_session_when_payload_has_no_transcript(
     fake_create_task = MagicMock(return_value=Path("task-2.task"))
     monkeypatch.setattr(knowledge, "create_task", fake_create_task)
     monkeypatch.setattr(mod.subprocess, "Popen", MagicMock())
-    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"session_id": "abc"})))
 
-    mod.main()
+    mod.main(_event(cwd=harness["cwd"]))
 
     fake_create_task.assert_called_once()
     assert fake_create_task.call_args.kwargs["session_jsonl"] == legacy_transcript
+
+
+def test_an_empty_event_cwd_falls_back_to_the_process_directory(
+    harness: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A payload naming no cwd parses as `Path("")`, which is `Path(".")`.
+
+    This hook is the one that cannot survive that: unlike its siblings it
+    derives the agent's project directory itself (`"-" + str(cwd).replace(...)`)
+    rather than through `project_key`, which resolves a relative path back to
+    the real one. `Path(".")` encodes to `-.`, so every session on the machine
+    would look for its transcript in one shared directory that holds none, and
+    the hook would silently stop queueing anything at all.
+
+    Asserted through the queued task rather than through a log line: the
+    failure is a lookup that finds nothing, and a hook that found nothing still
+    exits 0 and still writes a log.
+    """
+    from lazy_harness.hooks.builtins import compound_loop as mod
+    from lazy_harness.knowledge import compound_loop as knowledge
+
+    encoded = "-" + str(harness["cwd"]).replace("/", "-").lstrip("-")
+    legacy_dir = harness["project_dir"].parent / encoded
+    legacy_dir.mkdir(parents=True)
+    legacy_transcript = legacy_dir / "0197f0de-cafe-4bad-9001-000000000003.jsonl"
+    legacy_transcript.write_text('{"type":"user"}\n')
+
+    fake_create_task = MagicMock(return_value=Path("task-3.task"))
+    monkeypatch.setattr(knowledge, "create_task", fake_create_task)
+    monkeypatch.setattr(mod.subprocess, "Popen", MagicMock())
+
+    mod.main(_event(cwd=Path("")))
+
+    fake_create_task.assert_called_once()
+    kwargs = fake_create_task.call_args.kwargs
+    assert kwargs["session_jsonl"] == legacy_transcript
+    assert kwargs["cwd"] == harness["cwd"], "the task must name the real project, not '.'"
 
 
 def test_memory_dir_points_at_the_main_repo_when_running_in_a_worktree(
@@ -137,11 +181,34 @@ def test_memory_dir_points_at_the_main_repo_when_running_in_a_worktree(
     fake_create_task = MagicMock(return_value=Path("task-1.task"))
     monkeypatch.setattr(knowledge, "create_task", fake_create_task)
     monkeypatch.setattr(mod.subprocess, "Popen", MagicMock())
-    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"transcript_path": str(transcript)})))
 
-    mod.main()
+    mod.main(_event(cwd=worktree, transcript=transcript))
 
     kwargs = fake_create_task.call_args.kwargs
     assert kwargs["session_jsonl"] == transcript, "sessions still belong to the worktree"
     expected = agent_dir / "projects" / ("-" + str(repo.resolve()).replace("/", "-").lstrip("-"))
     assert kwargs["memory_dir"] == expected / "memory"
+
+
+def test_a_transcript_the_payload_names_but_disk_does_not_have_is_not_used(
+    harness: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`transcript_path` is what the payload claimed, not what exists.
+
+    The pre-runner helper stat'd it as part of reading the payload; without the
+    explicit check the hook would queue a task naming a file the worker cannot
+    open, and the cwd-derived fallback below it would never be reached.
+    """
+    from lazy_harness.hooks.builtins import compound_loop as mod
+    from lazy_harness.knowledge import compound_loop as knowledge
+
+    fake_create_task = MagicMock(return_value=Path("task-4.task"))
+    monkeypatch.setattr(knowledge, "create_task", fake_create_task)
+    monkeypatch.setattr(mod.subprocess, "Popen", MagicMock())
+
+    decision = mod.main(
+        _event(cwd=harness["cwd"], transcript=harness["cwd"] / "not-written-yet.jsonl")
+    )
+
+    assert decision == HookDecision()
+    fake_create_task.assert_not_called()

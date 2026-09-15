@@ -26,7 +26,6 @@ BUILTINS_DIR = Path(__file__).parents[4] / "src" / "lazy_harness" / "hooks" / "b
 # policy. `context_inject` left this list when it migrated; the rest follow at
 # step 5 of `specs/designs/2026-09-13-multi-agent-harness-design.md`.
 GUARDED_HOOKS = [
-    "compound_loop",
     "pre_compact",
     "session_end",
     "session_export",

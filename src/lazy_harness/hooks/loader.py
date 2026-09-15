@@ -104,6 +104,7 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
     "compound-loop": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.compound_loop",
         event="session_stop",
+        migrated=True,
     ),
     "context-inject": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.context_inject",

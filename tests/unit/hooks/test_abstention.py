@@ -50,6 +50,15 @@ _NO_OBJECTION: dict[str, dict[str, object]] = {
         "session_id": "s1",
         "cwd": "/tmp",
     },
+    # `compound-loop` has no verdict to form at all -- it queues a task and
+    # returns -- which is precisely why it belongs here: a hook on a blockable
+    # event that never refuses is the one whose silence is easiest to turn into
+    # an accidental `block` by returning something other than `HookDecision()`.
+    "compound-loop": {
+        "hook_event_name": "Stop",
+        "session_id": "s1",
+        "cwd": "/tmp",
+    },
 }
 
 
