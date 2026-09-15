@@ -531,10 +531,22 @@ def test_stop_and_suppress_output_travel_beside_no_verdict() -> None:
 # --- ClaudeCodeAdapter: the PreCompact text channel -----------------------
 
 
+def _hook_event_names() -> tuple[str, ...]:
+    """Canonical event names the Claude Code adapter declares.
+
+    Read from `_HOOK_EVENTS` rather than listed here: a static copy of a table
+    is the kind of second answer that drifts from the first one silently.
+    """
+    from lazy_harness.agents.claude_code import _HOOK_EVENTS
+
+    return tuple(_HOOK_EVENTS)
+
+
 def test_pre_compact_additional_context_serialises_as_plain_text() -> None:
     """PreCompact has no `hookSpecificOutput` variant; JSON there is discarded.
 
-    Recorded against the 2.1.234 binary in `pre_compact.py` and in ADR-036 D2:
+    Recorded against the 2.1.234 binary in `pre_compact.py` and in ADR-036's
+    Context (the union enumeration; D2 is the decision that follows from it):
     a JSON payload fails schema validation, which marks the hook failed and
     drops its output. The executor joins each *successful* hook's raw stdout
     into `newCustomInstructions`, so the summary arrives as the bytes the hook
@@ -616,8 +628,55 @@ def test_pre_compact_names_every_channel_it_cannot_carry_not_just_the_first() ->
     assert "suppress_output" in message
 
 
-def test_other_events_still_serialise_additional_context_as_json() -> None:
-    """The narrowing is PreCompact's alone, not a change to the channel."""
+def test_a_verdict_on_pre_compact_is_still_refused() -> None:
+    """The text branch sits *below* the verdict check, and that order is load-bearing.
+
+    `_HOOK_EVENTS["pre_compact"]` declares no verdicts, so the check at the top
+    of the method refuses every one of them -- which is why the branch does not
+    repeat it. Hoisting the branch above that check would return the summary
+    with a zero exit and drop the verdict in silence, so the ordering needs a
+    test of its own rather than an argument in a commit message.
+    """
+    from lazy_harness.agents.base import HookDecision, Verdict
+    from lazy_harness.agents.registry import get_agent
+
+    adapter = get_agent("claude-code")
+    for verdict in Verdict:
+        with pytest.raises(ValueError, match="does not honour"):
+            adapter.format_hook_output(
+                _event(adapter, "pre_compact"),
+                HookDecision(verdict=verdict, additional_context="Preserve X"),
+            )
+
+
+def test_pre_compact_emits_no_stderr_even_when_a_reason_is_set() -> None:
+    """Raw text has no second channel; `reason` belongs to a verdict it cannot carry."""
+    from lazy_harness.agents.base import HookDecision
+    from lazy_harness.agents.registry import get_agent
+
+    adapter = get_agent("claude-code")
+    out = adapter.format_hook_output(
+        _event(adapter, "pre_compact"),
+        HookDecision(additional_context="Preserve X", reason="ignored here"),
+    )
+    assert out.stdout == "Preserve X\n"
+    assert out.stderr == ""
+    assert out.exit_code == 0
+
+
+@pytest.mark.parametrize(
+    "event_name",
+    sorted(name for name in _hook_event_names() if name != "pre_compact"),
+)
+def test_every_other_event_still_serialises_additional_context_as_json(
+    event_name: str,
+) -> None:
+    """The narrowing is PreCompact's alone, not a change to the channel.
+
+    Parametrised over the adapter's own event table rather than one sample
+    event: asserting this against `session_start` alone lets the branch be
+    widened to any of the other nine without a test noticing.
+    """
     import json
 
     from lazy_harness.agents.base import HookDecision
@@ -625,7 +684,7 @@ def test_other_events_still_serialise_additional_context_as_json() -> None:
 
     adapter = get_agent("claude-code")
     out = adapter.format_hook_output(
-        _event(adapter, "session_start"), HookDecision(additional_context="ctx")
+        _event(adapter, event_name), HookDecision(additional_context="ctx")
     )
     assert out.stdout is not None
     assert json.loads(out.stdout)["hookSpecificOutput"]["additionalContext"] == "ctx"
