@@ -33,6 +33,7 @@ from lazy_harness.monitoring.engram_persist_health import (
     EngramPersistHealth,
     collect_engram_persist_health,
 )
+from lazy_harness.monitoring.hook_signals import HookSignalGap, collect_hook_signal_gaps
 from lazy_harness.monitoring.sink_freshness import SinkFreshness, collect_sinks_freshness
 from lazy_harness.monitoring.sink_setup import plan_sinks
 
@@ -374,6 +375,40 @@ def _render_unhonoured_profile_agents(console: Console, cfg: Config) -> None:
     )
 
 
+def _render_hook_signals(console: Console, gaps: list[HookSignalGap]) -> None:
+    """Name each deployed hook's missing signals, per profile (design step 4).
+
+    Reporting, not failing: the hook is installed and the agent is running, so
+    this is a capability gap to close, not a broken machine. Silent when there
+    is nothing to say, the same rule as `_render_artifact_versions`.
+
+    The line says the *event is delivered* on purpose. `hook_events()` not
+    carrying the event at all is the other unsupported state, and the design
+    refuses to collapse the two: that one is resolved by the agent's event
+    vocabulary, this one by a `TranscriptReader`. Naming the mechanism is what
+    keeps the reader from chasing the wrong one.
+    """
+    if not gaps:
+        return
+    console.print("\n[bold]Hook signals[/bold]")
+    for gap in gaps:
+        missing = ", ".join(escape(s.value) for s in gap.missing)
+        cause = (
+            f"{escape(gap.agent)}'s TranscriptReader does not deliver it"
+            if gap.has_reader
+            else f"{escape(gap.agent)} has no TranscriptReader"
+        )
+        console.print(
+            f"  [yellow]![/yellow] {escape(gap.profile)}/{escape(gap.hook)} — "
+            f"{escape(gap.event)} is delivered, but the hook needs signal "
+            f"{missing} and {cause}"
+        )
+    console.print(
+        "      [dim]Missing signal, not a missing event: the hook installs, runs, "
+        "finds nothing and passes. Closed by a TranscriptReader.[/dim]"
+    )
+
+
 def _project_memory_dir(agent: AgentAdapter, cfg: Config | None) -> Path:
     """Memory dir for the current project, canonicalised across worktrees."""
 
@@ -499,6 +534,7 @@ def doctor() -> None:
     reports = collect_artifact_version_reports(cfg, config_dir() / "profiles")
     _render_artifact_versions(console, reports)
     _render_unhonoured_profile_agents(console, cfg)
+    _render_hook_signals(console, collect_hook_signal_gaps(cfg))
 
     console.print()
     if ok:

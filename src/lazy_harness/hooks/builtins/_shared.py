@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - imported for typing only
     from lazy_harness.agents.base import TranscriptReader
+    from lazy_harness.core.config import Config
 
 _TRANSCRIPT_KEYS = ("transcript_path", "transcriptPath", "input")
 
@@ -231,7 +232,7 @@ def knowledge_root_for(cfg: object) -> Path | None:
     return root if root.is_dir() else None
 
 
-def transcript_reader(profile: str) -> TranscriptReader | None:
+def transcript_reader(profile: str, cfg: Config | None = None) -> TranscriptReader | None:
     """The `TranscriptReader` for the agent this profile runs, or None.
 
     One importable answer to "can this session's transcript be read, and by
@@ -251,6 +252,11 @@ def transcript_reader(profile: str) -> TranscriptReader | None:
     machine that has not run `lh init` still has an agent whose transcript its
     hooks can read.
 
+    `cfg` is an optional override for a caller that has already loaded one.
+    Hooks pass nothing and get the load above; `lh doctor` passes its own so
+    that one command does not answer the same question from two reads of the
+    same file.
+
     The Protocol is imported under `TYPE_CHECKING` so that this module keeps
     every runtime import inside a function — a hook's import cost is paid on
     every tool call.
@@ -261,10 +267,11 @@ def transcript_reader(profile: str) -> TranscriptReader | None:
         from lazy_harness.core.config import Config, ConfigError, load_config
         from lazy_harness.core.paths import config_file
 
-        try:
-            cfg = load_config(config_file())
-        except (ConfigError, OSError):
-            cfg = Config()
+        if cfg is None:
+            try:
+                cfg = load_config(config_file())
+            except (ConfigError, OSError):
+                cfg = Config()
         adapter = agent_for_profile(cfg, profile)
     except Exception:  # noqa: BLE001 — hooks degrade, they do not raise
         return None

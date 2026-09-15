@@ -8,6 +8,9 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+from lazy_harness.agents.base import HookSupport
+from lazy_harness.agents.registry import NullAdapter
+
 _BASE_TOML = (
     '[harness]\nversion = "1"\n'
     '[agent]\ntype = "claude-code"\n'
@@ -575,3 +578,82 @@ def test_doctor_is_silent_when_no_profile_declares_a_divergent_agent() -> None:
         _render_unhonoured_profile_agents(console, cfg)
 
     assert cap.get() == ""
+
+
+_SIGNAL_GAP_TOML = (
+    '[harness]\nversion = "1"\n'
+    '[agent]\ntype = "claude-code"\n'
+    '[profiles]\ndefault = "p1"\n\n'
+    '[profiles.p1]\nconfig_dir = "~/.claude-p1"\nagent = "no-reader"\n'
+    '[hooks.session_stop]\nscripts = ["stop-verify-guard"]\n'
+    '[knowledge]\nroot = ""\n'
+)
+
+
+def _unwrapped(output: str) -> str:
+    """Rich hard-wraps at the console width; assertions are about words."""
+    return " ".join(output.split())
+
+
+class _NoReaderAdapter(NullAdapter):
+    """Delivers Stop, implements no `TranscriptReader`."""
+
+    @property
+    def name(self) -> str:
+        return "no-reader"
+
+    def hook_events(self) -> dict[str, HookSupport]:
+        return {"session_stop": HookSupport(native_name="Stop")}
+
+
+def test_doctor_names_the_missing_signal_of_a_deployed_hook(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from lazy_harness.agents import registry
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(_SIGNAL_GAP_TOML)
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
+    monkeypatch.setitem(registry._AGENTS, "no-reader", _NoReaderAdapter)
+
+    output = _unwrapped(CliRunner().invoke(doctor, []).output)
+
+    assert "Hook signals" in output
+    assert "p1/stop-verify-guard" in output
+    assert "the hook needs signal goal_status" in output
+
+
+def test_doctor_hook_signal_line_names_the_signal_state_not_the_event_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The design keeps "event absent" and "signal absent" apart.
+
+    Their resolutions differ — an event vocabulary versus a `TranscriptReader`
+    — so the line has to say which one it is instead of "unavailable".
+    """
+    from lazy_harness.agents import registry
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(_SIGNAL_GAP_TOML)
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
+    monkeypatch.setitem(registry._AGENTS, "no-reader", _NoReaderAdapter)
+
+    output = _unwrapped(CliRunner().invoke(doctor, []).output)
+
+    assert "session_stop is delivered, but the hook needs signal" in output
+    assert "no-reader has no TranscriptReader" in output
+    assert "Missing signal, not a missing event" in output
+
+
+def test_doctor_omits_hook_signals_when_the_agent_delivers_everything(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(_SIGNAL_GAP_TOML.replace('agent = "no-reader"\n', ""))
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
+
+    assert "Hook signals" not in _unwrapped(CliRunner().invoke(doctor, []).output)
