@@ -213,6 +213,29 @@ agent resolution from global to per-profile, which is the behaviour change
 scheduled at **step 6**. Migrating a hook to the runner and re-scoping how it
 resolves its agent are two changes, and only the first belongs here.
 
+> **Measured against the code on 2026-09-15, and the roster has moved.** The
+> paragraph above is the plan as written at step 3 and is left standing; what
+> shipped since diverges from it in two places, both verified by grep rather
+> than by reading the names.
+>
+> `pre_tool_use_security.py:298` and `context_inject.py:758` are **no longer
+> literals**. PR #300 pulled both onto `agent_dir_for(cfg, event.profile)` as
+> part of the F7 isolation fix, ahead of the step 6 it was scheduled for; what
+> a grep finds at `:294` and `:775` today is docstring prose describing the
+> removal. A reader chasing those two line numbers finds comments and concludes
+> the fix is missing.
+>
+> `_shared.py:258` is a literal the paragraph does not name, inside
+> `agent_dir_for` itself. It is the documented degradation for a machine that
+> has not run `lh init` — the profile-to-config-dir mapping lives in the file
+> that did not load — so it stays global by decision, and the step 5 audit
+> excludes it explicitly rather than silently.
+>
+> Net: **nine** live literals, not ten, and step 5 still accounts for
+> **seven** of them — the same number by a different roster. The two outside it
+> are `knowledge/compound_loop_worker.py:100`, as the paragraph says, and
+> `_shared.py:258`, which it does not.
+
 **There are two callers of `main()`, not one, and neither passes arguments.**
 Verified in the code:
 
@@ -1525,6 +1548,34 @@ against a version that will not ship.
 > Step 4 is what freezes the contract, and it has run, so
 > [ADR-041](../adrs/041-multi-agent-hook-contract.md) is `accepted` as of
 > 2026-09-15. Step 5 — the bulk migration — is unblocked.
+>
+> **Three of step 5's own clauses are narrower than the step text, measured
+> 2026-09-15 before the migration started.** Tracked here rather than in the
+> step, which is not edited as things land; the executable form is
+> [the step 5 plan](2026-09-15-step5-builtin-migration-plan.md).
+>
+> `profile_name()` is **not deleted**, only removed from the builtins. Five
+> import sites and two are builtins (`session_end.py:35`,
+> `user_prompt_goal.py:131`); the rest are outside the hook path
+> (`cli/metrics_cmd.py:236`, `knowledge/compound_loop.py:1249` and `:1278`) and
+> one, `hooks/runner.py:151`, is the runner's own `resolve_profile` fallback —
+> the mechanism the migration depends on, so deleting it takes the migration
+> with it.
+>
+> `_TRANSCRIPT_KEYS` accepts three spellings and `parse_hook_input` reads one.
+> Deleting it narrows every migrated builtin from `transcript_path`,
+> `transcriptPath` and `input` to the first alone. That is a silent dropout
+> until it is measured and asserted either way, which is the plan's task 2.
+>
+> **`pre-compact` cannot migrate onto the contract as the contract stands.** It
+> writes plain text on purpose — Claude Code's `hookSpecificOutput` union has no
+> PreCompact variant, so JSON there fails schema validation and the output is
+> discarded (ADR-036 D2, and the module's own docstring against 2.1.234) —
+> while `format_hook_output` serialises every decision as JSON. A migration
+> that ignores this passes every unit test written against `HookDecision` and
+> kills the one hook whose job is surviving compaction. The adapter gains the
+> text channel first; that is the plan's task 1, and it blocks the other
+> fourteen.
 
 The two external reviews disagreed on exactly one thing, and it is the ordering.
 Codex argued for Claude-only first — runner plus goldens — so the contract
