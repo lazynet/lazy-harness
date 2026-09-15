@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.67.1](https://github.com/lazynet/lazy-harness/compare/v0.67.0...v0.67.1) (2026-09-15)
+
+
+### Bug Fixes
+
+* route hook logs to the profile the hook ran under ([#300](https://github.com/lazynet/lazy-harness/issues/300)) ([c19f193](https://github.com/lazynet/lazy-harness/commit/c19f193f40b41d27bb88b55e7f3a57312b7284c1))
+
+
+### Documentation
+
+* close the 0.67.1 pre-release coherence findings ([#301](https://github.com/lazynet/lazy-harness/issues/301)) ([3dfdb34](https://github.com/lazynet/lazy-harness/commit/3dfdb342f7f4f1c8f7a8f48ded73cc55e86b5555))
+* merge the silent-dropout and probe-first gates, pruning CLAUDE.md to fit ([#298](https://github.com/lazynet/lazy-harness/issues/298)) ([2a3226e](https://github.com/lazynet/lazy-harness/commit/2a3226e9de116b0731fefe8eaeca1e9c858b7975))
+
 ## [0.67.0](https://github.com/lazynet/lazy-harness/compare/v0.66.0...v0.67.0) (2026-09-15)
 
 
