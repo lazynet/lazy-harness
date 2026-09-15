@@ -7,16 +7,22 @@ for real (`/exit`, `/clear`, logout), those gates can silently swallow the
 last few minutes of work, leaving `handoff.md` stale.
 
 SessionEnd has no such rate limit — it fires exactly once, on shutdown — so
-this hook ignores both gates and always enqueues a task. Still exits 0 on
-every path; nothing here may block Claude Code's shutdown.
+this hook ignores both gates and always enqueues a task. It abstains on every
+path; nothing here may block Claude Code's shutdown.
+
+It declares no `Signal`: it *locates* a transcript and enqueues its path, and
+the compound-loop worker reads the messages afterwards, out of process.
+Declaring `MESSAGES` would make `deploy` refuse to install this hook on an
+agent whose reader cannot supply a signal the hook never touches.
 """
 
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
 from pathlib import Path
+
+from lazy_harness.agents.base import HookDecision, HookEvent
 
 
 def _loop_db_path() -> Path:
@@ -25,53 +31,45 @@ def _loop_db_path() -> Path:
     return resolve_db_path()
 
 
-def _record_session_closed(payload: object) -> None:
+def _record_session_closed(event: HookEvent) -> None:
     """Never raises: the compound-loop enqueue below must run regardless."""
     try:
-        data = payload if isinstance(payload, dict) else {}
-        session = data.get("session_id")
-        cwd = data.get("cwd")
-        from lazy_harness.hooks.builtins._shared import (
-            profile_name,
-            project_key,
-        )
+        from lazy_harness.hooks.builtins._shared import project_key
         from lazy_harness.monitoring.db import MetricsDB
 
+        # No `Path.cwd()` fallback here, deliberately: a payload naming no cwd
+        # used to reach `project_key` as the empty string and record an
+        # unattributed row, and this is a metrics label rather than a path the
+        # hook writes to. The enqueue below takes the fallback because a wrong
+        # directory there is a queued task pointing at the wrong project.
         MetricsDB(_loop_db_path()).record_loop_event(
-            session=session if isinstance(session, str) else "",
+            session=event.session_id,
             kind="session_closed",
-            project=project_key(Path(cwd)) if isinstance(cwd, str) and cwd else "",
-            profile=profile_name(),
+            project=project_key(event.cwd) if event.cwd != Path(".") else "",
+            profile=event.profile,
         )
     except Exception:
         pass
 
 
-def main() -> None:
-    payload: object = None
-    try:
-        payload = json.load(sys.stdin)
-    except (json.JSONDecodeError, EOFError, ValueError):
-        pass
-
-    _record_session_closed(payload)
+def main(event: HookEvent) -> HookDecision:
+    _record_session_closed(event)
 
     # A hook must degrade gracefully: any exception here must not block
-    # Claude Code's shutdown. Catch all exceptions and exit cleanly.
+    # Claude Code's shutdown. Catch all exceptions and abstain.
     try:
-        _enqueue_compound_loop(payload)
+        _enqueue_compound_loop(event)
     except Exception:
         pass
-    sys.exit(0)
+    return HookDecision()
 
 
-def _enqueue_compound_loop(payload: object) -> None:
+def _enqueue_compound_loop(event: HookEvent) -> None:
     try:
-        from lazy_harness.agents.registry import get_agent
         from lazy_harness.core.config import Config, ConfigError, load_config
-        from lazy_harness.core.paths import agent_runtime_dir, config_file
+        from lazy_harness.core.paths import config_file
         from lazy_harness.hooks.builtins._shared import (
-            _declared_transcript,
+            agent_dir_for,
             existing_transcript,
             find_latest_session,
             make_log,
@@ -84,14 +82,10 @@ def _enqueue_compound_loop(payload: object) -> None:
 
     _log = make_log("session-end")
 
-    # Pre-config bootstrap: the agent type is unknown until config loads, so
-    # resolve the log path via the Claude Code adapter (identical to the
-    # historical CLAUDE_CONFIG_DIR read). Re-resolved below once config is in.
-    boot_dir = agent_runtime_dir(get_agent("claude-code"))
-    log_dir = boot_dir / "logs"
-    log_file = log_dir / "hooks.log"
-
-    _log(log_file, f"fired cwd={Path.cwd()}")
+    # A payload with no `cwd` parses as `Path(".")`. The process directory is
+    # what this hook read before the runner, and encoding `.` into the project
+    # dir name would point every queued task at one shared garbage directory.
+    cwd = event.cwd if event.cwd != Path(".") else Path.cwd()
 
     cf = config_file()
     cfg: Config | None = None
@@ -101,19 +95,23 @@ def _enqueue_compound_loop(payload: object) -> None:
         except ConfigError:
             cfg = None
 
-    if cfg is None or not cfg.compound_loop.enabled:
-        _log(log_file, "disabled in config, skipping")
-        return
-
-    agent = get_agent(cfg.agent.type)
-    agent_dir = agent_runtime_dir(agent)
+    # Per profile, not per machine, and resolved *before* the first log line.
+    # The bootstrap this replaces went through a hardcoded
+    # `get_agent("claude-code")`, so `fired` landed in whatever directory the
+    # global agent named while every line below it landed in the profile's own.
+    agent, agent_dir = agent_dir_for(cfg, event.profile)
     subdirs = agent.session_dirs()
     log_dir = agent_dir / (subdirs.get("logs") or "logs")
     log_file = log_dir / "hooks.log"
     queue_dir = agent_dir / (subdirs.get("queue") or "queue")
 
-    cwd = Path.cwd()
-    declared = _declared_transcript(payload)
+    _log(log_file, f"fired cwd={cwd}")
+
+    if cfg is None or not cfg.compound_loop.enabled:
+        _log(log_file, "disabled in config, skipping")
+        return
+
+    declared = event.transcript_path
     session_jsonl = existing_transcript(declared)
     if session_jsonl is None:
         sessions_dir = resolve_project_dir(
@@ -174,7 +172,3 @@ def _enqueue_compound_loop(payload: object) -> None:
             )
     except OSError as e:
         _log(log_file, f"worker spawn failed: {e}")
-
-
-if __name__ == "__main__":
-    main()

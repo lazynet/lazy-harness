@@ -17,12 +17,29 @@ import pytest
 from lazy_harness.core.config import Config, HookEventConfig, ProfileEntry
 
 
+def _an_unmigrated_builtin() -> tuple[str, str]:
+    """(hook name, event) of a builtin still on the pre-runner path.
+
+    Read off the registry rather than named here. Step 5 migrates the fifteen
+    one commit at a time, and a hardcoded example makes every one of those
+    commits edit this file to re-point it at whichever hook has not moved yet —
+    a merge conflict per task, in a test that is about the *flag*, not the hook.
+    """
+    from lazy_harness.hooks.loader import _BUILTIN_HOOKS
+
+    for name, spec in _BUILTIN_HOOKS.items():
+        if not spec.migrated and spec.event:
+            return name, spec.event
+    pytest.skip("every builtin is migrated; this warning and its field are due for deletion")
+
+
 def _cfg(agent: str) -> Config:
+    name, event = _an_unmigrated_builtin()
     cfg = Config()
     cfg.agent.type = agent
     cfg.profiles.default = "p1"
     cfg.profiles.items = {"p1": ProfileEntry(config_dir="~/.agent-p1", agent=agent)}
-    cfg.hooks = {"session_end": HookEventConfig(scripts=["session-end"])}
+    cfg.hooks = {event: HookEventConfig(scripts=[name])}
     return cfg
 
 
@@ -31,10 +48,11 @@ def test_unmigrated_builtin_on_a_non_claude_code_agent_is_named(
 ) -> None:
     from lazy_harness.deploy.engine import _hook_entries_for
 
+    name, _event = _an_unmigrated_builtin()
     _hook_entries_for(_cfg("codex"), "p1", "lh")
 
     assert (
-        "session-end in 'p1': not migrated to the runner, so it reads "
+        f"{name} in 'p1': not migrated to the runner, so it reads "
         "Claude Code-shaped stdin and owns its own exit code on agent 'codex'"
         in capsys.readouterr().out
     )
@@ -44,9 +62,10 @@ def test_the_warning_does_not_stop_the_hook_being_deployed() -> None:
     """A warning, not a gate. Step 5 migrates these; until then they still ship."""
     from lazy_harness.deploy.engine import _hook_entries_for
 
+    name, event = _an_unmigrated_builtin()
     entries = _hook_entries_for(_cfg("codex"), "p1", "lh")
 
-    assert "lh hook session-end --profile p1" in [e.command for e in entries["session_end"]]
+    assert f"lh hook {name} --profile p1" in [e.command for e in entries[event]]
 
 
 def test_the_same_hook_on_claude_code_is_not_warned_about(

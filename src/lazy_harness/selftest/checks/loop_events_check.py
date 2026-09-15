@@ -67,12 +67,36 @@ def _write_config(root: Path, db_path: Path, profile_dir: Path) -> None:
     )
 
 
-def _run_hook(hook: Path, payload: dict[str, str], env: dict[str, str]) -> str:
-    """Run a hook script the way the agent does. Returns '' on success."""
+def _invocation(hook: Path, name: str) -> list[str] | str:
+    """How the agent runs this hook today, or why it cannot be run.
+
+    Two shapes, and the registry is what decides between them. A pre-runner
+    builtin is still a bare script the agent executes by path. A migrated one
+    is not a script at all: its `main()` takes a `HookEvent` and the module has
+    no `__main__` block, so `python session_end.py` reads stdin from nobody,
+    calls nothing and exits 0 — a check that kept doing that would report a
+    green run against a hook it never invoked, which is what this whole check
+    exists to prevent.
+    """
+    from lazy_harness.hooks.loader import _BUILTIN_HOOKS
+
+    spec = _BUILTIN_HOOKS.get(name)
+    if spec is not None and spec.migrated:
+        from lazy_harness.hooks.engine import CLI_BOOTSTRAP
+
+        return [sys.executable, "-c", CLI_BOOTSTRAP, "hook", name, "--profile", _PROFILE]
     if not hook.is_file():
         return f"{hook.name} not found in {hook.parent}"
+    return [sys.executable, str(hook)]
+
+
+def _run_hook(hook: Path, name: str, payload: dict[str, str], env: dict[str, str]) -> str:
+    """Run a hook the way the agent does. Returns '' on success."""
+    argv = _invocation(hook, name)
+    if isinstance(argv, str):
+        return argv
     proc = subprocess.run(
-        [sys.executable, str(hook)],
+        argv,
         input=json.dumps(payload),
         capture_output=True,
         text=True,
@@ -93,7 +117,12 @@ def _rows(db_path: Path, kind: str) -> list[tuple[str, str]]:
 
 
 def check_loop_events(*, hooks_dir: Path | None = None) -> list[CheckResult]:
-    """Verify loop-event attribution end to end against the running package."""
+    """Verify loop-event attribution end to end against the running package.
+
+    `hooks_dir` overrides where the *pre-runner* hook scripts are read from; a
+    migrated builtin is reached through `lh hook <name>` and ignores it, because
+    that is the only path the agent has left to it.
+    """
     hooks = hooks_dir if hooks_dir is not None else _builtin_hooks_dir()
 
     try:
@@ -129,12 +158,20 @@ def _probe(root: Path, hooks: Path) -> list[CheckResult]:
     prompt_hook = hooks / "user_prompt_goal.py"
     end_hook = hooks / "session_end.py"
 
-    for hook, payload in (
-        (prompt_hook, {"session_id": "s1", "prompt": _PROMPT, "cwd": str(subdir)}),
-        (prompt_hook, {"session_id": "s2", "prompt": _PROMPT, "cwd": str(worktree)}),
-        (end_hook, {"session_id": "s3", "cwd": str(subdir)}),
+    for hook, name, payload in (
+        (
+            prompt_hook,
+            "user-prompt-goal",
+            {"session_id": "s1", "prompt": _PROMPT, "cwd": str(subdir)},
+        ),
+        (
+            prompt_hook,
+            "user-prompt-goal",
+            {"session_id": "s2", "prompt": _PROMPT, "cwd": str(worktree)},
+        ),
+        (end_hook, "session-end", {"session_id": "s3", "cwd": str(subdir)}),
     ):
-        error = _run_hook(hook, payload, env)
+        error = _run_hook(hook, name, payload, env)
         if error:
             results.append(_fail("hook-run", error))
 
