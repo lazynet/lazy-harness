@@ -1580,6 +1580,48 @@ against a version that will not ship.
 > `transcriptPath` and `input` to the first alone. That is a silent dropout
 > until it is measured and asserted either way, which is the plan's task 2.
 >
+> **Measured, and the narrowing stands.** `parse_hook_input` keeps reading
+> `transcript_path` alone. Three sources, none of them an argument from
+> cleanliness:
+>
+> - `git log -S'transcriptPath'` dates the tuple to `b81f0a6` (2026-04-12), the
+>   first `pre_compact` ever written, where it arrived complete in its first
+>   line. No commit between then and now records a payload that sent one of the
+>   extra spellings; ADR-010:43 rationalises the tolerance *after* the fact,
+>   naming no incident.
+> - The shipped agent decides it. Claude Code 2.1.272 declares the hook
+>   payload's base fields as `["hook_event_name", "session_id",
+>   "transcript_path", "cwd", "scratchpad_dir", "prompt_id", "permission_mode",
+>   "agent_id", "agent_type", "served_call", "caller_session_id", "effort"]`,
+>   and its base schema for every event is `{session_id, transcript_path, cwd,
+>   ...}`. The 61 occurrences of `transcriptPath` in that binary are internal
+>   resume, summary and respawn plumbing; none falls inside a hook payload.
+>   There is no top-level `input` field at all — tool arguments arrive as
+>   `tool_input`.
+> - `codex.py:148` already records the same observation for the second agent:
+>   its payload is Claude-shaped snake_case, and it too reads one key.
+>
+> `input` in particular is not inert code. It is a generic name, so a future
+> payload that uses it for anything else resolves the project dir to a
+> directory derived from a non-transcript string — the silent-misplacement
+> class ADR-032 exists to close, bought as insurance against a drift no
+> release has shown.
+>
+> `test_transcript_path_is_the_only_spelling_the_adapter_reads`
+> (`tests/unit/test_agent_contract.py`) holds it. The test asserts on two
+> payloads on purpose: a widening chain that lists `transcript_path` first
+> still satisfies a payload carrying all three, so only a payload that *omits*
+> the snake spelling separates a narrow adapter from a wide one. Proven
+> load-bearing by hand — the widening from the plan's task 2 step 4 was applied
+> to `claude_code.py`, the test failed on the second payload, and the edit was
+> reverted by hand.
+>
+> Two prose surfaces still describe the three-spelling behaviour and are still
+> correct, because the unmigrated builtins keep their own copies of the tuple
+> (`_shared.py:56`, `pre_compact.py:189`): `docs/how/hooks.md:130` and `:641`,
+> and ADR-010:43. Each falls due with the builtin it describes — ADR-010's when
+> `pre-compact` migrates, the docs' as the builtins behind them do.
+>
 > **`pre-compact` cannot migrate onto the contract as the contract stands.** It
 > writes plain text on purpose — Claude Code's `hookSpecificOutput` union has no
 > PreCompact variant, so JSON there fails schema validation and the output is

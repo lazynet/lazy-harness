@@ -397,6 +397,53 @@ def test_a_missing_transcript_path_is_none_not_a_bare_path() -> None:
     assert event.transcript_path is None
 
 
+def test_transcript_path_is_the_only_spelling_the_adapter_reads() -> None:
+    """The narrowing away from the builtins' three-spelling tuple is measured.
+
+    `_shared` accepts `transcript_path`, `transcriptPath` and `input`. The two
+    extra spellings were defensive from the first line that carried them
+    (`b81f0a6`, the original `pre_compact`) and no payload has ever been
+    observed sending one: Claude Code 2.1.272 declares the hook payload's base
+    fields as `["hook_event_name", "session_id", "transcript_path", "cwd",
+    "scratchpad_dir", "prompt_id", "permission_mode", "agent_id", "agent_type",
+    "served_call", "caller_session_id", "effort"]`, and every `transcriptPath`
+    in that binary is internal resume/summary plumbing, never a hook field.
+
+    Both halves of the rule live on payloads that disagree, because the half
+    that a widening breaks is the *absence* one: honouring `transcript_path`
+    survives any fallback chain that lists it first, so only a payload that
+    omits it can tell a narrow adapter from a wide one.
+    """
+    from lazy_harness.agents.registry import get_agent
+
+    adapter = get_agent("claude-code")
+
+    both = adapter.parse_hook_input(
+        "session_start",
+        {
+            "session_id": "s",
+            "cwd": "/repo",
+            "transcript_path": "/snake.jsonl",
+            "transcriptPath": "/camel.jsonl",
+            "input": "/input.jsonl",
+        },
+        profile="lazy",
+    )
+    assert both.transcript_path == Path("/snake.jsonl")
+
+    neither = adapter.parse_hook_input(
+        "session_start",
+        {
+            "session_id": "s",
+            "cwd": "/repo",
+            "transcriptPath": "/camel.jsonl",
+            "input": "/input.jsonl",
+        },
+        profile="lazy",
+    )
+    assert neither.transcript_path is None
+
+
 # --- ClaudeCodeAdapter: format_hook_output -------------------------------
 
 
