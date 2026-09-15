@@ -172,11 +172,14 @@ This is the hook that does the heaviest lifting. It is split into two pieces del
 3. Apply debounce (`debounce_seconds`, default 60) — if a task for this session was queued within the window, skip.
 4. Apply the growth gate (`reprocess_min_growth_seconds`, default 120) — re-queue only if the JSONL grew past the threshold since the last `done/` task.
 5. Check `queue/done/` for the same short session id — if already processed, skip.
-6. Drop a task file (`<unix-ts>-<short-id>.task`) into `~/.claude/queue/` with key=value metadata (`cwd`, `session_jsonl`, `session_id`, `memory_dir`, `timestamp`).
+6. Drop a task file (`<unix-ts>-<short-id>.task`) into the agent's `queue/` directory with key=value metadata (`cwd`, `session_jsonl`, `session_id`, `memory_dir`, `timestamp`).
 7. `subprocess.Popen` the worker as a detached process. Return immediately.
 
 **Consumer (worker, slow, async):**
-1. Acquire `fcntl.flock` on `~/.claude/queue/.worker.lock`. If another worker is running, exit 0.
+1. Acquire `fcntl.flock` on `queue/.worker.lock`. If another worker is running, exit 0.
+
+    The queue and the worker's own log sit beside `hooks.log` in the agent runtime directory, so neither is at a fixed path either — see [Observability](#observability) for how that directory resolves. On a single-profile Claude Code install they are `~/.claude/queue/` and `~/.claude/queue/.worker.lock`.
+
 2. Drain `*.task` files in FIFO order.
 3. For each task: parse metadata → filter trivial sessions (`min_user_chars`, `min_messages`) → collect existing decisions/failures/learnings for deduplication → build prompt with `build_prompt` (ported verbatim from the predecessor; the wording is calibration, not code) → call `claude -p --model <model>` with a configurable timeout → parse the JSON response with `parse_response` (handles bare JSON, fenced JSON, and prose-preamble JSON) → persist with `persist_results` → record the session's `goal_declared`/`goal_absent` verdict (see below).
 4. Move the task to `queue/done/` regardless of outcome — failures never block the queue.

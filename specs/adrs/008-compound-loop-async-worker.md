@@ -26,6 +26,13 @@ Steps 4 and 5 can take 30–120 seconds and call another LLM. The naive implemen
 
 Split the compound loop into **a fast synchronous producer (the hook) and a slow asynchronous consumer (the worker)**, with a file-based queue between them.
 
+Paths as decided on 2026-05-02, when one agent meant one fixed location. They have since moved:
+`compound_loop.py:86` resolves the queue as `agent_dir / subdirs["queue"]` and `:132` the worker log
+as `log_dir / "compound-loop.log"`, both from the agent runtime directory of the profile the hook
+ran under. `src/lazy_harness/core/paths.py` (`agent_runtime_dir`) is the source of truth for that
+resolution. The `~/.claude/...` spellings below are what a single-profile Claude Code install
+resolves to, not the contract.
+
 - **Producer — `src/lazy_harness/hooks/builtins/compound_loop.py`.** Runs inside Claude Code's `Stop` hook. All it does:
   1. Read config, check `compound_loop.enabled`, bail if disabled.
   2. Locate the session JSONL for the current project.
