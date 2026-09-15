@@ -344,7 +344,7 @@ def test_generated_settings_carry_the_per_event_matcher_end_to_end() -> None:
             )
         entries[event] = resolved
 
-    generated = ClaudeCodeAdapter().generate_hook_config(entries)
+    generated = ClaudeCodeAdapter()._generate_hook_config(entries)
 
     assert generated["PostToolUse"][0]["matcher"] == "*"
     assert generated["Stop"][0]["matcher"] == ""
@@ -369,7 +369,7 @@ def test_generated_settings_never_carry_a_null_matcher() -> None:
             )
         entries[event] = resolved
 
-    generated = ClaudeCodeAdapter().generate_hook_config(entries)
+    generated = ClaudeCodeAdapter()._generate_hook_config(entries)
 
     for cc_event, groups in generated.items():
         for group in groups:

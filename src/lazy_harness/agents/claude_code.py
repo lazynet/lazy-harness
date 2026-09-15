@@ -63,7 +63,7 @@ def _as_int(*candidates: object) -> int | None:
 
 
 # Canonical event name -> how Claude Code delivers it. The single place the
-# native casing lives; `supported_hooks()` and `generate_hook_config()` both
+# native casing lives; `supported_hooks()` and `_generate_hook_config()` both
 # read it rather than repeating the mapping.
 #
 # `verdicts` is deliberately gated on evidence from this repository, not on
@@ -356,7 +356,7 @@ class ClaudeCodeAdapter:
     def hook_events(self) -> dict[str, HookSupport]:
         return dict(_HOOK_EVENTS)
 
-    def generate_hook_config(self, hooks: dict[str, list[str | HookEntry]]) -> dict:
+    def _generate_hook_config(self, hooks: dict[str, list[str | HookEntry]]) -> dict:
         """Generate Claude Code settings.json hooks section.
 
         Each value can be a plain command string (uses the event's default
@@ -778,7 +778,7 @@ class ClaudeCodeAdapter:
             session_id=session_id if isinstance(session_id, str) else None,
         )
 
-    def generate_mcp_config(self, servers: dict[str, dict]) -> dict:
+    def _generate_mcp_config(self, servers: dict[str, dict]) -> dict:
         normalized: dict[str, dict] = {}
         for name, entry in servers.items():
             normalized[name] = {
@@ -850,7 +850,7 @@ class ClaudeCodeAdapter:
         widened: dict[str, list[str | HookEntry]] = {
             event: list(entries) for event, entries in hooks.items()
         }
-        generated = self.generate_hook_config(widened)
+        generated = self._generate_hook_config(widened)
         settings = _as_document(existing_raw)
 
         merged, preserved, repaired, dropped = _merge_hook_blocks(
@@ -883,7 +883,7 @@ class ClaudeCodeAdapter:
         if not servers:
             return None
 
-        generated = self.generate_mcp_config(servers).get("mcpServers", {})
+        generated = self._generate_mcp_config(servers).get("mcpServers", {})
         document = _as_document(existing_raw)
         current = document.get("mcpServers")
         if not isinstance(current, dict):

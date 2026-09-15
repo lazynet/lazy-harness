@@ -25,7 +25,7 @@ def _deployed_matcher(name: str, event: str) -> str:
     entry: str | HookEntry = (
         HookEntry(command="cmd", matcher=hook.matcher) if hook.matcher is not None else "cmd"
     )
-    generated = ClaudeCodeAdapter().generate_hook_config({event: [entry]})
+    generated = ClaudeCodeAdapter()._generate_hook_config({event: [entry]})
     return generated[_CC_TOOL_EVENTS[event]][0]["matcher"]
 
 

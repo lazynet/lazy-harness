@@ -50,3 +50,14 @@ The rest of the codebase never imports a concrete adapter. Deploy, hooks, and mi
 - `resolve_binary` carries a subtle constraint documented in the protocol: it must avoid resolving to a shim that would recurse back into `lh run`. `ClaudeCodeAdapter.resolve_binary` implements this by preferring the version-manager directory (`~/.local/share/claude/versions/`) over a raw `shutil.which("claude")` lookup.
 - The adapter is the only place where "which events exist" is defined. `deploy_hooks` iterates `cfg.hooks` (user-declared event names) and calls `agent.generate_hook_config` — a user that declares an unsupported event for their agent gets a silent drop, which is intentional forward-compat: newer config can target older agents.
 - The agent layer is intentionally thin. It is not an abstraction over chat — the framework never proxies messages. It is an abstraction over the tiny surface area the framework actually touches: filesystem paths, event names, and settings serialization.
+
+## Evolution
+
+**2026-09-15 — the two config generators came off the Protocol.** `plan_config`
+replaced them as the deploy surface (decision 4 of the 2026-09-13 multi-agent
+harness design): a `dict` return cannot express "N files in two formats", which
+is what a second agent needs — Codex declares its hooks in `hooks.json`, not in
+a Claude-shaped `settings.json`. They survive as private serialisers inside
+`ClaudeCodeAdapter` (`_generate_hook_config`, `_generate_mcp_config`). The
+Protocol block quoted above is kept as written, because it records the decision
+as it was made; the live surface is `agents/base.py`.

@@ -238,7 +238,7 @@ def test_tool_response_is_unconstrained() -> None:
 
 def test_hook_events_is_the_only_place_the_event_mapping_lives() -> None:
     """`supported_hooks()` used to return canonical names while
-    `generate_hook_config` re-mapped them in a second literal."""
+    `_generate_hook_config` re-mapped them in a second literal."""
     from lazy_harness.agents.registry import get_agent
 
     adapter = get_agent("claude-code")

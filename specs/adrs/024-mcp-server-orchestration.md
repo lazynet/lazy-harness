@@ -35,6 +35,10 @@ Two claims above no longer describe the code. The decision stands; its mechanism
 - **Stale entries do survive.** `_collect_mcp_servers` does rebuild its dict from scratch, but `deploy_mcp_servers` merges it with `existing["mcpServers"].update(...)`, which adds and overwrites without removing. An entry for an uninstalled tool has to be deleted by hand. The Consequence above claiming otherwise was never true of the merge as written.
 - **The probe is not the only gate.** It is authoritative for QMD alone. Engram also requires `[memory.engram].enabled` (ADR-022) and Graphify also requires `[knowledge.structure].enabled` (ADR-023), so for those two the Consequence reads "probe **and** flag".
 
+### Evolution — 2026-09-15
+
+- **`generate_mcp_config` is no longer on the Protocol.** `plan_config` replaced it as the deploy surface (decision 4 of the 2026-09-13 multi-agent harness design): a `dict` return cannot express "N files in two formats". It survives as a private serialiser inside `ClaudeCodeAdapter` (`_generate_mcp_config`), called from `_plan_mcp`. The Decision above is kept as written; a new adapter implements `ConfigPlanner`, not this method.
+
 ## Alternatives considered
 
 - **Hand-edited `mcpServers` in profile templates.** Reproducible until a tool is uninstalled — the entry stays, the agent fails to start the missing server, and the user has to remember to clean up. Rejected because the install-uninstall cycle has no obvious trigger to keep the file in sync.

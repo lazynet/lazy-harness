@@ -13,6 +13,7 @@ from lazy_harness.agents.base import (
     HookSupport,
 )
 from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+from lazy_harness.agents.codex import CodexAdapter
 from lazy_harness.core.paths import expand_path
 
 if TYPE_CHECKING:
@@ -62,12 +63,6 @@ class NullAdapter:
             raise ValueError(f"null honours no verdict on {event.event!r}")
         return HookOutput(stdout=None, stderr="", exit_code=0)
 
-    def generate_hook_config(self, hooks: dict) -> dict:
-        return {}
-
-    def generate_mcp_config(self, servers: dict) -> dict:
-        return {}
-
     def global_config_link(self) -> Path | None:
         return None
 
@@ -86,6 +81,10 @@ class NullAdapter:
 
 _AGENTS: dict[str, type] = {
     "claude-code": ClaudeCodeAdapter,
+    # Throwaway, for step 4's contract gate — registered so that
+    # `[profiles.<name>].agent = "codex"` resolves and a throwaway profile can be
+    # deployed to without any daily profile changing agent.
+    "codex": CodexAdapter,
     "null": NullAdapter,
 }
 

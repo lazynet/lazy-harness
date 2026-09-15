@@ -37,7 +37,7 @@ def test_claude_adapter_maps_session_end_to_SessionEnd() -> None:
     from lazy_harness.agents.claude_code import ClaudeCodeAdapter
 
     adapter = ClaudeCodeAdapter()
-    result = adapter.generate_hook_config({"session_end": ["lh hook session-end"]})
+    result = adapter._generate_hook_config({"session_end": ["lh hook session-end"]})
     assert "SessionEnd" in result
     assert result["SessionEnd"][0]["hooks"][0]["command"] == "lh hook session-end"
 
@@ -128,7 +128,7 @@ def test_generate_hook_config_uses_bash_matcher_for_pre_tool_use() -> None:
     from lazy_harness.agents.claude_code import ClaudeCodeAdapter
 
     adapter = ClaudeCodeAdapter()
-    result = adapter.generate_hook_config({"pre_tool_use": ["pre-tool-use-security"]})
+    result = adapter._generate_hook_config({"pre_tool_use": ["pre-tool-use-security"]})
     assert "PreToolUse" in result
     entries = result["PreToolUse"]
     assert len(entries) == 1
@@ -139,7 +139,7 @@ def test_generate_hook_config_uses_edit_write_matcher_for_post_tool_use() -> Non
     from lazy_harness.agents.claude_code import ClaudeCodeAdapter
 
     adapter = ClaudeCodeAdapter()
-    result = adapter.generate_hook_config({"post_tool_use": ["post-tool-use-format"]})
+    result = adapter._generate_hook_config({"post_tool_use": ["post-tool-use-format"]})
     assert "PostToolUse" in result
     entries = result["PostToolUse"]
     assert len(entries) == 1
@@ -150,7 +150,7 @@ def test_generate_hook_config_keeps_empty_matcher_for_other_events() -> None:
     from lazy_harness.agents.claude_code import ClaudeCodeAdapter
 
     adapter = ClaudeCodeAdapter()
-    result = adapter.generate_hook_config({"session_start": ["context-inject"]})
+    result = adapter._generate_hook_config({"session_start": ["context-inject"]})
     entries = result["SessionStart"]
     assert entries[0]["matcher"] == ""
 
@@ -160,7 +160,7 @@ def test_generate_hook_config_respects_per_script_matcher_override() -> None:
     from lazy_harness.agents.claude_code import ClaudeCodeAdapter
 
     adapter = ClaudeCodeAdapter()
-    result = adapter.generate_hook_config(
+    result = adapter._generate_hook_config(
         {
             "pre_tool_use": [
                 HookEntry(command="hook-a", matcher="Edit|Write"),
@@ -185,7 +185,7 @@ def test_claude_adapter_generate_mcp_config_returns_dict() -> None:
     servers = {
         "qmd": {"command": "qmd", "args": ["mcp"]},
     }
-    result = adapter.generate_mcp_config(servers)
+    result = adapter._generate_mcp_config(servers)
     assert isinstance(result, dict)
     assert "mcpServers" in result
     assert "qmd" in result["mcpServers"]
@@ -196,7 +196,7 @@ def test_claude_adapter_generate_mcp_config_returns_dict() -> None:
 def test_claude_adapter_generate_mcp_config_empty() -> None:
     from lazy_harness.agents.claude_code import ClaudeCodeAdapter
 
-    result = ClaudeCodeAdapter().generate_mcp_config({})
+    result = ClaudeCodeAdapter()._generate_mcp_config({})
     assert result == {"mcpServers": {}}
 
 
@@ -210,7 +210,7 @@ def test_claude_adapter_generate_mcp_config_passes_env() -> None:
             "env": {"ENGRAM_PORT": "7437"},
         },
     }
-    result = ClaudeCodeAdapter().generate_mcp_config(servers)
+    result = ClaudeCodeAdapter()._generate_mcp_config(servers)
     assert result["mcpServers"]["engram"]["env"] == {"ENGRAM_PORT": "7437"}
 
 
@@ -261,7 +261,7 @@ def test_claude_adapter_supports_user_prompt_submit_and_permission_request() -> 
 def test_generate_hook_config_maps_user_prompt_submit_and_permission_request() -> None:
     from lazy_harness.agents.claude_code import ClaudeCodeAdapter
 
-    result = ClaudeCodeAdapter().generate_hook_config(
+    result = ClaudeCodeAdapter()._generate_hook_config(
         {"user_prompt_submit": ["cmd-a"], "permission_request": ["cmd-b"]}
     )
 
@@ -275,7 +275,7 @@ def test_generate_hook_config_never_emits_a_null_matcher() -> None:
     from lazy_harness.agents.base import HookEntry
     from lazy_harness.agents.claude_code import ClaudeCodeAdapter
 
-    result = ClaudeCodeAdapter().generate_hook_config(
+    result = ClaudeCodeAdapter()._generate_hook_config(
         {
             "user_prompt_submit": [HookEntry(command="cmd", matcher=None)],
             "session_start": ["cmd"],

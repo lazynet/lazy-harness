@@ -514,12 +514,6 @@ class FakeHeadlessAdapter:
     def supported_hooks(self) -> list[str]:
         return []
 
-    def generate_hook_config(self, hooks: dict) -> dict:
-        return {}
-
-    def generate_mcp_config(self, servers: dict) -> dict:
-        return {}
-
     def global_config_link(self) -> Path | None:
         return None
 
