@@ -78,6 +78,8 @@ The same blindness shows up in an expected value reverse-calculated from the imp
 
 `pytest.raises(match=...)` anchored on a loose substring matched text a `tmp_path` or traceback also carried.
 
+A test double shaped around the buggy call site is the same failure wearing a different hat. `_planner_for` called `agent.name()` where `AgentAdapter.name` is a `@property`, so the `ConfigPlannerRequiredError` it exists to raise never arrived — `lh deploy` ended in `TypeError: 'str' object is not callable` and a Click traceback, and the `except ConfigPlannerRequiredError` in `deploy_cmd` did not catch it, a plain `TypeError` not being an instance of its own subclass. Four tests across two modules asserted that refusal and all four were green, because both fakes declared `name()` as a method. Every other double in the suite used `@property`. Anchor a Protocol's refusal path on the shipped sentinel — `NullAdapter` — rather than a double the test module shapes, and assert the structured attributes (`.profile`, `.agent_name`) instead of a substring of the rendered message.
+
 Two `Path.cwd()` bugs survived years of green suites because every CLI test injected the parameter explicitly and default resolution was never exercised.
 
 Restoring the guard after the experiment is done by hand — `git checkout` reverts the uncommitted implementation along with it.

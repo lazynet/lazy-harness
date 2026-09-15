@@ -108,6 +108,7 @@ def test_an_adapter_that_cannot_plan_config_exits_nonzero(
     )
 
     class _Plannerless:
+        @property
         def name(self) -> str:
             return "plannerless"
 

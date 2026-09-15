@@ -240,6 +240,7 @@ def test_an_unknown_profile_is_refused(tmp_path: Path, servers: None) -> None:
 class _PlannerlessAdapter:
     """Everything the deploy needs except the ConfigPlanner half."""
 
+    @property
     def name(self) -> str:
         return "plannerless"
 
@@ -303,6 +304,27 @@ def test_the_refusal_names_the_adapter_and_the_profile(
     message = str(excinfo.value)
     assert "beta" in message
     assert "plannerless" in message
+
+
+def test_the_refusal_reads_name_the_way_the_protocol_declares_it(
+    tmp_path: Path, servers: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`AgentAdapter.name` is a property, so the refusal reads it, never calls it.
+
+    Anchored on the shipped `NullAdapter` rather than a fake this module shapes:
+    a fake that declares `name()` as a method matches a buggy call site and
+    reports the refusal as green while the real adapters raise `TypeError`.
+    """
+    from lazy_harness.agents.registry import NullAdapter
+    from lazy_harness.deploy import engine
+
+    monkeypatch.setattr(engine, "agent_for_profile", lambda cfg, name: NullAdapter())
+
+    with pytest.raises(engine.ConfigPlannerRequiredError) as excinfo:
+        engine.deploy_config(_cfg(tmp_path / "profile", name="beta"))
+
+    assert excinfo.value.agent_name == "null"
+    assert excinfo.value.profile == "beta"
 
 
 # --- the deploy report ---------------------------------------------------
