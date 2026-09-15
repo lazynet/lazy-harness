@@ -3,7 +3,7 @@
 **Status:** proposed (revision 4, 2026-09-13 — a third external review found an ordering contradiction in the sequence, an under-specified `TranscriptReader`, and a kill criterion superseded by the derived design; all three corrected below)
 **Date:** 2026-09-13
 **Derived design:** [2026-09-13-multi-agent-blast-radius-design.md](2026-09-13-multi-agent-blast-radius-design.md) — the impacts outside this seam, and the staging and rollback mechanism for this sequence.
-**Recorded as:** [ADR-041](../adrs/041-multi-agent-hook-contract.md) — the decision this document argues for, in the form the ADR index carries. `proposed`, and it stays that way until the step-4 gate runs.
+**Recorded as:** [ADR-041](../adrs/041-multi-agent-hook-contract.md) — the decision this document argues for, in the form the ADR index carries. `accepted` since 2026-09-15, when the step-4 gate ran and passed.
 **Relates to:** [ADR-004](../adrs/004-agent-adapter-pattern.md) (agent adapter pattern), [ADR-032](../adrs/032-agent-adapter-completeness.md) (adapter completeness), [ADR-035](../adrs/035-capability-registry.md) (capability registry), [ADR-009](../adrs/009-profile-symlink-deploy.md) (profile symlink deploy), [ADR-031](../adrs/031-default-hooks-merge.md) (default hooks merge)
 
 ## Problem
@@ -1432,8 +1432,8 @@ against a version that will not ship.
 
 ## Implementation sequence
 
-> **Status, 2026-09-15 — steps 0 to 3 are shipped; step 4 is partially shipped
-> and its gate has run and failed.**
+> **Status, 2026-09-15 — steps 0 to 4 are shipped; step 4's gate has run and
+> passed, and the contract is frozen.**
 >
 > | Step | State | Released in |
 > |------|-------|-------------|
@@ -1441,29 +1441,67 @@ against a version that will not ship.
 > | 1 — the contract types in `agents/base.py` | done | 0.61.0 |
 > | 2 — `lh hook <name> --profile <p>` as the runner, three builtins (0.62.0); `TranscriptReader` (0.63.0) | done | 0.62.0–0.63.0 |
 > | 3 — `config_targets()` / `plan_config()` and the engine that drives them | done | 0.65.0 |
-> | 4 — **contract gate: a throwaway `CodexAdapter` runs those three hooks** | in progress | 0.66.0–0.67.0 (parcial) |
+> | 4 — **contract gate: a throwaway `CodexAdapter` runs those three hooks** | done | 0.66.0–0.67.1 |
 > | 5 to 12 | not started | — |
 >
-> Step 4 spans two releases. 0.66.0 carried the adapter, the Protocol cleanup
+> Step 4 spans three releases. 0.66.0 carried the adapter, the Protocol cleanup
 > and the missing-signals line (#289, #290); 0.67.0 carries the three defects
-> the first gate run surfaced (#292, #294, #296), the deploy-side decision the
-> run forced (#295) and the snapshot half of the per-profile resolution (#297).
-> `specs/backlog.md` §Done has the per-PR record.
+> the first gate run surfaced (#292), the deploy-side decision that run forced
+> (#295), the snapshot half of the per-profile resolution (#297, found by
+> `/coherence-audit`) and two defects the gate did not surface — the
+> plannerless-adapter rejection found while implementing the adapter (#294) and
+> a flaky test plus a formatting gate that both reproduce on `main` (#296);
+> 0.67.1 carries the two the second run surfaced (#300). `specs/backlog.md` §Done has the per-PR record.
 >
-> Step 4 is `in progress`, not `done`: the adapter and the Protocol cleanup
-> shipped, the gate did not. What landed is `agents/codex.py` registered as
-> `codex`, the two config generators off the Protocol, and the `lh doctor`
-> missing-signals line — the step's own note below carries the detail.
+> **The gate passed on 2026-09-15, on the third run.** Each run settled a
+> different half, so the pass is composite and is written that way rather than
+> as one green run:
 >
-> **The gate ran on 2026-09-15 and failed.** Assertions A and B pass against a
-> throwaway Codex profile; assertion C does not, and the run surfaced three
-> production defects of one shape — an answer derived from the global agent
-> where the profile's agent is the source. They are fixed and their gate is in
-> *Verification gates* above. The step stays `in progress` regardless: the gate
-> has not *passed*. The design question assertion C turned on — whether a
-> deploy should skip a hook whose declared signals the profile's agent cannot
-> deliver — **is decided, and it does**; step 4's note below records what
-> shipped. Whether that makes assertion C pass is the gate re-run's answer.
+> | Run | What it asserted | Against | Result | Evidence |
+> |---|---|---|---|---|
+> | 1 | A, B, C | 0.66.0 | A and B pass, C fails | `/tmp/step4-gate-result.md` |
+> | 2 | A, B, C1/C2/C3 — the full gate | 0.67.0 | all pass; fails the isolation rule | `/tmp/step4-gate-rerun.md` |
+> | 3 | isolation only; A, B and C explicitly **not** re-run | installed 0.67.1 | pass, exit 0 | `/tmp/f7-gate/run-0.67.1.log` |
+>
+> So *"a hook fires, a blocking hook refuses, an unsupported hook is omitted
+> and named"* was established by run 2, on 0.67.0 — the design question C
+> turned on was decided in #295, and the deploy does omit. *"A hook invoked
+> with `--profile <p>` writes its log under that profile's directory and
+> nowhere else"* was established by run 3, on 0.67.1. No single binary has
+> passed all four properties in one run, and #300 changed the two hooks A and
+> B exercise, so the pass rests on `tests/integration/test_hook_log_profile_isolation.py`
+> covering that change through the real entry point rather than on a fourth run.
+> Worth having; not had.
+>
+> **Five production defects came out of the three runs, all of one shape** — an
+> answer derived from the global agent where the profile's agent is the source:
+> three in #292 (run 1) and two in #300 (run 2). A sixth of the same shape,
+> #297, was found by `/coherence-audit` rather than by a run — the second of the
+> two readers ADR-041 §3 required to move together, left behind for a release.
+> Two more PRs land in this window and are **not** gate outcomes: #294, a
+> different shape and the sharper one — `_planner_for` called `agent.name()` on
+> a `@property`, so the step-3 rejection path died on a `TypeError` while four
+> tests asserting that rejection passed, both doubles having declared `name()`
+> as a method — found while implementing the adapter; and #296, a flaky test
+> and a formatting gate, both of which reproduce on `main` and predate this
+> work. The three of #292 have their gate in *Verification gates* below; #294's
+> is in `CLAUDE.md`, not here.
+>
+> **What the pass does not cover, stated so it is not read as more than it is.**
+> Two builtins are asserted, not three: `stop-verify-guard` is migrated but
+> writes no `hooks.log`, its only sink being the metrics DB scoped by
+> `LH_DATA_DIR`, so it has no site in scope and the gate prints the skip with
+> its reason on every run. Of the fifteen unmigrated builtins, the eight that
+> resolve `hooks.log` globally are counted rather than failed — the gate's
+> known-gap list names seven of those eight, which leaked 28 lines in the
+> passing run; the eighth, `pre-compact`, is simply never invoked by the gate,
+> and writes its `fired` line unconditionally when it is — because
+> `cli/hooks_cmd.py` calls `main_fn()` with no arguments on that branch and the
+> `--profile` value dies in the dispatch. That is step 5's, and it is a
+> *contract* defect rather than a hook defect, which is exactly why a gate
+> scoped to the migrated hooks could not see it. The gate discriminates: exit 1
+> against 0.67.0, and exit 1 against a shim that fixes only one of the two
+> asserted hooks.
 >
 > Step 4's two displaced prerequisites are tracked here rather than in the
 > step text, which is not edited as things land: per-profile agent
@@ -1484,8 +1522,9 @@ against a version that will not ship.
 > the code is what shipped — `specs/backlog.md` §Done carries the per-step
 > record with its PR numbers.
 >
-> Step 4 is what freezes the contract, so [ADR-041](../adrs/041-multi-agent-hook-contract.md)
-> stays `proposed` until it runs, however many steps close before it.
+> Step 4 is what freezes the contract, and it has run, so
+> [ADR-041](../adrs/041-multi-agent-hook-contract.md) is `accepted` as of
+> 2026-09-15. Step 5 — the bulk migration — is unblocked.
 
 The two external reviews disagreed on exactly one thing, and it is the ordering.
 Codex argued for Claude-only first — runner plus goldens — so the contract
@@ -1635,9 +1674,12 @@ non-identity adapter has run against it.** Step 4 is that gate.
    > A warning and not a refusal: step 5 below migrates the remaining fifteen,
    > and refusing first would leave a Codex profile with almost no hooks.
    >
-   > This note records what changed, not a verdict. Step 4 stays `in progress`
-   > and ADR-041 stays `proposed`: whether assertion C passes is the re-run's
-   > answer, not this change's.
+   > This note records what changed, not a verdict. The re-run gave the
+   > verdict: assertions C1, C2 and C3 pass, and step 4 closed on 2026-09-15
+   > with ADR-041 `accepted`. The warning is still a warning, so the eight
+   > unmigrated builtins that write `hooks.log` still leak their line to the
+   > global agent — seven of them counted by the gate on every run — and this
+   > step's to fix.
 5. Migrate the remaining 15 builtins, each declaring its `Operation` set and its
    `Signal` set. Delete `profile_name()`, `_TRANSCRIPT_KEYS` and seven of the
    ten `get_agent("claude-code")` literals (decision 1 names the three that
@@ -1763,11 +1805,17 @@ ship broken while every test passes.
     threw it away. `_shared.agent_dir_for` is now the one importable place that
     joins the adapter and the directory.
 
-  Two adjacent surfaces are *not* covered by these fixes and stay open: the four
-  pre-runner builtins (`session_export`, `session_end`, `compound_loop`,
-  `engram_persist`) and `pre_compact` still resolve `cfg.agent.type` globally,
-  because they take no `HookEvent` and so have no profile to resolve against —
-  they are the same defect awaiting the runner migration, not a decision.
+  What these fixes do *not* cover stays open, and the count is by mechanism
+  rather than by grep: eight unmigrated builtins still resolve their
+  `hooks.log` directory globally — `session_export`, `session_end`,
+  `compound_loop`, `pre_compact`, `pre_tool_use_memory_size`,
+  `pre_tool_use_read_size`, `post_tool_use_format` and
+  `post_tool_use_ansible_lint` — plus `knowledge/compound_loop_worker.py`
+  outside the hook process. They take no `HookEvent` and so have no profile to
+  resolve against: the same defect awaiting the runner migration, not a
+  decision. `engram_persist` and `post_tool_use_sync_claude` resolve the global
+  agent too but write no `hooks.log`, so they are not on this list.
+  `specs/backlog.md` carries the per-site inventory.
 - **The kill criteria are measured at the horizon**, from the metrics store,
   not from memory.
 
