@@ -6,6 +6,16 @@ If you want the design rationale, read [ADR-008 — Compound loop async worker](
 
 ## The loop, one step at a time
 
+Every `~/.claude/...` path on this page is an **example**, not a fixed location: it is what a
+single-profile Claude Code install with no environment override resolves to. Neither the producer
+nor the worker reads the profile the hook was invoked with. Past that, they resolve in two
+different moments: the producer's pre-config lines go to a **hardcoded** Claude Code adapter
+(`compound_loop.py:62`) whatever the configured agent is, while everything after the enabled check
+— the queue, the task files, `queued`, and the worker's own log — follows the **global**
+`[agent].type` and then that adapter's own environment variable (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`,
+…) before its global fallback. Substitute accordingly; `agent_runtime_dir` in `core/paths.py` is the
+source of truth, and `docs/how/hooks.md` has the full resolution order.
+
 ```
   session ends
        │
@@ -289,8 +299,14 @@ Changes take effect on the next session — the producer and worker both reload 
 
 ```bash
 # Is the producer firing?
-# Both producer and worker resolve this dir globally, so it follows
-# CLAUDE_CONFIG_DIR when set and falls back to ~/.claude, not to the profile.
+# Example path -- see the note at the top of this page. The producer writes
+# in two moments that resolve DIFFERENTLY. Its first line (`fired`) and its
+# `disabled in config, skipping` line are written before config loads, from a
+# HARDCODED Claude Code adapter (compound_loop.py:62), so they land here even
+# when the global [agent].type is Codex -- do not go looking in CODEX_HOME
+# for them. Only after the enabled check does it re-resolve (:81) through the
+# global adapter, which is where `queued` and the worker's log go. Neither
+# moment reads the invoked profile's config_dir.
 tail -f ~/.claude/logs/hooks.log
 
 # Is the worker running?
