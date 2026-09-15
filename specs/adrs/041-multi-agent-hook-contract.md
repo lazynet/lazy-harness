@@ -116,39 +116,71 @@ throwaway `CodexAdapter` to run three hooks end to end against a throwaway
 profile. Anything the contract cannot express is fixed while three hooks depend
 on it rather than eighteen.
 
-**That gate ran on 2026-09-15 and passed, against the installed 0.67.1 binary
-rather than a worktree, which is why this ADR is now `accepted`.** It took three
-runs to pass, and seven production defects came out of them. Six are of one
-shape — an answer derived from the global agent where the profile's agent is
-the source: three in #292, one more in #297 when the second of two readers that
-had to move together was found still reading globally, and two in #300. The
-seventh is of another shape and is the sharper one: `_planner_for` called
-`agent.name()` where `name` is a `@property`, so the step-3 promise that an
-adapter without a `ConfigPlanner` is rejected before the first write died on a
-`TypeError` — with four tests asserting that rejection and all four passing,
-because both doubles declared `name()` as a method (#294). What the gate
-asserts is narrower than the sentence above, and the difference is the part
-worth carrying forward:
+**That gate closed on 2026-09-15, which is why this ADR is now `accepted`.**
+It took three runs, and **the pass is composite** — no single binary passed
+every property in one run, and saying otherwise would be the exact failure this
+ADR's own *Evidence standard* names:
 
-- **Two builtins are asserted, not three.** `stop-verify-guard` is migrated but
-  writes no `hooks.log`; its only sink is the metrics DB, scoped by
-  `LH_DATA_DIR` rather than by the agent runtime dir. It has no site in scope
-  and the gate prints the skip with its reason on every run.
-- **The fifteen unmigrated builtins are counted, not failed.** They reach
+- **Run 1**, against 0.66.0: a hook fires and a blocking hook refuses; the
+  third question — a hook whose declared signals the agent cannot supply —
+  fails. Three production defects (#292). Recorded in
+  `/tmp/step4-gate-result.md`.
+- **Run 2**, against 0.67.0: the full gate. A hook fires, a blocking hook
+  refuses, and an unsupported hook is omitted from the artifact, named in the
+  deploy output and named again by `lh doctor` — all through a real `codex
+  exec`. It fails on the rule the first two runs never looked at: each hook's
+  log line landing in the profile that invoked it. Two more defects (#300).
+  Recorded in `/tmp/step4-gate-rerun.md`.
+- **Run 3**, against the installed 0.67.1 binary rather than a worktree: the
+  isolation half only, with the first three assertions explicitly not re-run.
+  Pass, exit 0, `/tmp/f7-gate/run-0.67.1.log`.
+
+**Five production defects came out of the runs, all of one shape** — an answer
+derived from the global agent where the profile's agent is the source. A sixth
+of that shape, #297, was found by `/coherence-audit` rather than by a run: the
+second of the two readers §3 required to move together, left behind for a
+release. Two more PRs land in the same window and are not gate outcomes, and
+naming them as such would inflate what the gate is evidence for — #294, a
+different shape and the sharper one, found while implementing the adapter
+(`_planner_for` called `agent.name()` where `name` is a `@property`, so the
+step-3 promise that an adapter without a `ConfigPlanner` is rejected before the
+first write died on a `TypeError`, with four tests asserting that rejection and
+all four passing because both doubles declared `name()` as a method); and #296,
+a flaky test and a formatting gate that both reproduce on `main`.
+
+What the gate asserts is narrower than the sentence above, and the difference is
+the part worth carrying forward:
+
+- **The isolation half asserts two builtins, not three.** `stop-verify-guard`
+  is migrated but writes no `hooks.log`; its only sink is the metrics DB,
+  scoped by `LH_DATA_DIR` rather than by the agent runtime dir. It has no site
+  in scope and run 3 prints the skip with its reason. It is not unexercised —
+  it is the hook run 2 watched the deploy omit and name — but no run has
+  checked where it writes, because it does not write.
+- **The unmigrated builtins are counted, not failed.** All fifteen reach
   `main()` through `cli/hooks_cmd.py`'s unmigrated branch, which calls
   `main_fn()` with no arguments, so the `--profile` value is parsed and
-  discarded. Seven of them leaked 28 lines in the passing run. That is the
-  known gap, tracked to step 5 in `specs/backlog.md`, and a `PASS` does not
-  mean nothing leaks — it means the *migrated* hooks are isolated.
+  discarded — but only eight of them write `hooks.log` at all, and the gate's
+  known-gap list names seven of those eight, which leaked 28 lines in the
+  passing run. The eighth, `pre-compact`, is absent from the count because no
+  fixture scenario fires it, not because it is fixed. That is the known gap,
+  tracked to step 5 in `specs/backlog.md`, and a `PASS` does not mean nothing
+  leaks — it means the *migrated* hooks are isolated.
 - **The gate discriminates.** It exits 1 against 0.67.0, and it also exits 1
   against a shim that fixes only `pre-tool-use-security`, so a pass is not an
   artefact of a gate that cannot fail.
 
-The contract is frozen on that evidence. Freezing it on a gate whose scope is
-two hooks rather than three is a choice with a cost, and the cost is named: the
-`--profile` value dying in the dispatch is a *contract* defect, not a hook
-defect, and it stayed invisible to the gate because the hooks that carry it were
-outside the assertion set.
+The contract is frozen on that evidence, and the choice is worth naming rather
+than burying. Two costs come with it. The first: the `--profile` value dying in
+`cli/hooks_cmd.py`'s dispatch is a *contract* defect, not a hook defect, and it
+stayed invisible because the fifteen hooks that carry it sit outside every
+assertion set — a gate scoped to the migrated hooks cannot see the thing that
+makes the rest unmigrated. The second: the pass is assembled from two binaries,
+and #300 changed the two hooks runs 1 and 2 exercised. That the change did not
+disturb them is covered by
+`tests/integration/test_hook_log_profile_isolation.py` through the real entry
+point, not by a fourth run against Codex. A fourth run is the cheap thing that
+would close it, and it was not done.
 
 ## Consequences
 

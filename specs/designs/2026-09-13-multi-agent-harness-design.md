@@ -1446,37 +1446,56 @@ against a version that will not ship.
 >
 > Step 4 spans three releases. 0.66.0 carried the adapter, the Protocol cleanup
 > and the missing-signals line (#289, #290); 0.67.0 carries the three defects
-> the first gate run surfaced (#292, #294, #296), the deploy-side decision the
-> run forced (#295) and the snapshot half of the per-profile resolution (#297);
-> 0.67.1 carries the two the isolation re-run surfaced (#300).
-> `specs/backlog.md` §Done has the per-PR record.
+> the first gate run surfaced (#292), the deploy-side decision that run forced
+> (#295), the snapshot half of the per-profile resolution (#297, found by
+> `/coherence-audit`) and two defects the gate did not surface — the
+> plannerless-adapter rejection found while implementing the adapter (#294) and
+> a flaky test plus a formatting gate that both reproduce on `main` (#296);
+> 0.67.1 carries the two the second run surfaced (#300). `specs/backlog.md` §Done has the per-PR record.
 >
-> **The gate passed on 2026-09-15, on the third run, against the installed
-> 0.67.1 binary rather than a worktree** — `run-0.67.1.log` alongside the
-> script, exit 0. Run 1 passed assertions A and B against a throwaway Codex
-> profile and failed C, surfacing #292, #294 and #296. The design question C
-> turned on — whether a deploy should skip a hook whose declared signals the
-> profile's agent cannot deliver — was decided in #295, and it does. Run 2
-> rescoped to the isolation half (does a hook invoked with `--profile <p>`
-> write its log under that profile's dir, and nowhere else?) and failed,
-> fixed in #300. Run 3 is the pass.
+> **The gate passed on 2026-09-15, on the third run.** Each run settled a
+> different half, so the pass is composite and is written that way rather than
+> as one green run:
 >
-> **Seven defects across the three runs, and not all of one shape.** Six are the
-> global-agent-where-the-profile's-agent-is-the-source shape: three in #292,
-> one in #297 — the second of the two readers ADR-041 §3 required to move
-> together, left behind for a release — and two in #300. The seventh, #294, is
-> a different shape and the sharper one: `_planner_for` called `agent.name()`
-> on a `@property`, so the step-3 rejection path died on a `TypeError` while
-> four tests asserting that rejection passed, both doubles having declared
-> `name()` as a method. All seven have their gate in *Verification gates*
-> above.
+> | Run | What it asserted | Against | Result | Evidence |
+> |---|---|---|---|---|
+> | 1 | A, B, C | 0.66.0 | A and B pass, C fails | `/tmp/step4-gate-result.md` |
+> | 2 | A, B, C1/C2/C3 — the full gate | 0.67.0 | all pass; fails the isolation rule | `/tmp/step4-gate-rerun.md` |
+> | 3 | isolation only; A, B and C explicitly **not** re-run | installed 0.67.1 | pass, exit 0 | `/tmp/f7-gate/run-0.67.1.log` |
+>
+> So *"a hook fires, a blocking hook refuses, an unsupported hook is omitted
+> and named"* was established by run 2, on 0.67.0 — the design question C
+> turned on was decided in #295, and the deploy does omit. *"A hook invoked
+> with `--profile <p>` writes its log under that profile's directory and
+> nowhere else"* was established by run 3, on 0.67.1. No single binary has
+> passed all four properties in one run, and #300 changed the two hooks A and
+> B exercise, so the pass rests on `tests/integration/test_hook_log_profile_isolation.py`
+> covering that change through the real entry point rather than on a fourth run.
+> Worth having; not had.
+>
+> **Five production defects came out of the three runs, all of one shape** — an
+> answer derived from the global agent where the profile's agent is the source:
+> three in #292 (run 1) and two in #300 (run 2). A sixth of the same shape,
+> #297, was found by `/coherence-audit` rather than by a run — the second of the
+> two readers ADR-041 §3 required to move together, left behind for a release.
+> Two more PRs land in this window and are **not** gate outcomes: #294, a
+> different shape and the sharper one — `_planner_for` called `agent.name()` on
+> a `@property`, so the step-3 rejection path died on a `TypeError` while four
+> tests asserting that rejection passed, both doubles having declared `name()`
+> as a method — found while implementing the adapter; and #296, a flaky test
+> and a formatting gate, both of which reproduce on `main` and predate this
+> work. The three of #292 have their gate in *Verification gates* below; #294's
+> is in `CLAUDE.md`, not here.
 >
 > **What the pass does not cover, stated so it is not read as more than it is.**
 > Two builtins are asserted, not three: `stop-verify-guard` is migrated but
 > writes no `hooks.log`, its only sink being the metrics DB scoped by
 > `LH_DATA_DIR`, so it has no site in scope and the gate prints the skip with
-> its reason on every run. The fifteen unmigrated builtins are counted, not
-> failed — seven of them leaked 28 lines in the passing run — because
+> its reason on every run. Of the fifteen unmigrated builtins, the eight that
+> resolve `hooks.log` globally are counted rather than failed — the gate's
+> known-gap list names seven of those eight, which leaked 28 lines in the
+> passing run, `pre-compact` being absent only because no fixture scenario
+> fires it — because
 > `cli/hooks_cmd.py` calls `main_fn()` with no arguments on that branch and the
 > `--profile` value dies in the dispatch. That is step 5's, and it is a
 > *contract* defect rather than a hook defect, which is exactly why a gate
@@ -1517,9 +1536,7 @@ Both are right about different risks, and the resolution is a gate rather than
 an order. The runner lands first because it is a correctness fix for Claude Code
 on its own merits — it is the step that survives even if the kill criteria fire.
 But **the contract is not frozen, and the bulk migration does not start, until a
-non-identity adapter has run against it.** Step 4 is that gate. *(Written as the
-plan. The gate ran on 2026-09-15 and passed; the status block above is the
-record, and the contract is frozen.)*
+non-identity adapter has run against it.** Step 4 is that gate.
 
 0. **Fix `_is_harness_owned`** to identify harness entries by canonical hook
    name rather than by command text, with a test that redeploys after a command
@@ -1658,10 +1675,11 @@ record, and the contract is frozen.)*
    > and refusing first would leave a Codex profile with almost no hooks.
    >
    > This note records what changed, not a verdict. The re-run gave the
-   > verdict: assertion C passes, and step 4 closed on 2026-09-15 with ADR-041
-   > `accepted`. The warning is still a warning, so the fifteen unmigrated
-   > builtins still leak their `hooks.log` line to the global agent — counted
-   > by the gate on every run, and this step's to fix.
+   > verdict: assertions C1, C2 and C3 pass, and step 4 closed on 2026-09-15
+   > with ADR-041 `accepted`. The warning is still a warning, so the eight
+   > unmigrated builtins that write `hooks.log` still leak their line to the
+   > global agent — seven of them counted by the gate on every run — and this
+   > step's to fix.
 5. Migrate the remaining 15 builtins, each declaring its `Operation` set and its
    `Signal` set. Delete `profile_name()`, `_TRANSCRIPT_KEYS` and seven of the
    ten `get_agent("claude-code")` literals (decision 1 names the three that
