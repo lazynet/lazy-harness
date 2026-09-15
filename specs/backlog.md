@@ -420,19 +420,43 @@ Arreglarlo requiere que la clasificación conozca los hooks configurados, o sea 
 
 **Condición de arranque:** cuando alguien reporte un hook de usuario corriendo dos veces, o junto con el step 5 (migración de los 15 builtins restantes), que ya toca esa zona.
 
-### Siete builtins unmigrated leakean su `hooks.log` al agente global
+### Ocho builtins resuelven su `hooks.log` globalmente, más el worker
 
-Cerrado para los dos migrados que leakeaban: `pre-tool-use-security` (`_log_block`, vía `event.profile`) y `context-inject` (la línea de boot, cargando config antes de escribir). Quedan siete builtins que resuelven el directorio desde un `get_agent("claude-code")` hardcodeado, más el worker:
+Cerrado para los dos que se podían cerrar: `pre-tool-use-security` (`_log_block`, vía `event.profile`) y `context-inject` (la línea de boot, cargando config antes de escribir).
 
-- `session-export` (`:44` boot, `:59` post-config), `compound-loop` (`:62` boot, `:81` post-config), `session-end` (`:89` boot, `:107` post-config)
-- `pre-tool-use-memory-size` (`:170`), `pre-tool-use-read-size` (`:69`), `post-tool-use-format` (`:67`), `post-tool-use-ansible-lint` (`:140`)
-- `knowledge/compound_loop_worker.py:100` — mismo adapter hardcodeado, fuera del proceso del hook
+Inventario por **mecanismo**, no por grafía: diez builtins escriben `hooks.log`, dos están arreglados, ocho resuelven el directorio sin leer nunca el profile. El grep literal de `get_agent("claude-code")` encuentra siete y **pierde a `pre-compact`**, que hace lo mismo con otra expresión — la diferencia exacta que gatea el `CLAUDE.md`.
+
+| Builtin | Sitios | Grafía |
+|---|---|---|
+| `session-export` | `:44` boot, `:59-60` post-config | literal + `cfg.agent.type` |
+| `compound-loop` | `:62` boot, `:81-82` post-config | literal + `cfg.agent.type` |
+| `session-end` | `:89` boot, `:107-108` post-config | literal + `cfg.agent.type` |
+| `pre-compact` | `:158` resolución, `:184` escritura | `cfg.agent.type if cfg is not None else "claude-code"` |
+| `pre-tool-use-memory-size` | `:170` | literal |
+| `pre-tool-use-read-size` | `:69` | literal |
+| `post-tool-use-format` | `:67` | literal |
+| `post-tool-use-ansible-lint` | `:140` | literal |
+
+Más `knowledge/compound_loop_worker.py`, fuera del proceso del hook: el camino normal es `:98` con `cfg.agent.type` (`:100` es solo el fallback del `except`) y `:101` resuelve sin profile. Global sí, hardcodeado incondicionalmente no.
+
+`stop-verify-guard` **no** entra: es migrado y no escribe `hooks.log`, registra en MetricsDB.
 
 **Por qué no se arregló con los otros dos.** El dato existe y muere en el dispatch: `deploy/engine.py:136` emite `{binary} hook {name} --profile {profile}` para *todos* los builtins, pero `cli/hooks_cmd.py` llama `main_fn()` **sin argumentos** en la rama no-migrada. Ninguno de los siete tiene `event` ni profile en scope. Plumbearlo obliga a tocar esa rama transitoria, que el step 5 borra junto con `BuiltinHookSpec.migrated`.
 
 Descartadas dos salidas y por qué: introspeccionar la firma de `main()` contradice el docstring de `migrated` (*un chequeo de firma leería igual hoy y mentiría apenas un `main()` migrado crezca un default*); inventar un canal por env var agrega mecanismo a un camino condenado. Una tercera, `_shared.profile_name()`, arregla el `config_dir` y **no** el adapter — resuelve el agente vía el `cfg.agent.type` global en `_shared.py:160`, o sea hereda el mismo coupled reader un nivel más abajo.
 
-**Alcance real del agujero.** El gate del step 4 deployó solo los tres builtins migrados. Los quince restantes corren por la rama que asume el wire de Claude Code (`PRE_RUNNER_AGENT`, `loader.py`), así que no son deployables a un profile no-Claude de forma significativa: esto es trabajo **afuera** del contrato del step 4, no un hueco adentro. En un profile Claude Code el `CLAUDE_CONFIG_DIR` del subproceso tapa el bug; muerde cuando el agente del profile difiere del `[agent].type` global, o cuando la env var falta.
+**Alcance: elegido, no estructural.** El gate del step 4 se acotó a los tres builtins migrados, y eso es legítimo — el diseño define ese gate y §12.9 del informe reconoce a los unmigrated como no probados. Lo que **no** es cierto, y este párrafo decía antes, es que los demás queden excluidos por construcción.
+
+Los unmigrated sí se deployan a un profile no-Claude. `deploy/engine.py:204-233` (`_warn_unmigrated`) emite un warning y deliberadamente **no** los omite; su propio docstring lo dice: *«A warning rather than a refusal on purpose... A default `lh deploy` to a Codex profile ships four of these»*. `:273-276` sigue construyendo sus comandos. `PRE_RUNNER_AGENT` nombra el agente que la rama asume, no es un filtro.
+
+Y un wire no verificado no impide efectos en disco anteriores a interpretar el payload. Medido por el review: profile `gate` de agente Codex, `CLAUDE_CONFIG_DIR` y `CODEX_HOME` ausentes, compound loop deshabilitado — `lh hook compound-loop --profile gate` sale 0 y agrega dos líneas en `~/.claude/logs/hooks.log`:
+
+```
+compound-loop: fired cwd=/private/tmp/f7-review-probe
+compound-loop: disabled in config, skipping
+```
+
+O sea el riesgo real: se deployan, escriben, y en un profile cuyo agente difiere del `[agent].type` global escriben en el lugar equivocado. En un profile Claude Code el `CLAUDE_CONFIG_DIR` del subproceso tapa el bug; muerde cuando el agente difiere o cuando la env var falta.
 
 **Dos cosas medidas que quien lo tome necesita:**
 
@@ -441,7 +465,7 @@ Descartadas dos salidas y por qué: introspeccionar la firma de `main()` contrad
 
 Límite que no se cierra desde adentro del hook: con `cfg is None` no existe la tabla de profiles, así que el fallback global es correcto por construcción. El docstring de `agent_dir_for` (`_shared.py:235`) ya lo dice.
 
-**Condición de arranque:** con el step 5, que migra los quince builtins restantes a `main(event)` y borra la rama no-migrada. Antes no: cualquier arreglo parcial vive en código que ese step elimina.
+**Condición de arranque:** con el step 5, que migra los quince builtins restantes a `main(event)` y borra la rama no-migrada. Postergarlo hasta ahí es una **decisión**, no una imposibilidad técnica: se podría plumbear antes, al costo de tocar la rama que ese step elimina. El riesgo que se acepta mientras tanto es el del párrafo anterior — escrituras reales en el directorio equivocado en cualquier profile cuyo agente difiera del global.
 
 ## ADR decisions pending
 

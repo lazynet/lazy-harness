@@ -778,9 +778,16 @@ def main(event: HookEvent) -> HookDecision:
     # specs or docs reads this line's timing; the two consumers of the log
     # (`lh status hooks` and `docs/how/hooks.md`) parse its format.
     #
-    # A config that does not load still resolves globally, and correctly so:
-    # the profile -> config_dir mapping lives in the file that failed to load.
-    # `agent_dir_for`'s docstring owns that limit.
+    # An absent config and a `ConfigError` still resolve globally, and
+    # correctly so: the profile -> config_dir mapping lives in the file that
+    # did not load. `agent_dir_for`'s docstring owns that limit.
+    #
+    # Only those two. Any other failure of `load_config` -- `PermissionError`,
+    # `OSError`, a decode error -- escapes this function, and then neither line
+    # is written rather than one landing globally. `run_hook`'s blanket handler
+    # still reports it on stderr at exit 0, so the failure stays visible; what
+    # is lost is the persistent record, which was being written to the wrong
+    # profile anyway.
     _log(log_file, f"fired cwd={cwd}")
 
     # Sections. Prefer the project dir the agent declared over one derived from
