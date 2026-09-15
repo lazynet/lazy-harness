@@ -147,17 +147,34 @@ def process_exec_path(binary: Path, name: str) -> Path:
     return link
 
 
-def agent_runtime_dir(agent: AgentAdapter) -> Path:
-    """Resolve the agent's runtime config dir: adapter env var, else its global link.
+def agent_runtime_dir(agent: AgentAdapter, *, profile_config_dir: str | None = None) -> Path:
+    """Resolve the agent's runtime config dir: adapter env var, else the profile's
+    own `config_dir`, else the agent's global link.
 
     Resolution order (ADR-032 L3 — never read agent env vars directly):
     1. The adapter's env var (e.g. CLAUDE_CONFIG_DIR), if set and non-empty.
-    2. The adapter's global config link (e.g. ~/.claude), if it has one.
-    3. ~/.<agent name> as a last resort.
+    2. The caller's profile `config_dir`, when it knows which profile it runs
+       under. A deployed hook command carries `--profile`, so the answer is in
+       hand; without this step it was thrown away.
+    3. The adapter's global config link (e.g. ~/.claude), if it has one.
+    4. ~/.<agent name> as a last resort.
+
+    Step 2 exists because steps 3 and 4 are both global, and on an agent that
+    declares no link the last resort is the user's real agent home. The step 4
+    contract gate measured that: `CODEX_HOME` is absent from a hook subprocess's
+    environment, `CodexAdapter.global_config_link()` returns `None` to shrink the
+    blast radius, and the write landed in `~/.codex` — the directory that `None`
+    was protecting — while the hook was running under `--profile gate-throwaway`.
+
+    An empty `profile_config_dir` is "no profile resolved" (what
+    `resolve_profile` returns when nothing names one) and is skipped, not
+    expanded into the process's cwd.
     """
     env_value = os.environ.get(agent.env_var()) if agent.env_var() else None
     if env_value:
         return Path(env_value)
+    if profile_config_dir:
+        return expand_path(profile_config_dir)
     link = agent.global_config_link()
     if link is not None:
         return link

@@ -741,6 +741,7 @@ def main(event: HookEvent) -> HookDecision:
         from lazy_harness.core.config import ConfigError, load_config
         from lazy_harness.core.paths import agent_runtime_dir, config_file
         from lazy_harness.hooks.builtins._shared import (
+            agent_dir_for,
             knowledge_root_for,
             make_log,
             project_dir_from_payload,
@@ -771,8 +772,9 @@ def main(event: HookEvent) -> HookDecision:
         except ConfigError:
             cfg = None
 
-    agent = get_agent(cfg.agent.type if cfg is not None else "claude-code")
-    agent_dir = agent_runtime_dir(agent)
+    # Per profile, not per machine: `--profile` is in the deployed command, and
+    # both halves of this answer used to be read from the global `[agent].type`.
+    agent, agent_dir = agent_dir_for(cfg, event.profile)
     subdirs = agent.session_dirs()
     log_file = agent_dir / (subdirs.get("logs") or "logs") / "hooks.log"
 

@@ -544,3 +544,60 @@ def test_transcript_reader_uses_an_injected_config_instead_of_the_file_on_disk(
 
     assert reader is not None
     assert Signal.GOAL_STATUS in reader.signals()
+
+
+# --- agent_dir_for ----------------------------------------------------------
+#
+# The one importable answer to "which agent does this profile run, and which
+# directory do its hooks write under". Six builtins asked `cfg.agent.type` and
+# `agent_runtime_dir(agent)` separately, which is two global answers to a
+# per-profile question.
+
+
+def _two_agent_config(tmp_path: Path) -> Path:
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        '[harness]\nversion = "1"\n\n[agent]\ntype = "claude-code"\n\n'
+        '[profiles]\ndefault = "daily"\n\n'
+        f'[profiles.daily]\nconfig_dir = "{tmp_path / "claude-daily"}"\n\n'
+        f'[profiles.gate]\nconfig_dir = "{tmp_path / "codex-home"}"\nagent = "codex"\n'
+    )
+    return cfg
+
+
+def test_agent_dir_for_returns_the_profiles_own_agent_and_config_dir(tmp_path: Path) -> None:
+    """The step 4 gate's F4: a hook invoked with `--profile gate-throwaway` wrote
+    its log into the user's real `~/.codex`, because neither half of this answer
+    was resolved per profile."""
+    from lazy_harness.core.config import load_config
+    from lazy_harness.hooks.builtins._shared import agent_dir_for
+
+    cfg = load_config(_two_agent_config(tmp_path))
+
+    agent, agent_dir = agent_dir_for(cfg, "gate")
+
+    assert agent.name == "codex"
+    assert agent_dir == tmp_path / "codex-home"
+
+
+def test_agent_dir_for_a_profile_inheriting_the_global_agent(tmp_path: Path) -> None:
+    from lazy_harness.core.config import load_config
+    from lazy_harness.hooks.builtins._shared import agent_dir_for
+
+    cfg = load_config(_two_agent_config(tmp_path))
+
+    agent, agent_dir = agent_dir_for(cfg, "daily")
+
+    assert agent.name == "claude-code"
+    assert agent_dir == tmp_path / "claude-daily"
+
+
+def test_agent_dir_for_without_a_config_falls_back_to_claude_code(home_dir: Path) -> None:
+    """A machine that has not run `lh init` still has an agent whose dirs its
+    hooks write under — the same degradation `transcript_reader` applies."""
+    from lazy_harness.hooks.builtins._shared import agent_dir_for
+
+    agent, agent_dir = agent_dir_for(None, "")
+
+    assert agent.name == "claude-code"
+    assert agent_dir == home_dir / ".claude"

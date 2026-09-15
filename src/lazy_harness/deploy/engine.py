@@ -397,14 +397,22 @@ def deploy_claude_symlink(cfg: Config, *, only: str | None = None) -> None:
 
     Skipped when `only` names a profile that is not the default — see
     `deploys_global_link` for why the link belongs to that profile alone.
+
+    The link and its target both belong to the default profile, so the agent
+    asked for it is that profile's, not `[agent].type`. An adapter answering
+    `None` is refusing to own a global link at all, and that refusal is the last
+    thing standing between a narrowed deploy and a live link: the step 4 gate
+    made a Codex throwaway the default and watched `~/.claude` — the `lazy`
+    profile's own link — repointed at the throwaway's Codex home, because the
+    resolution here never asked the adapter that returns `None` to prevent it.
     """
-    from lazy_harness.agents.registry import get_agent
+    from lazy_harness.agents.registry import agent_for_profile
 
     if not deploys_global_link(cfg, only):
         click.echo(f"  · skipped — '{only}' is not the default profile")
         return
 
-    agent = get_agent(cfg.agent.type)
+    agent = agent_for_profile(cfg, cfg.profiles.default)
     link_path = agent.global_config_link()
     if link_path is None:
         return

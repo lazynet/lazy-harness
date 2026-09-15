@@ -103,6 +103,53 @@ def test_agent_runtime_dir_falls_back_to_dotted_agent_name(
     assert agent_runtime_dir(NullAdapter()) == home_dir / ".null"
 
 
+def test_agent_runtime_dir_prefers_the_profile_config_dir_over_the_dotted_name(
+    home_dir: Path, tmp_path: Path
+) -> None:
+    """The step 4 contract gate watched a hook run with `--profile gate-throwaway`
+    write its log into the user's real `~/.codex`.
+
+    `CODEX_HOME` is not in a hook subprocess's environment — Codex does not pass
+    its own home down — and `CodexAdapter.global_config_link()` returns `None` by
+    design, so resolution fell through to `~/.<agent name>`: the very directory
+    that `None` exists to protect. The profile's own `config_dir` was never
+    consulted even though the hook was told which profile it was running under.
+    """
+    from lazy_harness.agents.registry import get_agent
+    from lazy_harness.core.paths import agent_runtime_dir
+
+    scratch = tmp_path / "codex-home"
+
+    resolved = agent_runtime_dir(get_agent("codex"), profile_config_dir=str(scratch))
+
+    assert resolved == scratch
+    assert resolved != home_dir / ".codex"
+
+
+def test_agent_runtime_dir_still_prefers_the_adapter_env_var(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The guard on the fix: ADR-032 L3 step 1 stays step 1."""
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+    from lazy_harness.core.paths import agent_runtime_dir
+
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "from-env"))
+
+    resolved = agent_runtime_dir(
+        ClaudeCodeAdapter(), profile_config_dir=str(tmp_path / "from-profile")
+    )
+
+    assert resolved == tmp_path / "from-env"
+
+
+def test_agent_runtime_dir_ignores_an_empty_profile_config_dir(home_dir: Path) -> None:
+    """An unresolved profile hands over ""; that is "no answer", not a path."""
+    from lazy_harness.agents.registry import NullAdapter
+    from lazy_harness.core.paths import agent_runtime_dir
+
+    assert agent_runtime_dir(NullAdapter(), profile_config_dir="") == home_dir / ".null"
+
+
 def test_process_exec_path_creates_named_symlink_to_binary(home_dir: Path, tmp_path: Path) -> None:
     from lazy_harness.core.paths import cache_dir, process_exec_path
 

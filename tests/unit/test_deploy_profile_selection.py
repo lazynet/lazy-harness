@@ -193,3 +193,51 @@ def test_manifest_from_a_narrowed_snapshot_carries_no_other_profile(
     entries = json.loads(manifest_path.read_text())["entries"]
     assert entries
     assert not [e for e in entries if ".claude-lazy" in e["path"]]
+
+
+def _codex_default(home: Path) -> Config:
+    """A config whose default profile runs an agent with no global link."""
+    cfg = Config()
+    cfg.agent.type = "claude-code"
+    cfg.profiles.default = "gate"
+    cfg.profiles.items = {
+        "gate": ProfileEntry(config_dir=str(home / "codex-home"), agent="codex"),
+        "lazy": ProfileEntry(config_dir=str(home / ".claude-lazy")),
+    }
+    return cfg
+
+
+def test_a_default_profile_whose_agent_has_no_global_link_moves_no_symlink(
+    home_dir: Path,
+) -> None:
+    """The step 4 contract gate repointed the live `~/.claude` at a Codex home.
+
+    `deploys_global_link` passes here — the narrowed profile *is* the default —
+    so the only thing left to stop the write is asking the profile's own agent
+    for its link. `CodexAdapter.global_config_link()` returns `None` exactly to
+    refuse, and the code resolved `[agent].type` instead, which never asked it.
+    """
+    from lazy_harness.deploy.engine import deploy_claude_symlink
+
+    deploy_claude_symlink(_codex_default(home_dir), only="gate")
+
+    # `.exists()` alone would pass on a dangling link — the Codex home the gate
+    # pointed `~/.claude` at did not exist yet either.
+    assert not (home_dir / ".claude").is_symlink(), (
+        "a profile whose agent declares no global config link must not create one; "
+        f"got ~/.claude -> {(home_dir / '.claude').readlink()}"
+    )
+    assert not (home_dir / ".claude").exists()
+
+
+def test_a_claude_code_default_profile_still_gets_its_link(home_dir: Path) -> None:
+    """The guard on the fix: resolving per profile must not stop linking."""
+    from lazy_harness.deploy.engine import deploy_claude_symlink
+
+    cfg = _codex_default(home_dir)
+    cfg.profiles.default = "lazy"
+
+    deploy_claude_symlink(cfg, only="lazy")
+
+    assert (home_dir / ".claude").is_symlink()
+    assert (home_dir / ".claude").readlink() == home_dir / ".claude-lazy"

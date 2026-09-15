@@ -35,12 +35,21 @@ class RunnerError(Exception):
 def _adapter_for(profile: str) -> AgentAdapter:
     """Resolve the adapter that owns this profile's wire format.
 
-    Per-profile agents arrive with `agent_for_profile()`; until then the
-    configured agent is global and the profile is validated against the config
-    so that a typo in a deployed command is a named failure rather than a hook
-    that runs under the wrong scope.
+    Resolved through `agent_for_profile()`, which is the same call
+    `deploy.engine` makes for the same profile: deploy writes that agent's
+    config shape into the profile's config dir, and the runner speaks that
+    agent's wire format into it. Resolving `[agent].type` here instead made the
+    writer and the reader of one derived answer disagree — the step 4 contract
+    gate measured a `agent = "codex"` profile whose hooks emitted Claude Code's
+    top-level `systemMessage` and exit 2, neither of which `CodexAdapter`
+    delivers. `test_the_deploy_and_the_runner_resolve_one_profile_to_the_same_agent`
+    holds the two halves together.
+
+    The profile is still validated against the config so that a typo in a
+    deployed command is a named failure rather than a hook that runs under the
+    wrong scope.
     """
-    from lazy_harness.agents.registry import get_agent
+    from lazy_harness.agents.registry import agent_for_profile
     from lazy_harness.core.config import Config, ConfigError, load_config
     from lazy_harness.core.paths import config_file
 
@@ -67,7 +76,7 @@ def _adapter_for(profile: str) -> AgentAdapter:
     # its memory and its metrics somewhere the profile does not own.
     if profile and declared and profile not in declared:
         raise RunnerError(f"unknown profile {profile!r}; declared: {sorted(declared)}")
-    return get_agent(cfg.agent.type)
+    return agent_for_profile(cfg, profile)
 
 
 def _canonical_event(adapter: AgentAdapter, payload: dict, declared: str | None) -> str:

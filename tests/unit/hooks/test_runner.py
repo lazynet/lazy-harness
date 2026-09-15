@@ -307,3 +307,65 @@ def test_a_named_profile_that_is_not_declared_still_refuses(
 
     assert result.exit_code == 2
     assert "lazyy" in result.stderr
+
+
+@pytest.fixture
+def codex_profile(tmp_path, monkeypatch: pytest.MonkeyPatch) -> str:
+    """A config whose global agent and one profile's agent disagree.
+
+    The disagreement is the point: a profile that inherits the global agent
+    cannot tell a runner that resolves per profile from one that resolves
+    globally.
+    """
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        '[harness]\nversion = "1"\n\n[agent]\ntype = "claude-code"\n\n'
+        '[profiles]\ndefault = "lazy"\n\n'
+        f'[profiles.lazy]\nconfig_dir = "{tmp_path / "lazy"}"\nroots = ["~"]\n\n'
+        f'[profiles.gate]\nconfig_dir = "{tmp_path / "gate"}"\nroots = ["~"]\n'
+        'agent = "codex"\n'
+    )
+    monkeypatch.setattr("lazy_harness.core.paths.config_file", lambda: cfg)
+    return "gate"
+
+
+def test_a_profile_declaring_an_agent_gets_that_agent_s_wire_format(
+    monkeypatch: pytest.MonkeyPatch, codex_profile: str
+) -> None:
+    """The runner resolved `[agent].type` while deploy resolved the profile's.
+
+    Measured by the step 4 contract gate: under `[profiles.gate] agent = "codex"`
+    the runner emitted Claude Code's refusal — a top-level `systemMessage` and
+    exit 2 — into a config dir deploy had written in Codex's shape. Both are
+    channels `CodexAdapter.format_hook_output` documents it never uses.
+    """
+    register(
+        monkeypatch,
+        "guard",
+        lambda event: HookDecision(verdict=Verdict.DENY, reason="no"),
+        blocking=True,
+    )
+
+    result = runner.run_hook("guard", profile=codex_profile, stdin_text=json.dumps(PRE_TOOL_USE))
+
+    assert result.exit_code == 0, "exit 2 is Claude Code's refusal channel, not Codex's"
+    body = json.loads(result.stdout or "{}")
+    assert body["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "systemMessage" not in body
+
+
+def test_a_profile_inheriting_the_global_agent_still_gets_it(
+    monkeypatch: pytest.MonkeyPatch, codex_profile: str
+) -> None:
+    """The guard on the fix: per-profile resolution must not drop the fallback."""
+    register(
+        monkeypatch,
+        "guard",
+        lambda event: HookDecision(verdict=Verdict.DENY, reason="no"),
+        blocking=True,
+    )
+
+    result = runner.run_hook("guard", profile="lazy", stdin_text=json.dumps(PRE_TOOL_USE))
+
+    assert result.exit_code == 2
+    assert result.stderr == "no"

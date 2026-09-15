@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - imported for typing only
-    from lazy_harness.agents.base import TranscriptReader
+    from lazy_harness.agents.base import AgentAdapter, TranscriptReader
     from lazy_harness.core.config import Config
 
 _TRANSCRIPT_KEYS = ("transcript_path", "transcriptPath", "input")
@@ -230,6 +230,36 @@ def knowledge_root_for(cfg: object) -> Path | None:
     except Exception:  # noqa: BLE001 — hooks degrade, they do not raise
         return None
     return root if root.is_dir() else None
+
+
+def agent_dir_for(cfg: Config | None, profile: str) -> tuple[AgentAdapter, Path]:
+    """The agent one profile runs and the runtime dir its hooks write under.
+
+    One importable answer to a question six builtins used to answer twice each,
+    both times globally: `get_agent(cfg.agent.type)` for the adapter and
+    `agent_runtime_dir(agent)` for the directory. Neither read the profile the
+    hook was invoked with, so on a machine whose profiles run different agents a
+    hook wrote its log, its cursor and its session export under whichever agent
+    the global key happened to name.
+
+    The step 4 contract gate measured the far end of that: `context-inject`,
+    running under `--profile gate-throwaway`, wrote into the user's real
+    `~/.codex` — `CODEX_HOME` is absent from a hook subprocess, the adapter
+    declares no global link on purpose, and the last resort is `~/.<agent name>`.
+    Passing the profile's own `config_dir` is what stops that fall-through.
+
+    No config is the same degradation `transcript_reader` applies: a machine that
+    has not run `lh init` still has an agent whose directories its hooks use.
+    """
+    from lazy_harness.agents.registry import agent_for_profile, get_agent
+    from lazy_harness.core.paths import agent_runtime_dir
+
+    if cfg is None:
+        agent = get_agent("claude-code")
+        return agent, agent_runtime_dir(agent)
+    entry = cfg.profiles.items.get(profile)
+    agent = agent_for_profile(cfg, profile)
+    return agent, agent_runtime_dir(agent, profile_config_dir=entry.config_dir if entry else None)
 
 
 def transcript_reader(profile: str, cfg: Config | None = None) -> TranscriptReader | None:
