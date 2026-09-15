@@ -15,6 +15,36 @@ lh deploy                      # every profile
 lh deploy --profile <name>     # only that profile
 ```
 
+### Hooks the deploy leaves out, and says so
+
+A profile runs one agent — `[profiles.<name>].agent`, else `[agent].type` — and
+not every agent can feed every hook. A built-in declares the signals it needs to
+read out of a transcript; when the profile's agent delivers none of them, the
+deploy **skips that hook for that profile** and names it:
+
+```
+  · stop-verify-guard omitted in 'throwaway': agent 'codex' does not deliver goal_status
+```
+
+This is not a deploy failure. The exit code is unchanged, every other hook in
+that event is still written, and other profiles are unaffected — the line is the
+deploy telling you that a hook you declared would have installed cleanly and then
+never fired. `lh doctor`'s **Hook signals** section reports the same pairs from
+the same resolver, so a hook doctor names is a hook deploy leaves out. It applies
+to hooks you declared explicitly in `config.toml`, not only to the defaults: a
+capability the agent lacks is not something a declaration can override.
+
+A second, separate line warns about built-ins that still predate the hook runner:
+
+```
+  ⚠  pre-compact in 'throwaway': not migrated to the runner, so it reads Claude Code-shaped stdin and owns its own exit code on agent 'codex'
+```
+
+Unlike the omission, this hook **is** deployed. The warning says it will run
+against an agent whose stdin shape it was never written for, which is expected
+while the migration of the remaining built-ins is in progress. It does not block
+the deploy and never appears for `claude-code` profiles.
+
 `--profile` narrows the run to one profile: its symlinks, its `settings.json`
 and its MCP config are written, and no other profile is touched. The agent's
 global config link (`~/.claude`) points at the **default** profile, so it is

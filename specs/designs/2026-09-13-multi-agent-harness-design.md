@@ -1441,8 +1441,14 @@ against a version that will not ship.
 > | 1 — the contract types in `agents/base.py` | done | 0.61.0 |
 > | 2 — `lh hook <name> --profile <p>` as the runner, three builtins (0.62.0); `TranscriptReader` (0.63.0) | done | 0.62.0–0.63.0 |
 > | 3 — `config_targets()` / `plan_config()` and the engine that drives them | done | 0.65.0 |
-> | 4 — **contract gate: a throwaway `CodexAdapter` runs those three hooks** | in progress | 0.66.0 (parcial) |
+> | 4 — **contract gate: a throwaway `CodexAdapter` runs those three hooks** | in progress | 0.66.0–0.67.0 (parcial) |
 > | 5 to 12 | not started | — |
+>
+> Step 4 spans two releases. 0.66.0 carried the adapter, the Protocol cleanup
+> and the missing-signals line (#289, #290); 0.67.0 carries the three defects
+> the first gate run surfaced (#292, #294, #296), the deploy-side decision the
+> run forced (#295) and the snapshot half of the per-profile resolution (#297).
+> `specs/backlog.md` §Done has the per-PR record.
 >
 > Step 4 is `in progress`, not `done`: the adapter and the Protocol cleanup
 > shipped, the gate did not. What landed is `agents/codex.py` registered as
