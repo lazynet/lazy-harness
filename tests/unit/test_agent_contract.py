@@ -410,39 +410,47 @@ def test_transcript_path_is_the_only_spelling_the_adapter_reads() -> None:
     schema that all 33 of its event schemas extend. Every `transcriptPath` in
     that binary is internal resume/summary plumbing, never a hook field.
 
-    Both halves of the rule live on payloads that disagree, because the half
-    that a widening breaks is the *absence* one: honouring `transcript_path`
-    survives any fallback chain that lists it first, so only a payload that
-    omits it can tell a narrow adapter from a wide one.
+    The `neither` payload is the one that holds the narrowing: honouring
+    `transcript_path` survives any fallback chain that lists it first, so only
+    a payload that *omits* it tells a narrow adapter from a wide one. The
+    `both` payload pins precedence and keeps the rule stated whole here; for
+    coverage alone it is redundant with
+    `test_parse_hook_input_maps_a_pre_tool_use_payload_onto_the_canonical_view`.
+    Do not delete `neither` as the redundant-looking one.
     """
     from lazy_harness.agents.registry import get_agent
 
     adapter = get_agent("claude-code")
 
-    both = adapter.parse_hook_input(
-        "session_start",
-        {
-            "session_id": "s",
-            "cwd": "/repo",
-            "transcript_path": "/snake.jsonl",
-            "transcriptPath": "/camel.jsonl",
-            "input": "/input.jsonl",
-        },
-        profile="lazy",
-    )
-    assert both.transcript_path == Path("/snake.jsonl")
+    # Every event the adapter declares, read from the one place that declares
+    # them: a widening gated on the event name is the shape tasks 4-18 could
+    # produce, migrating one builtin at a time, and a single-event test cannot
+    # see it. A new event inherits the assertion rather than escaping it.
+    for event in adapter.hook_events():
+        both = adapter.parse_hook_input(
+            event,
+            {
+                "session_id": "s",
+                "cwd": "/repo",
+                "transcript_path": "/snake.jsonl",
+                "transcriptPath": "/camel.jsonl",
+                "input": "/input.jsonl",
+            },
+            profile="lazy",
+        )
+        assert both.transcript_path == Path("/snake.jsonl"), event
 
-    neither = adapter.parse_hook_input(
-        "session_start",
-        {
-            "session_id": "s",
-            "cwd": "/repo",
-            "transcriptPath": "/camel.jsonl",
-            "input": "/input.jsonl",
-        },
-        profile="lazy",
-    )
-    assert neither.transcript_path is None
+        neither = adapter.parse_hook_input(
+            event,
+            {
+                "session_id": "s",
+                "cwd": "/repo",
+                "transcriptPath": "/camel.jsonl",
+                "input": "/input.jsonl",
+            },
+            profile="lazy",
+        )
+        assert neither.transcript_path is None, event
 
 
 # --- ClaudeCodeAdapter: format_hook_output -------------------------------
