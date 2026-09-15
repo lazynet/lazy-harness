@@ -241,6 +241,14 @@ git commit -m "fix: serialise PreCompact additional context as plain text"
 
 This task produces a decision backed by measurement, not a guess. Either outcome is acceptable; an unrecorded one is not.
 
+**Settled: narrow.** `parse_hook_input` keeps reading `transcript_path` alone,
+and `test_transcript_path_is_the_only_spelling_the_adapter_reads`
+(`tests/unit/test_agent_contract.py`) holds it. The measurement, the two
+sources it rests on and the load-bearing proof are recorded in
+`2026-09-13-multi-agent-harness-design.md` under step 5. Step 4 below is the
+alternative that was rejected; it was applied by hand only to watch the test
+fail, and reverted. Tasks 4-18 inherit the narrowing and do not re-litigate it.
+
 **Files:**
 - Modify: `src/lazy_harness/agents/claude_code.py:407` (only if the measurement says widen)
 - Modify: `specs/designs/2026-09-13-multi-agent-harness-design.md` (record the decision either way)

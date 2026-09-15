@@ -638,7 +638,7 @@ Mechanics:
 
 1. If `[loops] inject_goal_prompt` is off, exit 0 immediately.
 2. Read `session_id` from stdin JSON; exit 0 if missing or not a string.
-3. Resolve the transcript path from the payload (`transcript_path` / `transcriptPath` / `input`) and ask for the profile's `TranscriptReader`. Exit 0 if no transcript is resolvable, if the adapter supplies no reader, or if the transcript carries no `GOAL_STATUS` event. The read stops at the first marker rather than parsing a transcript that can run to hundreds of megabytes by the time a `Stop` hook sees it.
+3. Take the transcript path from the parsed event — the adapter reads the agent's `transcript_path` field and nothing else — and ask for the profile's `TranscriptReader`. Exit 0 if no transcript is resolvable, if the adapter supplies no reader, or if the transcript carries no `GOAL_STATUS` event. The read stops at the first marker rather than parsing a transcript that can run to hundreds of megabytes by the time a `Stop` hook sees it.
 4. If a `verify_ran` event already exists for this session in `loop_events`, exit 0 — nothing to enforce.
 5. If a `verify_block` event already exists for this session (this is at least the second `Stop` attempt), record `verify_skipped` and exit 0 without blocking.
 6. Otherwise, record `verify_block` and print `{"decision": "block", "reason": "..."}` to stdout.

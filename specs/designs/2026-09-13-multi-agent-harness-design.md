@@ -1580,6 +1580,88 @@ against a version that will not ship.
 > `transcriptPath` and `input` to the first alone. That is a silent dropout
 > until it is measured and asserted either way, which is the plan's task 2.
 >
+> **Measured, and the narrowing stands.** `parse_hook_input` keeps reading
+> `transcript_path` alone. Three sources, none of them an argument from
+> cleanliness:
+>
+> - `git log -S'transcriptPath'` dates the tuple to `b81f0a6` (2026-04-12), the
+>   first `pre_compact` ever written, where it arrived complete in its first
+>   line. No commit between then and now records a payload that sent one of the
+>   extra spellings; ADR-010:43 rationalises the tolerance *after* the fact,
+>   naming no incident.
+> - The shipped agent decides it. Claude Code 2.1.272 declares the hook
+>   payload's base fields as `["hook_event_name", "session_id",
+>   "transcript_path", "cwd", "scratchpad_dir", "prompt_id", "permission_mode",
+>   "agent_id", "agent_type", "served_call", "caller_session_id", "effort"]`.
+>   That is not one event's shape extrapolated to the rest: the binary declares
+>   a single base schema `{session_id, transcript_path, cwd, ...}` and all
+>   **33** event schemas are built as `base().and({hook_event_name: ..., ...})`
+>   on top of it — `PreToolUse`, `SessionStart`, `PreCompact`, `Stop` and the
+>   twenty-nine others. Every one therefore carries `transcript_path`, and none
+>   declares a top-level `input`; tool arguments arrive as `tool_input`. The 61
+>   occurrences of `transcriptPath` in that binary are internal resume, summary
+>   and respawn plumbing, none inside a hook payload.
+>
+>   A schema validates what is *received*, so it is half the evidence. The other
+>   half is the runtime builder every one of those payload sites spreads, and it
+>   emits the same snake_case field. It also emits two shapes worth naming: on
+>   the served branch `transcript_path` is the **empty string**, and a cloud
+>   session rewrites it to a sentinel and moves the real path under
+>   `cloud_session.original.transcript_path`. So every event carries the key —
+>   sometimes empty, sometimes not a usable path. `parse_hook_input` already
+>   maps the empty string to `None` through its `isinstance(...) and transcript`
+>   guard; the sentinel it would pass through, which is a question for whoever
+>   first runs this harness against a cloud session, not for the key set.
+> - `codex.py:148` already records the same observation for the second agent:
+>   its payload is Claude-shaped snake_case, and it too reads one key.
+>
+> `input` in particular is not inert code. It is a generic name, so a future
+> payload that uses it for anything else resolves the project dir to a
+> directory derived from a non-transcript string — the silent-misplacement
+> class ADR-032 exists to close, bought as insurance against a drift no
+> release has shown.
+>
+> `test_transcript_path_is_the_only_spelling_the_adapter_reads`
+> (`tests/unit/test_agent_contract.py`) holds it, and the work is done by its
+> *second* payload. A widening chain that lists `transcript_path` first still
+> satisfies a payload carrying all three spellings, so only a payload that
+> **omits** the snake spelling separates a narrow adapter from a wide one.
+> Measured against five hand-applied widenings — the plan's task 2 step 4
+> `next()`, a camel-first chain, `input` alone, a `snake or camel` fallback, and
+> an adapter that reads none of them — the omitting payload kills the four
+> widenings and the all-three payload kills only the last, which
+> `test_parse_hook_input_maps_a_pre_tool_use_payload_onto_the_canonical_view`
+> already covers. The all-three assertion therefore buys precedence and a rule
+> stated whole in one place, not coverage; it is kept for the first reason.
+>
+> A sixth widening survived both assertions while the test fired one event:
+> `transcriptPath` honoured *only* when `event == "pre_compact"`. Tasks 4-18
+> migrate one builtin at a time, which is exactly the shape that produces a
+> per-event special case, so the test now runs both payloads over every event
+> `adapter.hook_events()` declares — ten today, and a new one inherits the
+> assertion instead of escaping it. Re-applied by hand, that mutant now fails
+> at `event='pre_compact'`.
+>
+> Proven load-bearing by hand: the task 2 step 4 widening was applied to
+> `claude_code.py`, the test failed on the second payload
+> (`assert PosixPath('/camel.jsonl') is None`), and the edit was reverted by
+> hand, leaving `git diff src/` empty.
+>
+> Three prose surfaces outside this design describe the three-spelling
+> behaviour. Two are still correct, because `pre-compact` is unmigrated and
+> keeps its own copy of the tuple (`pre_compact.py:189`, and `_shared.py:56`
+> for the five builtins behind it): `docs/how/hooks.md:130` and ADR-010:43.
+> Both fall due when `pre-compact` migrates.
+>
+> The third was already false. `docs/how/hooks.md:641` sits under
+> `### stop-verify-guard` (`:627`), and that builtin migrated onto the adapter
+> in `b2864b1` (#271, 2026-09-14) — `stop_verify_guard.py:96` reads
+> `event.transcript_path`, so its step 3 resolves nothing from a `transcriptPath`
+> or `input` payload. Corrected here. Finding the line required asking which
+> builtin each doc surface describes, not grepping the tuple in `src/` and
+> counting copies: the grep says the mechanism exists somewhere, never that the
+> paragraph in front of you is about a builtin that still has it.
+>
 > **`pre-compact` cannot migrate onto the contract as the contract stands.** It
 > writes plain text on purpose — Claude Code's `hookSpecificOutput` union has no
 > PreCompact variant, so JSON there fails schema validation and the output is
