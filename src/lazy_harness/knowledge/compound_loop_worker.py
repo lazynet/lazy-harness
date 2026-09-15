@@ -89,7 +89,46 @@ def _drain_queue(
             move_to_done(queue_dir, task_file)
 
 
-def main() -> int:
+def _agent_dir_for_profile(cfg: Config | None, profile: str) -> Path:
+    """The runtime dir this worker drains, for the profile that queued the task.
+
+    The producer names its queue with `agent_dir_for(cfg, event.profile)` once
+    it has migrated, so the worker has to answer the same question the same
+    way or the pair stops meeting — the producer writing under the profile and
+    the worker draining the global directory, both exiting 0, every queued task
+    orphaned. `test_the_worker_drains_the_queue_the_producer_writes_to` asserts
+    the two answers against each other.
+
+    An empty profile is "nobody said", which is what an unmigrated producer
+    still means: it resolves globally, so the worker must too. That is
+    `agent_runtime_dir`'s own contract for an empty `profile_config_dir`, not a
+    second rule invented here.
+    """
+    try:
+        agent = get_agent(cfg.agent.type if cfg is not None else "claude-code")
+    except Exception:  # noqa: BLE001 — unknown agent.type must not kill the worker
+        agent = get_agent("claude-code")
+    if not profile:
+        return agent_runtime_dir(agent)
+    from lazy_harness.hooks.builtins._shared import agent_dir_for
+
+    return agent_dir_for(cfg, profile)[1]
+
+
+def _profile_from_argv(argv: list[str] | None) -> str:
+    """`--profile <name>`, absent meaning "nobody said". Deliberately not
+    `resolve_profile`: the worker must inherit the profile of the hook that
+    queued the task, never re-derive one from its own ambient environment."""
+    args = sys.argv[1:] if argv is None else argv
+    for i, a in enumerate(args):
+        if a == "--profile" and i + 1 < len(args):
+            return args[i + 1]
+        if a.startswith("--profile="):
+            return a.split("=", 1)[1]
+    return ""
+
+
+def main(argv: list[str] | None = None) -> int:
     # Resolve dirs via the configured agent adapter (ADR-032 L3/L4). Without a
     # loadable config the Claude Code adapter is the bootstrap default, which
     # resolves exactly like the historical CLAUDE_CONFIG_DIR read.
@@ -98,7 +137,7 @@ def main() -> int:
         agent = get_agent(cfg.agent.type if cfg is not None else "claude-code")
     except Exception:  # noqa: BLE001 — unknown agent.type must not kill the worker
         agent = get_agent("claude-code")
-    agent_dir = agent_runtime_dir(agent)
+    agent_dir = _agent_dir_for_profile(cfg, _profile_from_argv(argv))
     subdirs = agent.session_dirs()
     log_dir = agent_dir / (subdirs.get("logs") or "logs")
     queue_dir = agent_dir / (subdirs.get("queue") or "queue")

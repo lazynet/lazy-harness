@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from lazy_harness.agents.base import HookDecision, HookEvent
+
 
 def _interactive_session_jsonl(sessions_dir: Path, session_id: str) -> Path:
     session = sessions_dir / f"{session_id}.jsonl"
@@ -56,23 +58,34 @@ def _patch_config_lookup(monkeypatch: pytest.MonkeyPatch, claude_dir: Path) -> N
     monkeypatch.setattr(paths_mod, "config_file", lambda: cfg_file)
 
 
+def _event(payload: dict | None = None) -> HookEvent:
+    """A `session_end` event built by the adapter the runner would use.
+
+    Built through `parse_hook_input` rather than by hand so the payload shapes
+    these tests feed it stay payload shapes: the `isinstance` narrowing that
+    turns a wrong-type `cwd` into `Path("")` lives in the adapter now, and a
+    hand-built `HookEvent` would assert against a normalisation nothing ran.
+    """
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    return ClaudeCodeAdapter().parse_hook_input("session_end", payload or {}, profile="")
+
+
 def _run_session_end(monkeypatch: pytest.MonkeyPatch, claude_dir: Path, cwd: Path) -> None:
     """Invoke session_end.main() in a controlled environment.
 
-    stdin is replaced with '{}' so the JSON parse in main() succeeds, and
-    subprocess.Popen is stubbed to a no-op to avoid spawning a real worker.
+    The payload names no `cwd`, so the hook takes its `Path.cwd()` fallback and
+    `monkeypatch.chdir` is what decides the project — the same shape these tests
+    had when `main()` read stdin itself. `subprocess.Popen` is stubbed to a
+    no-op to avoid spawning a real worker.
     """
-    import io
-
     from lazy_harness.hooks.builtins import session_end as hook_mod
 
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_dir))
     monkeypatch.chdir(cwd)
-    monkeypatch.setattr("sys.stdin", io.StringIO("{}"))
     monkeypatch.setattr(hook_mod.subprocess, "Popen", lambda *a, **kw: None)
-    with pytest.raises(SystemExit) as exc:
-        hook_mod.main()
-    assert exc.value.code == 0
+
+    assert hook_mod.main(_event()) == HookDecision()
 
 
 def test_session_end_hook_queues_task_even_when_debounced(
@@ -163,8 +176,6 @@ def test_session_end_routes_paths_through_agent_adapter(
     from a hardcoded CLAUDE_CONFIG_DIR read. With agent.type = "null" (no env
     var, no global link) resolution must land under ~/.null even when
     CLAUDE_CONFIG_DIR points elsewhere."""
-    import io
-
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
@@ -197,11 +208,9 @@ enabled = true
     monkeypatch.setattr(paths_mod, "config_file", lambda: cfg_file)
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(decoy_dir))
     monkeypatch.chdir(cwd)
-    monkeypatch.setattr("sys.stdin", io.StringIO("{}"))
     monkeypatch.setattr(hook_mod.subprocess, "Popen", lambda *a, **kw: None)
-    with pytest.raises(SystemExit) as exc:
-        hook_mod.main()
-    assert exc.value.code == 0
+
+    assert hook_mod.main(_event()) == HookDecision()
 
     assert len(list((agent_dir / "queue").glob("*.task"))) == 1
     assert not (decoy_dir / "queue").exists()
@@ -222,8 +231,6 @@ def test_session_end_keeps_the_declared_project_dir_when_the_transcript_is_unwri
     Asserted by running the hook rather than by watching an argument: the two
     directories hold different sessions, so only the right one queues.
     """
-    import io
-
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
@@ -263,11 +270,10 @@ enabled = true
 
     monkeypatch.setattr(paths_mod, "config_file", lambda: cfg_file)
     monkeypatch.chdir(cwd)
-    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"transcript_path": str(unwritten)})))
     monkeypatch.setattr(hook_mod.subprocess, "Popen", lambda *a, **kw: None)
-    with pytest.raises(SystemExit) as exc:
-        hook_mod.main()
-    assert exc.value.code == 0
+
+    decision = hook_mod.main(_event({"transcript_path": str(unwritten)}))
+    assert decision == HookDecision()
 
     tasks = list((agent_dir / "queue").glob("*.task"))
     assert len(tasks) == 1, "the declared project dir was not searched"
@@ -292,8 +298,6 @@ def test_session_end_hook_skips_when_no_session_found(
 def test_records_session_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A session_closed loop event is recorded regardless of whether the
     compound-loop enqueue itself finds a session to act on."""
-    import io
-
     from lazy_harness.hooks.builtins import session_end as hook_mod
     from lazy_harness.monitoring.db import MetricsDB
 
@@ -306,12 +310,9 @@ def test_records_session_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     _patch_config_lookup(monkeypatch, claude_dir)
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_dir))
     monkeypatch.chdir(cwd)
-    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"session_id": "s1"})))
     monkeypatch.setattr(hook_mod.subprocess, "Popen", lambda *a, **kw: None)
 
-    with pytest.raises(SystemExit) as exc:
-        hook_mod.main()
-    assert exc.value.code == 0
+    assert hook_mod.main(_event({"session_id": "s1"})) == HookDecision()
 
     assert MetricsDB(db_path).loop_event_counts() == {"session_closed": 1}
 
@@ -322,8 +323,6 @@ def test_still_exits_zero_and_still_enqueues_when_recording_fails(
     """A metrics-store failure while recording session_closed must not
     prevent the existing compound-loop enqueue from running — this is the
     ordering constraint the hook exists to preserve."""
-    import io
-
     from lazy_harness.hooks.builtins import session_end as hook_mod
 
     claude_dir = tmp_path / ".claude-test"
@@ -342,12 +341,9 @@ def test_still_exits_zero_and_still_enqueues_when_recording_fails(
     _patch_config_lookup(monkeypatch, claude_dir)
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_dir))
     monkeypatch.chdir(cwd)
-    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"session_id": "s1"})))
     monkeypatch.setattr(hook_mod.subprocess, "Popen", lambda *a, **kw: None)
 
-    with pytest.raises(SystemExit) as exc:
-        hook_mod.main()
-    assert exc.value.code == 0
+    assert hook_mod.main(_event({"session_id": "s1"})) == HookDecision()
 
     assert len(list(queue_dir.glob("*.task"))) == 1
 
@@ -357,13 +353,15 @@ def test_main_exits_zero_even_when_enqueue_raises_uncaught_exception(
 ) -> None:
     """Any exception inside _enqueue_compound_loop that is not explicitly
     caught must not escape main() — the hook must degrade gracefully and
-    exit 0 rather than crashing the Claude Code shutdown chain.
+    abstain rather than crashing the Claude Code shutdown chain.
 
     This test triggers a KeyError, which is not in the current exception
-    handlers (ImportError, ConfigError, OSError).
+    handlers (ImportError, ConfigError, OSError). It is raised from
+    `agent_dir_for`, which is where the hook's two-step agent resolution now
+    lives: patching `registry.get_agent` would no longer be reached, because
+    `agent_dir_for` goes through `agent_for_profile` for a configured machine.
     """
-    import io
-
+    from lazy_harness.hooks.builtins import _shared as shared_mod
     from lazy_harness.hooks.builtins import session_end as hook_mod
 
     claude_dir = tmp_path / ".claude-test"
@@ -373,18 +371,11 @@ def test_main_exits_zero_even_when_enqueue_raises_uncaught_exception(
     _patch_config_lookup(monkeypatch, claude_dir)
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_dir))
     monkeypatch.chdir(cwd)
-    monkeypatch.setattr("sys.stdin", io.StringIO("{}"))
 
-    # Monkeypatch get_agent to raise KeyError — an exception type
-    # that _enqueue_compound_loop does not currently catch.
     def raise_keyerror(*args: object, **kwargs: object) -> object:
-        raise KeyError("simulated uncaught exception in get_agent")
+        raise KeyError("simulated uncaught exception in agent_dir_for")
 
-    from lazy_harness.agents import registry as registry_mod
+    monkeypatch.setattr(shared_mod, "agent_dir_for", raise_keyerror)
 
-    monkeypatch.setattr(registry_mod, "get_agent", raise_keyerror)
-
-    # main() must still raise SystemExit with code 0, not let the KeyError escape.
-    with pytest.raises(SystemExit) as exc:
-        hook_mod.main()
-    assert exc.value.code == 0
+    # main() must still abstain, not let the KeyError escape.
+    assert hook_mod.main(_event()) == HookDecision()

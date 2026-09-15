@@ -107,6 +107,31 @@ def test_reader_delivering_other_signals_still_reports_the_one_it_lacks(
     assert gaps[0].has_reader is True
 
 
+def test_session_exports_declared_signal_is_reported_against_a_reader_less_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The live half of `session-export`'s `signals=MESSAGES` declaration.
+
+    `deploy` leaves a hook with an undeliverable signal out of the generated
+    settings, so this declaration is what decides whether the hook installs at
+    all on an agent that ships no `TranscriptReader`. Paired with
+    `test_hook_declaring_no_signals_reports_no_gap` above, which asserts the
+    other side for `compound-loop` -- same event, same transcript, but read by
+    a worker out of process rather than by the hook itself.
+    """
+    from lazy_harness.hooks.signal_gaps import collect_hook_signal_gaps
+
+    _register(monkeypatch, "no-reader", _NoReaderAdapter)
+    cfg = _cfg("no-reader")
+    cfg.hooks = {"session_stop": HookEventConfig(scripts=["session-export"])}
+
+    gaps = collect_hook_signal_gaps(cfg)
+
+    assert len(gaps) == 1
+    assert gaps[0].hook == "session-export"
+    assert gaps[0].missing == (Signal.MESSAGES,)
+
+
 def test_hook_whose_event_the_agent_lacks_is_not_reported_as_a_missing_signal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -127,7 +152,7 @@ def test_hook_declaring_no_signals_reports_no_gap(monkeypatch: pytest.MonkeyPatc
 
     _register(monkeypatch, "no-reader", _NoReaderAdapter)
     cfg = _cfg("no-reader")
-    cfg.hooks = {"session_stop": HookEventConfig(scripts=["session-export"])}
+    cfg.hooks = {"session_stop": HookEventConfig(scripts=["compound-loop"])}
 
     assert collect_hook_signal_gaps(cfg) == []
 

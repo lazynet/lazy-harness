@@ -11,7 +11,16 @@ def test_builtin_declaring_signals_returns_them() -> None:
 
 
 def test_builtin_declaring_none_returns_the_empty_set() -> None:
-    assert builtin_signals("session-export") == frozenset()
+    """`compound-loop` and `session-export` are the deliberate contrast.
+
+    Both run on `session_stop` and both reach a transcript, but only
+    `session-export` reads message *text* in its own process. `compound-loop`
+    enqueues the path and its worker reads it later, out of process — so
+    declaring a signal for it would make `deploy` omit a working hook on any
+    agent whose reader cannot supply one it never touches.
+    """
+    assert builtin_signals("compound-loop") == frozenset()
+    assert builtin_signals("session-export") == frozenset({Signal.MESSAGES})
 
 
 def test_unregistered_name_returns_the_empty_set_rather_than_raising() -> None:

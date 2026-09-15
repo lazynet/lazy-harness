@@ -273,3 +273,80 @@ enabled = true
     assert worker_mod.main() == 1
     log = (home / ".null" / "logs" / "compound-loop.log").read_text()
     assert "knowledge.toml" in log
+
+
+def _profile_config(tmp_path: Path) -> Path:
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        f"""
+[harness]
+version = "1"
+
+[agent]
+type = "claude-code"
+
+[profiles]
+default = "alpha"
+
+[profiles.alpha]
+config_dir = "{tmp_path / "alpha-home"}"
+
+[compound_loop]
+enabled = true
+"""
+    )
+    return cfg_file
+
+
+def test_the_worker_drains_the_queue_the_producer_writes_to(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The two paths that answer "where is the queue", asserted to agree.
+
+    Every migrated builtin names its directory with `agent_dir_for(cfg,
+    event.profile)`. The worker named its own, globally, and nothing compared
+    them -- so the producer could move to the profile's directory while the
+    consumer kept draining the global one, and every queued task would be
+    orphaned with both processes exiting 0. Measured on a real config before
+    this test existed: producer `~/.claude-lazy/queue`, worker `~/.claude/queue`.
+
+    `CLAUDE_CONFIG_DIR` is cleared because it outranks the profile's
+    `config_dir` (`core/paths.py:150-160`) and pinning it would make both sides
+    agree for the wrong reason.
+    """
+    from lazy_harness.core.config import load_config
+    from lazy_harness.hooks.builtins._shared import agent_dir_for
+    from lazy_harness.knowledge import compound_loop_worker
+
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    cfg_file = _profile_config(tmp_path)
+    cfg = load_config(cfg_file)
+
+    agent, producer_dir = agent_dir_for(cfg, "alpha")
+    queue_subdir = agent.session_dirs().get("queue") or "queue"
+
+    worker_dir = compound_loop_worker._agent_dir_for_profile(cfg, "alpha")
+
+    assert worker_dir / queue_subdir == producer_dir / queue_subdir
+
+
+def test_the_worker_without_a_profile_resolves_where_it_always_did(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The fallback that keeps an unmigrated producer working.
+
+    `compound-loop` passes a profile only once it has migrated. Until then the
+    producer still resolves globally, so a worker that resolved per profile
+    regardless would break the pair in the other direction.
+    """
+    from lazy_harness.agents.registry import get_agent
+    from lazy_harness.core.config import load_config
+    from lazy_harness.core.paths import agent_runtime_dir
+    from lazy_harness.knowledge import compound_loop_worker
+
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    cfg = load_config(_profile_config(tmp_path))
+
+    assert compound_loop_worker._agent_dir_for_profile(cfg, "") == agent_runtime_dir(
+        get_agent("claude-code")
+    )

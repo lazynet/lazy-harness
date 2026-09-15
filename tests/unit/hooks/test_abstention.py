@@ -45,6 +45,11 @@ _NO_OBJECTION: dict[str, dict[str, object]] = {
         "tool_name": "Bash",
         "tool_input": {"command": "ls -la"},
     },
+    "session-export": {
+        "hook_event_name": "Stop",
+        "session_id": "s1",
+        "cwd": "/tmp",
+    },
     "stop-verify-guard": {
         "hook_event_name": "Stop",
         "session_id": "s1",
