@@ -528,6 +528,109 @@ def test_stop_and_suppress_output_travel_beside_no_verdict() -> None:
     assert body["stopReason"] == "done"
 
 
+# --- ClaudeCodeAdapter: the PreCompact text channel -----------------------
+
+
+def test_pre_compact_additional_context_serialises_as_plain_text() -> None:
+    """PreCompact has no `hookSpecificOutput` variant; JSON there is discarded.
+
+    Recorded against the 2.1.234 binary in `pre_compact.py` and in ADR-036 D2:
+    a JSON payload fails schema validation, which marks the hook failed and
+    drops its output. The executor joins each *successful* hook's raw stdout
+    into `newCustomInstructions`, so the summary arrives as the bytes the hook
+    wrote or it does not arrive at all.
+
+    Asserted on the bytes rather than on a mapping, because a mapping here
+    parses cleanly and displays nothing -- the failure this guards is silent.
+    """
+    from lazy_harness.agents.base import HookDecision
+    from lazy_harness.agents.registry import get_agent
+
+    adapter = get_agent("claude-code")
+    out = adapter.format_hook_output(
+        _event(adapter, "pre_compact"), HookDecision(additional_context="Preserve X")
+    )
+    assert out.stdout == "Preserve X\n"
+    assert "hookSpecificOutput" not in (out.stdout or "")
+    assert out.stderr == ""
+    assert out.exit_code == 0
+
+
+def test_pre_compact_abstention_emits_nothing() -> None:
+    """An empty summary is silence, not an empty line.
+
+    `pre_compact.py` only prints when it extracted something; a hook that
+    found nothing must not put a bare newline into `newCustomInstructions`.
+    """
+    from lazy_harness.agents.base import HookDecision
+    from lazy_harness.agents.registry import get_agent
+
+    adapter = get_agent("claude-code")
+    out = adapter.format_hook_output(_event(adapter, "pre_compact"), HookDecision())
+    assert out.stdout is None
+    assert out.exit_code == 0
+
+
+def test_pre_compact_refuses_the_channels_plain_text_cannot_carry() -> None:
+    """Naming the narrowing beats dropping it.
+
+    The JSON path carries `system_message`, `stop` and `suppress_output`; raw
+    text carries none of them. Returning early while silently discarding all
+    three is the same silent-dropout class the migration exists to close, so
+    the branch refuses and says which channel it could not express.
+
+    Asserted against `format_hook_output` directly, never through `run_hook`:
+    the runner's blanket handler turns any exception from a non-blocking hook
+    into exit 0 with the reason on stderr, and Claude Code does not surface a
+    successful hook's stderr. At runtime this refusal degrades to a lost
+    summary rather than a visible error -- which is why the test has to sit
+    here, where the raise is still observable.
+    """
+    from lazy_harness.agents.base import HookDecision
+    from lazy_harness.agents.registry import get_agent
+
+    adapter = get_agent("claude-code")
+    for decision, named in (
+        (HookDecision(system_message="warn"), "system_message"),
+        (HookDecision(stop=True), "stop"),
+        (HookDecision(suppress_output=True), "suppress_output"),
+    ):
+        with pytest.raises(ValueError, match=named):
+            adapter.format_hook_output(_event(adapter, "pre_compact"), decision)
+
+
+def test_pre_compact_names_every_channel_it_cannot_carry_not_just_the_first() -> None:
+    """A decision setting three unsupported channels is told about three."""
+    from lazy_harness.agents.base import HookDecision
+    from lazy_harness.agents.registry import get_agent
+
+    adapter = get_agent("claude-code")
+    with pytest.raises(ValueError) as excinfo:
+        adapter.format_hook_output(
+            _event(adapter, "pre_compact"),
+            HookDecision(system_message="warn", stop=True, suppress_output=True),
+        )
+    message = str(excinfo.value)
+    assert "system_message" in message
+    assert "stop" in message
+    assert "suppress_output" in message
+
+
+def test_other_events_still_serialise_additional_context_as_json() -> None:
+    """The narrowing is PreCompact's alone, not a change to the channel."""
+    import json
+
+    from lazy_harness.agents.base import HookDecision
+    from lazy_harness.agents.registry import get_agent
+
+    adapter = get_agent("claude-code")
+    out = adapter.format_hook_output(
+        _event(adapter, "session_start"), HookDecision(additional_context="ctx")
+    )
+    assert out.stdout is not None
+    assert json.loads(out.stdout)["hookSpecificOutput"]["additionalContext"] == "ctx"
+
+
 # --- corrections found in review -----------------------------------------
 
 
