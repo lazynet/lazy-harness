@@ -95,17 +95,23 @@ def test_no_unmigrated_builtin_declares_a_signal() -> None:
     `cli/hooks_cmd.py:96`), and `operations` has no reader in `src/` at all.
     So step 5 can declare those early, in one reviewable diff.
 
-    `signals` cannot travel with them. `signal_gaps.gaps_for_profile` reads it
-    through `loader.builtin_signals` without consulting `migrated`, and
-    `deploy.engine` leaves a hook with an undeliverable signal out of the
-    generated settings. A profile whose agent supplies no `TranscriptReader`
-    delivers the empty set -- `codex.py` ships no reader today -- so declaring
-    a signal on a hook that has not migrated yet is enough to undeploy a
-    working hook there.
+    `signals` cannot travel with them, and not because migration changes what
+    it does -- measured, it changes nothing. `signal_gaps.gaps_for_profile`
+    reads it through `loader.builtin_signals` without consulting `migrated`,
+    and `deploy.engine` leaves a hook with an undeliverable signal out of the
+    generated settings. Against a profile whose agent supplies no
+    `TranscriptReader` -- `codex.py` ships none today, so it delivers the empty
+    set -- `session-export` declaring `MESSAGES` produces the same omission at
+    `migrated=False` and at `migrated=True`.
 
-    Hence the gate: a builtin's `signals` and its `migrated=True` land in the
-    same commit, where the golden and the isolation assertion of that hook's
-    own task cover them.
+    That symmetry is the reason for the gate rather than an argument against
+    it. The other three fields are inert, so declaring them early costs
+    nothing if a row is wrong. `signals` is live in both states, so a wrong row
+    silently undeploys a working hook the moment any profile runs a reader-less
+    agent -- and a bulk commit declaring fourteen of them carries evidence for
+    none. Hence: a builtin's `signals` lands in the commit that migrates it,
+    beside the golden and the isolation assertion that show what that hook
+    actually reads.
     """
     early = sorted(
         name for name, spec in _BUILTIN_HOOKS.items() if spec.signals and not spec.migrated

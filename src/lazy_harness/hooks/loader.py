@@ -33,10 +33,12 @@ class BuiltinHookSpec:
     `lh hook <name>` carries no event flag and `lh hooks run` hands the runner
     `{}`, so `hook_event_name` is not always there to read — and without an
     event the adapter can neither parse the payload nor name the event back in
-    its output. The wiring is static (`plugins/builtins.py`), so the answer is
-    known without the payload. A payload that *does* name an event still wins,
-    and a name no adapter recognises is still a refusal rather than a fallback:
-    that is a typo, not an absence.
+    its output. For a hook that handles one event the answer is known without
+    the payload — from `plugins/builtins.py` where the wiring is static, and
+    from the hook itself where the operator places it. A hook that branches on
+    several leaves this unset rather than naming one of them. A payload that
+    *does* name an event still wins, and a name no adapter recognises is still
+    a refusal rather than a fallback: that is a typo, not an absence.
     """
 
     blocking: bool = False
