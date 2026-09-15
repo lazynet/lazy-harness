@@ -308,7 +308,17 @@ def test_an_overridden_agent_keeps_snapshot_and_deploy_in_agreement(
 
     The pre-existing agreement test runs a config with no override, so it passes
     with and without per-profile resolution. This one does not.
+
+    The reverse direction is asserted over the overriding profile's directory
+    alone. Elsewhere a target may be legitimately absent — the manifest records
+    `kind: "absent"` precisely so a rollback deletes what a first deploy created
+    — and whether `.claude.json` is written at all depends on which MCP binaries
+    the machine has, which would make the assertion pass on a developer's laptop
+    and fail on a runner. Under the override there is no such slack: the Codex
+    profile's hooks document is written on every deploy, and anything else the
+    snapshot claims for that directory came from the wrong adapter.
     """
+    overridden = home_dir / ".claude-lazy"
     before = _artifacts(home_dir)
     targets = set(snapshot_targets(mixed_agents))
 
@@ -320,10 +330,12 @@ def test_an_overridden_agent_keeps_snapshot_and_deploy_in_agreement(
         "the deploy writes artifacts the snapshot would not capture: "
         f"{sorted(str(p) for p in written - targets)}"
     )
-    agent_owned = {p for p in targets if p.name in {".claude.json", ".claude"}}
-    assert agent_owned <= written, (
-        "the snapshot claims agent artifacts the deploy never wrote: "
-        f"{sorted(str(p) for p in agent_owned - written)}"
+
+    claimed = {p for p in targets if p.parent == overridden}
+    assert claimed, "no target under the overriding profile; the assertion below is vacuous"
+    assert claimed <= written, (
+        "the snapshot claims artifacts of the overriding profile that its own "
+        f"agent never writes: {sorted(str(p) for p in claimed - written)}"
     )
 
 
