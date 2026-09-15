@@ -77,23 +77,28 @@ def take_snapshot(targets: list[Path], snapshot_dir: Path) -> Path:
     return path
 
 
-def snapshot_targets(cfg: Config) -> list[Path]:
+def snapshot_targets(cfg: Config, *, only: str | None = None) -> list[Path]:
     """Every path a deploy owns, derived once so the rollback cannot miss one.
 
     Mirrors what `deploy/engine.py` writes: the per-profile symlinks named by
     the profile source tree, each profile's `settings.json` and MCP config, and
     the agent's global config link. An integration test invokes this and a real
     deploy and asserts they agree — two readers of one config-derived answer.
+
+    `only` narrows it the same way `lh deploy --profile <name>` narrows the
+    deploy, through the same `selected_profiles` and `deploys_global_link`, so
+    the two readers stay one answer under narrowing too.
     """
     from lazy_harness.agents.registry import get_agent
     from lazy_harness.core.paths import config_dir, expand_path
+    from lazy_harness.deploy.engine import deploys_global_link, selected_profiles
 
     agent = get_agent(cfg.agent.type)
     mcp_file_name = agent.mcp_config_file()
     profiles_src = config_dir() / "profiles"
 
     targets: list[Path] = []
-    for name, entry in cfg.profiles.items.items():
+    for name, entry in selected_profiles(cfg, only).items():
         target_dir = expand_path(entry.config_dir)
         src_dir = profiles_src / name
         if src_dir.is_dir():
@@ -103,7 +108,7 @@ def snapshot_targets(cfg: Config) -> list[Path]:
             targets.append(target_dir / mcp_file_name)
 
     link_path = agent.global_config_link()
-    if link_path is not None:
+    if link_path is not None and deploys_global_link(cfg, only):
         targets.append(link_path)
 
     seen: set[Path] = set()

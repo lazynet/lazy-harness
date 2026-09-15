@@ -17,10 +17,12 @@ from lazy_harness.core.backups import (
 from lazy_harness.core.config import Config, ConfigError, load_config
 from lazy_harness.core.paths import config_file
 from lazy_harness.deploy.engine import (
+    UnknownProfileError,
     deploy_claude_symlink,
     deploy_hooks,
     deploy_mcp_servers,
     deploy_profiles,
+    selected_profiles,
 )
 from lazy_harness.deploy.snapshot import snapshot_targets, take_snapshot
 from lazy_harness.migrate.rollback import apply_rollback_log
@@ -30,7 +32,7 @@ from lazy_harness.migrate.rollback import apply_rollback_log
 KEEP_SNAPSHOTS = 10
 
 
-def _take_snapshot(cfg: Config) -> Path:
+def _take_snapshot(cfg: Config, only: str | None = None) -> Path:
     """Record the pre-deploy state of every managed artifact.
 
     Unconditional: a version-change or plan-diff trigger is an optimisation of
@@ -44,28 +46,29 @@ def _take_snapshot(cfg: Config) -> Path:
     # what `latest_backup_dir` and the prune both sort on.
     stamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S.%f")
     snapshot_dir = namespace_dir(root, DEPLOY_NAMESPACE) / stamp
-    take_snapshot(snapshot_targets(cfg), snapshot_dir)
+    take_snapshot(snapshot_targets(cfg, only=only), snapshot_dir)
     prune_backups(root, DEPLOY_NAMESPACE, keep=KEEP_SNAPSHOTS)
     return snapshot_dir
 
 
-def _run_deploy(cfg: Config) -> None:
-    click.echo("=== lazy-harness deploy ===\n")
+def _run_deploy(cfg: Config, only: str | None = None) -> None:
+    scope = f" ({only})" if only else ""
+    click.echo(f"=== lazy-harness deploy{scope} ===\n")
 
     click.echo("Deploying profiles:")
-    deploy_profiles(cfg)
+    deploy_profiles(cfg, only=only)
     click.echo()
 
     click.echo("Deploying hooks:")
-    deploy_hooks(cfg)
+    deploy_hooks(cfg, only=only)
     click.echo()
 
     click.echo("Deploying MCP servers:")
-    deploy_mcp_servers(cfg)
+    deploy_mcp_servers(cfg, only=only)
     click.echo()
 
     click.echo("Setting up ~/.claude symlink:")
-    deploy_claude_symlink(cfg)
+    deploy_claude_symlink(cfg, only=only)
     click.echo()
 
     click.echo("Done.")
@@ -85,10 +88,27 @@ def _run_deploy(cfg: Config) -> None:
     is_flag=True,
     help="Restore the managed artifacts from the most recent deploy snapshot.",
 )
-def deploy(snapshot_only: bool, rollback: bool) -> None:
+@click.option(
+    "--profile",
+    "profile",
+    default=None,
+    metavar="NAME",
+    help="Deploy only this profile. Its symlinks, hooks and MCP servers are "
+    "written and no other profile is touched; the agent's global config link "
+    "follows only when NAME is the default profile.",
+)
+def deploy(snapshot_only: bool, rollback: bool, profile: str | None) -> None:
     """Deploy profiles, hooks, and skills."""
     if snapshot_only and rollback:
         click.echo("Error: --snapshot and --rollback are mutually exclusive.", err=True)
+        raise SystemExit(1)
+
+    # A snapshot's manifest already records the scope it was taken at. Replaying
+    # a subset of it would restore fewer artifacts than the snapshot captured
+    # and still report a rollback, so the narrowing is refused rather than
+    # silently ignored.
+    if rollback and profile is not None:
+        click.echo("Error: --profile and --rollback are mutually exclusive.", err=True)
         raise SystemExit(1)
 
     if rollback:
@@ -109,9 +129,17 @@ def deploy(snapshot_only: bool, rollback: bool) -> None:
         click.echo(f"Error: {e}", err=True)
         raise SystemExit(1)
 
-    snapshot_dir = _take_snapshot(cfg)
+    # Validated before the snapshot: a typo must cost nothing, and a snapshot
+    # taken for a profile that does not exist has no artifacts to record.
+    try:
+        selected_profiles(cfg, profile)
+    except UnknownProfileError as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1) from e
+
+    snapshot_dir = _take_snapshot(cfg, profile)
     click.echo(f"Snapshot: {snapshot_dir}\n")
     if snapshot_only:
         return
 
-    _run_deploy(cfg)
+    _run_deploy(cfg, profile)

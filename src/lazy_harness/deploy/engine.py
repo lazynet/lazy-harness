@@ -16,7 +16,7 @@ from lazy_harness.core.artifact_version import (
     SETTINGS_BINARY_KEY,
     extract_binary_from_settings,
 )
-from lazy_harness.core.config import Config
+from lazy_harness.core.config import Config, ProfileEntry
 from lazy_harness.core.paths import config_dir, expand_path
 from lazy_harness.deploy.symlinks import ensure_symlink
 from lazy_harness.hooks.loader import HookInfo
@@ -34,9 +34,52 @@ _HOOK_SUBCOMMAND = "hook"
 _LEGACY_BUILTIN_MARKER = "lazy_harness/hooks/builtins/"
 
 
-def hook_command(
-    hook: HookInfo, *, profile: str, binary: str = DEFAULT_HARNESS_BINARY
-) -> str:
+class UnknownProfileError(ValueError):
+    """`--profile` named a profile the config does not declare.
+
+    Raised rather than silently deploying nothing: `lh deploy --profile <typo>`
+    that exits 0 having written nothing is indistinguishable, to the step 4
+    contract gate, from a deploy that worked.
+    """
+
+    def __init__(self, name: str, known: Collection[str]) -> None:
+        self.name = name
+        self.known = sorted(known)
+        listed = ", ".join(self.known) if self.known else "none"
+        super().__init__(f"Unknown profile '{name}'. Configured profiles: {listed}")
+
+
+def selected_profiles(cfg: Config, only: str | None) -> dict[str, ProfileEntry]:
+    """The profiles one deploy touches — every one, or just the named one.
+
+    The single importable place that answers it. `deploy/snapshot.py` reads it
+    too: narrowing the deploy in the engine loops while the snapshot still
+    walked every profile would take a manifest listing artifacts this deploy
+    never writes, and a later `--rollback` would restore another profile's files
+    from a snapshot that had no business capturing them.
+    """
+    if only is None:
+        return cfg.profiles.items
+    entry = cfg.profiles.items.get(only)
+    if entry is None:
+        raise UnknownProfileError(only, cfg.profiles.items)
+    return {only: entry}
+
+
+def deploys_global_link(cfg: Config, only: str | None) -> bool:
+    """Whether this deploy may touch the agent's global config link.
+
+    The link is global but its *target* is the default profile's config dir, so
+    it is an artifact of that profile and of no other. A narrowed deploy of the
+    default profile leaves it correct; a narrowed deploy of any other profile
+    that rewrote it would reach outside the blast-radius boundary `--profile`
+    exists to draw — which is precisely what the step 4 gate, running against a
+    throwaway profile, must not do to `~/.claude`.
+    """
+    return only is None or only == cfg.profiles.default
+
+
+def hook_command(hook: HookInfo, *, profile: str, binary: str = DEFAULT_HARNESS_BINARY) -> str:
     """The command string written into the agent's settings for this hook.
 
     Builtins go through `<binary> hook <name> --profile <profile>`. The binary is
@@ -81,14 +124,18 @@ def hook_command(
     return f"{sys.executable} {hook.path}"
 
 
-def deploy_profiles(cfg: Config) -> None:
-    """Deploy profile content as symlinks to agent config dirs."""
+def deploy_profiles(cfg: Config, *, only: str | None = None) -> None:
+    """Deploy profile content as symlinks to agent config dirs.
+
+    `only` narrows the loop to one profile; `None` is every profile, which is
+    what `lh deploy` without `--profile` still does.
+    """
     profiles_src = config_dir() / "profiles"
     if not profiles_src.is_dir():
         click.echo("No profiles directory found. Run: lh init")
         return
 
-    for name, entry in cfg.profiles.items.items():
+    for name, entry in selected_profiles(cfg, only).items():
         src_dir = profiles_src / name
         if not src_dir.is_dir():
             click.echo(f"  · Profile '{name}' has no content dir at {src_dir}")
@@ -262,8 +309,11 @@ def _merge_hook_blocks(
     return merged, preserved, repaired
 
 
-def deploy_hooks(cfg: Config) -> None:
-    """Generate agent-native hook config for each profile."""
+def deploy_hooks(cfg: Config, *, only: str | None = None) -> None:
+    """Generate agent-native hook config for each profile.
+
+    `only` narrows the loop to one profile; `None` is every profile.
+    """
     from lazy_harness.agents.base import HookEntry
     from lazy_harness.agents.registry import get_agent
     from lazy_harness.deploy.defaults import merge_with_defaults
@@ -312,7 +362,7 @@ def deploy_hooks(cfg: Config) -> None:
         click.echo("  No hooks to deploy.")
         return
 
-    for name, entry in cfg.profiles.items.items():
+    for name, entry in selected_profiles(cfg, only).items():
         binary = binary_for_profile(cfg, name)
         agent_hooks = agent.generate_hook_config(entries_for(name, binary))
         target_dir = expand_path(entry.config_dir)
@@ -402,8 +452,11 @@ def _collect_mcp_servers(cfg: Config) -> dict[str, dict]:
     return servers
 
 
-def deploy_mcp_servers(cfg: Config) -> None:
-    """Write detected MCP server entries into each profile's agent MCP config file."""
+def deploy_mcp_servers(cfg: Config, *, only: str | None = None) -> None:
+    """Write detected MCP server entries into each profile's agent MCP config file.
+
+    `only` narrows the loop to one profile; `None` is every profile.
+    """
     from lazy_harness.agents.registry import get_agent
 
     servers = _collect_mcp_servers(cfg)
@@ -419,7 +472,7 @@ def deploy_mcp_servers(cfg: Config) -> None:
 
     mcp_block = agent.generate_mcp_config(servers)
 
-    for name, entry in cfg.profiles.items.items():
+    for name, entry in selected_profiles(cfg, only).items():
         target_dir = expand_path(entry.config_dir)
         target_dir.mkdir(parents=True, exist_ok=True)
         mcp_config_file = target_dir / mcp_file_name
@@ -439,9 +492,17 @@ def deploy_mcp_servers(cfg: Config) -> None:
         click.echo(f"  ✓ {name}/{mcp_file_name} (MCP servers: {', '.join(servers)})")
 
 
-def deploy_claude_symlink(cfg: Config) -> None:
-    """Create the agent's global config symlink to the default profile's config dir."""
+def deploy_claude_symlink(cfg: Config, *, only: str | None = None) -> None:
+    """Create the agent's global config symlink to the default profile's config dir.
+
+    Skipped when `only` names a profile that is not the default — see
+    `deploys_global_link` for why the link belongs to that profile alone.
+    """
     from lazy_harness.agents.registry import get_agent
+
+    if not deploys_global_link(cfg, only):
+        click.echo(f"  · skipped — '{only}' is not the default profile")
+        return
 
     agent = get_agent(cfg.agent.type)
     link_path = agent.global_config_link()
