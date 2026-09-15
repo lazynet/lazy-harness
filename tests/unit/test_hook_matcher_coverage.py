@@ -9,7 +9,6 @@ never invoked.
 from __future__ import annotations
 
 import importlib
-from pathlib import Path
 
 from lazy_harness.agents.base import HookEntry
 from lazy_harness.agents.claude_code import ClaudeCodeAdapter
@@ -55,37 +54,91 @@ def _tool_event_for(name: str) -> str | None:
     return None
 
 
-def _builtins_gating_on_tool_name() -> list[str]:
+_MIN_TOOL_GATING_BUILTINS = 7
+"""Floor on the size of the watched set, measured on 2026-09-15.
+
+This gate used to pick its subjects by grepping each module for the string
+`tool_name`, so migrating a hook to `main(event: HookEvent)` deleted the string
+and retired the hook from the gate with nothing red: `pre-tool-use-security` —
+the hook the whole suite exists for — was unwatched on `main` @ 75bedaa while
+all three tests passed. A subject list that can shrink to nothing while green
+is that same defect one level up, so the count is pinned. Retiring a
+tool-gating builtin lowers this deliberately; a migration must never.
+"""
+
+
+def _builtins_gating_on_tools() -> list[str]:
+    """The builtins that reason about tool calls, per the registry's declaration.
+
+    Keyed on `BuiltinHookSpec.operations`, not on the module's source text.
+    `operations` is what a hook *declares* it acts on, independent of how its
+    `main()` reads the payload, so migrating a hook cannot narrow this list.
+    Dropping the declaration is a visible registry edit, and
+    `test_tool_gating_builtins_match_the_modules_declaring_inspected_tools`
+    turns it red rather than letting it shrink.
+    """
     import lazy_harness.hooks.loader as loader
 
-    names = []
-    for name, spec in loader._BUILTIN_HOOKS.items():
-        module = importlib.import_module(spec.module)
-        source = Path(str(module.__file__)).read_text()
-        if "tool_name" in source:
-            names.append(name)
-    return names
+    return sorted(name for name, spec in loader._BUILTIN_HOOKS.items() if spec.operations)
 
 
-def test_every_builtin_gating_on_tool_name_declares_what_it_inspects() -> None:
+def _declares_inspected_tools(name: str) -> bool:
+    return isinstance(
+        getattr(importlib.import_module(_module_of(name)), "INSPECTED_TOOLS", None), frozenset
+    )
+
+
+def _inspected_tools(name: str) -> frozenset[str] | None:
+    """`INSPECTED_TOOLS` as the module publishes it, `None` when it does not.
+
+    Never `frozenset()` for a missing constant. An empty set reads as "this
+    hook inspects nothing", and every coverage check over it then passes
+    vacuously — a deleted declaration would look like a satisfied one.
+    """
+    if not _declares_inspected_tools(name):
+        return None
+    return frozenset(importlib.import_module(_module_of(name)).INSPECTED_TOOLS)
+
+
+def test_the_hook_this_gate_exists_for_is_watched() -> None:
+    """Migrating a hook must not retire the gate built after its own incident."""
+    assert "pre-tool-use-security" in _builtins_gating_on_tools()
+
+
+def test_the_watched_set_cannot_silently_shrink() -> None:
+    """A gate is only a gate while it still has subjects."""
+    watched = _builtins_gating_on_tools()
+    assert len(watched) >= _MIN_TOOL_GATING_BUILTINS, (
+        f"watched set shrank to {len(watched)} ({watched}); floor is {_MIN_TOOL_GATING_BUILTINS}"
+    )
+
+
+def test_tool_gating_builtins_match_the_modules_declaring_inspected_tools() -> None:
+    """Two independent sources, so dropping either fails instead of shrinking.
+
+    The registry says which hooks gate on tools; the modules say which native
+    tool names they gate on. Neither can go quiet on its own.
+    """
+    import lazy_harness.hooks.loader as loader
+
+    declaring = sorted(name for name in loader._BUILTIN_HOOKS if _declares_inspected_tools(name))
+    assert declaring == _builtins_gating_on_tools()
+
+
+def test_every_builtin_gating_on_tools_declares_what_it_inspects() -> None:
     """A matcher can only be checked against a set the module publishes."""
-    missing = [
-        name
-        for name in _builtins_gating_on_tool_name()
-        if not isinstance(
-            getattr(importlib.import_module(_module_of(name)), "INSPECTED_TOOLS", None),
-            frozenset,
-        )
-    ]
+    missing = [name for name in _builtins_gating_on_tools() if _inspected_tools(name) is None]
     assert missing == [], f"no INSPECTED_TOOLS declared by: {missing}"
 
 
 def test_deployed_matcher_covers_every_tool_each_builtin_inspects() -> None:
     """The gate the `pre-tool-use-security` matcher bug slipped through."""
     gaps: dict[str, list[str]] = {}
-    for name in _builtins_gating_on_tool_name():
-        module = importlib.import_module(_module_of(name))
-        inspected = getattr(module, "INSPECTED_TOOLS", frozenset())
+    for name in _builtins_gating_on_tools():
+        inspected = _inspected_tools(name)
+        if inspected is None:
+            gaps[name] = ["<no INSPECTED_TOOLS to check the matcher against>"]
+            continue
         fixed = _tool_event_for(name)
         events = [fixed] if fixed else list(_CC_TOOL_EVENTS)
         for event in events:
