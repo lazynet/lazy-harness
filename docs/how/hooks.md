@@ -178,7 +178,7 @@ This is the hook that does the heaviest lifting. It is split into two pieces del
 **Consumer (worker, slow, async):**
 1. Acquire `fcntl.flock` on `queue/.worker.lock`. If another worker is running, exit 0.
 
-    The queue and the worker's own log sit beside `hooks.log` in the agent runtime directory, so neither is at a fixed path either — see [Observability](#observability) for how that directory resolves. On a single-profile Claude Code install they are `~/.claude/queue/` and `~/.claude/queue/.worker.lock`.
+    Three distinct objects live under the agent runtime directory, none of them at a fixed path: the queue is its own subdirectory, the lock is a file inside that queue, and the worker's log sits in `logs/` alongside `hooks.log`. On a single-profile Claude Code install with no environment override they are `~/.claude/queue/`, `~/.claude/queue/.worker.lock` and `~/.claude/logs/compound-loop.log`. Unlike the two hooks named in [Observability](#observability), the producer and the worker resolve that directory from the global `[agent].type`, never from the invoked profile.
 
 2. Drain `*.task` files in FIFO order.
 3. For each task: parse metadata → filter trivial sessions (`min_user_chars`, `min_messages`) → collect existing decisions/failures/learnings for deduplication → build prompt with `build_prompt` (ported verbatim from the predecessor; the wording is calibration, not code) → call `claude -p --model <model>` with a configurable timeout → parse the JSON response with `parse_response` (handles bare JSON, fenced JSON, and prose-preamble JSON) → persist with `persist_results` → record the session's `goal_declared`/`goal_absent` verdict (see below).

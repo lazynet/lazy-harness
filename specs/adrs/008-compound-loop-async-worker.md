@@ -26,12 +26,18 @@ Steps 4 and 5 can take 30–120 seconds and call another LLM. The naive implemen
 
 Split the compound loop into **a fast synchronous producer (the hook) and a slow asynchronous consumer (the worker)**, with a file-based queue between them.
 
-Paths as decided on 2026-05-02, when one agent meant one fixed location. They have since moved:
-`compound_loop.py:86` resolves the queue as `agent_dir / subdirs["queue"]` and `:132` the worker log
-as `log_dir / "compound-loop.log"`, both from the agent runtime directory of the profile the hook
-ran under. `src/lazy_harness/core/paths.py` (`agent_runtime_dir`) is the source of truth for that
-resolution. The `~/.claude/...` spellings below are what a single-profile Claude Code install
-resolves to, not the contract.
+> **Path note (2026-09-15).** The `~/.claude/...` spellings below were written when one agent meant
+> one fixed location. They are now one possible result of a resolution, not the contract, and this
+> producer does **not** read the profile it was invoked with. `compound_loop.py:81-86` calls
+> `get_agent(cfg.agent.type)` — the *global* adapter — then `agent_runtime_dir(agent)` with no
+> `profile_config_dir`, and derives `agent_dir / (subdirs.get("queue") or "queue")` for the queue and
+> `log_dir / "compound-loop.log"` at `:132` for the worker's log. `compound_loop_worker.py:98-105`
+> repeats the same resolution. So the chain is: the global `[agent].type` picks the adapter, that
+> adapter's own environment variable wins if set (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, …), and
+> otherwise the adapter's global fallback applies. `core/paths.py` (`agent_runtime_dir`) is the
+> source of truth. The spellings below are what a single-profile Claude Code install with no
+> environment override resolves to; under any other combination they differ. Routing these two
+> through the invoked profile is open work, tracked in `specs/backlog.md`.
 
 - **Producer — `src/lazy_harness/hooks/builtins/compound_loop.py`.** Runs inside Claude Code's `Stop` hook. All it does:
   1. Read config, check `compound_loop.enabled`, bail if disabled.

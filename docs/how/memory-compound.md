@@ -6,6 +6,13 @@ If you want the design rationale, read [ADR-008 — Compound loop async worker](
 
 ## The loop, one step at a time
 
+Every `~/.claude/...` path on this page is an **example**, not a fixed location: it is what a
+single-profile Claude Code install with no environment override resolves to. The producer and the
+worker both resolve their directory from the global `[agent].type` — not from the profile the hook
+was invoked with — and then from that adapter's own environment variable (`CLAUDE_CONFIG_DIR`,
+`CODEX_HOME`, …) before its global fallback. Substitute accordingly; `agent_runtime_dir` in
+`core/paths.py` is the source of truth, and `docs/how/hooks.md` has the full resolution order.
+
 ```
   session ends
        │
@@ -289,8 +296,10 @@ Changes take effect on the next session — the producer and worker both reload 
 
 ```bash
 # Is the producer firing?
-# Both producer and worker resolve this dir globally, so it follows
-# CLAUDE_CONFIG_DIR when set and falls back to ~/.claude, not to the profile.
+# Example path -- see the note at the top of this page. Both producer and
+# worker resolve from the GLOBAL [agent].type, so the env var that wins is
+# that adapter's own (CLAUDE_CONFIG_DIR here, CODEX_HOME under a Codex
+# global), and never the invoked profile's config_dir.
 tail -f ~/.claude/logs/hooks.log
 
 # Is the worker running?
