@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.66.0](https://github.com/lazynet/lazy-harness/compare/v0.65.0...v0.66.0) (2026-09-15)
+
+
+### Features
+
+* **agents:** throwaway CodexAdapter and the two generators off the Protocol ([#290](https://github.com/lazynet/lazy-harness/issues/290)) ([0ce93a2](https://github.com/lazynet/lazy-harness/commit/0ce93a2ff48f4b0d2ac4a45621f3e0fc57965a95))
+* **doctor:** name each deployed hook's missing transcript signals ([#289](https://github.com/lazynet/lazy-harness/issues/289)) ([f720fbc](https://github.com/lazynet/lazy-harness/commit/f720fbcc81b56b958bdb6704c818f5e71d7b41b0))
+
+
+### Documentation
+
+* add the hook-wiring and guard-coverage gates ([#287](https://github.com/lazynet/lazy-harness/issues/287)) ([13e4a14](https://github.com/lazynet/lazy-harness/commit/13e4a1452b1c89cf19a0cd3c0b28852cd0c733cd))
+* reconcile the specs with what steps 3 and 4 shipped ([#291](https://github.com/lazynet/lazy-harness/issues/291)) ([c0dd40e](https://github.com/lazynet/lazy-harness/commit/c0dd40ea4aec9c8c74010c85c10b3cef663b2f2e))
+
 ## [0.65.0](https://github.com/lazynet/lazy-harness/compare/v0.64.0...v0.65.0) (2026-09-15)
 
 
