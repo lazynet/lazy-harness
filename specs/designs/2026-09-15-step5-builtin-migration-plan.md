@@ -408,6 +408,45 @@ Expected: PASS. Unmigrated builtins still calling the old names fail to import �
 git add -A && git commit -m "refactor: take the transcript path rather than the payload in shared helpers"
 ```
 
+> **Corrections (2026-09-15, from executing this task).** Five things above are
+> wrong against the code; the line numbers in *Files* (`:21`, `:49`, `:60`,
+> `:68`, `:83`, `:174`, `:192`) were all correct.
+>
+> 1. **Both sample tests in Step 1 pass before the implementation exists.**
+>    `test_resolve_project_dir_honours_a_declared_dir_inside_the_sessions_root`
+>    names the declared dir `-Users-x-repo` and the cwd `/Users/x/repo`, so the
+>    cwd-derived fallback produces the identical path; the *rejects* case
+>    asserts that same fallback. Neither discriminates. They were rewritten so
+>    the declared dir name cannot be re-derived from the cwd.
+> 2. **Step 2's expected failure is wrong.** Not `NameError` plus a `TypeError`
+>    on the changed signatures: it is `ImportError` (the test imports the new
+>    name), and no `TypeError` at all, because the old signature is
+>    `payload: object` and swallows a `Path` in silence, falling through to the
+>    cwd branch. That is *why* the tests in (1) passed.
+> 3. **`_TRANSCRIPT_KEYS` cannot "die with them", and Step 4 contradicts
+>    itself.** Six modules still read a raw stdin payload
+>    (`compound_loop.py:93`, `session_end.py:116`, `session_export.py:75`,
+>    `herdr_context_gauge.py:154`, `engram_persist.py:80`,
+>    `pre_compact.py:196`), so deleting the three-spelling reader changes their
+>    behaviour. Step 4 says unmigrated builtins "fail to import — that is the
+>    point" and in the next sentence that this commit carries the call sites as
+>    mechanical renames with behaviour unchanged; only the second is
+>    achievable. Resolved by keeping `_declared_transcript` as the payload half
+>    with the tuple inlined: the module-level constant is gone, the reader is
+>    not, and tasks 4–18 delete it as each builtin stops taking a payload.
+> 4. **The *Test* path is the wrong mirror.** `tests/` mirrors
+>    `src/lazy_harness/` one-to-one, so `_shared.py`'s mirror is
+>    `tests/unit/hooks/builtins/test_shared.py`, not
+>    `tests/unit/hooks/test_shared_memory_dir.py`.
+> 5. **The *Files → Modify* list omits the seven call sites** that must change
+>    in the same commit.
+>
+> Left for tasks 4–18, not done here:
+> `designs/2026-09-13-multi-agent-harness-design.md:128,201,1578,1748` still
+> names `_TRANSCRIPT_KEYS` as a live symbol. Those claims are now half-stale —
+> the constant is gone, the three spellings are not — and each of those tasks
+> retires another payload reader.
+
 ---
 
 ## Tasks 4–18: the fifteen builtins
