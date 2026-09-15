@@ -129,11 +129,12 @@ Steps when the event fires:
 
 1. Read the transcript path from the event JSON (accepts `transcript_path`, `transcriptPath`, or `input` field — tolerant to Claude Code version drift).
 2. Copy the raw transcript to `~/.claude/compact-backups/<timestamp>-<project>.jsonl`. This is the forensic backup; nothing in the framework relies on it, but `lh` users can re-run compound loop against it if needed.
-3. Parse the JSONL and extract:
-   - The last up to 5 non-trivial user messages (length ≥ 15 chars, truncated to 200 chars each).
-   - Every file path seen inside assistant `tool_use` blocks' `input.file_path` or `input.path`. Sorted, deduplicated, last 10 kept.
-4. Build a markdown summary with `## Tasks in progress` and `## Files worked on` sections.
-5. Write it to `<memory_dir>/pre-compact-summary.md` with a generation timestamp in an HTML comment — the same resolved directory every other memory writer uses (see `compound-loop` below).
+3. Parse the JSONL and extract the last up to 5 non-trivial user messages (length ≥ 15 chars, truncated to 200 chars each) and every file path seen inside assistant `tool_use` blocks' `input.file_path` or `input.path` (sorted, deduplicated, last 10 kept), then render them as `## Tasks in progress` and `## Files worked on`.
+
+    **This step recovers nothing today.** `parse_transcript` reads `role` and `content` at the top level of each JSONL line, and Claude Code nests both one level down, under `message`. Neither loop ever matches, so both sections are always absent from the summary — measured against production transcripts and against every `pre-compact-summary.md` on disk. The paragraph above describes what the step is meant to do, not what it does; the repair is tracked in the project backlog.
+
+4. Append the last 3 `summary` fields of `decisions.jsonl` and of `failures.jsonl` from the memory directory, as `## Recent decisions` and `## Recent failures`. These read the memory store rather than the transcript, and are in practice the only sections the summary carries.
+5. If the summary came out non-empty, write it to `<memory_dir>/pre-compact-summary.md` with a generation timestamp in an HTML comment — the same resolved directory every other memory writer uses (see `compound-loop` below).
 6. Print it on stdout as **plain text**, preceded by a line asking the summariser to preserve it. Claude Code's PreCompact executor collects each successful hook's raw stdout and hands the joined text to the compaction summariser as `newCustomInstructions`. There is no `hookSpecificOutput` variant for this event — a JSON payload fails schema validation, which marks the hook failed and discards its output.
 
 **Where it writes:**
