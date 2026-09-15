@@ -149,7 +149,7 @@ Responsibility: convert the just-ended session's JSONL into a clean markdown fil
 
 Flow:
 
-1. Locate the latest `*.jsonl` under `<CLAUDE_CONFIG_DIR>/projects/<encoded-cwd>/`.
+1. Take the transcript the agent declared on the event when it is already on disk; otherwise locate the latest `*.jsonl` under `<agent runtime dir>/projects/<encoded-cwd>/`, where the runtime dir is the one belonging to the profile the hook was invoked with.
 2. Parse it into metadata + messages. Sessions without a `permission-mode` first record are treated as non-interactive and skipped.
 3. Filter sessions under `min_messages` (default 4) — scratch prompts never make it into the knowledge tree.
 4. Classify the session by cwd heuristics (see [ADR-011](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/011-session-export-and-classification.md)) to compute `profile` and `session_type`.
