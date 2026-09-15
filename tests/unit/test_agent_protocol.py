@@ -4,7 +4,16 @@ from __future__ import annotations
 
 import pytest
 
-REGISTERED_AGENT_TYPES = ["claude-code"]
+from lazy_harness.agents.registry import list_agents
+
+# Derived from the registry rather than retyped. A hand-maintained list is how a
+# newly registered adapter ships without ever being checked against the Protocol
+# — the sweep stays green because it never ran against the new name.
+REGISTERED_AGENT_TYPES = [name for name in list_agents() if name != "null"]
+
+
+def test_the_conformance_sweep_covers_every_registered_agent() -> None:
+    assert set(REGISTERED_AGENT_TYPES) | {"null"} == set(list_agents())
 
 
 @pytest.mark.parametrize("agent_type", REGISTERED_AGENT_TYPES)
@@ -30,3 +39,91 @@ def test_null_adapter_satisfies_protocol() -> None:
     assert adapter.system_doc_name() == ""
     assert adapter.session_dirs() == {"sessions": "", "logs": "", "queue": ""}
     assert adapter.process_name() == ""
+
+
+def test_protocol_no_longer_declares_the_displaced_config_generators() -> None:
+    """`plan_config` is the deploy surface, so the two `dict`-returning
+    generators come off the Protocol (decision 4, 2026-09-13 multi-agent design).
+
+    While they are declared, every new adapter must write two stubs whose `dict`
+    return cannot express its own config — Codex needs `hooks.json` plus a TOML
+    block, which is exactly the shape a single `dict` cannot carry.
+    """
+    from lazy_harness.agents.base import AgentAdapter
+
+    assert not hasattr(AgentAdapter, "generate_hook_config")
+    assert not hasattr(AgentAdapter, "generate_mcp_config")
+
+
+def test_an_adapter_without_the_generators_still_satisfies_the_protocol() -> None:
+    """The declaration coming off is only worth something if `isinstance` agrees.
+
+    `runtime_checkable` checks attribute presence, so this is the assertion that
+    would actually have failed before: an adapter that declines to write the two
+    stubs is a conforming adapter.
+    """
+    from pathlib import Path
+
+    from lazy_harness.agents.base import (
+        AgentAdapter,
+        HookDecision,
+        HookEvent,
+        HookOutput,
+        HookSupport,
+    )
+
+    class Minimal:
+        @property
+        def name(self) -> str:
+            return "minimal"
+
+        def config_dir(self, profile_config_dir: str) -> Path:
+            return Path(profile_config_dir)
+
+        def supported_hooks(self) -> list[str]:
+            return []
+
+        def hook_events(self) -> dict[str, HookSupport]:
+            return {}
+
+        def parse_hook_input(self, event: str, payload: dict, *, profile: str) -> HookEvent:
+            raise NotImplementedError
+
+        def format_hook_output(self, event: HookEvent, decision: HookDecision) -> HookOutput:
+            raise NotImplementedError
+
+        def resolve_binary(self) -> Path | None:
+            return None
+
+        def env_var(self) -> str:
+            return ""
+
+        def global_config_link(self) -> Path | None:
+            return None
+
+        def mcp_config_file(self) -> str:
+            return ""
+
+        def session_dirs(self) -> dict[str, str]:
+            return {"sessions": "", "logs": "", "queue": ""}
+
+        def system_doc_name(self) -> str:
+            return ""
+
+        def process_name(self) -> str:
+            return ""
+
+    assert isinstance(Minimal(), AgentAdapter)
+
+
+def test_null_adapter_does_not_mirror_the_displaced_generators() -> None:
+    """The sentinel adapter is what a new adapter is read as a template from.
+
+    Leaving the two stubs on it re-teaches the removed requirement to whoever
+    copies it, which is how a declaration comes back after being deleted once.
+    """
+    from lazy_harness.agents.registry import get_agent
+
+    adapter = get_agent("null")
+    assert not hasattr(adapter, "generate_hook_config")
+    assert not hasattr(adapter, "generate_mcp_config")

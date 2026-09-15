@@ -102,9 +102,12 @@ Generates per-profile `.envrc` fragments for users who wire profile selection th
 - `name` / `config_dir(profile_config_dir)` — identification and path resolution.
 - `env_var()` — the environment variable the agent honors for alternate config dirs.
 - `resolve_binary()` — locate the agent executable, specifically avoiding recursion into the `lh` wrapper.
-- `supported_hooks()` + `generate_hook_config(hooks)` — what events exist and how to serialize them for the agent's native config format.
+- `supported_hooks()` + `hook_events()` — what events exist, under what native name, and which permission verdicts the agent actually honors on each.
+- `parse_hook_input()` / `format_hook_output()` — translate the agent's native hook payload into the canonical event, and a decision back into the channels that agent reads.
 
-`agents/claude_code.py` is the only implementation today. `agents/registry.py` maps `config.toml`'s `[agent].type` value to an adapter class. Adding a new agent = one file + one registry entry, with no other code in the framework touching agent-specific concerns.
+Writing the agent's config files is a separate, optional protocol, `ConfigPlanner`: `config_targets()` names the files an adapter may touch and `plan_config()` returns the complete set of writes. It is separate because a single `dict` return cannot express "N files in two formats" — Claude Code wants `settings.json` plus `.claude.json`, Codex a `hooks.json`.
+
+`agents/claude_code.py` is the reference implementation. `agents/registry.py` maps `config.toml`'s `[agent].type` value to an adapter class. Adding a new agent = one file + one registry entry, with no other code in the framework touching agent-specific concerns.
 
 Design: [ADR-004 — Agent adapter pattern](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/004-agent-adapter-pattern.md).
 

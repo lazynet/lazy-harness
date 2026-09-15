@@ -9,6 +9,7 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 ## Done
 
 - [x] **`uv run` sin `--frozen` descartaba el lockfile entero** — medido el 2026-09-14: un `uv run` posterior a cualquier edición bajo `src/` descarta `uv.lock` y escribe uno reducido, de 54 paquetes a 16, sin `revision = 3` y sin ningún `upload-time` (817 líneas borradas). `uv run -v` lo dice: `Ignoring existing lockfile due to mismatched dev dependencies`. Editar un fuente y correr los tests **es** el ciclo TDD de este repo, así que todo worktree acumulaba un lock degradado que el próximo commit podía arrastrar: tres agentes lo dejaron sucio en una sola sesión y ninguno lo reportó. Cerrado poniendo `--frozen` en las 14 invocaciones que prescriben las superficies de automatización (`.claude/commands/`, los dos workflows, el PR template) y sosteniéndolo con `tests/docs/test_uv_frozen_coherence.py`, que falla en las dos direcciones. `--group dev` también lo evita; declarar `[tool.uv] default-groups` **no** — medido, no supuesto. Es un defecto distinto del de `release-please` más abajo, que describe la línea de versión atrasada ensuciando el árbol *incluso con* `--frozen` vía el install editable: ese reescribe una línea, este descartaba el archivo.
+- [x] **`generate_hook_config` / `generate_mcp_config` fuera del Protocol** — el step 3 los desplazó de la ruta de deploy y el step 4 los borró de la declaración. Salieron de `AgentAdapter` y del adapter nulo; sobreviven privados dentro de `ClaudeCodeAdapter` como `_generate_hook_config` / `_generate_mcp_config`, llamados desde `_plan_settings` y `_plan_mcp`. La condición de arranque se cumplió al pie de la letra: el `CodexAdapter` throwaway es el segundo implementador que valida la forma que queda, y su config —`hooks.json`, no `config.toml`— es justamente la que un `dict` no puede expresar. Identidad byte a byte de Claude Code intacta (`tests/goldens/config-deploy/` sin tocar).
 - [x] **Profile isolation via CLAUDE_CONFIG_DIR** — wrapper `lcc`, aislamiento completo por perfil (ADR-009)
 - [x] **CLAUDE.md como router IF-ELSE** — carga condicional de docs/ on-demand (ADR-004)
 - [x] **Compound loop async** — `claude -p` headless, 100% de evaluaciones (ADR-005 v2)
@@ -386,14 +387,6 @@ La auditoría es tres líneas contra `DEFAULT_HOOKS` y el `config.toml`, compara
 ## Multi-agente — items declarados, deliberadamente no cableados
 
 Salen de [`designs/2026-09-13-multi-agent-blast-radius-design.md`](designs/2026-09-13-multi-agent-blast-radius-design.md) y de [`designs/2026-09-13-multi-agent-harness-design.md`](designs/2026-09-13-multi-agent-harness-design.md), y están acá por el gate del `CLAUDE.md`: *un `config.toml` sin una entrada puede ser una decisión y no un olvido, así que grepeá el backlog antes de cablear*. Si encontrás alguno de estos sin implementar, **no es un descuido** — leé la condición de arranque antes de tocarlo.
-
-### `generate_hook_config` / `generate_mcp_config` siguen en el Protocol después de ser desplazados
-
-El step 3 los sacó de la ruta de deploy: nada fuera del adapter los llama, `plan_config` es la superficie que el engine pide, y adentro de `ClaudeCodeAdapter` sobreviven como sus propios serializadores, llamados desde `_plan_settings` (`agents/claude_code.py:853`) y `_plan_mcp` (`:886`). Eso está bien — darle forma al bloque `matcher` / `hooks[]` de Claude Code es exactamente trabajo del adapter.
-
-Lo que **no** se hizo es sacarlos del Protocol `AgentAdapter` (`agents/base.py:466,470`, espejados por el adapter nulo en `agents/registry.py:65,68`). Mientras estén declarados ahí, todo adapter nuevo tiene que implementar dos métodos cuyo retorno `dict` no puede expresar su config — que es literalmente el argumento con el que la decisión 4 del diseño justificó reemplazarlos. La prosa del diseño decía "replaced, not extended", y hoy no lo están: quedaron desplazados, no borrados.
-
-**Condición de arranque:** el step 4. El `CodexAdapter` throwaway es el primer adapter que va a tener que escribir los dos stubs vacíos; ese es el momento en que las declaraciones se caen, no antes — sacarlas hoy es tocar el Protocol sin un segundo implementador que valide la forma que queda.
 
 ### Metric event v3 — dimensión `agent` y modelo de facturación plano
 

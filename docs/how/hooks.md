@@ -49,7 +49,7 @@ scripts = ["pre-compact"]
 | `user_prompt_submit` | `UserPromptSubmit` | When the user submits a prompt | `user-prompt-goal` (opt-in, not in the default set — see below) | Goal-declaration sensor, third-party integrations |
 | `permission_request` | `PermissionRequest` | When the agent asks for a permission decision | — | Third-party integrations, approval routing |
 
-The mapping lives in `ClaudeCodeAdapter.generate_hook_config` — other agents may expose different event names, but the `config.toml` side is stable.
+The mapping lives in each adapter's `hook_events()` — other agents expose different event names, and an event an agent does not deliver is simply absent from its map. The `config.toml` side is stable regardless.
 
 ## Default hooks
 

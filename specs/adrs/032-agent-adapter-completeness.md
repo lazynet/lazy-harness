@@ -215,3 +215,14 @@ This ADR must ship before any second adapter is added. Recommended sequence:
 Each step is independently reviewable. The milestone closes when `lh selftest`
 passes with a stub `NullAdapter` (returns `None`/`""` for all optional methods)
 registered alongside `ClaudeCodeAdapter`.
+
+## Evolution
+
+**2026-09-15 — the two config generators came off the Protocol.** `plan_config`
+replaced them as the deploy surface (decision 4 of the 2026-09-13 multi-agent
+harness design): a `dict` return cannot express "N files in two formats", which
+is what a second agent needs — Codex declares its hooks in `hooks.json`, not in
+a Claude-shaped `settings.json`. They survive as private serialisers inside
+`ClaudeCodeAdapter` (`_generate_hook_config`, `_generate_mcp_config`). The
+Protocol block quoted above is kept as written, because it records the decision
+as it was made; the live surface is `agents/base.py`.
