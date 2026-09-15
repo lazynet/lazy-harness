@@ -66,9 +66,9 @@ When Claude Code fires the `Stop` event, the producer runs in-process with a tig
 
 Steps, in order:
 
-1. **Read stdin.** The event payload is consumed and discarded — the producer does not need it. It is consumed only so Claude Code does not see a broken pipe.
+1. **Receive the event.** The hook does not touch stdin: the runner parses Claude Code's payload and hands it a `HookEvent`, and what the producer reads off it is the transcript path and the cwd.
 2. **Load config.** `load_config(config_file())` — if it fails or `compound_loop.enabled == False`, log and exit. The loop is opt-in.
-3. **Find the session JSONL.** Encode the cwd into Claude Code's project-dir convention (`/Users/x/repo` → `-Users-x-repo`), look under `<CLAUDE_CONFIG_DIR>/projects/<encoded>/`, pick the most recent `*.jsonl` by mtime.
+3. **Find the session JSONL.** The transcript the event names wins when it is on disk, because the agent's project-dir encoding has changed across releases. Only when the event names none is the path derived: encode the cwd into Claude Code's project-dir convention (`/Users/x/repo` → `-Users-x-repo`), look under `<agent runtime dir>/projects/<encoded>/`, pick the most recent `*.jsonl` by mtime.
 4. **Debounce.** `is_debounced(queue_dir, session_id, debounce_seconds)` — if a task for the same session was queued within the window (default 60s), skip. This is what prevents a flapping session close from queuing the same work repeatedly.
 5. **Growth gate.** `should_reprocess` — re-queue only if the session JSONL has grown past `reprocess_min_growth_seconds` (default 120) since the last `done/` task for this session. Bounds the worker cost on long active sessions where `Stop` fires after every LLM turn.
 6. **Drop the task file.** `create_task(queue_dir, cwd, session_jsonl, session_id, memory_dir)` writes a file named `<unix_ts>-<short_id>.task` with lines:
@@ -81,7 +81,7 @@ Steps, in order:
    ```
    `session_jsonl` points at the checkout the session actually ran in; `memory_dir` is resolved by `core/memory_store.py` against the project's **identity** — its normalised git remote — not against the path of the checkout. Distilled memory outlives any one branch and any one machine, so a session run inside `repo/.worktrees/feat` appends to the same `decisions.jsonl` as one run from the main checkout, and so does the same repository cloned elsewhere. See [where memory lives](../why/memory-model.md#where-memory-lives).
 7. **Spawn the worker.** `subprocess.Popen` with `start_new_session=True`, stdin `/dev/null`, stdout/stderr redirected to `~/.claude/logs/compound-loop.log`. The producer does not wait for it.
-8. **Exit 0.** The whole producer phase is tens of milliseconds. Claude Code sees a clean session close.
+8. **Abstain.** The producer returns an empty decision — it has nothing to say on any channel — and the whole phase is tens of milliseconds. Claude Code sees a clean session close.
 
 ### Why there is a second producer on `SessionEnd`
 
