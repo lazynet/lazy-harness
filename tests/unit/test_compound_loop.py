@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from lazy_harness.agents.base import HookEvent
 from lazy_harness.core.config import CompoundLoopConfig, Config
 from lazy_harness.knowledge.compound_loop import (
     AgentDispatch,
@@ -2227,9 +2228,12 @@ def test_stop_hook_routes_paths_through_agent_adapter(
 ) -> None:
     """ADR-032 L3/L4: the Stop hook must resolve dirs via the configured agent
     adapter. With agent.type = "null" (no env var, no global link) resolution
-    must land under ~/.null even when CLAUDE_CONFIG_DIR points elsewhere."""
-    import io
+    must land under ~/.null even when CLAUDE_CONFIG_DIR points elsewhere.
 
+    The event carries no `cwd`, which is how the payload used to arrive here as
+    `{}`: the session lookup then falls back to the process directory, and the
+    two halves — the adapter's root and the project encoding under it — have to
+    agree for the task to land at all."""
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
@@ -2270,9 +2274,16 @@ reprocess_min_growth_seconds = 120
 
     monkeypatch.setattr(paths_mod, "config_file", lambda: cfg_file)
     monkeypatch.chdir(cwd)
-    monkeypatch.setattr("sys.stdin", io.StringIO("{}"))
     monkeypatch.setattr(hook_mod.subprocess, "Popen", lambda *a, **kw: None)
-    hook_mod.main()
+    hook_mod.main(
+        HookEvent(
+            event="session_stop",
+            profile="",
+            session_id="abcd1234-deadbeef-0001",
+            cwd=Path(""),
+            transcript_path=None,
+        )
+    )
 
     assert len(list((agent_dir / "queue").glob("*.task"))) == 1
 

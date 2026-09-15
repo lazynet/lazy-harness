@@ -57,6 +57,19 @@ The mapping every task below applies. Every row was checked against all fifteen 
 
 **Trap 1 — four builtins do not read `cwd` from the payload at all.** `compound_loop.py:88`, `session_export.py:46`, `session_end.py:114` and `pre_compact.py:182` call `Path.cwd()`, the hook process's own directory; only `engram_persist.py:49` reads the payload with a `Path.cwd()` fallback. Swapping them to `event.cwd` looks like a normalisation and is a behaviour change: `parse_hook_input` yields `Path("")` when the payload names no cwd (`claude_code.py:414`), and `Path("")` is `Path(".")`. `project_key` resolves that back to the real directory, so the metrics survive — but `compound_loop.py:95` builds `"-" + str(cwd).replace("/", "-")` and would encode the project dir as `-.`, pointing every queued task at one shared garbage directory. Keep the `Path.cwd()` fallback for an empty `event.cwd`, as `stop_verify_guard` already does.
 
+**And the fallback is only half of it: `Path.cwd()` and a non-empty `event.cwd` are not the same spelling either.** `os.getcwd()` returns a symlink-resolved path (`/private/var/...` on macOS) while the payload carries what the agent saw (`/var/...`), and these hooks encode that string into a directory *name*. Tasks 4 and 6 hit it independently: a golden captured pre-migration under an unresolved `tmp_path` picks a different project dir after the swap while every frozen channel stays byte-identical — the golden cannot see it. Neither "fixed" it by resolving the path, and that is right: the agent names its own directory with the string *it* saw, which is the payload's. What each did was stop the test from hiding the difference, by realpath'ing the working directory it feeds in. Rows 5 and 8 call `Path.cwd()` too and inherit this.
+
+**Trap 5 — moving a writer to the profile orphans its reader, and neither process fails.** Step 4 tells each task to swap the boot-dir dance for `agent_dir_for(cfg, event.profile)`. It says nothing about who *else* names that directory, and wave A's single review found two pairs broken this way, both exiting 0:
+
+- `compound-loop` and `session-end` queue into `<profile>/queue`; `compound_loop_worker.py:101` drained `<global>/queue` and the spawn at `compound_loop.py:133` passed it no profile at all. Measured against the real config with `CLAUDE_CONFIG_DIR` unset: producer `~/.claude-lazy/queue`, worker `~/.claude/queue`, every queued task orphaned. Pre-migration both resolved globally and *agreed*, so the migration is what broke it.
+- `engram-persist` writes its metrics under the profile; `doctor_cmd.py:162` read them globally and reported `No runs yet (Stop hook not triggered)` — the health state a hook that never fires produces — while the hook was recording fine.
+
+Neither the goldens nor the isolation tests can see this: the goldens pin `CLAUDE_CONFIG_DIR` to the agent dir, and the isolation tests never enable processing. The failure needs both conditions at once.
+
+**So step 4 carries a second half: before changing a writer, grep for every reader of that directory and make the pair agree in one commit, with a test that invokes *both* sides.** `CLAUDE.md` already requires it — "where two paths answer one question, an integration test invokes both and asserts they agree" — and none of the four branches had one. The readers to check are the worker, `lh doctor`, `lh status`, the selftest checks, and `knowledge_cmd.py`. Every remaining task writes to a directory something else reads.
+
+**Trap 4 — a shipped selftest runs a builtin as a script, and a migrated one has no `__main__`.** `selftest/checks/loop_events_check.py:75` invokes `[sys.executable, str(hook)]`. A migrated module imports, defines `main(event)`, and exits 0 without running anything — the same exit code the working hook returns, so `_run_hook`'s `returncode != 0` test cannot tell them apart. Found by task 5, which routed the call through `lh hook <name> --profile` on `spec.migrated`. **Scope, checked rather than assumed:** `:130` names `session_end.py` and nothing else, so this trap fires for task 5 alone — the check still passed in the other three wave A trees. It returns for any later task that adds a hook to that file.
+
 **Trap 2 — `hook_event_name` carries the agent's wire name, `event.event` carries the canonical one.** `herdr_context_gauge.py:166` reads it and compares against `"PostToolUse"` (`:172`) and `"SessionEnd"` (`:175`). `HookEvent.event` holds `post_tool_use` and `session_end`. A direct swap leaves both comparisons permanently false: the hook stops throttling on every tool call and stops retracting a dead session's gauge, and nothing fails.
 
 **Trap 3 — `MODIFY_FILE` is wider than `INSPECTED_TOOLS`, and the widening is real.** `_TOOL_OPERATIONS` maps `NotebookEdit` to `MODIFY_FILE` alongside `Edit` and `Write` (`claude_code.py:97`), while **four** builtins gate on `frozenset({"Edit", "Write"})`: `post_tool_use_format.py:18`, `post_tool_use_sync_claude.py:25`, `post_tool_use_ansible_lint.py:20`, `pre_tool_use_memory_size.py:26`.
@@ -472,7 +485,21 @@ git add -A && git commit -m "refactor: take the transcript path rather than the 
 
 Each is one TDD cycle and one commit, and each depends only on tasks 1–3.
 
-**They are not file-independent, and the plan does not pretend otherwise.** Every migration edits `hooks/loader.py`'s `_BUILTIN_HOOKS` (`loader.py:101`) to add its `operations`, `signals`, `event` and `migrated` — one shared dict, fifteen times. There is a second: `tests/unit/hooks/test_abstention.py:41-75` derives `_NO_OBJECTION` from the registry and fails when a migrated hook wired to a blockable event has no entry. With `session_stop` honouring `BLOCK` and `pre_tool_use` honouring `DENY`, that reaches seven of the fifteen — tasks 4, 6, 7, 11, 16, 17 and 18. Both conflicts are appends and resolve mechanically, but a task that does not know about the second one lands red. Two workable orders, pick one and say which in the PR:
+**They are not file-independent, and the plan does not pretend otherwise.** Every migration edits `hooks/loader.py`'s `_BUILTIN_HOOKS` (`loader.py:101`) to add its `signals` and flip `migrated` — one shared dict, fifteen times. There is a second: `tests/unit/hooks/test_abstention.py:41-75` derives `_NO_OBJECTION` from the registry and fails when a migrated hook wired to a blockable event has no entry. With `session_stop` honouring `BLOCK` and `pre_tool_use` honouring `DENY`, that reaches seven of the fifteen — tasks 4, 6, 7, 11, 16, 17 and 18. Both conflicts are appends and resolve mechanically, but a task that does not know about the second one lands red.
+
+> **Wave A found three more, and the count is five, not two.** Measured from the four branches' `git diff --name-only main..HEAD`:
+>
+> | Surface | Branches touching it | In the plan? |
+> |---|---|---|
+> | `src/lazy_harness/hooks/loader.py` | 4 of 4 | yes — and PR #308 shrank it to `signals` + `migrated`, so it merged **clean** all four times |
+> | `docs/how/hooks.md` | 4 of 4 | **no** |
+> | `tests/unit/hooks/test_abstention.py` | 3 of 4 | yes |
+> | `tests/unit/hooks/builtins/test_import_safety.py` | 3 of 4 | **no** — `GUARDED_HOOKS` must *drop* each hook as it migrates: a migrated module imports `agents.base` at module level, so the poisoned-import subprocess starts exiting non-zero |
+> | `tests/integration/test_hook_log_profile_isolation.py` | 3 of 4 | **no** — recipe step 7 sends all fifteen to one file |
+>
+> Two further per-hook literals, found by task 4 and not general: `tests/unit/hooks/test_builtin_signals.py:14` and `tests/unit/hooks/test_signal_gaps.py:130` both hard-code `session-export` as *the* example of a builtin declaring no signals, and both go red when it declares `MESSAGES`. Whoever migrates a hook that some test uses as an example of the pre-migration state inherits that test.
+>
+> A trial merge of the four branches onto `main` conflicted only in `docs/how/hooks.md`, `test_import_safety.py`, `test_hook_log_profile_isolation.py` and `test_abstention.py` — every one an append, none in `src/`. Two workable orders, pick one and say which in the PR:
 
 - **Serialise the registry.** Land one commit first that gives all fifteen specs their final `event`, `operations` and `blocking`, leaving `migrated=False`. **Taken, in PR #308, and narrower than written here: `signals` was excluded.** The other three have no reader that `migrated=False` does not gate, so a wrong row costs nothing until the hook migrates; `signals` is read by `signal_gaps.gaps_for_profile` regardless of `migrated`, and a wrong row there undeploys a working hook on any profile whose agent ships no `TranscriptReader`. Row 12 was left undeclared as this plan requires. The declarations are a fact about each hook and are true before its `main()` moves. **This does not make the migrations file-independent** — each still flips its own `migrated=True` in the same dict — but it reduces the shared edit to a one-token change per task instead of a multi-line block, and it puts the reviewable half in one diff. Full independence needs task 19 first, which is not possible while the branch it deletes is what keeps the unmigrated ones running.
 - **Accept the rebases.** Each task rebases on `main` before pushing. Cheaper to start, and the cost lands on whoever merges last.
@@ -482,12 +509,23 @@ The first is preferred: it makes the declaration table reviewable in one diff, w
 **Per-builtin recipe, applied identically in each:**
 
 1. **Capture the golden first.** `tests/goldens/hooks/<name>/` — feed the pre-migration `main()` a representative payload on stdin, record stdout bytes and exit code. The golden is captured from the **unmigrated** hook, so it is evidence and not a restatement of the new code.
+
+   **For a hook whose output channel is "none" the golden alone discriminates nothing, and wave A measured that four times over.** Rows 4-7 all write on no channel, so every case froze to the identical `{"exit_code": 0, "stderr": "", "stdout": ""}` — seven files for `session-export`, fourteen for `session-end`, ten for `compound-loop`, twelve for `engram-persist`. A `main()` whose whole body is `return HookDecision()` reproduces all of them, so "the golden still matches" proves only that nothing reached stdout, which was already true of every branch. Each of the four independently moved the real evidence into the case: the `hooks.log` lines that branch writes, measured pre-migration, or the filesystem effect — a metrics row, a queued task, a cursor file. Rows 8 and 12 need the same; only 9-11 and 15-18 have a channel the golden can see.
 2. Change the signature to `main(event: HookEvent) -> HookDecision`.
 3. Apply the payload→event mapping table. Delete the `json.load(sys.stdin)` preamble and every `sys.exit`.
 4. Replace the boot-dir dance with `agent, agent_dir = agent_dir_for(cfg, event.profile)`, **loading config before the first log line is written** — the ordering `context-inject` was fixed to in PR #300. Writing `fired` before config loads is what sent it to the global agent's directory.
 5. Declare `signals=` on the builtin's `BuiltinHookSpec` in `hooks/loader.py` and flip `migrated=True`. **`event=`, `operations=` and `blocking=` are already there** — the coordination commit landed all fourteen (row 12 excepted) once those three were measured to be inert while `migrated` is `False`. Edit the existing entry; appending a second `event=` to it is a `SyntaxError`, not a merge conflict, and CI is where you would find out. `signals=` was deliberately left out of that commit: it is live in both states, so it lands here, where this task's golden and isolation assertion are the evidence for it. `test_no_unmigrated_builtin_declares_a_signal` holds that boundary.
 6. Assert the golden still matches, byte for byte.
 7. Assert profile isolation: invoke under `--profile <p>` and assert the `hooks.log` line lands in `<p>`'s directory **and is absent from the global one**. Presence alone does not detect the defect — PR #300 measured a weak presence assertion passing against a broken hook.
+
+   **Clear the adapter's env var first, or this step re-creates the defect it exists to catch.** `agent_runtime_dir` resolves the adapter env var *above* the profile's `config_dir` (ADR-032 L3, resolution order at `core/paths.py:150-160`), so a test that pins `CLAUDE_CONFIG_DIR` to a temp directory makes the global answer and the per-profile answer the same path, and the absence half can never fail. Measured:
+
+   ```
+   CLAUDE_CONFIG_DIR=/tmp/pinned   global=/tmp/pinned  profile=/tmp/pinned   equal=True
+   unset                           global=~/.claude    profile=/tmp/profile  equal=False
+   ```
+
+   Task 7 caught it because its first isolation test passed against the *unmigrated* hook. Unsetting the variable is also what a real hook subprocess sees, so the "global" probe is `~/.claude`. All fifteen inherit this: a step 7 test never run against the pre-migration hook is not evidence.
 
 **The declarations, per builtin.** Derived from what each one reads **in its own process**, not from its matcher and not from what something downstream reads later.
 

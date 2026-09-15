@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stderr": "session-end: unparseable payload: expected an object, got NoneType",
+  "stdout": ""
+}
