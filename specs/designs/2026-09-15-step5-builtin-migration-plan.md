@@ -202,6 +202,20 @@ In `format_hook_output`, before the `body` assembly:
 Run: `uv run --frozen pytest tests/unit/test_agent_claude.py -v`
 Expected: PASS, and no existing adapter test regresses.
 
+> **Note (2026-09-15, from the review of the shipped commit).** The refusal
+> this task prescribes is a deliberate trade, and the next fourteen tasks
+> should not inherit it as a rule without seeing the argument against it.
+> Raising loses *more* than the silent drop it replaces: the three channels,
+> **and** the summary, **and** still no user-visible error, because the
+> runner's blanket handler turns it into exit 0 with the reason on a stderr
+> Claude Code does not surface outside `--debug`. The alternative —
+> `HookOutput(stdout=text, stderr="<what could not be carried>", exit_code=0)`
+> — keeps the payload and still names the narrowing. It was not taken here
+> because no builtin sets those channels on `pre_compact`, so the raise is a
+> programming-error signal that fires in tests rather than in production. A
+> task where the same collision is *reachable* at runtime should choose the
+> degrading form instead, and say which it chose.
+
 - [ ] **Step 4b: Two things this branch gets wrong if written naively**
 
 **The newline is part of the bytes.** `pre_compact.py:247` emits `print(...)`, which appends `\n`; the JSON path appends one deliberately (`claude_code.py:509-514`) for exactly this reason. Returning `decision.additional_context` unchanged makes the golden differ by one character that nothing else would account for. Either the builtin includes the trailing newline in what it returns, or the branch appends it — decide which and say so in the code, because the next reader will otherwise "fix" whichever half looks redundant.

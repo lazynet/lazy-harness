@@ -106,6 +106,22 @@ la action de release-please en cada corrida. Recién después decidir si hace fa
 un paso `uv lock` en el workflow. No tocar `extra-files` a ciegas: equivocarse acá
 rompe releases, no docs.
 
+### Otros dos eventos emiten JSON para un `hookEventName` que la unión no tiene
+
+**Por qué:** la Task 1 del step 5 arregló `pre_compact`, que serializaba `hookSpecificOutput` para un evento sin variante en la unión. Cruzando la enumeración que [ADR-036](adrs/036-compact-hooks-use-real-channels.md) §Context leyó del bundle 2.1.234 contra `_HOOK_EVENTS` (`agents/claude_code.py:75-86`), quedan **dos** nombres nativos más que no figuran en esa lista: `PostCompact` y **`SessionEnd`**. El ADR nombra `PreCompact` y `PostCompact` explícitamente; que `SessionEnd` también falte no lo registró nadie.
+
+**Fuente:** medido el 2026-09-15 contra el adapter ya arreglado, corriendo `format_hook_output` con `HookDecision(additional_context="ctx")` sobre cada evento cuyo `native_name` no está en la unión del ADR:
+
+```
+session_end   -> {"hookSpecificOutput": {"hookEventName": "SessionEnd", "additionalContext": "ctx"}}
+post_compact  -> {"hookSpecificOutput": {"hookEventName": "PostCompact", "additionalContext": "ctx"}}
+pre_compact   -> ctx
+```
+
+**Ninguno es una regresión viva**, y por eso es una entrada y no un fix: el builtin `post-compact` lo borró ADR-036 D1, y el canal de salida de `session-end` es log y nada más. Los dos son latentes. El mapeo de `post_compact` se mantuvo **a propósito** —«an operator may still attach their own hook to it», ADR-036 D1— así que un hook de operador que devuelva `additional_context` ahí come exactamente la falla que la Task 1 cerró, en silencio.
+
+**Acción:** `post_compact` **no** se arregla con la misma rama de texto. ADR-036 §Context dice que su ejecutor devuelve `{userDisplayMessage}` y nada más, y que su salida llega a la terminal y nunca al modelo: lo que corresponde ahí es una **negativa**, no un canal. `session_end` hay que medirlo antes de decidir — si su ejecutor no lee stdout, la respuesta también es negarse. Las dos decisiones son distintas de la de `pre_compact` y ninguna está tomada. Precondición barata para las dos: volver a leer la unión contra un binario actual. El comentario de `claude_code.py:511-513` dice que las claves de `hookSpecificOutput` se verificaron contra **2.1.269** mientras la enumeración de variantes sigue siendo la de **2.1.234**; alguien leyó el bundle nuevo sin re-enumerar la unión.
+
 ### `parse_transcript` lee un shape de transcript que Claude Code no emite
 
 **Por qué:** `hooks/builtins/pre_compact.py:63-64` hace `obj.get("role")` y `obj.get("content")` sobre el **tope** de cada línea del JSONL. Claude Code los anida un nivel adentro, bajo `message`: `{"type": "assistant", "message": {"role": ..., "content": [...]}, ...}`. Los dos guards que siguen (`:66` para el turno de usuario, `:69` para los `tool_use`) comparan contra el default `""`, así que ninguno matchea jamás y `parse_transcript` devuelve `([], [])` para todo transcript real. `build_summary` sobre eso da string vacío, y el summary que sale por el canal de `PreCompact` queda reducido a los tails de memoria.

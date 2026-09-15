@@ -479,6 +479,45 @@ class ClaudeCodeAdapter:
                 f"claude-code does not honour {verdict.value!r} on {event.event!r}; "
                 f"honoured here: {sorted(v.value for v in support.verdicts) if support else []}"
             )
+        # PreCompact is a text channel, not a JSON one. Claude Code's
+        # `hookSpecificOutput` union has no PreCompact variant (recorded
+        # against the 2.1.234 binary in `hooks/builtins/pre_compact.py` and in
+        # ADR-036 D2): a JSON payload there fails schema validation, which
+        # marks the hook failed and discards its output. The executor joins
+        # each *successful* hook's raw stdout into `newCustomInstructions`, so
+        # the summary arrives as the bytes the hook wrote or not at all.
+        #
+        # The verdict needs no second check: `_HOOK_EVENTS["pre_compact"]`
+        # declares no verdicts, so every verdict is already refused above. The
+        # only narrowing left to name is the three channels raw text cannot
+        # express. Refusing beats dropping them -- a decision asking for a
+        # system message here would otherwise get silence and a zero exit,
+        # which reads as success.
+        if event.event == "pre_compact":
+            unsupported = [
+                channel
+                for channel, requested in (
+                    ("system_message", bool(decision.system_message)),
+                    ("stop", decision.stop),
+                    ("suppress_output", decision.suppress_output),
+                )
+                if requested
+            ]
+            if unsupported:
+                raise ValueError(
+                    "claude-code's PreCompact channel is plain text and cannot carry "
+                    + ", ".join(unsupported)
+                )
+            # The trailing newline is appended here for the same reason as on
+            # the JSON path below -- the adapter owns the bytes. `pre_compact`
+            # emits `print(...)` today, so a migrated hook that returned the
+            # summary unchanged would differ from the shipped one by exactly
+            # one character that nothing else would account for.
+            return HookOutput(
+                stdout=f"{decision.additional_context}\n" if decision.additional_context else None,
+                stderr="",
+                exit_code=0,
+            )
         body: dict[str, object] = {}
         if verdict is Verdict.BLOCK:
             body["decision"] = "block"
