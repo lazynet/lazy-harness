@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"SessionStart\", \"additionalContext\": \"## Preflight\\n\\n- **auth** [FAIL] \\u2014 refresh token expired <N> h ago \\u2014 run `claude auth login` from a terminal before starting work\\n- Clear: git, path.\"}}\n"
+}

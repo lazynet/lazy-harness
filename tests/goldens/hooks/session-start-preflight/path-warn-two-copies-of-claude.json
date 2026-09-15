@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"SessionStart\", \"additionalContext\": \"## Preflight\\n\\n- **path** [warn] \\u2014 claude (2 copies)\\n- Clear: auth, git.\"}}\n"
+}

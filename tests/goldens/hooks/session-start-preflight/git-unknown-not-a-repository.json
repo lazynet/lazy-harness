@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"SessionStart\", \"additionalContext\": \"## Preflight\\n\\n- **git** [?] \\u2014 no origin remote resolved here\\n- Clear: auth, path.\"}}\n"
+}

@@ -508,6 +508,20 @@ Límite que no se cierra desde adentro del hook: con `cfg is None` no existe la 
 
 **Condición de arranque:** con el step 5, que migra los quince builtins restantes a `main(event)` y borra la rama no-migrada. Postergarlo hasta ahí es una **decisión**, no una imposibilidad técnica: se podría plumbear antes, al costo de tocar la rama que ese step elimina. El riesgo que se acepta mientras tanto es el del párrafo anterior — escrituras reales en el directorio equivocado en cualquier profile cuyo agente difiera del global.
 
+### El preflight de auth lee un nombre de archivo de Claude Code y no se lo pregunta al adapter
+
+**Por qué:** `hooks/builtins/session_start_preflight.py:_credentials_path` arma `<agent dir>/.credentials.json`. El directorio ya sale per-profile —la Task 9 del step 5 cerró esa mitad, `agent_dir_for(cfg, event.profile)`— pero el **nombre del archivo** sigue escrito a mano en el builtin, y es el de Claude Code. Otro agente guarda sus credenciales en otro archivo, en otro formato, o directamente en un keychain sin archivo que leer.
+
+El resultado no es un error: es un `unknown`. `check_auth` devuelve `("auth", "unknown", "could not read the credentials file")` para cualquier cosa que no pueda abrir, que es exactamente la degradación correcta para un archivo corrupto y exactamente la equivocada para un agente que nunca tuvo ese archivo. Las dos situaciones quedan indistinguibles en la consola, y la segunda no se arregla loguéandose de nuevo.
+
+**Fuente:** medido el 2026-09-15. `AgentAdapter` (`agents/base.py:480-505`) declara `global_config_link()`, `mcp_config_file()`, `session_dirs()` y `system_doc_name()` — el patrón "este agente guarda X acá" ya existe y tiene cuatro instancias. Ninguna es para credenciales. `grep -rn "\.credentials\.json" src/` devuelve **un solo** call site en todo el árbol, y es este builtin.
+
+Lo que sí existe es el principio, escrito en otro lado: `agents/launch.py:77-79` dice «the agent's credential is one global variable and its stored credentials live inside `config_dir`, so a second profile backed by a second account would otherwise authenticate as the first — silently». O sea, el launcher ya trata la ubicación de credenciales como algo que cuelga del `config_dir` del profile — que es exactamente lo que la Task 9 le hizo al preflight. Lo que falta es que el *nombre* salga del adapter en vez del builtin.
+
+**Acción:** un método en el adapter —`credentials_file() -> str | None`— y que `None` sea una respuesta de primera clase, no un archivo faltante. Con `None` el check tiene que decir que **no puede hablar por ese agente**, que es un estado distinto de `unknown`; si se colapsan, el preflight reporta lo mismo para un login roto que para un agente cuyo login no sabe mirar. Precondición barata: leer dónde deja las credenciales cada adapter shippeado antes de fijar la firma — el gate del `CLAUDE.md` sobre adapters de binarios externos pide las probes primero, no durante la implementación.
+
+**Alcance: separado a propósito.** La Task 9 arregló la resolución per-profile y **no** esto, porque son dos cambios distintos con dos tests distintos: el primero se mide con dos profiles del mismo agente y verdicts opuestos, el segundo necesita un profile de otro agente. Meterlos en el mismo PR hubiera hecho que el golden de byte-identity cubriera uno de los dos y no el otro.
+
 ## ADR decisions pending
 
 - ~~**Legacy ADR-010 Ollama backend**~~ — cerrado. Promovido por [ADR-033](adrs/033-llm-backend-abstraction.md) y hecho utilizable por [ADR-039](adrs/039-role-routed-inference.md) (ruteo por rol).
