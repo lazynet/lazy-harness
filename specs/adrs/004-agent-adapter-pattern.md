@@ -61,3 +61,22 @@ a Claude-shaped `settings.json`. They survive as private serialisers inside
 `ClaudeCodeAdapter` (`_generate_hook_config`, `_generate_mcp_config`). The
 Protocol block quoted above is kept as written, because it records the decision
 as it was made; the live surface is `agents/base.py`.
+
+Two further claims outside that block had gone stale with it, and are corrected
+here rather than rewritten in place:
+
+- **`ClaudeCodeAdapter` is no longer the only implementation.** `agents/registry.py`
+  registers three: `claude-code`, `codex` — the throwaway adapter of step 4's
+  contract gate, deliberately the smallest thing that can carry three builtins to
+  a real Codex session — and `null`, the sentinel. The *Context* sentence that
+  Claude Code is "the only supported target" reads as of 2026-04-12.
+- **`deploy_hooks` does not call `agent.generate_hook_config`.** Since step 3 the
+  engine only does I/O; the adapter plans its own documents through
+  `ConfigPlanner.plan_config`. The *silent drop* of an event a user declares and
+  the agent does not support is unchanged and still deliberate — it is now
+  `hook_events()` that decides, and an absent key is what forward-compat rides on.
+
+The *Consequences* promise — one new file, one registry entry, zero changes
+elsewhere — was tested for the first time by `CodexAdapter` and did not hold
+unassisted: the Protocol had to shed two methods first. That is the promise
+working as a signal, which is what the second *Consequences* bullet asks for.

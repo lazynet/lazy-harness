@@ -128,9 +128,16 @@ Each `[profiles.<name>]` sub-table:
 | `config_dir`    | string (path)   | `""`    | yes\*    | Agent config directory for this profile. `~` is expanded.                             |
 | `roots`         | list of strings | `[]`    | no       | Filesystem roots that resolve to this profile (used by `lh run` and `profile envrc`). |
 | `lazynorth_doc` | string          | `""`    | no       | Per-profile LazyNorth doc filename. Overrides `[lazynorth].universal_doc`.            |
+| `agent`         | string          | `""`    | no       | Agent adapter this profile runs. Empty inherits `[agent].type`. Registered values: `claude-code`, `codex` (a throwaway adapter for contract testing, not a daily driver), `null`. |
 | `harness_binary` | string         | `""`    | no       | Launcher this profile's generated hook commands name. Empty inherits `lh`. A bare name resolved from `PATH`, never a path. |
 
 \* `config_dir` has no parser-level requirement, but everything downstream (`lh run`, `lh deploy`, `lh profile envrc`) is meaningless without it.
+
+`agent` and `harness_binary` are both "empty means inherit", and neither is read
+directly: the deploy and run paths resolve them through one function each so they
+cannot drift apart. Setting `agent` on one profile leaves every other profile on
+the global `[agent].type`, which is what makes a profile — not an installation —
+the blast radius when a new adapter is tried out.
 
 ## `[knowledge]` and sub-tables
 

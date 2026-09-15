@@ -1432,7 +1432,8 @@ against a version that will not ship.
 
 ## Implementation sequence
 
-> **Status, 2026-09-14 — steps 0 to 3 are shipped; step 4 is next.**
+> **Status, 2026-09-15 — steps 0 to 3 are shipped; step 4 is partially shipped
+> and its gate has not run.**
 >
 > | Step | State | Released in |
 > |------|-------|-------------|
@@ -1440,8 +1441,15 @@ against a version that will not ship.
 > | 1 — the contract types in `agents/base.py` | done | 0.61.0 |
 > | 2 — `lh hook <name> --profile <p>` as the runner, three builtins (0.62.0); `TranscriptReader` (0.63.0) | done | 0.62.0–0.63.0 |
 > | 3 — `config_targets()` / `plan_config()` and the engine that drives them | done | 0.65.0 |
-> | 4 — **contract gate: a throwaway `CodexAdapter` runs those three hooks** | next | — |
+> | 4 — **contract gate: a throwaway `CodexAdapter` runs those three hooks** | in progress | 0.66.0 (parcial) |
 > | 5 to 12 | not started | — |
+>
+> Step 4 is `in progress`, not `done`: the adapter and the Protocol cleanup
+> shipped, the gate did not. What landed is `agents/codex.py` registered as
+> `codex`, the two config generators off the Protocol, and the `lh doctor`
+> missing-signals line — the step's own note below carries the detail. The
+> three observations the gate consists of have not been made against a
+> throwaway profile, which is the whole of what `in progress` means here.
 >
 > Step 4's two displaced prerequisites are tracked here rather than in the
 > step text, which is not edited as things land: per-profile agent
@@ -1453,12 +1461,13 @@ against a version that will not ship.
 > step 10's to surface.
 >
 > The steps below are the plan as written, not a record of what happened, and
-> nothing in them is edited as they land. Two places where that distinction
-> already bit a reader are called out inline: the mtime/size abort in decision 4
-> reads as current behaviour and is step 7, and the two displaced generators in
-> the same decision are still on the Protocol. Where a step's prose and the code
-> disagree, the code is what shipped — `specs/backlog.md` §Done carries the
-> per-step record with its PR numbers.
+> nothing in them is edited as they land. One place where that distinction
+> already bit a reader is called out inline: the mtime/size abort in decision 4
+> reads as current behaviour and is step 7. The second such place — the two
+> displaced generators in the same decision — closed at step 4 and the
+> decision's own note records it. Where a step's prose and the code disagree,
+> the code is what shipped — `specs/backlog.md` §Done carries the per-step
+> record with its PR numbers.
 >
 > Step 4 is what freezes the contract, so [ADR-041](../adrs/041-multi-agent-hook-contract.md)
 > stays `proposed` until it runs, however many steps close before it.

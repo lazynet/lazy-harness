@@ -61,7 +61,7 @@ Same semantics as `session-end`, but driven by the user. Motivations:
 
 ## Consequences
 
-- `SessionEnd` is now a supported hook event in the Claude Code adapter (`supported_hooks()` and `generate_hook_config` both map `session_end` → `SessionEnd`). Deployments that opt in wire `lh hook session-end` into their `settings.json`.
+- `SessionEnd` is now a supported hook event in the Claude Code adapter. Deployments that opt in wire `lh hook session-end` into their `settings.json`. *(2026-09-15: this bullet said `supported_hooks()` and `generate_hook_config` "both map" the event. The mapping is no longer duplicated — it lives once in `hook_events()`, `supported_hooks()` derives from it, and the serialiser came off the Protocol at step 4. The claim that matters, that the event is supported, is unchanged.)*
 - `should_queue_task(force=bool)` is the one place where the force-vs-gate decision is made. Future producers (e.g. a `PreCompact`-driven forced run) can call the same helper with `force=True`.
 - The existing `compound-loop` hook is unchanged. It keeps its gates, its log prefix, and its tests. The duplication between it and `session-end` is deliberate and documented.
 - `handoff.md` provenance is unaffected: the frontmatter still records `session_id`, `written_at`, and `source_mtime`, and the staleness classifier in `context_inject` remains the belt-and-suspenders check. With the new force path the classifier should hit "stale" much less often in practice.

@@ -50,3 +50,54 @@ Wiring:
 - Each hook owns its own error handling and logging. The built-ins write to `~/.claude/logs/hooks.log` via a small helper pattern; failures there are still swallowed, because the contract is "always exit 0".
 - Because hooks are independent subprocess invocations, they cannot share in-memory state. State that needs to persist across events goes through the filesystem: `compound-loop` drops task files in `~/.claude/queue/`, `pre-compact` writes `memory/pre-compact-summary.md`, `session-export` writes into the knowledge directory.
 - The JSON protocol is the interoperability hinge. Adding a second agent ([ADR-004](004-agent-adapter-pattern.md)) does not require touching any hook — the adapter translates `cfg.hooks` events to that agent's native format.
+
+## Evolution
+
+**2026-09-15 — four claims above describe a runner that no longer exists.** The
+decision stands: hooks are still subprocesses, still fed JSON on stdin. What
+moved is who generates their command, what they may print, and how they refuse.
+
+This ADR was missed when the same mechanism was annotated elsewhere, and the
+reason is worth recording: [ADR-004](004-agent-adapter-pattern.md),
+[ADR-024](024-mcp-server-orchestration.md) and
+[ADR-032](032-agent-adapter-completeness.md) were found by grepping the *symbol*
+that had been removed. This ADR describes the hook contract without naming that
+symbol in its Decision, so the grep did not reach it — the widest-scoped document
+of the five was the one left stale. Grep the mechanism, not the identifier.
+
+- **The command is `lh hook <name> --profile <p>`, not `<python> <hook-path>`.**
+  `deploy/engine.py:hook_command` builds `<binary> hook <name> --profile
+  <profile>`, with the binary resolved per profile by `binary_for_profile`. The
+  runner taking a `--profile` argument is step 2 of the 2026-09-13 multi-agent
+  design ([ADR-041](041-multi-agent-hook-contract.md)).
+- **`lh deploy` no longer writes the agent-native hook config; the adapter
+  does.** Step 3 put merging behind the optional `ConfigPlanner` protocol:
+  `config_targets()` names the documents an adapter owns and `plan_config()`
+  returns their final text, leaving `deploy/engine.py` doing only I/O. The
+  pointer in the *Deployment* bullet to `ClaudeCodeAdapter.generate_hook_config`
+  names a symbol that no longer exists — it came off the Protocol at step 4 and
+  survives as the private `_generate_hook_config`, called from `_plan_settings`.
+- **`pre-compact` prints plain text, never JSON.** The *Output shape* bullet
+  lists it beside `context-inject`, and that was wrong before it was written:
+  `PreCompact` has no `hookSpecificOutput` variant, so a JSON payload fails
+  schema validation, which marks the hook failed and discards its output
+  entirely. The executor concatenates whatever the hook prints and hands it to
+  the summariser as `newCustomInstructions`. Settled as D2 of
+  [ADR-036](036-compact-hooks-use-real-channels.md); `hooks/builtins/pre_compact.py`
+  says so in its own module docstring. `context-inject` is unaffected.
+- **Hooks do not always exit 0 — exit 2 is the deny channel.** The contract is
+  that a hook never propagates an *error* to the agent, which is not the same
+  statement. A blocking decision reaches Claude Code as the reason on stderr with
+  exit 2, and that is the adapter's business now: `format_hook_output` returns
+  `exit_code=2` for a verdict the agent honours, while `pre-tool-use-git-scope`
+  still exits 2 directly. The *Consequences* bullet that derives "failures are
+  swallowed, because the contract is always exit 0" keeps its conclusion —
+  failures are still swallowed — but not via that premise.
+- **Adding a second agent did require touching hooks.** The last *Consequences*
+  bullet claimed the adapter alone absorbs a new agent because it translates
+  `cfg.hooks` events to a native format. That held only for *deployment*. The
+  adapter was never on the path a hook *ran* on, so eighteen builtins each
+  carried one agent's wire format — the defect ADR-041 exists to fix, and the
+  reason three builtins were migrated onto a typed event contract rather than
+  none. The bullet is true today for the migrated three, and step 5 is the
+  remaining fifteen.
