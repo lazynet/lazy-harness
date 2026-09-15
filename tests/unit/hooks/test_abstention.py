@@ -32,7 +32,7 @@ from pathlib import Path
 import pytest
 
 from lazy_harness.agents.claude_code import ClaudeCodeAdapter
-from lazy_harness.hooks.loader import _BUILTIN_HOOKS
+from lazy_harness.hooks.loader import _BUILTIN_HOOKS, BuiltinHookSpec
 from lazy_harness.hooks.runner import run_hook
 
 #: The no-objection payload for each migrated hook whose event honours a
@@ -79,19 +79,46 @@ _NO_OBJECTION: dict[str, dict[str, object]] = {
         "session_id": "s1",
         "cwd": "/tmp",
     },
+    # Reached through the *placement*, not through `spec.event`, which this hook
+    # leaves unset because it branches on four. It is deployed to `Stop` all the
+    # same, so the gate has to see it -- see the derivation below.
+    "herdr-context-gauge": {
+        "hook_event_name": "Stop",
+        "session_id": "s1",
+        "cwd": "/tmp",
+    },
 }
+
+
+def _blockable_placements(name: str, spec: BuiltinHookSpec) -> bool:
+    """Whether this hook lands on any event Claude Code honours a verdict on.
+
+    `spec.event` answers for a hook that declares one, and **only** for that
+    hook. A spec leaving it unset is not a spec that runs nowhere — it is one
+    that branches on four events and refuses to name a fallback. Filtering on
+    `spec.event is not None`, as this derivation used to, therefore exempted
+    exactly the hooks whose placement the registry cannot state, which is the
+    opposite of the narrowing it looked like.
+
+    For those, the placement is the operator's and lives in the shipped default
+    lists. `herdr-context-gauge` is deliberately absent from them too
+    (`plugins/builtins.py:60-64`), so the conservative reading is the right one:
+    an event-less migrated spec is assumed to reach a blockable event until it
+    says otherwise.
+    """
+    events = ClaudeCodeAdapter().hook_events()
+    if spec.event is None:
+        return True
+    support = events.get(spec.event)
+    return support is not None and support.can_block
 
 
 def _hooks_with_a_verdict() -> list[str]:
     """Migrated hooks wired to an event this agent honours a verdict on."""
-    events = ClaudeCodeAdapter().hook_events()
     return sorted(
         name
         for name, spec in _BUILTIN_HOOKS.items()
-        if spec.migrated
-        and spec.event is not None
-        and (support := events.get(spec.event)) is not None
-        and support.can_block
+        if spec.migrated and _blockable_placements(name, spec)
     )
 
 

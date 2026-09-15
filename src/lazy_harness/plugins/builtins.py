@@ -73,7 +73,11 @@ _TOOLS = [
 # operator's placement still decides what actually arrives.
 # `herdr-context-gauge` declares none, and that is the difference: it branches
 # on the event it receives and is wired to four, so no single fallback is
-# right. Step 5's task 12 resolves it.
+# right. It stays that way, and the cost is that an invocation carrying no
+# event does not run it at all — asserted in `tests/unit/hooks/test_builtin_registry.py`
+# and documented for operators in `docs/how/hooks.md`. Its `signals` are
+# declared per placement instead, since three of the four read the transcript
+# and the `SessionEnd` retract deliberately does not.
 #
 # `stop-verify-guard` has one fixed event (`Stop`) but is absent for a
 # different reason: the `verify_ran` event it waits for now has a producer,

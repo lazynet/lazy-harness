@@ -433,10 +433,16 @@ def test_every_declared_signal_is_one_claude_code_can_deliver() -> None:
     from lazy_harness.hooks.loader import _BUILTIN_HOOKS
 
     available = ClaudeCodeAdapter().signals()
+    events = ClaudeCodeAdapter().hook_events()
+    # Asked per placement, because that is how the field is now declared and how
+    # `signal_gaps` reads it. A spec-level subtraction raises `TypeError` on a
+    # per-placement mapping, and unioning one to avoid that would report a gap
+    # against a placement that never asks for the signal.
     missing = {
-        name: sorted(spec.signals - available)
+        f"{name}@{event}": sorted(spec.signals_for(event) - available)
         for name, spec in _BUILTIN_HOOKS.items()
-        if spec.signals - available
+        for event in events
+        if spec.signals_for(event) - available
     }
 
     assert missing == {}
@@ -453,7 +459,9 @@ def test_the_check_would_see_a_signal_no_reader_supplies() -> None:
 
     spec = BuiltinHookSpec(module="x", signals=frozenset({Signal.GOAL_STATUS}))
 
-    assert spec.signals - {Signal.MESSAGES, Signal.TOKEN_USAGE} == {Signal.GOAL_STATUS}
+    assert spec.signals_for("session_stop") - {Signal.MESSAGES, Signal.TOKEN_USAGE} == {
+        Signal.GOAL_STATUS
+    }
 
 
 def test_stop_verify_guard_declares_the_signal_it_reads() -> None:
@@ -461,4 +469,6 @@ def test_stop_verify_guard_declares_the_signal_it_reads() -> None:
     from lazy_harness.agents.base import Signal
     from lazy_harness.hooks.loader import _BUILTIN_HOOKS
 
-    assert _BUILTIN_HOOKS["stop-verify-guard"].signals == frozenset({Signal.GOAL_STATUS})
+    assert _BUILTIN_HOOKS["stop-verify-guard"].signals_for("session_stop") == frozenset(
+        {Signal.GOAL_STATUS}
+    )

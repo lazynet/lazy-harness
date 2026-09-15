@@ -60,7 +60,7 @@ class BuiltinHookSpec:
     means a hook that does not look at tool calls at all.
     """
 
-    signals: frozenset[Signal] = frozenset()
+    signals: frozenset[Signal] | Mapping[str, frozenset[Signal]] = frozenset()
     """Transcript signals this hook needs (decision 11 of the design).
 
     Declared before any `TranscriptReader` exists, which is the point: a
@@ -68,6 +68,15 @@ class BuiltinHookSpec:
     moment some reader shipped messages and tokens, and it would then find no
     `/goal` marker, conclude there is nothing to verify, and pass — a hook that
     cannot fail, reported green.
+
+    A plain set applies to every event the hook is wired to, which is what all
+    but one spec wants. A mapping keyed by `config.toml` event name declares per
+    *placement*, for a hook whose placements read different things — the same
+    widening `matcher` above carries, added for the same hook. An event the
+    mapping omits needs nothing: `herdr-context-gauge` opens the transcript on
+    three of its four placements and `herdr_context_gauge.py:175` short-circuits
+    before `_tokens_of` on the fourth, so a flat `TOKEN_USAGE` would make deploy
+    omit the retract too and strand a dead session's gauge on its pane.
     """
 
     migrated: bool = False
@@ -90,6 +99,18 @@ class BuiltinHookSpec:
         if isinstance(self.matcher, Mapping):
             return self.matcher.get(event) if event else None
         return self.matcher
+
+    def signals_for(self, event: str | None) -> frozenset[Signal]:
+        """What this hook reads at one placement.
+
+        A mapping that does not name the event declares nothing for it, and so
+        does a mapping asked with no event at all — the union would be a guess
+        at which placement the caller meant, and guessing high is what omits a
+        working hook from a deploy. `matcher_for` resolves the same way.
+        """
+        if isinstance(self.signals, Mapping):
+            return self.signals.get(event, frozenset()) if event else frozenset()
+        return self.signals
 
 
 @dataclass
@@ -125,6 +146,22 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
     "herdr-context-gauge": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.herdr_context_gauge",
         matcher={"post_tool_use": "*"},
+        # No `event`: this hook branches on the event it receives and is wired
+        # to four, so no single fallback is right. A payload naming its own
+        # event always wins over this field anyway (`runner._canonical_event`).
+        #
+        # `signals` is per placement because the placements disagree. Three
+        # reach `_tokens_of` and need the window; `session_end` short-circuits
+        # at `:175` and reads no transcript, because its whole job is retracting
+        # a dead session's gauge. Declaring `TOKEN_USAGE` flat would omit the
+        # retract on any agent lacking the signal and leave the gauge on the
+        # pane forever, which is worse than not shipping the hook.
+        signals={
+            "post_tool_use": frozenset({Signal.TOKEN_USAGE}),
+            "session_stop": frozenset({Signal.TOKEN_USAGE}),
+            "session_start": frozenset({Signal.TOKEN_USAGE}),
+        },
+        migrated=True,
     ),
     "post-tool-use-ansible-lint": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.post_tool_use_ansible_lint",
@@ -306,13 +343,18 @@ def builtin_migrated(name: str) -> bool:
     return spec.migrated if spec is not None else False
 
 
-def builtin_signals(name: str) -> frozenset[Signal]:
-    """Transcript signals a builtin declares, empty for anything unregistered.
+def builtin_signals(name: str, event: str | None = None) -> frozenset[Signal]:
+    """Transcript signals a builtin declares at one placement.
 
     The read side of `BuiltinHookSpec.signals`, so callers stop reaching into
     `_BUILTIN_HOOKS`. A user hook resolves to the empty set rather than an
     error: nothing outside the registry declares signals, and a caller asking
     "what does this hook need" wants that answer, not an exception.
+
+    `event` is optional because not every caller has one, and omitting it is
+    answered conservatively rather than by unioning a per-placement spec: a
+    caller that cannot say which placement it means is not owed a set that
+    would omit a hook from a deploy.
     """
     spec = _BUILTIN_HOOKS.get(name)
-    return spec.signals if spec is not None else frozenset()
+    return spec.signals_for(event) if spec is not None else frozenset()
