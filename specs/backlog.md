@@ -289,6 +289,30 @@ path único por destino en vez de por basename.
 
 ---
 
+### `pre_tool_use_security` es denylist; evaluar default-deny
+
+**Por qué:** `should_block()` es block-if-match (`hooks/builtins/pre_tool_use_security.py:241`)
+con `allow_patterns` como rescate (`:250`). Una corrida de mutation testing sobre esa
+lógica dio todos los mutantes muertos y aun así siete evasiones pasaron: variación de
+whitespace, reinterpretación de flags, y grafías alternativas de un path ya nombrado en
+una regla. El gate nuevo de `CLAUDE.md` —*mutation testing prueba que un guard tiene
+ramas, no que tiene cobertura*— cubre la **verificación**; esto es la pregunta de
+**diseño** que quedó abierta detrás.
+
+Un denylist no puede enumerar lo que no pensó. Un allowlist (default-deny) invierte la
+carga: lo no previsto se bloquea en vez de pasar. El costo es real y es el motivo por el
+que esto es un item y no un cambio: hoy el guard corre sobre cada `Bash`, y una lista de
+permitidos tiene que cubrir el uso diario de dos perfiles sin volverse un prompt continuo
+de permisos. `allow_patterns` ya existe y es el germen de esa lista.
+
+**Acción:** medir primero, no rediseñar de entrada. Instrumentar cuántos comandos
+distintos ve el hook en 72h por perfil y qué fracción cubrirían los `allow_patterns`
+actuales. Si la cola es corta, el allowlist es viable y va como ADR con período de
+sombra (registrar lo que *habría* bloqueado, sin bloquear). Si es larga, queda denylist y
+lo que corresponde es el ataque adversarial periódico que el gate ya pide.
+
+---
+
 ## Open — Prioridad BAJA
 
 ### Falso positivo del PreToolUse de seguridad con backticks de markdown

@@ -137,3 +137,27 @@ A billing model was assigned per agent. `~/.codex/auth.json` on the machine the 
 The shape is one step short of the existing grep gate above it. That gate asks whether an identifier exists; these four all existed. What none of them had was anyone running the path to see what it did — reading a help string, a docstring, a flag name or a config key and recording the reading as the behaviour.
 
 It is also the second time this class was recorded against the same document. An earlier review of it found six provider claims wrong "by reading a name out of a binary and inferring behaviour", the document wrote that lesson down as its own evidence standard, and the next revision committed four more instances of it. A gate that is stated but not run is not a gate.
+
+## A hook that is registered is not a hook that runs
+
+Two narrowings, both silent, both between a builtin that exists and a tool call that should have been stopped.
+
+The first is precedence. ADR-031 computes the effective list as `user_hooks[event].scripts if event in user_hooks else DEFAULT_HOOKS[event]` — a per-event replacement, not a merge. A config that declares *any* explicit `[hooks.pre_tool_use].scripts` list therefore pins that event forever: every hook later added to `DEFAULT_HOOKS` for it is dropped. Nothing warns. The hook is in the registry, its unit tests pass, `lh hooks list` shows it, and it is not in `settings.json`.
+
+The second is the matcher. `agents/claude_code.py` maps `pre_tool_use` to a default matcher of `Bash` and `post_tool_use` to `Edit|Write`, applied whenever a script does not declare one. A guard written to cover `Read` — the case that keeps a secret out of context — inherits `Bash` and covers nothing it was written for. The generated `settings.json` looks correct, because a matcher is present; it is simply the wrong one.
+
+Both defeat the same evidence: a passing test, a populated registry, a rendered config. Neither is defeated by anything short of firing the operation the hook exists to stop and watching the exit code.
+
+## A hook wired into shared config lands in every profile
+
+`config.toml` is one file; identity is per profile. A guard added to `[hooks.pre_tool_use]` for the profile it was designed in appeared the same instant in the other, which had none of the skills the guard's recovery instructions named. The result was work blocked behind an escape hatch that did not exist there, with the message pointing at a command the profile could not run.
+
+The constraint is structural and will recur with every hook that has a dependency: the config that activates it is global, the thing it depends on is not. The check is to run the hook once in each profile before wiring it, and to ship its dependency in the same change rather than the next one.
+
+## Mutation testing proves a guard has branches, not that it has coverage
+
+A denylist guard passed a mutation run: every rule, when broken, failed a test. The run was then read as evidence that the guard blocked what it claimed to block.
+
+It was not. Mutation testing asks whether a rule is load-bearing for some test, which is a question about the tests. It cannot ask whether the rule set covers the space of inputs, because a denylist has no way to enumerate what it has not thought of. Seven evasions got through a guard whose mutants all died — whitespace variation, flag reinterpretation, and alternate spellings of a path already named in a rule.
+
+This is the sibling of the gate above it, not a copy: that one catches a test that covers nothing, this one catches a test suite that covers exactly what it was written for and nothing beyond. The check is adversarial and manual — attack the rules with evasions of their own patterns and record what survived. Whether the guard should be a denylist at all is a design question, tracked separately in the backlog.
