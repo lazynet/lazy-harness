@@ -1,8 +1,8 @@
 ---
-description: Run the full pre-commit verification suite — pytest, ruff, mkdocs build
+description: Run the full pre-commit verification suite — pytest, ruff lint, ruff format, mkdocs build
 ---
 
-You are running the complete verification suite that must pass before any commit in this repo. Run the three checks in sequence, reporting each one's result clearly. If any check fails, stop and report the failure — do not try to fix it automatically.
+You are running the complete verification suite that must pass before any commit in this repo. Run the four checks in sequence, reporting each one's result clearly. If any check fails, stop and report the failure — do not try to fix it automatically.
 
 ## 1. Tests — `uv run --frozen pytest`
 
@@ -20,7 +20,21 @@ uv run --frozen ruff check src tests
 
 Pass criteria: exit code 0, no findings.
 
-## 3. Docs build — `uv run --frozen --group docs mkdocs build --strict`
+## 3. Format — `uv run --frozen ruff format --check src tests`
+
+```bash
+uv run --frozen ruff format --check src tests
+```
+
+Pass criteria: exit code 0, zero files reported as needing reformatting.
+
+Distinct from check 2, not a duplicate of it: `ruff check` runs lint rules and
+leaves layout alone, so a repo gated only on it drifts silently until somebody
+runs the formatter and lands 44 reformatted files on top of whatever they were
+actually changing. Fix by running `uv run --frozen ruff format src tests` and
+committing the result on its own.
+
+## 4. Docs build — `uv run --frozen --group docs mkdocs build --strict`
 
 ```bash
 uv run --frozen --group docs mkdocs build --strict
@@ -30,7 +44,7 @@ Pass criteria: exit code 0, no broken links, no unrecognised config, no nav warn
 
 ## Report
 
-After all three complete, summarise:
+After all four complete, summarise:
 
 - ✅ / ❌ per check
 - If everything passed: confirm the tree is ready to commit.
@@ -38,6 +52,6 @@ After all three complete, summarise:
 
 ## Why this exists
 
-This is the pre-commit checklist from `CLAUDE.md` made executable. Running it as a single command removes the temptation to skip one of the three under time pressure. TDD discipline depends on the full suite being green before you commit — not just the test you just added.
+This is the pre-commit checklist from `CLAUDE.md` made executable. Running it as a single command removes the temptation to skip one of the four under time pressure. TDD discipline depends on the full suite being green before you commit — not just the test you just added.
 
 See `superpowers:test-driven-development` for the broader TDD workflow.

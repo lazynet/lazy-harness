@@ -92,9 +92,7 @@ def test_merge_leaves_unchanged_values_byte_identical(tmp_path: Path) -> None:
     from lazy_harness.wizards._toml_merge import merge_into_config
 
     original = (
-        '[harness]\nversion = "1"\n\n'
-        "[profiles.lazy]\n"
-        'roots = ["~/repos/lazy", "~/repos/other"]\n'
+        '[harness]\nversion = "1"\n\n[profiles.lazy]\nroots = ["~/repos/lazy", "~/repos/other"]\n'
     )
     cfg_path = tmp_path / "config.toml"
     cfg_path.write_text(original)

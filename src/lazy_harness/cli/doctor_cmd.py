@@ -38,6 +38,18 @@ from lazy_harness.monitoring.sink_freshness import SinkFreshness, collect_sinks_
 from lazy_harness.monitoring.sink_setup import plan_sinks
 
 
+def _now() -> datetime:
+    """The clock `Sink freshness` is measured against.
+
+    A seam, not a convenience. The rendered age is a plain elapsed difference
+    and `_fmt_age` truncates it, so a test asserting on the seconds bucket is
+    otherwise asserting that setup plus everything this command does before it
+    reaches the age all fits inside one second — a stopwatch, not a freshness
+    check. Tests freeze this and pin `created_ts` to the same instant.
+    """
+    return datetime.now(UTC)
+
+
 def _endpoint_origin(url: str) -> str:
     """Scheme and host only.
 
@@ -518,7 +530,7 @@ def doctor() -> None:
     if not _render_egress(console, cfg):
         ok = False
 
-    sinks_freshness = collect_sinks_freshness(cfg, now=datetime.now(UTC))
+    sinks_freshness = collect_sinks_freshness(cfg, now=_now())
     if not _render_sink_freshness(console, sinks_freshness):
         ok = False
 

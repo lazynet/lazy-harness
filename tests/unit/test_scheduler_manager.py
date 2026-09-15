@@ -103,9 +103,7 @@ def test_install_and_drift_agree_on_the_timezone(tmp_path) -> None:
         backend="systemd",
         timezone="America/Argentina/Buenos_Aires",
         jobs=[
-            SchedulerJobConfig(
-                name="weekly-review", schedule="0 8 * * 1", command="/usr/bin/true"
-            )
+            SchedulerJobConfig(name="weekly-review", schedule="0 8 * * 1", command="/usr/bin/true")
         ],
     )
     jobs = parse_jobs_from_config(cfg)

@@ -169,9 +169,7 @@ def classify_legacy_memory(
             out.append(LegacyStatus(move.source, "unkeyable", move.reason, checkout))
             continue
         if not (move.target.is_dir() and any(move.target.iterdir())):
-            out.append(
-                LegacyStatus(move.source, "orphaned", checkout=checkout, target=move.target)
-            )
+            out.append(LegacyStatus(move.source, "orphaned", checkout=checkout, target=move.target))
             continue
         uncovered = _uncovered_files(move.source, move.target)
         out.append(

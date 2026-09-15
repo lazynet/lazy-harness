@@ -45,9 +45,7 @@ def test_write_enqueues_to_outbox(tmp_path: Path) -> None:
 def test_write_same_event_twice_upserts_single_outbox_row(tmp_path: Path) -> None:
     db = MetricsDB(tmp_path / "m.db")
     try:
-        sink = HttpRemoteSink(
-            db=db, url="https://x.invalid/", timeout_seconds=5, batch_size=10
-        )
+        sink = HttpRemoteSink(db=db, url="https://x.invalid/", timeout_seconds=5, batch_size=10)
         sink.write(_mk_event())
         sink.write(_mk_event())
         assert len(db.outbox_list_pending(sink_name="http_remote")) == 1

@@ -197,9 +197,7 @@ def test_a_migrated_builtin_is_held_to_its_timeout(
     slow.mkdir()
     (slow / "sitecustomize.py").write_text("import time\n\ntime.sleep(30)\n")
     inherited = os.environ.get("PYTHONPATH")
-    monkeypatch.setenv(
-        "PYTHONPATH", os.pathsep.join(p for p in (str(slow), inherited) if p)
-    )
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join(p for p in (str(slow), inherited) if p))
     register(monkeypatch, "spy", lambda event: HookDecision(), migrated=True)
     hook = HookInfo(name="spy", path=Path("/nonexistent/spy.py"), is_builtin=True)
 

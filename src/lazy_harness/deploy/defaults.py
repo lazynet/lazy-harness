@@ -40,8 +40,6 @@ def _derive_default_hooks() -> dict[str, list[str]]:
 DEFAULT_HOOKS: dict[str, list[str]] = _derive_default_hooks()
 
 
-
-
 def merge_with_defaults(
     user_hooks: dict[str, HookEventConfig],
     agent: AgentAdapter,

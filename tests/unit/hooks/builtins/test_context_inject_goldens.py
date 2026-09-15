@@ -189,9 +189,7 @@ def _proposals(n: int) -> str:
 _PROPOSAL = _proposals(1)
 
 
-_DECISIONS = "\n".join(
-    json.dumps({"summary": f"decision {i}"}) for i in range(1, 5)
-)
+_DECISIONS = "\n".join(json.dumps({"summary": f"decision {i}"}) for i in range(1, 5))
 _FAILURES = "\n".join(
     json.dumps({"summary": f"failure {i}", "prevention": f"prevent {i}"}) for i in range(1, 4)
 )
@@ -348,8 +346,7 @@ def _repo_map_truncated(world: World) -> None:
     (world.agent_dir / "docs").mkdir(parents=True, exist_ok=True)
     (world.agent_dir / "docs" / "repos.md").write_text(_REPO_MAP * 8)
     world.config(
-        f'\n[context_inject]\nrepo_map_scope = "{world.work.parent}"\n'
-        "repo_map_max_chars = 120\n"
+        f'\n[context_inject]\nrepo_map_scope = "{world.work.parent}"\nrepo_map_max_chars = 120\n'
     )
 
 
@@ -515,9 +512,7 @@ def test_case_ids_are_unique() -> None:
     assert len(ids) == len(set(ids))
 
 
-@pytest.mark.parametrize(
-    "case_id", [c.id for c in CASES if c.id not in UNUSABLE_PAYLOAD_CASE_IDS]
-)
+@pytest.mark.parametrize("case_id", [c.id for c in CASES if c.id not in UNUSABLE_PAYLOAD_CASE_IDS])
 def test_every_branch_emits_one_json_object_on_stdout_and_exits_0(case_id: str) -> None:
     """This hook has no verdict: it always answers, always on stdout, always 0."""
     golden = json.loads(golden_path(HOOK, case_id).read_text())
@@ -529,9 +524,7 @@ def test_every_branch_emits_one_json_object_on_stdout_and_exits_0(case_id: str) 
     assert payload["hookSpecificOutput"]["hookEventName"] == "SessionStart"
 
 
-@pytest.mark.parametrize(
-    "case_id", [c.id for c in CASES if c.id not in UNUSABLE_PAYLOAD_CASE_IDS]
-)
+@pytest.mark.parametrize("case_id", [c.id for c in CASES if c.id not in UNUSABLE_PAYLOAD_CASE_IDS])
 def test_the_banner_stays_at_the_top_level(case_id: str) -> None:
     """`systemMessage` nested inside `hookSpecificOutput` parses and is discarded.
 

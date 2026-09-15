@@ -25,7 +25,7 @@ def test_qmd_status_active_when_installed(monkeypatch) -> None:
     from lazy_harness.core.config import Config
     from lazy_harness.features import collect_feature_statuses
 
-    installed = ['qmd']
+    installed = ["qmd"]
     monkeypatch.setattr(
         "shutil.which", lambda name: f"/usr/bin/{name}" if name in installed else None
     )
@@ -57,7 +57,7 @@ def test_engram_status_active(monkeypatch) -> None:
     from lazy_harness.core.config import Config
     from lazy_harness.features import collect_feature_statuses
 
-    installed = ['engram']
+    installed = ["engram"]
     monkeypatch.setattr(
         "shutil.which", lambda name: f"/usr/bin/{name}" if name in installed else None
     )
@@ -77,7 +77,7 @@ def test_engram_status_dormant_when_installed_but_disabled(monkeypatch) -> None:
     from lazy_harness.core.config import Config
     from lazy_harness.features import collect_feature_statuses
 
-    installed = ['engram']
+    installed = ["engram"]
     monkeypatch.setattr(
         "shutil.which", lambda name: f"/usr/bin/{name}" if name in installed else None
     )
@@ -131,7 +131,7 @@ def test_graphify_status_active(monkeypatch) -> None:
     from lazy_harness.core.config import Config
     from lazy_harness.features import collect_feature_statuses
 
-    installed = ['graphify']
+    installed = ["graphify"]
     monkeypatch.setattr(
         "shutil.which", lambda name: f"/usr/bin/{name}" if name in installed else None
     )
@@ -151,7 +151,7 @@ def test_graphify_status_dormant_when_installed_but_disabled(monkeypatch) -> Non
     from lazy_harness.core.config import Config
     from lazy_harness.features import collect_feature_statuses
 
-    installed = ['graphify']
+    installed = ["graphify"]
     monkeypatch.setattr(
         "shutil.which", lambda name: f"/usr/bin/{name}" if name in installed else None
     )

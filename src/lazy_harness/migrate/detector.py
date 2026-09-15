@@ -55,7 +55,7 @@ def detect_lazy_claudecode(home: Path) -> LazyClaudecodeSetup | None:
         name = entry.name
         if not name.startswith(".claude-"):
             continue
-        profile = name[len(".claude-"):]
+        profile = name[len(".claude-") :]
         if not profile:
             continue
 
@@ -148,8 +148,8 @@ def detect_state(
     bdir = bin_dir if bin_dir is not None else (home / ".local" / "bin")
     state.deployed_scripts = detect_deployed_scripts(bdir)
 
-    la_dir = launch_agents_dir if launch_agents_dir is not None else (
-        home / "Library" / "LaunchAgents"
+    la_dir = (
+        launch_agents_dir if launch_agents_dir is not None else (home / "Library" / "LaunchAgents")
     )
     state.launch_agents = detect_launch_agents(la_dir)
 

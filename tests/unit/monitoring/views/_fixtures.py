@@ -13,9 +13,7 @@ def ctx(config_dir: Path, *, name: str = "lazy", exists: bool = True, **kwargs) 
     return StatusContext(
         cfg=Config(harness=HarnessConfig(version="1")),
         profiles=[
-            ProfileInfo(
-                name=name, config_dir=config_dir, roots=[], is_default=True, exists=exists
-            )
+            ProfileInfo(name=name, config_dir=config_dir, roots=[], is_default=True, exists=exists)
         ],
         **kwargs,
     )

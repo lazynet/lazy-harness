@@ -689,7 +689,6 @@ def test_context_inject_surfaces_proposals_section_in_stdout(tmp_path: Path) -> 
         "  - **Rationale:** Subagent hallucinated worktree.bgIsolation as boolean\n"
     )
 
-
     import os
 
     env = {
@@ -949,9 +948,7 @@ def test_context_inject_reports_the_halt_using_the_configured_cap(
     )
 
     cfg_file = tmp_path / "config.toml"
-    cfg_file.write_text(
-        '[harness]\nversion = "1"\n\n[compound_loop]\nmax_pending_proposals = 2\n'
-    )
+    cfg_file.write_text('[harness]\nversion = "1"\n\n[compound_loop]\nmax_pending_proposals = 2\n')
 
     body = _run_hook_in_process(monkeypatch, capsys, cwd, cfg_file)
 

@@ -3,11 +3,7 @@ from pathlib import Path
 from lazy_harness.selftest.checks.profile_check import check_profiles
 from lazy_harness.selftest.result import CheckStatus
 
-_BASE_TOML = (
-    '[harness]\nversion = "1"\n'
-    '[agent]\ntype = "claude-code"\n'
-    '[knowledge]\nroot = ""\n'
-)
+_BASE_TOML = '[harness]\nversion = "1"\n[agent]\ntype = "claude-code"\n[knowledge]\nroot = ""\n'
 
 
 def _make_cfg(tmp_path: Path, profiles_section: str) -> Path:

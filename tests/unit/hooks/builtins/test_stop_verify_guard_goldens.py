@@ -136,9 +136,7 @@ CASES: list[Case] = [
 #: it blocks through stdout with exit 0, not through exit 2 — so decision 3's
 #: table gives it the right-hand column: exit 0, a warning on stderr, and no
 #: stdout at all, because the hook never ran and has no verdict to report.
-UNUSABLE_PAYLOAD_CASE_IDS: frozenset[str] = frozenset(
-    {"stdin-empty", "stdin-malformed-json"}
-)
+UNUSABLE_PAYLOAD_CASE_IDS: frozenset[str] = frozenset({"stdin-empty", "stdin-malformed-json"})
 
 #: The branches that actually refuse. Everything else must stay silent.
 BLOCKING_CASE_IDS: frozenset[str] = frozenset(
@@ -150,9 +148,7 @@ BLOCKING_CASE_IDS: frozenset[str] = frozenset(
 )
 
 #: Cases whose payload is built during the run because it names a transcript.
-_NEEDS_TRANSCRIPT = frozenset(
-    c.id for c in CASES if c.payload is None and c.raw_stdin is None
-)
+_NEEDS_TRANSCRIPT = frozenset(c.id for c in CASES if c.payload is None and c.raw_stdin is None)
 
 
 def _prepare(tmp_path: Path, case: Case) -> tuple[str, dict[str, str], Path]:

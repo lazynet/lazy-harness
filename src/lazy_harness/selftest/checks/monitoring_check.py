@@ -57,9 +57,7 @@ def check_monitoring(*, config_path: Path) -> list[CheckResult]:
     try:
         pricing = load_pricing(cfg.monitoring.pricing or None)
         if pricing:
-            results.append(
-                CheckResult(group=group, name="pricing", status=CheckStatus.PASSED)
-            )
+            results.append(CheckResult(group=group, name="pricing", status=CheckStatus.PASSED))
         else:
             results.append(
                 CheckResult(

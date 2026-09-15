@@ -1,5 +1,3 @@
-
-
 def test_migrate_knowledge_block_preserves_comments_and_mode(tmp_path) -> None:
     """`lh config migrate-knowledge` writes the live config.
 

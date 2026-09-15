@@ -40,9 +40,7 @@ def test_offline_reconnect_drains_all(tmp_path: Path, httpserver: HTTPServer) ->
     db = MetricsDB(tmp_path / "m.db")
 
     # 1. Offline phase: unreachable URL.
-    offline = HttpRemoteSink(
-        db=db, url="http://127.0.0.1:1", timeout_seconds=1, batch_size=10
-    )
+    offline = HttpRemoteSink(db=db, url="http://127.0.0.1:1", timeout_seconds=1, batch_size=10)
     try:
         offline.write(_event("s1"))
         offline.write(_event("s2"))

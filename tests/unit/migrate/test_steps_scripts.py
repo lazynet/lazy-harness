@@ -26,9 +26,7 @@ def test_remove_scripts_dry_run(tmp_path: Path):
     link = tmp_path / "lcc-x"
     link.symlink_to(target)
 
-    step = RemoveScriptsStep(
-        scripts=[DeployedScript(name="lcc-x", symlink=link, target=target)]
-    )
+    step = RemoveScriptsStep(scripts=[DeployedScript(name="lcc-x", symlink=link, target=target)])
     result = step.execute(backup_dir=tmp_path / "backup", dry_run=True)
     assert result.status == StepStatus.DONE
     assert link.is_symlink()

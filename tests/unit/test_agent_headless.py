@@ -356,9 +356,7 @@ def test_an_adapter_without_session_argv_is_not_a_session_pinning_agent() -> Non
         def resolve_model(self, *, tier: str | None, explicit: str | None) -> str | None:
             return explicit
 
-        def headless_argv(
-            self, *, model: str | None, allowed_tools: list[str] | None
-        ) -> list[str]:
+        def headless_argv(self, *, model: str | None, allowed_tools: list[str] | None) -> list[str]:
             return []
 
         def parse_headless_result(self, stdout: str, exit_code: int):  # noqa: ANN201

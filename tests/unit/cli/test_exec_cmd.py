@@ -955,10 +955,22 @@ def test_a_timeout_reports_the_cost_fields_the_success_path_reports(
 
 
 _AGENT_ENVELOPE_KEYS_BEFORE_ADR039 = {
-    "schema", "dry_run", "success", "exit_code", "output", "cost_usd",
-    "cost_source", "duration_ms", "prompt_tokens", "output_tokens",
-    "cache_creation_tokens", "cache_read_tokens", "num_turns", "error",
-    "harness", "raw",
+    "schema",
+    "dry_run",
+    "success",
+    "exit_code",
+    "output",
+    "cost_usd",
+    "cost_source",
+    "duration_ms",
+    "prompt_tokens",
+    "output_tokens",
+    "cache_creation_tokens",
+    "cache_read_tokens",
+    "num_turns",
+    "error",
+    "harness",
+    "raw",
 }
 
 
@@ -992,8 +1004,12 @@ def _ok(output: str = "answer") -> object:
     from lazy_harness.llm.invoke import InferenceResult
 
     return InferenceResult(
-        output=output, success=True, model="qwen2.5-coder:7b",
-        backend="ollama", duration_ms=12, error=None,
+        output=output,
+        success=True,
+        model="qwen2.5-coder:7b",
+        backend="ollama",
+        duration_ms=12,
+        error=None,
     )
 
 
@@ -1001,8 +1017,12 @@ def _failed(kind: str) -> object:
     from lazy_harness.llm.invoke import InferenceError, InferenceResult
 
     return InferenceResult(
-        output="", success=False, model="qwen2.5-coder:7b", backend="ollama",
-        duration_ms=3, error=InferenceError(kind=kind, message=f"{kind} happened"),
+        output="",
+        success=False,
+        model="qwen2.5-coder:7b",
+        backend="ollama",
+        duration_ms=3,
+        error=InferenceError(kind=kind, message=f"{kind} happened"),
     )
 
 
@@ -1039,8 +1059,7 @@ def test_inference_reports_backend_and_model(
 def test_output_is_never_null_on_failure(
     role_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    for kind in ("backend-unreachable", "timeout", "schema-violation", "empty",
-                 "backend-error"):
+    for kind in ("backend-unreachable", "timeout", "schema-violation", "empty", "backend-error"):
         _stub_inference(monkeypatch, _failed(kind))
         _, envelope = _invoke(["--role", "classify"])
         assert envelope["output"] == ""
@@ -1053,22 +1072,17 @@ def test_timeout_exits_124(role_config: Path, monkeypatch: pytest.MonkeyPatch) -
     assert code == 124
 
 
-def test_other_failures_exit_70(
-    role_config: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_other_failures_exit_70(role_config: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     for kind in ("backend-unreachable", "schema-violation", "empty", "backend-error"):
         _stub_inference(monkeypatch, _failed(kind))
         code, _ = _invoke(["--role", "classify"])
         assert code == 70, kind
 
 
-def test_no_failed_inference_exits_2(
-    role_config: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_no_failed_inference_exits_2(role_config: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """2 stays the usage-error code, which carries no envelope. A consumer
     branching on it before parsing stdout must never lose a typed failure."""
-    for kind in ("backend-unreachable", "timeout", "schema-violation", "empty",
-                 "backend-error"):
+    for kind in ("backend-unreachable", "timeout", "schema-violation", "empty", "backend-error"):
         _stub_inference(monkeypatch, _failed(kind))
         code, _ = _invoke(["--role", "classify"])
         assert code != 2, kind

@@ -266,9 +266,7 @@ def test_still_blocks_when_an_unhashable_type_precedes_the_goal_marker(
     assert _recorded(db_path) == [("verify_block", "s1", "")]
 
 
-def test_lets_the_second_stop_attempt_close_without_blocking(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_lets_the_second_stop_attempt_close_without_blocking(monkeypatch, tmp_path: Path) -> None:
     from lazy_harness.hooks.builtins import stop_verify_guard as mod
     from lazy_harness.monitoring.db import MetricsDB
 
@@ -304,9 +302,7 @@ def test_never_blocks_a_third_time_either(monkeypatch, tmp_path: Path) -> None:
     assert MetricsDB(db_path).loop_event_counts() == {"verify_block": 1, "verify_skipped": 2}
 
 
-def test_stays_silent_when_verify_ran_is_already_recorded(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_stays_silent_when_verify_ran_is_already_recorded(monkeypatch, tmp_path: Path) -> None:
     from lazy_harness.hooks.builtins import stop_verify_guard as mod
     from lazy_harness.monitoring.db import MetricsDB
 
@@ -343,9 +339,7 @@ def test_stays_silent_when_no_goal_was_declared(monkeypatch, tmp_path: Path) -> 
     assert MetricsDB(db_path).loop_event_counts() == {}
 
 
-def test_stays_silent_when_the_transcript_is_unresolvable(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_stays_silent_when_the_transcript_is_unresolvable(monkeypatch, tmp_path: Path) -> None:
     """No transcript_path/transcriptPath/input key, or one pointing nowhere."""
     from lazy_harness.hooks.builtins import stop_verify_guard as mod
     from lazy_harness.monitoring.db import MetricsDB

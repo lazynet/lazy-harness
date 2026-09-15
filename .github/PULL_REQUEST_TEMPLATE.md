@@ -23,6 +23,7 @@ user-visible behaviour. -->
 
 - [ ] `uv run --frozen pytest` passes with pristine output
 - [ ] `uv run --frozen ruff check src tests` passes
+- [ ] `uv run --frozen ruff format --check src tests` passes
 - [ ] `uv run --frozen --group docs mkdocs build --strict` passes (for docs changes)
 - [ ] Manual end-to-end check of the user-facing behaviour (for CLI/hook/config changes)
 
