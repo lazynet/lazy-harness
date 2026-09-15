@@ -1,0 +1,25 @@
+{
+  "numStartups": 7,
+  "mcpServers": {
+    "foreign": {
+      "command": "foreign-mcp",
+      "args": []
+    },
+    "qmd": {
+      "command": "qmd",
+      "args": [
+        "mcp"
+      ]
+    },
+    "engram": {
+      "command": "engram",
+      "args": [
+        "mcp",
+        "serve"
+      ],
+      "env": {
+        "ENGRAM_DB": "/tmp/e.db"
+      }
+    }
+  }
+}

@@ -18,6 +18,10 @@ from lazy_harness.core.config import (
 )
 from lazy_harness.deploy.engine import deploy_hooks
 
+# `_is_harness_owned` takes the owned-launcher set from the artifact being
+# merged, so it has no default; these cases are about a stock `lh` install.
+DEFAULT_BINARIES = {"lh"}
+
 
 def _cfg_with_profile(profile_dir: Path, hooks: dict[str, HookEventConfig] | None = None) -> Config:
     """Build a minimal Config pointing one profile at `profile_dir`."""
@@ -363,7 +367,7 @@ def _hook_entry_count(settings_path: Path) -> int:
     what the redeploy test is exercising, and a counter built on it would report
     a stable count while the file doubled in size.
     """
-    from lazy_harness.deploy.engine import _entry_commands
+    from lazy_harness.agents.claude_code import _entry_commands
 
     settings = json.loads(settings_path.read_text())
     return sum(
@@ -384,14 +388,15 @@ def test_a_generated_builtin_command_is_recognised_as_its_own() -> None:
     classifier is checked against both ends of that range rather than only the
     default launcher.
     """
-    from lazy_harness.deploy.engine import _is_harness_owned, hook_command
+    from lazy_harness.agents.claude_code import _is_harness_owned
+    from lazy_harness.deploy.engine import hook_command
     from lazy_harness.hooks.loader import resolve_script_names
 
     hooks = resolve_script_names(["context-inject"], event="session_start")
     assert hooks, "context-inject should resolve as a builtin"
 
     default_command = hook_command(hooks[0], profile="personal")
-    assert _is_harness_owned(default_command), (
+    assert _is_harness_owned(default_command, binaries=DEFAULT_BINARIES), (
         f"the harness does not recognise its own generated command: {default_command!r}"
     )
 
@@ -403,24 +408,24 @@ def test_a_generated_builtin_command_is_recognised_as_its_own() -> None:
 
 def test_a_legacy_builtin_path_command_is_still_recognised() -> None:
     """Entries written by an older harness carry the interpreter+path form."""
-    from lazy_harness.deploy.engine import _is_harness_owned
+    from lazy_harness.agents.claude_code import _is_harness_owned
 
     legacy = (
         "/usr/bin/python3 /opt/lib/python3.11/site-packages/"
         "lazy_harness/hooks/builtins/context_inject.py"
     )
-    assert _is_harness_owned(legacy)
+    assert _is_harness_owned(legacy, binaries=DEFAULT_BINARIES)
 
 
 def test_a_foreign_command_is_not_claimed_by_the_harness() -> None:
     """The fix must not over-match: another tool's hook stays foreign."""
-    from lazy_harness.deploy.engine import _is_harness_owned
+    from lazy_harness.agents.claude_code import _is_harness_owned
 
-    assert not _is_harness_owned("/usr/local/bin/my-manual-hook")
-    assert not _is_harness_owned("npx some-other-tool hook pre-tool-use")
-    assert not _is_harness_owned("other-tool hook context-inject")
-    assert not _is_harness_owned("lh status")
-    assert not _is_harness_owned("echo 'lh hook context-inject'")
+    assert not _is_harness_owned("/usr/local/bin/my-manual-hook", binaries=DEFAULT_BINARIES)
+    assert not _is_harness_owned("npx some-other-tool hook pre-tool-use", binaries=DEFAULT_BINARIES)
+    assert not _is_harness_owned("other-tool hook context-inject", binaries=DEFAULT_BINARIES)
+    assert not _is_harness_owned("lh status", binaries=DEFAULT_BINARIES)
+    assert not _is_harness_owned("echo 'lh hook context-inject'", binaries=DEFAULT_BINARIES)
 
 
 def test_an_undeclared_binary_is_not_claimed_by_the_harness() -> None:
@@ -430,13 +435,15 @@ def test_an_undeclared_binary_is_not_claimed_by_the_harness() -> None:
     plus the default; a `hook` subcommand alone is not a harness fingerprint, or
     every tool that models hooks the same way would be adopted and then pruned.
     """
-    from lazy_harness.deploy.engine import _is_harness_owned
+    from lazy_harness.agents.claude_code import _is_harness_owned
 
     binaries = {"lh", "lh-beta"}
     assert _is_harness_owned("lh-beta hook context-inject --profile beta", binaries=binaries)
     assert not _is_harness_owned("lh-other hook context-inject --profile beta", binaries=binaries)
     assert not _is_harness_owned("other-tool hook context-inject --profile beta", binaries=binaries)
-    assert not _is_harness_owned("lh-beta hook context-inject --profile beta")
+    assert not _is_harness_owned(
+        "lh-beta hook context-inject --profile beta", binaries=DEFAULT_BINARIES
+    )
 
 
 def test_redeploy_after_a_command_format_change_installs_each_hook_once(
@@ -724,8 +731,8 @@ def test_each_profile_gets_its_own_profile_flag(tmp_path: Path) -> None:
     into each profile's own command, which means the command is generated per
     profile rather than once for all of them.
     """
+    from lazy_harness.agents.claude_code import _entry_commands
     from lazy_harness.core.config import Config, HarnessConfig, ProfileEntry, ProfilesConfig
-    from lazy_harness.deploy.engine import _entry_commands
 
     work = tmp_path / "work"
     play = tmp_path / "play"
@@ -758,7 +765,7 @@ def test_each_profile_gets_its_own_profile_flag(tmp_path: Path) -> None:
 
 def test_a_deployed_builtin_command_names_its_profile(tmp_path: Path) -> None:
     """The deployed bytes, not the generator in isolation."""
-    from lazy_harness.deploy.engine import _entry_commands
+    from lazy_harness.agents.claude_code import _entry_commands
 
     profile_dir = tmp_path / "profile"
 

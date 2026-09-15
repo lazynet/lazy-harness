@@ -1,0 +1,9 @@
+{
+  "numStartups": 7,
+  "mcpServers": {
+    "foreign": {
+      "command": "foreign-mcp",
+      "args": []
+    }
+  }
+}

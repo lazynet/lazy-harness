@@ -550,11 +550,20 @@ class ConfigPlanner(Protocol):
         hooks: dict[str, list[HookEntry]],
         servers: dict[str, dict],
         existing: dict[Path, str],
+        *,
+        binary: str | None = None,
     ) -> list[WriteOp]:
         """One call produces the complete set of operations.
 
         `existing` holds every target that exists, by path, so an adapter whose
         hooks and MCP servers share one file emits a single write for it and
         cannot overwrite its own earlier result.
+
+        `binary` is the launcher this deploy writes into the generated commands,
+        resolved per profile by `binary_for_profile`. It is declared here because
+        the engine has to pass it and an adapter that stamps the writing launcher
+        cannot derive it: a profile whose only hooks are third-party generates no
+        launcher invocation to read it off. Adapters that do not stamp one ignore
+        it.
         """
         ...

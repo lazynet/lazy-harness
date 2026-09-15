@@ -142,14 +142,15 @@ Design decisions: [ADR-008](https://github.com/lazynet/lazy-harness/blob/main/sp
 
 ## Deploy engine — `deploy/`
 
-Every `lh deploy` snapshots first. `deploy/snapshot.py` writes a manifest of the artifacts the four functions below are about to touch — one entry per destination, carrying its absolute path, its kind (`file`, `symlink`, or `absent` for something the deploy is about to create), and for a file a content path unique per destination rather than per basename, because `~/.claude-lazy/settings.json` and `~/.claude-flex/settings.json` share one. `core/backups.py` decides where it lands: `~/.config/lazy-harness/backups/deploy/<ts>/`, pruned to the newest ten, in a namespace `lh migrate --rollback` cannot reach and a deploy's prune cannot delete from. `lh deploy --rollback` replays the newest through `migrate/rollback.py`.
+Every `lh deploy` snapshots first. `deploy/snapshot.py` writes a manifest of the artifacts the three functions below are about to touch — one entry per destination, carrying its absolute path, its kind (`file`, `symlink`, or `absent` for something the deploy is about to create), and for a file a content path unique per destination rather than per basename, because `~/.claude-lazy/settings.json` and `~/.claude-flex/settings.json` share one. `core/backups.py` decides where it lands: `~/.config/lazy-harness/backups/deploy/<ts>/`, pruned to the newest ten, in a namespace `lh migrate --rollback` cannot reach and a deploy's prune cannot delete from. `lh deploy --rollback` replays the newest through `migrate/rollback.py`.
 
-`deploy/engine.py` has four top-level functions called by `lh deploy`:
+`deploy/engine.py` has three top-level functions called by `lh deploy`:
 
 1. **`deploy_profiles(cfg)`** — for each profile, symlink every item from `~/.config/lazy-harness/profiles/<name>/*` into `<profile.config_dir>/`. Per-file symlinks (not whole-directory), idempotent.
-2. **`deploy_hooks(cfg)`** — resolve hooks per event, call `agent.generate_hook_config`, write the result into each profile's `settings.json`.
-3. **`deploy_mcp_servers(cfg)`** — probe each detected memory-stack tool (QMD, Engram, Graphify), call `agent.generate_mcp_config`, merge the resulting `mcpServers` block into each profile's `<agent.mcp_config_file()>` — `.claude.json` for Claude Code, not `settings.json`. Uninstalled tools get no entry; the merge is additive, so an entry for a tool since removed survives until deleted by hand.
-4. **`deploy_claude_symlink(cfg)`** — create `~/.claude → <default profile config_dir>`.
+2. **`deploy_config(cfg)`** — for each profile, run the config cycle: ask the adapter for `config_targets()`, read the ones on disk, call `plan_config()` once with the resolved hook entries and the probed MCP servers, and apply the `WriteOp`s that come back. Merging is the adapter's — parsing a native config format never was agent-neutral — so the engine writes the returned text verbatim, deletes what the plan retires, writes a `.bak` when the plan reports a repair, and prints the preserved/dropped/repaired diagnostics. An adapter that cannot plan its config is refused before the first write, never discovered mid-deploy.
+3. **`deploy_claude_symlink(cfg)`** — create `~/.claude → <default profile config_dir>`.
+
+`deploy_hooks(cfg)` and `deploy_mcp_servers(cfg)` remain as narrowings of `deploy_config` that plan with one half of the inputs blanked out. Nothing in the CLI calls them; they exist for tests that drive one document at a time.
 
 `deploy/symlinks.py` implements `ensure_symlink`, which returns `"exists"` when the target is already a symlink to the correct source and `"created"` otherwise. It does **not** refuse: a symlink pointing elsewhere is unlinked and replaced, and a real file or directory at the target is renamed to `<name>.bak` before the link is written. The `.bak` is a single slot, not a chain — a second deploy over a second real file overwrites the first backup.
 
@@ -236,7 +237,7 @@ One file per top-level `lh` command, all based on `click`:
 - `main.py` — entrypoint + root group, maps to `lh = "lazy_harness.cli.main:cli"` in `pyproject.toml`.
 - `init_cmd.py` — interactive wizard delegating to `init/`.
 - `migrate_cmd.py` — `lh migrate`, `--dry-run`, `--rollback`.
-- `deploy_cmd.py` — `lh deploy`, `--snapshot`, `--rollback`; triggers the four deploy functions.
+- `deploy_cmd.py` — `lh deploy`, `--profile`, `--snapshot`, `--rollback`; triggers the three deploy functions.
 - `hooks_cmd.py` — `lh hooks list` / `lh hooks run` / dry-run.
 - `profile_cmd.py` — `lh profile list/add/remove`.
 - `status_cmd.py` — monitoring dashboard.

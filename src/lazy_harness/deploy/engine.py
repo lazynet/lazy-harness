@@ -2,19 +2,18 @@
 
 from __future__ import annotations
 
-import json
 import shlex
 import sys
 from collections.abc import Collection
-from pathlib import PurePosixPath
+from pathlib import Path
 
 import click
 
-from lazy_harness import __version__
-from lazy_harness.agents.registry import DEFAULT_HARNESS_BINARY, binary_for_profile
-from lazy_harness.core.artifact_version import (
-    SETTINGS_BINARY_KEY,
-    extract_binary_from_settings,
+from lazy_harness.agents.base import ConfigPlanner, HookEntry, WriteOp
+from lazy_harness.agents.registry import (
+    DEFAULT_HARNESS_BINARY,
+    agent_for_profile,
+    binary_for_profile,
 )
 from lazy_harness.core.config import Config, ProfileEntry
 from lazy_harness.core.paths import config_dir, expand_path
@@ -22,16 +21,29 @@ from lazy_harness.deploy.symlinks import ensure_symlink
 from lazy_harness.hooks.loader import HookInfo
 
 # The launcher invocation every generated builtin command takes. `hook_command`
-# builds it and `_is_harness_owned` recognises it; both derive from these names
-# so the generator and the classifier cannot drift apart again. The launcher
-# itself is per profile since decision 11 — `DEFAULT_HARNESS_BINARY` is only
-# what a profile that declares nothing gets.
+# builds it; the classifier that recognises it lives with the merge, in the
+# adapter. The launcher itself is per profile since decision 11 —
+# `DEFAULT_HARNESS_BINARY` is only what a profile that declares nothing gets.
 _HOOK_SUBCOMMAND = "hook"
 
-# Written by harness versions before the launcher existed, when a generated
-# command was `{sys.executable} {path-under-builtins}`. Still recognised so a
-# redeploy prunes those entries instead of preserving them as foreign.
-_LEGACY_BUILTIN_MARKER = "lazy_harness/hooks/builtins/"
+
+class ConfigPlannerRequiredError(TypeError):
+    """A profile's adapter cannot plan its own config documents.
+
+    Raised before anything is written. Merging is an adapter operation because
+    parsing never was agent-neutral (decision 4, 2026-09-13 multi-agent design),
+    so an adapter that has not been taught its own format has nothing the engine
+    could write on its behalf — and discovering that halfway through a deploy
+    would leave the profiles before it already written.
+    """
+
+    def __init__(self, profile: str, agent_name: str) -> None:
+        self.profile = profile
+        self.agent_name = agent_name
+        super().__init__(
+            f"Profile '{profile}' runs agent '{agent_name}', which cannot plan its "
+            f"own config documents. Deploy is refused rather than half-applied."
+        )
 
 
 class UnknownProfileError(ValueError):
@@ -157,282 +169,168 @@ def _plural(count: int, singular: str, plural: str) -> str:
     return singular if count == 1 else plural
 
 
-def _entry_commands(entry: dict) -> list[str]:
-    """Command strings carried by a single settings.json hook entry."""
-    hooks = entry.get("hooks")
-    if not isinstance(hooks, list):
-        return []
-    commands: list[str] = []
-    for h in hooks:
-        if isinstance(h, dict):
-            cmd = h.get("command")
-            if isinstance(cmd, str):
-                commands.append(cmd)
-    return commands
+def _hook_entries_for(cfg: Config, profile: str, binary: str) -> dict[str, list[HookEntry]]:
+    """The hook entries one profile's config gets, as agent-neutral records.
 
+    Built per profile because `hook_command` names the profile and takes its
+    binary: a single shared list would deploy every profile's hooks under
+    whichever one happened to be generated first.
 
-def _is_harness_owned(
-    command: str, *, binaries: Collection[str] = (DEFAULT_HARNESS_BINARY,)
-) -> bool:
-    """Whether the harness generated this command.
-
-    Identity is the canonical hook name inside a launcher invocation — `<binary>
-    hook <name>` — not the text of the command as a whole. Flags the harness
-    adds later (`--profile <name>`) change that text on every entry, and a
-    classifier keyed on text would then read its own previous output as another
-    tool's hook and preserve it alongside the new one.
-
-    `binaries` is what `_owned_binaries` reads off the artifact being merged —
-    the launcher the file itself records as having written it, plus the one this
-    deploy is about to write, plus the default. Deriving it from the live config
-    instead is the defect this replaced: a profile rolled back off `lh-beta`
-    dropped `lh-beta` from the set, so the entries the harness's own previous
-    deploy had written became foreign and were preserved beside the new ones.
-    A config cannot answer "did I write this" — only the artifact can.
-
-    A `hook` subcommand alone is deliberately not enough to claim a command:
-    another tool modelling hooks the same way would be adopted and then pruned.
-
-    The predecessor matched on a builtins path, which `hook_command` stopped
-    emitting when it moved to the launcher: it had been classifying every
-    harness hook as foreign, masked only by the separate byte-identical check
-    in `_merge_hook_blocks`.
+    Third-party commands declared in config are emitted to every profile, so a
+    tool's hooks stop depending on which profile its installer happened to run
+    against. Appended after the harness scripts, including on events whose
+    scripts list is empty.
     """
-    normalised = command.replace("\\", "/")
-    if _LEGACY_BUILTIN_MARKER in normalised:
-        return True
-    try:
-        argv = shlex.split(normalised)
-    except ValueError:
-        return False
-    if len(argv) < 3:
-        return False
-    if PurePosixPath(argv[0]).name not in binaries:
-        return False
-    if argv[1] != _HOOK_SUBCOMMAND:
-        return False
-    return not argv[2].startswith("-")
-
-
-def _normalize_entry(entry: dict) -> tuple[dict, list[str]]:
-    """Coerce a foreign hook entry into the schema Claude Code accepts.
-
-    Returns the repaired entry and a description of each repair. A non-string
-    matcher is the one seen in the wild: an installer writing `null` for "no
-    matcher" makes Claude Code reject the entire settings file, which silently
-    disables every unrelated hook in the profile.
-    """
-    repairs: list[str] = []
-    fixed = dict(entry)
-    matcher = fixed.get("matcher")
-    if matcher is None:
-        fixed["matcher"] = ""
-        repairs.append('matcher: null -> ""')
-    elif not isinstance(matcher, str):
-        fixed["matcher"] = ""
-        repairs.append(f'matcher: {type(matcher).__name__} -> ""')
-    return fixed, repairs
-
-
-def _owned_binaries(settings: dict, binary: str) -> set[str]:
-    """The launchers whose commands this settings file may legitimately carry.
-
-    Three sources, none of them the live config:
-
-    - the launcher the file records as having written it, so entries survive
-      their binary being retired from every profile;
-    - the launcher this deploy is writing, so a first deploy onto a file that
-      records nothing still recognises what it is about to generate;
-    - the default, which is what every settings.json written before the stamp
-      existed necessarily used — no released version could emit another.
-
-    The set stays closed: a launcher nobody ever deployed is never claimed.
-    """
-    owned = {DEFAULT_HARNESS_BINARY, binary}
-    recorded = extract_binary_from_settings(settings)
-    if recorded:
-        owned.add(recorded)
-    return owned
-
-
-def _merge_hook_blocks(
-    existing: object,
-    generated: dict,
-    *,
-    binaries: Collection[str] = (DEFAULT_HARNESS_BINARY,),
-) -> tuple[dict, list[tuple[str, str]], list[tuple[str, str, str]]]:
-    """Merge harness-generated hooks over an existing settings.json hooks block.
-
-    Harness-owned entries are replaced by the freshly generated ones; everything
-    else belongs to another tool and is carried through, repaired if its schema
-    would make Claude Code reject the file. Events the harness does not model are
-    passed through untouched rather than dropped.
-
-    Returns the merged block, the preserved entries as `(event, command)`, and
-    the repairs as `(event, description, command)`.
-    """
-    merged: dict = {event: list(entries) for event, entries in generated.items()}
-    preserved: list[tuple[str, str]] = []
-    repaired: list[tuple[str, str, str]] = []
-    if not isinstance(existing, dict):
-        return merged, preserved, repaired
-
-    generated_commands = {
-        cmd
-        for entries in generated.values()
-        for entry in entries
-        if isinstance(entry, dict)
-        for cmd in _entry_commands(entry)
-    }
-
-    for event, entries in existing.items():
-        if not isinstance(entries, list):
-            continue
-        for entry in entries:
-            if not isinstance(entry, dict):
-                continue
-            commands = _entry_commands(entry)
-            if not commands:
-                continue
-            if all(_is_harness_owned(cmd, binaries=binaries) for cmd in commands):
-                continue
-            # Already emitted this run — the tool's own installer wrote it and
-            # config declares it too. Keeping both would run the hook twice.
-            if all(cmd in generated_commands for cmd in commands):
-                continue
-            fixed, fixes = _normalize_entry(entry)
-            for fix in fixes:
-                repaired.append((event, fix, commands[0]))
-            merged.setdefault(event, []).append(fixed)
-            preserved.append((event, commands[0]))
-
-    return merged, preserved, repaired
-
-
-def deploy_hooks(cfg: Config, *, only: str | None = None) -> None:
-    """Generate agent-native hook config for each profile.
-
-    `only` narrows the loop to one profile; `None` is every profile.
-    """
-    from lazy_harness.agents.base import HookEntry
-    from lazy_harness.agents.registry import get_agent
     from lazy_harness.deploy.defaults import merge_with_defaults
     from lazy_harness.hooks.loader import resolve_script_names
 
-    agent = get_agent(cfg.agent.type)
+    effective = merge_with_defaults(cfg.hooks, agent_for_profile(cfg, profile))
 
-    effective = merge_with_defaults(cfg.hooks, agent)
+    entries: dict[str, list[HookEntry]] = {}
+    for event_name, script_names in effective.items():
+        if not script_names:
+            continue
+        hooks = resolve_script_names(script_names, event=event_name)
+        if not hooks:
+            continue
+        entries[event_name] = [
+            HookEntry(
+                command=hook_command(hook, profile=profile, binary=binary),
+                matcher=hook.matcher,
+            )
+            for hook in hooks
+        ]
 
-    def entries_for(profile: str, binary: str) -> dict[str, list[str | HookEntry]]:
-        """The hook entries one profile's settings file gets.
+    for event_name, event_cfg in cfg.hooks.items():
+        for ext in event_cfg.external:
+            entries.setdefault(event_name, []).append(
+                HookEntry(command=ext.command, matcher=ext.matcher)
+            )
+    return entries
 
-        Built per profile because `hook_command` names the profile and takes its
-        binary: a single shared list would deploy every profile's hooks under
-        whichever one happened to be generated first.
-        """
-        hook_entries: dict[str, list[str | HookEntry]] = {}
-        for event_name, script_names in effective.items():
-            if not script_names:
-                continue
-            hooks = resolve_script_names(script_names, event=event_name)
-            if hooks:
-                entries: list[str | HookEntry] = []
-                for hook in hooks:
-                    command = hook_command(hook, profile=profile, binary=binary)
-                    if hook.matcher is not None:
-                        entries.append(HookEntry(command=command, matcher=hook.matcher))
-                    else:
-                        entries.append(command)
-                hook_entries[event_name] = entries
 
-        # Third-party commands declared in config are emitted to every profile,
-        # so a tool's hooks stop depending on which profile its installer
-        # happened to run against. Appended after the harness scripts, including
-        # on events whose scripts list is empty.
-        for event_name, event_cfg in cfg.hooks.items():
-            for ext in event_cfg.external:
-                hook_entries.setdefault(event_name, []).append(
-                    HookEntry(command=ext.command, matcher=ext.matcher)
-                )
-        return hook_entries
+def _planner_for(cfg: Config, profile: str) -> ConfigPlanner:
+    """The profile's adapter, refused unless it can plan its own config.
 
-    # Whether there is anything to deploy does not depend on the profile: the
-    # profile decides what each command says, not which hooks resolve.
-    if not entries_for("", DEFAULT_HARNESS_BINARY):
-        click.echo("  No hooks to deploy.")
+    Refused here rather than mid-deploy, which is what the `ConfigPlanner`
+    docstring asks for: `deploy_config` resolves every selected profile's planner
+    before it writes anything, so a config naming one adapter that cannot plan
+    does not leave the other profiles half-deployed.
+    """
+    agent = agent_for_profile(cfg, profile)
+    if not isinstance(agent, ConfigPlanner):
+        raise ConfigPlannerRequiredError(profile, agent.name())
+    return agent
+
+
+def _report_lines(label: str, items: list[str]) -> None:
+    """Render one diagnostic group.
+
+    Column width and truncation live here, not in the adapter: the adapter emits
+    flat `"<label>: <detail>"` strings and knows nothing about a terminal.
+    """
+    for item in items:
+        head, _, detail = item.partition(": ")
+        click.echo(f"      {head:<20} {detail[:60]}")
+
+
+def _apply(op: WriteOp, target_dir: Path, profile: str) -> None:
+    """Perform one planned write or delete, and report what the plan diagnosed."""
+    path = target_dir / op.relative_path
+    label = f"{profile}/{op.relative_path}"
+
+    if op.repaired:
+        # The backup is I/O, so it is the engine's; the adapter only reports the
+        # repair. Claude Code discards the whole settings file on one bad field,
+        # so the pre-merge bytes are worth keeping even though the merge fixed it.
+        if path.is_file():
+            path.with_suffix(path.suffix + ".bak").write_text(path.read_text())
+        click.echo(
+            f"  ⚠  {label}: repaired {len(op.repaired)} "
+            f"{_plural(len(op.repaired), 'entry', 'entries')} the agent would reject "
+            f"(the whole file is discarded on one bad field); "
+            f"backup saved to {path.name}.bak."
+        )
+        _report_lines("repaired", op.repaired)
+
+    if op.preserved:
+        click.echo(
+            f"  ·  {label}: preserved {len(op.preserved)} "
+            f"{_plural(len(op.preserved), 'entry', 'entries')} not managed by the harness."
+        )
+        _report_lines("preserved", op.preserved)
+
+    if op.dropped:
+        click.echo(
+            f"  ·  {label}: dropped {len(op.dropped)} harness "
+            f"{_plural(len(op.dropped), 'entry', 'entries')} no longer generated."
+        )
+        _report_lines("dropped", op.dropped)
+
+    if op.artifact is None:
+        if path.exists():
+            path.unlink()
+            click.echo(f"  ✓ {label} (removed — no longer generated)")
         return
 
-    for name, entry in selected_profiles(cfg, only).items():
-        binary = binary_for_profile(cfg, name)
-        agent_hooks = agent.generate_hook_config(entries_for(name, binary))
+    # Written verbatim. Producing the text is the adapter's half of decision 4;
+    # reserialising it here would be the engine learning the format again.
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(op.artifact.content)
+    click.echo(f"  ✓ {label}")
+
+
+def deploy_config(cfg: Config, *, only: str | None = None) -> None:
+    """Deploy every profile's native config documents: discover, read, plan, apply.
+
+    The cycle decision 4 of the 2026-09-13 multi-agent design prescribes. The
+    adapter names its targets and merges them; the engine reads, writes, deletes
+    and prints. One `plan_config` call per profile, so an adapter whose hooks and
+    MCP servers share a file emits a single write for it and cannot overwrite its
+    own earlier result.
+
+    `only` narrows it to one profile through `selected_profiles`, exactly as the
+    other deploy steps are narrowed.
+    """
+    profiles = selected_profiles(cfg, only)
+    # Resolved for every selected profile before the first write: an adapter that
+    # cannot plan is a refusal, not a partial deploy.
+    planners = {name: _planner_for(cfg, name) for name in profiles}
+
+    servers = _collect_mcp_servers(cfg)
+
+    for name, entry in profiles.items():
+        planner = planners[name]
         target_dir = expand_path(entry.config_dir)
-        target_dir.mkdir(parents=True, exist_ok=True)
-        settings_file = target_dir / "settings.json"
+        binary = binary_for_profile(cfg, name)
 
-        settings: dict = {}
-        existing_raw = ""
-        if settings_file.is_file():
-            existing_raw = settings_file.read_text()
-            try:
-                settings = json.loads(existing_raw)
-            except json.JSONDecodeError:
-                settings = {}
+        existing = {
+            target: (target_dir / target).read_text()
+            for target in planner.config_targets()
+            if (target_dir / target).is_file()
+        }
 
-        if not isinstance(settings, dict):
-            settings = {}
-        existing_hooks = settings.get("hooks", {})
-        merged, preserved, repaired = _merge_hook_blocks(
-            existing_hooks, agent_hooks, binaries=_owned_binaries(settings, binary)
+        ops = planner.plan_config(
+            _hook_entries_for(cfg, name, binary), servers, existing, binary=binary
         )
+        if not ops:
+            click.echo(f"  · {name}: nothing to deploy.")
+            continue
 
-        if repaired:
-            backup = settings_file.with_suffix(".json.bak")
-            backup.write_text(existing_raw)
-            click.echo(
-                f"  ⚠  {name}/settings.json: repaired {len(repaired)} hook "
-                f"{_plural(len(repaired), 'entry', 'entries')} Claude Code would reject "
-                f"(the whole file is discarded on one bad field); "
-                f"backup saved to {backup.name}."
-            )
-            for event, fix, cmd in repaired:
-                click.echo(f"      {event:<20} {fix}   {cmd[:60]}")
+        target_dir.mkdir(parents=True, exist_ok=True)
+        for op in ops:
+            _apply(op, target_dir, name)
 
-        if preserved:
-            click.echo(
-                f"  ·  {name}/settings.json: preserved {len(preserved)} hook "
-                f"{_plural(len(preserved), 'entry', 'entries')} not managed by the harness."
-            )
-            for event, cmd in preserved:
-                click.echo(f"      {event:<20} {cmd[:60]}")
 
-        # Decision 9 (2026-09-13 multi-agent blast radius design): the
-        # managed section declares the version that wrote it, so a reader can
-        # tell a settings.json newer than the running binary apart from a
-        # stale one — see `lazy_harness.core.artifact_version`.
-        #
-        # Written at the document's top level, not inside the hooks block.
-        # Measured directly (a `PreToolUse` hook that denies with a unique
-        # reason string, fired via `claude -p` against a real settings file):
-        # Claude Code parses and honours a settings file carrying an unknown
-        # top-level key exactly as it does one carrying the same key inside
-        # `hooks` — both are tolerated, so that axis does not decide it.
-        # `settings["hooks"]` does: it is a `{event: [entry, ...]}` contract,
-        # and every generic reader of that shape (this repo's own
-        # `_harness_entry_count` test helper included) iterates every value
-        # as a list of entries — a scalar there breaks the harness's own
-        # readers first, which is exactly what smuggling this in as
-        # `merged["lh_version"]` did. The version of the document is a
-        # property of the document, not a hook entry, so it is written next
-        # to `hooks`, not inside it.
-        settings["lh_version"] = __version__
-        # Declared, not inferred: the next deploy asks the file which launcher
-        # wrote these commands instead of asking the config which launchers it
-        # currently names. Retiring a binary from the config must not turn the
-        # harness's own entries into another tool's.
-        settings[SETTINGS_BINARY_KEY] = binary
-        settings["hooks"] = merged
-        settings_file.write_text(json.dumps(settings, indent=2) + "\n")
-        click.echo(f"  ✓ {name}/settings.json (hooks updated)")
+def deploy_hooks(cfg: Config, *, only: str | None = None) -> None:
+    """Deploy only the hook half of each profile's config.
+
+    A narrowing of `deploy_config`, kept because the byte-identity acceptance
+    test for the `ConfigPlanner` move is written against this entry point. Every
+    planner treats an empty `servers` as "no MCP document to write", so this
+    reaches exactly the files hooks live in.
+    """
+    _deploy_config_subset(cfg, only=only, hooks=True, servers=False)
 
 
 def _collect_mcp_servers(cfg: Config) -> dict[str, dict]:
@@ -453,43 +351,45 @@ def _collect_mcp_servers(cfg: Config) -> dict[str, dict]:
 
 
 def deploy_mcp_servers(cfg: Config, *, only: str | None = None) -> None:
-    """Write detected MCP server entries into each profile's agent MCP config file.
+    """Deploy only the MCP half of each profile's config.
 
-    `only` narrows the loop to one profile; `None` is every profile.
+    The counterpart of `deploy_hooks`, and kept for the same reason.
     """
-    from lazy_harness.agents.registry import get_agent
+    _deploy_config_subset(cfg, only=only, hooks=False, servers=True)
 
-    servers = _collect_mcp_servers(cfg)
-    if not servers:
-        click.echo("  No MCP servers detected — nothing to deploy.")
-        return
 
-    agent = get_agent(cfg.agent.type)
-    mcp_file_name = agent.mcp_config_file()
-    if not mcp_file_name:
-        click.echo("  Agent does not use a separate MCP config file — skipping.")
-        return
+def _deploy_config_subset(cfg: Config, *, only: str | None, hooks: bool, servers: bool) -> None:
+    """Run the cycle with one half of the inputs blanked out.
 
-    mcp_block = agent.generate_mcp_config(servers)
+    Blanking an input rather than filtering the resulting ops is what makes the
+    two halves independent: a planner asked to plan with no hooks returns no
+    settings write at all, which is not the same as a write of an empty hooks
+    block — the latter would uninstall every foreign entry on a profile that
+    configures no harness hooks.
+    """
+    profiles = selected_profiles(cfg, only)
+    planners = {name: _planner_for(cfg, name) for name in profiles}
+    detected = _collect_mcp_servers(cfg) if servers else {}
 
-    for name, entry in selected_profiles(cfg, only).items():
+    for name, entry in profiles.items():
+        planner = planners[name]
         target_dir = expand_path(entry.config_dir)
+        binary = binary_for_profile(cfg, name)
+
+        existing = {
+            target: (target_dir / target).read_text()
+            for target in planner.config_targets()
+            if (target_dir / target).is_file()
+        }
+        entries = _hook_entries_for(cfg, name, binary) if hooks else {}
+
+        ops = planner.plan_config(entries, detected, existing, binary=binary)
+        if not ops:
+            continue
+
         target_dir.mkdir(parents=True, exist_ok=True)
-        mcp_config_file = target_dir / mcp_file_name
-
-        existing: dict = {}
-        if mcp_config_file.is_file():
-            try:
-                existing = json.loads(mcp_config_file.read_text())
-            except json.JSONDecodeError:
-                pass
-
-        existing_mcp = existing.get("mcpServers", {})
-        existing_mcp.update(mcp_block.get("mcpServers", {}))
-        existing["mcpServers"] = existing_mcp
-
-        mcp_config_file.write_text(json.dumps(existing, indent=2) + "\n")
-        click.echo(f"  ✓ {name}/{mcp_file_name} (MCP servers: {', '.join(servers)})")
+        for op in ops:
+            _apply(op, target_dir, name)
 
 
 def deploy_claude_symlink(cfg: Config, *, only: str | None = None) -> None:

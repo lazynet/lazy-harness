@@ -17,10 +17,10 @@ from lazy_harness.core.backups import (
 from lazy_harness.core.config import Config, ConfigError, load_config
 from lazy_harness.core.paths import config_file
 from lazy_harness.deploy.engine import (
+    ConfigPlannerRequiredError,
     UnknownProfileError,
     deploy_claude_symlink,
-    deploy_hooks,
-    deploy_mcp_servers,
+    deploy_config,
     deploy_profiles,
     selected_profiles,
 )
@@ -59,12 +59,11 @@ def _run_deploy(cfg: Config, only: str | None = None) -> None:
     deploy_profiles(cfg, only=only)
     click.echo()
 
-    click.echo("Deploying hooks:")
-    deploy_hooks(cfg, only=only)
-    click.echo()
-
-    click.echo("Deploying MCP servers:")
-    deploy_mcp_servers(cfg, only=only)
+    # One step, not two: hooks and MCP servers are planned together so an
+    # adapter whose documents overlap writes each of them once (decision 4,
+    # 2026-09-13 multi-agent design).
+    click.echo("Deploying agent config:")
+    deploy_config(cfg, only=only)
     click.echo()
 
     click.echo("Setting up ~/.claude symlink:")
@@ -142,4 +141,8 @@ def deploy(snapshot_only: bool, rollback: bool, profile: str | None) -> None:
     if snapshot_only:
         return
 
-    _run_deploy(cfg, profile)
+    try:
+        _run_deploy(cfg, profile)
+    except ConfigPlannerRequiredError as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1) from e
