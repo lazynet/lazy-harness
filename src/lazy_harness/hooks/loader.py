@@ -213,3 +213,15 @@ def resolve_hooks_for_event(
     if not event_cfg:
         return []
     return resolve_script_names(event_cfg.scripts, user_hooks_dir, event)
+
+
+def builtin_signals(name: str) -> frozenset[Signal]:
+    """Transcript signals a builtin declares, empty for anything unregistered.
+
+    The read side of `BuiltinHookSpec.signals`, so callers stop reaching into
+    `_BUILTIN_HOOKS`. A user hook resolves to the empty set rather than an
+    error: nothing outside the registry declares signals, and a caller asking
+    "what does this hook need" wants that answer, not an exception.
+    """
+    spec = _BUILTIN_HOOKS.get(name)
+    return spec.signals if spec is not None else frozenset()

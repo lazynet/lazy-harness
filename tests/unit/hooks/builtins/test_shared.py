@@ -6,6 +6,8 @@ import os
 import time
 from pathlib import Path
 
+import pytest
+
 
 def test_make_log_writes_prefixed_line_and_creates_parents(tmp_path: Path) -> None:
     from lazy_harness.hooks.builtins._shared import make_log
@@ -517,3 +519,28 @@ def test_transcript_reader_rejects_an_adapter_that_only_half_implements_it(
     )
 
     assert transcript_reader("lazy") is None
+
+
+def test_transcript_reader_uses_an_injected_config_instead_of_the_file_on_disk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`lh doctor` has already loaded a config; a second read could disagree."""
+    from lazy_harness.agents.base import Signal
+    from lazy_harness.core.config import Config, ProfileEntry
+    from lazy_harness.core.paths import config_file as real_config_file
+    from lazy_harness.hooks.builtins._shared import transcript_reader
+
+    def _refuse() -> object:
+        raise AssertionError("transcript_reader re-read config.toml despite an injected cfg")
+
+    monkeypatch.setattr("lazy_harness.core.paths.config_file", _refuse)
+    assert real_config_file is not None
+
+    cfg = Config()
+    cfg.agent.type = "null"
+    cfg.profiles.items = {"p1": ProfileEntry(config_dir="~/.agent-p1", agent="claude-code")}
+
+    reader = transcript_reader("p1", cfg)
+
+    assert reader is not None
+    assert Signal.GOAL_STATUS in reader.signals()

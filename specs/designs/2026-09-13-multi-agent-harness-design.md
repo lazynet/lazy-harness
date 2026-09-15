@@ -1422,6 +1422,15 @@ against a version that will not ship.
 > | 4 — **contract gate: a throwaway `CodexAdapter` runs those three hooks** | next | — |
 > | 5 to 12 | not started | — |
 >
+> Step 4's two displaced prerequisites are tracked here rather than in the
+> step text, which is not edited as things land: per-profile agent
+> resolution arrived with step 3, and the `lh doctor` line naming each
+> deployed hook's missing signals — the half of step 10 the gate cannot be
+> performed without — landed ahead of the gate as
+> `monitoring/hook_signals.py`. It reports the *signal* state only; an event
+> absent from `hook_events()` is skipped rather than relabelled, and stays
+> step 10's to surface.
+>
 > The steps below are the plan as written, not a record of what happened, and
 > nothing in them is edited as they land. Two places where that distinction
 > already bit a reader are called out inline: the mtime/size abort in decision 4
