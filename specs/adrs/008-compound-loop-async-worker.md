@@ -36,7 +36,8 @@ Split the compound loop into **a fast synchronous producer (the hook) and a slow
 > adapter's own environment variable wins if set (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, …), and
 > otherwise the adapter's global fallback applies. `core/paths.py` (`agent_runtime_dir`) is the
 > source of truth. The spellings below are what a single-profile Claude Code install with no
-> environment override resolves to; under any other combination they differ. Routing these two
+> environment override resolves to; under any other combination they may differ — an override can
+> also happen to name the same directory. Routing these two
 > through the invoked profile is open work, tracked in `specs/backlog.md`.
 
 - **Producer — `src/lazy_harness/hooks/builtins/compound_loop.py`.** Runs inside Claude Code's `Stop` hook. All it does:
