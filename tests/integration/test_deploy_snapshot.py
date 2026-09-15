@@ -234,3 +234,132 @@ def test_two_deploys_in_the_same_second_keep_separate_snapshots(home_dir: Path) 
     assert runner.invoke(cli, ["deploy", "--snapshot"]).exit_code == 0
 
     assert len(_snapshots(home_dir)) == 2
+
+
+@pytest.fixture
+def mixed_agents(home_dir: Path) -> Config:
+    """The default profile overrides the agent; the second inherits the global.
+
+    The override is the only shape under which the two readers can disagree —
+    without one, `get_agent(cfg.agent.type)` and `agent_for_profile` return the
+    same adapter and every assertion below holds for the wrong reason.
+    """
+    profiles_src = config_dir() / "profiles"
+    for name in ("lazy", "flex"):
+        src = profiles_src / name
+        src.mkdir(parents=True)
+        (src / "CLAUDE.md").write_text(f"# {name}\n")
+    cfg = Config(
+        harness=HarnessConfig(version="1"),
+        profiles=ProfilesConfig(
+            default="lazy",
+            items={
+                "lazy": ProfileEntry(config_dir=str(home_dir / ".claude-lazy"), agent="codex"),
+                "flex": ProfileEntry(config_dir=str(home_dir / ".claude-flex")),
+            },
+        ),
+        hooks={},
+    )
+    cfg.agent.type = "claude-code"
+    return cfg
+
+
+def test_the_snapshot_reads_the_agent_per_profile_like_the_deploy(
+    home_dir: Path, mixed_agents: Config
+) -> None:
+    """The override profile's MCP target comes from its own adapter.
+
+    `CodexAdapter.mcp_config_file()` is `""`, so the profile that declares it
+    owns no MCP document, while the profile that inherits `[agent].type` still
+    owns `.claude.json`. Resolving the global agent once above the loop gives
+    the overriding profile the other adapter's file — a rollback that restores
+    or deletes an artifact the deploy never wrote.
+    """
+    from lazy_harness.agents.registry import get_agent
+
+    global_mcp = get_agent("claude-code").mcp_config_file()
+    targets = set(snapshot_targets(mixed_agents))
+
+    assert home_dir / ".claude-flex" / global_mcp in targets
+    assert home_dir / ".claude-lazy" / global_mcp not in targets
+
+
+def test_the_global_link_follows_the_default_profiles_agent(
+    home_dir: Path, mixed_agents: Config
+) -> None:
+    """`CodexAdapter.global_config_link()` is `None` — a refusal to own one.
+
+    The link belongs to the default profile, so the adapter asked for it is that
+    profile's. Asking `[agent].type` snapshots `~/.claude` on a machine whose
+    default profile runs an agent that never touches it.
+    """
+    from lazy_harness.agents.registry import get_agent
+
+    global_link = get_agent("claude-code").global_config_link()
+    assert global_link is not None, "the global agent must own a link, or this proves nothing"
+
+    assert global_link not in set(snapshot_targets(mixed_agents))
+
+
+def test_an_overridden_agent_keeps_snapshot_and_deploy_in_agreement(
+    home_dir: Path, mixed_agents: Config
+) -> None:
+    """Both readers invoked for real, under the override, and compared.
+
+    The pre-existing agreement test runs a config with no override, so it passes
+    with and without per-profile resolution. This one does not.
+
+    The reverse direction is asserted over the overriding profile's directory
+    alone. Elsewhere a target may be legitimately absent — the manifest records
+    `kind: "absent"` precisely so a rollback deletes what a first deploy created
+    — and whether `.claude.json` is written at all depends on which MCP binaries
+    the machine has, which would make the assertion pass on a developer's laptop
+    and fail on a runner. Under the override there is no such slack: the Codex
+    profile's hooks document is written on every deploy, and anything else the
+    snapshot claims for that directory came from the wrong adapter.
+    """
+    overridden = home_dir / ".claude-lazy"
+    before = _artifacts(home_dir)
+    targets = set(snapshot_targets(mixed_agents))
+
+    _run_deploy(mixed_agents)
+
+    written = _artifacts(home_dir) - before
+    assert written, "the deploy wrote nothing; the assertion below would be vacuous"
+    assert written <= targets, (
+        "the deploy writes artifacts the snapshot would not capture: "
+        f"{sorted(str(p) for p in written - targets)}"
+    )
+
+    claimed = {p for p in targets if p.parent == overridden}
+    assert claimed, "no target under the overriding profile; the assertion below is vacuous"
+    assert claimed <= written, (
+        "the snapshot claims artifacts of the overriding profile that its own "
+        f"agent never writes: {sorted(str(p) for p in claimed - written)}"
+    )
+
+
+def test_a_profile_whose_agent_cannot_plan_contributes_no_config_target(
+    home_dir: Path,
+) -> None:
+    """`config_targets()` is `ConfigPlanner`'s, not every adapter's.
+
+    `NullAdapter` is the shipped sentinel for an agent that plans nothing. Asking
+    it for its targets is an `AttributeError` on a duck-typed collaborator, and
+    inventing `settings.json` for it would snapshot a path no deploy can write.
+    """
+    profiles_src = config_dir() / "profiles"
+    (profiles_src / "void").mkdir(parents=True)
+    (profiles_src / "void" / "CLAUDE.md").write_text("# void\n")
+    cfg = Config(
+        harness=HarnessConfig(version="1"),
+        profiles=ProfilesConfig(
+            default="void",
+            items={"void": ProfileEntry(config_dir=str(home_dir / ".void"), agent="null")},
+        ),
+        hooks={},
+    )
+
+    targets = snapshot_targets(cfg)
+
+    assert targets == [home_dir / ".void" / "CLAUDE.md"]

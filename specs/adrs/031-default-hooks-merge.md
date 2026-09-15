@@ -103,6 +103,44 @@ when declared. Fixed alongside the default-set work.
   on older deploys who relied on it being a no-op may see the hook fire
   for the first time on their next `lh deploy`; behaviour is fail-soft.
 
+## Evolution
+
+**2026-09-15 (0.67.0, PR #295): the effective set is no longer the merge.**
+The formula under **Decision** still describes the merge, but the merge is now
+the first of two stages, not the whole answer. `_hook_entries_for`
+(`deploy/engine.py`) computes `effective` exactly as written above and then
+drops every script whose declared `Signal`s the *profile's agent* cannot
+deliver, asking `gaps_for_profile` (`hooks/signal_gaps.py`) — the same reader
+`lh doctor` reports from, so the two cannot drift. The effective set is
+therefore
+
+    entries[event] = [
+        script for script in effective[event]
+        if (event, script) not in gaps_for_profile(cfg, profile)
+    ]
+
+This narrows an override, which the original decision did not contemplate: a
+user who declares `stop-verify-guard` explicitly in
+`[hooks.session_stop].scripts` does **not** get it deployed on an agent that
+supplies no `GOAL_STATUS`. "User declarations override per-event" now means
+they override the *defaults*, not the agent's capabilities.
+
+What keeps this from being a silent drop — the failure mode this ADR exists to
+prevent — is that the omission is printed, by name and with its reason:
+
+    · stop-verify-guard omitted in 'throwaway': agent 'codex' does not deliver goal_status
+
+That is the whole distinction from the 2026-04-17 incident. There the hooks
+vanished from a deployed profile with no output at all; here the deploy names
+every hook it left out and why, on the run that leaves it out. The alternative
+was worse than either: `stop-verify-guard` deployed to an agent with no goal
+marker finds nothing to verify, concludes there is nothing to do and passes —
+green because it cannot fail. `BuiltinHookSpec.signals` exists so that a hook
+which cannot work is refused rather than trusted.
+
+See [ADR-041](041-multi-agent-hook-contract.md) property 2 for the contract this
+implements.
+
 ## Implementation
 
 Tracked in `specs/plans/2026-05-21-deploy-hook-defaults-plan.md` and

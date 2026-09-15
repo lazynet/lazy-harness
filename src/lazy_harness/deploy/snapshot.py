@@ -81,20 +81,30 @@ def snapshot_targets(cfg: Config, *, only: str | None = None) -> list[Path]:
     """Every path a deploy owns, derived once so the rollback cannot miss one.
 
     Mirrors what `deploy/engine.py` writes: the per-profile symlinks named by
-    the profile source tree, each profile's `settings.json` and MCP config, and
-    the agent's global config link. An integration test invokes this and a real
+    the profile source tree, each profile's native config documents, and the
+    agent's global config link. An integration test invokes this and a real
     deploy and asserts they agree — two readers of one config-derived answer.
+
+    Both halves resolve the agent exactly as the deploy does, and the agent is
+    per profile. `deploy_config` asks each profile's own planner for
+    `config_targets()`, and `deploy_claude_symlink` asks the *default* profile's
+    adapter for the link, because the link and its target both belong to that
+    profile. Reading `[agent].type` once above the loop instead — which this did
+    until ADR-041's `they must move together` was closed — hands a profile
+    declaring `agent = "codex"` the other adapter's documents: `.claude.json` and
+    `~/.claude` snapshotted although `CodexAdapter` answers `""` and `None`, and
+    the `hooks.json` it really writes missed. A rollback then restores or deletes
+    artifacts the deploy never wrote, and leaves the one it did.
 
     `only` narrows it the same way `lh deploy --profile <name>` narrows the
     deploy, through the same `selected_profiles` and `deploys_global_link`, so
     the two readers stay one answer under narrowing too.
     """
-    from lazy_harness.agents.registry import get_agent
+    from lazy_harness.agents.base import ConfigPlanner
+    from lazy_harness.agents.registry import agent_for_profile
     from lazy_harness.core.paths import config_dir, expand_path
     from lazy_harness.deploy.engine import deploys_global_link, selected_profiles
 
-    agent = get_agent(cfg.agent.type)
-    mcp_file_name = agent.mcp_config_file()
     profiles_src = config_dir() / "profiles"
 
     targets: list[Path] = []
@@ -103,11 +113,15 @@ def snapshot_targets(cfg: Config, *, only: str | None = None) -> list[Path]:
         src_dir = profiles_src / name
         if src_dir.is_dir():
             targets.extend(target_dir / item.name for item in sorted(src_dir.iterdir()))
-        targets.append(target_dir / "settings.json")
-        if mcp_file_name:
-            targets.append(target_dir / mcp_file_name)
+        agent = agent_for_profile(cfg, name)
+        # An adapter that cannot plan writes no config document, so it owns
+        # none. The deploy refuses such a profile outright; the snapshot only
+        # has to not invent targets for it.
+        if isinstance(agent, ConfigPlanner):
+            targets.extend(target_dir / relative for relative in agent.config_targets())
 
-    link_path = agent.global_config_link()
+    default_agent = agent_for_profile(cfg, cfg.profiles.default)
+    link_path = default_agent.global_config_link()
     if link_path is not None and deploys_global_link(cfg, only):
         targets.append(link_path)
 

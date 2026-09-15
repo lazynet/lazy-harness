@@ -16,7 +16,7 @@ The pre-commit gate defined in [`CLAUDE.md`](https://github.com/lazynet/lazy-har
 - [x] Rewrite `tests/unit/test_version.py` to compare `pyproject.toml` and `src/lazy_harness/__init__.py` against each other (no hardcoded expected value).
 - [x] Resolve 23 preexisting `ruff check src tests` findings — auto-fix the fixable, justify or exclude the rest.
 - [x] Make the pre-commit gate green on `main` and keep it green.
-- [x] Add a GitHub Actions workflow that runs `pytest` and `ruff` on every PR and blocks merge on failure. Enforced by [`tests.yml`](https://github.com/lazynet/lazy-harness/blob/main/.github/workflows/tests.yml) across four OS/Python combinations, alongside the docs build in [`docs.yml`](https://github.com/lazynet/lazy-harness/blob/main/.github/workflows/docs.yml).
+- [x] Add a GitHub Actions workflow that runs the gate on every PR and blocks merge on failure. All four checks are enforced: [`tests.yml`](https://github.com/lazynet/lazy-harness/blob/main/.github/workflows/tests.yml) runs `pytest`, `ruff check` and `ruff format --check` across four OS/Python combinations and builds the docs with `mkdocs build --strict` in a `docs` job of its own — [`docs.yml`](https://github.com/lazynet/lazy-harness/blob/main/.github/workflows/docs.yml) publishes the site on push to `main` and never sees a pull request, so the fourth check has to live here.
 
 ## Theme 2 — Knowledge pipeline maturity
 
@@ -55,7 +55,7 @@ The contract is **not** frozen until a second, non-identity adapter has run agai
 - [x] **Move config merging behind the adapter.** Released in 0.65.0 — the adapter names the documents it owns and returns merged text; the deploy engine only discovers, reads, plans once per profile, and writes. `lh deploy --profile <name>` lands with it, so a single profile can be deployed without touching the others.
 - [ ] **Run the contract gate against a throwaway second adapter.** Three hooks, end to end, against a disposable profile — observing that a hook fires, that a blocking hook actually refuses, and that a hook whose required signal the second agent does not supply is reported as unsupported rather than deployed. Anything the contract cannot express gets fixed here, while three hooks depend on it instead of eighteen. **This is the gate**: the remaining items do not start until it runs, and ADR-041 does not move to `accepted` until it passes.
 - [ ] Migrate the remaining fifteen builtins onto the contract, each declaring the operations it covers and the signals it needs.
-- [ ] Make agent selection per profile throughout. Two readers under `deploy/` and the rest of the codebase still resolve one global setting; they move together, because a snapshot that resolves the agent differently from the deploy is a rollback that misses an artifact.
+- [ ] Make agent selection per profile throughout. Both readers under `deploy/` now resolve it per profile — the global symlink in 0.67.0 and the deploy snapshot alongside it — so the remaining work is the rest of the codebase, which still reads one global setting. The pair moved early because they answer one question between them: a snapshot that resolves the agent differently from the deploy is a rollback that misses an artifact.
 - [ ] Ship a real second adapter, replacing the throwaway, with its trust and capability state reported by `lh doctor`.
 
 ## Closed themes

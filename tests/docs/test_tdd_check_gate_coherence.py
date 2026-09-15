@@ -2,8 +2,9 @@
 
 `.claude/commands/tdd-check.md` is the gate. Five other surfaces describe it —
 `CLAUDE.md` mandates it, `CONTRIBUTING.md` spells it out for contributors, the
-PR template asks a human to tick it off, and CI enforces it — and each one is a
-separate place to forget a check.
+PR template asks a human to tick it off, CI enforces it, and `docs/roadmap.md`
+names it as the floor Theme 1 builds on — and each one is a separate place to
+forget a check.
 
 A gate that only runs locally is a convention, not a gate: the next PR that
 never runs `/tdd-check` reintroduces whatever it was meant to catch. So the
@@ -28,6 +29,7 @@ CLAUDE_MD = REPO_ROOT / "CLAUDE.md"
 CONTRIBUTING = REPO_ROOT / "CONTRIBUTING.md"
 PR_TEMPLATE = REPO_ROOT / ".github/PULL_REQUEST_TEMPLATE.md"
 TESTS_WORKFLOW = REPO_ROOT / ".github/workflows/tests.yml"
+ROADMAP = REPO_ROOT / "docs/roadmap.md"
 
 _CHECK_HEADING = re.compile(r"^## (?P<n>\d+)\. (?P<title>.+)$", re.MULTILINE)
 
@@ -46,6 +48,16 @@ _CONTRIBUTING_COUNT = re.compile(r"All (?P<word>\w+) must pass with pristine out
 # `uv run` flags that swallow the token after them, so stripping the runner
 # prefix does not eat the tool name.
 _VALUE_FLAGS = {"--group", "--python"}
+
+# Paths the gate commands pass to their tools. Prose naming the check names the
+# tool and its mode, not the trees it is pointed at.
+_PATH_ARGS = {"src", "tests", "."}
+
+# The one roadmap sentence that enumerates the gate. Anchored rather than
+# searched for across the page: the roadmap names the gate twice, so a
+# whole-file grep is satisfied by the *other* mention and a stale enumeration
+# here survives it — measured, by mutating this line and watching the test pass.
+_ROADMAP_GATE = re.compile(r"^The pre-commit gate defined in .+?\.$", re.MULTILINE | re.DOTALL)
 
 
 def _gate_checks() -> list[str]:
@@ -78,6 +90,18 @@ def _tool_invocation(command: str) -> str:
         if flag in _VALUE_FLAGS and rest:
             rest.pop(0)
     return " ".join(rest)
+
+
+def _tool_phrase(command: str) -> str:
+    """The tool and its mode, with the runner prefix and path arguments gone.
+
+    `uv run --frozen ruff format --check src tests` reduces to
+    `ruff format --check`. Prose that names a check names it this way — the
+    roadmap says what runs, not which trees it is pointed at — so the phrase is
+    derived rather than restated, and a fifth check appears here for free.
+    """
+    tokens = [t for t in _tool_invocation(command).split() if t not in _PATH_ARGS]
+    return " ".join(tokens)
 
 
 def test_the_gate_headings_are_actually_found() -> None:
@@ -143,3 +167,21 @@ def test_ci_enforces_every_gate_command() -> None:
         if invocation not in body
     ]
     assert not missing, f"tests.yml runs no step for: {missing}"
+
+
+def test_the_roadmap_names_every_gate_check() -> None:
+    """`docs/roadmap.md` calls the gate the floor every other change builds on.
+
+    It is the one surface of the five that enforces nothing, which is exactly
+    why it was the one left uncovered: a stale enumeration here breaks no build
+    and contradicts the four that do. It has already gone stale once — the same
+    line named `ruff` where the gate runs two distinct ruff checks.
+    """
+    match = _ROADMAP_GATE.search(ROADMAP.read_text())
+    assert match is not None, "docs/roadmap.md no longer defines the pre-commit gate"
+    sentence = match.group(0)
+
+    missing = [
+        phrase for phrase in (_tool_phrase(c) for c in _gate_commands()) if phrase not in sentence
+    ]
+    assert not missing, f"the roadmap's gate sentence names no check for: {missing}"

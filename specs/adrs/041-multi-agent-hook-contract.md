@@ -77,16 +77,34 @@ Four properties matter more than the type list:
    once, above their own profile loop, so a per-profile agent could not take
    effect at all.
 
-   *Known exception, scheduled.* Two readers under `deploy/` still resolve the
-   global agent — `deploy_claude_symlink` (`deploy/engine.py:407`) and
-   `snapshot_targets` (`deploy/snapshot.py:96`), both reaching for
-   `global_config_link()` and `mcp_config_file()` off `get_agent(cfg.agent.type)`.
-   Neither is inside a per-profile loop, so neither reproduces the defect this
-   point describes; both are instances of the wider `cfg.agent.type` sweep that
-   step 6 of the implementation sequence owns, and they are deliberately not
-   fixed piecemeal. They must move together: they answer one question — which
-   agent's global link does this deploy own — and a snapshot resolving it
-   differently from the deploy is a rollback that misses the link.
+   *Known exception, now closed — the record of how it closed matters.* Two
+   readers under `deploy/` resolved the global agent off `get_agent(cfg.agent.type)`
+   — `deploy_claude_symlink` and `snapshot_targets` — reaching for
+   `global_config_link()` and `mcp_config_file()`. Neither sat inside a
+   per-profile loop, so neither reproduced the defect this point describes; both
+   were instances of the wider `cfg.agent.type` sweep that step 6 of the
+   implementation sequence owns, and this ADR deliberately deferred them. The
+   deferral carried one condition: **they must move together**, because they
+   answer one question — which agent's artifacts does this deploy own — and a
+   snapshot resolving it differently from the deploy is a rollback that misses
+   the link.
+
+   That condition was broken and then repaired, in that order, and the invariant
+   stands unamended because it was violated rather than made obsolete. #292 moved
+   `deploy_claude_symlink` alone, ahead of step 6, because step 4's gate needed
+   it: a Codex throwaway made the default profile repointed `~/.claude` — the
+   daily profile's own link — at the throwaway's Codex home, which is the blast
+   radius step 4 exists to avoid. For one release `snapshot_targets` was the last
+   reader of `[agent].type` under `deploy/`, and the divergence was live: a
+   default profile declaring `agent = "codex"` had `.claude.json` and `~/.claude`
+   snapshotted although `CodexAdapter` answers `""` and `None` for them, while the
+   `hooks.json` the deploy did write went uncaptured. #297 closed it — the
+   snapshot now resolves `agent_for_profile` per profile for config documents and
+   the default profile's adapter for the link, and an integration test invokes
+   both readers under an override and asserts they agree.
+
+   Step 6 still owns the sweep outside `deploy/`; what moved early is these two
+   readers and nothing else.
 4. **Permissions are not unified.** Each agent's permission model is expressed
    in its own terms. Attempting one cross-agent permission language would
    produce a translation that is wrong in exactly the cases that matter.
