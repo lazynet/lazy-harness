@@ -38,6 +38,7 @@ Two claims above no longer describe the code. The decision stands; its mechanism
 ### Evolution — 2026-09-15
 
 - **`generate_mcp_config` is no longer on the Protocol.** `plan_config` replaced it as the deploy surface (decision 4 of the 2026-09-13 multi-agent harness design): a `dict` return cannot express "N files in two formats". It survives as a private serialiser inside `ClaudeCodeAdapter` (`_generate_mcp_config`), called from `_plan_mcp`. The Decision above is kept as written; a new adapter implements `ConfigPlanner`, not this method.
+- **`ClaudeCodeAdapter` is not the only adapter any more.** The Consequence claiming it is predates `CodexAdapter` (`agents/codex.py`, registered as `codex` at step 4). MCP is out of scope for that throwaway on purpose: its `mcp_config_file()` returns `""` and its `plan_config` ignores `servers`, so nothing in this ADR's pipeline reaches it — the first adapter that has to translate an `mcpServers` entry is still unwritten.
 
 ## Alternatives considered
 
