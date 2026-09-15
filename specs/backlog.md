@@ -420,6 +420,29 @@ Arreglarlo requiere que la clasificación conozca los hooks configurados, o sea 
 
 **Condición de arranque:** cuando alguien reporte un hook de usuario corriendo dos veces, o junto con el step 5 (migración de los 15 builtins restantes), que ya toca esa zona.
 
+### Siete builtins unmigrated leakean su `hooks.log` al agente global
+
+Cerrado para los dos migrados que leakeaban: `pre-tool-use-security` (`_log_block`, vía `event.profile`) y `context-inject` (la línea de boot, cargando config antes de escribir). Quedan siete builtins que resuelven el directorio desde un `get_agent("claude-code")` hardcodeado, más el worker:
+
+- `session-export` (`:44` boot, `:59` post-config), `compound-loop` (`:62` boot, `:81` post-config), `session-end` (`:89` boot, `:107` post-config)
+- `pre-tool-use-memory-size` (`:170`), `pre-tool-use-read-size` (`:69`), `post-tool-use-format` (`:67`), `post-tool-use-ansible-lint` (`:140`)
+- `knowledge/compound_loop_worker.py:100` — mismo adapter hardcodeado, fuera del proceso del hook
+
+**Por qué no se arregló con los otros dos.** El dato existe y muere en el dispatch: `deploy/engine.py:136` emite `{binary} hook {name} --profile {profile}` para *todos* los builtins, pero `cli/hooks_cmd.py` llama `main_fn()` **sin argumentos** en la rama no-migrada. Ninguno de los siete tiene `event` ni profile en scope. Plumbearlo obliga a tocar esa rama transitoria, que el step 5 borra junto con `BuiltinHookSpec.migrated`.
+
+Descartadas dos salidas y por qué: introspeccionar la firma de `main()` contradice el docstring de `migrated` (*un chequeo de firma leería igual hoy y mentiría apenas un `main()` migrado crezca un default*); inventar un canal por env var agrega mecanismo a un camino condenado. Una tercera, `_shared.profile_name()`, arregla el `config_dir` y **no** el adapter — resuelve el agente vía el `cfg.agent.type` global en `_shared.py:160`, o sea hereda el mismo coupled reader un nivel más abajo.
+
+**Alcance real del agujero.** El gate del step 4 deployó solo los tres builtins migrados. Los quince restantes corren por la rama que asume el wire de Claude Code (`PRE_RUNNER_AGENT`, `loader.py`), así que no son deployables a un profile no-Claude de forma significativa: esto es trabajo **afuera** del contrato del step 4, no un hueco adentro. En un profile Claude Code el `CLAUDE_CONFIG_DIR` del subproceso tapa el bug; muerde cuando el agente del profile difiere del `[agent].type` global, o cuando la env var falta.
+
+**Dos cosas medidas que quien lo tome necesita:**
+
+1. En `compound-loop` y `session-end` la rama `enabled = false` **retorna antes** de la re-resolución post-config. Con compound loop apagado, el 100% de lo que esos dos escriben sale del directorio de boot — arreglar la primera línea ahí no arregla nada. Igual `session-export` en no-config y config roto.
+2. `compound_loop.py:67` hace `_rotate_log` sobre el archivo mal resuelto, y eso es escritura **truncante**, no append: no solo escribe en el profile equivocado, le trunca el log.
+
+Límite que no se cierra desde adentro del hook: con `cfg is None` no existe la tabla de profiles, así que el fallback global es correcto por construcción. El docstring de `agent_dir_for` (`_shared.py:235`) ya lo dice.
+
+**Condición de arranque:** con el step 5, que migra los quince builtins restantes a `main(event)` y borra la rama no-migrada. Antes no: cualquier arreglo parcial vive en código que ese step elimina.
+
 ## ADR decisions pending
 
 - ~~**Legacy ADR-010 Ollama backend**~~ — cerrado. Promovido por [ADR-033](adrs/033-llm-backend-abstraction.md) y hecho utilizable por [ADR-039](adrs/039-role-routed-inference.md) (ruteo por rol).
