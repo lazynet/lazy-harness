@@ -1433,7 +1433,7 @@ against a version that will not ship.
 ## Implementation sequence
 
 > **Status, 2026-09-15 — steps 0 to 3 are shipped; step 4 is partially shipped
-> and its gate has not run.**
+> and its gate has run and failed.**
 >
 > | Step | State | Released in |
 > |------|-------|-------------|
@@ -1447,9 +1447,16 @@ against a version that will not ship.
 > Step 4 is `in progress`, not `done`: the adapter and the Protocol cleanup
 > shipped, the gate did not. What landed is `agents/codex.py` registered as
 > `codex`, the two config generators off the Protocol, and the `lh doctor`
-> missing-signals line — the step's own note below carries the detail. The
-> three observations the gate consists of have not been made against a
-> throwaway profile, which is the whole of what `in progress` means here.
+> missing-signals line — the step's own note below carries the detail.
+>
+> **The gate ran on 2026-09-15 and failed.** Assertions A and B pass against a
+> throwaway Codex profile; assertion C does not, and the run surfaced three
+> production defects of one shape — an answer derived from the global agent
+> where the profile's agent is the source. They are fixed and their gate is in
+> *Verification gates* above. The step stays `in progress` regardless: the gate
+> has not *passed*, and assertion C turns on a design question — whether a
+> deploy should skip a hook whose declared signals the profile's agent cannot
+> deliver — that is not decided.
 >
 > Step 4's two displaced prerequisites are tracked here rather than in the
 > step text, which is not edited as things land: per-profile agent
@@ -1689,6 +1696,38 @@ ship broken while every test passes.
 - **A static list that should mirror the registry is derived from it.**
   `supported_hooks()` is `hook_events().keys()`, never a second literal, with a
   test asserting the two cannot diverge.
+- **An answer derived from the agent is derived from the *profile's* agent.**
+  `agent_for_profile()` landing does not retire `get_agent(cfg.agent.type)`;
+  every remaining reader is a path where a machine running two agents gets one
+  answer. Grep for the call and read each hit against the profile it serves. The
+  step 4 contract gate found three by running the paths, all with the same
+  shape and each failing differently:
+  - `hooks/runner.py:_adapter_for` resolved the global agent, so deploy wrote a
+    `agent = "codex"` profile's config in Codex's shape while the runner spoke
+    Claude Code's wire format into it — a top-level `systemMessage` and exit 2,
+    both of which `CodexAdapter.format_hook_output` documents it never emits. It
+    failed closed only because Codex happens to honour exit 2; on an agent that
+    ignores exit codes it is a security guard that reports blocking and does not
+    block. Two paths answer one question, so
+    `test_the_deploy_and_the_runner_resolve_one_profile_to_the_same_agent`
+    invokes both and asserts they agree.
+  - `deploy/engine.py:deploy_claude_symlink` asked the global agent for
+    `global_config_link()`, so `lh deploy --profile <codex-throwaway>` repointed
+    the live `~/.claude` at a Codex home. `deploys_global_link` is not the guard
+    here — it passes, because the throwaway *was* the default profile. The guard
+    is the adapter's own `None`, and the code never asked it.
+  - `core/paths.py:agent_runtime_dir` fell through to `~/.<agent name>` when the
+    agent's env var was absent from the hook subprocess and its global link was
+    `None` — writing into the real `~/.codex` that the `None` existed to
+    protect. A hook invoked with `--profile` knows the answer; the resolution
+    threw it away. `_shared.agent_dir_for` is now the one importable place that
+    joins the adapter and the directory.
+
+  Two adjacent surfaces are *not* covered by these fixes and stay open: the four
+  pre-runner builtins (`session_export`, `session_end`, `compound_loop`,
+  `engram_persist`) and `pre_compact` still resolve `cfg.agent.type` globally,
+  because they take no `HookEvent` and so have no profile to resolve against —
+  they are the same defect awaiting the runner migration, not a decision.
 - **The kill criteria are measured at the horizon**, from the metrics store,
   not from memory.
 
