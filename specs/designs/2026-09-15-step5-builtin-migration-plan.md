@@ -29,17 +29,18 @@
 
 ### Payload → event mapping
 
-The mapping every task below applies. **It is not exhaustive and must not be treated as such** — `herdr-context-gauge:166` reads `payload.get("hook_event_name")`, which has no row here and maps to `event.event`. Each task confirms its own builtin's reads against the source before applying the table; a key with no row is a gap in the table, not a field to drop.
+The mapping every task below applies. Every row was checked against all fifteen builtins on 2026-09-15; the three traps the check found are called out under it, and each is a silent behaviour change rather than a compile error.
 
 | Today | After |
 |---|---|
 | `json.load(sys.stdin)` | deleted; the runner parses and the adapter normalises |
-| `payload.get("cwd")` | `event.cwd` |
+| `payload.get("cwd")` | `event.cwd` — **but see trap 1** |
 | `payload.get("session_id")` | `event.session_id` |
 | `transcript_from_payload(payload)` | `event.transcript_path`, **plus an `.is_file()` check** — see task 3 |
 | `payload.get("prompt")` | `event.prompt` |
 | `payload.get("trigger")` | `event.trigger` |
 | `payload.get("source")` | `event.source` |
+| `payload.get("hook_event_name")` | `event.event` — **canonical, not the wire name; see trap 2** |
 | `payload.get("hook_event_name")` | `event.event` — canonical, *not* the agent's wire name |
 | `payload.get("tool_name")` | `event.tool.native_name`, but prefer `event.tool.operation` |
 | `payload.get("tool_input")["command"]` | `event.tool.command` |
@@ -52,6 +53,12 @@ The mapping every task below applies. **It is not exhaustive and must not be tre
 | `print(json.dumps({"hookSpecificOutput": {"additionalContext": X}}))` | `return HookDecision(additional_context=X)` |
 | `sys.exit(2)` + stderr text | `return HookDecision(verdict=Verdict.DENY, reason=X)` |
 | `sys.exit(0)` | `return HookDecision()` |
+
+**Trap 1 — four builtins do not read `cwd` from the payload at all.** `compound_loop.py:88`, `session_export.py:46`, `session_end.py:114` and `pre_compact.py:182` call `Path.cwd()`, the hook process's own directory; only `engram_persist.py:49` reads the payload with a `Path.cwd()` fallback. Swapping them to `event.cwd` looks like a normalisation and is a behaviour change: `parse_hook_input` yields `Path("")` when the payload names no cwd (`claude_code.py:414`), and `Path("")` is `Path(".")`. `project_key` resolves that back to the real directory, so the metrics survive — but `compound_loop.py:95` builds `"-" + str(cwd).replace("/", "-")` and would encode the project dir as `-.`, pointing every queued task at one shared garbage directory. Keep the `Path.cwd()` fallback for an empty `event.cwd`, as `stop_verify_guard` already does.
+
+**Trap 2 — `hook_event_name` carries the agent's wire name, `event.event` carries the canonical one.** `herdr_context_gauge.py:166` reads it and compares against `"PostToolUse"` (`:172`) and `"SessionEnd"` (`:175`). `HookEvent.event` holds `post_tool_use` and `session_end`. A direct swap leaves both comparisons permanently false: the hook stops throttling on every tool call and stops retracting a dead session's gauge, and nothing fails.
+
+**Trap 3 — `MODIFY_FILE` is wider than `INSPECTED_TOOLS`, and it is inert here by luck.** `_TOOL_OPERATIONS` maps `NotebookEdit` to `MODIFY_FILE` alongside `Edit` and `Write` (`claude_code.py:97`), while four builtins gate on `frozenset({"Edit", "Write"})`. Switching those gates to the operation admits notebooks for the first time — and all four then reject them anyway on a later check: `.py` (`post_tool_use_format.py:45`), `.yml`/`.yaml` (`post_tool_use_ansible_lint.py:94`), `SEGMENT_FILES` by name (`post_tool_use_sync_claude.py:64`), and `MEMORY.md`/`CLAUDE.md` by name (`pre_tool_use_memory_size.py:198-205`). No `.ipynb` reaches any of them. Record that it is inert **and why**: the protection is an incidental suffix check, not an intent, so the next hook that gates on the operation without one inherits the widening. Deleting `INSPECTED_TOOLS` outright also drops the hook from `tests/unit/test_hook_matcher_coverage.py:83-88` with no failure.
 
 ### What the design's step 5 text gets wrong
 
@@ -407,7 +414,9 @@ The first is preferred: it makes the declaration table reviewable in one diff, w
 
 **The declarations, per builtin.** Derived from what each one reads **in its own process**, not from its matcher and not from what something downstream reads later.
 
-> **Provenance, stated because it bounds how far this table can be trusted.** Rows 4–8 and 16–18 were derived by reading each `main()` and its output helpers. Rows 9–15 were derived from greps over the output calls and the `INSPECTED_TOOLS` constants, which is weaker — and three review passes have each found a different row wrong that way, most recently row 12. **Step 0 of each of tasks 9–15 is to read that builtin end to end and correct its row before writing any test.** A wrong `signals` set is not a documentation error: `deploy` refuses to install a hook whose signals the profile's agent does not supply, so an invented signal silently undeploys a working hook.
+> **All fifteen were read end to end on 2026-09-15 and the table is the output of that read.** An earlier draft derived rows 9–15 from greps over the output calls and the `INSPECTED_TOOLS` constants; three review passes each found a different one of those rows wrong, which is what a grep-derived table is worth. The read changed two rows — 8 and 12 — and found the three mapping traps above plus the two defects in the section that follows.
+>
+> A wrong `signals` set is not a documentation error: `deploy` refuses to install a hook whose signals the profile's agent does not supply, so an invented signal silently undeploys a working hook. That is why row 8 is now empty.
 
 That distinction decides two rows. `session-end` (`session_end.py:115`, `:152`) and `compound-loop` (`compound_loop.py:93`, `:123`) *locate* a transcript and enqueue its path; the compound-loop worker reads messages and tool calls afterwards, out of process. Declaring `MESSAGES` for either would make the deploy refuse to install them on an agent whose reader cannot supply a signal the hook never touches. `session-export` is the contrast and keeps `MESSAGES`: it consumes message text in-process (`knowledge/session_export.py:43`).
 
@@ -417,11 +426,11 @@ That distinction decides two rows. `session-end` (`session_end.py:115`, `:152`) 
 | 5 | `session-end` | `session_end` | — | **none** | no | none (log only) |
 | 6 | `compound-loop` | `session_stop` | — | **none** | no | none (log only) |
 | 7 | `engram-persist` | `session_stop` | — | — | no | none |
-| 8 | `pre-compact` | `pre_compact` | — | `MESSAGES`, `TOOL_CALLS` | no | **plain text** (task 1) |
+| 8 | `pre-compact` | `pre_compact` | — | **none** — see task 8 | no | **plain text** (task 1) |
 | 9 | `session-start-preflight` | `session_start` | — | — | no | `additionalContext` |
 | 10 | `user-prompt-goal` | `user_prompt_submit` | — | — | no | `additionalContext` |
 | 11 | `stop-context-rotate` | `session_stop` | — | `TOKEN_USAGE` | no | `systemMessage` |
-| 12 | `herdr-context-gauge` | **four, see below** | — | `TOKEN_USAGE` (but see below) | no | none |
+| 12 | `herdr-context-gauge` | **unset** — see below | — | `TOKEN_USAGE` — see below | no | none |
 | 13 | `post-tool-use-format` | `post_tool_use` | `MODIFY_FILE` | — | no | none |
 | 14 | `post-tool-use-sync-claude` | `post_tool_use` | `MODIFY_FILE` | — | no | none |
 | 15 | `post-tool-use-ansible-lint` | `post_tool_use` | `MODIFY_FILE` | — | no | `additionalContext` |
@@ -433,13 +442,35 @@ That distinction decides two rows. `session-end` (`session_end.py:115`, `:152`) 
 
 - **Wave A** (tasks 4–7): the four session-lifecycle hooks. They share the identical boot-dir defect, and three of the four share the `find_latest_session` / `resolve_project_dir` call shape, so one reviewer sees the pattern repeatedly. `compound-loop` is the exception: `compound_loop.py:95-97` builds its project path by hand rather than calling `resolve_project_dir`, so task 6 cannot copy task 4's diff.
 - **Wave B** (task 8): `pre-compact` alone. It is the only consumer of task 1 and the only plain-text channel; it gets its own review.
-**Row 12 does not fit the table and task 12 has to resolve it.** `herdr-context-gauge` is wired to Stop, SessionEnd, SessionStart *and* PostToolUse (docstring `:12-13`, dispatch `main:172-175`) and branches on `payload.get("hook_event_name")`. `BuiltinHookSpec.event` is a single canonical name, so the single-value column above cannot express it — which is fine at runtime, because a payload that names its event wins over the registry (`runner._canonical_event`), but it means `event=` must be left **unset** rather than guessed at `post_tool_use`. Declaring `TOKEN_USAGE` is the second half of the problem: it makes `deploy` omit the hook entirely on an agent without that signal, including its SessionEnd retract path, which reads no transcript at all. Task 12 decides between a narrower signal set and splitting the hook, and records which.
+**Task 9 inherits the F7 defect in a second spelling.** `session_start_preflight._credentials_path()` (`:54-57`) reads `os.environ["CLAUDE_CONFIG_DIR"]` directly, falling back to `~/.claude`. That is the same "resolve globally, ignore the profile" shape PR #300 fixed for `hooks.log`, wearing a different mask: a hook invoked with `--profile p` checks whichever profile the ambient environment names, so the preflight can report a healthy login for a profile the session is not running under — which is exactly the failure the check exists to catch. It is not a `get_agent` call, so the task 21 audit does not see it.
+
+  The fix is `agent_dir_for(cfg, event.profile)` and the adapter's own credentials location, but **note the scope**: this hook reads a Claude Code credentials file by name, so the per-profile fix and the per-agent one are different changes. Task 9 does the first and records the second.
+
+**Row 12 does not fit the table and task 12 has to resolve it.** `herdr-context-gauge` runs on **four** events, not the three its own docstring claims (`:12-13`): `main` branches on `PostToolUse` (`:172`) and `SessionEnd` (`:175`) and falls through for Stop and SessionStart. `BuiltinHookSpec.event` is a single canonical name, so `event=` is left **unset** rather than guessed at `post_tool_use`; that is safe at runtime because a payload naming its own event wins over the registry (`runner._canonical_event`), and this hook's payloads always do.
+
+  Two further decisions belong to task 12. `TOKEN_USAGE` makes `deploy` omit the hook *entirely* on an agent lacking that signal — including the SessionEnd retract, which reads no transcript at all and would leave a dead session's gauge on the pane forever. And trap 2 above applies here first: the two comparisons are against wire names. Decide between a narrower signal set and splitting the retract out, and record which.
 
 - **Wave C** (tasks 9–12): the context-emitting hooks. `stop-context-rotate` imports `context_tokens` from `herdr_context_gauge` (`stop_context_rotate.py:39`), so those two land together or task 11 goes second.
 - **Wave D** (tasks 13–15): PostToolUse. Each reads `event.tool.edits` where it used to read `tool_input["file_path"]`.
 
   > **`MODIFY_FILE` is wider than `INSPECTED_TOOLS` and the difference is `NotebookEdit`.** Five builtins gate on `frozenset({"Edit", "Write"})` (`post_tool_use_format.py:18`, `post_tool_use_sync_claude.py:25`, `post_tool_use_ansible_lint.py:20`, `pre_tool_use_memory_size.py:26`); `_TOOL_OPERATIONS` maps `NotebookEdit` to `MODIFY_FILE` too (`claude_code.py:97`). Switching the guard from the tool set to the operation therefore makes all five act on `.ipynb` for the first time — effective immediately for `post-tool-use-format`, which carries no matcher. Keep the narrowing explicit (check `event.tool.native_name` against the same set, or exclude notebooks by suffix) and say which; do not let a widening ride in as a normalisation. Deleting `INSPECTED_TOOLS` outright also drops the hook from `tests/unit/test_hook_matcher_coverage.py:83-88` without a failure.
 - **Wave E** (tasks 16–18): PreToolUse. Task 18 is the only blocking hook in this plan and is the one that must be exercised through the `Verdict.DENY` path with dependencies mocked away.
+
+**Task 8, `pre-compact`, carries two defects the migration must decide about — neither is a migration defect, and both become permanent if the migration papers over them.**
+
+**It is the only builtin built to run without the package, and the runner removes that.** `_resolve_agent_dirs` (`:144-149`) catches `ImportError` and falls back to reading `CLAUDE_CONFIG_DIR` directly; `_bootstrap_log` (`:31`) and `_bootstrap_project_dir` (`:42`) stand in for the `_shared` helpers on that path, and `main:175-180` binds them. The docstring says why: *"this hook has to run as a bare script, so nothing outside this guard may import from the package"*. A migrated `main(event)` is reached only through `hooks.runner`, which imports the module from inside the package — so every one of those fallbacks becomes unreachable. Task 8 deletes them **deliberately and says so in the commit**, or the migration is a silent capability loss dressed as a refactor. (Nothing else in the fifteen has this shape; it is `pre-compact`'s alone.)
+
+**Its transcript parser has been reading nothing, and its declared signals describe that dead code.** `parse_transcript` (`:63-64`) reads `obj.get("role")` and `obj.get("content")` at the **top level** of each JSONL line. Claude Code nests both under `message` — `herdr_context_gauge._usage_of:47-52` already knows this and reaches through `entry["message"]["usage"]`. Measured across 40 session files, 5,153 lines: **zero** carry a top-level `role`, and zero match the `assistant` + list-`content` branch the tool-use extraction needs. Both loops are dead. The only thing this hook has ever emitted is `build_memory_tails(memory_dir)`.
+
+That is why row 8 declares **no signals**. Declaring `MESSAGES` and `TOOL_CALLS` would name reads that do not happen and would let `deploy` omit the hook on an agent whose reader lacks them — losing the memory tails, which are the part that works, over a transcript read that does not.
+
+`specs/backlog.md:36` says this hook *"ya re-inyecta tasks (últimos user_msgs) + archivos (`file_path` de tool_use blocks)"* and closes with *"No queda gap accionable."* Both halves are false. **Fix the backlog entry in task 8's commit** whether or not the parser is repaired — prose that names a mechanism is grepped against the code in both directions, and this one survived because nobody ran it.
+
+Repairing `parse_transcript` is **out of scope for step 5** and belongs in its own commit with its own test, because it changes what the hook emits and every golden captured before it. Open it as a backlog entry; do not fold it into a migration whose acceptance test is byte identity.
+
+- [ ] Task 8 step 0: open the backlog entry for the dead parser, correct `specs/backlog.md:36`, and decide the bootstrap deletion — before writing the first test.
+
+---
 
 **Worked instance — Task 18, `pre-tool-use-git-scope`**, written out because it is the one with a refusal path and the recipe alone is not enough for it.
 
