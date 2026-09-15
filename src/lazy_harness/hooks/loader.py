@@ -207,6 +207,8 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
     "stop-context-rotate": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.stop_context_rotate",
         event="session_stop",
+        signals=frozenset({Signal.TOKEN_USAGE}),
+        migrated=True,
     ),
     "stop-verify-guard": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.stop_verify_guard",

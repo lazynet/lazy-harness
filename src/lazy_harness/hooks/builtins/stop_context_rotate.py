@@ -30,12 +30,12 @@ colour cannot drift apart.
 
 from __future__ import annotations
 
-import json
 import re
-import sys
 import tempfile
 from pathlib import Path
 
+from lazy_harness.agents.base import HookDecision, HookEvent
+from lazy_harness.hooks.builtins._shared import existing_transcript
 from lazy_harness.hooks.builtins.herdr_context_gauge import (
     ROTATE_TOKENS,
     _format_tokens,
@@ -83,54 +83,32 @@ def _record(stamp: Path) -> None:
         pass
 
 
-def main() -> None:
-    # Every path below exits 0. A gauge must never take down the turn it
-    # measures, so a malformed payload, a vanished transcript and an
-    # unwritable stamp all resolve to silence rather than to an error.
-    try:
-        raw = sys.stdin.read()
-    except OSError:
-        sys.exit(0)
+def main(event: HookEvent) -> HookDecision:
+    # Every path below returns an empty decision, which the adapter serialises
+    # as silence and a zero exit. A gauge must never take down the turn it
+    # measures, so a vanished transcript, an unreadable one and an unwritable
+    # stamp all resolve to silence rather than to an error.
+    transcript = existing_transcript(event.transcript_path)
+    if transcript is None:
+        return HookDecision()
 
     try:
-        payload = json.loads(raw)
-    except (ValueError, TypeError):
-        sys.exit(0)
-
-    if not isinstance(payload, dict):
-        sys.exit(0)
-
-    transcript = payload.get("transcript_path")
-    if not isinstance(transcript, str) or not transcript:
-        sys.exit(0)
-
-    session_id = payload.get("session_id")
-    if not isinstance(session_id, str):
-        session_id = ""
-
-    try:
-        tokens = context_tokens(Path(transcript))
+        tokens = context_tokens(transcript)
     except Exception:
-        sys.exit(0)
+        return HookDecision()
 
     if tokens is None or tokens < ROTATE_TOKENS:
-        sys.exit(0)
+        return HookDecision()
 
-    stamp = _stamp_for(session_id)
+    stamp = _stamp_for(event.session_id)
     if _already_warned(stamp):
-        sys.exit(0)
+        return HookDecision()
 
-    # Top level, not inside `hookSpecificOutput`. Claude Code's hook schema
-    # (verified against the 2.1.269 binary) lists `systemMessage` among the
-    # common "Fields:" — "Display a message to the user (all hooks)" — while
-    # `hookSpecificOutput` takes exactly four keys: additionalContext,
-    # permissionDecision, permissionDecisionReason and updatedInput. Nesting it
-    # parses fine and is then discarded, giving a hook that runs, stamps, logs,
-    # and shows nothing.
-    print(json.dumps({"systemMessage": notice(tokens)}))
+    # `system_message` is the channel ADR-030 G2 established as the
+    # non-blocking shape, and the adapter puts it at the top level rather than
+    # inside `hookSpecificOutput` -- which takes exactly four keys (verified
+    # against the 2.1.269 binary) and discards the rest, so a nested one would
+    # give a hook that runs, stamps, and shows nothing.
+    decision = HookDecision(system_message=notice(tokens))
     _record(stamp)
-    sys.exit(0)
-
-
-if __name__ == "__main__":
-    main()
+    return decision
