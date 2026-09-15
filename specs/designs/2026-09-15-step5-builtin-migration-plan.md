@@ -4,11 +4,11 @@
 
 **Goal:** Migrate the fifteen builtins still on the pre-runner path to `main(event: HookEvent) -> HookDecision`, each declaring its `Operation` and `Signal` sets, and delete the transitional branch that keeps them alive.
 
-**Architecture:** Each builtin stops parsing stdin and stops serialising Claude Code's JSON; the adapter owns both translations and the builtin sees only `HookEvent` and returns only `HookDecision`. Three adapter- and substrate-level defects (tasks 1–3) block the bulk migration and land first. The fifteen migrations (tasks 4–18) are independent of one another and parallelise. The transitional field, the second entry point and the literal sweep (tasks 19–21) close behind them.
+**Architecture:** Each builtin stops parsing stdin and stops serialising Claude Code's JSON; the adapter owns both translations and the builtin sees only `HookEvent` and returns only `HookDecision`. Three adapter- and substrate-level defects (tasks 1–3) block the bulk migration and land first. The fifteen migrations (tasks 4–18) parallelise apart from two shared files, named where the waves are. The second entry point, the transitional field and the literal sweep close behind them — **task 20 before task 19**, for the reason recorded there.
 
 **Tech Stack:** Python 3.11+, `uv run --frozen`, `pytest`, `ruff`, strict type hints.
 
-**Spec:** [`specs/designs/2026-09-13-multi-agent-harness-design.md`](2026-09-13-multi-agent-harness-design.md), step 5 (line 1674 ff.), decisions 1, 3, 9 and 11. Contract frozen by [ADR-041](../adrs/041-multi-agent-hook-contract.md), `accepted` 2026-09-15.
+**Spec:** [`specs/designs/2026-09-13-multi-agent-harness-design.md`](2026-09-13-multi-agent-harness-design.md), step 5 (the numbered list at `design.md:1747`), decisions 1, 3, 9 and 11. Contract frozen by [ADR-041](../adrs/041-multi-agent-hook-contract.md), `accepted` 2026-09-15.
 
 ## Global Constraints
 
@@ -16,7 +16,7 @@
 - **Strict TDD, no exceptions** (`CLAUDE.md` non-negotiable 2). Write the failing test, watch it fail, implement, watch it pass.
 - **One worktree per task group**, via `/new-worktree` (non-negotiable 1). Commits are conventional, no AI trailers, no `--no-verify`.
 - **`/tdd-check` passes before every commit**, all four checks pristine.
-- **`uv run --frozen`** on every invocation. A bare `uv run` discards the lockfile.
+- **`uv run --frozen`** on every invocation. Without it `uv run` re-locks whenever it decides the environment is stale — measured 2026-09-14 rewriting `uv.lock` from 54 packages to 16, dropping `revision` and every `upload-time`. Editing a source and running the tests *is* this repo's TDD cycle, so every worktree accumulates it.
 - **No builtin may read `event.raw` or `event.tool.raw_input`.** `tests/unit/hooks/test_builtin_contract.py` gates this through the AST and will fail the build.
 - **Hooks handle every exception explicitly.** A non-blocking builtin returns `HookDecision()` on any failure; a blocking one refuses. The runner's blanket handler is a backstop, not the policy.
 - **Versions are owned by release-please.** Never hand-bump.
@@ -29,7 +29,7 @@
 
 ### Payload → event mapping
 
-The mapping every task below applies. It is exhaustive for what the fifteen actually read.
+The mapping every task below applies. **It is not exhaustive and must not be treated as such** — `herdr-context-gauge:166` reads `payload.get("hook_event_name")`, which has no row here and maps to `event.event`. Each task confirms its own builtin's reads against the source before applying the table; a key with no row is a gap in the table, not a field to drop.
 
 | Today | After |
 |---|---|
@@ -40,6 +40,7 @@ The mapping every task below applies. It is exhaustive for what the fifteen actu
 | `payload.get("prompt")` | `event.prompt` |
 | `payload.get("trigger")` | `event.trigger` |
 | `payload.get("source")` | `event.source` |
+| `payload.get("hook_event_name")` | `event.event` — canonical, *not* the agent's wire name |
 | `payload.get("tool_name")` | `event.tool.native_name`, but prefer `event.tool.operation` |
 | `payload.get("tool_input")["command"]` | `event.tool.command` |
 | `payload.get("tool_input")["file_path"]` (Read) | `event.tool.reads` |
@@ -56,14 +57,22 @@ The mapping every task below applies. It is exhaustive for what the fifteen actu
 
 Recorded here because the step text is never edited as things land, and a reader following it would chase two symbols that are already gone.
 
-- **Step 5 owns nine literals, not seven, and the design's "ten" was never the right total either.** Counted by AST over `get_agent(...)` calls whose argument mentions `claude-code`, not by grepping one spelling — the distinction the backlog entry and the `CLAUDE.md` gate both turn on. Fifteen such calls exist in `src/`. **Nine** are in the fifteen migration targets: `compound_loop.py:62`, `engram_persist.py:75`, `post_tool_use_ansible_lint.py:140`, `post_tool_use_format.py:67`, `pre_compact.py:158`, `pre_tool_use_memory_size.py:170`, `pre_tool_use_read_size.py:69`, `session_end.py:89`, `session_export.py:44`.
+- **No syntactic criterion produces this number, and three attempts have now proved it.** The count is **at least ten** in the fifteen migration targets, and the plan states it that way on purpose.
 
-  A literal grep for `get_agent("claude-code")` finds seven of those nine and misses `engram_persist.py:75` and `pre_compact.py:158`, which both write `get_agent(cfg.agent.type if cfg is not None else "claude-code")`. That is the same second grapheme the backlog entry flags for `pre-compact`; it applies to `engram-persist` too, and nothing had recorded that. **An earlier draft of this plan reached "seven" by exactly that grep, in the same paragraph where it corrected the design for a roster error.** Task 21's test therefore matches on the `get_agent` *call*, not on any spelling of its argument.
+  The history is the argument. A grep for `get_agent("claude-code")` finds **seven** and misses `engram_persist.py:75` and `pre_compact.py:158`, which write `get_agent(cfg.agent.type if cfg is not None else "claude-code")` — the second grapheme the backlog flags for `pre-compact`, unrecorded for `engram-persist`. Widening to an AST match on *calls whose argument mentions `claude-code`* gives **nine** and misses `post_tool_use_sync_claude.py:83`, whose `get_agent(agent_type)` falls back to the module constant `DEFAULT_AGENT_TYPE = "claude-code"` at `:29`. Each widening was written as the correction of the previous one, and each missed a case the next one found.
 
-  Design line 207 is separately wrong about which ones survive: it names `pre_tool_use_security.py:298` and `context_inject.py:758`, and both are now **docstring prose** describing what PR #300 removed. The six live calls outside step 5 are `_shared.py:258` (inside `agent_dir_for`, the documented degradation for a machine that has not run `lh init`), `knowledge/compound_loop_worker.py:98` and `:100`, `cli/memory_cmd.py:237` and `:264`, and `monitoring/statusline.py:44`. None is a builtin.
+  So the audit is **per builtin, by reading**, and the number is an output of it rather than an input. Task 21's test matches the `get_agent` *call* with no reference to its argument at all, which is the only criterion that does not depend on how the next one is spelled. The ten known today: `compound_loop.py:62`, `engram_persist.py:75`, `post_tool_use_ansible_lint.py:140`, `post_tool_use_format.py:67`, `post_tool_use_sync_claude.py:83`, `pre_compact.py:158`, `pre_tool_use_memory_size.py:170`, `pre_tool_use_read_size.py:69`, `session_end.py:89`, `session_export.py:44`.
+
+  Design line 207 is separately wrong about which ones survive: it names `pre_tool_use_security.py:298` and `context_inject.py:758`, and both are now **docstring prose** describing what PR #300 removed. Outside step 5 and staying: `_shared.py:258` and `:160` (inside `agent_dir_for` and `profile_name`, the documented degradations for a machine that has not run `lh init`), `knowledge/compound_loop_worker.py:98` and `:100`, `cli/memory_cmd.py:237` and `:264`, and `monitoring/statusline.py:44`. None is a builtin.
 - **`profile_name()` cannot be deleted at step 5.** Six import statements and six call sites. Two are builtins (`session_end.py:35`, `user_prompt_goal.py:131`) and go with their migrations. Four calls across three modules survive, none of them a builtin: one in `cli/metrics_cmd.py:236`, two in `knowledge/compound_loop.py:1249` and `:1278`, and one in `hooks/runner.py:151`.
 
-  That last one is `resolve_profile`'s fallback for a deployed command written before `--profile` existed (`runner.py:141`). It is **compatibility behaviour, not a dependency**: both live callers pass a resolved profile — `cli/hooks_cmd.py:97` and `deploy` via `hooks/engine.py:64` — so dropping the fallback would break settings files not yet redeployed, and nothing else. Step 5 removes the symbol from the builtins and leaves it standing. Task 21 records that.
+  That last one is `resolve_profile`'s fallback, and it is **live, tested behaviour on the ordinary path** — not, as an earlier draft of this plan claimed, compatibility for settings files nobody has redeployed.
+
+  Measured: `--profile` is `default=None` on both entry points (`cli/hooks_cmd.py:78-83`, `:143`), and both hand that straight to `resolve_profile` (`cli/hooks_cmd.py:97`, `hooks/engine.py:67`). Every `lh hooks run <event>` without the flag therefore reaches `profile_name()`. `runner.py:66-72` documents it as a reachable state and two tests pin it (`test_entry_points.py:115`, `test_runner.py:276`).
+
+  **This paragraph is a correction of a correction, and that is the point.** The first review pass asserted the callers pass a resolved profile; this plan adopted it without running the path, and the second pass falsified it against the `default=None`. A reviewer's finding is evidence to check, not a result to apply — the same standard this plan applies to the design. (The same draft also cited "`deploy` via `hooks/engine.py:64`"; `run_hooks_for_event` has exactly one caller, `cli/hooks_cmd.py:159`, and deploy never touches `hooks/engine.py`.)
+
+  Step 5 removes the symbol from the builtins and leaves it standing. Task 21 records that.
 
 ---
 
@@ -181,6 +190,12 @@ In `format_hook_output`, before the `body` assembly:
 Run: `uv run --frozen pytest tests/unit/test_agent_claude.py -v`
 Expected: PASS, and no existing adapter test regresses.
 
+- [ ] **Step 4b: Two things this branch gets wrong if written naively**
+
+**The newline is part of the bytes.** `pre_compact.py:247` emits `print(...)`, which appends `\n`; the JSON path appends one deliberately (`claude_code.py:509-514`) for exactly this reason. Returning `decision.additional_context` unchanged makes the golden differ by one character that nothing else would account for. Either the builtin includes the trailing newline in what it returns, or the branch appends it — decide which and say so in the code, because the next reader will otherwise "fix" whichever half looks redundant.
+
+**The `ValueError` is swallowed.** `run_hook` calls `format_hook_output` inside its try (`runner.py:149`), and the blanket handler at `:150-154` turns any exception from a non-blocking hook into exit 0 with the reason on stderr. `pre-compact` is non-blocking, and Claude Code does not surface a successful hook's stderr outside debug output — so a decision this branch refuses is lost *silently*, along with the summary, which is the failure mode the branch exists to prevent. That is the Global Constraint at the top of this plan biting: the blanket handler is a backstop, not a policy. Assert the raise in a unit test against `format_hook_output` directly, not through `run_hook`, and accept that at runtime the refusal degrades to a lost summary rather than a visible error.
+
 - [ ] **Step 5: Prove the guard is load-bearing**
 
 Delete the `if event.event == "pre_compact":` block by hand, re-run, watch `test_pre_compact_additional_context_serialises_as_plain_text` fail, restore by hand. **Never `git checkout`** — it reverts the uncommitted implementation too.
@@ -280,7 +295,7 @@ Five helpers take the raw payload and reach into it through `_declared_transcrip
 The second half matters as much: `transcript_from_payload` returns `None` unless the path `.is_file()`, while `HookEvent.transcript_path` is the **declared** path, un-stat'd. A call site that swaps one for the other without adding the check proceeds on a path that is not there — at `SessionStart` the transcript is routinely not written yet, which is exactly when several of these run.
 
 **Files:**
-- Modify: `src/lazy_harness/hooks/builtins/_shared.py:21` (`_TRANSCRIPT_KEYS`), `:48` `_declared_transcript`, `:60` `transcript_from_payload`, `:68` `project_dir_from_payload`, `:83` `resolve_project_dir`, `:174` `resolve_memory_dir`, `:192` `memory_dir`
+- Modify: `src/lazy_harness/hooks/builtins/_shared.py:21` (`_TRANSCRIPT_KEYS`), `:49` `_declared_transcript`, `:60` `transcript_from_payload`, `:68` `project_dir_from_payload`, `:83` `resolve_project_dir`, `:174` `resolve_memory_dir`, `:192` `memory_dir`
 - Test: `tests/unit/hooks/test_shared_memory_dir.py`, `tests/unit/hooks/builtins/`
 
 **Interfaces:**
@@ -373,7 +388,7 @@ git add -A && git commit -m "refactor: take the transcript path rather than the 
 
 Each is one TDD cycle and one commit, and each depends only on tasks 1–3.
 
-**They are not file-independent, and the plan does not pretend otherwise.** Every migration edits `hooks/loader.py`'s `_BUILTIN_HOOKS` (`loader.py:101`) to add its `operations`, `signals`, `event` and `migrated` — one shared dict, fifteen times. Run in parallel worktrees they conflict there and nowhere else, and the conflict is an append to a mapping, so it resolves mechanically. Two workable orders, pick one and say which in the PR:
+**They are not file-independent, and the plan does not pretend otherwise.** Every migration edits `hooks/loader.py`'s `_BUILTIN_HOOKS` (`loader.py:101`) to add its `operations`, `signals`, `event` and `migrated` — one shared dict, fifteen times. There is a second: `tests/unit/hooks/test_abstention.py:41-75` derives `_NO_OBJECTION` from the registry and fails when a migrated hook wired to a blockable event has no entry. With `session_stop` honouring `BLOCK` and `pre_tool_use` honouring `DENY`, that reaches seven of the fifteen — tasks 4, 6, 7, 11, 16, 17 and 18. Both conflicts are appends and resolve mechanically, but a task that does not know about the second one lands red. Two workable orders, pick one and say which in the PR:
 
 - **Serialise the registry.** Land one commit first that gives all fifteen specs their final `event`, `operations`, `signals` and `blocking`, leaving `migrated=False`. The declarations are a fact about each hook and are true before its `main()` moves. Then the fifteen migrations touch only their own module and genuinely parallelise.
 - **Accept the rebases.** Each task rebases on `main` before pushing. Cheaper to start, and the cost lands on whoever merges last.
@@ -392,6 +407,8 @@ The first is preferred: it makes the declaration table reviewable in one diff, w
 
 **The declarations, per builtin.** Derived from what each one reads **in its own process**, not from its matcher and not from what something downstream reads later.
 
+> **Provenance, stated because it bounds how far this table can be trusted.** Rows 4–8 and 16–18 were derived by reading each `main()` and its output helpers. Rows 9–15 were derived from greps over the output calls and the `INSPECTED_TOOLS` constants, which is weaker — and three review passes have each found a different row wrong that way, most recently row 12. **Step 0 of each of tasks 9–15 is to read that builtin end to end and correct its row before writing any test.** A wrong `signals` set is not a documentation error: `deploy` refuses to install a hook whose signals the profile's agent does not supply, so an invented signal silently undeploys a working hook.
+
 That distinction decides two rows. `session-end` (`session_end.py:115`, `:152`) and `compound-loop` (`compound_loop.py:93`, `:123`) *locate* a transcript and enqueue its path; the compound-loop worker reads messages and tool calls afterwards, out of process. Declaring `MESSAGES` for either would make the deploy refuse to install them on an agent whose reader cannot supply a signal the hook never touches. `session-export` is the contrast and keeps `MESSAGES`: it consumes message text in-process (`knowledge/session_export.py:43`).
 
 | # | Builtin | `event` | `operations` | `signals` | `blocking` | Output channel today |
@@ -404,7 +421,7 @@ That distinction decides two rows. `session-end` (`session_end.py:115`, `:152`) 
 | 9 | `session-start-preflight` | `session_start` | — | — | no | `additionalContext` |
 | 10 | `user-prompt-goal` | `user_prompt_submit` | — | — | no | `additionalContext` |
 | 11 | `stop-context-rotate` | `session_stop` | — | `TOKEN_USAGE` | no | `systemMessage` |
-| 12 | `herdr-context-gauge` | `post_tool_use` | — | `TOKEN_USAGE` | no | none |
+| 12 | `herdr-context-gauge` | **four, see below** | — | `TOKEN_USAGE` (but see below) | no | none |
 | 13 | `post-tool-use-format` | `post_tool_use` | `MODIFY_FILE` | — | no | none |
 | 14 | `post-tool-use-sync-claude` | `post_tool_use` | `MODIFY_FILE` | — | no | none |
 | 15 | `post-tool-use-ansible-lint` | `post_tool_use` | `MODIFY_FILE` | — | no | `additionalContext` |
@@ -414,27 +431,31 @@ That distinction decides two rows. `session-end` (`session_end.py:115`, `:152`) 
 
 **Wave ordering for parallel dispatch.** Within a wave the tasks share no files and can run concurrently; waves are sequential because each later one reuses a pattern the earlier one established.
 
-- **Wave A** (tasks 4–7): the four session-lifecycle hooks. They share the identical boot-dir defect and the `find_latest_session` / `resolve_project_dir` call shape, so one reviewer sees the pattern four times.
+- **Wave A** (tasks 4–7): the four session-lifecycle hooks. They share the identical boot-dir defect, and three of the four share the `find_latest_session` / `resolve_project_dir` call shape, so one reviewer sees the pattern repeatedly. `compound-loop` is the exception: `compound_loop.py:95-97` builds its project path by hand rather than calling `resolve_project_dir`, so task 6 cannot copy task 4's diff.
 - **Wave B** (task 8): `pre-compact` alone. It is the only consumer of task 1 and the only plain-text channel; it gets its own review.
+**Row 12 does not fit the table and task 12 has to resolve it.** `herdr-context-gauge` is wired to Stop, SessionEnd, SessionStart *and* PostToolUse (docstring `:12-13`, dispatch `main:172-175`) and branches on `payload.get("hook_event_name")`. `BuiltinHookSpec.event` is a single canonical name, so the single-value column above cannot express it — which is fine at runtime, because a payload that names its event wins over the registry (`runner._canonical_event`), but it means `event=` must be left **unset** rather than guessed at `post_tool_use`. Declaring `TOKEN_USAGE` is the second half of the problem: it makes `deploy` omit the hook entirely on an agent without that signal, including its SessionEnd retract path, which reads no transcript at all. Task 12 decides between a narrower signal set and splitting the hook, and records which.
+
 - **Wave C** (tasks 9–12): the context-emitting hooks. `stop-context-rotate` imports `context_tokens` from `herdr_context_gauge` (`stop_context_rotate.py:39`), so those two land together or task 11 goes second.
 - **Wave D** (tasks 13–15): PostToolUse. Each reads `event.tool.edits` where it used to read `tool_input["file_path"]`.
+
+  > **`MODIFY_FILE` is wider than `INSPECTED_TOOLS` and the difference is `NotebookEdit`.** Five builtins gate on `frozenset({"Edit", "Write"})` (`post_tool_use_format.py:18`, `post_tool_use_sync_claude.py:25`, `post_tool_use_ansible_lint.py:20`, `pre_tool_use_memory_size.py:26`); `_TOOL_OPERATIONS` maps `NotebookEdit` to `MODIFY_FILE` too (`claude_code.py:97`). Switching the guard from the tool set to the operation therefore makes all five act on `.ipynb` for the first time — effective immediately for `post-tool-use-format`, which carries no matcher. Keep the narrowing explicit (check `event.tool.native_name` against the same set, or exclude notebooks by suffix) and say which; do not let a widening ride in as a normalisation. Deleting `INSPECTED_TOOLS` outright also drops the hook from `tests/unit/test_hook_matcher_coverage.py:83-88` without a failure.
 - **Wave E** (tasks 16–18): PreToolUse. Task 18 is the only blocking hook in this plan and is the one that must be exercised through the `Verdict.DENY` path with dependencies mocked away.
 
 **Worked instance — Task 18, `pre-tool-use-git-scope`**, written out because it is the one with a refusal path and the recipe alone is not enough for it.
 
-**What this hook actually does, read from the code rather than from its name.** It guards `git stash`, and nothing else. `_STASH_CALL` (`:84`) matches `git … stash <args>` through shell keywords, assignments and wrappers; `_classify` sorts the subcommand into read-only (`list`, `show`), always-unsafe (`pop`, `store`, `create`, …) or safe. `should_block` (`:321`) refuses **only** when all three hold: the command contains an unsafe stash, `stash_stack_is_shared(cwd)` says the cwd sits in a *linked worktree*, and no configured allow pattern matches. Everything else exits 0. A test built around a forced push — which an earlier draft of this plan used — captures a passing hook and proves nothing: a file name says a guard exists, never what it guards.
+**What this hook actually does, read from the code rather than from its name.** It guards `git stash`, and nothing else. `_STASH_CALL` (`:84`) matches `git … stash <args>` through shell keywords, assignments and wrappers; `_classify` sorts the subcommand into read-only (`list`, `show`), always-unsafe (`pop`, `store`, `create`, …) or safe. `should_block` (`:321`) refuses **only** when all three hold: the command contains an unsafe stash, `stash_stack_is_shared(cwd)` is true, and no configured allow pattern matches. That middle condition is **not** "is this a linked worktree", which an earlier draft of this plan said three times. `stash_stack_is_shared` (`:254-278`) returns true for a linked worktree *or* for the main checkout of a repository that has at least one — its docstring (`:257-259`) says so, because the stack belongs to the repository and both sides reach it. A repository with no linked worktrees keeps its stack private and is left alone. Everything else exits 0. A test built around a forced push — which an earlier draft of this plan used — captures a passing hook and proves nothing: a file name says a guard exists, never what it guards.
 
 > **The guard fires on prose about the guard.** Writing this task set it off: a shell command whose *argument* merely contains `git stash pop` is refused, because `_STASH_CALL` matches command text and cannot tell an invocation from a quoted example. Not a defect to fix here — the hook is correct to be literal — but it is the cheapest available evidence that step 6's evasion testing has real surface to work on, and it is why this file was written through an editor rather than a heredoc.
 
 **Files:**
-- Modify: `src/lazy_harness/hooks/builtins/pre_tool_use_git_scope.py:353` (`_read_stdin_json`), `:365-395` (`main`)
+- Modify: `src/lazy_harness/hooks/builtins/pre_tool_use_git_scope.py:350` (`_read_stdin_json`), `:365-395` (`main`)
 - Modify: `src/lazy_harness/hooks/loader.py` (the `pre-tool-use-git-scope` entry)
 - Test: `tests/unit/hooks/builtins/test_pre_tool_use_git_scope.py`
 - Create: `tests/goldens/hooks/pre-tool-use-git-scope/`
 
 - [ ] **Step 1: Capture the golden from the unmigrated hook**
 
-The cwd must be a real linked worktree or `should_block` returns `None` and the golden records a pass. Build the payload in a file rather than inline: the guard refuses a command line carrying its own trigger text.
+The cwd must reach a shared stack — a linked worktree, or a main checkout that has one — or `should_block` returns `None` and the golden records a pass. **And the golden is environment-dependent:** `load_allowlist` (`:289`) reads the real `config.toml`, so a profile carrying a matching `allow_patterns` entry turns the refusal into a pass and the golden records the wrong thing. Pin the allowlist empty. Build the payload in a file rather than inline: the guard refuses a command line carrying its own trigger text.
 
 ```bash
 mkdir -p tests/goldens/hooks/pre-tool-use-git-scope
@@ -450,7 +471,9 @@ uv run --frozen python -m lazy_harness.hooks.builtins.pre_tool_use_git_scope \
 echo $? > tests/goldens/hooks/pre-tool-use-git-scope/deny.exit
 ```
 
-Assert before moving on: `deny.exit` is `2` and `deny.stderr` starts `Blocked by lazy-harness PreToolUse: unsafe git stash (scope).`. If it is `0`, the cwd was not a linked worktree and the golden is worthless.
+Assert before moving on: `deny.exit` is `2` and `deny.stderr` starts `Blocked by lazy-harness PreToolUse: unsafe git stash (scope).`. If it is `0`, either the cwd reached no shared stack or an allow pattern matched — worthless either way.
+
+**Use the existing harness, do not invent files.** `tests/unit/hooks/builtins/_goldens.py` already owns golden capture here: JSON per branch, a pinned environment, capture gated behind `LH_CAPTURE_GOLDENS`, comparison through `assert_golden` (`:171`). Three raw files captured against ambient config and cwd are unreproducible *and* a second answer to a question that already has one — this plan's own constraint about one importable place applies to test infrastructure too. The shell above is the *shape* of the capture; run it through `_goldens.py`.
 
 - [ ] **Step 2: Write the failing test**
 
@@ -479,23 +502,50 @@ def test_git_scope_refuses_an_unsafe_stash_through_the_verdict(worktree_cwd: Pat
     assert "unsafe git stash" in decision.reason
 
 
-def test_git_scope_abstains_outside_a_linked_worktree(tmp_path: Path) -> None:
-    """The same command from a main checkout is not refused.
+def test_git_scope_abstains_where_no_one_else_reaches_the_stack(plain_repo: Path) -> None:
+    """The same command in a repository whose stash stack nobody else reaches.
 
-    Paired with the test above so neither passes on a hook that always refuses
-    or always abstains.
+    `plain_repo` is a real checkout with an absent or empty `.git/worktrees`,
+    not a bare `tmp_path`: a directory with no `.git` at all exercises
+    `_find_dot_git` returning None, a different branch, and would let this
+    test pass against a guard that had lost the worktree check entirely.
     """
     event = HookEvent(
         event="pre_tool_use",
         profile="p",
         session_id="s",
-        cwd=tmp_path,
+        cwd=plain_repo,
         transcript_path=None,
         tool=ToolCall(
             native_name="Bash", operation=Operation.RUN_COMMAND, command=_POP
         ),
     )
     assert main(event).verdict is None
+
+
+def test_git_scope_still_refuses_from_the_main_checkout_of_a_repo_with_worktrees(
+    main_checkout_with_worktrees: Path,
+) -> None:
+    """The stack belongs to the repository, so both sides are guarded.
+
+    `stash_stack_is_shared` is true for a linked worktree *or* for the main
+    checkout of a repo that has one (`pre_tool_use_git_scope.py:254-278`).
+    Without this, the pair above passes against a guard narrowed to linked
+    worktrees only -- which is what an earlier draft of this plan described.
+    The suite already has the fixture: `_make_main_checkout_with_worktrees`
+    (`test_pre_tool_use_git_scope.py:117`).
+    """
+    event = HookEvent(
+        event="pre_tool_use",
+        profile="p",
+        session_id="s",
+        cwd=main_checkout_with_worktrees,
+        transcript_path=None,
+        tool=ToolCall(
+            native_name="Bash", operation=Operation.RUN_COMMAND, command=_POP
+        ),
+    )
+    assert main(event).verdict is Verdict.DENY
 
 
 def test_git_scope_declares_the_operation_it_guards() -> None:
@@ -525,7 +575,11 @@ Expected: FAIL — `main()` takes no argument.
 
 - [ ] **Step 4: Implement**
 
-Delete `_read_stdin_json`; change `main` to take `event` and return `HookDecision`. `INSPECTED_TOOLS` and the `tool_input` guards collapse into `event.tool is None or event.tool.operation is not Operation.RUN_COMMAND`, and the command comes from `event.tool.command`. `cwd` comes from `event.cwd`, keeping the `os.getcwd()` fallback for `Path("")`. Replace `sys.stderr.write(...); sys.exit(2)` with `return HookDecision(verdict=Verdict.DENY, reason=_format_block_message(verdict))` — the adapter puts `reason` on stderr and exits 2 (`claude_code.py:517`), which is what makes the bytes identical. Every `sys.exit(0)` becomes `return HookDecision()`. The blanket `except Exception: sys.exit(0)` becomes `return HookDecision()`; keep it, the fail-open is deliberate and documented.
+Delete `_read_stdin_json`; change `main` to take `event` and return `HookDecision`. `INSPECTED_TOOLS` and the `tool_input` guards collapse into `event.tool is None or event.tool.operation is not Operation.RUN_COMMAND`, and the command comes from `event.tool.command`. `cwd` comes from `event.cwd`, keeping the `os.getcwd()` fallback for `Path("")`. Replace `sys.stderr.write(...); sys.exit(2)` with `return HookDecision(verdict=Verdict.DENY, reason=_format_block_message(verdict))` — the adapter puts `reason` on stderr and exits 2 (`claude_code.py:520-521`), which is what makes the bytes identical. Every `sys.exit(0)` becomes `return HookDecision()`. The blanket `except Exception: sys.exit(0)` becomes `return HookDecision()`; keep it, the fail-open is deliberate and documented.
+
+**Two failure policies meet here and the plan must not pretend they agree.** The Global Constraints say a *blocking* builtin refuses when it cannot run, and this is the only blocking hook in the fifteen. Its own `except Exception` abstains instead, on purpose: "a bug here must not block honest work" (`:394`). Both survive, at different layers — the builtin fails open on a bug *inside its own logic*, `run_hook` refuses when it cannot even construct the event (decision 3, `runner.py:119-124`). Do not collapse them.
+
+That layering is also **the one exception to this plan's byte-identity constraint**, and it belongs in the PR body rather than looking like a regression in a diff: today `_read_stdin_json` (`:350`) returns `{}` on unparseable stdin and the hook exits 0; after migration the runner refuses with exit 2 before the builtin is reached.
 
 In `loader.py`:
 
@@ -547,7 +601,9 @@ Expected: PASS, and the bytes on all three channels equal to `deny.stdout` / `de
 
 - [ ] **Step 6: Attack the denylist with evasions of its own patterns**
 
-Mutation coverage proves the guard has branches, not that it covers anything. `_STASH_CALL` is a regex over shell text, so attack it there: repeated whitespace between `git`, `stash` and the subcommand; a global option between them (`-c core.pager=cat`); an assignment prefix (`GIT_DIR=.`); a wrapper (`env`); and a compound where the unsafe call is second, which `is_unsafe_stash` claims to judge because it iterates every match. **Record what got through in the PR body**, including the ones that correctly did not.
+Mutation coverage proves the guard has branches, not that it covers anything. `_STASH_CALL` is a regex over shell text, so attack it there: repeated whitespace between `git`, `stash` and the subcommand; a global option between them (`-c core.pager=cat`); an assignment prefix (`GIT_DIR=.`); a wrapper (`env`); and a compound where the unsafe call is second, which `is_unsafe_stash` claims to judge because it iterates every match. Those five are inside what the regex declares it covers, so they check that it does what it says. The interesting set is outside it, found by reading `_COMMAND_START` (`:61`): a quoted invocation (`sh -c "…"`), a backslash-escaped command name, a quoted subcommand, and a redirect before the command.
+
+**Record what got through in a versioned file** — `specs/backlog.md`, or a docstring on `_STASH_CALL`. A PR body is not where a future reader looks for a guard's known gaps.
 
 - [ ] **Step 7: Commit**
 
@@ -564,8 +620,12 @@ Only once all fifteen are `migrated=True`. The field, the constant and both bran
 **Files:**
 - Modify: `src/lazy_harness/hooks/loader.py` — delete `BuiltinHookSpec.migrated`, `PRE_RUNNER_AGENT`, `builtin_migrated()`
 - Modify: `src/lazy_harness/cli/hooks_cmd.py:88-121` — delete the `if spec.migrated:` branch and everything after it in the `else`
-- Modify: `src/lazy_harness/deploy/engine.py:204-233` — `_warn_unmigrated` has nothing left to warn about
-- Test: `tests/unit/hooks/test_builtin_registry.py`, `tests/unit/hooks/test_entry_points.py`, `tests/integration/test_deploy_signal_agreement.py`
+- Modify: `src/lazy_harness/hooks/engine.py:59` — `execute_hook` reads `spec.migrated`; **task 20 must land first or this task's own test suite fails with `AttributeError`**
+- Modify: `src/lazy_harness/deploy/engine.py:204-233` and `:223` — `_warn_unmigrated` has nothing left to warn about
+- Delete: `tests/unit/test_deploy_unmigrated_hooks.py` in full
+- Test: `tests/unit/hooks/test_builtin_registry.py`, `tests/unit/hooks/test_entry_points.py:141-152` and `:213-224` (both call `register(..., migrated=False)`), `tests/unit/hooks/test_abstention.py:62`, `tests/integration/test_deploy_signal_agreement.py`
+
+**Ordering.** This task is numbered 19 and runs *after* 20, not before. Task 20 removes the last reader of `migrated` outside the registry; with it still in place, step 4 below fails on `hooks/engine.py:59`. Running 20 first is safe in the other direction — `cli/hooks_cmd.py:96-121` still routes unmigrated builtins while it stands.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -710,7 +770,7 @@ git add -A && git commit -m "refactor: dispatch builtins on is_builtin rather th
 ## Task 21: The literal sweep, and what `profile_name()` keeps
 
 **Files:**
-- Modify: the seven builtins carrying `get_agent("claude-code")` (already handled in their own tasks; this is the audit that proves it)
+- Modify: nothing new — the ten global resolutions are removed by tasks 4–18, each in its own commit. This task is the audit that proves none was missed, plus the two records below.
 - Modify: `src/lazy_harness/hooks/builtins/_shared.py` — `profile_name()` gains a docstring naming its four surviving callers
 - Modify: `specs/backlog.md` — close *Ocho builtins resuelven su `hooks.log` globalmente*
 - Test: `tests/unit/hooks/test_builtin_contract.py`
@@ -741,7 +801,11 @@ def test_no_builtin_resolves_its_agent_globally() -> None:
     assert offenders == {}, f"builtins resolving an agent without a profile: {offenders}"
 ```
 
-- [ ] **Step 2: Run to verify it fails before the migrations and passes after**
+- [ ] **Step 2: Give the test a red phase it would otherwise never have**
+
+Run as written after tasks 4–18 this test passes on its first execution, which is the shape of a test that covers nothing. It gets its red phase the only honest way available: **write and land it first**, before task 4, where it fails naming all ten sites; then each migration task removes one name from the failure. Add it to task 3's commit.
+
+If it is instead written last, prove it by hand: reintroduce `get_agent("claude-code")` into one migrated builtin, watch the test name that file, remove it by hand. **Never `git checkout`** — it reverts the uncommitted work too.
 
 Run: `uv run --frozen pytest tests/unit/hooks/test_builtin_contract.py -v`
 
