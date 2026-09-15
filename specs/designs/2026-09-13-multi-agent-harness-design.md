@@ -635,14 +635,15 @@ cannot express "N files in two formats", so `generate_hook_config` and
 > shaping Claude Code's `matcher` / `hooks[]` block is exactly the adapter's
 > business.
 >
-> What is *not* yet done is removing them from the `AgentAdapter` Protocol
-> (`agents/base.py:466,470`, mirrored by the null adapter at
-> `agents/registry.py:65,68`). While they are declared there, every new adapter
-> must implement two methods whose `dict` return cannot express its config —
-> which is the exact constraint this paragraph gives for replacing them. The
-> throwaway `CodexAdapter` of step 4 is the first adapter that will have to
-> write two such stubs, so that is the moment the declarations come off; the
-> backlog carries the item.
+> **Closed at step 4.** The declarations are off the `AgentAdapter` Protocol and
+> off the null adapter, and the two survivors are private to
+> `ClaudeCodeAdapter` as `_generate_hook_config` / `_generate_mcp_config`. They
+> came off at step 4 rather than at step 3 for the reason the backlog gave: the
+> throwaway `CodexAdapter` is the second implementer, and it is what validates
+> the shape that is left. It writes `hooks.json` plus, in a real deployment, a
+> TOML block — the shape a single `dict` return cannot carry, which is this
+> paragraph's own argument. Claude Code's byte identity is unchanged;
+> `tests/goldens/config-deploy/` is the anchor and it did not move.
 
 The existing repair logic — entries Claude Code would reject, backups, the
 "preserved N entries not managed by the harness" report — moves behind the
@@ -721,10 +722,30 @@ generated declaration does. `NormalizedHookIdentity` is the event name, the
 matcher, and the single normalised handler, serialised to TOML before hashing
 ([src], `discovery.rs:767` @ `6b9826e`) — so a `[hooks]` table written into
 `config.toml` and a `hooks.json` entry that declare the same thing hash to the
-same identity, and a redeploy that moves a hook between the two representations
-does not untrust it. This inverts the risk: the dangerous case is not a
+same identity. This inverts the risk: the dangerous case is not a
 modified script running untrusted, it is a *redeploy* that changes a matcher and
 silently untrusts all 18 hooks mid-flight.
+
+> **Correction, measured at step 4.** The sentence that stood here — *"a
+> redeploy that moves a hook between the two representations does not untrust
+> it"* — is false as it was stated, and the hash is only half the story. The
+> state *key* is
+> `<absolute path of the declaring file>:<snake_case event>:<group index>:<handler index>`,
+> so it is **path-scoped**. Decisive probe, on 0.154.0 with a byte-identical
+> handler: the `hooks.json` entry read `Trusted` while the `config.toml` one
+> declaring the same thing read `new · review required`, and the two carried the
+> *same* `trusted_hash` (`sha256:904128e4…`). The hash is stable across the two
+> representations; the key is not, so moving a hook between them re-prompts for
+> every hook in the file. For `lh deploy` that makes the choice of
+> representation frozen at the first deploy — switching it costs a full
+> re-trust, and `CodexAdapter` records that in its own docstring.
+>
+> Two details the same probe settled, both in the harness's favour. The key uses
+> the **snake_case** event name (`session_start`) even though the declaration
+> must be **PascalCase** (`SessionStart`) — both casings are live in one file, in
+> different roles. And adding a second, unrelated declaration left the first
+> hook's hash untouched, so a redeploy that only *adds* hooks keeps the existing
+> ones trusted.
 
 **There is a bypass, and the harness cannot reach it.** `HookTrustStatus::Managed`
 skips trust entirely, but only for `System`, `Mdm`, `EnterpriseManaged` and
@@ -1524,6 +1545,43 @@ non-identity adapter has run against it.** Step 4 is that gate.
    The gate is run against a **throwaway profile**, not against `lazy` or
    `flex`. That is the derived design's decision 11 and it is what keeps a
    failing gate from taking a daily profile with it.
+
+   > **What step 4 shipped, and what it did not.** `CodexAdapter`
+   > (`agents/codex.py`) exists, is registered as `codex`, and implements
+   > `AgentAdapter` + `ConfigPlanner`. The two generators are off the Protocol,
+   > which is the half of this step that was blocking every future adapter.
+   >
+   > The adapter writes **`hooks.json`, never `config.toml`** — the paragraph
+   > above left the choice open, and the probe closed it: Codex persists
+   > `[hooks.state]` back into the same `config.toml` the hooks are declared in,
+   > next to `[projects.*]`, so a harness that owns that file can revoke the
+   > user's own trust decisions. `hooks.json` carries nothing but declarations,
+   > which is what lets the adapter replace it wholesale instead of merging.
+   >
+   > Measured against the 0.154.0 binary, by effect rather than by exit code,
+   > with the adapter's *own* `plan_config` output written as `hooks.json` and
+   > its *own* `format_hook_output` bytes on the handler's stdout: both hooks
+   > fired (`hook: SessionStart Completed`, `hook: PreToolUse Completed`) and
+   > the marker file was created; with the deny envelope the same declaration
+   > produced `hook: PreToolUse Blocked`, `Command blocked by PreToolUse hook:
+   > refused by CodexAdapter`, and the marker was **never** created across three
+   > attempts.
+   >
+   > One gap the evidence had left open is now closed, and it was load-bearing:
+   > Codex's `command` field takes a **full command line**, not a path to an
+   > executable, and resolves a bare name from the ambient `PATH`. A handler
+   > declared as `<script> --profile lazy --flag=x` received three argv entries,
+   > and one declared as a bare `lhprobe hook context-inject --profile lazy`
+   > resolved and received four. `hook_command`'s
+   > `lh hook <name> --profile <p>` therefore deploys to Codex unchanged.
+   > `--dangerously-bypass-hook-trust` also works non-interactively, which
+   > removes the TUI from the measurement loop (it does **not** change the
+   > design's option (b) for real deploys).
+   >
+   > Still open, and not attempted here: the three builtins are not migrated to
+   > run through this adapter, no `lh doctor` line names Codex's missing
+   > signals, and MCP is out of scope for the throwaway — `mcp_config_file()`
+   > returns `""` and `plan_config` ignores `servers`.
 5. Migrate the remaining 15 builtins, each declaring its `Operation` set and its
    `Signal` set. Delete `profile_name()`, `_TRANSCRIPT_KEYS` and seven of the
    ten `get_agent("claude-code")` literals (decision 1 names the three that
