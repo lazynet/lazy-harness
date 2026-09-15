@@ -127,18 +127,18 @@ Responsibility: rescue working state before Claude Code compacts the conversatio
 
 Steps when the event fires:
 
-1. Read the transcript path from the event JSON (accepts `transcript_path`, `transcriptPath`, or `input` field — tolerant to Claude Code version drift).
-2. Copy the raw transcript to `~/.claude/compact-backups/<timestamp>-<project>.jsonl`. This is the forensic backup; nothing in the framework relies on it, but `lh` users can re-run compound loop against it if needed.
+1. Take the transcript path from the normalised event (`HookEvent.transcript_path`), and use it only when a file is actually there — at compaction time it always is, but the same helper serves `SessionStart`, where the agent names a transcript it has not written yet.
+2. Copy the raw transcript to `<agent runtime dir>/compact-backups/<timestamp>-<project>.jsonl`. This is the forensic backup; nothing in the framework relies on it, but `lh` users can re-run compound loop against it if needed.
 3. Parse the JSONL and extract the last up to 5 non-trivial user messages (length ≥ 15 chars, truncated to 200 chars each) and every file path seen inside assistant `tool_use` blocks' `input.file_path` or `input.path` (sorted, deduplicated, last 10 kept), then render them as `## Tasks in progress` and `## Files worked on`.
 
     **This step recovers nothing today.** `parse_transcript` reads `role` and `content` at the top level of each JSONL line, and Claude Code nests both one level down, under `message`. Neither loop ever matches, so both sections are always absent from the summary — measured against production transcripts and against every `pre-compact-summary.md` on disk. The paragraph above describes what the step is meant to do, not what it does; the repair is tracked in the project backlog.
 
 4. Append the last 3 `summary` fields of `decisions.jsonl` and of `failures.jsonl` from the memory directory, as `## Recent decisions` and `## Recent failures`. These read the memory store rather than the transcript, and are in practice the only sections the summary carries.
 5. If the summary came out non-empty, write it to `<memory_dir>/pre-compact-summary.md` with a generation timestamp in an HTML comment — the same resolved directory every other memory writer uses (see `compound-loop` below).
-6. Print it on stdout as **plain text**, preceded by a line asking the summariser to preserve it. Claude Code's PreCompact executor collects each successful hook's raw stdout and hands the joined text to the compaction summariser as `newCustomInstructions`. There is no `hookSpecificOutput` variant for this event — a JSON payload fails schema validation, which marks the hook failed and discards its output.
+6. Return it as **plain text**, preceded by a line asking the summariser to preserve it. The adapter puts `HookDecision.additional_context` on stdout unchanged for this event alone. Claude Code's PreCompact executor collects each successful hook's raw stdout and hands the joined text to the compaction summariser as `newCustomInstructions`. There is no `hookSpecificOutput` variant for this event — a JSON payload fails schema validation, which marks the hook failed and discards its output.
 
 **Where it writes:**
-- `~/.claude/compact-backups/<ts>-<project>.jsonl` — raw transcript backup.
+- `<agent runtime dir>/compact-backups/<ts>-<project>.jsonl` — raw transcript backup.
 - `<memory_dir>/pre-compact-summary.md` — distilled summary for the next session start.
 
 ### `session-export` — runs on `Stop`
@@ -787,6 +787,6 @@ Most built-in hooks append a line to `logs/hooks.log` with their name, the cwd, 
 
 Neither file sits at a fixed path. Both live in the agent runtime directory, which resolves in this order: the agent's own environment variable (`CLAUDE_CONFIG_DIR` and its equivalents), then the profile's `config_dir`, then the agent's global link (`~/.claude`), then `~/.<agent>`. On a single-profile Claude Code install that lands in `~/.claude/logs/`; with profiles declared, the launcher exports the environment variable, so it lands in the profile's own directory — see [profiles and deploy](profiles-and-deploy.md).
 
-The second step, the profile's `config_dir`, is what a hook falls back on when the environment variable is absent, and five hooks read it today: `context-inject`, `session-export`, `session-end`, `compound-loop` and the block log of `pre-tool-use-security` resolve the directory from the profile they were invoked with — and so does the compound-loop worker, which inherits the profile the producer spawns it with. The other five that write this file — `pre-compact`, `pre-tool-use-memory-size`, `pre-tool-use-read-size`, `post-tool-use-format`, `post-tool-use-ansible-lint` — resolve it globally instead, so on a profile whose agent differs from the global `[agent].type` they write under the wrong agent. That is open work, tracked in the backlog against the hook migration.
+The second step, the profile's `config_dir`, is what a hook falls back on when the environment variable is absent, and six hooks read it today: `context-inject`, `session-export`, `session-end`, `compound-loop`, `pre-compact` and the block log of `pre-tool-use-security` resolve the directory from the profile they were invoked with — and so does the compound-loop worker, which inherits the profile the producer spawns it with. The other four that write this file — `pre-tool-use-memory-size`, `pre-tool-use-read-size`, `post-tool-use-format`, `post-tool-use-ansible-lint` — resolve it globally instead, so on a profile whose agent differs from the global `[agent].type` they write under the wrong agent. That is open work, tracked in the backlog against the hook migration.
 
 `lh status hooks` surfaces a summary view over `hooks.log` so you do not have to tail it by hand.

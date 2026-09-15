@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "Preserve the following working context in the summary:\n\n## Recent decisions\n- resolve the profile in the writer\n- keep the plain-text channel\n\n## Recent failures\n- the reader stayed global\n"
+}

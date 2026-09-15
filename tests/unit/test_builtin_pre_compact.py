@@ -8,22 +8,54 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
+from lazy_harness.agents.base import HookEvent
+from lazy_harness.hooks.engine import CLI_BOOTSTRAP
 
 # Captured at collection time, before any per-test fixture can patch HOME, so
 # it reflects the real machine home regardless of what a test later pins.
 _REAL_HOME = Path(os.environ.get("HOME") or Path.home())
 
 
-def test_pre_compact_returns_zero(tmp_path: Path) -> None:
-    hook_path = (
-        Path(__file__).parent.parent.parent
-        / "src"
-        / "lazy_harness"
-        / "hooks"
-        / "builtins"
-        / "pre_compact.py"
+def _event(cwd: Path, *, transcript: Path | None = None, profile: str = "") -> HookEvent:
+    return HookEvent(
+        event="pre_compact",
+        profile=profile,
+        session_id="s1",
+        cwd=cwd,
+        transcript_path=transcript,
     )
+
+
+def _run_through_lh(
+    cwd: Path, payload: str, *, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Invoke the deployed command, which is how a migrated builtin is reached.
+
+    `python <path>` stops working once `main()` takes a `HookEvent`: the module
+    imports, defines `main`, and exits 0 without running anything — the same
+    exit code a working hook returns, so a test spawning the bare script could
+    no longer tell the two apart. `lh hook` is what `settings.json` carries.
+
+    `env=None` means "inherit", which one test below depends on: it reproduces
+    the call shape that leaked into the developer's real home.
+    """
+    return subprocess.run(
+        [sys.executable, "-c", CLI_BOOTSTRAP, "hook", "pre-compact"],
+        input=payload,
+        capture_output=True,
+        text=True,
+        cwd=str(cwd),
+        timeout=30,
+        env=env if env is not None else os.environ.copy(),
+        check=False,
+    )
+
+
+def _encoded_cwd(cwd: Path) -> str:
+    return "-" + str(cwd).replace("/", "-").lstrip("-")
+
+
+def test_pre_compact_returns_zero(tmp_path: Path) -> None:
     transcript = tmp_path / "session.jsonl"
     transcript.write_text(
         json.dumps(
@@ -41,36 +73,34 @@ def test_pre_compact_returns_zero(tmp_path: Path) -> None:
     }
     (tmp_path / ".claude").mkdir()
 
-    result = subprocess.run(
-        [sys.executable, str(hook_path)],
-        input=json.dumps({"transcript_path": str(transcript)}),
-        capture_output=True,
-        text=True,
-        cwd=str(tmp_path),
-        timeout=10,
+    result = _run_through_lh(
+        tmp_path,
+        json.dumps({"hook_event_name": "PreCompact", "transcript_path": str(transcript)}),
         env=env,
     )
-    assert result.returncode == 0
-
-
-def _encoded_cwd(cwd: Path) -> str:
-    return "-" + str(cwd).replace("/", "-").lstrip("-")
+    assert result.returncode == 0, result.stderr
 
 
 def test_pre_compact_emits_plain_text_carrying_decisions_and_failures_tails(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch
 ) -> None:
-    hook_path = (
-        Path(__file__).parent.parent.parent
-        / "src"
-        / "lazy_harness"
-        / "hooks"
-        / "builtins"
-        / "pre_compact.py"
-    )
+    """The channel, asserted on the decision rather than on a process's stdout.
+
+    Claude Code 2.1.234's `hookSpecificOutput` union has no PreCompact variant,
+    so JSON here fails schema validation and the hook is marked failed — its
+    output dropped. The executor collects each *successful* hook's raw stdout
+    into `newCustomInstructions` instead, which is why `format_hook_output`
+    special-cases `pre_compact` and writes `additional_context` as raw text.
+    The bytes that reach the summariser are frozen in
+    `tests/goldens/hooks/pre-compact/`; this asserts the hook put them on the
+    channel the adapter reads.
+    """
+    from lazy_harness.hooks.builtins.pre_compact import SUMMARY_PREAMBLE, main
 
     claude_dir = tmp_path / ".claude"
-    memory_dir = claude_dir / "projects" / _encoded_cwd(tmp_path) / "memory"
+    work = (tmp_path / "work").resolve()
+    work.mkdir()
+    memory_dir = claude_dir / "projects" / _encoded_cwd(work) / "memory"
     memory_dir.mkdir(parents=True)
 
     (memory_dir / "decisions.jsonl").write_text(
@@ -88,46 +118,14 @@ def test_pre_compact_emits_plain_text_carrying_decisions_and_failures_tails(
         + "\n"
     )
 
-    transcript = tmp_path / "session.jsonl"
-    transcript.write_text(
-        json.dumps(
-            {
-                "role": "user",
-                "content": "working on the precompact hook tail",
-                "timestamp": "2026-05-20T10:00:00",
-            }
-        )
-        + "\n"
-    )
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_dir))
 
-    env = {
-        "PATH": os.environ.get("PATH", ""),
-        "HOME": str(tmp_path),
-        "CLAUDE_CONFIG_DIR": str(claude_dir),
-    }
+    decision = main(_event(work))
 
-    result = subprocess.run(
-        [sys.executable, str(hook_path)],
-        input=json.dumps({"transcript_path": str(transcript)}),
-        capture_output=True,
-        text=True,
-        cwd=str(tmp_path),
-        timeout=10,
-        env=env,
-    )
-
-    assert result.returncode == 0
-    # Claude Code 2.1.234's `hookSpecificOutput` union has no PreCompact
-    # variant, so JSON here fails schema validation and the hook is marked
-    # failed — its output dropped. The executor collects each *successful*
-    # hook's raw stdout into `newCustomInstructions` instead, which is why
-    # this has to be plain text.
-    from lazy_harness.hooks.builtins.pre_compact import SUMMARY_PREAMBLE
-
-    with pytest.raises(json.JSONDecodeError):
-        json.loads(result.stdout)
-    ctx = result.stdout
-    assert ctx.lstrip().startswith(SUMMARY_PREAMBLE)
+    ctx = decision.additional_context
+    assert ctx.startswith(SUMMARY_PREAMBLE)
+    assert decision.system_message == ""
+    assert decision.verdict is None
 
     assert "Recent decisions" in ctx
     assert "pyright-lsp in both profiles" in ctx
@@ -137,37 +135,25 @@ def test_pre_compact_emits_plain_text_carrying_decisions_and_failures_tails(
 
 
 def test_pre_compact_empty_input(tmp_path: Path) -> None:
-    hook_path = (
-        Path(__file__).parent.parent.parent
-        / "src"
-        / "lazy_harness"
-        / "hooks"
-        / "builtins"
-        / "pre_compact.py"
-    )
     claude_dir = tmp_path / ".claude"
     claude_dir.mkdir()
+    work = (tmp_path / "work").resolve()
+    work.mkdir()
     env = {
         "PATH": os.environ.get("PATH", ""),
         "HOME": str(tmp_path),
         "CLAUDE_CONFIG_DIR": str(claude_dir),
     }
 
-    result = subprocess.run(
-        [sys.executable, str(hook_path)],
-        input="{}",
-        capture_output=True,
-        text=True,
-        cwd=str(tmp_path),
-        timeout=10,
-        env=env,
+    result = _run_through_lh(
+        work, json.dumps({"hook_event_name": "PreCompact", "cwd": str(work)}), env=env
     )
-    assert result.returncode == 0
+    assert result.returncode == 0, result.stderr
 
     # Effect, not just exit code: the hook always creates the memory dir
     # (even with no transcript), so its presence at the pinned location is
     # proof the run stayed inside the sandbox instead of the real machine.
-    memory_dir = claude_dir / "projects" / _encoded_cwd(tmp_path) / "memory"
+    memory_dir = claude_dir / "projects" / _encoded_cwd(work) / "memory"
     assert memory_dir.is_dir()
 
 
@@ -184,47 +170,41 @@ def test_pre_compact_subprocess_cannot_leak_into_real_machine_home(tmp_path: Pat
     the hook never touches the real machine home. Before the `_isolate_home_dir`
     guard in conftest.py existed, this failed - the directory below was really
     created on disk.
+
+    Routed through `lh hook` rather than `python pre_compact.py`: a migrated
+    module run as a script exits 0 having done nothing, so the bare-script
+    shape would assert the absence of a write no hook was ever going to make.
+    The memory-dir assertion is what proves the run actually happened.
     """
-    hook_path = (
-        Path(__file__).parent.parent.parent
-        / "src"
-        / "lazy_harness"
-        / "hooks"
-        / "builtins"
-        / "pre_compact.py"
-    )
-    encoded = _encoded_cwd(tmp_path)
+    work = (tmp_path / "work").resolve()
+    work.mkdir()
+    encoded = _encoded_cwd(work)
     real_leak_target = _REAL_HOME / ".claude" / "projects" / encoded
 
-    result = subprocess.run(
-        [sys.executable, str(hook_path)],
-        input="{}",
-        capture_output=True,
-        text=True,
-        cwd=str(tmp_path),
-        timeout=10,
-    )
+    result = _run_through_lh(work, json.dumps({"hook_event_name": "PreCompact", "cwd": str(work)}))
 
-    assert result.returncode == 0
+    assert result.returncode == 0, result.stderr
     assert not real_leak_target.exists(), (
         f"hook subprocess leaked into the real machine home at {real_leak_target}"
     )
+    # The run reached the hook: without this the assertion above would pass
+    # against a command that never resolved a memory dir at all.
+    leaked = sorted(_REAL_HOME.glob(f".claude*/projects/{encoded}"))
+    assert leaked == [], leaked
 
 
 def test_pre_compact_routes_paths_through_agent_adapter(tmp_path, monkeypatch) -> None:
     """ADR-032 L3/L4: memory/backup dirs must come from the configured agent
     adapter. With agent.type = "null" the summary must land under ~/.null even
     when CLAUDE_CONFIG_DIR points elsewhere."""
-    import io
     import json as _json
-    import sys as _sys
 
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "decoy-claude"))
 
-    cwd = tmp_path / "proj"
+    cwd = (tmp_path / "proj").resolve()
     cwd.mkdir()
     encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
 
@@ -240,10 +220,7 @@ def test_pre_compact_routes_paths_through_agent_adapter(tmp_path, monkeypatch) -
 
     monkeypatch.setattr(paths_mod, "config_file", lambda: cfg_file)
     monkeypatch.chdir(cwd)
-    monkeypatch.setattr(
-        _sys, "stdin", io.StringIO(_json.dumps({"transcript_path": str(transcript)}))
-    )
-    hook_mod.main()
+    hook_mod.main(_event(cwd, transcript=transcript))
 
     summary_file = home / ".null" / "projects" / encoded / "memory" / "pre-compact-summary.md"
     assert summary_file.is_file()

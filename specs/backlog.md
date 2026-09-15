@@ -464,7 +464,7 @@ Inventario por **mecanismo**, no por grafía: diez builtins escriben `hooks.log`
 | `session-export` | `:44` boot, `:59-60` post-config | literal + `cfg.agent.type` |
 | ~~`compound-loop`~~ | cerrado — ver la actualización debajo de la tabla | — |
 | `session-end` | `:89` boot, `:107-108` post-config | literal + `cfg.agent.type` |
-| `pre-compact` | `:158` resolución, `:184` escritura | `cfg.agent.type if cfg is not None else "claude-code"` |
+| ~~`pre-compact`~~ | cerrado — ver la actualización debajo de la tabla | — |
 | `pre-tool-use-memory-size` | `:170` | literal |
 | `pre-tool-use-read-size` | `:69` | literal |
 | `post-tool-use-format` | `:67` | literal |
@@ -477,6 +477,10 @@ Más `knowledge/compound_loop_worker.py`, fuera del proceso del hook: el camino 
 `stop-verify-guard` **no** entra: es migrado y no escribe `hooks.log`, registra en MetricsDB.
 
 Medido por el gate de aislamiento el 2026-09-15 contra 0.67.1: **siete** de los ocho filtraron **28 líneas** fuera del dir del profile en una sola corrida. `pre-compact` no aparece en ese conteo porque el gate **nunca lo invoca** —no está en `KNOWN_GAP_HOOKS` ni tiene un `invoke`—, no porque esté arreglado ni porque cueste dispararlo: `pre_compact.py:185` escribe su línea `fired` sin condición. Sigue siendo ocho por mecanismo. El gate los imprime bajo `KNOWN GAP` en cada corrida y no los asertea, así que un `PASS` dice que los **migrados** están aislados, nunca que no filtra nada.
+
+**Actualización 2026-09-15 — `pre-compact` también sale del inventario** (task 8 del step 5). `main(event)` resuelve `agent_dir_for(cfg, event.profile)` y carga config antes de la primera línea de log, así que la grafía `cfg.agent.type if cfg is not None else "claude-code"` desaparece con las dos escrituras que dependían de ella. **Y el gate ahora sí lo invoca**: el párrafo de arriba decía que no, y era cierto hasta este commit — `tests/integration/test_hook_log_profile_isolation.py` ya tiene sus dos casos, presencia en el dir del profile y ausencia fuera. El conteo de 0.67.1 sigue siendo el registro de lo que se midió entonces.
+
+Lo que cerró junto con esto, y no estaba en este inventario: `pre-compact` escribía `pre-compact-summary.md` en el dir global mientras `context-inject` —migrado en el #300— lo leía en el del profile. Los dos procesos salían 0. Cubierto ahora por `tests/integration/test_pre_compact_context_inject_pair.py`, que invoca los dos lados.
 
 **Por qué no se arregló con los otros dos.** El dato existe y muere en el dispatch: `deploy/engine.py:136` emite `{binary} hook {name} --profile {profile}` para *todos* los builtins, pero `cli/hooks_cmd.py` llama `main_fn()` **sin argumentos** en la rama no-migrada. Ninguno de los ocho tiene `event` ni profile en scope — `pre-compact` incluido, que es unmigrated igual que los otros siete. Plumbearlo obliga a tocar esa rama transitoria, que el step 5 borra junto con `BuiltinHookSpec.migrated`.
 
