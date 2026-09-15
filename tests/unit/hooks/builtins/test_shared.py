@@ -59,88 +59,77 @@ def test_find_latest_session_picks_most_recent_jsonl(tmp_path: Path) -> None:
     assert find_latest_session(tmp_path) == new
 
 
-def test_transcript_from_payload_reads_snake_case_key(tmp_path: Path) -> None:
-    from lazy_harness.hooks.builtins._shared import transcript_from_payload
+def test_declared_transcript_reads_snake_case_key(tmp_path: Path) -> None:
+    from lazy_harness.hooks.builtins._shared import _declared_transcript
 
     transcript = tmp_path / "abc123.jsonl"
     transcript.write_text("{}\n")
 
-    assert transcript_from_payload({"transcript_path": str(transcript)}) == transcript
+    assert _declared_transcript({"transcript_path": str(transcript)}) == transcript
 
 
-def test_transcript_from_payload_reads_camel_case_key(tmp_path: Path) -> None:
-    from lazy_harness.hooks.builtins._shared import transcript_from_payload
+def test_declared_transcript_reads_camel_case_key(tmp_path: Path) -> None:
+    from lazy_harness.hooks.builtins._shared import _declared_transcript
 
     transcript = tmp_path / "abc123.jsonl"
     transcript.write_text("{}\n")
 
-    assert transcript_from_payload({"transcriptPath": str(transcript)}) == transcript
+    assert _declared_transcript({"transcriptPath": str(transcript)}) == transcript
 
 
-def test_transcript_from_payload_returns_none_when_key_absent() -> None:
-    from lazy_harness.hooks.builtins._shared import transcript_from_payload
+def test_declared_transcript_returns_none_when_key_absent() -> None:
+    from lazy_harness.hooks.builtins._shared import _declared_transcript
 
-    assert transcript_from_payload({"session_id": "abc123"}) is None
-
-
-def test_transcript_from_payload_returns_none_when_file_missing(tmp_path: Path) -> None:
-    from lazy_harness.hooks.builtins._shared import transcript_from_payload
-
-    missing = tmp_path / "gone.jsonl"
-
-    assert transcript_from_payload({"transcript_path": str(missing)}) is None
+    assert _declared_transcript({"session_id": "abc123"}) is None
 
 
-def test_transcript_from_payload_returns_none_for_non_mapping() -> None:
-    from lazy_harness.hooks.builtins._shared import transcript_from_payload
+def test_declared_transcript_does_not_touch_the_filesystem(tmp_path: Path) -> None:
+    """The declaration is what the payload said, not what exists.
 
-    assert transcript_from_payload(None) is None
-    assert transcript_from_payload("transcript_path") is None
+    `existing_transcript` owns the `.is_file()` half; keeping them apart is what
+    lets `resolve_project_dir` work at SessionStart, before the file is written.
+    """
+    from lazy_harness.hooks.builtins._shared import _declared_transcript
 
+    missing = tmp_path / "nowhere" / "gone.jsonl"
 
-def test_project_dir_from_payload_is_the_transcript_parent(tmp_path: Path) -> None:
-    """The agent owns the project-dir naming; we read it, never recompute it."""
-    from lazy_harness.hooks.builtins._shared import project_dir_from_payload
-
-    # Encoding the agent actually uses for a path with a space and a leading dot.
-    project_dir = tmp_path / "-Users-x-Mobile-Documents-iCloud-md-obsidian-LazyMind"
-    project_dir.mkdir()
-    transcript = project_dir / "abc123.jsonl"
-    transcript.write_text("{}\n")
-
-    assert project_dir_from_payload({"transcript_path": str(transcript)}) == project_dir
+    assert _declared_transcript({"transcript_path": str(missing)}) == missing
 
 
-def test_project_dir_from_payload_returns_none_without_transcript() -> None:
-    from lazy_harness.hooks.builtins._shared import project_dir_from_payload
+def test_declared_transcript_returns_none_for_non_mapping() -> None:
+    from lazy_harness.hooks.builtins._shared import _declared_transcript
 
-    assert project_dir_from_payload({}) is None
+    assert _declared_transcript(None) is None
+    assert _declared_transcript("transcript_path") is None
 
 
-def test_project_dir_from_payload_resolves_before_transcript_is_written(
+def test_existing_transcript_filters_a_declared_path_that_is_not_written_yet(
     tmp_path: Path,
 ) -> None:
-    """At SessionStart the transcript file does not exist yet, but its dir does."""
-    from lazy_harness.hooks.builtins import _shared
+    """SessionStart declares a transcript before the agent writes it.
 
-    project_dir = tmp_path / "-Users-x-repos-thing"
-    project_dir.mkdir()
-    unwritten = project_dir / "0197f0de-cafe-4bad-9001-000000000003.jsonl"
+    `HookEvent.transcript_path` is the declared path, un-stat'd, so the filter
+    the deleted `transcript_from_payload` applied has to survive somewhere --
+    here. Without a house of its own it vanishes at every call site at once.
+    """
+    from lazy_harness.hooks.builtins._shared import existing_transcript
 
-    assert _shared.project_dir_from_payload({"transcript_path": str(unwritten)}) == project_dir
-    # The transcript itself is still unusable — only the directory resolves.
-    assert _shared.transcript_from_payload({"transcript_path": str(unwritten)}) is None
-
-
-def test_project_dir_from_payload_returns_none_when_dir_missing(tmp_path: Path) -> None:
-    from lazy_harness.hooks.builtins._shared import project_dir_from_payload
-
-    stale = tmp_path / "gone" / "abc.jsonl"
-
-    assert project_dir_from_payload({"transcript_path": str(stale)}) is None
+    assert existing_transcript(tmp_path / "absent.jsonl") is None
+    written = tmp_path / "present.jsonl"
+    written.write_text("{}\n")
+    assert existing_transcript(written) == written
+    assert existing_transcript(None) is None
 
 
-def test_resolve_project_dir_prefers_the_payload(tmp_path: Path) -> None:
+def test_existing_transcript_rejects_a_directory(tmp_path: Path) -> None:
+    """`.is_file()`, not `.exists()` — the project dir shares the path shape."""
+    from lazy_harness.hooks.builtins._shared import existing_transcript
+
+    assert existing_transcript(tmp_path) is None
+
+
+def test_resolve_project_dir_prefers_the_declared_dir(tmp_path: Path) -> None:
+    """The agent owns the project-dir naming; we read it, never recompute it."""
     from lazy_harness.hooks.builtins._shared import resolve_project_dir
 
     agent_dir = tmp_path / "agent"
@@ -148,13 +137,65 @@ def test_resolve_project_dir_prefers_the_payload(tmp_path: Path) -> None:
     declared.mkdir(parents=True)
 
     resolved = resolve_project_dir(
-        {"transcript_path": str(declared / "s.jsonl")},
+        declared / "s.jsonl",
         agent_dir=agent_dir,
         sessions_subdir="projects",
         cwd=Path("/Users/x/some where/proj"),
     )
 
     assert resolved == declared
+
+
+def test_resolve_project_dir_honours_a_transcript_not_written_yet(tmp_path: Path) -> None:
+    """At SessionStart the transcript file does not exist, but its dir does.
+
+    Only the parent is stat'd, which is why this helper takes the declared path
+    and not the `existing_transcript` of it.
+    """
+    from lazy_harness.hooks.builtins._shared import resolve_project_dir
+
+    agent_dir = tmp_path / "agent"
+    declared = agent_dir / "projects" / "-encoded-by-the-agent"
+    declared.mkdir(parents=True)
+    unwritten = declared / "0197f0de-cafe-4bad-9001-000000000003.jsonl"
+
+    resolved = resolve_project_dir(
+        unwritten,
+        agent_dir=agent_dir,
+        sessions_subdir="projects",
+        cwd=Path("/Users/x/some where/proj"),
+    )
+
+    assert resolved == declared
+
+
+def test_the_two_helpers_disagree_about_one_unwritten_transcript(tmp_path: Path) -> None:
+    """The invariant that makes the two helpers non-interchangeable, on one input.
+
+    Asserted as a pair rather than as two tests over two paths, because the
+    thing worth stating is the *disagreement*: for a transcript the agent has
+    declared but not yet written, `existing_transcript` must say `None` while
+    `resolve_project_dir` must still recover the dir the agent named. Split
+    across separate inputs, both halves pass while a call site that feeds the
+    filtered value to both silently falls back to encoding the cwd.
+    """
+    from lazy_harness.hooks.builtins._shared import existing_transcript, resolve_project_dir
+
+    agent_dir = tmp_path / "agent"
+    declared_dir = agent_dir / "projects" / "-encoded-by-the-agent"
+    declared_dir.mkdir(parents=True)
+    unwritten = declared_dir / "0197f0de-cafe-4bad-9001-000000000011.jsonl"
+
+    assert existing_transcript(unwritten) is None
+    assert (
+        resolve_project_dir(
+            unwritten,
+            agent_dir=agent_dir,
+            sessions_subdir="projects",
+            cwd=Path("/Users/x/some where/proj"),
+        )
+        == declared_dir
+    )
 
 
 def test_resolve_project_dir_ignores_a_transcript_outside_the_sessions_root(
@@ -168,7 +209,24 @@ def test_resolve_project_dir_ignores_a_transcript_outside_the_sessions_root(
     stray.mkdir()
 
     resolved = resolve_project_dir(
-        {"transcript_path": str(stray / "transcript.jsonl")},
+        stray / "transcript.jsonl",
+        agent_dir=agent_dir,
+        sessions_subdir="projects",
+        cwd=Path("/Users/x/proj"),
+    )
+
+    assert resolved == agent_dir / "projects" / "-Users-x-proj"
+
+
+def test_resolve_project_dir_ignores_a_declared_dir_that_is_gone(tmp_path: Path) -> None:
+    """A stale transcript path from a deleted project dir derives from cwd instead."""
+    from lazy_harness.hooks.builtins._shared import resolve_project_dir
+
+    agent_dir = tmp_path / "agent"
+    stale = agent_dir / "projects" / "-removed-by-the-agent" / "abc.jsonl"
+
+    resolved = resolve_project_dir(
+        stale,
         agent_dir=agent_dir,
         sessions_subdir="projects",
         cwd=Path("/Users/x/proj"),
@@ -183,7 +241,7 @@ def test_resolve_project_dir_falls_back_to_cwd_encoding(tmp_path: Path) -> None:
     agent_dir = tmp_path / "agent"
 
     resolved = resolve_project_dir(
-        {},
+        None,
         agent_dir=agent_dir,
         sessions_subdir="projects",
         cwd=Path("/Users/x/proj"),
@@ -226,7 +284,7 @@ def test_resolve_memory_dir_uses_the_main_repo_from_inside_a_worktree(tmp_path: 
     declared.mkdir(parents=True)
 
     resolved = resolve_memory_dir(
-        {"transcript_path": str(declared / "s.jsonl")},
+        declared / "s.jsonl",
         agent_dir=agent_dir,
         sessions_subdir="projects",
         cwd=worktree,
@@ -244,8 +302,8 @@ def test_resolve_memory_dir_matches_the_project_dir_outside_a_worktree(tmp_path:
     plain.mkdir()
 
     assert resolve_memory_dir(
-        {}, agent_dir=agent_dir, sessions_subdir="projects", cwd=plain
-    ) == resolve_project_dir({}, agent_dir=agent_dir, sessions_subdir="projects", cwd=plain)
+        None, agent_dir=agent_dir, sessions_subdir="projects", cwd=plain
+    ) == resolve_project_dir(None, agent_dir=agent_dir, sessions_subdir="projects", cwd=plain)
 
 
 def test_project_key_is_identical_from_every_entry_point(tmp_path: Path) -> None:

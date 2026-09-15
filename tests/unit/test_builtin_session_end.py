@@ -207,6 +207,73 @@ enabled = true
     assert not (decoy_dir / "queue").exists()
 
 
+def test_session_end_keeps_the_declared_project_dir_when_the_transcript_is_unwritten(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The declared path reaches `resolve_project_dir` un-stat'd, and must.
+
+    `existing_transcript` filters a transcript that is not on disk yet;
+    `resolve_project_dir` only stats the *parent*, so it still recovers the
+    project dir the agent named. Passing the filtered value to both — the one
+    swap this refactor makes easy — always yields `None` here, because this
+    branch is only reached when the filter already returned `None`. The agent's
+    own naming would be discarded for a cwd-derived guess on every call.
+
+    Asserted by running the hook rather than by watching an argument: the two
+    directories hold different sessions, so only the right one queues.
+    """
+    import io
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    cwd = tmp_path / "proj"
+    cwd.mkdir()
+    agent_dir = home / ".null"
+    sessions_root = agent_dir / "projects"
+
+    # What the agent named. Deliberately not re-derivable from the cwd.
+    declared_dir = sessions_root / "-agent-chose-this-name"
+    declared_dir.mkdir(parents=True)
+    _interactive_session_jsonl(declared_dir, "abcd1234-deadbeef-0009")
+
+    # Where encoding the cwd would land instead: present, and empty.
+    (sessions_root / ("-" + str(cwd).replace("/", "-").lstrip("-"))).mkdir(parents=True)
+
+    # Declared on stdin, never written to disk.
+    unwritten = declared_dir / "0197f0de-cafe-4bad-9001-000000000009.jsonl"
+    assert not unwritten.exists()
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        """
+[harness]
+version = "1"
+
+[agent]
+type = "null"
+
+[compound_loop]
+enabled = true
+"""
+    )
+    from lazy_harness.core import paths as paths_mod
+    from lazy_harness.hooks.builtins import session_end as hook_mod
+
+    monkeypatch.setattr(paths_mod, "config_file", lambda: cfg_file)
+    monkeypatch.chdir(cwd)
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"transcript_path": str(unwritten)})))
+    monkeypatch.setattr(hook_mod.subprocess, "Popen", lambda *a, **kw: None)
+    with pytest.raises(SystemExit) as exc:
+        hook_mod.main()
+    assert exc.value.code == 0
+
+    tasks = list((agent_dir / "queue").glob("*.task"))
+    assert len(tasks) == 1, "the declared project dir was not searched"
+    assert "abcd1234-deadbeef-0009" in tasks[0].read_text()
+
+
 def test_session_end_hook_skips_when_no_session_found(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

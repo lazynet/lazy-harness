@@ -34,7 +34,7 @@ def test_the_helper_resolves_into_the_knowledge_store(tmp_path: Path) -> None:
     store = _store(tmp_path)
 
     resolved = memory_dir(
-        {},
+        None,
         agent_dir=tmp_path / "agent",
         sessions_subdir="projects",
         cwd=_repo(tmp_path),
@@ -53,7 +53,7 @@ def test_without_a_store_it_keeps_writing_where_it_always_did(tmp_path: Path) ->
     cwd = _repo(tmp_path)
 
     resolved = memory_dir(
-        {},
+        None,
         agent_dir=agent_dir,
         sessions_subdir="projects",
         cwd=cwd,
@@ -79,7 +79,7 @@ def test_a_worktree_and_its_main_checkout_agree(tmp_path: Path) -> None:
         "sessions_subdir": "projects",
         "knowledge_root": store,
     }
-    assert memory_dir({}, cwd=wt, **kwargs) == memory_dir({}, cwd=root, **kwargs)
+    assert memory_dir(None, cwd=wt, **kwargs) == memory_dir(None, cwd=root, **kwargs)
 
 
 def test_a_broken_store_degrades_instead_of_raising(tmp_path: Path) -> None:
@@ -92,7 +92,7 @@ def test_a_broken_store_degrades_instead_of_raising(tmp_path: Path) -> None:
     (store / "knowledge.toml").write_text("not toml [[[")
 
     resolved = memory_dir(
-        {},
+        None,
         agent_dir=tmp_path / "agent",
         sessions_subdir="projects",
         cwd=_repo(tmp_path),

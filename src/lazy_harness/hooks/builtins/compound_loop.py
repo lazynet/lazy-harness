@@ -35,10 +35,11 @@ def main() -> None:
         from lazy_harness.core.config import Config, ConfigError, load_config
         from lazy_harness.core.paths import agent_runtime_dir, config_file
         from lazy_harness.hooks.builtins._shared import (
+            _declared_transcript,
+            existing_transcript,
             find_latest_session,
             knowledge_root_for,
             make_log,
-            transcript_from_payload,
         )
         from lazy_harness.hooks.builtins._shared import (
             memory_dir as shared_memory_dir,
@@ -90,7 +91,8 @@ def main() -> None:
     # The agent names its project dirs with an encoding that has changed across
     # releases, so prefer the transcript it hands us and only derive a path when
     # the payload omits it.
-    session_jsonl = transcript_from_payload(payload)
+    declared = _declared_transcript(payload)
+    session_jsonl = existing_transcript(declared)
     if session_jsonl is None:
         encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
         sessions_dir = agent_dir / (subdirs.get("sessions") or "projects") / encoded
@@ -114,7 +116,7 @@ def main() -> None:
         return
 
     memory_dir = shared_memory_dir(
-        payload,
+        declared,
         agent_dir=agent_dir,
         sessions_subdir=subdirs.get("sessions") or "projects",
         cwd=cwd,

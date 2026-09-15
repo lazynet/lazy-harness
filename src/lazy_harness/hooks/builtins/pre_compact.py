@@ -40,7 +40,7 @@ def _bootstrap_log(log_file: Path, msg: str) -> None:
 
 
 def _bootstrap_project_dir(
-    payload: object, *, agent_dir: Path, sessions_subdir: str, cwd: Path
+    transcript: Path | None, *, agent_dir: Path, sessions_subdir: str, cwd: Path
 ) -> Path:
     """Stand-in for `_shared.resolve_project_dir` when lazy_harness is not importable."""
     encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
@@ -168,7 +168,7 @@ def main() -> None:
         input_data = {}
 
     try:
-        from lazy_harness.hooks.builtins._shared import make_log
+        from lazy_harness.hooks.builtins._shared import _declared_transcript, make_log
         from lazy_harness.hooks.builtins._shared import memory_dir as shared_memory_dir
 
         _log = make_log("pre-compact")
@@ -178,6 +178,7 @@ def main() -> None:
         # from the package.
         _log = _bootstrap_log
         shared_memory_dir = None
+        _declared_transcript = None
 
     cwd = Path.cwd()
     agent_dir, subdirs, knowledge_root = _resolve_agent_dirs()
@@ -192,7 +193,7 @@ def main() -> None:
 
     if shared_memory_dir is not None:
         memory_dir = shared_memory_dir(
-            input_data,
+            _declared_transcript(input_data),
             agent_dir=agent_dir,
             sessions_subdir=subdirs.get("sessions") or "projects",
             cwd=cwd,
@@ -201,7 +202,7 @@ def main() -> None:
     else:
         memory_dir = (
             _bootstrap_project_dir(
-                input_data,
+                None,
                 agent_dir=agent_dir,
                 sessions_subdir=subdirs.get("sessions") or "projects",
                 cwd=cwd,

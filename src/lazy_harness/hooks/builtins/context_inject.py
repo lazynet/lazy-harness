@@ -727,23 +727,14 @@ def qmd_suggest_context(query_text: str, top_k: int = 3, timeout: int = 5) -> st
 
 
 def main(event: HookEvent) -> HookDecision:
-    # `_shared`'s project-dir helpers read a transcript path out of a payload
-    # mapping, and three of the 15 unmigrated builtins still hand them the raw
-    # stdin dict. Rebuilding the one key they consume keeps them on one code
-    # path until step 5 retypes them; `event.raw` is for adapters, so the
-    # declaration is reconstructed rather than forwarded.
-    payload: object = (
-        {"transcript_path": str(event.transcript_path)} if event.transcript_path else {}
-    )
-
     try:
         from lazy_harness.core.config import ConfigError, load_config
         from lazy_harness.core.paths import config_file
         from lazy_harness.hooks.builtins._shared import (
+            _project_dir_of,
             agent_dir_for,
             knowledge_root_for,
             make_log,
-            project_dir_from_payload,
         )
         from lazy_harness.hooks.builtins._shared import memory_dir as shared_memory_dir
     except ImportError:
@@ -792,7 +783,7 @@ def main(event: HookEvent) -> HookDecision:
 
     # Sections. Prefer the project dir the agent declared over one derived from
     # cwd — the agent's encoding of cwd has changed across releases.
-    project_dir = project_dir_from_payload(payload)
+    project_dir = _project_dir_of(event.transcript_path)
     if project_dir is None:
         encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
         project_dir = agent_dir / (subdirs.get("sessions") or "projects") / encoded
@@ -801,7 +792,7 @@ def main(event: HookEvent) -> HookDecision:
     # repository on two machines injected two different MEMORY.md files — one
     # of them empty, with nothing to say so.
     memory_dir = shared_memory_dir(
-        payload,
+        event.transcript_path,
         agent_dir=agent_dir,
         sessions_subdir=subdirs.get("sessions") or "projects",
         cwd=cwd,

@@ -27,10 +27,11 @@ def main() -> None:
         from lazy_harness.core.config import ConfigError, load_config
         from lazy_harness.core.paths import agent_runtime_dir, config_file
         from lazy_harness.hooks.builtins._shared import (
+            _declared_transcript,
+            existing_transcript,
             find_latest_session,
             make_log,
             resolve_project_dir,
-            transcript_from_payload,
         )
     except ImportError:
         # Broken/uninstalled package: silently no-op, never block the agent.
@@ -71,10 +72,11 @@ def main() -> None:
         _log(log_file, f"knowledge store unusable, skipping: {e}")
         return
 
-    session_file = transcript_from_payload(payload)
+    declared = _declared_transcript(payload)
+    session_file = existing_transcript(declared)
     if session_file is None:
         sessions_dir = resolve_project_dir(
-            payload,
+            declared,
             agent_dir=agent_dir,
             sessions_subdir=subdirs.get("sessions") or "projects",
             cwd=cwd,
