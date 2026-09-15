@@ -18,6 +18,12 @@ A null hook matcher parsed fine and made the agent discard the entire settings f
 
 The create path and the merge-on-existing path each skipped a required field the other supplied, which is why they get separate round trips. Create also dodged the mode-preserving `chmod` that merge applied.
 
+## A config schema accepting user-supplied identifiers validates them explicitly
+
+Codex drops an event name it does not recognise and says nothing. A `PreToolUse` written where the schema wants `pre_tool_use` therefore produces the same console as a hook deliberately withheld as untrusted: nothing at all. The operator has no reading that separates a typo from a policy decision, and the hook they believe is deployed never fires.
+
+The shape is not specific to event names. Any schema field accepting a user-supplied identifier — matcher patterns, role names, enum values — converts a spelling mistake into an invisible failure the moment it drops unknown input in silence. The check is to feed the loader a misspelled identifier and assert on the diagnostic it emits; a schema that accepts the bad input without complaint has no diagnostic to assert on.
+
 ## Hooks handle every exception explicitly and exit 0
 
 An unhandled exception in a hook escapes to the subprocess and crashes the chain rather than degrading. The inverse holds for a *blocking* hook, where exit 0 is itself the failure.
@@ -58,12 +64,6 @@ A binary living in a peer project's virtualenv was invisible to a hook running f
 
 **Read the absence before fixing it.** `stop-verify-guard` is registered and unwired *on purpose* — nothing emits the `verify_ran` event it reads, so wiring it produces a guaranteed nag rather than calibrated enforcement. The decision is recorded in `specs/backlog.md` and in the comment above `_DEFAULT_ON_HOOKS`. A missing `config.toml` entry is evidence of a question, not proof of an oversight.
 
-## A static list that should mirror a directory is derived from it
-
-`GUARDED_HOOKS`, hand-maintained beside `hooks/builtins/*.py`, drifted the moment a hook was added.
-
-A completeness test against the glob is what puts a new file in scope with no code change.
-
 ## Behavioural automation ships with kill criteria
 
 A documented practice without enforcement ran at roughly 60% non-compliance.
@@ -84,15 +84,15 @@ Two `Path.cwd()` bugs survived years of green suites because every CLI test inje
 
 Restoring the guard after the experiment is done by hand — `git checkout` reverts the uncommitted implementation along with it.
 
-## Every reader and writer of a config-derived path resolves it the same way
+## One answer lives in one importable place
 
-Readers honour `[monitoring] db` before falling back to the data dir. A hook that skipped that lookup wrote its file somewhere nothing reads: zero rows forever, no error, no complaint.
+Readers honour `[monitoring] db` before falling back to the data dir. A hook that skipped that lookup wrote its file somewhere nothing reads: zero rows forever, no error, no complaint. Where two paths answer one question, only an integration test invoking both catches the disagreement.
 
-## Widening a type means auditing every path that names it
+`GUARDED_HOOKS`, hand-maintained beside `hooks/builtins/*.py`, drifted the moment a hook was added. A completeness test against the glob is what puts a new file in scope with no code change.
 
-`path: Path` widened to `Path | str` without coercion left `path.parent` raising on every string but one.
+`path: Path` widened to `Path | str` without coercion left `path.parent` raising on every string but one. For a pluggable protocol the audit covers every path naming its type or its config, not just the `Protocol` methods: `AgentAdapter` gained Codex beside Claude, and every leak was outside the adapter file — deploy, config, hook wiring, monitoring.
 
-For a pluggable protocol the audit covers every path naming its type or its config, not just the `Protocol` methods: `AgentAdapter` gained Codex beside Claude, and every leak was outside the adapter file — deploy, config, hook wiring, monitoring.
+The three are one shape. A single answer with more than one place that names it drifts unless every other place is derived from it or audited against it; which of the two applies is a design choice, not an excuse to skip both.
 
 ## Deploying a hook is binary-first, never from a worktree
 
@@ -138,17 +138,23 @@ A billing model was assigned per agent. `~/.codex/auth.json` on the machine the 
 
 The shape is one step short of the existing grep gate above it. That gate asks whether an identifier exists; these four all existed. What none of them had was anyone running the path to see what it did — reading a help string, a docstring, a flag name or a config key and recording the reading as the behaviour.
 
+The ordering variant is the same defect one step earlier. Building the Codex adapter, two contract details were read out of the documentation and written into the design: how the `command` field is parsed, and what the trust state is keyed on. Both were wrong — the parsing differs, and the key is path-scoped — and both were discovered by probing the real binary *during* implementation, which meant correcting a design the tests had already been written against. The probes cost the same either way; running them first would have paid for a design that was right.
+
+So for an adapter over an external binary the sequence is fixed: probe the real binary for the undocumented contract (payload schema, command parsing, response format, state keying), record observed-vs-spec in `<binary>-evidence.md`, correct the design from the findings, and only then write the first test. A probe run after the design is written documents a design already wrong.
+
 It is also the second time this class was recorded against the same document. An earlier review of it found six provider claims wrong "by reading a name out of a binary and inferring behaviour", the document wrote that lesson down as its own evidence standard, and the next revision committed four more instances of it. A gate that is stated but not run is not a gate.
 
 ## A hook that is registered is not a hook that runs
 
-Two narrowings, both silent, both between a builtin that exists and a tool call that should have been stopped.
+Three narrowings sit between a builtin that exists and a tool call that should have been stopped. Two are silent; only the third announces itself.
 
 The first is precedence. ADR-031 computes the effective list as `user_hooks[event].scripts if event in user_hooks else DEFAULT_HOOKS[event]` — a per-event replacement, not a merge. A config that declares *any* explicit `[hooks.pre_tool_use].scripts` list therefore pins that event forever: every hook later added to `DEFAULT_HOOKS` for it is dropped. Nothing warns. The hook is in the registry, its unit tests pass, `lh hooks list` shows it, and it is not in `settings.json`.
 
 The second is the matcher. `agents/claude_code.py` maps `pre_tool_use` to a default matcher of `Bash` and `post_tool_use` to `Edit|Write`, applied whenever a script does not declare one. A guard written to cover `Read` — the case that keeps a secret out of context — inherits `Bash` and covers nothing it was written for. The generated `settings.json` looks correct, because a matcher is present; it is simply the wrong one.
 
-Both defeat the same evidence: a passing test, a populated registry, a rendered config. Neither is defeated by anything short of firing the operation the hook exists to stop and watching the exit code.
+The third is agent capability, and it is the one that speaks. A hook whose declared `Signal`s the *profile's* agent cannot deliver is dropped after the merge and named on the deploy's own output — `· <hook> omitted in '<profile>': agent '<x>' does not deliver <signal>`. It is found by reading the deploy just run rather than by grepping, and unlike the other two it narrows an explicit declaration as well: a capability the agent lacks is not something config can override.
+
+The first two defeat the same evidence: a passing test, a populated registry, a rendered config. Neither is defeated by anything short of firing the operation the hook exists to stop and watching the exit code.
 
 ## A hook wired into shared config lands in every profile
 
