@@ -7,6 +7,11 @@
 
 * route hook logs to the profile the hook ran under ([#300](https://github.com/lazynet/lazy-harness/issues/300)) ([c19f193](https://github.com/lazynet/lazy-harness/commit/c19f193f40b41d27bb88b55e7f3a57312b7284c1))
 
+  Route the context-inject startup log and pre-tool-use-security block log
+  through the invoked profile when the adapter environment variable is absent.
+  Eight other logging builtins and the compound-loop worker still resolve
+  globally; their migration remains pending.
+
 
 ### Documentation
 
