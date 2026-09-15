@@ -169,6 +169,35 @@ def test_resolve_project_dir_honours_a_transcript_not_written_yet(tmp_path: Path
     assert resolved == declared
 
 
+def test_the_two_helpers_disagree_about_one_unwritten_transcript(tmp_path: Path) -> None:
+    """The invariant that makes the two helpers non-interchangeable, on one input.
+
+    Asserted as a pair rather than as two tests over two paths, because the
+    thing worth stating is the *disagreement*: for a transcript the agent has
+    declared but not yet written, `existing_transcript` must say `None` while
+    `resolve_project_dir` must still recover the dir the agent named. Split
+    across separate inputs, both halves pass while a call site that feeds the
+    filtered value to both silently falls back to encoding the cwd.
+    """
+    from lazy_harness.hooks.builtins._shared import existing_transcript, resolve_project_dir
+
+    agent_dir = tmp_path / "agent"
+    declared_dir = agent_dir / "projects" / "-encoded-by-the-agent"
+    declared_dir.mkdir(parents=True)
+    unwritten = declared_dir / "0197f0de-cafe-4bad-9001-000000000011.jsonl"
+
+    assert existing_transcript(unwritten) is None
+    assert (
+        resolve_project_dir(
+            unwritten,
+            agent_dir=agent_dir,
+            sessions_subdir="projects",
+            cwd=Path("/Users/x/some where/proj"),
+        )
+        == declared_dir
+    )
+
+
 def test_resolve_project_dir_ignores_a_transcript_outside_the_sessions_root(
     tmp_path: Path,
 ) -> None:

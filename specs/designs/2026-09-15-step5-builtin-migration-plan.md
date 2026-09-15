@@ -425,7 +425,7 @@ git add -A && git commit -m "refactor: take the transcript path rather than the 
 >    cwd branch. That is *why* the tests in (1) passed.
 > 3. **`_TRANSCRIPT_KEYS` cannot "die with them", and Step 4 contradicts
 >    itself.** Six modules still read a raw stdin payload
->    (`compound_loop.py:93`, `session_end.py:116`, `session_export.py:75`,
+>    (`compound_loop.py:94`, `session_end.py:116`, `session_export.py:75`,
 >    `herdr_context_gauge.py:154`, `engram_persist.py:80`,
 >    `pre_compact.py:196`), so deleting the three-spelling reader changes their
 >    behaviour. Step 4 says unmigrated builtins "fail to import — that is the
@@ -438,14 +438,25 @@ git add -A && git commit -m "refactor: take the transcript path rather than the 
 >    `src/lazy_harness/` one-to-one, so `_shared.py`'s mirror is
 >    `tests/unit/hooks/builtins/test_shared.py`, not
 >    `tests/unit/hooks/test_shared_memory_dir.py`.
-> 5. **The *Files → Modify* list omits the seven call sites** that must change
->    in the same commit.
+> 5. **The *Files → Modify* list omits the call sites** that must change in
+>    the same commit — seven files, and more than seven calls.
 >
-> Left for tasks 4–18, not done here:
-> `designs/2026-09-13-multi-agent-harness-design.md:128,201,1578,1748` still
-> names `_TRANSCRIPT_KEYS` as a live symbol. Those claims are now half-stale —
-> the constant is gone, the three spellings are not — and each of those tasks
-> retires another payload reader.
+> Two debts this task takes on rather than pays, both for tasks 4–18:
+>
+> - Inlining `_TRANSCRIPT_KEYS` leaves the three-spelling tuple in **two**
+>   literal copies, `_shared.py:56` and `pre_compact.py:189`. That is a step
+>   away from the *one answer lives in one importable place* gate. The
+>   duplication predates this commit — `pre_compact` never imported the
+>   constant — but the resolution in (3) is not as clean as it reads.
+> - Two design documents still name deleted symbols.
+>   `designs/2026-09-13-multi-agent-harness-design.md:128,201,1578,1748` names
+>   `_TRANSCRIPT_KEYS` as a live symbol, and
+>   `designs/2026-09-09-hook-import-guard-population-design.md:87,337,345,350`
+>   names `transcript_from_payload` as the live import at
+>   `herdr_context_gauge:31`. The second is the sharper one: that symbol no
+>   longer exists anywhere in `src/`. Each of tasks 4–18 retires another
+>   payload reader, so both files are worth rewriting once at the end rather
+>   than per task.
 
 ---
 
