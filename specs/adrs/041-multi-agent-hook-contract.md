@@ -118,12 +118,17 @@ on it rather than eighteen.
 
 **That gate ran on 2026-09-15 and passed, against the installed 0.67.1 binary
 rather than a worktree, which is why this ADR is now `accepted`.** It took three
-runs to pass. The first failed on assertion C and surfaced three production
-defects of one shape — an answer derived from the global agent where the
-profile's agent is the source (#292, #294, #297). The second, rescoped to
-isolation, failed on two more of the same shape and was fixed in #300. What the
-gate asserts is narrower than the sentence above, and the difference is the
-part worth carrying forward:
+runs to pass, and seven production defects came out of them. Six are of one
+shape — an answer derived from the global agent where the profile's agent is
+the source: three in #292, one more in #297 when the second of two readers that
+had to move together was found still reading globally, and two in #300. The
+seventh is of another shape and is the sharper one: `_planner_for` called
+`agent.name()` where `name` is a `@property`, so the step-3 promise that an
+adapter without a `ConfigPlanner` is rejected before the first write died on a
+`TypeError` — with four tests asserting that rejection and all four passing,
+because both doubles declared `name()` as a method (#294). What the gate
+asserts is narrower than the sentence above, and the difference is the part
+worth carrying forward:
 
 - **Two builtins are asserted, not three.** `stop-verify-guard` is migrated but
   writes no `hooks.log`; its only sink is the metrics DB, scoped by

@@ -1452,16 +1452,24 @@ against a version that will not ship.
 > `specs/backlog.md` §Done has the per-PR record.
 >
 > **The gate passed on 2026-09-15, on the third run, against the installed
-> 0.67.1 binary rather than a worktree.** Run 1 passed assertions A and B
-> against a throwaway Codex profile and failed C, surfacing three production
-> defects of one shape — an answer derived from the global agent where the
-> profile's agent is the source. The design question C turned on — whether a
-> deploy should skip a hook whose declared signals the profile's agent cannot
-> deliver — was decided in #295, and it does. Run 2 rescoped to the isolation
-> half (does a hook invoked with `--profile <p>` write its log under that
-> profile's dir, and nowhere else?) and failed on two more of the same shape,
-> fixed in #300. Run 3 is the pass. All five defects have their gate in
-> *Verification gates* above.
+> 0.67.1 binary rather than a worktree** — `run-0.67.1.log` alongside the
+> script, exit 0. Run 1 passed assertions A and B against a throwaway Codex
+> profile and failed C, surfacing #292, #294 and #296. The design question C
+> turned on — whether a deploy should skip a hook whose declared signals the
+> profile's agent cannot deliver — was decided in #295, and it does. Run 2
+> rescoped to the isolation half (does a hook invoked with `--profile <p>`
+> write its log under that profile's dir, and nowhere else?) and failed,
+> fixed in #300. Run 3 is the pass.
+>
+> **Seven defects across the three runs, and not all of one shape.** Six are the
+> global-agent-where-the-profile's-agent-is-the-source shape: three in #292,
+> one in #297 — the second of the two readers ADR-041 §3 required to move
+> together, left behind for a release — and two in #300. The seventh, #294, is
+> a different shape and the sharper one: `_planner_for` called `agent.name()`
+> on a `@property`, so the step-3 rejection path died on a `TypeError` while
+> four tests asserting that rejection passed, both doubles having declared
+> `name()` as a method. All seven have their gate in *Verification gates*
+> above.
 >
 > **What the pass does not cover, stated so it is not read as more than it is.**
 > Two builtins are asserted, not three: `stop-verify-guard` is migrated but
@@ -1509,7 +1517,9 @@ Both are right about different risks, and the resolution is a gate rather than
 an order. The runner lands first because it is a correctness fix for Claude Code
 on its own merits — it is the step that survives even if the kill criteria fire.
 But **the contract is not frozen, and the bulk migration does not start, until a
-non-identity adapter has run against it.** Step 4 is that gate.
+non-identity adapter has run against it.** Step 4 is that gate. *(Written as the
+plan. The gate ran on 2026-09-15 and passed; the status block above is the
+record, and the contract is frozen.)*
 
 0. **Fix `_is_harness_owned`** to identify harness entries by canonical hook
    name rather than by command text, with a test that redeploys after a command
