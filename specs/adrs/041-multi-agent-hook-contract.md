@@ -37,13 +37,16 @@ So the same hook, deployed unchanged to three agents, would be enforced on one,
 unenforced but green on another, and silently skipped on the third. A test suite
 passing against Claude Code says nothing about any of that.
 
-There is also a live defect at the seam. `_is_harness_owned` (`deploy/engine.py`)
-identified harness entries by matching a builtins path in the command text,
-while `hook_command` had moved to emitting `lh hook <name>`. It matched nothing:
-every harness hook was classified as another tool's. A second guard in the merge
-masked the duplicate only because the two command strings were byte-identical —
-which stops being true the moment the command format changes, as it does the
-moment the runner takes a `--profile` argument.
+There was also a live defect at the seam, and it is what step 0 fixed.
+`_is_harness_owned` identified harness entries by matching a builtins path in
+the command text, while `hook_command` had moved to emitting `lh hook <name>`.
+It matched nothing: every harness hook was classified as another tool's. A
+second guard in the merge masked the duplicate only because the two command
+strings were byte-identical — which stops being true the moment the command
+format changes, as it does the moment the runner takes a `--profile` argument.
+Ownership is now the canonical hook name inside a launcher invocation, and the
+function moved with the merge it belongs to: it lives at
+`agents/claude_code.py:191`, not in `deploy/engine.py`.
 
 ## Decision
 
@@ -73,6 +76,17 @@ Four properties matter more than the type list:
    place that resolves it. Deploy loops previously resolved the global agent
    once, above their own profile loop, so a per-profile agent could not take
    effect at all.
+
+   *Known exception, scheduled.* Two readers under `deploy/` still resolve the
+   global agent — `deploy_claude_symlink` (`deploy/engine.py:407`) and
+   `snapshot_targets` (`deploy/snapshot.py:96`), both reaching for
+   `global_config_link()` and `mcp_config_file()` off `get_agent(cfg.agent.type)`.
+   Neither is inside a per-profile loop, so neither reproduces the defect this
+   point describes; both are instances of the wider `cfg.agent.type` sweep that
+   step 6 of the implementation sequence owns, and they are deliberately not
+   fixed piecemeal. They must move together: they answer one question — which
+   agent's global link does this deploy own — and a snapshot resolving it
+   differently from the deploy is a rollback that misses the link.
 4. **Permissions are not unified.** Each agent's permission model is expressed
    in its own terms. Attempting one cross-agent permission language would
    produce a translation that is wrong in exactly the cases that matter.

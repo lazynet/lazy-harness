@@ -2,7 +2,7 @@
 
 Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio MkDocs); el roadmap público vive en `docs/roadmap.md` y solo contiene los temas comprometidos a alto nivel.
 
-Última revisión: 2026-09-12 — pasada de coherencia sobre `docs/` y `specs/`: cuatro ADRs (035, 037, 038, 039) estaban `proposed` con el código shippeado y se pasaron a `accepted`; nueve claims de `docs/` describían comportamiento que el código no tiene. Revisión previa: 2026-09-10 — `/coherence-audit` cruzó 34 ADRs `accepted` contra su código. Cinco items que figuraban abiertos resultaron implementados: tres desde el 2026-08-17 (PRs #167 y #168) y dos del mismo día en que se anotaron. La deriva restante quedó en `failures.jsonl` bajo el tag `coherence-audit`, para revisión humana. Revisión previa: 2026-08-17 — análisis de los tres ejes de refactor (paridad Linux, capability registry, TUI).
+Última revisión: 2026-09-14 — `/coherence-audit` antes de cortar 0.65.0. Piece A (los tests de `tests/docs/`) 31/31; Piece B, nueve hallazgos de drift semántico, todos del mismo modo de falla: **los tres PRs del step 3 (#282, #283, #285) tocaron cero archivos bajo `specs/`**, así que cada referencia a `deploy/engine.py` que el step 3 movió al adapter quedó colgada. Cerrados en esta pasada, más el hueco de roadmap que el audit levanta aparte: el diseño multi-agente no figuraba en `docs/roadmap.md`, §Done no tenía los steps 0 ni 3, y la *Implementation sequence* no marcaba progreso. Tercera reincidencia del patrón «PR toca `src/` y `tests/` y ningún spec» — ver la entrada del step 2 más abajo, que ya se quejaba de él. Revisión previa: 2026-09-12 — pasada de coherencia sobre `docs/` y `specs/`: cuatro ADRs (035, 037, 038, 039) estaban `proposed` con el código shippeado y se pasaron a `accepted`; nueve claims de `docs/` describían comportamiento que el código no tiene. Revisión previa: 2026-09-10 — `/coherence-audit` cruzó 34 ADRs `accepted` contra su código. Cinco items que figuraban abiertos resultaron implementados: tres desde el 2026-08-17 (PRs #167 y #168) y dos del mismo día en que se anotaron. La deriva restante quedó en `failures.jsonl` bajo el tag `coherence-audit`, para revisión humana. Revisión previa: 2026-08-17 — análisis de los tres ejes de refactor (paridad Linux, capability registry, TUI).
 
 ---
 
@@ -59,7 +59,10 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 - [x] **El guard de paths secretos estaba inerte: el matcher desplegado no lo alcanzaba** — `pre-tool-use-security` inspecciona `Bash` más `Read`/`Edit`/`Write`/`NotebookEdit`, pero su entrada en `_BUILTIN_HOOKS` no declaraba `matcher`, así que heredaba el default del evento (`Bash`) y Claude Code nunca lo invocaba en un `Read`. Cerrado declarando `matcher="Bash|Read|Edit|Write|NotebookEdit"`. Lo que faltaba de verdad era la relación entre las dos puntas: cada builtin que gatea por `tool_name` ahora publica `INSPECTED_TOOLS` y lo usa en su propio gate, y `tests/unit/test_hook_matcher_coverage.py` sostiene el matcher desplegado contra ese conjunto. Verificado en ambas direcciones: sin el matcher, dos de los tres tests fallan con `matcher 'Bash' never reaches ['Edit', 'NotebookEdit', 'Read', 'Write']`. Desplegado el 2026-09-11 en las dos máquinas: release 0.57.1, `uv tool install --reinstall`, grep a site-packages y `lh deploy`. Verificado end-to-end en laptop y en el CT `agents` — un payload de `Read` contra `**/secrets/**` sale exit 2, uno a un path normal exit 0. El CT ya tenía el matcher ancho antes del fix y la laptop no: `lh deploy` lo pisaba solo donde había corrido después de chezmoi.
 - [x] **`save_config` destruía config (51 claves) + tres claves de `[context_inject]` ignoradas en silencio** — read-modify-write sobre TOML crudo (`tomlkit`) en vez de completar el serializer, per D5 de [`designs/2026-08-17-capability-registry-design.md`](designs/2026-08-17-capability-registry-design.md) (commit `56429ad`, PR #167). Selftest `check_config_round_trip` registrado. Esta entrada había quedado listada como ALTA abierta pese a estar mergeada desde el 2026-08-17; el backlog no se había actualizado. Reconciliado el 2026-09-10 agregando además `tests/unit/test_config.py::test_save_config_round_trip_preserves_every_key_of_the_live_config` y `::test_context_inject_switches_survive_round_trip_against_the_live_config`, que corren el ciclo completo contra una copia del `config.toml` real de la máquina (nunca contra el archivo real) en vez de solo contra el fixture sintético `_FULL_CONFIG`.
 - [x] **Ollama como backend para compound-loop** — cerrado. [ADR-033](adrs/033-llm-backend-abstraction.md) promovió la idea del legacy ADR-010 a un Protocol provider-agnostic (implementado 2026-06-11) y [ADR-039](adrs/039-role-routed-inference.md) la hizo utilizable: el ruteo pasa a ser por rol (`[llm.roles]` → `run_inference`), así el modelo local atiende trabajo barato sin quedarse también con el destilado y el grading. Vivió como MEDIA abierta con `**Resuelto:**` en su propio cuerpo; reconciliado el 2026-09-12.
-- [x] **`TranscriptReader` de Claude Code — shippeado en el step 2** — `Signal`, `TranscriptEvent`, `TokenUsage`, `GoalStatus` y el Protocol `TranscriptReader` viven en `agents/base.py`; `ClaudeCodeAdapter.read()` los emite y su `signals()` declara las cuatro (`agents/claude_code.py:367-369`); `_shared.transcript_reader(profile)` resuelve el reader por perfil y devuelve `None` cuando el adapter no lo implementa; y `stop_verify_guard._goal_declared` consume `Signal.GOAL_STATUS` en vez de escanear el `attachment` a mano (PR #273, 2026-09-14). Cierra el prerequisito del step 4 y deja el step 12 como lo que siempre fue: los readers de los otros agentes. Vivió como única ALTA abierta hasta el 2026-09-14 porque el PR tocó `src/` y `tests/` y ningún spec — el mismo patrón que ya habían tenido la traducción de schedule y `save_config`.
+- [x] **`_is_harness_owned` identificaba por texto de comando — step 0** — el clasificador matcheaba un path de builtins (`lazy_harness/hooks/builtins/`) contra comandos que `hook_command` ya había dejado de emitir, así que clasificaba **cada** hook del harness como ajeno; un segundo guard en el merge tapaba el duplicado sólo mientras las dos strings fueran byte-idénticas, lo cual deja de valer en cuanto el comando cambia de forma — y cambia en cuanto el runner toma `--profile`. Cerrado identificando por nombre canónico dentro de `lh hook <name>`, con un test que redeploya después de un cambio de formato de comando y asserta que no hay duplicado. Shippeado en 0.60.0 (`968195e`). Es el defecto que [ADR-041](adrs/041-multi-agent-hook-contract.md) describe en su Context y el que todo step posterior habría compuesto. La función se mudó a `agents/claude_code.py:191` con el step 3, junto al merge al que pertenece.
+- [x] **Deploy de config a través del adapter — step 3, tres PRs** — el vertical slice que el diseño multi-agente pone antes del gate. `lh deploy --profile <name>` acota un deploy a un solo perfil, con el link global siguiendo al perfil default y nada más (#282); `ClaudeCodeAdapter` implementa `ConfigPlanner` — `config_targets()` nombra `settings.json` y `.claude.json`, `plan_config()` mergea y devuelve texto final (#283); y `deploy/engine.py` pasa a hacer sólo I/O: descubre, lee, planifica una vez por perfil y aplica los `WriteOp`, borrando su copia duplicada del merge — `_merge_hook_blocks`, `_is_harness_owned`, `_normalize_entry`, `_owned_binaries`, `_entry_commands` (#285). Un adapter que no satisface `ConfigPlanner` se rechaza antes de la primera escritura, no a mitad del deploy. Identidad de bytes anclada en `tests/goldens/config-deploy/`, capturada del engine **antes** del refactor: los tests de `test_config_planner.py` que cruzaban adapter contra engine quedaron tautológicos al unificarse las dos implementaciones, y un golden pre-refactor es lo único que sigue probando algo. Shippeado en 0.65.0. Deja el gate del step 4 — el `CodexAdapter` throwaway contra un perfil descartable — como lo único que falta antes de congelar el contrato y pasar ADR-041 a `accepted`.
+- [x] **`TranscriptReader` de Claude Code — shippeado en el step 2** — `Signal`, `TranscriptEvent`, `TokenUsage`, `GoalStatus` y el Protocol `TranscriptReader` viven en `agents/base.py`; `ClaudeCodeAdapter.read()` los emite y su `signals()` declara las cuatro (`agents/claude_code.py:546-548`, movido
+desde `:367-369` cuando el step 3 insertó los helpers de merge arriba de la clase); `_shared.transcript_reader(profile)` resuelve el reader por perfil y devuelve `None` cuando el adapter no lo implementa; y `stop_verify_guard._goal_declared` consume `Signal.GOAL_STATUS` en vez de escanear el `attachment` a mano (PR #273, 2026-09-14). Cierra el prerequisito del step 4 y deja el step 12 como lo que siempre fue: los readers de los otros agentes. Vivió como única ALTA abierta hasta el 2026-09-14 porque el PR tocó `src/` y `tests/` y ningún spec — el mismo patrón que ya habían tenido la traducción de schedule y `save_config`.
 - [x] **El chequeo de coherencia del CLI no miraba flags** — el walk paraba en el primer token con `-`, así que un flag inventado en `docs/` pasaba verde. Cerrado el 2026-09-14: las dos direcciones comparten un solo `_walk_command_path`, cuyo `stop` distingue "nombre que no resuelve" de "tokens que dejaron de ser clasificables", y `find_unknown_lh_flags` resuelve cada flag contra las opciones del comando que lo precede — **strict**, que es la semántica de click (`lh status --version` es `No such option`). Medido sobre `docs/**` antes de escribirlo: 75 invocaciones con flags, 104 tokens, 38 distintos, todos long-form; strict y lax dan idéntico hoy (97 known), así que la regla correcta no cuesta ningún falso positivo. Los tres bordes que el item pedía decidir quedaron ignorados a propósito, cada uno con su test: lo que va después del `--` de click, los flags que siguen a un `<placeholder>` que frenó el walk (`lh config <feature> --init`, donde `--init` existe pero sólo en las hojas), y los flags de un comando que no resuelve, que el scan viejo ya reporta. Verificado en las dos direcciones: con `lh deploy --dry-run` reinyectado a mano el scan nuevo falla y el viejo pasa verde. Primer hallazgo del checker: `docs/how/hooks.md` documentaba `lh hooks run my_hook --event session_start`, que sale exit 2 con `No such option: --event` — `EVENT` es posicional. Aparte, el help de `--memory-dir` apuntaba al runtime dir: era un solo `_MEMORY_DIR_OPTION` compartido por seis comandos, no dos docstrings.
 
 ---
@@ -163,8 +166,8 @@ Es el mismo patrón que el gate de `auto_rebuild_on_commit`: un contrato declara
 ### `[hooks.*].external` no puede expresar un comando por perfil
 
 **Por qué:** `external` es una lista global del `config.toml` y cada entrada es
-un string literal que `entries_for()` en `deploy/engine.py` copia **verbatim** a
-cada perfil (`HookEntry(command=ext.command, ...)`, el bloque comentado
+un string literal que `_hook_entries_for()` en `deploy/engine.py:172` copia
+**verbatim** a cada perfil (`HookEntry(command=ext.command, ...)`, el bloque comentado
 "Third-party commands declared in config are emitted to every profile"), sin
 expansión de paths ni de variables. Los scripts del harness sí se resuelven por
 perfil, vía `hook_command(hook, profile=profile)` — `external` es la única mitad
@@ -197,7 +200,7 @@ perfil correcto.
 
 ### `deploy` serializa `settings.json` con `ensure_ascii=True` y hace rebotar los bytes en cada ciclo
 
-**Por qué:** `deploy/engine.py:323` escribe
+**Por qué:** `agents/claude_code.py:873` escribe
 `json.dumps(settings, indent=2)`, y `ensure_ascii` por default es `True`, así
 que todo carácter no-ASCII sale escapado (`—` → `—`). Claude Code, que
 reescribe ese mismo archivo en runtime, serializa con `ensure_ascii=False`. El
@@ -221,11 +224,15 @@ archivo.
 Medido el 2026-09-14: 11 líneas de diff por este motivo en un profile,
 persistentes entre un `deploy` y el `apply` que lo sigue.
 
-**Acción:** `json.dumps(settings, indent=2, ensure_ascii=False)` en
-`deploy/engine.py:323`. Va con worktree y test — el test es el que fija el
-contrato de formato, que hoy no está cubierto en ningún lado. Revisar de paso
-el `json.dumps` del bloque MCP (misma función, `.claude.json`), que tiene el
-mismo default y el mismo consumidor en runtime.
+**Acción:** `ensure_ascii=False` en los **dos** call sites, que desde el step 3
+viven en el adapter y ya no en el engine: `ClaudeCodeAdapter._plan_settings`
+(`agents/claude_code.py:873`, `settings.json`) y `._plan_mcp` (`:900`,
+`.claude.json`). Son dos funciones distintas, no una — la redacción anterior
+decía "misma función" cuando ambos `json.dumps` estaban en `deploy/engine.py`.
+El `.claude.json` tiene el mismo default y el mismo consumidor en runtime. Va
+con worktree y test — el test es el que fija el contrato de formato, que hoy no
+está cubierto en ningún lado, y los goldens de `tests/goldens/config-deploy/`
+son el lugar natural para anclarlo.
 
 ### El backup de `lh migrate` colapsa dos artefactos que comparten basename
 
@@ -353,7 +360,15 @@ La auditoría es tres líneas contra `DEFAULT_HOOKS` y el `config.toml`, compara
 
 ## Multi-agente — items declarados, deliberadamente no cableados
 
-Los tres salen de [`designs/2026-09-13-multi-agent-blast-radius-design.md`](designs/2026-09-13-multi-agent-blast-radius-design.md) y están acá por el gate del `CLAUDE.md`: *un `config.toml` sin una entrada puede ser una decisión y no un olvido, así que grepeá el backlog antes de cablear*. Si encontrás alguno de estos sin implementar, **no es un descuido** — leé la condición de arranque antes de tocarlo.
+Salen de [`designs/2026-09-13-multi-agent-blast-radius-design.md`](designs/2026-09-13-multi-agent-blast-radius-design.md) y de [`designs/2026-09-13-multi-agent-harness-design.md`](designs/2026-09-13-multi-agent-harness-design.md), y están acá por el gate del `CLAUDE.md`: *un `config.toml` sin una entrada puede ser una decisión y no un olvido, así que grepeá el backlog antes de cablear*. Si encontrás alguno de estos sin implementar, **no es un descuido** — leé la condición de arranque antes de tocarlo.
+
+### `generate_hook_config` / `generate_mcp_config` siguen en el Protocol después de ser desplazados
+
+El step 3 los sacó de la ruta de deploy: nada fuera del adapter los llama, `plan_config` es la superficie que el engine pide, y adentro de `ClaudeCodeAdapter` sobreviven como sus propios serializadores, llamados desde `_plan_settings` (`agents/claude_code.py:853`) y `_plan_mcp` (`:886`). Eso está bien — darle forma al bloque `matcher` / `hooks[]` de Claude Code es exactamente trabajo del adapter.
+
+Lo que **no** se hizo es sacarlos del Protocol `AgentAdapter` (`agents/base.py:466,470`, espejados por el adapter nulo en `agents/registry.py:65,68`). Mientras estén declarados ahí, todo adapter nuevo tiene que implementar dos métodos cuyo retorno `dict` no puede expresar su config — que es literalmente el argumento con el que la decisión 4 del diseño justificó reemplazarlos. La prosa del diseño decía "replaced, not extended", y hoy no lo están: quedaron desplazados, no borrados.
+
+**Condición de arranque:** el step 4. El `CodexAdapter` throwaway es el primer adapter que va a tener que escribir los dos stubs vacíos; ese es el momento en que las declaraciones se caen, no antes — sacarlas hoy es tocar el Protocol sin un segundo implementador que valide la forma que queda.
 
 ### Metric event v3 — dimensión `agent` y modelo de facturación plano
 
@@ -375,9 +390,9 @@ El árbol de system docs se keyea hoy por el filename de Claude (`CLAUDE.md`) a 
 
 ### Hooks de usuario tienen el mismo bug de duplicación que tenían los builtins
 
-Cerrado para builtins (`_is_harness_owned` ahora identifica por nombre canónico dentro de `lh hook <name>`). Los hooks de usuario siguen expuestos: su comando generado es `{sys.executable} {path}`, y `sys.executable` cambia al actualizar Python — con lo cual el redeploy preserva la entrada vieja como ajena y queda duplicada.
+Cerrado para builtins (`_is_harness_owned` ahora identifica por nombre canónico dentro de `lh hook <name>`). La función se mudó con el merge en el step 3: vive en `agents/claude_code.py:191`, no en `deploy/engine.py`. Los hooks de usuario siguen expuestos: su comando generado es `{sys.executable} {path}`, y `sys.executable` cambia al actualizar Python — con lo cual el redeploy preserva la entrada vieja como ajena y queda duplicada.
 
-Arreglarlo requiere que la clasificación conozca los hooks configurados, o sea cambiarle la firma a `_is_harness_owned`. No se hizo en el fix del step 0 para no ampliar el alcance.
+Arreglarlo requiere que la clasificación conozca los hooks configurados, o sea cambiarle la firma a `_is_harness_owned` (`agents/claude_code.py:191`). No se hizo en el fix del step 0 para no ampliar el alcance.
 
 **Condición de arranque:** cuando alguien reporte un hook de usuario corriendo dos veces, o junto con el step 5 (migración de los 15 builtins restantes), que ya toca esa zona.
 

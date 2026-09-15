@@ -82,8 +82,9 @@ def extract_from_settings(settings: dict) -> str | None:
 
 
 # The managed section's record of which launcher generated this file's hook
-# commands. `deploy_hooks` writes it and `_owned_binaries` reads it, both
-# through this module, so the name of the key has one home.
+# commands. Both ends live in the Claude Code adapter since the merge moved
+# there: `ClaudeCodeAdapter._plan_settings` writes it and `_owned_binaries`
+# reads it back, each through this module, so the name of the key has one home.
 SETTINGS_BINARY_KEY = "lh_harness_binary"
 
 

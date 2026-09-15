@@ -614,12 +614,35 @@ apply, telling the user to close the agent and retry. Deploying while an agent
 is running is not a supported state, and silently winning that race is worse
 than refusing it.
 
+> **Not shipped.** Step 3 landed the discover/read/plan/apply cycle without this
+> guard: `deploy/engine.py` does not `stat()` a target at any point, so a deploy
+> concurrent with a running agent still silently wins the race. The abort is
+> scheduled at step 7 alongside the rest of multi-file planning. The paragraph
+> above states the intended design, not current behaviour.
+
 `deploy/engine.py:deploy_hooks` hardcodes `settings.json` and merges with a
 function shaped like Claude Code's `matcher` / `hooks[]` block. Codex wants a
 separate `hooks.json` or TOML declarations in `config.toml`; Copilot wants JSON
 under `$COPILOT_HOME/hooks/`; Codex's MCP block lives in TOML. A `dict` return
 cannot express "N files in two formats", so `generate_hook_config` and
-`generate_mcp_config` are replaced, not extended.
+`generate_mcp_config` stop being the deploy surface: `plan_config` is.
+
+> **What step 3 actually did, and what it did not.** The two generators were
+> *displaced, not deleted*. Nothing outside the adapter calls either one any
+> more — `plan_config` is what the engine asks for — but both survive inside
+> `ClaudeCodeAdapter` as its own serialisers, called from `_plan_settings`
+> (`agents/claude_code.py:853`) and `_plan_mcp` (`:886`). That part is fine:
+> shaping Claude Code's `matcher` / `hooks[]` block is exactly the adapter's
+> business.
+>
+> What is *not* yet done is removing them from the `AgentAdapter` Protocol
+> (`agents/base.py:466,470`, mirrored by the null adapter at
+> `agents/registry.py:65,68`). While they are declared there, every new adapter
+> must implement two methods whose `dict` return cannot express its config —
+> which is the exact constraint this paragraph gives for replacing them. The
+> throwaway `CodexAdapter` of step 4 is the first adapter that will have to
+> write two such stubs, so that is the moment the declarations come off; the
+> backlog carries the item.
 
 The existing repair logic — entries Claude Code would reject, backups, the
 "preserved N entries not managed by the harness" report — moves behind the
@@ -1388,6 +1411,28 @@ against a version that will not ship.
 
 ## Implementation sequence
 
+> **Status, 2026-09-14 — steps 0 to 3 are shipped; step 4 is next.**
+>
+> | Step | State | Released in |
+> |------|-------|-------------|
+> | 0 — `_is_harness_owned` by canonical hook name | done | 0.60.0 |
+> | 1 — the contract types in `agents/base.py` | done | 0.61.0 |
+> | 2 — `lh hook <name> --profile <p>` as the runner, three builtins (0.62.0); `TranscriptReader` (0.63.0) | done | 0.62.0–0.63.0 |
+> | 3 — `config_targets()` / `plan_config()` and the engine that drives them | done | 0.65.0 |
+> | 4 — **contract gate: a throwaway `CodexAdapter` runs those three hooks** | next | — |
+> | 5 to 12 | not started | — |
+>
+> The steps below are the plan as written, not a record of what happened, and
+> nothing in them is edited as they land. Two places where that distinction
+> already bit a reader are called out inline: the mtime/size abort in decision 4
+> reads as current behaviour and is step 7, and the two displaced generators in
+> the same decision are still on the Protocol. Where a step's prose and the code
+> disagree, the code is what shipped — `specs/backlog.md` §Done carries the
+> per-step record with its PR numbers.
+>
+> Step 4 is what freezes the contract, so [ADR-041](../adrs/041-multi-agent-hook-contract.md)
+> stays `proposed` until it runs, however many steps close before it.
+
 The two external reviews disagreed on exactly one thing, and it is the ordering.
 Codex argued for Claude-only first — runner plus goldens — so the contract
 hardens without multiplying variables. Copilot argued the opposite: that
@@ -1398,7 +1443,7 @@ Both are right about different risks, and the resolution is a gate rather than
 an order. The runner lands first because it is a correctness fix for Claude Code
 on its own merits — it is the step that survives even if the kill criteria fire.
 But **the contract is not frozen, and the bulk migration does not start, until a
-non-identity adapter has run against it.** Step 3 is that gate.
+non-identity adapter has run against it.** Step 4 is that gate.
 
 0. **Fix `_is_harness_owned`** to identify harness entries by canonical hook
    name rather than by command text, with a test that redeploys after a command
