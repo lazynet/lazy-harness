@@ -50,6 +50,11 @@ _NO_OBJECTION: dict[str, dict[str, object]] = {
         "session_id": "s1",
         "cwd": "/tmp",
     },
+    "engram-persist": {
+        "hook_event_name": "Stop",
+        "session_id": "s1",
+        "cwd": "/tmp",
+    },
 }
 
 

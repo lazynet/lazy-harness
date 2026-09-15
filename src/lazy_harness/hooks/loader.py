@@ -113,6 +113,13 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
     "engram-persist": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.engram_persist",
         event="session_stop",
+        # No `signals`: this hook never opens the transcript. It takes the
+        # declared path as a *name* — `resolve_project_dir` reads the parent
+        # directory the agent encoded into it — and reads `decisions.jsonl` and
+        # `failures.jsonl` beside it. Declaring one would make `deploy` refuse
+        # to install it on an agent whose reader cannot supply a signal the
+        # hook never touches.
+        migrated=True,
     ),
     "herdr-context-gauge": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.herdr_context_gauge",
