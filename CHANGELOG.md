@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.67.0](https://github.com/lazynet/lazy-harness/compare/v0.66.0...v0.67.0) (2026-09-15)
+
+
+### Features
+
+* skip hooks whose declared signals the profile's agent cannot deliver ([#295](https://github.com/lazynet/lazy-harness/issues/295)) ([37064a2](https://github.com/lazynet/lazy-harness/commit/37064a21531c1651e3d4f0a07fa5c502c0ae80bd))
+
+
+### Bug Fixes
+
+* de-flake the sink freshness doctor test and gate on ruff format ([#296](https://github.com/lazynet/lazy-harness/issues/296)) ([4df42fb](https://github.com/lazynet/lazy-harness/commit/4df42fb336dd86ad04ec29db38a6636a34798e46))
+* read the adapter name as a property when refusing a plannerless profile ([#294](https://github.com/lazynet/lazy-harness/issues/294)) ([016c8df](https://github.com/lazynet/lazy-harness/commit/016c8df8f5bdad4e5ef4f3081a4c545076be19e7))
+* resolve the agent per profile in the runner, the symlink deploy and the runtime dir ([#292](https://github.com/lazynet/lazy-harness/issues/292)) ([062eb1e](https://github.com/lazynet/lazy-harness/commit/062eb1e9775ae7d9b04ec1b69fea385c457b14c9))
+
 ## [0.66.0](https://github.com/lazynet/lazy-harness/compare/v0.65.0...v0.66.0) (2026-09-15)
 
 
