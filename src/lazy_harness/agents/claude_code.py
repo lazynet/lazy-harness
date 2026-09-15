@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
+from lazy_harness import __version__
 from lazy_harness.agents.base import (
+    ConfigArtifact,
     FileEdit,
     GoalStatus,
     HeadlessResult,
@@ -24,6 +27,7 @@ from lazy_harness.agents.base import (
     ToolCall,
     TranscriptEvent,
     Verdict,
+    WriteOp,
 )
 from lazy_harness.core.paths import expand_path
 
@@ -135,6 +139,181 @@ def _message_text(content: object) -> str:
         and block.get("type") == "text"
         and isinstance(block.get("text"), str)
     )
+
+
+# --- Claude Code config documents (ConfigPlanner) ---
+
+_SETTINGS_FILE = "settings.json"
+
+# The launcher invocation every generated builtin command takes: `<binary> hook
+# <name>`. Ownership is that canonical hook name, never the text of the command
+# as a whole — flags the harness adds later (`--profile <name>`) change the text
+# of every entry, and a classifier keyed on text reads its own previous output
+# as another tool's hook and preserves it beside the new one.
+_HOOK_SUBCOMMAND = "hook"
+
+# Written by harness versions before the launcher existed, when a generated
+# command was `{sys.executable} {path-under-builtins}`. Still recognised so a
+# redeploy prunes those entries instead of preserving them as foreign.
+_LEGACY_BUILTIN_MARKER = "lazy_harness/hooks/builtins/"
+
+
+def _as_document(raw: str | None) -> dict:
+    """The parsed document, or an empty one when it is missing or unusable.
+
+    A file that is not JSON, or is JSON that is not an object, is treated as
+    absent rather than as an error: refusing to deploy over a settings file some
+    other tool corrupted would leave the profile with no hooks at all.
+    """
+    if raw is None:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _entry_commands(entry: dict) -> list[str]:
+    """Command strings carried by a single settings.json hook entry."""
+    hooks = entry.get("hooks")
+    if not isinstance(hooks, list):
+        return []
+    commands: list[str] = []
+    for hook in hooks:
+        if isinstance(hook, dict):
+            command = hook.get("command")
+            if isinstance(command, str):
+                commands.append(command)
+    return commands
+
+
+def _is_harness_owned(command: str, *, binaries: Collection[str]) -> bool:
+    """Whether the harness generated this command.
+
+    `binaries` is what `_owned_binaries` reads off the artifact being merged, not
+    off the live config: a config cannot answer "did I write this" — only the
+    artifact can. A `hook` subcommand alone is deliberately not enough to claim a
+    command, or another tool modelling hooks the same way would be adopted and
+    then pruned.
+    """
+    normalised = command.replace("\\", "/")
+    if _LEGACY_BUILTIN_MARKER in normalised:
+        return True
+    try:
+        argv = shlex.split(normalised)
+    except ValueError:
+        return False
+    if len(argv) < 3:
+        return False
+    if PurePosixPath(argv[0]).name not in binaries:
+        return False
+    if argv[1] != _HOOK_SUBCOMMAND:
+        return False
+    return not argv[2].startswith("-")
+
+
+def _normalize_entry(entry: dict) -> tuple[dict, list[str]]:
+    """Coerce a foreign hook entry into the schema Claude Code accepts.
+
+    Returns the repaired entry and a description of each repair. A non-string
+    matcher is the one seen in the wild: an installer writing `null` for "no
+    matcher" makes Claude Code reject the entire settings file, which silently
+    disables every unrelated hook in the profile.
+    """
+    repairs: list[str] = []
+    fixed = dict(entry)
+    matcher = fixed.get("matcher")
+    if matcher is None:
+        fixed["matcher"] = ""
+        repairs.append('matcher: null -> ""')
+    elif not isinstance(matcher, str):
+        fixed["matcher"] = ""
+        repairs.append(f'matcher: {type(matcher).__name__} -> ""')
+    return fixed, repairs
+
+
+def _owned_binaries(settings: dict, binary: str) -> set[str]:
+    """The launchers whose commands this settings file may legitimately carry.
+
+    Three sources, none of them the live config: the launcher the file records as
+    having written it, so entries survive their binary being retired from every
+    profile; the launcher this deploy is writing, so a first deploy onto a file
+    that records nothing still recognises what it is about to generate; and the
+    default, which is what every settings.json written before the stamp existed
+    necessarily used. The set stays closed — a launcher nobody ever deployed is
+    never claimed.
+    """
+    # Both imports are deferred: `agents.registry` imports this module, and
+    # `core.artifact_version` imports `agents.registry`. At module level either
+    # one closes the cycle.
+    from lazy_harness.agents.registry import DEFAULT_HARNESS_BINARY
+    from lazy_harness.core.artifact_version import extract_binary_from_settings
+
+    owned = {DEFAULT_HARNESS_BINARY, binary}
+    recorded = extract_binary_from_settings(settings)
+    if recorded:
+        owned.add(recorded)
+    return owned
+
+
+def _merge_hook_blocks(
+    existing: object, generated: dict, *, binaries: Collection[str]
+) -> tuple[dict, list[str], list[str], list[str]]:
+    """Merge harness-generated hooks over an existing settings.json hooks block.
+
+    Harness-owned entries are replaced by the freshly generated ones; everything
+    else belongs to another tool and is carried through, repaired if its schema
+    would make Claude Code reject the file. Events the harness does not model are
+    passed through untouched rather than dropped.
+
+    Returns the merged block and the three `WriteOp` diagnostics: preserved,
+    repaired, and the harness entries this run no longer generates.
+    """
+    merged: dict = {event: list(entries) for event, entries in generated.items()}
+    preserved: list[str] = []
+    repaired: list[str] = []
+    dropped: list[str] = []
+    if not isinstance(existing, dict):
+        return merged, preserved, repaired, dropped
+
+    generated_commands = {
+        command
+        for entries in generated.values()
+        for entry in entries
+        if isinstance(entry, dict)
+        for command in _entry_commands(entry)
+    }
+
+    for event, entries in existing.items():
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            commands = _entry_commands(entry)
+            if not commands:
+                continue
+            if all(_is_harness_owned(command, binaries=binaries) for command in commands):
+                # Ours, and the merged block already carries whatever replaces
+                # it. A command we no longer generate is being pruned, which is
+                # the one thing this loop does that the user cannot otherwise see.
+                dropped.extend(
+                    f"{event}: {command}"
+                    for command in commands
+                    if command not in generated_commands
+                )
+                continue
+            # Already emitted this run — the tool's own installer wrote it and
+            # config declares it too. Keeping both would run the hook twice.
+            if all(command in generated_commands for command in commands):
+                continue
+            fixed, fixes = _normalize_entry(entry)
+            repaired.extend(f"{event}: {fix} ({commands[0]})" for fix in fixes)
+            merged.setdefault(event, []).append(fixed)
+            preserved.append(f"{event}: {commands[0]}")
+
+    return merged, preserved, repaired, dropped
 
 
 class ClaudeCodeAdapter:
@@ -609,3 +788,117 @@ class ClaudeCodeAdapter:
             if entry.get("env"):
                 normalized[name]["env"] = dict(entry["env"])
         return {"mcpServers": normalized}
+
+    # --- config planning (ConfigPlanner) ---
+    #
+    # Merging is an adapter operation; writing is the engine's (decision 4,
+    # 2026-09-13 multi-agent design). Everything below parses and reserialises
+    # Claude Code's own documents and returns final text — the engine never
+    # learns what a `matcher` is.
+
+    def config_targets(self) -> list[Path]:
+        """Every file this adapter may read or write, relative to the config dir."""
+        return [Path(_SETTINGS_FILE), Path(self.mcp_config_file())]
+
+    def plan_config(
+        self,
+        hooks: dict[str, list[HookEntry]],
+        servers: dict[str, dict],
+        existing: dict[Path, str],
+        *,
+        binary: str | None = None,
+    ) -> list[WriteOp]:
+        """Plan both documents in one call.
+
+        `binary` is the launcher this deploy writes into the generated commands,
+        and it is keyword-only with a default because the design's signature does
+        not carry it while `settings.json` does: the stamp naming the writing
+        launcher is what stops the *next* deploy reading its own previous output
+        as another tool's hooks. Deriving it from the commands would be wrong for
+        a profile whose only hooks are third-party, which generates no launcher
+        invocation to read it off.
+        """
+        from lazy_harness.agents.registry import DEFAULT_HARNESS_BINARY
+
+        ops: list[WriteOp] = []
+        settings_op = self._plan_settings(
+            hooks,
+            existing.get(Path(_SETTINGS_FILE)),
+            binary=binary or DEFAULT_HARNESS_BINARY,
+        )
+        if settings_op is not None:
+            ops.append(settings_op)
+        mcp_op = self._plan_mcp(servers, existing.get(Path(self.mcp_config_file())))
+        if mcp_op is not None:
+            ops.append(mcp_op)
+        return ops
+
+    def _plan_settings(
+        self, hooks: dict[str, list[HookEntry]], existing_raw: str | None, *, binary: str
+    ) -> WriteOp | None:
+        """Merge the generated hooks over an existing settings.json.
+
+        Returns `None` when there is nothing to deploy. An empty plan is not the
+        same as a plan to write an empty hooks block: the latter would uninstall
+        every foreign entry on a profile that configures no harness hooks.
+        """
+        if not hooks:
+            return None
+
+        from lazy_harness.core.artifact_version import SETTINGS_BINARY_KEY
+
+        widened: dict[str, list[str | HookEntry]] = {
+            event: list(entries) for event, entries in hooks.items()
+        }
+        generated = self.generate_hook_config(widened)
+        settings = _as_document(existing_raw)
+
+        merged, preserved, repaired, dropped = _merge_hook_blocks(
+            settings.get("hooks", {}),
+            generated,
+            binaries=_owned_binaries(settings, binary),
+        )
+
+        # Decision 9: the document declares the version and the launcher that
+        # wrote it, at the top level rather than inside `hooks` — that block is a
+        # `{event: [entry, ...]}` contract and a scalar there breaks every
+        # generic reader of it, the harness's own included.
+        settings["lh_version"] = __version__
+        settings[SETTINGS_BINARY_KEY] = binary
+        settings["hooks"] = merged
+
+        return WriteOp(
+            artifact=ConfigArtifact(
+                relative_path=Path(_SETTINGS_FILE),
+                content=json.dumps(settings, indent=2) + "\n",
+            ),
+            relative_path=Path(_SETTINGS_FILE),
+            preserved=preserved,
+            dropped=dropped,
+            repaired=repaired,
+        )
+
+    def _plan_mcp(self, servers: dict[str, dict], existing_raw: str | None) -> WriteOp | None:
+        """Merge the detected MCP servers into the agent's MCP config document."""
+        if not servers:
+            return None
+
+        generated = self.generate_mcp_config(servers).get("mcpServers", {})
+        document = _as_document(existing_raw)
+        current = document.get("mcpServers")
+        if not isinstance(current, dict):
+            current = {}
+
+        preserved = [f"mcpServers: {name}" for name in current if name not in generated]
+        current.update(generated)
+        document["mcpServers"] = current
+
+        relative = Path(self.mcp_config_file())
+        return WriteOp(
+            artifact=ConfigArtifact(
+                relative_path=relative,
+                content=json.dumps(document, indent=2) + "\n",
+            ),
+            relative_path=relative,
+            preserved=preserved,
+        )
