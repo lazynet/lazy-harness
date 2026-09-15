@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.67.2](https://github.com/lazynet/lazy-harness/compare/v0.67.1...v0.67.2) (2026-09-15)
+
+
+### Bug Fixes
+
+* make the queue and metrics readers resolve the profile their writers use ([#313](https://github.com/lazynet/lazy-harness/issues/313)) ([1425ccc](https://github.com/lazynet/lazy-harness/commit/1425ccc643ed360e1b9409da504ade5ea5d21668))
+* serialise PreCompact additional context as plain text ([#305](https://github.com/lazynet/lazy-harness/issues/305)) ([65511a1](https://github.com/lazynet/lazy-harness/commit/65511a19276527a4f58eb7ed305609acfc3b0aa1))
+
+
+### Refactors
+
+* migrate compound-loop onto the HookEvent contract ([#311](https://github.com/lazynet/lazy-harness/issues/311)) ([df737e5](https://github.com/lazynet/lazy-harness/commit/df737e5e6e75939bd1dbb78332e0ebc6a7f9c849))
+* migrate pre-compact onto the HookEvent contract ([#314](https://github.com/lazynet/lazy-harness/issues/314)) ([75bedaa](https://github.com/lazynet/lazy-harness/commit/75bedaa3d19453b8aadb14cbdf74a6fee7159f97))
+* migrate session-end to the HookEvent contract ([#310](https://github.com/lazynet/lazy-harness/issues/310)) ([d50dcb0](https://github.com/lazynet/lazy-harness/commit/d50dcb0513f24b326237f520eb2b205362202b75))
+* migrate session-export onto the HookEvent contract ([#309](https://github.com/lazynet/lazy-harness/issues/309)) ([363d0e7](https://github.com/lazynet/lazy-harness/commit/363d0e782929bcb25ba898ec1e51b09f070d1283))
+* take the hook event rather than stdin in engram-persist ([#312](https://github.com/lazynet/lazy-harness/issues/312)) ([79d7d37](https://github.com/lazynet/lazy-harness/commit/79d7d379dd3ab617dfd4751faca7010e7f91752f))
+* take the transcript path rather than the payload in shared helpers ([#306](https://github.com/lazynet/lazy-harness/issues/306)) ([8008a7e](https://github.com/lazynet/lazy-harness/commit/8008a7e8496729513ff67aa8e1d50c00e54495cf))
+
+
+### Documentation
+
+* accept ADR-041 and close the step 4 contract gate ([#302](https://github.com/lazynet/lazy-harness/issues/302)) ([6c76481](https://github.com/lazynet/lazy-harness/commit/6c764811cd9cb9ed1799735532c4ac406ac78a6d))
+* correct the dead pre-compact transcript parser claim ([1e602f2](https://github.com/lazynet/lazy-harness/commit/1e602f2f9f34cae21cbc0a6a6bc6aefaa1e4f6e2))
+* mark the step 5 plan's backlog-fix item as already done ([4aa3cde](https://github.com/lazynet/lazy-harness/commit/4aa3cde02bde2669038b7e7b5a7e4e116e0aabd9))
+* plan step 5 and record the three narrowings it inherits ([#304](https://github.com/lazynet/lazy-harness/issues/304)) ([083d1b2](https://github.com/lazynet/lazy-harness/commit/083d1b20d530c0a8c90e7601051bb24873c45b6b))
+* raise wave A's four cross-cutting findings into the step 5 plan ([db9d6ba](https://github.com/lazynet/lazy-harness/commit/db9d6ba955ccd91cbc3202b29baed5a8950a9f4d))
+
 ## [0.67.1](https://github.com/lazynet/lazy-harness/compare/v0.67.0...v0.67.1) (2026-09-15)
 
 
