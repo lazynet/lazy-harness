@@ -17,8 +17,8 @@ If either of those is a dealbreaker for your workflow, `lazy-harness` is probabl
 git clone https://github.com/lazynet/lazy-harness.git
 cd lazy-harness
 uv sync
-uv run pytest         # should be green
-uv run ruff check src tests
+uv run --frozen pytest         # should be green
+uv run --frozen ruff check src tests
 ```
 
 If any of those fail on a clean clone, that is a bug in the repo itself — please open an issue.
@@ -33,11 +33,15 @@ If any of those fail on a clean clone, that is a bug in the repo itself — plea
 2. Follow strict TDD: write a failing test, watch it fail, write the minimal code to pass, refactor. Repeat.
 3. Before committing, run the full pre-commit gate — either manually or via the `/tdd-check` slash command:
    ```bash
-   uv run pytest
-   uv run ruff check src tests
-   uv run --group docs mkdocs build --strict
+   uv run --frozen pytest
+   uv run --frozen ruff check src tests
+   uv run --frozen ruff format --check src tests
+   uv run --frozen --group docs mkdocs build --strict
    ```
-   All three must pass with pristine output.
+   All four must pass with pristine output. `ruff check` runs lint rules and
+   leaves layout alone, so the formatter is a separate check rather than a
+   duplicate of the one above it — reformat with `uv run --frozen ruff format
+   src tests` and commit the result on its own.
 4. Use [conventional commits](https://www.conventionalcommits.org/) for the commit message. Release-please uses them to drive version bumps — see [`specs/workflow/release-flow.md`](specs/workflow/release-flow.md) for what each type means.
 5. Open a PR from your branch. The PR template will ask you for a Summary, a Why, and a Test plan.
 

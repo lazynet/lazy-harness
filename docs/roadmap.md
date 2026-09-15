@@ -11,7 +11,7 @@ Where `lazy-harness` is heading. This is a **curated list of committed themes**,
 
 ## Theme 1 — Stability & quality gates
 
-The pre-commit gate defined in [`CLAUDE.md`](https://github.com/lazynet/lazy-harness/blob/main/CLAUDE.md) requires `pytest`, `ruff`, and `mkdocs build --strict` to all pass cleanly. That invariant is the floor every other change builds on.
+The pre-commit gate defined in [`CLAUDE.md`](https://github.com/lazynet/lazy-harness/blob/main/CLAUDE.md) requires `pytest`, `ruff check`, `ruff format --check`, and `mkdocs build --strict` to all pass cleanly. That invariant is the floor every other change builds on.
 
 - [x] Rewrite `tests/unit/test_version.py` to compare `pyproject.toml` and `src/lazy_harness/__init__.py` against each other (no hardcoded expected value).
 - [x] Resolve 23 preexisting `ruff check src tests` findings — auto-fix the fixable, justify or exclude the rest.

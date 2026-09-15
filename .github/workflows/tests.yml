@@ -51,7 +51,13 @@ jobs:
       - name: Run ruff
         run: uv run --frozen --python ${{ matrix.python-version }} ruff check src tests
 
-  # Third leg of the pre-commit gate. docs.yml only runs on push to main, so
+      # Disjoint from the lint step above: lint rules never reformat, so a gate
+      # without this one lets layout drift until it lands as an unreviewable
+      # diff on top of somebody's logic change.
+      - name: Check formatting
+        run: uv run --frozen --python ${{ matrix.python-version }} ruff format --check src tests
+
+  # Fourth leg of the pre-commit gate. docs.yml only runs on push to main, so
   # without this no pull request would ever build the docs.
   docs:
     runs-on: ubuntu-latest

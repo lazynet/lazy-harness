@@ -49,6 +49,7 @@ AUTOMATION_GLOBS = (
     ".github/workflows/*.yml",
     ".github/PULL_REQUEST_TEMPLATE.md",
     "specs/workflow/*.md",
+    "CONTRIBUTING.md",
 )
 
 _UV_RUN = re.compile(r"uv run(?P<flags>(?:\s+--?[\w-]+(?:[= ][^\s`]+)?)*)")
