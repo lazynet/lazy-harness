@@ -173,6 +173,7 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
     "session-end": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.session_end",
         event="session_end",
+        migrated=True,
     ),
     "session-export": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.session_export",

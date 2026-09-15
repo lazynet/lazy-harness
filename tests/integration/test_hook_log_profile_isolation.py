@@ -148,6 +148,84 @@ def test_context_inject_writes_nothing_outside_the_invoked_profile(
     assert (_files_under(other) if other.exists() else set()) == before_other
 
 
+@pytest.fixture
+def metrics_elsewhere(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Keep the metrics store out of `home_dir`, so it cannot mask a log leak.
+
+    `session-end` records a `session_closed` loop event before it touches the
+    log, and `resolve_db_path` falls back to the data dir — which, with the XDG
+    vars cleared, is inside `home_dir`. Leaving it there would make the absence
+    assertions below fail for a reason that has nothing to do with the profile.
+    """
+    data = tmp_path / "lhdata"
+    monkeypatch.setenv("LH_DATA_DIR", str(data))
+    return data
+
+
+def _session_end_payload(cwd: Path) -> dict[str, object]:
+    return {
+        "hook_event_name": "SessionEnd",
+        "session_id": "isolation-test",
+        "cwd": str(cwd),
+    }
+
+
+def test_session_end_logs_into_the_invoked_profile(
+    harness_config: Path, metrics_elsewhere: Path, tmp_path: Path
+) -> None:
+    """Both of this hook's lines, not just the second one.
+
+    `session_end` wrote `fired` from a `get_agent("claude-code")` bootstrap dir
+    and then re-resolved `agent_runtime_dir(agent)` globally as well, so under
+    `--profile gate` the whole audit trail landed somewhere else.
+    """
+    exit_code = _run_hook("session-end", "gate", _session_end_payload(tmp_path))
+
+    assert exit_code == 0
+    log = (harness_config / "logs" / "hooks.log").read_text()
+    assert "session-end: fired cwd=" in log
+    assert "session-end: disabled in config, skipping" in log
+
+
+def test_session_end_writes_nothing_outside_the_invoked_profile(
+    harness_config: Path, metrics_elsewhere: Path, home_dir: Path, tmp_path: Path
+) -> None:
+    """The half that fails before the fix: `~/.claude` is the global fallback."""
+    other = tmp_path / "other-home"
+    before_home = _files_under(home_dir)
+    before_other = _files_under(other) if other.exists() else set()
+
+    exit_code = _run_hook("session-end", "gate", _session_end_payload(tmp_path))
+
+    assert exit_code == 0
+    assert "session-end: fired cwd=" in (harness_config / "logs" / "hooks.log").read_text()
+    assert _files_under(home_dir) == before_home
+    assert (_files_under(other) if other.exists() else set()) == before_other
+
+
+def test_session_end_labels_its_loop_event_with_the_invoked_profile(
+    harness_config: Path, metrics_elsewhere: Path, tmp_path: Path
+) -> None:
+    """The same defect one column over, in the metrics store rather than the log.
+
+    `_record_session_closed` labelled the `session_closed` row with
+    `profile_name()`, which reads the *ambient* `CLAUDE_CONFIG_DIR` and answers
+    `""` when it is unset — so every hook invoked under an explicit `--profile`
+    wrote an unattributed row. `event.profile` is the flag the command carries.
+    """
+    import sqlite3
+
+    exit_code = _run_hook("session-end", "gate", _session_end_payload(tmp_path))
+
+    assert exit_code == 0
+    with sqlite3.connect(metrics_elsewhere / "metrics.db") as conn:
+        rows = conn.execute(
+            "SELECT profile FROM loop_events WHERE session = ? AND kind = 'session_closed'",
+            ("isolation-test",),
+        ).fetchall()
+    assert rows == [("gate",)]
+
+
 def test_session_export_logs_into_the_invoked_profile(harness_config: Path, tmp_path: Path) -> None:
     """`session-export` resolved its log path twice, both times globally.
 
