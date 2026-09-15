@@ -1011,7 +1011,7 @@ git add -A && git commit -m "refactor: sweep the global agent literals out of th
 
 ## Task 22: Re-run the isolation gate against the shipped binary
 
-The step 4 gate lives in `/tmp/f7-gate/`, outside the repo, and CI cannot reproduce it. Whether it gets versioned is an open question this plan does not settle; running it is not optional.
+The step 4 gate lived in `/tmp/f7-gate/`, outside the repo, where CI could not reproduce it. It is now versioned under `specs/gates/f7/`, which is what makes the rest of this task a set of paths rather than a ritual. Running it is not optional.
 
 - [ ] **Step 1: Merge, let release-please cut, and install the tag explicitly**
 
@@ -1036,9 +1036,15 @@ Expected: no hits. **The absence of a symbol that used to be there is the cheap 
 
 - [ ] **Step 3: Run the gate with all fifteen in scope**
 
-`KNOWN_GAP_HOOKS` should be empty, and `pre-compact` must be **invoked** rather than skipped — it is absent from the step 4 counts only because the gate never called it, not because it was clean.
+```bash
+specs/gates/f7/isolation-gate.sh "$(command -v lh)"
+```
 
-**This step is not executable from the repository and that is a decision, not an oversight.** The gate lives in `/tmp/f7-gate/`, is unversioned and mutable, and its invoke list is a shell array inside a script no commit contains. A fresh executor cannot run it and CI cannot reproduce it. Before running anything here, **copy the gate into the repository under `specs/gates/f7/` and commit it** — then "add the invoke" names a file and a line instead of a directory that may not exist tomorrow. If versioning it is refused, this task stops being a gate and the plan should say so rather than prescribing a ritual nobody else can perform.
+The known-gap list should print empty, and `pre-compact` must be **invoked** rather than skipped — it is absent from the step 4 counts only because the gate never called it, not because it was clean.
+
+**Neither is something to arrange by hand.** The gate's asserted and known-gap sets are derived from the registry (`list_builtin_hooks()` + `builtin_migrated()`), so the gap list empties itself as tasks 4–18 land and `pre-compact` enters the asserted set the moment it is marked migrated. An empty gap block is therefore evidence that the migration is complete, not a number someone remembered to update. If the block is not empty, name which builtins are still in it.
+
+Run both controls in the same sitting — `fake-lh-fixed.sh` must exit 0 and `fake-lh-security-only.sh` must exit 1, per the repo's gate about feeding a checker a case it must pass *and* one it must fail. If either verdict flips, the gate regressed and this task's result means nothing.
 
 - [ ] **Step 4: Record the result**
 
@@ -1052,6 +1058,6 @@ A single run that exercises all four properties at once. The step 4 pass was **c
 
 **Spec coverage.** Step 5's four clauses: migrate the fifteen (tasks 4–18) ✓; declare `Operation` and `Signal` per builtin (the table, and step 5 of each recipe) ✓; delete `profile_name()` (task 21 — **narrowed, with evidence**, and the divergence recorded) ✓; delete `_TRANSCRIPT_KEYS` (task 3) ✓; the literals (task 21 — **ten, not the seven the step text implies**; no syntactic criterion found them all, see the count's own history above) ✓. The design's two displaced prerequisites — the second entry point and the transitional field — are tasks 20 and 19.
 
-**Gaps this plan opens deliberately.** Whether `/tmp/f7-gate/` gets versioned is unresolved and stays that way; task 22 runs it from where it lives. `_shared.py:258`, `knowledge/compound_loop_worker.py:98` and `:100`, `cli/memory_cmd.py:237` and `:264`, and `monitoring/statusline.py:44` stay global by decision, not oversight; none is a builtin, and task 21's test excludes `_shared.py` explicitly because it is the one inside the replacement helper itself.
+**Gaps this plan opens deliberately.** `_shared.py:258`, `knowledge/compound_loop_worker.py:98` and `:100`, `cli/memory_cmd.py:237` and `:264`, and `monitoring/statusline.py:44` stay global by decision, not oversight; none is a builtin, and task 21's test excludes `_shared.py` explicitly because it is the one inside the replacement helper itself.
 
 **Risk that outranks the rest.** Task 1. `pre-compact` is the only builtin whose migration can pass every test and still be dead on the wire, because the channel it speaks is not the channel the contract serialises to. If only one task gets an independent review by a different model, it is that one.
