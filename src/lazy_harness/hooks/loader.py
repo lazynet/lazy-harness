@@ -178,6 +178,13 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
     "session-export": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.session_export",
         event="session_stop",
+        # The one lifecycle hook that reads message *text* in its own process
+        # (`knowledge/session_export.py:43`). `session-end` and `compound-loop`
+        # only locate a transcript and enqueue its path; their worker reads it
+        # later, out of process, so declaring MESSAGES for them would make
+        # `deploy` omit them on an agent whose reader never has to supply it.
+        signals=frozenset({Signal.MESSAGES}),
+        migrated=True,
     ),
     "stop-context-rotate": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.stop_context_rotate",

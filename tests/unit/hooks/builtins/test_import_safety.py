@@ -23,12 +23,12 @@ BUILTINS_DIR = Path(__file__).parents[4] / "src" / "lazy_harness" / "hooks" / "b
 # as a bare script at all. `lh hook <name>` imports it through the runner, so a
 # lazy_harness that will not import means there is no `lh` to run in the first
 # place, and the guarantee the guard carried moves to the runner's failure
-# policy. `context_inject` and `session_end` left this list when they migrated;
-# the rest follow at step 5 of `specs/designs/2026-09-13-multi-agent-harness-design.md`.
+# policy. `context_inject`, `session_export` and `session_end` left this list
+# when they migrated; the rest follow at step 5 of
+# `specs/designs/2026-09-13-multi-agent-harness-design.md`.
 GUARDED_HOOKS = [
     "compound_loop",
     "pre_compact",
-    "session_export",
     "user_prompt_goal",
 ]
 
