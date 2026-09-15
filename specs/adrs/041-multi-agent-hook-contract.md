@@ -1,6 +1,6 @@
 # ADR-041: The multi-agent hook contract — a runner that knows its profile
 
-**Status:** proposed
+**Status:** accepted
 **Date:** 2026-09-13
 **Supersedes:** —
 **Superseded by:** —
@@ -114,8 +114,36 @@ The runner lands first because it is a correctness fix for Claude Code on its
 own merits, but the bulk migration of the remaining builtins waits for a
 throwaway `CodexAdapter` to run three hooks end to end against a throwaway
 profile. Anything the contract cannot express is fixed while three hooks depend
-on it rather than eighteen. That gate is why this ADR is `proposed` and not
-`accepted`.
+on it rather than eighteen.
+
+**That gate ran on 2026-09-15 and passed, against the installed 0.67.1 binary
+rather than a worktree, which is why this ADR is now `accepted`.** It took three
+runs to pass. The first failed on assertion C and surfaced three production
+defects of one shape — an answer derived from the global agent where the
+profile's agent is the source (#292, #294, #297). The second, rescoped to
+isolation, failed on two more of the same shape and was fixed in #300. What the
+gate asserts is narrower than the sentence above, and the difference is the
+part worth carrying forward:
+
+- **Two builtins are asserted, not three.** `stop-verify-guard` is migrated but
+  writes no `hooks.log`; its only sink is the metrics DB, scoped by
+  `LH_DATA_DIR` rather than by the agent runtime dir. It has no site in scope
+  and the gate prints the skip with its reason on every run.
+- **The fifteen unmigrated builtins are counted, not failed.** They reach
+  `main()` through `cli/hooks_cmd.py`'s unmigrated branch, which calls
+  `main_fn()` with no arguments, so the `--profile` value is parsed and
+  discarded. Seven of them leaked 28 lines in the passing run. That is the
+  known gap, tracked to step 5 in `specs/backlog.md`, and a `PASS` does not
+  mean nothing leaks — it means the *migrated* hooks are isolated.
+- **The gate discriminates.** It exits 1 against 0.67.0, and it also exits 1
+  against a shim that fixes only `pre-tool-use-security`, so a pass is not an
+  artefact of a gate that cannot fail.
+
+The contract is frozen on that evidence. Freezing it on a gate whose scope is
+two hooks rather than three is a choice with a cost, and the cost is named: the
+`--profile` value dying in the dispatch is a *contract* defect, not a hook
+defect, and it stayed invisible to the gate because the hooks that carry it were
+outside the assertion set.
 
 ## Consequences
 
