@@ -320,7 +320,7 @@ Rules of the allowlist:
 - If `config.toml` cannot be read or the section is missing, the allowlist is empty. This is fail-safe: stricter blocking, never weaker.
 - Matching is per-command, not per-rule. One pattern can rescue any block rule it covers.
 
-**Where it writes:** nowhere on disk. Logs go to the standard `~/.claude/logs/hooks.log` like every other built-in.
+**Where it writes:** nowhere on disk. Blocks are logged to `logs/hooks.log` inside the runtime directory of the profile the hook was invoked with — this hook and `context-inject` are the two that resolve that directory per profile; see [Observability](#observability).
 
 The full rule list and the rationale behind each category live in [`specs/designs/2026-04-17-security-hooks-cluster-design.md`](https://github.com/lazynet/lazy-harness/blob/main/specs/designs/2026-04-17-security-hooks-cluster-design.md).
 
@@ -779,6 +779,10 @@ Hooks are ordered within an event. They run sequentially in the order you declar
 
 ## Observability
 
-Every built-in hook appends a line to `~/.claude/logs/hooks.log` with its name, the cwd, and what it did (or why it skipped). The compound-loop worker logs to `~/.claude/logs/compound-loop.log`. Both files rotate in place once they exceed 100 KB, keeping the last 500 lines.
+Most built-in hooks append a line to `logs/hooks.log` with their name, the cwd, and what they did (or why they skipped); the compound-loop worker logs to `compound-loop.log` beside it. Both files rotate in place once they exceed 100 KB, keeping the last 500 lines. Not every built-in writes there — `stop-verify-guard` records to the metrics database instead.
+
+Neither file sits at a fixed path. Both live in the agent runtime directory, which resolves in this order: the agent's own environment variable (`CLAUDE_CONFIG_DIR` and its equivalents), then the profile's `config_dir`, then the agent's global link (`~/.claude`), then `~/.<agent>`. On a single-profile Claude Code install that lands in `~/.claude/logs/`; with profiles declared, the launcher exports the environment variable, so it lands in the profile's own directory — see [profiles and deploy](profiles-and-deploy.md).
+
+The second step, the profile's `config_dir`, is what a hook falls back on when the environment variable is absent, and only two hooks read it today: `context-inject` and the block log of `pre-tool-use-security` resolve the directory from the profile they were invoked with. The other eight that write this file — `session-export`, `compound-loop`, `session-end`, `pre-compact`, `pre-tool-use-memory-size`, `pre-tool-use-read-size`, `post-tool-use-format`, `post-tool-use-ansible-lint` — and the compound-loop worker resolve it globally instead, so on a profile whose agent differs from the global `[agent].type` they write under the wrong agent. That is open work, tracked in the backlog against the hook migration.
 
 `lh status hooks` surfaces a summary view over `hooks.log` so you do not have to tail it by hand.

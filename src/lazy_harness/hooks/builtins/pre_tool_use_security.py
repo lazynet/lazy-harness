@@ -284,18 +284,27 @@ def should_block_path(path: str) -> BlockDecision | None:
     return None
 
 
-def _log_block(decision: BlockDecision, command: str) -> None:
+def _log_block(decision: BlockDecision, command: str, profile: str) -> None:
     """Record a block so the guardrail leaves an auditable trace.
 
     Only blocks are logged: this hook runs on every Bash call, so logging
     allowed commands would bury the events that matter.
+
+    Per profile, not per machine. Resolving the directory from a hardcoded
+    `get_agent("claude-code")` appended this line to whichever directory the
+    global agent named, so a block raised under one profile was auditable only
+    from another. The `load_config` this costs is paid on the deny path alone.
     """
     try:
-        from lazy_harness.agents.registry import get_agent
-        from lazy_harness.core.paths import agent_runtime_dir
-        from lazy_harness.hooks.builtins._shared import make_log
+        from lazy_harness.core.config import ConfigError, load_config
+        from lazy_harness.core.paths import config_file
+        from lazy_harness.hooks.builtins._shared import agent_dir_for, make_log
 
-        agent_dir = agent_runtime_dir(get_agent("claude-code"))
+        try:
+            cfg = load_config(config_file())
+        except ConfigError:
+            cfg = None
+        _, agent_dir = agent_dir_for(cfg, profile)
         log = make_log("pre-tool-use-security")
         log(agent_dir / "logs" / "hooks.log", f"blocked {decision.rule.category}: {command[:200]}")
     except Exception:
@@ -329,5 +338,5 @@ def main(event: HookEvent) -> HookDecision:
         return HookDecision()
     if decision is None:
         return HookDecision()
-    _log_block(decision, subject)
+    _log_block(decision, subject, event.profile)
     return HookDecision(verdict=Verdict.DENY, reason=_format_block_message(decision))

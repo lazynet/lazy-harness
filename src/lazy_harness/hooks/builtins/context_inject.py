@@ -737,9 +737,8 @@ def main(event: HookEvent) -> HookDecision:
     )
 
     try:
-        from lazy_harness.agents.registry import get_agent
         from lazy_harness.core.config import ConfigError, load_config
-        from lazy_harness.core.paths import agent_runtime_dir, config_file
+        from lazy_harness.core.paths import config_file
         from lazy_harness.hooks.builtins._shared import (
             agent_dir_for,
             knowledge_root_for,
@@ -753,16 +752,10 @@ def main(event: HookEvent) -> HookDecision:
 
     _log = make_log("session-context")
 
-    # Pre-config bootstrap: the agent type is unknown until config loads, so
-    # resolve the log path via the Claude Code adapter (identical to the
-    # historical CLAUDE_CONFIG_DIR read). Re-resolved below once config is in.
-    boot_dir = agent_runtime_dir(get_agent("claude-code"))
-    log_file = boot_dir / "logs" / "hooks.log"
     # A payload with no `cwd` parses as `Path(".")`. The process directory is
     # what this hook read before the runner, and it is the same directory the
     # agent declares whenever it declares one at all.
     cwd = event.cwd if event.cwd != Path(".") else Path.cwd()
-    _log(log_file, f"fired cwd={cwd}")
 
     cf = config_file()
     cfg = None
@@ -777,6 +770,25 @@ def main(event: HookEvent) -> HookDecision:
     agent, agent_dir = agent_dir_for(cfg, event.profile)
     subdirs = agent.session_dirs()
     log_file = agent_dir / (subdirs.get("logs") or "logs") / "hooks.log"
+    # Config loads before the first line is written, rather than after. The
+    # bootstrap resolution this replaces went through a hardcoded
+    # `get_agent("claude-code")`, so `fired` landed in whatever directory the
+    # global agent named while `injected` below landed in the profile's own --
+    # one hook's audit trail split across two live profiles. Nothing in tests,
+    # specs or docs reads this line's timing; the two consumers of the log
+    # (`lh status hooks` and `docs/how/hooks.md`) parse its format.
+    #
+    # An absent config and a `ConfigError` still resolve globally, and
+    # correctly so: the profile -> config_dir mapping lives in the file that
+    # did not load. `agent_dir_for`'s docstring owns that limit.
+    #
+    # Only those two. Any other failure of `load_config` -- `PermissionError`,
+    # `OSError`, a decode error -- escapes this function, and then neither line
+    # is written rather than one landing globally. `run_hook`'s blanket handler
+    # still reports it on stderr at exit 0, so the failure stays visible; what
+    # is lost is the persistent record, which was being written to the wrong
+    # profile anyway.
+    _log(log_file, f"fired cwd={cwd}")
 
     # Sections. Prefer the project dir the agent declared over one derived from
     # cwd — the agent's encoding of cwd has changed across releases.

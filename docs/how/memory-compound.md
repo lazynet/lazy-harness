@@ -289,6 +289,8 @@ Changes take effect on the next session — the producer and worker both reload 
 
 ```bash
 # Is the producer firing?
+# Both producer and worker resolve this dir globally, so it follows
+# CLAUDE_CONFIG_DIR when set and falls back to ~/.claude, not to the profile.
 tail -f ~/.claude/logs/hooks.log
 
 # Is the worker running?
