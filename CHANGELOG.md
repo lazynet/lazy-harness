@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.65.0](https://github.com/lazynet/lazy-harness/compare/v0.64.0...v0.65.0) (2026-09-15)
+
+
+### Features
+
+* **agents:** implement ConfigPlanner in ClaudeCodeAdapter ([#283](https://github.com/lazynet/lazy-harness/issues/283)) ([511f9d9](https://github.com/lazynet/lazy-harness/commit/511f9d9b68b1e144bdc3a6b591571981e5e3e936))
+* **deploy:** add --profile to deploy a single profile in isolation ([#282](https://github.com/lazynet/lazy-harness/issues/282)) ([035d62f](https://github.com/lazynet/lazy-harness/commit/035d62f5f8a90035cccbb75d17410cbd4062710b))
+* **deploy:** drive config deployment through the adapter's plan_config ([#285](https://github.com/lazynet/lazy-harness/issues/285)) ([6d4a0b5](https://github.com/lazynet/lazy-harness/commit/6d4a0b52885671937ec470e68430bbe67c38e9c5))
+
+
+### Documentation
+
+* reconcile the specs with what step 3 shipped ([#286](https://github.com/lazynet/lazy-harness/issues/286)) ([d1fcf63](https://github.com/lazynet/lazy-harness/commit/d1fcf63153f7e8d381c66eaf266764f5709196c5))
+
 ## [0.64.0](https://github.com/lazynet/lazy-harness/compare/v0.63.0...v0.64.0) (2026-09-14)
 
 
