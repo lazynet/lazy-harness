@@ -26,6 +26,7 @@ from lazy_harness.core.paths import (
     expand_path,
 )
 from lazy_harness.core.profiles import list_profiles
+from lazy_harness.hooks.runner import resolve_profile
 from lazy_harness.hooks.signal_gaps import HookSignalGap, collect_hook_signal_gaps
 from lazy_harness.llm import LLMBackendError, LLMBackendNotFoundError
 from lazy_harness.llm.openai_compat import OpenAICompatibleBackend
@@ -159,8 +160,24 @@ def _fmt_bytes(n: int) -> str:
     return f"{n / (1024 * 1024):.1f} MB"
 
 
-def _engram_persist_metrics_path(agent: AgentAdapter) -> Path:
-    base = agent_runtime_dir(agent)
+def _engram_persist_metrics_path(agent: AgentAdapter, cfg: Config | None, profile: str) -> Path:
+    """Where `engram-persist` wrote its metrics, for the profile being diagnosed.
+
+    The hook names this file with `agent_dir_for(cfg, event.profile)`. Reading
+    it globally reported "No runs yet (Stop hook not triggered)" — the state a
+    hook that never fires produces — while the hook was recording every run
+    under the profile. `test_doctor_reads_the_engram_metrics_the_hook_writes`
+    asserts the two answers against each other.
+
+    An empty profile keeps the global answer, which is what an unmigrated hook
+    still writes.
+    """
+    if profile:
+        from lazy_harness.hooks.builtins._shared import agent_dir_for
+
+        agent, base = agent_dir_for(cfg, profile)
+    else:
+        base = agent_runtime_dir(agent)
     logs_subdir = agent.session_dirs().get("logs") or "logs"
     return base / logs_subdir / "engram_persist_metrics.jsonl"
 
@@ -538,7 +555,7 @@ def doctor() -> None:
         ok = False
 
     health = collect_engram_persist_health(
-        _engram_persist_metrics_path(agent),
+        _engram_persist_metrics_path(agent, cfg, resolve_profile(None)),
         now=datetime.now(UTC),
     )
     if not _render_engram_persist(console, health):
