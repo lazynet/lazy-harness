@@ -1,0 +1,51 @@
+{
+  "model": "opus",
+  "permissions": {
+    "allow": [
+      "Bash(ls:*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "other-tool guard"
+          }
+        ]
+      },
+      {
+        "matcher": null,
+        "hooks": [
+          {
+            "type": "command",
+            "command": "broken-tool check"
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "lh hook retired_builtin --profile personal"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "notifier send"
+          }
+        ]
+      }
+    ]
+  },
+  "lh_version": "0.1.0"
+}

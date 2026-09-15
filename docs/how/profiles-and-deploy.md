@@ -117,42 +117,29 @@ For each profile in config:
 The linking is **per item**, not per directory. The target ends up with a mix of:
 
 - Symlinks into the source (the user's versioned profile content)
-- A `settings.json` written by `deploy_hooks` (see below)
+- A `settings.json` written by `deploy_config` (see below)
 - Runtime state Claude Code writes itself during sessions
 
 All three coexist in the target without stepping on each other.
 
-### 2. `deploy_hooks(cfg)` — generate agent-native hook config
+### 2. `deploy_config(cfg)` — plan and write the agent's own config documents
 
-1. Look up the agent adapter via `get_agent(cfg.agent.type)`.
-2. For each event declared in `cfg.hooks` (e.g. `session_start`, `session_stop`, `pre_compact`), call `resolve_hooks_for_event(cfg, event)` — this returns the resolved builtin or user-hook paths for that event.
-3. Build a `hook_commands` dict mapping event name to a list of `"<python> <hook-path>"` command strings.
-4. Call `agent.generate_hook_config(hook_commands)`. For Claude Code (`ClaudeCodeAdapter`), this returns a dict in the shape Claude Code's `settings.json` expects:
-   ```json
-   {
-     "SessionStart": [
-       {"matcher": "", "hooks": [{"type": "command", "command": "/path/to/python /path/to/hook.py"}]}
-     ],
-     "Stop": [
-       {"matcher": "", "hooks": [{"type": "command", "command": "..."}]}
-     ]
-   }
-   ```
-5. For each profile, read its existing `settings.json` (if present — parsed leniently, corruption falls back to `{}`), replace the `hooks` key with the generated dict, and write it back to `<target_dir>/settings.json`.
+Hooks and MCP servers are one step, because an adapter is free to keep both in one file. Merging belongs to the adapter — parsing a native config format never was agent-neutral — and writing belongs to the engine. The cycle is:
 
-The result is that every profile has its own `settings.json` with the exact hook wiring derived from config. Re-running `lh deploy` is safe — the generated block is always rewritten from config, so a user who changes `config.toml` and runs deploy gets a consistent update.
+1. **Discover.** Ask the profile's adapter for `config_targets()`: every file it may read or write, relative to the profile's config dir. Claude Code names `settings.json` and `.claude.json`.
+2. **Read.** Read each target that exists and pass them as a mapping. A target that is not on disk is absent from the mapping, which is not the same as present and empty.
+3. **Plan.** Call `plan_config(hooks, servers, existing, binary=...)` **once**, with the hook entries resolved for that profile and the MCP servers probed for this run — QMD (present on `PATH`), Engram (`[memory.engram].enabled` **and** present) and Graphify (`[knowledge.structure].enabled` **and** a `graphify-mcp` binary present; the CLI alone is not enough, older installs shipped no MCP entry point). One call, so an adapter whose hooks and MCP servers share a file emits a single write for it and cannot overwrite its own earlier result.
+4. **Apply.** Write each returned document's text verbatim, delete the paths the plan retires (`artifact is None`, which is how an adapter stops generating a file it used to write), and print the diagnostics the plan carries: entries **preserved** because another tool owns them, entries **dropped** because the harness no longer generates them, and entries **repaired** because the agent would have rejected the file over them. A repair also leaves a `.bak` of the pre-merge bytes.
 
-### 3. `deploy_mcp_servers(cfg)` — wire the detected memory-stack tools
+An adapter that has not been taught to plan its own config is refused before the first profile is written, rather than discovered halfway through a deploy.
 
-1. Probe each external memory-stack tool the framework orchestrates and keep the ones actually installed: QMD (present on `PATH`), Engram (`[memory.engram].enabled` **and** present), and Graphify (`[knowledge.structure].enabled` **and** a `graphify-mcp` binary present — the CLI alone is not enough, older installs shipped no MCP entry point).
-2. Call `agent.generate_mcp_config(servers)` to serialize them into the agent's native shape.
-3. Merge the resulting `mcpServers` block into `<target_dir>/<agent.mcp_config_file()>` — `.claude.json` for Claude Code, a **different file from `settings.json`**, which carries only `hooks`.
+Two consequences worth knowing. If no MCP tool is detected, no MCP document is written at all, rather than an empty block. And the MCP merge is additive: an entry for a tool you have since uninstalled is **not** pruned by a later deploy — remove it from `.claude.json` by hand.
 
-Two consequences worth knowing. If no tool is detected the function prints a line and writes nothing at all, rather than writing an empty block. And the merge is additive (`existing["mcpServers"].update(...)`): an entry for a tool you have since uninstalled is **not** pruned by a later deploy — remove it from `.claude.json` by hand.
+Re-running `lh deploy` is safe and converges: the same config produces the same bytes, so a chezmoi-managed profile sees no diff on a redeploy.
 
-Design: [ADR-024](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/024-mcp-server-orchestration.md).
+Design: [ADR-024](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/024-mcp-server-orchestration.md) for the MCP half; the adapter/engine split is decision 4 of the 2026-09-13 multi-agent design.
 
-### 4. `deploy_claude_symlink(cfg)` — the default shortcut
+### 3. `deploy_claude_symlink(cfg)` — the default shortcut
 
 Creates `~/.claude → <default profile's target>`. This is the fallback that lets `claude` work without any env var. If the default is `personal`, running plain `claude` in a directory outside of any profile root still gets the personal profile.
 
@@ -166,7 +153,7 @@ Starting from an empty target:
 ├── skills/                → ~/.config/lazy-harness/profiles/personal/skills/
 ├── agents/                → ~/.config/lazy-harness/profiles/personal/agents/
 ├── commands/              → ~/.config/lazy-harness/profiles/personal/commands/
-├── settings.json          (generated by deploy_hooks)
+├── settings.json          (generated by deploy_config)
 └── ...
 ```
 
