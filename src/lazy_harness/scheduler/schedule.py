@@ -67,9 +67,7 @@ def _as_int(field: str, name: str) -> int:
     value = int(field)
     low, high = _RANGES[name]
     if not low <= value <= high:
-        raise ScheduleTranslationError(
-            f"{name}={field!r} is outside the valid range {low}-{high}"
-        )
+        raise ScheduleTranslationError(f"{name}={field!r} is outside the valid range {low}-{high}")
     return value
 
 
@@ -146,11 +144,7 @@ def render_launchd(s: Schedule) -> dict[str, object]:
         )
     key = _PLIST_KEYS[name]
     start = low
-    return {
-        "StartCalendarInterval": [
-            {**base, key: v} for v in range(start, high + 1, step)
-        ]
-    }
+    return {"StartCalendarInterval": [{**base, key: v} for v in range(start, high + 1, step)]}
 
 
 _SYSTEMD_DOW = ("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
@@ -257,9 +251,7 @@ def render_systemd(s: Schedule, timezone: str | None = None) -> str:
         if part in ("", "*"):
             continue
         if not part.isdigit() or not 1 <= int(part) <= 12:
-            raise ScheduleTranslationError(
-                f"month={s.month!r} is outside the valid range 1-12"
-            )
+            raise ScheduleTranslationError(f"month={s.month!r} is outside the valid range 1-12")
 
     # cron ORs the two day fields when both are restricted; systemd ANDs them,
     # exactly as launchd does. `0 9 1 * 1` is roughly five times a month in
@@ -272,9 +264,7 @@ def render_systemd(s: Schedule, timezone: str | None = None) -> str:
 
     dow = _systemd_dow(s.day_of_week)
     date = f"*-{_systemd_num(s.month, 'month')}-{_systemd_num(s.day_of_month, 'day_of_month')}"
-    time_part = (
-        f"{_systemd_num(s.hour, 'hour')}:{_systemd_num(s.minute, 'minute')}:00"
-    )
+    time_part = f"{_systemd_num(s.hour, 'hour')}:{_systemd_num(s.minute, 'minute')}:00"
     calendar = f"{date} {time_part}"
     expr = f"{dow} {calendar}" if dow else calendar
     return f"{expr} {timezone}" if timezone else expr

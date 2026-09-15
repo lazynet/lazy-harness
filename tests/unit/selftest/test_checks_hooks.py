@@ -37,8 +37,7 @@ def test_check_hooks_builtin_resolves(tmp_path: Path):
     )
     results = check_hooks(config_path=cfg)
     assert any(
-        r.name == "PreToolUse:context-inject" and r.status == CheckStatus.PASSED
-        for r in results
+        r.name == "PreToolUse:context-inject" and r.status == CheckStatus.PASSED for r in results
     )
 
 
@@ -49,6 +48,5 @@ def test_check_hooks_unknown_hook_warns(tmp_path: Path):
     )
     results = check_hooks(config_path=cfg)
     assert any(
-        r.name == "Stop:nonexistent-hook" and r.status == CheckStatus.WARNING
-        for r in results
+        r.name == "Stop:nonexistent-hook" and r.status == CheckStatus.WARNING for r in results
     )

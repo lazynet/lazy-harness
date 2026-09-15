@@ -28,9 +28,7 @@ def _event(session: str, output_tokens: int = 50) -> MetricEvent:
     )
 
 
-def test_drain_posts_pending_events_and_marks_sent(
-    tmp_path: Path, httpserver: HTTPServer
-) -> None:
+def test_drain_posts_pending_events_and_marks_sent(tmp_path: Path, httpserver: HTTPServer) -> None:
     httpserver.expect_request("/ingest", method="POST").respond_with_json({"ok": True})
     db = MetricsDB(tmp_path / "m.db")
     sink = HttpRemoteSink(
@@ -54,9 +52,7 @@ def test_drain_posts_pending_events_and_marks_sent(
 def test_drain_on_server_error_marks_failed_and_keeps_pending(
     tmp_path: Path, httpserver: HTTPServer
 ) -> None:
-    httpserver.expect_request("/ingest", method="POST").respond_with_data(
-        "boom", status=500
-    )
+    httpserver.expect_request("/ingest", method="POST").respond_with_data("boom", status=500)
     db = MetricsDB(tmp_path / "m.db")
     sink = HttpRemoteSink(
         db=db, url=httpserver.url_for("/ingest"), timeout_seconds=2, batch_size=10
@@ -77,9 +73,7 @@ def test_drain_on_server_error_marks_failed_and_keeps_pending(
 
 def test_drain_when_backend_unreachable_does_not_raise(tmp_path: Path) -> None:
     db = MetricsDB(tmp_path / "m.db")
-    sink = HttpRemoteSink(
-        db=db, url="http://127.0.0.1:1", timeout_seconds=1, batch_size=10
-    )
+    sink = HttpRemoteSink(db=db, url="http://127.0.0.1:1", timeout_seconds=1, batch_size=10)
     try:
         sink.write(_event("s1"))
         result = drain_http_remote(
@@ -128,9 +122,7 @@ def test_a_rewritten_event_is_resent_under_the_same_event_id(
     assert [r["output_tokens"] for r in received] == [50, 80]
 
 
-def test_drain_does_not_resend_an_unchanged_event(
-    tmp_path: Path, httpserver: HTTPServer
-) -> None:
+def test_drain_does_not_resend_an_unchanged_event(tmp_path: Path, httpserver: HTTPServer) -> None:
     """The treadmill, at the level that actually POSTs.
 
     `ingest` re-emits every session it can still read on every run. When an

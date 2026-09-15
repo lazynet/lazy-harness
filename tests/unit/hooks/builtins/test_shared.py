@@ -478,9 +478,7 @@ def test_transcript_reader_falls_back_to_the_global_agent_without_a_config(
     assert isinstance(transcript_reader(""), TranscriptReader)
 
 
-def test_transcript_reader_is_none_for_an_unregistered_agent(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_transcript_reader_is_none_for_an_unregistered_agent(tmp_path: Path, monkeypatch) -> None:
     """A typo in `[profiles.<name>].agent` leaves the hook without a signal."""
     from lazy_harness.hooks.builtins._shared import transcript_reader
 

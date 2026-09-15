@@ -24,12 +24,12 @@ from tests.unit.hooks.builtins._goldens import (
     run_builtin,
 )
 
-_NOISY_MODULE = '''\
+_NOISY_MODULE = """\
 import sys
 sys.stdout.write("out-bytes\\n")
 sys.stderr.write("err-bytes\\n")
 sys.exit(2)
-'''
+"""
 
 
 @pytest.fixture

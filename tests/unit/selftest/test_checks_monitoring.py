@@ -43,6 +43,6 @@ def test_check_monitoring_happy_path(tmp_path: Path):
 
 
 def test_check_monitoring_no_db_path(tmp_path: Path):
-    cfg = _make_cfg(tmp_path, "\n[monitoring]\nenabled = true\ndb = \"\"\n")
+    cfg = _make_cfg(tmp_path, '\n[monitoring]\nenabled = true\ndb = ""\n')
     results = check_monitoring(config_path=cfg)
     assert any(r.name == "db-path" and r.status == CheckStatus.FAILED for r in results)

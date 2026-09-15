@@ -387,9 +387,7 @@ def _accepted_options(command: click.Command) -> set[str]:
     return accepted
 
 
-def _attributable_flags(
-    root: click.Group, doc_text: str
-) -> list[tuple[str, str, click.Command]]:
+def _attributable_flags(root: click.Group, doc_text: str) -> list[tuple[str, str, click.Command]]:
     """Every (invocation, flag, command) the flag scan can attribute.
 
     A flag is attributable only when the walk ended somewhere that names a real

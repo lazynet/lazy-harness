@@ -54,9 +54,7 @@ class PluginRegistry:
                     name=prefixed,
                     origins=[bucket[prefixed].origin, f"ext:{dist_name}"],
                 )
-            bucket[prefixed] = PluginInfo(
-                name=prefixed, origin=f"ext:{dist_name}", impl=impl
-            )
+            bucket[prefixed] = PluginInfo(name=prefixed, origin=f"ext:{dist_name}", impl=impl)
 
     def resolve(self, kind: type, name: str) -> type[Any]:
         bucket = self._builtins.get(kind, {})

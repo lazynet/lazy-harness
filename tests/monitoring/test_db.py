@@ -306,13 +306,9 @@ def test_outbox_delivery_health_surfaces_the_worst_attempt_count_and_its_error(
     db = MetricsDB(tmp_path / "m.db")
     db.outbox_enqueue(sink_name="http_remote", event_id="e1", payload_json="{}")
     db.outbox_enqueue(sink_name="http_remote", event_id="e2", payload_json="{}")
-    db.outbox_mark_failed(
-        "http_remote", "e1", error="HTTP 502", retry_after_seconds=60
-    )
+    db.outbox_mark_failed("http_remote", "e1", error="HTTP 502", retry_after_seconds=60)
     for _ in range(3):
-        db.outbox_mark_failed(
-            "http_remote", "e2", error="HTTP 503", retry_after_seconds=60
-        )
+        db.outbox_mark_failed("http_remote", "e2", error="HTTP 503", retry_after_seconds=60)
 
     health = db.outbox_delivery_health("http_remote")
 
@@ -363,9 +359,7 @@ def test_outbox_delivery_health_ignores_rows_already_sent(tmp_path: Path) -> Non
     """A drained backlog is the healthy state, not a silent one."""
     db = MetricsDB(tmp_path / "m.db")
     db.outbox_enqueue(sink_name="http_remote", event_id="e1", payload_json="{}")
-    db.outbox_mark_failed(
-        "http_remote", "e1", error="HTTP 502", retry_after_seconds=60
-    )
+    db.outbox_mark_failed("http_remote", "e1", error="HTTP 502", retry_after_seconds=60)
     db.outbox_mark_sent("http_remote", "e1")
 
     health = db.outbox_delivery_health("http_remote")
@@ -653,7 +647,6 @@ def test_backfill_host_requeues_an_event_the_remote_already_has(tmp_path: Path) 
         payload = json.loads(pending[0].payload_json)
         assert payload["host"] == "LazyMBP"
         assert payload["cost"] == 0.01
-
 
     finally:
         db.close()

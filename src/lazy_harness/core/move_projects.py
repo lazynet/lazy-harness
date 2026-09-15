@@ -76,6 +76,5 @@ def move_projects(
 ) -> list[MoveResult]:
     """Move many projects in order, collecting results. Stops on MoveError."""
     return [
-        move_project(src_profile_dir, dst_profile_dir, p, overwrite=overwrite)
-        for p in projects
+        move_project(src_profile_dir, dst_profile_dir, p, overwrite=overwrite) for p in projects
     ]

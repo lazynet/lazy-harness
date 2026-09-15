@@ -16,9 +16,7 @@ def _ctx(config_dir: Path, name: str = "lazy") -> StatusContext:
     return StatusContext(
         cfg=Config(harness=HarnessConfig(version="1")),
         profiles=[
-            ProfileInfo(
-                name=name, config_dir=config_dir, roots=[], is_default=True, exists=True
-            )
+            ProfileInfo(name=name, config_dir=config_dir, roots=[], is_default=True, exists=True)
         ],
     )
 
@@ -41,9 +39,7 @@ def test_queue_skips_a_profile_that_does_not_exist(tmp_path: Path) -> None:
     ctx = StatusContext(
         cfg=Config(harness=HarnessConfig(version="1")),
         profiles=[
-            ProfileInfo(
-                name="ghost", config_dir=tmp_path, roots=[], is_default=True, exists=False
-            )
+            ProfileInfo(name="ghost", config_dir=tmp_path, roots=[], is_default=True, exists=False)
         ],
     )
 

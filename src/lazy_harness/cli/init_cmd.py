@@ -61,8 +61,7 @@ def init(force: bool) -> None:
     console.print(f"[green]✓[/green] Knowledge directory ready at {answers.knowledge_path}")
     if enable_qmd:
         console.print(
-            "[green]✓[/green] QMD integration flagged "
-            "(run `lh knowledge sync` to initialize)"
+            "[green]✓[/green] QMD integration flagged (run `lh knowledge sync` to initialize)"
         )
 
     _maybe_deploy_envrc(console, cfg)

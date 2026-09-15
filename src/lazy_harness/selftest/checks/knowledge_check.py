@@ -49,9 +49,7 @@ def check_knowledge(*, config_path: Path) -> list[CheckResult]:
         marker = read_marker(knowledge_path)
     except MarkerError as e:
         results.append(
-            CheckResult(
-                group=group, name="marker", status=CheckStatus.FAILED, message=str(e)
-            )
+            CheckResult(group=group, name="marker", status=CheckStatus.FAILED, message=str(e))
         )
         return results
     results.append(CheckResult(group=group, name="marker", status=CheckStatus.PASSED))

@@ -371,10 +371,7 @@ def _hook_entry_count(settings_path: Path) -> int:
 
     settings = json.loads(settings_path.read_text())
     return sum(
-        1
-        for entries in settings["hooks"].values()
-        for entry in entries
-        if _entry_commands(entry)
+        1 for entries in settings["hooks"].values() for entry in entries if _entry_commands(entry)
     )
 
 
@@ -579,8 +576,7 @@ def test_a_profile_changing_its_binary_installs_each_hook_once(
 
     assert counts[0] > 0, f"{label}: the first deploy should install harness hooks"
     assert len(set(counts)) == 1, (
-        f"{label}: redeploying duplicated hooks — entry counts across "
-        f"{sequence} were {counts}"
+        f"{label}: redeploying duplicated hooks — entry counts across {sequence} were {counts}"
     )
 
     # Only the binary from the final deploy may still appear: a surviving

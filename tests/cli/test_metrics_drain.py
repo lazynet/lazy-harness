@@ -51,9 +51,7 @@ def test_drain_exits_zero_with_nothing_pending(
     assert "0 sent" in result.output or "nothing to drain" in result.output
 
 
-def test_drain_flushes_pending_events(
-    tmp_path: Path, monkeypatch, httpserver: HTTPServer
-) -> None:
+def test_drain_flushes_pending_events(tmp_path: Path, monkeypatch, httpserver: HTTPServer) -> None:
     cfg_path = tmp_path / "config.toml"
     db_path = tmp_path / "m.db"
     cfg_path.write_text(

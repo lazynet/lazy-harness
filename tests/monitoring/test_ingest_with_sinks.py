@@ -59,9 +59,7 @@ def test_ingest_fans_out_to_every_configured_sink(tmp_path: Path) -> None:
     cfg.profiles = ProfilesConfig(
         default="personal",
         items={
-            "personal": ProfileEntry(
-                config_dir=str(profile_dir), roots=[], lazynorth_doc=""
-            ),
+            "personal": ProfileEntry(config_dir=str(profile_dir), roots=[], lazynorth_doc=""),
         },
     )
     cfg.metrics = MetricsConfig(

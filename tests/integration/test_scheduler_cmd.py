@@ -48,9 +48,7 @@ def test_scheduler_status_missing_config(home_dir: Path) -> None:
     assert "Error" in result.output
 
 
-def test_scheduler_install_on_cron_reports_the_installed_jobs(
-    home_dir: Path, monkeypatch
-) -> None:
+def test_scheduler_install_on_cron_reports_the_installed_jobs(home_dir: Path, monkeypatch) -> None:
     """The cron backend installs rather than raising, as of this wave.
 
     Replaces `test_scheduler_install_unsupported_backend_fails_loud`, whose

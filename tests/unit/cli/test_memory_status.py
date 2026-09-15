@@ -136,9 +136,7 @@ def test_status_counts_proposals_by_rule_not_by_timestamp_block(tmp_path: Path) 
     d = tmp_path / "memory"
     d.mkdir()
     (d / "claude-md.proposal.md").write_text(
-        "## 2026-08-31T11:00:13-03:00\n\n"
-        "- **Rule:** first pending\n"
-        "  - **Rationale:** why\n"
+        "## 2026-08-31T11:00:13-03:00\n\n- **Rule:** first pending\n  - **Rationale:** why\n"
     )
     (d / "claude-md.rejected.md").write_text(
         "## 2026-08-31T13:48:15-03:00\n"

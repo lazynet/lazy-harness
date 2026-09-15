@@ -159,10 +159,6 @@ def test_status_context_exposes_the_backend_not_a_launchd_prefix() -> None:
     assert ctx.scheduler_backend is not None
 
 
-
-
-
-
 def test_lock_state_never_acquires_the_lock(tmp_path: Path) -> None:
     """The probe must be read-only.
 

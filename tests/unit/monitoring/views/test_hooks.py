@@ -17,9 +17,7 @@ def test_hooks_marks_a_hook_that_ran_today_as_ok(tmp_path: Path) -> None:
     # `last_hook_line` matches on the hook name AND the word "fired"; a line
     # without it is a detail line, not a run.
     today = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
-    (logs / "hooks.log").write_text(
-        f"{today} context-inject: fired cwd=/Users/me/repo\n"
-    )
+    (logs / "hooks.log").write_text(f"{today} context-inject: fired cwd=/Users/me/repo\n")
 
     text = render_to_text(hooks_view.render(ctx(tmp_path)))
 

@@ -35,9 +35,7 @@ def test_absent_metrics_block_defaults_to_sqlite_local_only(tmp_path: Path) -> N
 def test_named_sink_requires_config_block(tmp_path: Path) -> None:
     cfg_path = _write(
         tmp_path,
-        '[harness]\nversion = "1"\n'
-        "[metrics]\n"
-        'sinks = ["sqlite_local", "http_remote"]\n',
+        '[harness]\nversion = "1"\n[metrics]\nsinks = ["sqlite_local", "http_remote"]\n',
     )
     with pytest.raises(ConfigError) as info:
         load_config(cfg_path)
@@ -89,9 +87,7 @@ def test_full_opt_in_parses_cleanly(tmp_path: Path) -> None:
 def test_sqlite_local_is_always_valid_without_config_block(tmp_path: Path) -> None:
     cfg_path = _write(
         tmp_path,
-        '[harness]\nversion = "1"\n'
-        "[metrics]\n"
-        'sinks = ["sqlite_local"]\n',
+        '[harness]\nversion = "1"\n[metrics]\nsinks = ["sqlite_local"]\n',
     )
     cfg = load_config(cfg_path)
     assert cfg.metrics.sinks == ["sqlite_local"]

@@ -100,8 +100,6 @@ def store_memory_dirs(knowledge_root: Path | None) -> list[Path]:
     )
 
 
-def all_memory_dirs(
-    profile_dirs: list[Path], knowledge_root: Path | None
-) -> list[Path]:
+def all_memory_dirs(profile_dirs: list[Path], knowledge_root: Path | None) -> list[Path]:
     """Both locations, so a half-migrated machine still shows everything."""
     return store_memory_dirs(knowledge_root) + legacy_memory_dirs(profile_dirs)

@@ -425,9 +425,7 @@ def test_the_measured_batch_totals_the_verified_amount() -> None:
             pricing,
             on="2026-08-31",
         )
-        for _item, model, inp, out, cache_read, cache_create_1h, _expected in (
-            MEASURED_SESSIONS
-        )
+        for _item, model, inp, out, cache_read, cache_create_1h, _expected in (MEASURED_SESSIONS)
     )
     assert total == pytest.approx(2.4559, abs=0.00005)
 
@@ -493,8 +491,7 @@ def test_an_override_without_a_1h_rate_falls_back_to_twice_input() -> None:
     )
     cost = calculate_cost(
         "claude-sonnet-5",
-        {"input": 0, "output": 0, "cache_read": 0, "cache_create": 0,
-         "cache_create_1h": 1_000_000},
+        {"input": 0, "output": 0, "cache_read": 0, "cache_create": 0, "cache_create_1h": 1_000_000},
         pricing,
     )
     assert cost == pytest.approx(14.0)
