@@ -231,10 +231,18 @@ resolves its agent are two changes, and only the first belongs here.
 > that did not load — so it stays global by decision, and the step 5 audit
 > excludes it explicitly rather than silently.
 >
-> Net: **nine** live literals, not ten, and step 5 still accounts for
-> **seven** of them — the same number by a different roster. The two outside it
-> are `knowledge/compound_loop_worker.py:100`, as the paragraph says, and
-> `_shared.py:258`, which it does not.
+> Net, counted by AST over `get_agent(...)` calls whose argument mentions
+> `claude-code` rather than by grepping one spelling: **fifteen** live calls in
+> `src/`, of which step 5 owns **nine** — not the seven the paragraph implies.
+> A literal grep finds seven and misses `engram_persist.py:75` and
+> `pre_compact.py:158`, both written
+> `get_agent(cfg.agent.type if cfg is not None else "claude-code")`. The
+> backlog flags that second grapheme for `pre-compact`; nothing had recorded
+> that `engram-persist` shares it.
+>
+> The six outside step 5, none of them a builtin: `_shared.py:258`,
+> `knowledge/compound_loop_worker.py:98` and `:100`, `cli/memory_cmd.py:237`
+> and `:264`, and `monitoring/statusline.py:44`.
 
 **There are two callers of `main()`, not one, and neither passes arguments.**
 Verified in the code:
@@ -1554,13 +1562,18 @@ against a version that will not ship.
 > step, which is not edited as things land; the executable form is
 > [the step 5 plan](2026-09-15-step5-builtin-migration-plan.md).
 >
-> `profile_name()` is **not deleted**, only removed from the builtins. Five
-> import sites and two are builtins (`session_end.py:35`,
-> `user_prompt_goal.py:131`); the rest are outside the hook path
-> (`cli/metrics_cmd.py:236`, `knowledge/compound_loop.py:1249` and `:1278`) and
-> one, `hooks/runner.py:151`, is the runner's own `resolve_profile` fallback —
-> the mechanism the migration depends on, so deleting it takes the migration
-> with it.
+> `profile_name()` is **not deleted**, only removed from the builtins. Six
+> import statements and six call sites; two are builtins (`session_end.py:35`,
+> `user_prompt_goal.py:131`) and go with their migrations. Four calls across
+> three modules survive, none a builtin: `cli/metrics_cmd.py:236`,
+> `knowledge/compound_loop.py:1249` and `:1278`, and `hooks/runner.py:151`.
+>
+> That last is `resolve_profile`'s fallback for a deployed command written
+> before `--profile` existed, and it is compatibility rather than a dependency:
+> both live callers already pass a resolved profile (`cli/hooks_cmd.py:97`,
+> `hooks/engine.py:64`), so dropping it would break settings files not yet
+> redeployed and nothing more. It is still a caller, which is why the symbol
+> stays.
 >
 > `_TRANSCRIPT_KEYS` accepts three spellings and `parse_hook_input` reads one.
 > Deleting it narrows every migrated builtin from `transcript_path`,

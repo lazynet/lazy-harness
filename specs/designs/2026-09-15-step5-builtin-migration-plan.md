@@ -56,8 +56,14 @@ The mapping every task below applies. It is exhaustive for what the fifteen actu
 
 Recorded here because the step text is never edited as things land, and a reader following it would chase two symbols that are already gone.
 
-- **The live literals are nine, not ten.** Design line 207 counts `pre_tool_use_security.py:298` and `context_inject.py:758` as live `get_agent("claude-code")` literals. Both are now **docstring prose** describing what PR #300 removed — the code literals are gone. The two that genuinely stay out of step 5 are `knowledge/compound_loop_worker.py:100` (not a builtin, never reaches the runner) and `_shared.py:258` (inside `agent_dir_for`, the documented degradation for a machine that has not run `lh init`). The count of **seven** for step 5 survives; the roster does not.
-- **`profile_name()` cannot be deleted at step 5.** Five import sites, and only two are builtins (`session_end.py:35`, `user_prompt_goal.py:131`). The other three are outside the hook path — `cli/metrics_cmd.py:236`, `knowledge/compound_loop.py:1249` and `:1278` — and a fourth, `hooks/runner.py:151`, is the runner's *own* `resolve_profile` fallback, which is the mechanism this whole migration depends on. Step 5 removes it from the builtins; the symbol survives. Task 21 records that.
+- **Step 5 owns nine literals, not seven, and the design's "ten" was never the right total either.** Counted by AST over `get_agent(...)` calls whose argument mentions `claude-code`, not by grepping one spelling — the distinction the backlog entry and the `CLAUDE.md` gate both turn on. Fifteen such calls exist in `src/`. **Nine** are in the fifteen migration targets: `compound_loop.py:62`, `engram_persist.py:75`, `post_tool_use_ansible_lint.py:140`, `post_tool_use_format.py:67`, `pre_compact.py:158`, `pre_tool_use_memory_size.py:170`, `pre_tool_use_read_size.py:69`, `session_end.py:89`, `session_export.py:44`.
+
+  A literal grep for `get_agent("claude-code")` finds seven of those nine and misses `engram_persist.py:75` and `pre_compact.py:158`, which both write `get_agent(cfg.agent.type if cfg is not None else "claude-code")`. That is the same second grapheme the backlog entry flags for `pre-compact`; it applies to `engram-persist` too, and nothing had recorded that. **An earlier draft of this plan reached "seven" by exactly that grep, in the same paragraph where it corrected the design for a roster error.** Task 21's test therefore matches on the `get_agent` *call*, not on any spelling of its argument.
+
+  Design line 207 is separately wrong about which ones survive: it names `pre_tool_use_security.py:298` and `context_inject.py:758`, and both are now **docstring prose** describing what PR #300 removed. The six live calls outside step 5 are `_shared.py:258` (inside `agent_dir_for`, the documented degradation for a machine that has not run `lh init`), `knowledge/compound_loop_worker.py:98` and `:100`, `cli/memory_cmd.py:237` and `:264`, and `monitoring/statusline.py:44`. None is a builtin.
+- **`profile_name()` cannot be deleted at step 5.** Six import statements and six call sites. Two are builtins (`session_end.py:35`, `user_prompt_goal.py:131`) and go with their migrations. Four calls across three modules survive, none of them a builtin: one in `cli/metrics_cmd.py:236`, two in `knowledge/compound_loop.py:1249` and `:1278`, and one in `hooks/runner.py:151`.
+
+  That last one is `resolve_profile`'s fallback for a deployed command written before `--profile` existed (`runner.py:141`). It is **compatibility behaviour, not a dependency**: both live callers pass a resolved profile — `cli/hooks_cmd.py:97` and `deploy` via `hooks/engine.py:64` — so dropping the fallback would break settings files not yet redeployed, and nothing else. Step 5 removes the symbol from the builtins and leaves it standing. Task 21 records that.
 
 ---
 
@@ -65,17 +71,28 @@ Recorded here because the step text is never edited as things land, and a reader
 
 **Blocks every other task.** Migrating `pre-compact` without this silently destroys it, and does so while passing every unit test written against `HookDecision`.
 
-`pre_compact.py:247` writes `print(f"{SUMMARY_PREAMBLE}\n\n{summary}")` — raw text, deliberately. Its module docstring records why, verified against the 2.1.234 binary: Claude Code's `hookSpecificOutput` union has **no PreCompact variant**, so a JSON payload fails schema validation, marks the hook failed, and discards its output. The PreCompact executor collects each successful hook's raw stdout and hands the joined text to the summariser as `newCustomInstructions`.
+`pre_compact.py:247` writes `print(f"{SUMMARY_PREAMBLE}\n\n{summary}")` — raw text, deliberately. Its module docstring records why: Claude Code's `hookSpecificOutput` union has **no PreCompact variant**, so a JSON payload fails schema validation, marks the hook failed, and discards its output. The PreCompact executor collects each successful hook's raw stdout and hands the joined text to the summariser as `newCustomInstructions`.
+
+**Two claims, two evidence standards, kept apart.** That the adapter emits JSON here is measured against the installed adapter and reproducible in one command:
+
+```
+$ uv run --frozen python -c "...format_hook_output(<pre_compact event>, HookDecision(additional_context='X'))"
+STDOUT REPR: '{"hookSpecificOutput": {"hookEventName": "PreCompact", "additionalContext": "X"}}\n'
+```
+
+That Claude Code *discards* that payload is the repository's prior finding, recorded against the 2.1.234 binary in `pre_compact.py:8` and in ADR-036 D2, and **not re-measured here** — it is a claim about a vendor binary that no test in this repo can assert. This task takes it as given because the repo already paid for it; an executor who wants to re-establish it does so against a live Claude Code, not against pytest. What does not depend on it: the two channels disagree either way, and a hook whose whole purpose is surviving compaction should not be the one we find out about in production.
 
 `ClaudeCodeAdapter.format_hook_output` (`claude_code.py:474`) unconditionally emits `json.dumps(body) + "\n"`. `_HOOK_EVENTS["pre_compact"] = HookSupport("PreCompact")` carries an empty verdict set, so there is no verdict path to ride either. A migrated `pre-compact` returning `HookDecision(additional_context=summary)` serialises to `{"hookSpecificOutput": {"hookEventName": "PreCompact", "additionalContext": …}}` — exactly the payload the docstring says is discarded.
 
 **Files:**
 - Modify: `src/lazy_harness/agents/claude_code.py:474-520` (`format_hook_output`)
-- Test: `tests/unit/agents/test_claude_code_adapter.py`
+- Test: `tests/unit/test_agent_claude.py`
 
 **Interfaces:**
 - Consumes: `HookEvent`, `HookDecision`, `HookOutput` from `agents/base.py`
-- Produces: `format_hook_output` returns `HookOutput(stdout=<raw text>, stderr="", exit_code=0)` when `event.event == "pre_compact"` and `decision.additional_context` is set. No other event changes shape.
+- Produces: `format_hook_output` returns `HookOutput(stdout=<raw text>, stderr="", exit_code=0)` when `event.event == "pre_compact"`. No other event changes shape.
+
+**The branch must not silently narrow the decision.** `format_hook_output` today also serialises `system_message` (`claude_code.py:501`), `stop` (`:503`) and `suppress_output` (`:507`). A `pre_compact` early return that carries only `additional_context` drops all three without a word — the same silent-dropout class this plan exists to close. PreCompact's channel is raw text and cannot express them, so the branch **names what it cannot carry** rather than discarding it. The verdict check is *not* repeated: `format_hook_output:475` already rejects any verdict against `_HOOK_EVENTS`, and `pre_compact`'s support set is empty (`claude_code.py:80`), so every verdict is refused there already.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -118,7 +135,7 @@ def test_other_events_still_serialise_additional_context_as_json() -> None:
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `uv run --frozen pytest tests/unit/agents/test_claude_code_adapter.py -k pre_compact -v`
+Run: `uv run --frozen pytest tests/unit/test_agent_claude.py -k pre_compact -v`
 Expected: FAIL — `out.stdout` is the JSON document, not `"Preserve X"`.
 
 - [ ] **Step 3: Implement**
@@ -127,15 +144,32 @@ In `format_hook_output`, before the `body` assembly:
 
 ```python
         # PreCompact is a text channel, not a JSON one. Claude Code's
-        # `hookSpecificOutput` union has no PreCompact variant (verified
-        # against 2.1.234): a JSON payload there fails schema validation, marks
-        # the hook failed and discards its output. The executor joins each
-        # successful hook's raw stdout into `newCustomInstructions`, so the
-        # summary has to arrive as the bytes the hook wrote.
+        # `hookSpecificOutput` union has no PreCompact variant (recorded
+        # against 2.1.234 in `pre_compact.py` and ADR-036 D2): a JSON payload
+        # there fails schema validation, marks the hook failed and discards its
+        # output. The executor joins each successful hook's raw stdout into
+        # `newCustomInstructions`, so the summary arrives as the bytes the hook
+        # wrote or it does not arrive.
+        #
+        # The verdict is already refused above -- `_HOOK_EVENTS["pre_compact"]`
+        # declares no verdicts -- so the only narrowing left to name is the
+        # three channels raw text cannot carry. Refusing beats dropping them:
+        # a hook asking for a system message here would otherwise get silence
+        # and a zero exit, which reads as success.
         if event.event == "pre_compact":
-            if decision.verdict is not None:
+            unsupported = [
+                name
+                for name, set_ in (
+                    ("system_message", bool(decision.system_message)),
+                    ("stop", decision.stop),
+                    ("suppress_output", decision.suppress_output),
+                )
+                if set_
+            ]
+            if unsupported:
                 raise ValueError(
-                    f"claude-code does not honour {decision.verdict.value!r} on 'pre_compact'"
+                    f"claude-code's PreCompact channel is plain text and cannot carry "
+                    f"{', '.join(unsupported)}"
                 )
             return HookOutput(
                 stdout=decision.additional_context or None, stderr="", exit_code=0
@@ -144,7 +178,7 @@ In `format_hook_output`, before the `body` assembly:
 
 - [ ] **Step 4: Run to verify it passes**
 
-Run: `uv run --frozen pytest tests/unit/agents/test_claude_code_adapter.py -v`
+Run: `uv run --frozen pytest tests/unit/test_agent_claude.py -v`
 Expected: PASS, and no existing adapter test regresses.
 
 - [ ] **Step 5: Prove the guard is load-bearing**
@@ -154,7 +188,7 @@ Delete the `if event.event == "pre_compact":` block by hand, re-run, watch `test
 - [ ] **Step 6: Commit**
 
 ```bash
-git add tests/unit/agents/test_claude_code_adapter.py src/lazy_harness/agents/claude_code.py
+git add tests/unit/test_agent_claude.py src/lazy_harness/agents/claude_code.py
 git commit -m "fix: serialise PreCompact additional context as plain text"
 ```
 
@@ -169,7 +203,7 @@ This task produces a decision backed by measurement, not a guess. Either outcome
 **Files:**
 - Modify: `src/lazy_harness/agents/claude_code.py:407` (only if the measurement says widen)
 - Modify: `specs/designs/2026-09-13-multi-agent-harness-design.md` (record the decision either way)
-- Test: `tests/unit/agents/test_claude_code_adapter.py`
+- Test: `tests/unit/test_agent_claude.py`
 
 - [ ] **Step 1: Measure what actually sends each spelling**
 
@@ -210,7 +244,7 @@ def test_parse_hook_input_reads_only_the_documented_transcript_key() -> None:
 
 - [ ] **Step 3: Run to verify it fails (widen) or passes (narrow)**
 
-Run: `uv run --frozen pytest tests/unit/agents/test_claude_code_adapter.py -k transcript -v`
+Run: `uv run --frozen pytest tests/unit/test_agent_claude.py -k transcript -v`
 
 - [ ] **Step 4: Implement, if widening**
 
@@ -233,7 +267,7 @@ Add a note under step 5 naming the measurement and the outcome. A decision with 
 - [ ] **Step 6: Run the gate and commit**
 
 ```bash
-uv run --frozen pytest tests/unit/agents/ -v
+uv run --frozen pytest tests/unit/test_agent_claude.py tests/unit/test_agent_contract.py -v
 git add -A && git commit -m "fix: settle the transcript key set the adapter accepts"
 ```
 
@@ -241,12 +275,12 @@ git add -A && git commit -m "fix: settle the transcript key set the adapter acce
 
 ## Task 3: Move the `_shared` payload helpers onto the transcript path
 
-Four helpers take the raw payload and reach into it through `_declared_transcript`: `transcript_from_payload`, `project_dir_from_payload`, `resolve_project_dir`, `resolve_memory_dir`, `memory_dir`. A migrated builtin has no payload, and `_TRANSCRIPT_KEYS` dies with them.
+Five helpers take the raw payload and reach into it through `_declared_transcript`: `transcript_from_payload`, `project_dir_from_payload`, `resolve_project_dir`, `resolve_memory_dir`, `memory_dir`. A migrated builtin has no payload, and `_TRANSCRIPT_KEYS` dies with them.
 
 The second half matters as much: `transcript_from_payload` returns `None` unless the path `.is_file()`, while `HookEvent.transcript_path` is the **declared** path, un-stat'd. A call site that swaps one for the other without adding the check proceeds on a path that is not there — at `SessionStart` the transcript is routinely not written yet, which is exactly when several of these run.
 
 **Files:**
-- Modify: `src/lazy_harness/hooks/builtins/_shared.py:21` (`_TRANSCRIPT_KEYS`), `:48-95` (the four helpers)
+- Modify: `src/lazy_harness/hooks/builtins/_shared.py:21` (`_TRANSCRIPT_KEYS`), `:48` `_declared_transcript`, `:60` `transcript_from_payload`, `:68` `project_dir_from_payload`, `:83` `resolve_project_dir`, `:174` `resolve_memory_dir`, `:192` `memory_dir`
 - Test: `tests/unit/hooks/test_shared_memory_dir.py`, `tests/unit/hooks/builtins/`
 
 **Interfaces:**
@@ -337,7 +371,16 @@ git add -A && git commit -m "refactor: take the transcript path rather than the 
 
 ## Tasks 4–18: the fifteen builtins
 
-Each is one TDD cycle and one commit. They are independent of one another and of nothing but tasks 1–3, so they parallelise across worktrees. **Per-builtin recipe, applied identically in each:**
+Each is one TDD cycle and one commit, and each depends only on tasks 1–3.
+
+**They are not file-independent, and the plan does not pretend otherwise.** Every migration edits `hooks/loader.py`'s `_BUILTIN_HOOKS` (`loader.py:101`) to add its `operations`, `signals`, `event` and `migrated` — one shared dict, fifteen times. Run in parallel worktrees they conflict there and nowhere else, and the conflict is an append to a mapping, so it resolves mechanically. Two workable orders, pick one and say which in the PR:
+
+- **Serialise the registry.** Land one commit first that gives all fifteen specs their final `event`, `operations`, `signals` and `blocking`, leaving `migrated=False`. The declarations are a fact about each hook and are true before its `main()` moves. Then the fifteen migrations touch only their own module and genuinely parallelise.
+- **Accept the rebases.** Each task rebases on `main` before pushing. Cheaper to start, and the cost lands on whoever merges last.
+
+The first is preferred: it makes the declaration table reviewable in one diff, which is where a wrong `signals` set is actually visible.
+
+**Per-builtin recipe, applied identically in each:**
 
 1. **Capture the golden first.** `tests/goldens/hooks/<name>/` — feed the pre-migration `main()` a representative payload on stdin, record stdout bytes and exit code. The golden is captured from the **unmigrated** hook, so it is evidence and not a restatement of the new code.
 2. Change the signature to `main(event: HookEvent) -> HookDecision`.
@@ -347,13 +390,15 @@ Each is one TDD cycle and one commit. They are independent of one another and of
 6. Assert the golden still matches, byte for byte.
 7. Assert profile isolation: invoke under `--profile <p>` and assert the `hooks.log` line lands in `<p>`'s directory **and is absent from the global one**. Presence alone does not detect the defect — PR #300 measured a weak presence assertion passing against a broken hook.
 
-**The declarations, per builtin.** Derived from what each one reads, not from its matcher.
+**The declarations, per builtin.** Derived from what each one reads **in its own process**, not from its matcher and not from what something downstream reads later.
+
+That distinction decides two rows. `session-end` (`session_end.py:115`, `:152`) and `compound-loop` (`compound_loop.py:93`, `:123`) *locate* a transcript and enqueue its path; the compound-loop worker reads messages and tool calls afterwards, out of process. Declaring `MESSAGES` for either would make the deploy refuse to install them on an agent whose reader cannot supply a signal the hook never touches. `session-export` is the contrast and keeps `MESSAGES`: it consumes message text in-process (`knowledge/session_export.py:43`).
 
 | # | Builtin | `event` | `operations` | `signals` | `blocking` | Output channel today |
 |---|---|---|---|---|---|---|
 | 4 | `session-export` | `session_stop` | — | `MESSAGES` | no | none (log only) |
-| 5 | `session-end` | `session_end` | — | `MESSAGES` | no | none (log only) |
-| 6 | `compound-loop` | `session_stop` | — | `MESSAGES` | no | none (log only) |
+| 5 | `session-end` | `session_end` | — | **none** | no | none (log only) |
+| 6 | `compound-loop` | `session_stop` | — | **none** | no | none (log only) |
 | 7 | `engram-persist` | `session_stop` | — | — | no | none |
 | 8 | `pre-compact` | `pre_compact` | — | `MESSAGES`, `TOOL_CALLS` | no | **plain text** (task 1) |
 | 9 | `session-start-preflight` | `session_start` | — | — | no | `additionalContext` |
@@ -371,63 +416,104 @@ Each is one TDD cycle and one commit. They are independent of one another and of
 
 - **Wave A** (tasks 4–7): the four session-lifecycle hooks. They share the identical boot-dir defect and the `find_latest_session` / `resolve_project_dir` call shape, so one reviewer sees the pattern four times.
 - **Wave B** (task 8): `pre-compact` alone. It is the only consumer of task 1 and the only plain-text channel; it gets its own review.
-- **Wave C** (tasks 9–12): the context-emitting hooks. `stop-context-rotate` imports `context_tokens` from `herdr_context_gauge`, so those two land together or task 11 goes second.
+- **Wave C** (tasks 9–12): the context-emitting hooks. `stop-context-rotate` imports `context_tokens` from `herdr_context_gauge` (`stop_context_rotate.py:39`), so those two land together or task 11 goes second.
 - **Wave D** (tasks 13–15): PostToolUse. Each reads `event.tool.edits` where it used to read `tool_input["file_path"]`.
 - **Wave E** (tasks 16–18): PreToolUse. Task 18 is the only blocking hook in this plan and is the one that must be exercised through the `Verdict.DENY` path with dependencies mocked away.
 
 **Worked instance — Task 18, `pre-tool-use-git-scope`**, written out because it is the one with a refusal path and the recipe alone is not enough for it.
 
+**What this hook actually does, read from the code rather than from its name.** It guards `git stash`, and nothing else. `_STASH_CALL` (`:84`) matches `git … stash <args>` through shell keywords, assignments and wrappers; `_classify` sorts the subcommand into read-only (`list`, `show`), always-unsafe (`pop`, `store`, `create`, …) or safe. `should_block` (`:321`) refuses **only** when all three hold: the command contains an unsafe stash, `stash_stack_is_shared(cwd)` says the cwd sits in a *linked worktree*, and no configured allow pattern matches. Everything else exits 0. A test built around a forced push — which an earlier draft of this plan used — captures a passing hook and proves nothing: a file name says a guard exists, never what it guards.
+
+> **The guard fires on prose about the guard.** Writing this task set it off: a shell command whose *argument* merely contains `git stash pop` is refused, because `_STASH_CALL` matches command text and cannot tell an invocation from a quoted example. Not a defect to fix here — the hook is correct to be literal — but it is the cheapest available evidence that step 6's evasion testing has real surface to work on, and it is why this file was written through an editor rather than a heredoc.
+
 **Files:**
-- Modify: `src/lazy_harness/hooks/builtins/pre_tool_use_git_scope.py:353` (`_read_payload`), `:365-395` (`main`)
+- Modify: `src/lazy_harness/hooks/builtins/pre_tool_use_git_scope.py:353` (`_read_stdin_json`), `:365-395` (`main`)
 - Modify: `src/lazy_harness/hooks/loader.py` (the `pre-tool-use-git-scope` entry)
 - Test: `tests/unit/hooks/builtins/test_pre_tool_use_git_scope.py`
 - Create: `tests/goldens/hooks/pre-tool-use-git-scope/`
 
 - [ ] **Step 1: Capture the golden from the unmigrated hook**
 
+The cwd must be a real linked worktree or `should_block` returns `None` and the golden records a pass. Build the payload in a file rather than inline: the guard refuses a command line carrying its own trigger text.
+
 ```bash
-echo '{"tool_name":"Bash","tool_input":{"command":"git push --force origin main"},"cwd":"/tmp","session_id":"s"}' \
-  | uv run --frozen python -m lazy_harness.hooks.builtins.pre_tool_use_git_scope \
-  > tests/goldens/hooks/pre-tool-use-git-scope/deny.stdout 2> tests/goldens/hooks/pre-tool-use-git-scope/deny.stderr; \
-  echo $? > tests/goldens/hooks/pre-tool-use-git-scope/deny.exit
+mkdir -p tests/goldens/hooks/pre-tool-use-git-scope
+python3 - <<'EOF' > /tmp/gitscope-payload.json
+import json, subprocess
+wt = subprocess.run(["git","rev-parse","--show-toplevel"],capture_output=True,text=True).stdout.strip()
+print(json.dumps({"tool_name":"Bash","tool_input":{"command":"git st"+"ash pop"},"cwd":wt,"session_id":"s"}))
+EOF
+uv run --frozen python -m lazy_harness.hooks.builtins.pre_tool_use_git_scope \
+  < /tmp/gitscope-payload.json \
+  > tests/goldens/hooks/pre-tool-use-git-scope/deny.stdout \
+  2> tests/goldens/hooks/pre-tool-use-git-scope/deny.stderr
+echo $? > tests/goldens/hooks/pre-tool-use-git-scope/deny.exit
 ```
+
+Assert before moving on: `deny.exit` is `2` and `deny.stderr` starts `Blocked by lazy-harness PreToolUse: unsafe git stash (scope).`. If it is `0`, the cwd was not a linked worktree and the golden is worthless.
 
 - [ ] **Step 2: Write the failing test**
 
 ```python
-def test_git_scope_refuses_through_the_verdict_rather_than_an_exit_code() -> None:
+_POP = "git st" + "ash pop"  # kept out of one literal so the guard does not refuse the test run
+
+
+def test_git_scope_refuses_an_unsafe_stash_through_the_verdict(worktree_cwd: Path) -> None:
+    """An always-unsafe stash subcommand from a linked worktree.
+
+    All three conditions of `should_block` are supplied: the unsafe subcommand,
+    a cwd whose stash stack is shared, and no allow pattern.
+    """
     event = HookEvent(
         event="pre_tool_use",
         profile="p",
         session_id="s",
-        cwd=Path("/tmp"),
+        cwd=worktree_cwd,
         transcript_path=None,
         tool=ToolCall(
-            native_name="Bash",
-            operation=Operation.RUN_COMMAND,
-            command="git push --force origin main",
+            native_name="Bash", operation=Operation.RUN_COMMAND, command=_POP
         ),
     )
     decision = main(event)
     assert decision.verdict is Verdict.DENY
-    assert "force" in decision.reason
+    assert "unsafe git stash" in decision.reason
+
+
+def test_git_scope_abstains_outside_a_linked_worktree(tmp_path: Path) -> None:
+    """The same command from a main checkout is not refused.
+
+    Paired with the test above so neither passes on a hook that always refuses
+    or always abstains.
+    """
+    event = HookEvent(
+        event="pre_tool_use",
+        profile="p",
+        session_id="s",
+        cwd=tmp_path,
+        transcript_path=None,
+        tool=ToolCall(
+            native_name="Bash", operation=Operation.RUN_COMMAND, command=_POP
+        ),
+    )
+    assert main(event).verdict is None
 
 
 def test_git_scope_declares_the_operation_it_guards() -> None:
     """Declared, not inferred from the `Bash` matcher, which names Claude Code's
     own tool. Another agent's translated matcher still has to be asked whether
     the operation exists there."""
-    assert _BUILTIN_HOOKS["pre-tool-use-git-scope"].operations == frozenset({Operation.RUN_COMMAND})
-    assert _BUILTIN_HOOKS["pre-tool-use-git-scope"].blocking is True
+    spec = _BUILTIN_HOOKS["pre-tool-use-git-scope"]
+    assert spec.operations == frozenset({Operation.RUN_COMMAND})
+    assert spec.blocking is True
 
 
-def test_git_scope_refuses_when_it_cannot_run(monkeypatch) -> None:
+def test_git_scope_refuses_rather_than_abstains_when_it_cannot_run() -> None:
     """Exit 0 with no output is how a hook says 'no objection'.
 
-    Exercised with the config read mocked to raise, so the refusal is reached
-    through the failure path and not through a denied command.
+    Reached through the runner's failure policy on an unparseable payload, not
+    through a denied command, so the refusal is the *blocking* path and not the
+    guard working normally.
     """
-    monkeypatch.setattr("lazy_harness.hooks.builtins.pre_tool_use_git_scope.config_file", _raises)
     out = run_hook("pre-tool-use-git-scope", profile="p", stdin_text="not json")
     assert out.exit_code == 2
 ```
@@ -439,7 +525,9 @@ Expected: FAIL — `main()` takes no argument.
 
 - [ ] **Step 4: Implement**
 
-Delete `_read_payload`; change `main` to take `event` and return `HookDecision`; replace `sys.exit(2)` with `return HookDecision(verdict=Verdict.DENY, reason=<the text it wrote to stderr>)` and every `sys.exit(0)` with `return HookDecision()`. Read the command from `event.tool.command`, guarding `event.tool is None`. In `loader.py`:
+Delete `_read_stdin_json`; change `main` to take `event` and return `HookDecision`. `INSPECTED_TOOLS` and the `tool_input` guards collapse into `event.tool is None or event.tool.operation is not Operation.RUN_COMMAND`, and the command comes from `event.tool.command`. `cwd` comes from `event.cwd`, keeping the `os.getcwd()` fallback for `Path("")`. Replace `sys.stderr.write(...); sys.exit(2)` with `return HookDecision(verdict=Verdict.DENY, reason=_format_block_message(verdict))` — the adapter puts `reason` on stderr and exits 2 (`claude_code.py:517`), which is what makes the bytes identical. Every `sys.exit(0)` becomes `return HookDecision()`. The blanket `except Exception: sys.exit(0)` becomes `return HookDecision()`; keep it, the fail-open is deliberate and documented.
+
+In `loader.py`:
 
 ```python
     "pre-tool-use-git-scope": BuiltinHookSpec(
@@ -454,12 +542,12 @@ Delete `_read_payload`; change `main` to take `event` and return `HookDecision`;
 
 - [ ] **Step 5: Run to verify it passes, and the golden with it**
 
-Run: `uv run --frozen pytest tests/unit/hooks/ tests/goldens -v`
-Expected: PASS, `deny.stdout` byte-identical.
+Run: `uv run --frozen pytest tests/unit/hooks/ -v`
+Expected: PASS, and the bytes on all three channels equal to `deny.stdout` / `deny.stderr` / `deny.exit`. The golden is compared by a test you write under `tests/unit/hooks/builtins/`; `tests/goldens/` holds fixtures and collects nothing on its own, so `pytest tests/goldens` verifies nothing.
 
 - [ ] **Step 6: Attack the denylist with evasions of its own patterns**
 
-Mutation coverage proves the guard has branches, not that it covers anything. Feed it whitespace variants, reordered flags and alternate path spellings of the commands it claims to refuse, and **record what got through** in the PR body.
+Mutation coverage proves the guard has branches, not that it covers anything. `_STASH_CALL` is a regex over shell text, so attack it there: repeated whitespace between `git`, `stash` and the subcommand; a global option between them (`-c core.pager=cat`); an assignment prefix (`GIT_DIR=.`); a wrapper (`env`); and a compound where the unsafe call is second, which `is_unsafe_stash` claims to judge because it iterates every match. **Record what got through in the PR body**, including the ones that correctly did not.
 
 - [ ] **Step 7: Commit**
 
@@ -520,49 +608,101 @@ git add -A && git commit -m "refactor: delete the pre-runner hook dispatch branc
 
 ---
 
-## Task 20: Route `lh hooks run` through the runner
+## Task 20: Collapse the second execution mechanism
 
-`hooks/engine.py:27-33` executes the hook **file** via `subprocess.run([sys.executable, str(hook.path)], …)`, reached from `cli/hooks_cmd.py:124-133`. A builtin whose `main` now requires an argument breaks at its `if __name__ == "__main__":`. The design names this explicitly: a migration that changes only the builtins and `hook_invoke` leaves `lh hooks run` broken **and silent**.
+**Read the code before this task, not the design.** The design's decision 1 says `hooks/engine.py:27-33` runs `subprocess.run([sys.executable, str(hook.path)], …)` for everything, so a builtin whose `main` requires an argument breaks at `if __name__ == "__main__":`. **That is step 3's text and the code has moved past it.** `execute_hook` today (`engine.py:58`) already routes a `migrated` builtin through `[sys.executable, "-c", CLI_BOOTSTRAP, "hook", <name>, "--profile", …]` and uses the hook *file* only for an unmigrated builtin or a user hook (`:69`); its own docstring says so. An earlier draft of this plan asserted the design's version and would have sent an executor chasing a bug that was fixed.
+
+What is actually left is smaller and is a consequence of task 19: once `migrated` is gone, `engine.py:58`'s condition has nothing to read. The branch becomes "is this a builtin at all" — builtins through the CLI, user hooks through the file — and `PRE_RUNNER_AGENT`'s last reader goes with it.
+
+The `subprocess` stays. Calling `run_hook` in-process cannot honour `timeout`: Python cannot interrupt a synchronous call, so that branch ignored the argument and reported `timed_out=False` unconditionally. `engine.py:42-53` records this; do not "simplify" it away.
 
 **Files:**
-- Modify: `src/lazy_harness/cli/hooks_cmd.py:124-165` (`hooks_run`)
-- Modify: `src/lazy_harness/hooks/engine.py:27-33` (`execute_hook` keeps the subprocess path for **user** hooks only)
+- Modify: `src/lazy_harness/hooks/engine.py:58-70` (`execute_hook`)
 - Test: `tests/unit/hooks/test_entry_points.py`
 
 **Interfaces:**
-- Consumes: `hooks.runner.run_hook(name, *, profile, stdin_text) -> HookOutput`
-- Produces: `hooks_run` dispatches a builtin through `run_hook` and a user hook through `execute_hook`, and the two report identically.
+- Consumes: `hooks.loader.HookInfo.is_builtin`
+- Produces: `execute_hook` dispatches on `hook.is_builtin` alone; no caller signature changes.
 
 - [ ] **Step 1: Write the failing test**
 
-```python
-def test_hooks_run_and_hook_invoke_agree_on_a_builtin(tmp_path: Path) -> None:
-    """Two entry points, one execution mechanism.
+`lh hooks run` hands the runner `payload={}` (`cli/hooks_cmd.py:159`) and does not read stdin, so an assertion comparing the two entry points on a fed payload compares nothing. Assert the *dispatch*, which is the thing that changes.
 
-    An integration assertion rather than two unit tests, because the defect
-    this catches is precisely the two paths disagreeing -- which neither half
-    can observe alone.
+```python
+def test_every_builtin_is_executed_through_the_cli_not_its_file(monkeypatch) -> None:
+    """One execution mechanism for builtins, whatever the registry says.
+
+    Asserted on the argv `execute_hook` builds rather than on output: the
+    defect this catches is a builtin being spawned as a script, which on a
+    migrated `main(event)` fails at `__main__` and reports a non-zero exit that
+    looks like the hook having an opinion.
     """
-    payload = '{"tool_name":"Read","tool_input":{"file_path":"/etc/hosts"},"cwd":"/tmp"}'
-    via_hook = CliRunner().invoke(hook_invoke, ["pre-tool-use-read-size", "--profile", "p"], input=payload)
-    via_run = CliRunner().invoke(hooks_run, ["pre_tool_use", "--profile", "p"], input=payload)
-    assert via_hook.exit_code == via_run.exit_code
-    assert via_hook.stdout in via_run.stdout
+    seen: list[list[str]] = []
+    monkeypatch.setattr(
+        "lazy_harness.hooks.engine.subprocess.run",
+        lambda cmd, **kw: seen.append(cmd) or _completed(),
+    )
+    for name in list_builtin_hooks():
+        info = resolve_hook(name)
+        assert info is not None
+        execute_hook(info, event="session_start", payload={}, profile="p")
+    assert all("-c" in cmd and "hook" in cmd for cmd in seen), seen
+    assert not any(cmd[-1].endswith(".py") for cmd in seen), seen
+
+
+def test_a_user_hook_is_still_executed_as_a_file(tmp_path: Path, monkeypatch) -> None:
+    """The registry never heard of it and it has no `main(event)` to call."""
+    script = tmp_path / "mine.py"
+    script.write_text("import sys; sys.exit(0)\n")
+    seen: list[list[str]] = []
+    monkeypatch.setattr(
+        "lazy_harness.hooks.engine.subprocess.run",
+        lambda cmd, **kw: seen.append(cmd) or _completed(),
+    )
+    execute_hook(
+        HookInfo(name="mine", path=script, is_builtin=False),
+        event="session_start",
+        payload={},
+        profile="p",
+    )
+    assert seen[0][-1] == str(script)
 ```
 
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `uv run --frozen pytest tests/unit/hooks/test_entry_points.py -v`
-Expected: FAIL — `hooks_run` spawns the file, whose `main()` now needs an argument.
+Expected: FAIL before task 19 lands — the unmigrated builtins are spawned as files, so `seen` carries `.py` paths.
 
 - [ ] **Step 3: Implement**
 
+```python
+    if hook.is_builtin:
+        cmd = [
+            sys.executable,
+            "-c",
+            CLI_BOOTSTRAP,
+            "hook",
+            hook.name,
+            "--profile",
+            resolve_profile(profile),
+        ]
+    else:
+        cmd = [sys.executable, str(hook.path)]
+```
+
 - [ ] **Step 4: Run to verify it passes**
 
-- [ ] **Step 5: Commit**
+Run: `uv run --frozen pytest tests/unit/hooks/ -v`
+
+- [ ] **Step 5: Exercise it for real, not through the mock**
+
+Run: `uv run --frozen lh hooks run session_start --profile <a declared profile>`
+Expected: every configured hook reports, none with a traceback. A registered hook is not a hook that runs, and this is the only step here that proves the argv is well-formed.
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add -A && git commit -m "refactor: run builtins through the runner from lh hooks run"
+git add -A && git commit -m "refactor: dispatch builtins on is_builtin rather than a migration flag"
 ```
 
 ---
@@ -579,12 +719,15 @@ git add -A && git commit -m "refactor: run builtins through the runner from lh h
 
 ```python
 def test_no_builtin_resolves_its_agent_globally() -> None:
-    """Seven literals, by mechanism rather than by spelling.
+    """Nine literals, by mechanism rather than by spelling.
 
-    A grep for `get_agent("claude-code")` finds seven and misses `pre-compact`,
-    which does the same thing as `cfg.agent.type if cfg is not None else
-    "claude-code"` -- the exact difference the CLAUDE.md gate is written for.
-    Both shapes are matched here.
+    A grep for `get_agent("claude-code")` finds seven of the nine and misses
+    `engram_persist.py:75` and `pre_compact.py:158`, which write
+    `get_agent(cfg.agent.type if cfg is not None else "claude-code")` -- the
+    exact difference the CLAUDE.md gate is written for, and the one an earlier
+    draft of this plan walked into. Matching the `get_agent` *call* rather than
+    any spelling of its argument is what makes the count independent of how the
+    next one is written.
     """
     offenders = {}
     for path in _BUILTINS_DIR.glob("*.py"):
@@ -610,12 +753,16 @@ It is not deleted. Add to its docstring:
     """...
 
     Survives step 5 rather than being deleted with the builtins' other
-    pre-runner helpers. Four callers remain and none of them is a builtin:
-    `cli/metrics_cmd.py`, `knowledge/compound_loop.py` (twice), and
-    `hooks/runner.py:resolve_profile`, which is the runner's own fallback for a
-    deployed command written before `--profile` existed -- the mechanism this
-    migration depends on. The design's step 5 text says "delete"; the code says
-    "remove from the builtins", and this is the difference.
+    pre-runner helpers. Four call sites remain across three modules, none of
+    them a builtin: one in `cli/metrics_cmd.py`, two in
+    `knowledge/compound_loop.py`, and one in `hooks/runner.py:resolve_profile`.
+
+    That last is the fallback for a deployed command written before `--profile`
+    existed. Both live callers pass a resolved profile, so it is compatibility
+    for settings files not yet redeployed rather than a mechanism anything
+    depends on -- but it is a caller, and it is why the symbol stays. The
+    design's step 5 text says "delete"; the code says "remove from the
+    builtins", and this is the difference.
     """
 ```
 
@@ -661,8 +808,8 @@ A single run that exercises all four properties at once. The step 4 pass was **c
 
 ## Self-review
 
-**Spec coverage.** Step 5's four clauses: migrate the fifteen (tasks 4–18) ✓; declare `Operation` and `Signal` per builtin (the table, and step 5 of each recipe) ✓; delete `profile_name()` (task 21 — **narrowed, with evidence**, and the divergence recorded) ✓; delete `_TRANSCRIPT_KEYS` (task 3) ✓; seven of the ten literals (task 21, roster corrected) ✓. The design's two displaced prerequisites — the second entry point and the transitional field — are tasks 20 and 19.
+**Spec coverage.** Step 5's four clauses: migrate the fifteen (tasks 4–18) ✓; declare `Operation` and `Signal` per builtin (the table, and step 5 of each recipe) ✓; delete `profile_name()` (task 21 — **narrowed, with evidence**, and the divergence recorded) ✓; delete `_TRANSCRIPT_KEYS` (task 3) ✓; the literals (task 21 — **nine, not the seven the step text implies**, counted by AST rather than by grep) ✓. The design's two displaced prerequisites — the second entry point and the transitional field — are tasks 20 and 19.
 
-**Gaps this plan opens deliberately.** Whether `/tmp/f7-gate/` gets versioned is unresolved and stays that way; task 22 runs it from where it lives. `knowledge/compound_loop_worker.py:100` and `_shared.py:258` stay global by decision, not oversight, and task 21's test excludes `_shared.py` explicitly for that reason.
+**Gaps this plan opens deliberately.** Whether `/tmp/f7-gate/` gets versioned is unresolved and stays that way; task 22 runs it from where it lives. `_shared.py:258`, `knowledge/compound_loop_worker.py:98` and `:100`, `cli/memory_cmd.py:237` and `:264`, and `monitoring/statusline.py:44` stay global by decision, not oversight; none is a builtin, and task 21's test excludes `_shared.py` explicitly because it is the one inside the replacement helper itself.
 
 **Risk that outranks the rest.** Task 1. `pre-compact` is the only builtin whose migration can pass every test and still be dead on the wire, because the channel it speaks is not the channel the contract serialises to. If only one task gets an independent review by a different model, it is that one.
