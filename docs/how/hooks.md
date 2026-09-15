@@ -450,7 +450,7 @@ Mechanics:
 
 ### `engram-persist` — runs on `Stop`
 
-Source: `src/lazy_harness/hooks/builtins/engram_persist.py` (the wrapper) + `src/lazy_harness/knowledge/engram_persist.py` (the `EngramPersister` class).
+Source: `src/lazy_harness/hooks/builtins/engram_persist.py` (the builtin, which takes a `HookEvent` and returns an empty `HookDecision`) + `src/lazy_harness/knowledge/engram_persist.py` (the `EngramPersister` class).
 
 Responsibility: deterministically mirror new entries from `decisions.jsonl` and `failures.jsonl` into [Engram](https://github.com/Gentleman-Programming/engram) so the same observation is queryable both via `grep` over the JSONL and via `mem_search` from any future session. Runs after `compound-loop` writes its new entries on the same `Stop` event.
 

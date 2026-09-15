@@ -1,4 +1,19 @@
-"""Subprocess-level tests for the engram-persist builtin wrapper."""
+"""Directory routing for the engram-persist builtin, asserted on `main(event)`.
+
+The end-to-end half of what this file used to cover now lives in
+`tests/unit/hooks/builtins/test_engram_persist_goldens.py`, which runs the hook
+through `lh hook engram-persist` the way a deployed `settings.json` does. What
+stays here is the routing claim ADR-032 L3/L4 makes, which is about the
+*adapter* rather than about the wire: whatever `CLAUDE_CONFIG_DIR` says, a
+profile running `agent.type = "null"` writes under that agent's directories.
+
+`test_wrapper_reads_stdin_and_invokes_engram` was retired rather than ported.
+Its value was a pair — the save reached `engram`, and nothing landed in the
+`~/.claude` fallback — and both halves are asserted together in
+`test_the_run_lands_in_the_invoked_profile_and_not_in_the_global_dir`, against
+a profile rather than against an environment variable. Splitting the pair is
+what would have lost it.
+"""
 
 from __future__ import annotations
 
@@ -9,14 +24,21 @@ import subprocess
 import sys
 from pathlib import Path
 
-HOOK_PATH = (
-    Path(__file__).parent.parent.parent
-    / "src"
-    / "lazy_harness"
-    / "hooks"
-    / "builtins"
-    / "engram_persist.py"
-)
+from lazy_harness.agents.base import HookDecision, HookEvent
+
+
+def _stop_event(cwd: Path, *, profile: str = "") -> HookEvent:
+    """A Stop event built by the adapter, not by hand.
+
+    Hand-constructing the dataclass would let this file disagree with what
+    `parse_hook_input` actually produces — which is where trap 1 lives: a
+    payload naming no `cwd` yields `Path("")`, and `Path("")` is `Path(".")`.
+    """
+    from lazy_harness.agents.registry import get_agent
+
+    return get_agent("claude-code").parse_hook_input(
+        "session_stop", {"cwd": str(cwd)}, profile=profile
+    )
 
 
 def _make_engram_shim(shim_dir: Path, exit_code: int = 0) -> Path:
@@ -38,52 +60,10 @@ def _make_engram_shim(shim_dir: Path, exit_code: int = 0) -> Path:
     return shim
 
 
-def test_wrapper_reads_stdin_and_invokes_engram(tmp_path: Path) -> None:
-    claude_dir = tmp_path / "claude"
-    cwd = tmp_path / "lazy-harness"
-    cwd.mkdir()
-    encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
-    memory_dir = claude_dir / "projects" / encoded / "memory"
-    memory_dir.mkdir(parents=True)
-
-    entry = {"ts": "T1", "type": "decision", "summary": "hello"}
-    (memory_dir / "decisions.jsonl").write_text(json.dumps(entry) + "\n")
-
-    shim_dir = tmp_path / "shimbin"
-    _make_engram_shim(shim_dir, exit_code=0)
-
-    decoy_home = tmp_path / "home"
-    decoy_home.mkdir()
-
-    env = os.environ.copy()
-    env["HOME"] = str(decoy_home)
-    env["CLAUDE_CONFIG_DIR"] = str(claude_dir)
-    env["PATH"] = str(shim_dir) + os.pathsep + env.get("PATH", "")
-
-    result = subprocess.run(
-        [sys.executable, str(HOOK_PATH)],
-        input=json.dumps({"cwd": str(cwd)}),
-        capture_output=True,
-        text=True,
-        env=env,
-        cwd=str(cwd),
-    )
-
-    assert result.returncode == 0, result.stderr
-    log = (shim_dir / "engram_invocations.log").read_text()
-    assert " save hello " in log
-    # Pins that the env var wins in the bootstrap path: nothing may land in
-    # the ~/.claude fallback when CLAUDE_CONFIG_DIR is set.
-    assert not (decoy_home / ".claude").exists()
-
-
-def test_wrapper_routes_paths_through_agent_adapter(tmp_path: Path, monkeypatch) -> None:
+def test_hook_routes_paths_through_agent_adapter(tmp_path: Path, monkeypatch) -> None:
     """ADR-032 L3/L4: memory/logs dirs must come from the configured agent
     adapter. With agent.type = "null" they must land under ~/.null even when
     CLAUDE_CONFIG_DIR points elsewhere."""
-    import io
-    import sys as _sys
-
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
@@ -127,18 +107,15 @@ type = "null"
             pass
 
     monkeypatch.setattr("lazy_harness.knowledge.engram_persist.EngramPersister", FakePersister)
-    monkeypatch.setattr(_sys, "stdin", io.StringIO(json.dumps({"cwd": str(cwd)})))
-    hook_mod.main()
+
+    assert hook_mod.main(_stop_event(cwd)) == HookDecision()
 
     assert captured["memory_dir"] == home / ".null" / "projects" / encoded / "memory"
     assert captured["logs_dir"] == home / ".null" / "logs"
 
 
-def test_wrapper_passes_configured_engram_binary(tmp_path: Path, monkeypatch) -> None:
+def test_hook_passes_configured_engram_binary(tmp_path: Path, monkeypatch) -> None:
     """Hook subprocesses inherit a PATH that may lack the binary; config must win."""
-    import io
-    import sys as _sys
-
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
@@ -180,13 +157,14 @@ binary = "/opt/homebrew/bin/engram"
             pass
 
     monkeypatch.setattr("lazy_harness.knowledge.engram_persist.EngramPersister", FakePersister)
-    monkeypatch.setattr(_sys, "stdin", io.StringIO(json.dumps({"cwd": str(cwd)})))
-    hook_mod.main()
+
+    assert hook_mod.main(_stop_event(cwd)) == HookDecision()
 
     assert captured["engram_bin"] == "/opt/homebrew/bin/engram"
 
 
-def test_wrapper_exits_zero_when_engram_save_fails(tmp_path: Path) -> None:
+def test_hook_abstains_when_engram_save_fails(tmp_path: Path, monkeypatch) -> None:
+    """A failing `engram save` is a logged no-op, never a decision."""
     claude_dir = tmp_path / "claude"
     cwd = tmp_path / "lazy-harness"
     cwd.mkdir()
@@ -200,17 +178,38 @@ def test_wrapper_exits_zero_when_engram_save_fails(tmp_path: Path) -> None:
     shim_dir = tmp_path / "shimbin"
     _make_engram_shim(shim_dir, exit_code=1)
 
-    env = os.environ.copy()
-    env["CLAUDE_CONFIG_DIR"] = str(claude_dir)
-    env["PATH"] = str(shim_dir) + os.pathsep + env.get("PATH", "")
-
-    result = subprocess.run(
-        [sys.executable, str(HOOK_PATH)],
-        input=json.dumps({"cwd": str(cwd)}),
-        capture_output=True,
-        text=True,
-        env=env,
-        cwd=str(cwd),
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_dir))
+    monkeypatch.setenv("PATH", str(shim_dir) + os.pathsep + os.environ.get("PATH", ""))
+    monkeypatch.setattr(
+        "lazy_harness.core.paths.config_file", lambda: tmp_path / "absent-config.toml"
     )
 
-    assert result.returncode == 0, result.stderr
+    from lazy_harness.hooks.builtins import engram_persist as hook_mod
+
+    assert hook_mod.main(_stop_event(cwd)) == HookDecision()
+
+    log = (claude_dir / "logs" / "engram_persist.log").read_text()
+    assert "engram save returned 1" in log
+
+
+def test_the_module_no_longer_carries_a_script_entry_point(tmp_path: Path) -> None:
+    """The bare-script path is gone, and importing the module still exits 0.
+
+    `main` takes a `HookEvent` now, so a leftover `if __name__ == "__main__":
+    main()` would raise `TypeError: main() missing 1 required positional
+    argument` and exit 1. No golden covers this: the goldens run `lh hook`, the
+    only command anything deploys. What is left is an import with no side
+    effects, which is what this asserts.
+    """
+    proc = subprocess.run(
+        [sys.executable, "-m", "lazy_harness.hooks.builtins.engram_persist"],
+        input="{}",
+        capture_output=True,
+        text=True,
+        cwd=str(tmp_path),
+        check=False,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == ""

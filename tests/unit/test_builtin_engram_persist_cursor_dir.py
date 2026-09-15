@@ -5,11 +5,10 @@ A `cursor_dir` parameter nothing passes is a fix that ships without running.
 
 from __future__ import annotations
 
-import io
-import json
 import subprocess
-import sys as _sys
 from pathlib import Path
+
+from tests.unit.test_builtin_engram_persist import _stop_event
 
 
 def _git(cwd: Path, *args: str) -> None:
@@ -54,8 +53,7 @@ def test_hook_passes_a_cursor_dir_under_the_agent_runtime_dir(tmp_path: Path, mo
             pass
 
     monkeypatch.setattr("lazy_harness.knowledge.engram_persist.EngramPersister", FakePersister)
-    monkeypatch.setattr(_sys, "stdin", io.StringIO(json.dumps({"cwd": str(cwd)})))
-    hook_mod.main()
+    hook_mod.main(_stop_event(cwd))
 
     cursor_dir = captured["cursor_dir"]
     assert cursor_dir is not None
@@ -99,8 +97,7 @@ def test_two_repos_of_the_same_name_get_different_cursor_dirs(tmp_path: Path, mo
         cwd.mkdir(parents=True)
         _git(cwd, "init", "-q")
         _git(cwd, "remote", "add", "origin", f"git@github.com:{owner}/proj.git")
-        monkeypatch.setattr(_sys, "stdin", io.StringIO(json.dumps({"cwd": str(cwd)})))
-        hook_mod.main()
+        hook_mod.main(_stop_event(cwd))
 
     assert len(seen) == 2
     assert seen[0] != seen[1]
