@@ -78,7 +78,12 @@ def test_engram_persist_metrics_path_routes_through_agent_adapter(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """ADR-032 L3: the metrics path must come from the agent adapter, not a
-    hardcoded ~/.claude fallback."""
+    hardcoded ~/.claude fallback.
+
+    Exercised on the no-profile branch, which is the one this claim is about:
+    with a profile the answer comes from its `config_dir` instead, and
+    `test_doctor_reads_the_engram_metrics_the_hook_writes` covers that half.
+    """
     from lazy_harness.agents.registry import NullAdapter
     from lazy_harness.cli.doctor_cmd import _engram_persist_metrics_path
 
@@ -87,7 +92,7 @@ def test_engram_persist_metrics_path_routes_through_agent_adapter(
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "decoy-claude"))
 
-    result = _engram_persist_metrics_path(NullAdapter())
+    result = _engram_persist_metrics_path(NullAdapter(), None, "")
 
     assert result == home / ".null" / "logs" / "engram_persist_metrics.jsonl"
 
@@ -681,3 +686,50 @@ def test_doctor_omits_hook_signals_when_the_agent_delivers_everything(
     monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
 
     assert "Hook signals" not in _unwrapped(CliRunner().invoke(doctor, []).output)
+
+
+def test_doctor_reads_the_engram_metrics_the_hook_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The second pair of paths that answer one question, asserted to agree.
+
+    `engram-persist` names its metrics file with `agent_dir_for(cfg,
+    event.profile)`. `doctor` named the file it reads globally, and nothing
+    compared them — so the hook recorded every run under the profile while
+    `doctor` reported "No runs yet (Stop hook not triggered)" from the global
+    directory, which is the health state a hook that never fires produces.
+    A diagnostic that cannot distinguish "working" from "never ran" is worse
+    than none.
+
+    `CLAUDE_CONFIG_DIR` is cleared: it outranks the profile's `config_dir`, so
+    pinning it would make both sides agree for the wrong reason.
+    """
+    from lazy_harness.agents.registry import get_agent
+    from lazy_harness.cli.doctor_cmd import _engram_persist_metrics_path
+    from lazy_harness.core.config import load_config
+    from lazy_harness.hooks.builtins._shared import agent_dir_for
+
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        f"""
+[harness]
+version = "1"
+
+[agent]
+type = "claude-code"
+
+[profiles]
+default = "alpha"
+
+[profiles.alpha]
+config_dir = "{tmp_path / "alpha-home"}"
+"""
+    )
+    cfg = load_config(cfg_file)
+
+    agent, writer_dir = agent_dir_for(cfg, "alpha")
+    logs = agent.session_dirs().get("logs") or "logs"
+    written = writer_dir / logs / "engram_persist_metrics.jsonl"
+
+    assert _engram_persist_metrics_path(get_agent("claude-code"), cfg, "alpha") == written
