@@ -130,7 +130,16 @@ def main(event: HookEvent) -> HookDecision:
         worker_log.parent.mkdir(parents=True, exist_ok=True)
         with open(worker_log, "a") as stdout_f:
             subprocess.Popen(
-                [sys.executable, "-m", "lazy_harness.knowledge.compound_loop_worker"],
+                # The worker inherits the profile rather than deriving one: it
+                # has to drain the queue this hook just wrote to, and with no
+                # `--profile` it falls back to the global directory, which
+                # since the migration is not where the task is.
+                [
+                    sys.executable,
+                    "-m",
+                    "lazy_harness.knowledge.compound_loop_worker",
+                    *(["--profile", event.profile] if event.profile else []),
+                ],
                 stdin=subprocess.DEVNULL,
                 stdout=stdout_f,
                 stderr=stdout_f,

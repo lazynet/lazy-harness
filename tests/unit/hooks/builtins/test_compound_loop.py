@@ -212,3 +212,30 @@ def test_a_transcript_the_payload_names_but_disk_does_not_have_is_not_used(
 
     assert decision == HookDecision()
     fake_create_task.assert_not_called()
+
+
+def test_the_worker_is_spawned_with_the_profile_that_queued_the_task(
+    harness: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The hook queues under `event.profile`; the worker must drain there.
+
+    `compound_loop_worker._agent_dir_for_profile` resolves per profile only
+    when one is named on its argv, and falls back to the global directory
+    otherwise. Spawning it bare therefore sends it to a queue this hook no
+    longer writes to -- both processes exit 0 and every queued task is
+    orphaned. Measured on the real config before this assertion existed:
+    producer `~/.claude-lazy/queue`, worker `~/.claude/queue`.
+    """
+    from lazy_harness.hooks.builtins import compound_loop as mod
+    from lazy_harness.knowledge import compound_loop as knowledge
+
+    monkeypatch.setattr(knowledge, "create_task", MagicMock(return_value=Path("t.task")))
+    popen = MagicMock()
+    monkeypatch.setattr(mod.subprocess, "Popen", popen)
+
+    mod.main(_event(cwd=harness["cwd"], transcript=harness["transcript"], profile="alpha"))
+
+    assert popen.called, "the worker was never spawned"
+    argv = popen.call_args[0][0]
+    assert "--profile" in argv, argv
+    assert argv[argv.index("--profile") + 1] == "alpha", argv
