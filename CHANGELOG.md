@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.70.0](https://github.com/lazynet/lazy-harness/compare/v0.69.0...v0.70.0) (2026-09-16)
+
+
+### Features
+
+* Codex TranscriptReader — measured rollout format, no goal_status ([#355](https://github.com/lazynet/lazy-harness/issues/355)) ([3bf8bdf](https://github.com/lazynet/lazy-harness/commit/3bf8bdfe5fd296f92bfa35a982aa1986093f67bf))
+* CopilotAdapter — ADR-047, run-backed contract and probe script (step 11) ([#357](https://github.com/lazynet/lazy-harness/issues/357)) ([550e4c9](https://github.com/lazynet/lazy-harness/commit/550e4c94aab1b910556b6f82200a323bf8ed5323))
+* FileEdit expresses a delete — ADR-046, apply_patch delete sections, reader audit ([#354](https://github.com/lazynet/lazy-harness/issues/354)) ([5d5945e](https://github.com/lazynet/lazy-harness/commit/5d5945eb919f217e41ce5612a2b1186d97564db0))
+* lh doctor surfaces hook_events per profile — verdicts, operations, missing events (step 10) ([#358](https://github.com/lazynet/lazy-harness/issues/358)) ([69f896c](https://github.com/lazynet/lazy-harness/commit/69f896c8133bee4a9416dd4801ca0e02e820ec5e))
+
+
+### Documentation
+
+* 0.70.0 release gate — coherence audit, wave-2 follow-ups ([#354](https://github.com/lazynet/lazy-harness/issues/354)/[#355](https://github.com/lazynet/lazy-harness/issues/355)/[#357](https://github.com/lazynet/lazy-harness/issues/357)/[#358](https://github.com/lazynet/lazy-harness/issues/358)) ([#359](https://github.com/lazynet/lazy-harness/issues/359)) ([72d1992](https://github.com/lazynet/lazy-harness/commit/72d1992a19dcffee7c42b76fdadc80c8b1470b20))
+
 ## [0.69.0](https://github.com/lazynet/lazy-harness/compare/v0.68.0...v0.69.0) (2026-09-16)
 
 
