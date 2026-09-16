@@ -1473,7 +1473,7 @@ against a version that will not ship.
 
 ## Implementation sequence
 
-> **Status, 2026-09-16 — steps 0 to 9 are shipped; steps 10 to 12 are next.**
+> **Status, 2026-09-16 — steps 0 to 10 and 12 are shipped; step 11 is next.**
 >
 > | Step | State | Released in |
 > |------|-------|-------------|
@@ -1487,7 +1487,9 @@ against a version that will not ship.
 > | 7 — multi-file config planning (ADR-042) | done | 0.68.0 |
 > | 8 — `system_docs()` replaces `system_doc_name()` (ADR-043) | done | 0.68.0 |
 > | 9 — **`CodexAdapter` for real**, with hook trust in `lh doctor` | done | 0.69.0 |
-> | 10 to 12 | not started | — |
+> | 10 — `hook_events()` surfaced in `lh doctor` per profile: honoured verdicts, covered operations, missing events | done | entra en 0.70.0 |
+> | 11 — `CopilotAdapter` | in progress | — |
+> | 12 — Codex `TranscriptReader`, against a measured rollout format (ADR-048) | done | entra en 0.70.0 |
 >
 > Step 4 spans three releases. 0.66.0 carried the adapter, the Protocol cleanup
 > and the missing-signals line (#289, #290); 0.67.0 carries the three defects
