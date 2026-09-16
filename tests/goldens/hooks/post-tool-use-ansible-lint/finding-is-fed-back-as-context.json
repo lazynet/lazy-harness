@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PostToolUse\", \"additionalContext\": \"ansible-lint on main.yml:\\nroles/web/tasks/main.yml:2: syntax-check[unknown-module] couldnt resolve module/action mynamespace.mycollection.mymodule\\nRead documentation for the rule: fqcn\"}}\n"
+}

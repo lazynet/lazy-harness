@@ -168,6 +168,11 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
         matcher="Edit|Write",
         event="post_tool_use",
         operations=frozenset({Operation.MODIFY_FILE}),
+        # No `signals`: this hook reads the file the tool call edited and the
+        # linter's own output, never the transcript. Declaring one would make
+        # `deploy` refuse to install it on an agent whose reader cannot supply a
+        # signal the hook never touches.
+        migrated=True,
     ),
     "post-tool-use-format": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.post_tool_use_format",
