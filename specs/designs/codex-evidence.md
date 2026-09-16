@@ -56,7 +56,8 @@ round's mistake named, since it changed what the F8 section below concludes.
 |---|---|---|---|
 | Native tool name for an edit | Design doc line 1196 (provider table): `apply_patch`, tagged **`(source)`** — read off Rust source, never exercised. Contrast `Bash`, tagged `(run)` at the same table and confirmed again at line 1048: `exec_command` normalises to `"Bash"` on the wire. | `_TOOL_OPERATIONS = {"Bash": Operation.RUN_COMMAND}` (`codex.py:92`) has no entry for whatever the edit tool's native name turns out to be, so `operation` comes back `None` for it regardless of what that name is. | **Resolved: both candidates are real, and Codex picks between them non-deterministically.** Six runs, model `gpt-6-astra`, two rounds: most edits go through `Bash` (a python heredoc, `tool_name: "Bash"`), and — confirmed by probe 4c, which forced the model toward a native edit and used a *validated* deny to prove the hook actually saw it — Codex also uses a genuine `apply_patch` tool, firing `PreToolUse` with `tool_name: "apply_patch"` literally. (The first round's reading that this second path produced no hook payload at all was wrong — see the note on §1 above; it was a malformed-envelope artefact, not evidence of an unhooked path.) **`_TOOL_OPERATIONS` has a real gap now**: `apply_patch` is not in it, so an edit taking that path still parses with `operation=None` today. Mapping it to `MODIFY_FILE` is necessary — see the F8 reconciliation below for why it's not sufficient. |
 | Downstream field construction (`reads` / `edits`) | `ToolCall.edits: tuple[FileEdit, ...] = ()` and `.reads: tuple[Path, ...] = ()` (`agents/base.py:87,91`) — both default empty, populated per-adapter. | `CodexAdapter._parse_tool` never sets either field — confirmed by reading the method (`codex.py:178-191`): it returns a `ToolCall` with only `native_name`, `operation`, `command`, `raw_input` set. `edits` and `reads` are always `()` under `CodexAdapter`, independent of `tool_name`. | **Confirmed, and now the load-bearing finding rather than a side note.** `apply_patch`'s `tool_input` is `{"command": "<patch blob>"}` (§1) — the *same key* `_parse_tool` already reads for `Bash`. So even after mapping `apply_patch -> MODIFY_FILE`, `_parse_tool` would read the blob into `command` and still leave `edits`/`reads` empty, because nothing parses the blob's `*** Update File: <path>` lines into a `FileEdit`. Two fixes are needed, not one: the `_TOOL_OPERATIONS` entry, **and** a parser for the patch-blob text. Neither alone revives the five builtins gated on `tool.edits`. |
-| Multi-file edits in one call | Design doc line 1009: "Codex's `apply_patch` … can touch several files in one call". Cited from the same source-only evidence as the tool name. | N/A — nothing reads `tool_input` for edits at all yet. | **Confirmed for `Bash`, untested for `apply_patch`.** Probe 3 (append `ALPHA` to `a.txt`, `BETA` to `b.txt` in the same turn) produced exactly two `PreToolUse` records for the whole turn: one discovery `rg --files` call, and one `Bash` python-heredoc call whose loop edited *both* files in a single `command` string. No probe forced a multi-file `apply_patch` call, so whether its patch-blob format concatenates multiple `*** Update File:` sections in one `command` string (plausible, given the design doc's `apply_patch` claim) or Codex always splits multi-file patches into separate hook calls is still open — lower priority than closing §4, since a parser for the single-file blob is the harder, necessary-first piece regardless. |
+| Multi-file edits in one call | Design doc line 1009: "Codex's `apply_patch` … can touch several files in one call". Cited from the same source-only evidence as the tool name. | N/A — nothing reads `tool_input` for edits at all yet. | **Confirmed for `Bash`, untested for `apply_patch`.** Probe 3 (append `ALPHA` to `a.txt`, `BETA` to `b.txt` in the same turn) produced exactly two `PreToolUse` records for the whole turn: one discovery `rg --files` call, and one `Bash` python-heredoc call whose loop edited *both* files in a single `command` string. No probe forced a multi-file `apply_patch` call, so whether its patch-blob format concatenates multiple `*** Update File:` sections in one `command` string (plausible, given the design doc's `apply_patch` claim) or Codex always splits multi-file patches into separate hook calls is still open — lower priority than closing §4, since a parser for the single-file blob is the harder, necessary-first piece regardless. **Resolved 2026-09-16 (probe 5, `codex-cli 0.154.0`, model `gpt-5.6-sol`).** One `PreToolUse` record for the whole turn, `tool_name: apply_patch`, one blob between a single `*** Begin Patch`/`*** End Patch` pair carrying two `*** Update File:` sections, one per touched file — both files changed on disk. Codex concatenates a multi-file `apply_patch` edit into one blob; it does not split multi-file patches into separate hook calls. `_parse_patch` (shipped in #348) already parses N sections generically and carries a two-section test — nothing to change. |
+| Delete spelling (`*** Delete File:`) | ADR-044's Consequences (`specs/adrs/044-codex-native-edit-path.md`): widening `FileEdit` for a delete is undecided because "the delete spelling is the patch format's, not one any probe has seen Codex emit." | N/A — `FileEdit` has no delete counterpart and nothing constructs one. | **Measured 2026-09-16 (probe 6, model `gpt-5.6-sol`).** One `PreToolUse` record, `tool_name: apply_patch`, blob is a single `*** Begin Patch`/`*** End Patch` pair with one section, literal header `*** Delete File: <abs path>` — no diff body under it. The target file was removed from disk. The spelling ADR-044 flagged as unprobed is now on record; widening `FileEdit` for it is unblocked and tracked as its own backlog item, not done here. |
 
 ## 3. Response format (verdict envelope)
 
@@ -347,6 +348,76 @@ valid.
 "`hook_event_name`", §2 "Native tool name for an edit", §3 "Refusal envelope"
 — all closed by these two runs together, recorded above.
 
+### Probes 5–8 — multi-file, delete spelling, read dialect, auth.json shape
+
+Ran 2026-09-16 from an Aqua terminal (`probe5-7.sh`), against `codex-cli
+0.154.0`, model `gpt-5.6-sol` — a different model than the six probes above
+(`gpt-6-astra`); nothing below turned on the model, only on the binary. Same
+fixture discipline as Probes 1-4c: a fresh, disposable `CODEX_HOME` per probe
+with `auth.json` copied in and a `hooks.json` dumping every
+`PreToolUse`/`PostToolUse` payload to `pre_tool_use.jsonl`; a fresh `WORK` dir
+seeded with `a.txt='alpha'`, `b.txt='beta'`,
+`target.txt='first line\nsecond line\nthird line'`; invoked as `codex exec
+--dangerously-bypass-hook-trust --sandbox workspace-write
+--skip-git-repo-check -C $WORK --json "<prompt>"`. Raw output kept at
+`~/.claude-lazy/projects/-Users-lazynet-repos-lazy-lazy-harness/reports/codex-probes-5-8-output.txt`.
+
+**Probe 5 — multi-file `apply_patch`.** Prompt: *"Use your built-in
+file-editing tool (apply_patch), NOT the shell, to change 'alpha' to 'ALPHA'
+in a.txt and 'beta' to 'BETA' in b.txt, in a single patch."*
+
+```
+#1 event=PreToolUse tool_name='apply_patch' tool_input_keys=['command']
+   sections: ['*** Update File: <abs path>/a.txt', '*** Update File: <abs path>/b.txt']
+   markers : ['*** Begin Patch', '*** End Patch']
+files after: a.txt=ALPHA| b.txt=BETA| target.txt=first line|second line|third line|
+```
+
+One record, one blob, two `*** Update File:` sections — both files changed.
+**Output → evidence cell:** §2 "Multi-file edits in one call", now resolved.
+
+**Probe 6 — delete spelling.** Prompt: *"Use your built-in file-editing tool
+(apply_patch), NOT the shell, to delete target.txt."*
+
+```
+#1 event=PreToolUse tool_name='apply_patch' tool_input_keys=['command']
+   sections: ['*** Delete File: <abs path>/target.txt']
+   markers : ['*** Begin Patch', '*** End Patch']
+files after: a.txt=alpha| b.txt=beta| target.txt=<deleted>
+```
+
+One record, literal header `*** Delete File: <abs path>`, no diff body — the
+file was removed from disk. **Output → evidence cell:** §2's new "Delete
+spelling" row, above.
+
+**Probe 7 — read dialect.** Prompt: *"Read target.txt and tell me its second
+line. Do NOT use a shell command; use your built-in file-reading tool."*
+
+```
+#1 event=PreToolUse tool_name='list_mcp_resources' tool_input_keys=[]
+assistant: "No built-in text-file reader is available in this session, so I
+couldn't read `target.txt`. I did not use a shell command."
+files after: unchanged
+```
+
+One `PreToolUse` record, `tool_name: list_mcp_resources`, empty `tool_input`,
+then Codex gave up rather than fall back to `Bash` — 0.154.0 has no native
+read tool. **Output → evidence cells:** §2's `pre-tool-use-read-size` row and
+its ceiling note, above.
+
+**Probe 8 — `~/.codex/auth.json` top-level shape** (keys and value types
+only, no values):
+
+```
+{'auth_mode': 'str', 'OPENAI_API_KEY': 'NoneType', 'tokens': 'dict', 'last_refresh': 'str'}
+```
+
+No expiry field at the top level. The `tokens` sub-shape is unprobed — it's
+what `CodexAdapter.credentials_file()` (ADR-045 D4/A4) needs before it can
+return anything but `None`.
+
+**Probe 9 (keychain entry) was not run.**
+
 ## Lo que el gate F8 ya midió y el evidence tiene que confirmar o falsificar
 
 `specs/gates/f8/translation-gate.sh` runs entirely between two Python objects —
@@ -378,7 +449,7 @@ Per builtin, the two guards it actually hits under `CodexAdapter` today:
 | Builtin | First guard | Result on `Bash` | Result on `apply_patch` | Second guard | Result |
 |---|---|---|---|---|---|
 | `post-tool-use-format` | `tool.operation is not Operation.MODIFY_FILE` (`post_tool_use_format.py:32`) | Fails: `operation` is `RUN_COMMAND`, never `MODIFY_FILE`. | Fails **today**: `operation` is `None` — `apply_patch` isn't in `_TOOL_OPERATIONS` at all. Mapping it to `MODIFY_FILE` would flip this guard to pass. | `for edit in tool.edits` (`post_tool_use_format.py:36`) | Never reached on either path today. If `apply_patch` were mapped, this becomes reachable and still fails: `tool.edits` is `()` regardless of `operation`, because `_parse_tool` never parses the patch blob (§2). |
-| `pre-tool-use-read-size` | `tool.operation is not Operation.READ_FILE` (`pre_tool_use_read_size.py:105`) | Fails: `RUN_COMMAND`, never `READ_FILE`. | Fails: `None`, and would still fail even mapped — `apply_patch` is an edit, not a read; `READ_FILE` is the wrong target operation for it regardless. | `for path in tool.reads` (`pre_tool_use_read_size.py:119`) | Never reached, and mapping `apply_patch` doesn't change that — this hook was never going to apply to an edit tool. |
+| `pre-tool-use-read-size` | `tool.operation is not Operation.READ_FILE` (`pre_tool_use_read_size.py:105`) | Fails: `RUN_COMMAND`, never `READ_FILE`. | Fails: `None`, and would still fail even mapped — `apply_patch` is an edit, not a read; `READ_FILE` is the wrong target operation for it regardless. | `for path in tool.reads` (`pre_tool_use_read_size.py:119`) | Never reached, and mapping `apply_patch` doesn't change that — this hook was never going to apply to an edit tool. **Probe 7, 2026-09-16 (model `gpt-5.6-sol`): confirmed inert for a different reason than assumed.** Asked for a native read, Codex fired `PreToolUse` with `tool_name: list_mcp_resources`, empty `tool_input`, then told the model no built-in text-file reader is available in this session — 0.154.0 has no native read tool at all. Reads go through `Bash` (`cat`/`sed`/`rg`), the same structurally-ungateable path this document already records for edits. |
 | `pre-tool-use-memory-size` | `tool.native_name not in INSPECTED_TOOLS` where `INSPECTED_TOOLS = {"Edit", "Write"}` (`pre_tool_use_memory_size.py:44,225`) | Fails: `native_name == "Bash"`, never in the set. | **Fails today, confirmed by run**: `native_name == "apply_patch"`, and `"apply_patch"` is not in `{"Edit","Write"}` either — the set itself needs widening, separately from `_TOOL_OPERATIONS`. | `for edit in tool.edits` (`pre_tool_use_memory_size.py:234`) | Never reached on either path today. If both the set *and* `_TOOL_OPERATIONS` were fixed, still fails: `tool.edits` stays `()` until the patch blob is parsed. |
 | `post-tool-use-sync-claude` | Same `INSPECTED_TOOLS` check (`post_tool_use_sync_claude.py:32,76`) | Fails: `"Bash"` not in the set. | Fails: `"apply_patch"` not in the set. | `tuple(edit.path for edit in tool.edits)` (`post_tool_use_sync_claude.py:78`) | Never reached; same blob-parsing gap blocks it even if the set and the mapping were both fixed. |
 | `post-tool-use-ansible-lint` | Same `INSPECTED_TOOLS` check (`post_tool_use_ansible_lint.py:33,113`) | Fails: `"Bash"` not in the set. | Fails: `"apply_patch"` not in the set. | `for edit in tool.edits` (`post_tool_use_ansible_lint.py:122`) | Never reached; same blob-parsing gap. |
@@ -413,6 +484,17 @@ branch is chosen by the `FileEdit` it carries, not by its name. With
 `_TOOL_OPERATIONS`, `INSPECTED_TOOLS` and the patch parser all in place, this
 builtin still stayed silent — a fourth fix, not the three implied above.
 Closed in #348; `specs/backlog.md` §Done has the record.
+
+**`pre-tool-use-read-size`'s inertness is now a measured design limit, not an
+open question.** Probe 7 (2026-09-16, model `gpt-5.6-sol`) asked Codex for a
+native read and it fired `PreToolUse` with `tool_name: list_mcp_resources`,
+empty `tool_input`, then answered that no built-in text-file reader is
+available in this session. Codex 0.154.0 has no native read tool at all —
+reads go through `Bash` (`cat`/`sed`/`rg`), the same tool this document
+already records as structurally ungateable for edits. ADR-044 §2 left this
+builtin un-widened on the assumption that `apply_patch` is an edit, not a
+read; the deeper reason it stays inert is now on record — there is no read
+dialect under Codex to gate, full stop.
 
 **The `Bash` path is structurally different, not just currently unmapped: it
 cannot be gated as an edit at all with information the hook has.** `tool_input`
@@ -467,6 +549,18 @@ hold: probe 3 confirms multi-file edits happen in one hook call for `Bash`,
 and nothing here contradicts the same being possible for `apply_patch`
 (untested, §2).
 
+**Update, probe 5 (2026-09-16, above): the "untested" just above is now
+resolved.** `apply_patch` concatenates a multi-file edit into one blob with
+multiple `*** Update File:` sections rather than splitting across hook calls —
+confirmed in §2's "Multi-file edits in one call" row.
+
+**A third tool_name surfaced, outside the two-path pair above.** Probe 7
+(§2's `pre-tool-use-read-size` row, below) fired `PreToolUse` with
+`tool_name: list_mcp_resources` and an empty `tool_input` (`{}`) when asked
+for a native read — not an edit tool, and not added to the provider table's
+edit-path list, but the concrete evidence behind "Codex has no native read
+tool at 0.154.0."
+
 ## Pendiente
 
 Cerrado 2026-09-16 contra el binario real (`codex-cli 0.154.0`, modelo
@@ -493,3 +587,18 @@ probes tocó trust ni matchers, y queda con el alcance original documentado ahí
 `allow`/`ask` sobre un edit tampoco se corrió — de menor prioridad ahora que el
 contrato de `deny` quedó confirmado en los dos paths, y sin usarse hoy en el
 harness para Codex.
+
+**Cerrado además el 2026-09-16, probes 5-8 (`probe5-7.sh`, mismo binario,
+modelo `gpt-5.6-sol`):** multi-file `apply_patch` (probe 5, dos secciones
+`*** Update File:` en un solo blob), la grafía de delete (probe 6, `*** Delete
+File: <path>` literal, sin diff body) y el dialecto de lectura (probe 7,
+`list_mcp_resources` con `tool_input` vacío, sin reader nativo) — las tres
+preguntas que quedaban abiertas en §2 arriba. `pre-tool-use-read-size` pasa de
+"sin ejercitar" a límite estructural medido, en la misma clase que el path
+`Bash`. Probe 8 midió además la forma de nivel superior de
+`~/.codex/auth.json` (`auth_mode`, `OPENAI_API_KEY`, `tokens`,
+`last_refresh`) — ver `specs/backlog.md` y ADR-045 para el uso de ese
+hallazgo.
+
+**Sigue sin correr:** la sub-forma de `tokens` dentro de `auth.json`, y la
+probe 9 (keychain, ADR-045 A5) — no se corre desde un pane de agente.
