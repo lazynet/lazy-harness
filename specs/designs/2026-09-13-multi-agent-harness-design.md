@@ -1286,6 +1286,14 @@ have granted. The engine cannot know that. The adapter can.
 `~/.codex/skills/` is empty — so the "`~/.agents/skills` scanned by Codex and
 opencode" row stays `source`. No hook has fired on either agent.
 
+**Correction, 2026-09-16 (step 11, #357):** the paragraph above is contradicted
+twice, both later in this same file — `:1201` ("`$COPILOT_HOME/hooks/*.json`
+(**run, 1.0.83** — registered and fired)") and `:2071-2098` (the literal
+`preToolUse` payload a registered hook received). A hook at
+`~/.copilot/hooks/` does fire on Copilot 1.0.83; this paragraph is left as
+written, above, as the record of what the design believed before that run. See
+`specs/designs/copilot-evidence.md` for the measured rows.
+
 ## What the existing profile content costs to port
 
 Measured against the deployed profile sources rather than estimated:
@@ -1473,7 +1481,7 @@ against a version that will not ship.
 
 ## Implementation sequence
 
-> **Status, 2026-09-16 — steps 0 to 10 and 12 are shipped; step 11 is next.**
+> **Status, 2026-09-16 — steps 0 to 12 shipped.**
 >
 > | Step | State | Released in |
 > |------|-------|-------------|
@@ -1488,7 +1496,7 @@ against a version that will not ship.
 > | 8 — `system_docs()` replaces `system_doc_name()` (ADR-043) | done | 0.68.0 |
 > | 9 — **`CodexAdapter` for real**, with hook trust in `lh doctor` | done | 0.69.0 |
 > | 10 — `hook_events()` surfaced in `lh doctor` per profile: honoured verdicts, covered operations, missing events | done | entra en 0.70.0 |
-> | 11 — `CopilotAdapter` | in progress | — |
+> | 11 — `CopilotAdapter` | done | entra en 0.70.0 |
 > | 12 — Codex `TranscriptReader`, against a measured rollout format (ADR-048) | done | entra en 0.70.0 |
 >
 > Step 4 spans three releases. 0.66.0 carried the adapter, the Protocol cleanup
