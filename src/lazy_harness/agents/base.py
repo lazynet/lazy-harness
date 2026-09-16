@@ -62,6 +62,10 @@ class FileEdit:
 
     `content` and `replacements` are both present because the agents disclose
     different halves: a whole-file write gives text, a patch gives pairs.
+
+    **Every entry names a file that still exists afterwards.** A removal is
+    `ToolCall.deletes`, never a flag here — see that field for why the two are
+    kept apart rather than distinguished by a boolean (ADR-046).
     """
 
     path: Path
@@ -89,12 +93,24 @@ class ToolCall:
     """`None` means unbounded — not 0, which is a legitimate start offset."""
     limit: int | None = None
     edits: tuple[FileEdit, ...] = ()
+    deletes: tuple[Path, ...] = ()
+    """Files the call removes. Separate from `edits` rather than a flag on
+    `FileEdit`, so that a reader which iterates `edits` to format, lint or size
+    a file cannot act on one that is gone by forgetting a negative check —
+    three of the five builtins reading `edits` would have needed one (ADR-046).
+    The trade is the opposite failure, which is visible: a reader that wants
+    deletes and does not name this field simply does not react."""
     raw_input: object | None = None
     """Adapters only. A builtin reading this is a normalisation that failed."""
 
     @property
     def paths(self) -> tuple[Path, ...]:
-        return self.reads + tuple(edit.path for edit in self.edits)
+        """Every file this call touches, deletions included.
+
+        The union is what a path guard gates on, and deleting a protected file
+        is worse than editing it — so the field `edits` readers deliberately
+        cannot see is the one `paths` must not omit."""
+        return self.reads + tuple(edit.path for edit in self.edits) + self.deletes
 
 
 @dataclass(frozen=True)
