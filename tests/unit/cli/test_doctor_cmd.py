@@ -627,6 +627,169 @@ def test_doctor_omits_hook_signals_when_the_agent_delivers_everything(
     assert "Hook signals" not in _unwrapped(CliRunner().invoke(doctor, []).output)
 
 
+# --- hook_events() surface: operations and event vocabulary (step 10) ------
+
+
+def test_render_hook_operations_silent_when_nothing_inert() -> None:
+    from lazy_harness.cli.doctor_cmd import _render_hook_operations
+
+    console, buf = _recording_console()
+    _render_hook_operations(console, [])
+    assert buf.getvalue() == ""
+
+
+def test_render_hook_operations_names_a_partially_inert_hook() -> None:
+    from lazy_harness.agents.base import Operation
+    from lazy_harness.cli.doctor_cmd import _render_hook_operations
+    from lazy_harness.hooks.event_surface import HookOperationGap
+
+    console, buf = _recording_console()
+    gap = HookOperationGap(
+        profile="cx",
+        agent="codex",
+        event="pre_tool_use",
+        hook="pre-tool-use-security",
+        inert=(Operation.READ_FILE,),
+        fully_inert=False,
+    )
+    _render_hook_operations(console, [gap])
+    out = _unwrapped(buf.getvalue())
+
+    assert "Hook operations" in out
+    assert "cx/pre-tool-use-security" in out
+    assert "pre_tool_use is delivered" in out
+    assert "read_file" in out
+    assert "can't see those calls" in out
+
+
+def test_render_hook_operations_names_a_fully_inert_hook() -> None:
+    from lazy_harness.agents.base import Operation
+    from lazy_harness.cli.doctor_cmd import _render_hook_operations
+    from lazy_harness.hooks.event_surface import HookOperationGap
+
+    console, buf = _recording_console()
+    gap = HookOperationGap(
+        profile="cx",
+        agent="codex",
+        event="pre_tool_use",
+        hook="pre-tool-use-read-size",
+        inert=(Operation.READ_FILE,),
+        fully_inert=True,
+    )
+    _render_hook_operations(console, [gap])
+    out = _unwrapped(buf.getvalue())
+
+    assert "the hook is inert on this profile" in out
+    assert "can't see those calls" not in out
+
+
+def test_render_uncarried_events_silent_when_nothing_uncarried() -> None:
+    from lazy_harness.cli.doctor_cmd import _render_uncarried_events
+
+    console, buf = _recording_console()
+    _render_uncarried_events(console, [])
+    assert buf.getvalue() == ""
+
+
+def test_render_uncarried_events_names_the_hook_and_event() -> None:
+    from lazy_harness.cli.doctor_cmd import _render_uncarried_events
+    from lazy_harness.hooks.event_surface import UncarriedEventHook
+
+    console, buf = _recording_console()
+    gap = UncarriedEventHook(
+        profile="p1", agent="session-only", event="session_stop", hook="stop-verify-guard"
+    )
+    _render_uncarried_events(console, [gap])
+    out = _unwrapped(buf.getvalue())
+
+    assert "Hook events" in out
+    assert "p1/stop-verify-guard" in out
+    assert "wired to session_stop" in out
+    assert "session-only does not deliver at all" in out
+    assert "nothing installs and nothing runs" in out
+
+
+class _SessionOnlyAdapter(NullAdapter):
+    """Delivers `session_start` only — every other deployed hook is uncarried."""
+
+    @property
+    def name(self) -> str:
+        return "session-only"
+
+    def hook_events(self) -> dict[str, HookSupport]:
+        return {"session_start": HookSupport(native_name="SessionStart")}
+
+
+_UNCARRIED_EVENT_TOML = (
+    '[harness]\nversion = "1"\n'
+    '[agent]\ntype = "claude-code"\n'
+    '[profiles]\ndefault = "p1"\n\n'
+    '[profiles.p1]\nconfig_dir = "~/.claude-p1"\nagent = "session-only"\n'
+    '[hooks.session_stop]\nscripts = ["stop-verify-guard"]\n'
+    '[knowledge]\nroot = ""\n'
+)
+
+
+def test_doctor_reports_an_uncarried_event(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from lazy_harness.agents import registry
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(_UNCARRIED_EVENT_TOML)
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
+    monkeypatch.setitem(registry._AGENTS, "session-only", _SessionOnlyAdapter)
+
+    output = _unwrapped(CliRunner().invoke(doctor, []).output)
+
+    assert "Hook events" in output
+    assert "p1/stop-verify-guard" in output
+    assert "wired to session_stop" in output
+
+
+def _codex_default_hooks_config(tmp_path: Path) -> Path:
+    """A Codex profile with no hooks.json — cfg.hooks is empty, so the full
+    default hook set is what gets checked for operation coverage."""
+    profile_dir = tmp_path / "codex-home"
+    profile_dir.mkdir()
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        '[harness]\nversion = "1"\n'
+        '[agent]\ntype = "claude-code"\n'
+        '[profiles]\ndefault = "cx"\n\n'
+        f'[profiles.cx]\nconfig_dir = "{profile_dir}"\nagent = "codex"\n'
+        '[knowledge]\nroot = ""\n'
+    )
+    return cfg
+
+
+def test_doctor_reports_codexs_read_file_operation_gap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    cfg = _codex_default_hooks_config(tmp_path)
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
+
+    output = _unwrapped(CliRunner().invoke(doctor, []).output)
+
+    assert "Hook operations" in output
+    assert "cx/pre-tool-use-security" in output
+    assert "cx/pre-tool-use-read-size" in output
+    assert "the hook is inert on this profile" in output
+
+
+def test_doctor_omits_the_new_hook_event_surface_sections_for_claude_code(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: _write_config(tmp_path))
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    output = _unwrapped(CliRunner().invoke(doctor, []).output)
+
+    assert "Hook operations" not in output
+    assert "Hook events" not in output
+
+
 def test_doctor_reads_the_engram_metrics_the_hook_writes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

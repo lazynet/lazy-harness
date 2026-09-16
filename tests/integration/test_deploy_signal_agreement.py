@@ -48,10 +48,16 @@ def _write_config(home_dir: Path) -> Path:
 def _doctor_hook_signal_names(output: str) -> set[str]:
     """Builtin names `lh doctor` lists under its Hook signals heading.
 
+    Cut at the next section's blank-line separator, not just the string's end:
+    step 10 added `Hook operations` and `Hook events` right after this section,
+    and both can legitimately name `pre-tool-use-security` for a reason that
+    has nothing to do with a signal gap — reading to end-of-output would
+    misattribute their names to this one.
+
     Rich wraps at the terminal width, so the section is flattened before it is
     searched — a wrapped line would otherwise hide a name the comparison needs.
     """
-    section = output.partition("Hook signals")[2]
+    section = output.partition("Hook signals")[2].split("\n\n", 1)[0]
     flat = re.sub(r"\s+", " ", section)
     from lazy_harness.hooks.loader import list_builtin_hooks
 

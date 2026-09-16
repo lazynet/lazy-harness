@@ -319,6 +319,19 @@ def resolve_hooks_for_event(
     return resolve_script_names(event_cfg.scripts, user_hooks_dir, event)
 
 
+def builtin_operations(name: str) -> frozenset[Operation]:
+    """Tool operations a builtin declares (`BuiltinHookSpec.operations`).
+
+    The read side, so callers stop reaching into `_BUILTIN_HOOKS` — the same
+    reason `builtin_signals` exists. Unlike signals, `operations` is never a
+    per-placement mapping, so there is no `event` argument to resolve against.
+    A user hook resolves to the empty set, matching `builtin_signals`: nothing
+    outside the registry declares operations.
+    """
+    spec = _BUILTIN_HOOKS.get(name)
+    return spec.operations if spec is not None else frozenset()
+
+
 def builtin_signals(name: str, event: str | None = None) -> frozenset[Signal]:
     """Transcript signals a builtin declares at one placement.
 
