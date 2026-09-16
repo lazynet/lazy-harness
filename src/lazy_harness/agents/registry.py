@@ -14,6 +14,7 @@ from lazy_harness.agents.base import (
 )
 from lazy_harness.agents.claude_code import ClaudeCodeAdapter
 from lazy_harness.agents.codex import CodexAdapter
+from lazy_harness.agents.copilot import CopilotAdapter
 from lazy_harness.core.paths import expand_path
 
 if TYPE_CHECKING:
@@ -85,6 +86,7 @@ class NullAdapter:
 _AGENTS: dict[str, type] = {
     "claude-code": ClaudeCodeAdapter,
     "codex": CodexAdapter,
+    "copilot": CopilotAdapter,
     "null": NullAdapter,
 }
 
