@@ -187,6 +187,11 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
     "session-start-preflight": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.session_start_preflight",
         event="session_start",
+        # No signals: this hook reads a credentials file, a git remote and
+        # `PATH`. It never opens a transcript, so declaring one would make
+        # `deploy` omit a working preflight on any agent whose reader cannot
+        # supply a signal it does not touch.
+        migrated=True,
     ),
     "session-end": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.session_end",

@@ -15,6 +15,8 @@ from pathlib import Path
 
 import pytest
 
+from lazy_harness.hooks.engine import CLI_BOOTSTRAP
+
 _HOUR = 3600.0
 _NOW = 1_800_000_000.0
 
@@ -166,8 +168,17 @@ class TestRender:
 
 
 def _run_hook(payload: object, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    """Invoke the *deployed* command, not `python -m <module>`.
+
+    Trap 4 of the migration plan: a migrated module defines `main(event)` and
+    has no `__main__` block, so `python -m` imports it, runs nothing and exits
+    0 — the same exit code the working hook returns. Every assertion below
+    would keep passing against a hook that had stopped doing anything at all.
+    `lh hook <name>` is the command `settings.json` actually carries, and it is
+    the only path on which the adapter's `format_hook_output` reaches stdout.
+    """
     return subprocess.run(
-        [sys.executable, "-m", "lazy_harness.hooks.builtins.session_start_preflight"],
+        [sys.executable, "-c", CLI_BOOTSTRAP, "hook", "session-start-preflight"],
         input=payload if isinstance(payload, str) else json.dumps(payload),
         capture_output=True,
         text=True,
@@ -182,7 +193,14 @@ class TestHookEntrypoint:
         ids=lambda v: repr(v)[:24],
     )
     def test_always_exits_0(self, payload: str) -> None:
-        """SessionStart has no blocking semantics. Every path exits 0."""
+        """SessionStart honours no verdict at all, so no payload may refuse.
+
+        `BuiltinHookSpec.blocking` is `False` here, which is what puts an
+        unparseable payload in decision 3's *informational* column: exit 0 with
+        a warning on stderr rather than exit 2. A hook wired to an event the
+        agent cannot block must never hand back a non-zero code, because the
+        agent has nothing to do with it but log it.
+        """
         assert _run_hook(payload).returncode == 0
 
     def test_emits_valid_hook_specific_output_or_nothing(self, tmp_path: Path) -> None:

@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"SessionStart\", \"additionalContext\": \"## Preflight\\n\\n- **git** [warn] \\u2014 https://github.com/example/preflight-fixture.git \\u2014 user.email is unset\\n- Clear: auth, path.\"}}\n"
+}

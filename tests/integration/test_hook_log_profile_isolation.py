@@ -354,3 +354,49 @@ def test_compound_loop_writes_nothing_outside_the_invoked_profile(
     assert "compound-loop: fired cwd=" in (harness_config / "logs" / "hooks.log").read_text()
     assert _files_under(home_dir) == before_home
     assert (_files_under(other) if other.exists() else set()) == before_other
+
+
+def test_session_start_preflight_reads_the_invoked_profiles_credentials(
+    harness_config: Path, home_dir: Path, tmp_path: Path
+) -> None:
+    """The same defect one file over, in what a hook *reads* rather than writes.
+
+    Every other case here is about placement of an audit line. This hook writes
+    nothing at all, so presence and absence of a file cannot speak for it — the
+    probe is its output. `_credentials_path` resolved `CLAUDE_CONFIG_DIR` itself
+    and fell back to `~/.claude`, so under `--profile gate` it reported whatever
+    login the *global* directory held: a healthy verdict for a profile the
+    session was not running under, which is the one failure a preflight exists
+    to catch.
+
+    The two directories carry opposite verdicts on purpose. `gate` is expired
+    and `~/.claude` is healthy, so a run that still resolved globally comes back
+    all-clear and this fails.
+    """
+    expired = json.dumps(
+        {"claudeAiOauth": {"accessToken": "x", "refreshTokenExpiresAt": 1_577_836_800_000}}
+    )
+    healthy = json.dumps(
+        {"claudeAiOauth": {"accessToken": "x", "refreshTokenExpiresAt": 4_102_444_800_000}}
+    )
+    harness_config.mkdir(parents=True, exist_ok=True)
+    (harness_config / ".credentials.json").write_text(expired)
+    (home_dir / ".claude").mkdir(parents=True, exist_ok=True)
+    (home_dir / ".claude" / ".credentials.json").write_text(healthy)
+
+    result = CliRunner().invoke(
+        cli,
+        ["hook", "session-start-preflight", "--profile", "gate"],
+        input=json.dumps(
+            {
+                "hook_event_name": "SessionStart",
+                "cwd": str(tmp_path),
+                "session_id": "isolation-test",
+            }
+        ),
+    )
+
+    assert result.exit_code == 0, result.output
+    body = json.loads(result.output)["hookSpecificOutput"]["additionalContext"]
+    assert "- **auth** [FAIL] — refresh token expired" in body
+    assert "All clear" not in body

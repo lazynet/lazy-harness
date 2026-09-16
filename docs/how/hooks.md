@@ -111,6 +111,10 @@ Responsibility: report the things that strand a session partway through, before 
 | `git` | The `origin` remote and the `user.email` commits would carry |
 | `path` | Tools resolving to more than one copy on `PATH` |
 
+**Which profile's login it checks.** The one the hook was invoked under: the credentials file is read from the agent runtime directory that `--profile` resolves to, following the same resolution order as [the hook log](#observability). Before that it resolved `CLAUDE_CONFIG_DIR` on its own and fell back to `~/.claude`, so on a machine with several profiles the preflight could report a healthy login for a profile the session was not running under — the one failure the check exists to catch.
+
+The filename it looks for is Claude Code's. On a profile running another agent the check has nothing to read and reports `unknown`; moving the location onto the adapter is open work, tracked in the backlog.
+
 **The auth check reads a file and spawns nothing.** Running an auth CLI from inside a hook is exactly what an operator rule elsewhere forbids: a credential helper that cannot reach the keychain — as happens in launchd's Background domain — has deleted a credential store before now. A read cannot do that.
 
 It reads `refreshTokenExpiresAt`, **not** `expiresAt`. The access token expires constantly and is refreshed transparently: measured on a live profile, `expiresAt` sat 61 hours in the past while the session worked perfectly, because the refresh token still had 84 hours left. Reading the wrong field makes the check cry wolf every session, and a preflight nobody reads is worse than no preflight.

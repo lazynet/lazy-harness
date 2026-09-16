@@ -5,8 +5,13 @@ already staged when the credential turned out to be dead. The other recorded
 stranders are a git remote resolving to an unexpected identity and a tool
 resolving to a second copy on `PATH`.
 
-Reports, never blocks. `SessionStart` has no blocking semantics, so every path
-exits 0 and the worst outcome is a line saying the check could not tell.
+Reports, never blocks. `SessionStart` honours no verdict at all, so every path
+returns an empty decision at worst and the worst outcome the reader sees is a
+line saying the check could not tell.
+
+Every check is scoped to the profile the hook was invoked under, which is the
+whole point of the auth one: a preflight reporting some other profile's login
+is the failure it exists to catch, not a smaller version of working.
 
 **The auth check reads a file and spawns nothing.** Running the auth CLI from
 inside a hook is what the operator's rules forbid: a credential helper that
@@ -27,11 +32,18 @@ import json
 import os
 import shutil
 import subprocess
-import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
+
+# Module level, not under `TYPE_CHECKING`: `test_builtin_registry` resolves the
+# signature with `typing.get_type_hints`, which evaluates the annotations
+# against module globals and raises `NameError` on a name that only exists for
+# the type checker. Importing here is also what takes a migrated module off
+# `test_import_safety.GUARDED_HOOKS` — it is no longer invoked as a bare script,
+# so the guarantee the ImportError guard carried moves to the runner's policy.
+from lazy_harness.agents.base import HookDecision, HookEvent
 
 Status = Literal["pass", "warn", "fail", "unknown"]
 
@@ -51,10 +63,27 @@ class Check:
     detail: str
 
 
-def _credentials_path() -> Path:
-    config_dir = os.environ.get("CLAUDE_CONFIG_DIR")
-    base = Path(config_dir) if config_dir else Path.home() / ".claude"
-    return base / ".credentials.json"
+def _credentials_path(agent_dir: Path) -> Path:
+    """The credentials file of the agent dir the *invoked profile* resolves to.
+
+    This used to read `CLAUDE_CONFIG_DIR` itself and fall back to `~/.claude` —
+    the "resolve globally, ignore the profile" shape PR #300 fixed for
+    `hooks.log`, wearing a different mask. A hook invoked with `--profile p`
+    checked whichever profile the ambient environment named, so the preflight
+    could report a healthy login for a profile the session was not running
+    under: exactly the failure this check exists to catch. `agent_dir_for`
+    closes that half.
+
+    **The other half is deliberately still open, and is not this hook's to
+    close.** `.credentials.json` is a *Claude Code* filename. Another adapter
+    keeps its credentials somewhere else entirely — or in a keychain, with no
+    file to read — so the location belongs on the adapter, beside
+    `session_dirs()` and `global_config_link()`, rather than written out here.
+    Until it moves, this check silently reports `unknown` on any non-Claude
+    profile instead of saying it cannot speak for that agent. Recorded in
+    `specs/backlog.md`.
+    """
+    return agent_dir / ".credentials.json"
 
 
 def check_auth(credentials_path: Path, now: float | None = None) -> Check:
@@ -170,51 +199,44 @@ def render(checks: list[Check]) -> str:
     return "\n".join(lines)
 
 
-def _read_stdin_json() -> dict[str, Any]:
-    """Read and parse stdin as JSON; return {} on any parse error or empty input."""
+def main(event: HookEvent) -> HookDecision:
+    """Emit the preflight block. Abstains on every failure, including its own."""
     try:
-        data = sys.stdin.read()
-    except (OSError, ValueError):
-        return {}
-    if not data.strip():
-        return {}
-    try:
-        parsed = json.loads(data)
-    except json.JSONDecodeError:
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
+        from lazy_harness.core.config import Config, ConfigError, load_config
+        from lazy_harness.core.paths import config_file
+        from lazy_harness.hooks.builtins._shared import agent_dir_for
 
+        cf = config_file()
+        cfg: Config | None = None
+        if cf.is_file():
+            try:
+                cfg = load_config(cf)
+            except ConfigError:
+                cfg = None
 
-def main() -> None:
-    """Emit the preflight block. Exits 0 on every path, including failure."""
-    try:
-        payload = _read_stdin_json()
-        cwd = payload.get("cwd")
-        if not isinstance(cwd, str) or not cwd:
-            cwd = os.getcwd()
+        # The adapter half is unused here on purpose: unlike the hooks that
+        # write under `session_dirs()`, this one only reads a file whose name
+        # it still owns. That is the part `specs/backlog.md` keeps open.
+        agent_dir = agent_dir_for(cfg, event.profile)[1]
+
+        # `parse_hook_input` yields `Path("")` — which is `Path(".")`, and
+        # truthy — for a payload that names no cwd, so an `or Path.cwd()` would
+        # not fire. `check_git_identity` shells out with this as the process's
+        # working directory; `.` happens to resolve to the same place here, but
+        # the fallback is kept explicit so this hook does not become the one
+        # place in the fifteen where trap 1 is left to coincidence.
+        cwd = event.cwd if event.cwd != Path(".") else Path.cwd()
 
         checks = [
-            check_auth(_credentials_path()),
-            check_git_identity(cwd),
+            check_auth(_credentials_path(agent_dir)),
+            check_git_identity(str(cwd)),
             check_path_duplicates(),
         ]
         body = render(checks)
-        if body:
-            print(
-                json.dumps(
-                    {
-                        "hookSpecificOutput": {
-                            "hookEventName": "SessionStart",
-                            "additionalContext": body,
-                        }
-                    }
-                )
-            )
     except Exception:
         # Fail silent: a preflight bug must not disturb the session it precedes.
-        pass
-    sys.exit(0)
-
-
-if __name__ == "__main__":
-    main()
+        # `SessionStart` honours no verdict at all (`claude_code.py:77`), so
+        # there is nothing to fail open *into* — an empty decision is the only
+        # thing this hook can return, and it is also the right one.
+        return HookDecision()
+    return HookDecision(additional_context=body) if body else HookDecision()

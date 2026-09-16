@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"SessionStart\", \"additionalContext\": \"## Preflight\\n\\n- **auth** [?] \\u2014 no refresh-token expiry recorded\\n- Clear: git, path.\"}}\n"
+}
