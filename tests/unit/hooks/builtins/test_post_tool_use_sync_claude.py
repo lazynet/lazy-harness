@@ -214,6 +214,101 @@ def test_syncs_every_distinct_tree_a_multi_file_edit_touched(
     ]
 
 
+def test_a_deleted_segment_regenerates_its_tree(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ADR-046 D4 — the one reader that *gains* from the widening.
+
+    A segment removed from a profile tree changes the document assembled from
+    it exactly as an edited one does. Before `ToolCall.deletes` existed the
+    removal produced no `FileEdit` at all, so the deployed contract file went
+    stale with nothing on any channel saying so.
+    """
+    from lazy_harness.hooks.builtins import post_tool_use_sync_claude as mod
+
+    fake_sync = MagicMock(return_value=[])
+    monkeypatch.setattr(mod, "sync_profiles", fake_sync)
+
+    call = ToolCall(
+        native_name="apply_patch",
+        operation=Operation.MODIFY_FILE,
+        deletes=(Path("/a/profiles/_common/codex.md"),),
+    )
+    mod.main(
+        HookEvent(
+            event="post_tool_use",
+            profile="p",
+            session_id="s1",
+            cwd=Path("/work"),
+            transcript_path=None,
+            tool=call,
+        )
+    )
+
+    assert [c[0][0] for c in fake_sync.call_args_list] == [Path("/a/profiles")]
+
+
+def test_a_deleted_file_that_is_no_segment_still_syncs_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The must-fail half of the test above. Reading `deletes` must not widen
+    the *filename* gate: a tree is regenerated because a segment moved, and a
+    delete of anything else under `profiles/` is not that."""
+    from lazy_harness.hooks.builtins import post_tool_use_sync_claude as mod
+
+    fake_sync = MagicMock(return_value=[])
+    monkeypatch.setattr(mod, "sync_profiles", fake_sync)
+
+    call = ToolCall(
+        native_name="apply_patch",
+        operation=Operation.MODIFY_FILE,
+        deletes=(Path("/a/profiles/lazy/notes.md"),),
+    )
+    mod.main(
+        HookEvent(
+            event="post_tool_use",
+            profile="p",
+            session_id="s1",
+            cwd=Path("/work"),
+            transcript_path=None,
+            tool=call,
+        )
+    )
+
+    fake_sync.assert_not_called()
+
+
+def test_one_call_editing_and_deleting_syncs_both_trees(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The mixed blob probe 5 measured, with a delete in it. The two collections
+    are read in order — edits then deletes — and neither shadows the other."""
+    from lazy_harness.hooks.builtins import post_tool_use_sync_claude as mod
+
+    fake_sync = MagicMock(return_value=[])
+    monkeypatch.setattr(mod, "sync_profiles", fake_sync)
+
+    call = ToolCall(
+        native_name="apply_patch",
+        operation=Operation.MODIFY_FILE,
+        edits=(FileEdit(path=Path("/a/profiles/lazy/CLAUDE.head.md")),),
+        deletes=(Path("/b/profiles/_common/codex.md"),),
+    )
+    mod.main(
+        HookEvent(
+            event="post_tool_use",
+            profile="p",
+            session_id="s1",
+            cwd=Path("/work"),
+            transcript_path=None,
+            tool=call,
+        )
+    )
+
+    assert [c[0][0] for c in fake_sync.call_args_list] == [
+        Path("/a/profiles"),
+        Path("/b/profiles"),
+    ]
+
+
 def test_swallows_sync_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     """If sync_profiles raises, the hook still abstains — never block the agent."""
     from lazy_harness.hooks.builtins import post_tool_use_sync_claude as mod

@@ -422,9 +422,21 @@ def main(event: HookEvent) -> HookDecision:
         subject = tool.command or ""
         decision = should_block(subject, _load_allowlist())
     elif tool.operation in (Operation.READ_FILE, Operation.MODIFY_FILE):
-        paths = tool.paths
-        subject = str(paths[0]) if paths else ""
-        decision = should_block_path(subject)
+        # Every path, not `paths[0]`. Under Claude Code the two are the same —
+        # `reads` and `edits` are never both populated and `edits` never holds
+        # more than one entry — but Codex's `apply_patch` delivers a multi-file
+        # blob as one call (probe 5), so since the native edit path landed,
+        # every path after the first went unexamined. ADR-046 D5: a delete
+        # joins `paths` last, which makes it the entry most likely to be the
+        # one skipped, and deleting a protected file is worse than editing it.
+        #
+        # First match wins, so one call still yields one block message.
+        subject, decision = "", None
+        for path in tool.paths:
+            subject = str(path)
+            decision = should_block_path(subject)
+            if decision is not None:
+                break
     else:
         return HookDecision()
     if decision is None:
