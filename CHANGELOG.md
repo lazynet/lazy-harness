@@ -1,5 +1,47 @@
 # Changelog
 
+## [0.67.2](https://github.com/lazynet/lazy-harness/compare/v0.67.1...v0.67.2) (2026-09-16)
+
+
+### Bug Fixes
+
+* fire the exec timeout on the agent's progress, not a wall clock ([#321](https://github.com/lazynet/lazy-harness/issues/321)) ([b994a89](https://github.com/lazynet/lazy-harness/commit/b994a89efeac6cad71594644271534d5dd84076f))
+* key the matcher-coverage gate on declared operations, not source text ([#320](https://github.com/lazynet/lazy-harness/issues/320)) ([5bb6853](https://github.com/lazynet/lazy-harness/commit/5bb6853cfae22726ef81afa78112e9a48fd3f277))
+* make the queue and metrics readers resolve the profile their writers use ([#313](https://github.com/lazynet/lazy-harness/issues/313)) ([1425ccc](https://github.com/lazynet/lazy-harness/commit/1425ccc643ed360e1b9409da504ade5ea5d21668))
+* serialise PreCompact additional context as plain text ([#305](https://github.com/lazynet/lazy-harness/issues/305)) ([65511a1](https://github.com/lazynet/lazy-harness/commit/65511a19276527a4f58eb7ed305609acfc3b0aa1))
+
+
+### Refactors
+
+* collapse the builtin migration flag and its second dispatch ([#330](https://github.com/lazynet/lazy-harness/issues/330)) ([939e258](https://github.com/lazynet/lazy-harness/commit/939e258702eae9b3be71c9cd0c12b7059f46b176))
+* migrate compound-loop onto the HookEvent contract ([#311](https://github.com/lazynet/lazy-harness/issues/311)) ([df737e5](https://github.com/lazynet/lazy-harness/commit/df737e5e6e75939bd1dbb78332e0ebc6a7f9c849))
+* migrate herdr-context-gauge onto the HookEvent contract ([#319](https://github.com/lazynet/lazy-harness/issues/319)) ([3249c0e](https://github.com/lazynet/lazy-harness/commit/3249c0e8a7a60edc4f53492d5d92a25972804c92))
+* migrate post-tool-use-ansible-lint onto the HookEvent contract ([#324](https://github.com/lazynet/lazy-harness/issues/324)) ([7d4f0cc](https://github.com/lazynet/lazy-harness/commit/7d4f0cc63dd6a31b1f0ab32d2e470686f8f5a5e7))
+* migrate post-tool-use-format onto the HookEvent contract ([#322](https://github.com/lazynet/lazy-harness/issues/322)) ([005edd4](https://github.com/lazynet/lazy-harness/commit/005edd451b2a6b9cbd2e2196b8a2022b231258f8))
+* migrate post-tool-use-sync-claude onto the HookEvent contract ([#323](https://github.com/lazynet/lazy-harness/issues/323)) ([4cc5506](https://github.com/lazynet/lazy-harness/commit/4cc550639c21eb7ea8c4c9bf98332aaafe505c95))
+* migrate pre-compact onto the HookEvent contract ([#314](https://github.com/lazynet/lazy-harness/issues/314)) ([75bedaa](https://github.com/lazynet/lazy-harness/commit/75bedaa3d19453b8aadb14cbdf74a6fee7159f97))
+* migrate pre-tool-use-git-scope onto the HookEvent contract ([#326](https://github.com/lazynet/lazy-harness/issues/326)) ([61fb5f0](https://github.com/lazynet/lazy-harness/commit/61fb5f0a5178a44044c66cdb77580b4ce53516cb))
+* migrate pre-tool-use-memory-size onto the HookEvent contract ([#327](https://github.com/lazynet/lazy-harness/issues/327)) ([571d0bb](https://github.com/lazynet/lazy-harness/commit/571d0bb2b898d4508b84f0c470b5c1428e54e763))
+* migrate pre-tool-use-read-size onto the HookEvent contract ([#325](https://github.com/lazynet/lazy-harness/issues/325)) ([d1adb76](https://github.com/lazynet/lazy-harness/commit/d1adb76a2cf4298e12793280b59dea9d8437b189))
+* migrate session-end to the HookEvent contract ([#310](https://github.com/lazynet/lazy-harness/issues/310)) ([d50dcb0](https://github.com/lazynet/lazy-harness/commit/d50dcb0513f24b326237f520eb2b205362202b75))
+* migrate session-export onto the HookEvent contract ([#309](https://github.com/lazynet/lazy-harness/issues/309)) ([363d0e7](https://github.com/lazynet/lazy-harness/commit/363d0e782929bcb25ba898ec1e51b09f070d1283))
+* migrate session-start-preflight onto the HookEvent contract ([#315](https://github.com/lazynet/lazy-harness/issues/315)) ([115caa4](https://github.com/lazynet/lazy-harness/commit/115caa49bbae7a9616898ac680eab1078d513d56))
+* migrate user-prompt-goal onto the HookEvent contract ([#316](https://github.com/lazynet/lazy-harness/issues/316)) ([eddbd95](https://github.com/lazynet/lazy-harness/commit/eddbd9517ce6648ba796be9a3dc1b9b11bb29928))
+* take the hook event rather than stdin in engram-persist ([#312](https://github.com/lazynet/lazy-harness/issues/312)) ([79d7d37](https://github.com/lazynet/lazy-harness/commit/79d7d379dd3ab617dfd4751faca7010e7f91752f))
+* take the transcript path rather than the payload in shared helpers ([#306](https://github.com/lazynet/lazy-harness/issues/306)) ([8008a7e](https://github.com/lazynet/lazy-harness/commit/8008a7e8496729513ff67aa8e1d50c00e54495cf))
+
+
+### Documentation
+
+* accept ADR-041 and close the step 4 contract gate ([#302](https://github.com/lazynet/lazy-harness/issues/302)) ([6c76481](https://github.com/lazynet/lazy-harness/commit/6c764811cd9cb9ed1799735532c4ac406ac78a6d))
+* correct six ADR and gate claims the step 5 migrations outdated ([#332](https://github.com/lazynet/lazy-harness/issues/332)) ([3fab60f](https://github.com/lazynet/lazy-harness/commit/3fab60f2d9df32486f2f92fb5bc5a31fd8f2df39))
+* correct the dead pre-compact transcript parser claim ([1e602f2](https://github.com/lazynet/lazy-harness/commit/1e602f2f9f34cae21cbc0a6a6bc6aefaa1e4f6e2))
+* correct two drifted claims on the hooks page ([#329](https://github.com/lazynet/lazy-harness/issues/329)) ([fffe2e3](https://github.com/lazynet/lazy-harness/commit/fffe2e34febd18ff7ae2079236e4fb13655ac0ae))
+* mark the step 5 plan's backlog-fix item as already done ([4aa3cde](https://github.com/lazynet/lazy-harness/commit/4aa3cde02bde2669038b7e7b5a7e4e116e0aabd9))
+* plan step 5 and record the three narrowings it inherits ([#304](https://github.com/lazynet/lazy-harness/issues/304)) ([083d1b2](https://github.com/lazynet/lazy-harness/commit/083d1b20d530c0a8c90e7601051bb24873c45b6b))
+* raise wave A's four cross-cutting findings into the step 5 plan ([db9d6ba](https://github.com/lazynet/lazy-harness/commit/db9d6ba955ccd91cbc3202b29baed5a8950a9f4d))
+* rightsize CLAUDE.md by moving gate evidence into the incident ledger ([#331](https://github.com/lazynet/lazy-harness/issues/331)) ([798016c](https://github.com/lazynet/lazy-harness/commit/798016c82c3495ac209a27b60a267c213a72d9a6))
+
 ## [0.67.1](https://github.com/lazynet/lazy-harness/compare/v0.67.0...v0.67.1) (2026-09-15)
 
 
