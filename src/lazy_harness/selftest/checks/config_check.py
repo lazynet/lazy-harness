@@ -2,10 +2,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from lazy_harness.agents.registry import list_agents
 from lazy_harness.core.config import ConfigError, load_config, save_config
 from lazy_harness.selftest.result import CheckResult, CheckStatus
 
-SUPPORTED_AGENTS = {"claude-code"}
+#: Derived from the registry rather than listed by hand. The registry is what
+#: `get_agent` refuses against, so a second hand-maintained set answers "is this
+#: agent usable" twice — and it had already drifted: `codex` resolves, deploys
+#: and runs, and this check failed every config naming it.
+SUPPORTED_AGENTS = set(list_agents())
 
 
 def check_config(*, config_path: Path) -> list[CheckResult]:
@@ -51,13 +56,26 @@ def check_config(*, config_path: Path) -> list[CheckResult]:
     else:
         results.append(CheckResult(group=group, name="has-profiles", status=CheckStatus.PASSED))
 
-    if cfg.agent.type not in SUPPORTED_AGENTS:
+    # Every agent identifier the config declares, not just the global default.
+    # `[profiles.<name>].agent` is user-supplied too, and a typo there raises
+    # `AgentNotFoundError` at deploy and hook time while this check reported the
+    # config valid.
+    unknown = [f"[agent].type: {cfg.agent.type}"] if cfg.agent.type not in SUPPORTED_AGENTS else []
+    unknown += [
+        f"[profiles.{name}].agent: {entry.agent}"
+        for name, entry in cfg.profiles.items.items()
+        if entry.agent and entry.agent not in SUPPORTED_AGENTS
+    ]
+    if unknown:
         results.append(
             CheckResult(
                 group=group,
                 name="agent-valid",
                 status=CheckStatus.FAILED,
-                message=f"unknown agent type: {cfg.agent.type}",
+                message=(
+                    f"unknown agent type — {'; '.join(unknown)}. "
+                    f"Registered: {', '.join(sorted(SUPPORTED_AGENTS))}"
+                ),
             )
         )
     else:
