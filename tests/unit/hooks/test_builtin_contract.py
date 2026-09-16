@@ -60,11 +60,18 @@ def _get_agent_calls(source: str) -> list[int]:
     """Line numbers of every `get_agent(...)` call in one module.
 
     Matched on the *call* rather than on its argument. A grep for
-    `get_agent("claude-code")` found seven of the ten sites step 5 removed and
-    missed the two spelled `get_agent(cfg.agent.type if cfg is not None else
-    "claude-code")` -- so the count would have depended on how the next one was
-    written. Both call shapes are matched, bare and attribute-qualified, because
-    `registry.get_agent(...)` is the same global resolution one import away.
+    `get_agent("claude-code")` missed the sites spelled
+    `get_agent(cfg.agent.type if cfg is not None else "claude-code")` --
+    `engram_persist.py` and `pre_compact.py` -- so the count would have depended
+    on how the next one was written. Both call shapes are matched, bare and
+    attribute-qualified, because `registry.get_agent(...)` is the same global
+    resolution one import away.
+
+    No total is quoted here on purpose. The plan this came from says "seven of
+    the ten", which does not add up with the two it then names, and the sites
+    were removed across PRs #314-#327 rather than in one diff, so the figure is
+    not auditable from any one tree. What is auditable is the answer this test
+    gives today, and it is zero.
     """
     return sorted(
         node.lineno
@@ -85,8 +92,12 @@ def test_no_builtin_resolves_its_agent_globally() -> None:
     asks it writes its log, its cursor and its session export under whichever
     agent the global key happens to name -- another profile's directory, live.
     `_shared.agent_dir_for(cfg, profile)` is the one importable answer, and
-    `_shared.py` is excluded here because it *is* that helper: its single
-    `get_agent` call is the documented no-config degradation.
+    `_shared.py` is excluded here because it *is* that helper. The exclusion is
+    the whole file and covers **two** call sites, not one: `agent_dir_for`'s
+    documented no-config degradation, and `profile_name`'s read of
+    `cfg.agent.type` to learn which environment variable names the config dir —
+    that one resolves globally by construction, because answering "which profile
+    is this" is what it is for, and it has no profile to be given.
     """
     offenders = {
         path.name: lines

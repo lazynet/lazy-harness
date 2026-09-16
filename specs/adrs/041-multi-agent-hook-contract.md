@@ -222,6 +222,40 @@ running the path — recording the command, its exit code, and its output. Where
 probe could be satisfied by a name alone, a control is run to prove the probe
 discriminates.
 
+## Evolution
+
+**2026-09-16 (PR #330): the known gap this ADR records is closed, and the
+mechanism it describes no longer exists.**
+
+Under **Consequences**, *"The unmigrated builtins are counted, not failed"*
+describes fifteen builtins reaching `main()` through a second branch in
+`cli/hooks_cmd.py` that called `main_fn()` with no arguments and discarded the
+`--profile` value. That branch, the `BuiltinHookSpec.migrated` field both entry
+points routed on, and the `PRE_RUNNER_AGENT` constant naming the wire format it
+assumed are all deleted. Every builtin now takes `main(event)` and reaches it
+through `hooks.runner.run_hook`, which is handed `resolve_profile(profile)`.
+
+The gate's own scope followed. It derived its asserted and known-gap sets from
+`builtin_migrated()`; with no flag there is no gap set to derive, so rather than
+leave a block that is permanently empty the script asserts **coverage**: the two
+lanes plus its skip list must account for every name `list_builtin_hooks()`
+returns, no registry row may arrive without a lane, and every skipped name must
+still be in the registry. Any of the three failing exits 2 before the gate runs,
+because a name that fell out of a lane cannot fail a check it is never fed.
+
+Running that gate surfaced a defect this ADR's numbers had already drifted past:
+`pre-tool-use-git-scope` was being asserted for a `hooks.log` line it has never
+written — it refuses on stderr and that is its whole output. It shares a payload
+fixture with `pre-tool-use-security`, which *does* log its refusals, and the
+adjacency put a sink assertion on the hook with no sink. It joins the skip list
+as the seventh entry, on the same measured criterion as the other six.
+
+The first two limits under **Consequences** are unaffected: the isolation half
+still asserts fewer builtins than are migrated, because some write nothing this
+gate can watch, and no single binary has yet passed all four properties in one
+run. The second is not closed here — it needs a released binary, and re-running
+the gate against one is tracked separately.
+
 ## References
 
 - `specs/designs/2026-09-13-multi-agent-harness-design.md` — the contract, the

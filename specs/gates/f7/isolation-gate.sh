@@ -280,7 +280,7 @@ SKIPPED_HOOKS=(
 )
 is_skipped() { case " ${SKIPPED_HOOKS[*]} " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
-declare -a CODEX_LANE=() CLAUDE_LANE=() SKIPPED_SEEN=() REGISTERED=()
+declare -a CODEX_LANE=() CLAUDE_LANE=() SKIPPED_SEEN=() REGISTERED=() UNLANED=()
 while read -r name lane; do
   [ -n "$name" ] || continue
   REGISTERED+=("$name")
@@ -288,16 +288,34 @@ while read -r name lane; do
     SKIPPED_SEEN+=("$name")
     continue
   fi
-  [ "$lane" = claude ] && CLAUDE_LANE+=("$name") || CODEX_LANE+=("$name")
+  # A `case`, not `[ "$lane" = claude ] && A || B`. That idiom has no third
+  # outcome: anything not spelled `claude` lands in the codex lane, so an
+  # unlaned row was silently absorbed there and the arithmetic below could
+  # never see it. Measured against a registry emitting a hook with no lane: the
+  # gate ran to completion and failed with `did not reach .../profile-codex;
+  # found: (no entry written anywhere the gate watches)` — a tool-reading hook
+  # abstaining correctly under the codex adapter, which is precisely the
+  # false-leak diagnostic the lane split exists to eliminate. A silent fallback
+  # here does not lose a check, it reintroduces the defect.
+  case "$lane" in
+    claude) CLAUDE_LANE+=("$name") ;;
+    codex)  CODEX_LANE+=("$name") ;;
+    *)      UNLANED+=("$name [lane=${lane:-<none>}]") ;;
+  esac
 done <<< "$REGISTRY"
 
 # COVERAGE. Asserted before anything runs, because every later assertion is
 # scoped by these lanes: a name that silently fell out of them cannot fail a
 # check it is never fed to, and a green run would then be reporting on a smaller
-# question than the one it names. Both directions, and neither is the other's
-# restatement — the first catches a builtin added without a lane, the second a
-# skip entry left behind by a hook that was renamed or deleted.
+# question than the one it names. Three directions, none a restatement of
+# another — a builtin the registry emits with no lane, a builtin that reached
+# neither a lane nor the skip list, and a skip entry left behind by a hook that
+# was renamed or deleted. Each was proved by making it fire.
 COVERAGE_ERRORS=0
+if [ "${#UNLANED[@]}" -gt 0 ]; then
+  echo "harness error: registry rows with no lane: ${UNLANED[*]}" >&2
+  COVERAGE_ERRORS=$((COVERAGE_ERRORS + 1))
+fi
 in_scope=$(( ${#CODEX_LANE[@]} + ${#CLAUDE_LANE[@]} + ${#SKIPPED_SEEN[@]} ))
 if [ "$in_scope" -ne "${#REGISTERED[@]}" ]; then
   echo "harness error: $in_scope of ${#REGISTERED[@]} registered builtins accounted for" >&2
