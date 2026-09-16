@@ -128,7 +128,7 @@ Each `[profiles.<name>]` sub-table:
 | `config_dir`    | string (path)   | `""`    | yes\*    | Agent config directory for this profile. `~` is expanded.                             |
 | `roots`         | list of strings | `[]`    | no       | Filesystem roots that resolve to this profile (used by `lh run` and `profile envrc`). |
 | `lazynorth_doc` | string          | `""`    | no       | Per-profile LazyNorth doc filename. Overrides `[lazynorth].universal_doc`.            |
-| `agent`         | string          | `""`    | no       | Agent adapter this profile runs. Empty inherits `[agent].type`. Registered values: `claude-code`, `codex` (a throwaway adapter for contract testing, not a daily driver), `null`. |
+| `agent`         | string          | `""`    | no       | Agent adapter this profile runs. Empty inherits `[agent].type`. Registered values: `claude-code`, `codex` (a throwaway adapter for contract testing, not a daily driver), `copilot` (no edit guards and no context injection today — no tool has been observed editing a file, and `additionalContext` is unverified; see [ADR-047](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/047-copilot-adapter.md)), `null`. |
 | `harness_binary` | string         | `""`    | no       | Launcher this profile's generated hook commands name. Empty inherits `lh`. A bare name resolved from `PATH`, never a path. |
 
 \* `config_dir` has no parser-level requirement, but everything downstream (`lh run`, `lh deploy`, `lh profile envrc`) is meaningless without it.
