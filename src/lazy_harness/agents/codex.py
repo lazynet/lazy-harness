@@ -1,14 +1,32 @@
-"""Codex CLI adapter — the throwaway that runs step 4's contract gate.
+"""Codex CLI adapter — the whole eighteen-builtin surface, not step 4's gate.
 
-Deliberately the smallest thing that can carry three builtins to a real Codex
-session. The adapter step 9 ships is a different object; this one exists to make
-the canonical hook contract fail where it is going to fail, while three hooks
-depend on it instead of eighteen.
+The throwaway this replaces carried three builtins to a real Codex session to
+make the canonical hook contract fail where it was going to fail. It did, twice
+over: the contract froze at ADR-041, and the F8 translation gate then named five
+builtins that deployed, ran, exited 0 and enforced nothing, because the
+`ToolCall` this adapter handed them came back with the field they gate on
+emptied. Closing that is what makes this the real one.
 
 Everything here is pinned to behaviour **observed** against `codex-cli 0.154.0`
 with `CODEX_HOME` pointed at a disposable directory. Where the binary was not
 exercised, the adapter declares nothing rather than mirroring Claude Code: a
-guess that reads as a capability is what the gate is supposed to catch.
+guess that reads as a capability is the failure this file exists to avoid, and
+the previous revision of the design shipped six of them.
+
+Two absences are decisions and not gaps, both recorded so a later reader does
+not close them by symmetry with `ClaudeCodeAdapter`:
+
+`SessionPinningAgent` is **unimplementable** here. `codex exec` at 0.154.0 has
+no `--session-id`; six candidate spellings were rejected by the argument parser,
+`ConfigToml`'s 101 fields carry no session id, and the decisive behavioural run
+is `CODEX_SESSION_ID=<fixed uuid> codex exec --json` exiting 0 while
+`thread.started` carries a UUIDv7 Codex generated. The id is born on Codex's
+side, so the harness reconciles it after the fact or not at all.
+
+`HeadlessAgent` is **unclaimed**, which is weaker and deliberate. `codex exec
+--json` is read off the binary's strings and has never been driven end to end by
+the harness; declaring the Protocol would make `lh exec` route work to a parser
+nobody has fed. It waits on a run, not on a design decision.
 """
 
 from __future__ import annotations
@@ -77,7 +95,7 @@ class CodexConfigUnreadableError(RuntimeError):
 
     def __init__(self, detail: str) -> None:
         super().__init__(
-            f"{_CONFIG_FILE} does not parse as TOML ({detail}). It carries project "
+            f"{CONFIG_FILE} does not parse as TOML ({detail}). It carries project "
             f"trust and hook approvals that cannot be reconstructed, so it is left "
             f"untouched. Fix the file and re-run."
         )
@@ -285,11 +303,15 @@ _TOOL_OPERATIONS: dict[str, Operation] = {
 # the key is not, so moving a hook from `hooks.json` to `config.toml` (or back)
 # re-prompts for every hook even though nothing about the hook changed. Switching
 # representation costs a full re-trust; it is not a refactor.
-_HOOKS_FILE = "hooks.json"
+#
+# Public because `agents/codex_trust.py` reads the same two documents back:
+# the trust key embeds the declaring file's path, so a second spelling of
+# either name is a report keyed on a file nothing writes.
+HOOKS_FILE = "hooks.json"
 
 # The file Codex writes to *itself*, mid-session. The adapter merges into it
 # and never owns it — see `_plan_mcp` for what that costs and buys.
-_CONFIG_FILE = "config.toml"
+CONFIG_FILE = "config.toml"
 _MCP_SECTION = "mcp_servers"
 
 # The only free-text slot the document has: the top level accepts `description`
@@ -302,8 +324,69 @@ _MCP_SECTION = "mcp_servers"
 _DESCRIPTION = "Managed by lazy-harness. Edits are overwritten on the next deploy."
 
 
+def trust_keys(hooks_file: Path, raw: str) -> tuple[tuple[tuple[str, str], ...], tuple[str, ...]]:
+    """Codex's trust-state key for every handler a `hooks.json` declares.
+
+    The formula is `<absolute path of the declaring file>:<snake_case event>:<group
+    index>:<handler index>`, **measured** on 0.154.0 by the probe that found a
+    byte-identical handler reading `Trusted` from `hooks.json` while the
+    `config.toml` declaration of the same thing read `new · review required`,
+    both carrying the same `trusted_hash`. Two details that probe settled and
+    this function depends on: the key uses the **snake_case** event name even
+    though the declaration must be PascalCase — both casings live in one file,
+    in different roles — and both indices are *positions*, which is why a
+    redeploy that reorders a group re-prompts for everything below it.
+
+    The path is resolved: a relative one keys every hook under a string Codex
+    never wrote, and every hook would then read untrusted forever.
+
+    Returns `(declared, ignored)`. `declared` pairs each key with a human label,
+    because a key is an absolute path plus three integers and says nothing to a
+    reader. `ignored` names the event keys in the document that this Codex does
+    not deliver — a hand-edited file can carry anything, and silently skipping
+    one would report "all trusted" over a declaration nobody looked at.
+
+    Anything that is not the expected shape declares nothing. This reads a file
+    on the user's disk to build a diagnostic; raising here would take the twelve
+    other sections of `lh doctor` down with it.
+    """
+    try:
+        document = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return (), ()
+    if not isinstance(document, dict):
+        return (), ()
+    hooks = document.get("hooks")
+    if not isinstance(hooks, dict):
+        return (), ()
+
+    canonical = {support.native_name: name for name, support in _HOOK_EVENTS.items()}
+    declaring = hooks_file.resolve()
+    declared: list[tuple[str, str]] = []
+    ignored: list[str] = []
+    for native, groups in hooks.items():
+        event = canonical.get(str(native))
+        if event is None:
+            ignored.append(str(native))
+            continue
+        if not isinstance(groups, list):
+            continue
+        for group_index, group in enumerate(groups):
+            handlers = group.get("hooks") if isinstance(group, dict) else None
+            if not isinstance(handlers, list):
+                continue
+            for handler_index in range(len(handlers)):
+                declared.append(
+                    (
+                        f"{declaring}:{event}:{group_index}:{handler_index}",
+                        f"{event}[{group_index}]",
+                    )
+                )
+    return tuple(declared), tuple(ignored)
+
+
 class CodexAdapter:
-    """Codex CLI, as much of it as step 4's gate needs."""
+    """Codex CLI — the full `AgentAdapter` and `ConfigPlanner` surface."""
 
     @property
     def name(self) -> str:
@@ -444,7 +527,7 @@ class CodexAdapter:
         no second home: `[mcp_servers.<id>]` is where Codex reads servers, so the
         only choice there is to merge carefully or not to ship them at all.
         """
-        return [Path(_HOOKS_FILE), Path(_CONFIG_FILE)]
+        return [Path(HOOKS_FILE), Path(CONFIG_FILE)]
 
     def plan_config(
         self,
@@ -468,10 +551,10 @@ class CodexAdapter:
         whose top level accepts only `description` and `hooks`.
         """
         ops: list[WriteOp] = []
-        hooks_op = self._plan_hooks(hooks, existing.get(Path(_HOOKS_FILE)))
+        hooks_op = self._plan_hooks(hooks, existing.get(Path(HOOKS_FILE)))
         if hooks_op is not None:
             ops.append(hooks_op)
-        mcp_op = self._plan_mcp(servers, existing.get(Path(_CONFIG_FILE)))
+        mcp_op = self._plan_mcp(servers, existing.get(Path(CONFIG_FILE)))
         if mcp_op is not None:
             ops.append(mcp_op)
         return ops
@@ -494,15 +577,15 @@ class CodexAdapter:
         groups = self._hook_groups(hooks)
         if not groups:
             if _is_harness_written(existing_raw):
-                return WriteOp(artifact=None, relative_path=Path(_HOOKS_FILE))
+                return WriteOp(artifact=None, relative_path=Path(HOOKS_FILE))
             return None
         document = {"description": _DESCRIPTION, "hooks": groups}
         return WriteOp(
             artifact=ConfigArtifact(
-                relative_path=Path(_HOOKS_FILE),
+                relative_path=Path(HOOKS_FILE),
                 content=json.dumps(document, indent=2) + "\n",
             ),
-            relative_path=Path(_HOOKS_FILE),
+            relative_path=Path(HOOKS_FILE),
         )
 
     def _plan_mcp(self, servers: dict[str, dict], existing_raw: str | None) -> WriteOp | None:
@@ -546,10 +629,10 @@ class CodexAdapter:
 
         return WriteOp(
             artifact=ConfigArtifact(
-                relative_path=Path(_CONFIG_FILE),
+                relative_path=Path(CONFIG_FILE),
                 content=tomlkit.dumps(document),
             ),
-            relative_path=Path(_CONFIG_FILE),
+            relative_path=Path(CONFIG_FILE),
             preserved=preserved,
         )
 
@@ -584,11 +667,23 @@ class CodexAdapter:
     # --- the rest of the adapter surface ---
 
     def global_config_link(self) -> Path | None:
-        """None, deliberately.
+        """None — and the reason is no longer the throwaway's.
 
-        Step 4 runs against a throwaway profile precisely so a failing gate
-        cannot take a daily one with it. Linking `~/.codex` at the user's real
-        Codex home would reintroduce exactly that blast radius.
+        Step 4 answered `None` to keep a failing gate from taking a daily
+        profile with it, and `core/paths.py:162-171` records that the reasoning
+        did not hold: resolution's last resort is `~/.<agent name>`, so a hook
+        running under a Codex profile with no `CODEX_HOME` set wrote into
+        `~/.codex` anyway — the directory `None` was supposedly protecting.
+
+        The answer survives its justification because a better one arrived.
+        `ensure_symlink` **renames an existing target to `<name>.bak`** before
+        linking (`deploy/symlinks.py:16-21`), and `~/.codex` is not an empty
+        mount point: it holds `auth.json`, and the `config.toml` carrying the
+        `[hooks.state]` approvals the user granted by hand and the `[projects.*]`
+        trust levels beside them. None of that is reconstructible, which is the
+        same reason `_plan_mcp` merges that file instead of owning it. Claude
+        Code can link `~/.claude` because the harness owns what is under it;
+        Codex's home is shared with the vendor.
         """
         return None
 

@@ -1,4 +1,4 @@
-"""The throwaway `CodexAdapter` — step 4's contract gate.
+"""`CodexAdapter` — the full surface, not step 4's throwaway.
 
 Every payload, envelope and config shape asserted here was *observed* against
 `codex-cli 0.154.0` with `CODEX_HOME` pointed at a disposable directory. Where

@@ -127,3 +127,70 @@ def test_null_adapter_does_not_mirror_the_displaced_generators() -> None:
     adapter = get_agent("null")
     assert not hasattr(adapter, "generate_hook_config")
     assert not hasattr(adapter, "generate_mcp_config")
+
+
+# --- the optional Protocols an adapter may decline ------------------------
+
+
+def test_codex_declares_neither_optional_protocol() -> None:
+    """Two absences, two different reasons, and neither is an oversight.
+
+    `SessionPinningAgent` is unimplementable: `codex exec` at 0.154.0 offers no
+    `--session-id`, and `CODEX_SESSION_ID=<uuid> codex exec --json` exits 0 while
+    `thread.started` carries a UUIDv7 Codex generated. `HeadlessAgent` is merely
+    unclaimed: `codex exec --json` is read off the binary's strings and has never
+    been driven end to end, so declaring it would route `lh exec` at a parser
+    nobody has fed. Closing either by symmetry with `ClaudeCodeAdapter` is the
+    guess this asserts against.
+    """
+    from lazy_harness.agents.base import HeadlessAgent, SessionPinningAgent
+    from lazy_harness.agents.registry import get_agent
+
+    codex = get_agent("codex")
+    assert not isinstance(codex, SessionPinningAgent)
+    assert not isinstance(codex, HeadlessAgent)
+
+
+def test_claude_code_still_declares_both() -> None:
+    """The control for the assertion above: `isinstance` against a
+    `runtime_checkable` Protocol only checks method *names*, so a test that only
+    ever sees `False` would pass against a Protocol nobody satisfies."""
+    from lazy_harness.agents.base import HeadlessAgent, SessionPinningAgent
+    from lazy_harness.agents.registry import get_agent
+
+    claude = get_agent("claude-code")
+    assert isinstance(claude, SessionPinningAgent)
+    assert isinstance(claude, HeadlessAgent)
+
+
+def test_the_sentinel_refuses_a_verdict_rather_than_emitting_nothing() -> None:
+    """`NullAdapter`'s refusal path, exercised through the shipped sentinel.
+
+    It delivers no event and therefore honours no verdict. Emitting an empty
+    `HookOutput` for one would read, on a blocking hook, as approval — the exact
+    shape of failure ADR-041 records for Codex's own invalid envelopes. The
+    match is anchored on the event name the caller passed and on the agent's own
+    name, which are the two facts a reader needs to locate the misconfiguration;
+    the exception carries no structured attributes to assert on.
+    """
+    from lazy_harness.agents.base import HookDecision, Verdict
+    from lazy_harness.agents.registry import get_agent
+
+    adapter = get_agent("null")
+    event = adapter.parse_hook_input("pre_tool_use", {}, profile="p")
+
+    with pytest.raises(ValueError, match=r"null honours no verdict on 'pre_tool_use'"):
+        adapter.format_hook_output(event, HookDecision(verdict=Verdict.DENY, reason="no"))
+
+
+def test_the_sentinel_abstains_without_raising() -> None:
+    """The other half: no verdict is not an error, it is the ordinary case."""
+    from lazy_harness.agents.base import HookDecision
+    from lazy_harness.agents.registry import get_agent
+
+    adapter = get_agent("null")
+    event = adapter.parse_hook_input("pre_tool_use", {}, profile="p")
+
+    output = adapter.format_hook_output(event, HookDecision())
+
+    assert (output.stdout, output.stderr, output.exit_code) == (None, "", 0)

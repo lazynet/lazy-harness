@@ -728,3 +728,146 @@ def test_doctor_reads_the_memory_dir_the_hook_writes(
     )
 
     assert _project_memory_dir(get_agent("claude-code"), cfg, "alpha") == written
+
+
+# --- Codex hook trust -----------------------------------------------------
+
+
+def _codex_profile(tmp_path: Path, *, hooks: bool = True) -> Path:
+    """A Codex profile with a deployed `hooks.json`, and the config naming it."""
+    from lazy_harness.agents.base import HookEntry
+    from lazy_harness.agents.codex import CodexAdapter
+
+    profile_dir = tmp_path / "codex-home"
+    profile_dir.mkdir()
+    if hooks:
+        ops = CodexAdapter().plan_config(
+            {"pre_tool_use": [HookEntry(command="lh hook pre-tool-use-security --profile cx")]},
+            {},
+            {},
+        )
+        assert ops[0].artifact is not None
+        (profile_dir / "hooks.json").write_text(ops[0].artifact.content)
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        '[harness]\nversion = "1"\n'
+        '[agent]\ntype = "claude-code"\n'
+        '[profiles]\ndefault = "cx"\n\n'
+        f'[profiles.cx]\nconfig_dir = "{profile_dir}"\nagent = "codex"\n'
+        '[knowledge]\nroot = ""\n'
+    )
+    return cfg
+
+
+def test_doctor_reports_an_untrusted_codex_hook_and_never_calls_one_trusted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The state right after `lh deploy`, and the one Codex expresses as silence.
+
+    `trusted` is absent from the vocabulary on purpose: establishing it needs
+    the hash Codex recomputes, which the harness declines to reimplement.
+    """
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    cfg = _codex_profile(tmp_path)
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
+
+    output = _unwrapped(CliRunner().invoke(doctor, []).output)
+
+    assert "Codex hook trust" in output
+    assert "cx — 1 of 1 deployed hook untrusted" in output
+    assert "trusted hook" not in output
+
+
+def test_doctor_calls_a_stored_hash_unknown_rather_than_trusted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from lazy_harness.agents.codex import trust_keys
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    cfg = _codex_profile(tmp_path)
+    hooks_file = tmp_path / "codex-home" / "hooks.json"
+    declared, _ = trust_keys(hooks_file, hooks_file.read_text())
+    (tmp_path / "codex-home" / "config.toml").write_text(
+        f'[hooks.state."{declared[0][0]}"]\ntrusted_hash = "sha256:abc"\n'
+    )
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
+
+    output = _unwrapped(CliRunner().invoke(doctor, []).output)
+
+    assert "1 hook carries a stored hash" in output
+    assert "whether it still matches is not determinable" in output
+    assert "untrusted" not in output
+
+
+def test_doctor_names_an_orphaned_trust_entry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The one state the harness establishes alone: the key is position-scoped,
+    so a redeploy that drops a group strands its approval."""
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    cfg = _codex_profile(tmp_path)
+    hooks_file = tmp_path / "codex-home" / "hooks.json"
+    (tmp_path / "codex-home" / "config.toml").write_text(
+        f'[hooks.state."{hooks_file}:session_start:4:0"]\ntrusted_hash = "sha256:abc"\n'
+    )
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
+
+    output = _unwrapped(CliRunner().invoke(doctor, []).output)
+
+    assert "1 orphaned trust entry" in output
+
+
+def test_doctor_says_so_when_the_trust_state_cannot_be_read(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Reporting "0 untrusted" over an unreadable file looks like the good
+    outcome, which makes it the worst of the three."""
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    cfg = _codex_profile(tmp_path)
+    (tmp_path / "codex-home" / "config.toml").write_text("[hooks.state\nbroken")
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
+
+    output = _unwrapped(CliRunner().invoke(doctor, []).output)
+
+    assert "trust state not readable" in output
+    assert "untrusted" not in output
+
+
+def test_doctor_trust_reports_without_failing_the_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Untrusted is the *expected* state right after a deploy, so failing on it
+    would make the documented happy path red. Same rule as `Hook signals`."""
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    cfg = _codex_profile(tmp_path)
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
+
+    result = CliRunner().invoke(doctor, [])
+
+    assert "Codex hook trust" in _unwrapped(result.output)
+    assert result.exit_code == 0
+
+
+def test_doctor_omits_the_section_for_a_profile_with_no_deployed_hooks(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    cfg = _codex_profile(tmp_path, hooks=False)
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
+
+    assert "Codex hook trust" not in _unwrapped(CliRunner().invoke(doctor, []).output)
+
+
+def test_doctor_omits_the_section_entirely_without_a_codex_profile(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: _write_config(tmp_path))
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    assert "Codex hook trust" not in _unwrapped(CliRunner().invoke(doctor, []).output)
