@@ -8,6 +8,16 @@
 # F7_FAKE_FIXED is the set of hooks that resolve their evidence dir from the
 # INVOKING PROFILE's config_dir. Everything else resolves globally, which is what
 # a partial fix looks like. The literal `ALL` means every hook is fixed.
+#
+# IT ALSO EMULATES THE ADAPTER'S ABSTENTION, and that is not decoration. Until
+# 2026-09-15 this shim logged a line for every hook on every payload, so BOTH
+# fixtures passed their directions while the real binary failed 28 assertions:
+# the gate fed a Claude Code payload to a profile declaring `agent = "codex"`,
+# `CodexAdapter._TOOL_OPERATIONS` maps only `Bash -> RUN_COMMAND`
+# (`codex.py:92`), and every hook gating on `operation is MODIFY_FILE` abstained
+# and wrote nothing. A shim that always writes cannot see that, which is how the
+# defect shipped. `abstains` below reproduces it, so the fixtures now cover the
+# failure class the gate was repaired for.
 set -uo pipefail
 
 FIXED="${F7_FAKE_FIXED:?F7_FAKE_FIXED must be set by the calling shim}"
@@ -24,11 +34,32 @@ is_fixed() {
 }
 
 CFG="${LH_CONFIG_DIR:-}/config.toml"
+
+profile_field() {
+  [ -f "$CFG" ] || return 0
+  awk -v p="[profiles.$PROFILE]" -v k="$1" '
+    $0==p {inb=1; next} /^\[/ {inb=0}
+    inb && $1==k {gsub(/.*= *"|"$/,""); print; exit}' "$CFG"
+}
+
+# The adapter's abstention, emulated. A hook reasoning about a tool call reads
+# `event.tool.operation`, and the codex adapter resolves an operation for `Bash`
+# alone — so under a codex profile any other tool arrives as
+# `ToolCall(operation=None, edits=())` and the hook returns an empty decision
+# without touching a file. A payload naming no tool at all is a lifecycle event,
+# which crosses both adapters unchanged.
+abstains() {
+  local tool
+  tool="$(printf '%s' "$PAYLOAD" | sed -n 's/.*"tool_name":"\([^"]*\)".*/\1/p')"
+  [ -n "$tool" ] || return 1
+  [ "$tool" = Bash ] && return 1
+  [ "$(profile_field agent)" = codex ]
+}
+abstains && exit 0
+
 DIR=""
 if is_fixed "$HOOK" && [ -n "$PROFILE" ] && [ -f "$CFG" ] && grep -q '^\[harness\]' "$CFG" 2>/dev/null; then
-  DIR="$(awk -v p="[profiles.$PROFILE]" '
-    $0==p {inb=1; next} /^\[/ {inb=0}
-    inb && /^config_dir/ {gsub(/.*= *"|"$/,""); print; exit}' "$CFG")"
+  DIR="$(profile_field config_dir)"
 fi
 [ -z "$DIR" ] && DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"   # global / degraded fallback
 
@@ -55,7 +86,6 @@ case "$HOOK" in
   pre-tool-use-read-size)     NAME=$HOOK; MSG="unbounded read: $FP 600 lines ~9000 tokens" ;;
   post-tool-use-format)       NAME=$HOOK; MSG="ruff unavailable (FileNotFoundError), left $FP unformatted" ;;
   post-tool-use-ansible-lint) NAME=$HOOK; MSG="ansible-lint unavailable (FileNotFoundError), left $FP unchecked" ;;
-  post-tool-use-sync-claude)  NAME=$HOOK; MSG="synced $FP" ;;
   *)                          NAME=$HOOK; MSG="fired cwd=$CWD" ;;
 esac
 

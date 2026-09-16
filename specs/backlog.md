@@ -8,6 +8,7 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 
 ## Done
 
+- [x] **El gate F7 dejó de suprimir la evidencia que mide — opción 2, y la entrada del backlog estaba mal en dos puntos** — el gate corría **un** profile throwaway con `agent = "codex"` y le daba a todos los hooks un payload de Claude Code; desde el step 5 el parseo pasa por el adapter del profile invocado, así que los hooks que gatean en `operation is MODIFY_FILE` se abstenían y la sección 10 leía «no escribió nada» como fuga. Cerrado con la **opción 2**: dos lanes, `agent = "codex"` para los builtins que no declaran `operations` y `agent = "claude-code"` con `config_dir` propio para los que sí, derivados de `BuiltinHookSpec.operations` — el único read privado del script, mismo keying que `tests/unit/test_hook_matcher_coverage.py:82` (#320). La divergencia global-vs-profile se conserva en las dos: el adapter en la codex, el `config_dir` en la claude. **La entrada estaba equivocada en dos puntos y los dos cambian el arreglo.** Primero, decía «esos cinco sí tienen sink bajo el agent runtime dir, a diferencia de `stop-verify-guard`» y es **falso para los seis**: `user-prompt-goal` sinkea a la MetricsDB vía `resolve_db_path()` (`user_prompt_goal.py:73`) —el motivo textual de `stop-verify-guard`—, `herdr-context-gauge` y `stop-context-rotate` a un stamp bajo `tempfile.gettempdir()` (`herdr_context_gauge.py:123`, `stop_context_rotate.py:48`), `session-start-preflight` no escribe nada y contesta por stdout, y `post-tool-use-sync-claude` —migrado en #324, después de que se escribiera la entrada— lo dice en su propio docstring. Van a `SKIPPED_HOOKS` con el criterio ya documentado del gate, no como excepción al contrato; las dos resoluciones que sí valen quedan abiertas arriba, en canales que F7 no mira. Segundo, «los cinco hooks que leen `tool`» es más ancho que el defecto: Codex mapea `Bash -> RUN_COMMAND`, así que `pre-tool-use-security` **pasa** bajo el adapter codex y sólo los `post-tool-use-*` caen. Conteos: **28 aserciones falladas antes** (siete hooks × dos escenarios × dos modos; eran 20 cuando se escribió la entrada, #323 y #324 sumaron dos hooks), **0 después**, 36 aserciones en verde. Los dos fixtures dan sus verdicts opuestos —`fake-lh-fixed.sh` exit 0, `fake-lh-security-only.sh` exit 1— y eso **no alcanzaba como prueba**: los dos ya los daban contra el gate roto, porque `fake-lh.sh` logueaba una línea por hook en todo payload y era estructuralmente ciego a un hook que se abstiene. Ahora emula la abstención del adapter, y con eso el fixture *fixed* falla 12 aserciones contra el gate viejo — la mitad adapter del defecto, aislada de la mitad no-sink por aritmética. Sección 11d nueva, que es lo que dos profiles vivos habilitan: «escribió bajo un profile» y «escribió bajo **el** profile invocado» eran indistinguibles con uno solo; `profiles.default` nombra la lane codex a propósito y un shim que resuelve el default en vez de `--profile` la dispara. La opción 1 —medir la traducción— queda abierta arriba como gate propio. Cerrado en `fix/f7-gate-measures-isolation-only`.
 - [x] **El gate del step 4 pasó y ADR-041 quedó `accepted`** — corrido el 2026-09-15 contra el binario instalado desde el tag `v0.67.1`, nunca desde un worktree, y con el fix grepeado en site-packages antes de correrlo: el exit 0 del `uv tool install` no prueba nada, y el receipt de `uv` tenía `rev=v0.67.0` pinneado, así que un `--reinstall` pelado hubiera reinstalado la versión rota en silencio. El discriminador barato del fix es la **firma** `_log_block(decision, command, profile)`, que no puede existir sin el cambio de call site. Resultado: `PASS`, exit 0; el stdout quedó guardado como `run-0.67.1.log` al lado del script, porque el dir de la corrida (`run-f7gate178948476834223`) sólo tiene el estado generado y no preserva ni la salida ni el exit code. **El pase es compuesto y así hay que leerlo**: la corrida 1 (contra 0.66.0) falló la aserción C y sacó tres defectos (#292); la 2 (contra 0.67.0, `/tmp/step4-gate-rerun.md`) fue el **gate completo** —A, B y C1/C2/C3 pasan por `codex exec` real— y falló por la regla que ninguna corrida había mirado hasta ahí, el aislamiento del log (#300); la 3 es la reacotada a esa mitad sola, contra 0.67.1, con A/B/C explícitamente **no** recorridas. Ningún binario pasó las cuatro propiedades en una sola corrida, y #300 tocó justo los dos hooks que A y B ejercitan: que eso no los haya movido lo cubre `test_hook_log_profile_isolation.py` por el entry point real, no una cuarta corrida. **Cinco defectos de producción salieron de las corridas, todos de la misma forma** —una respuesta derivada del agente global donde la fuente es el agente del profile—: tres en #292 y dos en #300. Un sexto de esa forma, #297, lo encontró `/coherence-audit`, no una corrida. #294 y #296 caen en la misma ventana y **no** son resultados del gate: el primero salió implementando el adapter (`_planner_for` llamando `agent.name()` sobre un `@property`, con cuatro tests afirmando ese rechazo y los cuatro pasando porque los dos dobles declaraban `name()` como método), el segundo es un test flaky y un gate de formato que reproducen en `main`. El gate **discrimina**: sale 1 contra 0.67.0 y también contra un shim que arregla sólo `pre-tool-use-security`. Lo que el pase **no** cubre, dicho para que no se lea de más: son **dos** builtins aserteados y no tres —`stop-verify-guard` es migrado pero no escribe `hooks.log`, su único sink es la MetricsDB acotada por `LH_DATA_DIR`— y de los quince unmigrated se **cuentan** los ocho que escriben `hooks.log`, no se fallan: el known-gap list del script nombra siete de esos ocho y filtraron 28 líneas en la corrida que pasó. El gate vive en `/tmp/f7-gate/`, fuera del repo, así que no es reproducible por CI — vale registrarlo, no se toca acá.
 - [x] **0.67.1 cortada con el alcance del fix calificado a mano** — release-please genera las notas desde el subject del commit, que dice «route hook logs to the profile the hook ran under» sin decir *cuáles*. Un review adversarial ya había falsificado esa lectura amplia, así que el calificador entró en `CHANGELOG.md` y en el body del PR —las dos mitades, porque el body es lo que termina en el GitHub Release y el changelog es lo que queda en el repo—: la ruta por profile alcanza el log de arranque de `context-inject` y el de bloqueo de `pre-tool-use-security` cuando falta la env var del adapter; los otros ocho builtins que loguean y el worker del compound loop siguen resolviendo global. PR #299, mergeado el 2026-09-15; corta 0.67.1.
 - [x] **Hook logs ruteados al profile bajo el que corrió el hook** — F7 del gate del step 4: los builtins resolvían el dir de `hooks.log` desde un `get_agent("claude-code")` hardcodeado, así que un hook invocado con `--profile <p>` escribía su línea de auditoría en el dir que nombraba el agente **global** — otro profile, vivo. Cerrados los dos que tenían el profile en scope: `_log_block` de `pre-tool-use-security` vía `event.profile`, y la línea de boot de `context-inject` cargando config antes de escribir. Un review adversarial falsificó la tesis de que los unmigrated estuvieran fuera del contrato por construcción, midiendo `lh hook compound-loop --profile gate` escribiendo en el dir global bajo un profile Codex. Los ocho restantes quedan abiertos en *Ocho builtins resuelven su `hooks.log` globalmente*, más abajo en este archivo, con el alcance escrito como decisión y no como exclusión estructural. Test de integración que afirma **ausencia** además de presencia: la presencia *específica* sí detectaba el defecto —`session-context: fired` faltaba en el dir del profile, y el log de security ni existía ahí— pero una presencia *débil*, «alguna línea de context-inject está», pasaba igual gracias a `injected`, que ya resolvía por profile. La aserción de ausencia es la que cierra ese hueco. PR #300, mergeado el 2026-09-15; entra en 0.67.1.
@@ -524,30 +525,52 @@ Lo que sí existe es el principio, escrito en otro lado: `agents/launch.py:77-79
 
 **Alcance: separado a propósito.** La Task 9 arregló la resolución per-profile y **no** esto, porque son dos cambios distintos con dos tests distintos: el primero se mide con dos profiles del mismo agente y verdicts opuestos, el segundo necesita un profile de otro agente. Meterlos en el mismo PR hubiera hecho que el golden de byte-identity cubriera uno de los dos y no el otro.
 
-### El gate F7 suprime la evidencia que mide: su profile declara `agent = "codex"` y los payloads son de Claude Code
+### El gate F7 mide aislamiento de directorios y no traducción de wire format
 
-**Por qué:** `specs/gates/f7/isolation-gate.sh` hace que el profile throwaway declare `agent = "codex"` mientras `[agent].type` global queda en `claude-code`. Esa divergencia es deliberada y load-bearing —sin ella una resolución global y una per-profile dan el mismo path y el gate no prueba nada (comentario en `write_config`). Pero el gate también alimenta a cada hook con un payload de Claude Code, y desde el step 5 el **parseo pasa por el adapter del profile**, no por el hook.
+**Por qué:** es la mitad que la opción 2 dejó explícitamente afuera al cerrar *El gate F7 suprime
+la evidencia que mide* (ver §Done). El gate le da a cada hook un payload en el dialecto de Claude
+Code y usa el split de lanes para garantizar que ese dialecto le llegue a un adapter que lo
+entiende. Lo que nadie mide es la traducción en sí: que un payload en el dialecto *de cada agente*
+llegue al hook con el mismo `ToolCall`. Hoy `payload_for` escribe un solo dialecto y eso es
+deliberado — dos propiedades detrás de un exit code no pueden decir cuál se rompió.
 
-Medido el 2026-09-15 contra el adapter shippeado:
+**Fuente:** medido el 2026-09-15 contra los adapters shippeados. `CodexAdapter._TOOL_OPERATIONS`
+(`agents/codex.py:92`) mapea **un solo** tool, `Bash -> RUN_COMMAND`, así que
+`{"tool_name":"Edit","tool_input":{"file_path":"/a/b.py"}}` llega como
+`ToolCall(native_name='Edit', operation=None, edits=())` y todo hook que gatea en
+`operation is MODIFY_FILE` se abstiene. Eso no es un bug del adapter: Codex no tiene ese tool con
+ese nombre. Lo que falta es un gate que le pregunte al adapter cuál **sí** tiene, y que falle
+cuando un hook declarado sobre `MODIFY_FILE` no es alcanzable en un agente que modifica archivos.
 
-```
-codex   parse_hook_input({"tool_name":"Edit","tool_input":{"file_path":"/a/b.py"}})
-        -> ToolCall(native_name='Edit', operation=None, edits=())
-claude  -> ToolCall(native_name='Edit', operation=MODIFY_FILE, edits=(FileEdit(path=/a/b.py),))
-```
+**Acción:** un gate propio, no una extensión de F7. Precondición barata y ya nombrada por el
+`CLAUDE.md`: las probes primero — el dialecto real de Codex para un edit, registrado en un
+`codex-evidence.md`, antes del primer test. Sin eso el gate mediría el mapa que ya está escrito
+en `_TOOL_OPERATIONS` contra sí mismo.
 
-Un hook migrado correctamente se abstiene ante ese `ToolCall` vacío y no escribe nada. La sección 10 del gate lee "no escribió nada" como fuga y falla. El gate fue escrito para la rama pre-runner, donde cada hook parseaba stdin por su cuenta e ignoraba el adapter; la migración le sacó esa premisa sin que nadie volviera a correrlo.
+### Dos hooks resuelven el profile de verdad y F7 no tiene canal para verlo
 
-**Fuente:** corrida del 2026-09-15 contra el venv del worktree de la Task 13: **20 assertions falladas**, cinco hooks × dos escenarios × dos modos. Los cinco son `herdr-context-gauge`, `post-tool-use-format`, `session-start-preflight`, `stop-context-rotate` y `user-prompt-goal`. Cuatro de los cinco ya estaban en `main` antes de la Task 13 (PRs #315, #316, #317, #319), así que el gate ya fallaba 16 sin ella. La sección 11 —la mitad que importa, "nada fuera del profile"— pasa limpia en todos.
+**Por qué:** `session-start-preflight` y `post-tool-use-sync-claude` están en `SKIPPED_HOOKS` del
+gate F7 y el motivo es correcto pero incómodo: **no escriben nada bajo el agent runtime dir**, así
+que ese gate no tiene sitio donde observarlos. Su resolución per-profile igual existe y es
+load-bearing en los dos casos.
 
-Que la resolución per-profile sí funciona se midió aparte, con el mismo binario y el mismo payload pero con `agent = "claude-code"` en el profile: la línea de `hooks.log` aterriza en el `config_dir` del profile invocado. El defecto está en el gate, no en los hooks.
+- `session-start-preflight` toma la mitad *directorio* de `agent_dir_for` para **leer**
+  `.credentials.json` (`session_start_preflight.py:220`) y contesta por stdout (`:242`). Un
+  preflight que resuelve global reportaría un login sano para un profile que la sesión no corre —
+  exactamente la falla que el check existe para agarrar.
+- `post-tool-use-sync-claude` toma la mitad *adapter* para `system_doc_name()`
+  (`post_tool_use_sync_claude.py:103`) y escribe en el árbol de segmentos,
+  `<profiles_dir>/<profile>/CLAUDE.md` (`core/sync_agent_md.py:79`). Resolverlo global escribiría
+  el archivo de contrato de un agente en un profile que corre otro.
 
-**Acción:** dos opciones, y elegir cuesta una decisión sobre qué mide el gate.
+**Fuente:** medido el 2026-09-15 leyendo los sinks, no de una corrida vacía: `grep -n "hooks.log"`
+devuelve cero en los dos módulos, y el docstring de sync-claude lo dice él mismo — *«The directory
+half is unused: this hook writes nothing under the agent's runtime dir»*.
 
-- Darle a cada hook un payload en el wire format del agente que el profile declara. Es lo correcto conceptualmente —el gate pasaría a medir también la traducción— y es caro: hoy `payload_for` escribe un solo dialecto.
-- Separar las dos preguntas: un profile `agent = "codex"` para los hooks de ciclo de vida (donde el payload cruza los adapters sin perder nada) y uno `agent = "claude-code"` con `config_dir` propio para los hooks que leen `tool`. La divergencia global-vs-profile se conserva por el `config_dir`, que es lo que la sección 11 realmente observa.
-
-Lo que **no** sirve es agregarlos a `SKIPPED_HOOKS`: esos cinco sí tienen sink bajo el agent runtime dir, a diferencia de `stop-verify-guard`. Saltearlos convertiría un gate que falla ruidosamente en uno que no mira.
+**Acción:** dos aserciones en canales que F7 no mira — el stdout del preflight (dos profiles con
+un `.credentials.json` plantado en uno solo y verdicts opuestos) y el árbol de segmentos de
+sync-claude (dos profiles con `system_doc_name()` distinto). Ninguno pertenece a F7: meterlos ahí
+volvería a ser el problema que la opción 2 acaba de resolver.
 
 ## ADR decisions pending
 
