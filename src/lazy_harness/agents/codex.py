@@ -33,8 +33,9 @@ from __future__ import annotations
 
 import json
 import shutil
+from datetime import datetime
 from pathlib import Path
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 from lazy_harness.agents.base import (
     ConfigArtifact,
@@ -45,11 +46,17 @@ from lazy_harness.agents.base import (
     HookOutput,
     HookSupport,
     Operation,
+    Signal,
+    TokenUsage,
     ToolCall,
+    TranscriptEvent,
     Verdict,
     WriteOp,
 )
 from lazy_harness.core.paths import expand_path
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 def _is_harness_written(raw: str | None) -> bool:
@@ -307,6 +314,108 @@ _TOOL_OPERATIONS: dict[str, Operation] = {
     "Bash": Operation.RUN_COMMAND,
     _APPLY_PATCH: Operation.MODIFY_FILE,
 }
+
+
+# --- rollout transcript (TranscriptReader) ---
+#
+# Every name below was measured off rollout files `codex-cli 0.154.0` wrote on
+# this machine, recorded as §5 of `specs/designs/codex-evidence.md` (`[log]`).
+# A transcript schema is valid only for the version it was observed on, so the
+# version is on record in both places and there is no version switch here: a
+# second version has never been seen, and a branch nothing has exercised is the
+# guess this adapter exists to avoid.
+
+_ROLLOUT_GLOB = "rollout-*.jsonl"
+
+# `developer` is the third role in the stream and is deliberately not here. It
+# is Codex's instruction channel — the composed `AGENTS.md` and config text,
+# re-sent every turn — not a turn anyone took. `knowledge/session_export.py:56`
+# labels every non-`user` role as the model speaking, so emitting it would write
+# the profile's own instructions into the exported conversation.
+_MESSAGE_ROLES: frozenset[str] = frozenset({"user", "assistant"})
+
+# Two spellings for one concept, split by direction: `input_text` on user and
+# developer turns, `output_text` on assistant turns.
+_TEXT_BLOCKS: frozenset[str] = frozenset({"input_text", "output_text"})
+
+# `custom_tool_call` carries a bare string argument, `function_call` a JSON one.
+# Their `*_output` counterparts are results, not calls, and are not read: the
+# signal is the call, and `call_id` is what pairs the two for a consumer that
+# wants both.
+_TOOL_CALL_KINDS: frozenset[str] = frozenset({"custom_tool_call", "function_call"})
+
+
+def _as_int(value: object) -> int | None:
+    """`value` if it is a real int. Unlike `or`, a legitimate 0 survives."""
+    if isinstance(value, bool):
+        return None
+    return value if isinstance(value, int) else None
+
+
+def _rollout_timestamp(value: object) -> datetime | None:
+    """The envelope's `timestamp`, or None for anything that is not one.
+
+    Observed as `2026-09-16T12:02:13.926Z` — UTC, milliseconds, `Z` rather than
+    an offset, which `fromisoformat` accepts from 3.11 on. Never raises: a later
+    release is allowed to change this field, and losing the time of one entry
+    must not lose the entry.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _tool_input(kind: str, payload: dict) -> dict:
+    """The call's argument, as the dict `_parse_tool` reads — never as `command`.
+
+    The two kinds spell their argument differently and only one of them is
+    structured. `function_call.arguments` is a JSON object, so it is parsed and
+    handed over as-is. `custom_tool_call.input` is a **bare string**, and at
+    0.154.0 the only tool taking that path is `exec`, whose argument is a
+    *TypeScript program* for Codex's cell runtime — measured: 154 of 154 calls
+    multiline, every one containing `await `, first tokens `text` / `const` /
+    `for` / `await`, not one shell-shaped.
+
+    So it is wrapped under `input` rather than mapped onto `command`, and the
+    consequence is deliberate: `_parse_tool` reads `command` only, so the
+    program lands in `raw_input` and `ToolCall.command` stays `None`.
+    `pre_tool_use_security.py` and `pre_tool_use_git_scope.py` both scan
+    `tool.command` as shell text — the same reason `_parse_tool` refuses to put
+    a patch blob there, and the same failure if a program went in (ADR-048).
+    """
+    if kind == "function_call":
+        arguments = payload.get("arguments")
+        if not isinstance(arguments, str):
+            return {}
+        try:
+            parsed = json.loads(arguments)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    raw = payload.get("input")
+    return {"input": raw} if isinstance(raw, str) else {}
+
+
+def _rollout_text(content: object) -> str:
+    """A turn's text, with every non-text block dropped.
+
+    `content` is always a list here — unlike Claude Code, Codex never puts a
+    bare string on a turn — but a non-list still degrades to empty rather than
+    raising, since this runs over a file another process is writing.
+    """
+    if not isinstance(content, list):
+        return ""
+    return "\n".join(
+        block["text"]
+        for block in content
+        if isinstance(block, dict)
+        and block.get("type") in _TEXT_BLOCKS
+        and isinstance(block.get("text"), str)
+    )
+
 
 # The file the harness owns, and the decision behind it.
 #
@@ -738,3 +847,183 @@ class CodexAdapter:
 
     def process_name(self) -> str:
         return "codex"
+
+    # --- transcript reading (TranscriptReader) ---
+    #
+    # Pinned to the rollout format of **`codex-cli 0.154.0`**, measured rather
+    # than assumed: `specs/designs/codex-evidence.md` §5 carries the kind
+    # inventory this reads and the kinds it skips, from 15 real session files.
+    #
+    # `locate_sessions` exists for the after-the-fact scan only. A hook is
+    # handed `transcript_path` outright in Codex's payload (evidence §1), so it
+    # has no path to reconstruct.
+
+    def signals(self) -> set[Signal]:
+        """Three of the four. `GOAL_STATUS` is refused, and that is the decision.
+
+        Codex 0.154.0 has no `/goal` and no marker anywhere in the rollout — no
+        kind, no payload field, in any of the 15 sessions measured. Decision 11
+        of `specs/designs/2026-09-13-multi-agent-harness-design.md` makes this
+        set the thing a hook's declaration is checked against, so claiming the
+        signal here would deploy `stop-verify-guard` onto Codex, where it would
+        read a transcript that cannot carry a goal and approve every stop.
+        """
+        return {Signal.MESSAGES, Signal.TOOL_CALLS, Signal.TOKEN_USAGE}
+
+    def locate_sessions(self, config_dir: Path, since: datetime | None) -> Iterator[Path]:
+        """`<config_dir>/sessions/**/rollout-*.jsonl`, filtered by modification time.
+
+        **Modification time, not the timestamp in the file name.** The name
+        carries `rollout-<YYYY-MM-DD>T<HH-MM-SS>-<uuid>.jsonl`, and that stamp
+        is the session's *start* in **local wall-clock with no offset** —
+        measured: a file named `...T09-02-04-...` whose first record is
+        `2026-09-16T12:02:13.926Z`, three hours apart on a UTC-3 host. So it
+        answers neither question `since` asks, and parsing it as a time is wrong
+        by whatever offset the machine that wrote it was on (ADR-048).
+
+        Order is the filesystem's and is not promised; yielding as the walk
+        proceeds is what keeps a sessions tree of thousands of files from being
+        materialised to answer "any since Monday".
+        """
+        root = config_dir / (self.session_dirs()["sessions"] or "sessions")
+        cutoff = since.timestamp() if since is not None else None
+        try:
+            for path in root.glob(f"**/{_ROLLOUT_GLOB}"):
+                try:
+                    if not path.is_file():
+                        continue
+                    if cutoff is not None and path.stat().st_mtime < cutoff:
+                        continue
+                except OSError:
+                    continue
+                yield path
+        except OSError:
+            return
+
+    def read(self, path: Path) -> Iterator[TranscriptEvent]:
+        """One rollout, line by line, yielding only what a signal is defined over.
+
+        Lazy for the same two reasons the Claude Code reader is: nothing is
+        opened until the first `next()`, so a hook that builds its reader when
+        it starts still judges the file as of the moment it decides; and a
+        consumer looking for one marker stops at the first hit.
+
+        `errors="replace"` rather than a strict decode: one byte Codex failed to
+        write cleanly would otherwise raise mid-iteration and cost every line
+        after it.
+        """
+        try:
+            handle = path.open("r", encoding="utf-8", errors="replace")
+        except OSError:
+            return
+        with handle:
+            for raw_line in handle:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    # A corrupt line, or the half-written last one of a live
+                    # session. Both are ordinary; neither ends the read.
+                    continue
+                if isinstance(entry, dict):
+                    yield from self._events_from(entry)
+
+    def _events_from(self, entry: dict) -> Iterator[TranscriptEvent]:
+        """Every event one rollout line carries — at most one, in this format.
+
+        A rollout is two interleaved streams, and **the same fact appears in
+        both**: the model's own `response_item` items and the UI's `event_msg`
+        ones. A turn is a `response_item/message` *and* an
+        `event_msg/item_completed` with an `AgentMessage` item; a turn's tokens
+        are a `token_usage_record` *and* an `event_msg/token_count`. Only one
+        side is read per signal, or every consumer counting turns or summing
+        tokens doubles its answer (ADR-048). The `event_msg` side is the one
+        dropped: it is the TUI's rendering — `completed_at_ms`,
+        `formatted_output` — and it carries no `call_id` to pair a call with its
+        result.
+        """
+        payload = entry.get("payload")
+        if not isinstance(payload, dict):
+            return
+        when = _rollout_timestamp(entry.get("timestamp"))
+        # `==` rather than a membership test: a `type` of `[]` or `{}` is valid
+        # JSON, and `in` hashes its left operand, so the lookup alone would
+        # raise out of this generator and end the read.
+        kind = entry.get("type")
+        if kind == "response_item":
+            yield from self._response_item_events(entry, payload, when)
+        elif kind == "token_usage_record":
+            yield from self._usage_events(entry, payload, when)
+
+    def _response_item_events(
+        self, entry: dict, payload: dict, when: datetime | None
+    ) -> Iterator[TranscriptEvent]:
+        """A message or a tool call. Every other item kind is skipped.
+
+        `reasoning` is skipped for the reason `_message_text` drops thinking
+        blocks on the other adapter: its `encrypted_content` is not text anyone
+        saw, and a consumer matching a phrase would be reading the model's
+        scratchpad as though it had been said.
+        """
+        kind = payload.get("type")
+        if kind == "message":
+            role = payload.get("role")
+            if not isinstance(role, str) or role not in _MESSAGE_ROLES:
+                return
+            text = _rollout_text(payload.get("content"))
+            if text:
+                yield TranscriptEvent(
+                    signal=Signal.MESSAGES, timestamp=when, role=role, text=text, raw=entry
+                )
+            return
+
+        if not isinstance(kind, str) or kind not in _TOOL_CALL_KINDS:
+            return
+        name = payload.get("name")
+        if not isinstance(name, str) or not name:
+            return
+        use_id = payload.get("call_id")
+        yield TranscriptEvent(
+            signal=Signal.TOOL_CALLS,
+            timestamp=when,
+            # The same normalisation `parse_hook_input` performs, through the
+            # same method: a transcript tool call and a `PreToolUse` tool call
+            # are one concept, and two mappings would drift.
+            tool=self._parse_tool({"tool_name": name, "tool_input": _tool_input(kind, payload)}),
+            tool_use_id=use_id if isinstance(use_id, str) else None,
+            raw=entry,
+        )
+
+    def _usage_events(
+        self, entry: dict, payload: dict, when: datetime | None
+    ) -> Iterator[TranscriptEvent]:
+        """`usage` — this turn's accounting — and not the two running totals.
+
+        The record carries three sibling objects of identical shape: `usage` and
+        `turn_token_usage`, which were equal in every line measured, and
+        `thread_token_usage`, the session-to-date total. `TokenUsage` is
+        per-turn by its own docstring, so the cumulative one is not a candidate;
+        between the two per-turn spellings, `usage` is the one the other
+        adapters' field is named after.
+
+        Codex's `cached_input_tokens` and `cache_write_input_tokens` are the
+        read and creation halves `TokenUsage` names; `reasoning_output_tokens`
+        and `total_tokens` have no field and are not folded into one, since a
+        sum that silently includes reasoning is worse than an absent counter.
+        """
+        usage = payload.get("usage")
+        if not isinstance(usage, dict):
+            return
+        yield TranscriptEvent(
+            signal=Signal.TOKEN_USAGE,
+            timestamp=when,
+            usage=TokenUsage(
+                input_tokens=_as_int(usage.get("input_tokens")),
+                output_tokens=_as_int(usage.get("output_tokens")),
+                cache_read_tokens=_as_int(usage.get("cached_input_tokens")),
+                cache_creation_tokens=_as_int(usage.get("cache_write_input_tokens")),
+            ),
+            raw=entry,
+        )

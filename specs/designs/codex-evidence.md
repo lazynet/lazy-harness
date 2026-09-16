@@ -561,6 +561,126 @@ for a native read — not an edit tool, and not added to the provider table's
 edit-path list, but the concrete evidence behind "Codex has no native read
 tool at 0.154.0."
 
+## 5. Rollout format (transcript on disk)
+
+**Medido** el 2026-09-16 sobre los rollouts que `codex-cli 0.154.0` escribió en
+esta máquina: 15 archivos, 1.147 líneas, 0 no parseables, todos con
+`session_meta.cli_version == "0.154.0"`. `[log], 0.154.0` — leídos del disco, no
+corridos contra el binario. Un schema de transcript vale sólo para la versión en
+la que se observó (design doc `:1901-1905`), así que la versión queda anotada acá
+y en el docstring del reader, y **no** hay switch de versiones: nunca existió una
+segunda.
+
+Nada del contenido de esas sesiones entra al repo. Lo que sigue es forma —
+claves, anidamiento, tipos, inventario de kinds y conteos. Los fixtures de
+`tests/unit/test_agent_codex_transcript.py` son sintéticos, reconstruidos desde
+esta tabla.
+
+### 5.1 Envelope
+
+Una línea = un objeto JSON con exactamente cuatro claves, en 416/416 líneas del
+día medido:
+
+| Clave | Tipo | Observado |
+|---|---|---|
+| `timestamp` | `str` | ISO-8601 UTC con milisegundos y sufijo `Z`: `2026-09-16T12:02:13.926Z` (24 chars). `datetime.fromisoformat` lo acepta desde 3.11. |
+| `type` | `str` | El kind de nivel superior — seis valores, tabla 5.2. |
+| `payload` | `dict` | El cuerpo. Para `event_msg` y `response_item` lleva su propio `payload.type`; para los otros cuatro, no. |
+| `ordinal` | `int` | Índice creciente dentro del archivo. |
+
+**Ruta y nombre:** `$CODEX_HOME/sessions/<YYYY>/<MM>/<DD>/rollout-<YYYY-MM-DD>T<HH-MM-SS>-<uuid v7>.jsonl`.
+El stamp del nombre es el **arranque de la sesión en hora local, sin offset**:
+`rollout-2026-09-16T09-02-04-...` cuya primera línea es
+`2026-09-16T12:02:13.926Z` — tres horas de diferencia en un host UTC-3. No es
+hora de modificación ni UTC; ver ADR-048 para por qué `locate_sessions` filtra
+por mtime y no por el nombre.
+
+### 5.2 Inventario de kinds
+
+Los 15 archivos, `type` (+ `payload.type` donde existe):
+
+| Kind | Líneas | Señal que entrega | Leído |
+|---|---|---|---|
+| `event_msg/item_completed` | 441 | — (duplica lo de abajo) | no |
+| `event_msg/token_count` | 179 | duplica `token_usage_record` | no |
+| `token_usage_record` | 176 | `TOKEN_USAGE` | **sí** |
+| `response_item/custom_tool_call` | 154 | `TOOL_CALLS` | **sí** |
+| `response_item/custom_tool_call_output` | 154 | — (resultado, no llamada) | no |
+| `response_item/message` | 151 | `MESSAGES` (roles `user`/`assistant`) | **sí** |
+| `response_item/reasoning` | 134 | — (`encrypted_content`, no es texto que alguien vio) | no |
+| `event_msg/task_started` | 23 | — | no |
+| `event_msg/task_complete` | 23 | — | no |
+| `turn_context` | 23 | — (cwd, modelo, sandbox, permisos) | no |
+| `world_state` | 18 | — (instrucciones compuestas del turno) | no |
+| `session_meta` | 15 | — (`cli_version`, `cwd`, `git`, `id`) | no |
+| `event_msg/thread_settings_applied` | 8 | — | no |
+| `response_item/function_call` | 2 | `TOOL_CALLS` | **sí** |
+| `response_item/function_call_output` | 2 | — | no |
+
+**No hay ningún kind, ni ningún campo de payload, que marque un objetivo
+explícito.** Codex 0.154.0 no tiene `/goal` y el rollout no lleva nada
+equivalente: `GOAL_STATUS` no se entrega, y `signals()` no lo declara.
+
+### 5.3 Los tres streams que se leen
+
+**`response_item/message`** — `{type, id, role, content[], phase?, internal_chat_message_metadata_passthrough}`.
+`role` ∈ `{assistant: 67, developer: 46, user: 38}`. `content[]` son bloques
+`{type, text}` con `type` ∈ `{input_text: 135, output_text: 67}` — `input_text`
+en turnos `user`/`developer`, `output_text` en `assistant`. No hay string pelado
+en `content` (a diferencia de Claude Code). `developer` es el canal de
+instrucciones compuestas, no un turno de nadie: no se emite (ADR-048).
+
+**`response_item/custom_tool_call`** — `{type, id, call_id, name, input, status}`.
+`name` == `exec` en 154/154 llamadas. `status` == `completed`. **`input` es un
+`str` que no es JSON y no es shell**: 154/154 multilínea, 154/154 contienen
+`await `, 154/154 contienen `;`, 70 contienen `const `; primeras palabras
+`text` (81), `const` (64), `for` (6), `await` (3). Es un programa para el
+runtime de celdas de Codex (`unified_exec`), no un comando. Por eso no se mapea
+a `ToolCall.command` (ADR-048).
+
+**`response_item/function_call`** — `{type, id, call_id, name, arguments}`.
+`name` == `wait` en 2/2; `arguments` sí es JSON, con claves
+`{cell_id, max_tokens, yield_time_ms}` — el otro extremo del mismo runtime de
+celdas.
+
+**`token_usage_record`** — `{session_id, thread_id, turn_id, root_turn_id, response_id, usage, turn_token_usage, thread_token_usage}`.
+Los tres objetos de usage tienen forma idéntica:
+`{input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens, reasoning_output_tokens, total_tokens}`, todos `int`. `usage` y
+`turn_token_usage` fueron iguales en cada línea medida; `thread_token_usage` es
+el acumulado de la sesión. Mapeo a `TokenUsage`:
+`input_tokens→input_tokens`, `output_tokens→output_tokens`,
+`cached_input_tokens→cache_read_tokens`,
+`cache_write_input_tokens→cache_creation_tokens`.
+`reasoning_output_tokens` y `total_tokens` no tienen campo y no se suman a
+ninguno.
+
+### 5.4 Lo que el stream `event_msg` duplica
+
+`event_msg/item_completed` lleva `{completed_at_ms, started_at_ms, thread_id, turn_id, item}`
+y `item.type` ∈ `{CommandExecution: 211, Reasoning, AgentMessage, UserMessage, Extension, FileChange}`.
+Es la vista de la TUI del mismo turno que el stream `response_item` ya registró,
+y no lleva `call_id`. Se descarta entero para no contar dos veces (ADR-048).
+
+`item.type == "CommandExecution"` es igualmente la **única** grafía donde aparece
+el comando realmente ejecutado: `command` es una lista de 3 elementos, siempre
+`["/bin/zsh", "-lc", "<script>"]`, con `cwd`, `exit_code`, `status`
+(`completed: 193`, `failed: 18`), `duration{secs,nanos}`, `process_id` y
+`parsed_cmd[]` (tipos `read: 231`, `unknown: 129`, `search: 58`,
+`list_files: 12`). `source` == `unified_exec_startup` en 211/211.
+
+### 5.5 Lo que no se observó, y por lo tanto no se declara
+
+- **`apply_patch` como tool call del rollout: 0 ocurrencias** en 154 llamadas y
+  15 sesiones. En este modo las ediciones las hace el programa `exec`, y la
+  única línea que nombra los archivos tocados es
+  `item_completed/FileChange` (3 ocurrencias), cuyo `changes` es un dict
+  **tecleado por path absoluto** → `{type, content}`. No se emite: no tiene
+  `call_id`, pertenece al stream duplicado, y `_parse_patch` no tiene entrada
+  acá. El día que un rollout traiga un `custom_tool_call` llamado
+  `apply_patch`, el mapeo a `{"command": input}` es una línea y un test.
+- **Un segundo `cli_version`.** 15/15 archivos dicen `0.154.0`.
+- **`GOAL_STATUS`**, por 5.2.
+
 ## Pendiente
 
 Cerrado 2026-09-16 contra el binario real (`codex-cli 0.154.0`, modelo

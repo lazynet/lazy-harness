@@ -15,7 +15,39 @@ from __future__ import annotations
 
 import pytest
 
+from lazy_harness.agents.base import HookSupport
+from lazy_harness.agents.registry import NullAdapter
 from lazy_harness.core.config import Config, HookEventConfig, ProfileEntry
+
+_GAUGE_EVENTS = ("session_start", "session_stop", "session_end", "post_tool_use")
+
+
+class _NoReaderAdapter(NullAdapter):
+    """Delivers every event the gauge is wired to, and reads no transcript.
+
+    A purpose-built stand-in rather than a shipped adapter, and that is the
+    whole point of it. These tests used `codex` for this role until `codex`
+    grew a `TranscriptReader` (ADR-048) and they went green for the wrong
+    reason: the filter they exercise is keyed on *signals*, so binding the role
+    to an adapter whose capabilities can grow makes the test a statement about
+    that adapter instead of about the filter.
+    """
+
+    @property
+    def name(self) -> str:
+        return "no-reader"
+
+    def hook_events(self) -> dict[str, HookSupport]:
+        return {event: HookSupport(native_name=event) for event in _GAUGE_EVENTS}
+
+
+@pytest.fixture
+def no_reader_agent(monkeypatch: pytest.MonkeyPatch) -> str:
+    """`_NoReaderAdapter` under the name a config can name it by."""
+    from lazy_harness.agents import registry
+
+    monkeypatch.setitem(registry._AGENTS, "no-reader", _NoReaderAdapter)
+    return "no-reader"
 
 
 def _cfg(agent: str) -> Config:
@@ -143,7 +175,9 @@ def _gauge_cfg(agent: str) -> Config:
     return cfg
 
 
-def test_the_retract_survives_on_an_agent_that_cannot_deliver_token_usage() -> None:
+def test_the_retract_survives_on_an_agent_that_cannot_deliver_token_usage(
+    no_reader_agent: str,
+) -> None:
     """The failure the per-placement declaration exists to prevent.
 
     A flat `TOKEN_USAGE` on this spec would omit all four placements on a
@@ -155,7 +189,7 @@ def test_the_retract_survives_on_an_agent_that_cannot_deliver_token_usage() -> N
     """
     from lazy_harness.deploy.engine import _hook_entries_for
 
-    entries = _hook_entries_for(_gauge_cfg("codex"), "p1", "lh")
+    entries = _hook_entries_for(_gauge_cfg(no_reader_agent), "p1", "lh")
 
     assert "session_end" in entries
     assert [e.command for e in entries["session_end"]] == [
@@ -164,7 +198,9 @@ def test_the_retract_survives_on_an_agent_that_cannot_deliver_token_usage() -> N
 
 
 @pytest.mark.parametrize("event", ["session_start", "session_stop", "post_tool_use"])
-def test_the_publishing_placements_are_omitted_on_that_same_agent(event: str) -> None:
+def test_the_publishing_placements_are_omitted_on_that_same_agent(
+    event: str, no_reader_agent: str
+) -> None:
     """The other half: the three that *do* read the window are left out.
 
     Without this the test above passes just as well against a spec declaring
@@ -173,7 +209,7 @@ def test_the_publishing_placements_are_omitted_on_that_same_agent(event: str) ->
     """
     from lazy_harness.deploy.engine import _hook_entries_for
 
-    entries = _hook_entries_for(_gauge_cfg("codex"), "p1", "lh")
+    entries = _hook_entries_for(_gauge_cfg(no_reader_agent), "p1", "lh")
 
     assert event not in entries
 
@@ -198,7 +234,7 @@ def test_every_placement_is_deployed_to_an_agent_that_delivers_the_signal() -> N
 
 
 def test_each_omitted_placement_is_named_on_its_own_line(
-    capsys: pytest.CaptureFixture[str],
+    capsys: pytest.CaptureFixture[str], no_reader_agent: str
 ) -> None:
     """Printed per event, because a hook omitted from three is three absences.
 
@@ -207,7 +243,7 @@ def test_each_omitted_placement_is_named_on_its_own_line(
     """
     from lazy_harness.deploy.engine import _hook_entries_for
 
-    _hook_entries_for(_gauge_cfg("codex"), "p1", "lh")
+    _hook_entries_for(_gauge_cfg(no_reader_agent), "p1", "lh")
 
     omissions = [
         line
