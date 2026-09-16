@@ -173,6 +173,7 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
         module="lazy_harness.hooks.builtins.post_tool_use_format",
         event="post_tool_use",
         operations=frozenset({Operation.MODIFY_FILE}),
+        migrated=True,
     ),
     "post-tool-use-sync-claude": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.post_tool_use_sync_claude",

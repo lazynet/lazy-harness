@@ -407,9 +407,9 @@ Responsibility: keep edited Python files formatted without forcing a separate wo
 
 Behaviour:
 
-- Non-Python files: instant exit 0.
-- Tools other than `Edit` / `Write`: instant exit 0.
-- `ruff` not on `PATH`, or `ruff format` times out, or the file does not exist: exit 0 (the hook never fails the agent's turn).
+- Non-Python files: no decision, nothing run.
+- Tools other than `Edit` / `Write`: no decision, nothing run. `NotebookEdit` is deliberately among them even though it carries the same `modify_file` operation — nothing guarantees a notebook's path ends in `.ipynb`, so the suffix check alone would let Ruff loose on a file that was never Python source.
+- `ruff` not on `PATH`, or `ruff format` times out, or the file does not exist: no decision, and a line in `hooks.log` under the invoking profile saying which file was left unformatted (the hook never fails the agent's turn).
 
 This is the simplest built-in and the easiest extension point — a project that prefers `black` over `ruff format`, or that wants to format `.go` files with `gofmt`, can copy this file into `~/.config/lazy-harness/hooks/` under a different name and register it in `[hooks.post_tool_use]` instead.
 
@@ -803,6 +803,6 @@ Most built-in hooks append a line to `logs/hooks.log` with their name, the cwd, 
 
 Neither file sits at a fixed path. Both live in the agent runtime directory, which resolves in this order: the agent's own environment variable (`CLAUDE_CONFIG_DIR` and its equivalents), then the profile's `config_dir`, then the agent's global link (`~/.claude`), then `~/.<agent>`. On a single-profile Claude Code install that lands in `~/.claude/logs/`; with profiles declared, the launcher exports the environment variable, so it lands in the profile's own directory — see [profiles and deploy](profiles-and-deploy.md).
 
-The second step, the profile's `config_dir`, is what a hook falls back on when the environment variable is absent, and six hooks read it today: `context-inject`, `session-export`, `session-end`, `compound-loop`, `pre-compact` and the block log of `pre-tool-use-security` resolve the directory from the profile they were invoked with — and so does the compound-loop worker, which inherits the profile the producer spawns it with. The other four that write this file — `pre-tool-use-memory-size`, `pre-tool-use-read-size`, `post-tool-use-format`, `post-tool-use-ansible-lint` — resolve it globally instead, so on a profile whose agent differs from the global `[agent].type` they write under the wrong agent. That is open work, tracked in the backlog against the hook migration.
+The second step, the profile's `config_dir`, is what a hook falls back on when the environment variable is absent, and seven hooks read it today: `context-inject`, `session-export`, `session-end`, `compound-loop`, `pre-compact`, `post-tool-use-format` and the block log of `pre-tool-use-security` resolve the directory from the profile they were invoked with — and so does the compound-loop worker, which inherits the profile the producer spawns it with. The other three that write this file — `pre-tool-use-memory-size`, `pre-tool-use-read-size`, `post-tool-use-ansible-lint` — resolve it globally instead, so on a profile whose agent differs from the global `[agent].type` they write under the wrong agent. That is open work, tracked in the backlog against the hook migration.
 
 `lh status hooks` surfaces a summary view over `hooks.log` so you do not have to tail it by hand.

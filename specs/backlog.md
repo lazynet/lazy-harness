@@ -522,6 +522,31 @@ Lo que sí existe es el principio, escrito en otro lado: `agents/launch.py:77-79
 
 **Alcance: separado a propósito.** La Task 9 arregló la resolución per-profile y **no** esto, porque son dos cambios distintos con dos tests distintos: el primero se mide con dos profiles del mismo agente y verdicts opuestos, el segundo necesita un profile de otro agente. Meterlos en el mismo PR hubiera hecho que el golden de byte-identity cubriera uno de los dos y no el otro.
 
+### El gate F7 suprime la evidencia que mide: su profile declara `agent = "codex"` y los payloads son de Claude Code
+
+**Por qué:** `specs/gates/f7/isolation-gate.sh` hace que el profile throwaway declare `agent = "codex"` mientras `[agent].type` global queda en `claude-code`. Esa divergencia es deliberada y load-bearing —sin ella una resolución global y una per-profile dan el mismo path y el gate no prueba nada (comentario en `write_config`). Pero el gate también alimenta a cada hook con un payload de Claude Code, y desde el step 5 el **parseo pasa por el adapter del profile**, no por el hook.
+
+Medido el 2026-09-15 contra el adapter shippeado:
+
+```
+codex   parse_hook_input({"tool_name":"Edit","tool_input":{"file_path":"/a/b.py"}})
+        -> ToolCall(native_name='Edit', operation=None, edits=())
+claude  -> ToolCall(native_name='Edit', operation=MODIFY_FILE, edits=(FileEdit(path=/a/b.py),))
+```
+
+Un hook migrado correctamente se abstiene ante ese `ToolCall` vacío y no escribe nada. La sección 10 del gate lee "no escribió nada" como fuga y falla. El gate fue escrito para la rama pre-runner, donde cada hook parseaba stdin por su cuenta e ignoraba el adapter; la migración le sacó esa premisa sin que nadie volviera a correrlo.
+
+**Fuente:** corrida del 2026-09-15 contra el venv del worktree de la Task 13: **20 assertions falladas**, cinco hooks × dos escenarios × dos modos. Los cinco son `herdr-context-gauge`, `post-tool-use-format`, `session-start-preflight`, `stop-context-rotate` y `user-prompt-goal`. Cuatro de los cinco ya estaban en `main` antes de la Task 13 (PRs #315, #316, #317, #319), así que el gate ya fallaba 16 sin ella. La sección 11 —la mitad que importa, "nada fuera del profile"— pasa limpia en todos.
+
+Que la resolución per-profile sí funciona se midió aparte, con el mismo binario y el mismo payload pero con `agent = "claude-code"` en el profile: la línea de `hooks.log` aterriza en el `config_dir` del profile invocado. El defecto está en el gate, no en los hooks.
+
+**Acción:** dos opciones, y elegir cuesta una decisión sobre qué mide el gate.
+
+- Darle a cada hook un payload en el wire format del agente que el profile declara. Es lo correcto conceptualmente —el gate pasaría a medir también la traducción— y es caro: hoy `payload_for` escribe un solo dialecto.
+- Separar las dos preguntas: un profile `agent = "codex"` para los hooks de ciclo de vida (donde el payload cruza los adapters sin perder nada) y uno `agent = "claude-code"` con `config_dir` propio para los hooks que leen `tool`. La divergencia global-vs-profile se conserva por el `config_dir`, que es lo que la sección 11 realmente observa.
+
+Lo que **no** sirve es agregarlos a `SKIPPED_HOOKS`: esos cinco sí tienen sink bajo el agent runtime dir, a diferencia de `stop-verify-guard`. Saltearlos convertiría un gate que falla ruidosamente en uno que no mira.
+
 ## ADR decisions pending
 
 - ~~**Legacy ADR-010 Ollama backend**~~ — cerrado. Promovido por [ADR-033](adrs/033-llm-backend-abstraction.md) y hecho utilizable por [ADR-039](adrs/039-role-routed-inference.md) (ruteo por rol).

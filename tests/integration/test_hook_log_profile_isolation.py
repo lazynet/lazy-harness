@@ -22,6 +22,7 @@ tests exist to exercise.
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -461,5 +462,80 @@ def test_user_prompt_goal_writes_nothing_outside_the_invoked_profile(
     exit_code = _run_hook("user-prompt-goal", "gate", _user_prompt_goal_payload(tmp_path))
 
     assert exit_code == 0
+    assert _files_under(home_dir) == before_home
+    assert (_files_under(other) if other.exists() else set()) == before_other
+
+
+@pytest.fixture
+def ruff_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Drive `post-tool-use-format` down its only branch that writes a log line.
+
+    The hook is silent when `ruff` runs, so with the binary present there is no
+    evidence to place in a profile at all. Only the `ruff` invocation is
+    intercepted: everything else the CLI spawns during the run is left alone.
+    """
+    real_run = subprocess.run
+
+    def no_ruff(cmd: object, *args: object, **kwargs: object) -> object:
+        if isinstance(cmd, list) and cmd and cmd[0] == "ruff":
+            raise FileNotFoundError("ruff")
+        return real_run(cmd, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(subprocess, "run", no_ruff)
+
+
+def _format_payload(edited: Path) -> dict[str, object]:
+    return {
+        "hook_event_name": "PostToolUse",
+        "session_id": "isolation-test",
+        "tool_name": "Edit",
+        "tool_input": {"file_path": str(edited)},
+    }
+
+
+def test_post_tool_use_format_logs_into_the_invoked_profile(
+    harness_config: Path, ruff_unreachable: None, tmp_path: Path
+) -> None:
+    """`post-tool-use-format` resolved its log dir from a hardcoded agent name.
+
+    `_log_unavailable` did `agent_runtime_dir(get_agent("claude-code"))` with no
+    profile, so under `--profile gate` the one line this hook ever writes landed
+    in whatever directory the *global* agent named — `~/.claude`, once
+    `CLAUDE_CONFIG_DIR` is cleared. `agent_dir_for(cfg, event.profile)` is what
+    the migration replaces that with.
+    """
+    edited = tmp_path / "edited.py"
+    edited.write_text("x  =  1\n")
+
+    exit_code = _run_hook("post-tool-use-format", "gate", _format_payload(edited))
+
+    assert exit_code == 0
+    log = (harness_config / "logs" / "hooks.log").read_text()
+    assert "post-tool-use-format: ruff unavailable (FileNotFoundError)" in log
+    assert f"left {edited} unformatted" in log
+
+
+def test_post_tool_use_format_writes_nothing_outside_the_invoked_profile(
+    harness_config: Path, ruff_unreachable: None, home_dir: Path, tmp_path: Path
+) -> None:
+    """The half that fails before the migration.
+
+    Presence alone passes either way: `~/.claude` is a directory the hook is
+    entitled to create, so the leak looks exactly like a first run.
+    """
+    other = tmp_path / "other-home"
+    before_home = _files_under(home_dir)
+    before_other = _files_under(other) if other.exists() else set()
+
+    edited = tmp_path / "edited.py"
+    edited.write_text("x  =  1\n")
+
+    exit_code = _run_hook("post-tool-use-format", "gate", _format_payload(edited))
+
+    assert exit_code == 0
+    assert (
+        "post-tool-use-format: ruff unavailable"
+        in (harness_config / "logs" / "hooks.log").read_text()
+    )
     assert _files_under(home_dir) == before_home
     assert (_files_under(other) if other.exists() else set()) == before_other
