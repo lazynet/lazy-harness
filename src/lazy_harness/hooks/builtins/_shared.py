@@ -175,19 +175,31 @@ def profile_name() -> str:
     the runner.
     """
     try:
-        from lazy_harness.agents.registry import get_agent
+        from lazy_harness.agents.registry import agent_for_profile
         from lazy_harness.core.config import load_config
         from lazy_harness.core.paths import config_file
 
         cfg = load_config(config_file())
-        env_var = get_agent(cfg.agent.type).env_var()
-        raw = os.environ.get(env_var, "") if env_var else ""
-        if not raw:
-            return ""
-        target = Path(os.path.expanduser(raw)).resolve()
         for name, entry in cfg.profiles.items.items():
             entry_dir = getattr(entry, "config_dir", "") or ""
-            if entry_dir and Path(os.path.expanduser(entry_dir)).resolve() == target:
+            if not entry_dir:
+                continue
+            # Each profile is asked for *its own* agent's variable. Reading
+            # `[agent].type`'s variable once, above the loop, could only ever
+            # find a profile running the global agent: a `agent = "codex"`
+            # profile runs with `CODEX_HOME` set and `CLAUDE_CONFIG_DIR` unset,
+            # so under a Claude Code default it answered "" and every row it
+            # wrote went in unlabelled.
+            try:
+                env_var = agent_for_profile(cfg, name).env_var()
+            except Exception:  # noqa: BLE001 — one bad entry must not blank the rest
+                continue
+            raw = os.environ.get(env_var, "") if env_var else ""
+            if not raw:
+                continue
+            if Path(os.path.expanduser(raw)).resolve() == Path(
+                os.path.expanduser(entry_dir)
+            ).resolve():
                 return name
     except Exception:
         return ""

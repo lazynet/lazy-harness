@@ -301,7 +301,7 @@ def test_project_memory_dir_resolves_worktree_to_main_checkout(
 
     encoded = "-" + str(repo).replace("/", "-").lstrip("-")
     assert (
-        _project_memory_dir(get_agent("claude-code"), None)
+        _project_memory_dir(get_agent("claude-code"), None, "")
         == runtime / "projects" / encoded / "memory"
     )
 
@@ -320,7 +320,7 @@ def test_project_memory_dir_uses_cwd_outside_a_worktree(
 
     encoded = "-" + str(repo).replace("/", "-").lstrip("-")
     assert (
-        _project_memory_dir(get_agent("claude-code"), None)
+        _project_memory_dir(get_agent("claude-code"), None, "")
         == runtime / "projects" / encoded / "memory"
     )
 
@@ -733,3 +733,59 @@ config_dir = "{tmp_path / "alpha-home"}"
     written = writer_dir / logs / "engram_persist_metrics.jsonl"
 
     assert _engram_persist_metrics_path(get_agent("claude-code"), cfg, "alpha") == written
+
+
+def test_doctor_reads_the_memory_dir_the_hook_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The third pair of paths that answer one question, asserted to agree.
+
+    `session-end` names the memory dir with `agent_dir_for(cfg, event.profile)`
+    — the profile's agent, the profile's directory, that agent's `sessions`
+    subdirectory. `doctor` named it from `[agent].type` and had no way to be
+    told which profile it was diagnosing, so under a profile running a second
+    agent its memory-hygiene section reported on a directory nothing writes to.
+
+    `CLAUDE_CONFIG_DIR` is cleared: it outranks the profile's `config_dir`, so
+    pinning it would make both sides agree for the wrong reason.
+    """
+    from lazy_harness.agents import registry
+    from lazy_harness.agents.registry import get_agent
+    from lazy_harness.cli.doctor_cmd import _project_memory_dir
+    from lazy_harness.core.config import load_config
+    from lazy_harness.hooks.builtins._shared import agent_dir_for, knowledge_root_for
+    from lazy_harness.hooks.builtins._shared import memory_dir as shared_memory_dir
+
+    class _OtherAdapter(registry.NullAdapter):
+        @property
+        def name(self) -> str:
+            return "other"
+
+        def env_var(self) -> str:
+            return "OTHER_CONFIG_DIR"
+
+        def session_dirs(self) -> dict[str, str]:
+            return {"sessions": "threads", "logs": "journal", "queue": "outbox"}
+
+    monkeypatch.setitem(registry._AGENTS, "other", _OtherAdapter)
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("OTHER_CONFIG_DIR", raising=False)
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        '[harness]\nversion = "1"\n\n[agent]\ntype = "claude-code"\n\n'
+        '[profiles]\ndefault = "alpha"\n\n'
+        f'[profiles.alpha]\nconfig_dir = "{tmp_path / "alpha-home"}"\nagent = "other"\n'
+    )
+    cfg = load_config(cfg_file)
+
+    writer_agent, writer_dir = agent_dir_for(cfg, "alpha")
+    written = shared_memory_dir(
+        None,
+        agent_dir=writer_dir,
+        sessions_subdir=writer_agent.session_dirs().get("sessions") or "projects",
+        cwd=Path.cwd(),
+        knowledge_root=knowledge_root_for(cfg),
+    )
+
+    assert _project_memory_dir(get_agent("claude-code"), cfg, "alpha") == written

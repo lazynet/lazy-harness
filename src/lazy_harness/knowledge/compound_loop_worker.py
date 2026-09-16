@@ -13,6 +13,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from lazy_harness.agents.base import AgentAdapter
 from lazy_harness.agents.registry import get_agent
 from lazy_harness.core.config import Config, ConfigError, load_config
 from lazy_harness.core.paths import agent_runtime_dir, config_file
@@ -89,8 +90,8 @@ def _drain_queue(
             move_to_done(queue_dir, task_file)
 
 
-def _agent_dir_for_profile(cfg: Config | None, profile: str) -> Path:
-    """The runtime dir this worker drains, for the profile that queued the task.
+def _agent_dir_for_profile(cfg: Config | None, profile: str) -> tuple[AgentAdapter, Path]:
+    """The agent this worker drains for, and the runtime dir it drains.
 
     The producer names its queue with `agent_dir_for(cfg, event.profile)`, so
     the worker has to answer the same question the same way or the pair stops
@@ -99,19 +100,29 @@ def _agent_dir_for_profile(cfg: Config | None, profile: str) -> Path:
     orphaned. `test_the_worker_drains_the_queue_the_producer_writes_to` asserts
     the two answers against each other.
 
+    The adapter is returned with the directory rather than resolved separately
+    by `main`, which is where the pair broke a second time: the directory came
+    from the profile and the subdirectory names inside it from `[agent].type`,
+    so a profile whose agent names its queue anything but `queue/` had the
+    producer and the worker one level apart inside the same directory.
+
     An empty profile is "nobody said": it resolves globally, so the worker
     must too. That is `agent_runtime_dir`'s own contract for an empty
     `profile_config_dir`, not a second rule invented here.
     """
-    try:
-        agent = get_agent(cfg.agent.type if cfg is not None else "claude-code")
-    except Exception:  # noqa: BLE001 — unknown agent.type must not kill the worker
-        agent = get_agent("claude-code")
     if not profile:
-        return agent_runtime_dir(agent)
+        try:
+            agent = get_agent(cfg.agent.type if cfg is not None else "claude-code")
+        except Exception:  # noqa: BLE001 — unknown agent.type must not kill the worker
+            agent = get_agent("claude-code")
+        return agent, agent_runtime_dir(agent)
     from lazy_harness.hooks.builtins._shared import agent_dir_for
 
-    return agent_dir_for(cfg, profile)[1]
+    try:
+        return agent_dir_for(cfg, profile)
+    except Exception:  # noqa: BLE001 — unknown per-profile agent must not kill the worker
+        agent = get_agent("claude-code")
+        return agent, agent_runtime_dir(agent)
 
 
 def _profile_from_argv(argv: list[str] | None) -> str:
@@ -132,11 +143,7 @@ def main(argv: list[str] | None = None) -> int:
     # loadable config the Claude Code adapter is the bootstrap default, which
     # resolves exactly like the historical CLAUDE_CONFIG_DIR read.
     cfg = _load_config()
-    try:
-        agent = get_agent(cfg.agent.type if cfg is not None else "claude-code")
-    except Exception:  # noqa: BLE001 — unknown agent.type must not kill the worker
-        agent = get_agent("claude-code")
-    agent_dir = _agent_dir_for_profile(cfg, _profile_from_argv(argv))
+    agent, agent_dir = _agent_dir_for_profile(cfg, _profile_from_argv(argv))
     subdirs = agent.session_dirs()
     log_dir = agent_dir / (subdirs.get("logs") or "logs")
     queue_dir = agent_dir / (subdirs.get("queue") or "queue")

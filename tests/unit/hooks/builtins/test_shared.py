@@ -458,6 +458,36 @@ def test_profile_name_is_empty_when_no_profile_matches(tmp_path: Path, monkeypat
     assert _shared.profile_name() == ""
 
 
+def test_profile_name_finds_a_profile_whose_agent_is_not_the_global_one(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The defect (design step 6): `profile_name` read `[agent].type`'s env var
+    and only that one.
+
+    A profile declaring `agent = "codex"` runs with `CODEX_HOME` set and
+    `CLAUDE_CONFIG_DIR` unset, so under a Claude Code default the lookup found
+    nothing and every metrics row that profile wrote went in unlabelled — the
+    exact failure the function exists to prevent, for the one profile a
+    multi-agent config exists to support.
+    """
+    from lazy_harness.hooks.builtins import _shared
+
+    codex_dir = tmp_path / "codex-work"
+    codex_dir.mkdir()
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        '[harness]\nversion = "1"\n\n[agent]\ntype = "claude-code"\n\n'
+        '[profiles]\ndefault = "work"\n\n'
+        f'[profiles.work]\nconfig_dir = "{codex_dir}"\nroots = ["~"]\nagent = "codex"\n'
+    )
+
+    monkeypatch.setattr("lazy_harness.core.paths.config_file", lambda: cfg)
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    monkeypatch.setenv("CODEX_HOME", str(codex_dir))
+
+    assert _shared.profile_name() == "work"
+
+
 def test_profile_name_is_empty_when_the_config_cannot_be_read(tmp_path: Path, monkeypatch) -> None:
     """A broken config must degrade to an unlabelled row, never raise."""
     from lazy_harness.hooks.builtins import _shared

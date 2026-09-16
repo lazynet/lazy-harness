@@ -322,12 +322,16 @@ def test_the_worker_drains_the_queue_the_producer_writes_to(
     cfg_file = _profile_config(tmp_path)
     cfg = load_config(cfg_file)
 
-    agent, producer_dir = agent_dir_for(cfg, "alpha")
-    queue_subdir = agent.session_dirs().get("queue") or "queue"
+    producer_agent, producer_dir = agent_dir_for(cfg, "alpha")
+    worker_agent, worker_dir = compound_loop_worker._agent_dir_for_profile(cfg, "alpha")
 
-    worker_dir = compound_loop_worker._agent_dir_for_profile(cfg, "alpha")
+    # Each side names the subdirectory with its *own* adapter, so the comparison
+    # covers the directory and the name inside it. Taking one side's subdir for
+    # both would agree even when the two adapters differ.
+    producer_queue = producer_dir / (producer_agent.session_dirs().get("queue") or "queue")
+    worker_queue = worker_dir / (worker_agent.session_dirs().get("queue") or "queue")
 
-    assert worker_dir / queue_subdir == producer_dir / queue_subdir
+    assert worker_queue == producer_queue
 
 
 def test_the_worker_without_a_profile_resolves_where_it_always_did(
@@ -347,6 +351,65 @@ def test_the_worker_without_a_profile_resolves_where_it_always_did(
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     cfg = load_config(_profile_config(tmp_path))
 
-    assert compound_loop_worker._agent_dir_for_profile(cfg, "") == agent_runtime_dir(
+    assert compound_loop_worker._agent_dir_for_profile(cfg, "")[1] == agent_runtime_dir(
         get_agent("claude-code")
+    )
+
+
+def test_the_worker_names_its_queue_with_the_profiles_own_adapter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The defect (design step 6): `main` resolved the directory per profile and
+    the *subdirectory names inside it* globally.
+
+    `session_dirs()` is the adapter's answer, so a profile running an agent that
+    names its queue something other than `queue/` had the producer writing to
+    `<profile dir>/<its agent's name>` while the worker created and drained
+    `<profile dir>/queue`. Both exit 0 and every queued task is orphaned —
+    the same pair `_agent_dir_for_profile` was added to keep together, broken
+    one level further down the path.
+    """
+    from lazy_harness.agents import registry
+    from lazy_harness.core.config import load_config
+    from lazy_harness.hooks.builtins._shared import agent_dir_for
+    from lazy_harness.knowledge import compound_loop_worker
+
+    class _OtherAdapter(registry.NullAdapter):
+        @property
+        def name(self) -> str:
+            return "other"
+
+        def env_var(self) -> str:
+            return "OTHER_CONFIG_DIR"
+
+        def session_dirs(self) -> dict[str, str]:
+            return {"sessions": "threads", "logs": "journal", "queue": "outbox"}
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setitem(registry._AGENTS, "other", _OtherAdapter)
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("OTHER_CONFIG_DIR", raising=False)
+
+    profile_home = tmp_path / "alpha-home"
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        '[harness]\nversion = "1"\n\n[agent]\ntype = "claude-code"\n\n'
+        '[profiles]\ndefault = "alpha"\n\n'
+        f'[profiles.alpha]\nconfig_dir = "{profile_home}"\nagent = "other"\n'
+    )
+    # Bound into the worker's own namespace by `from ... import config_file`,
+    # so patching `core.paths` leaves the worker reading the real config.
+    monkeypatch.setattr(compound_loop_worker, "config_file", lambda: cfg_file)
+
+    cfg = load_config(cfg_file)
+    producer_agent, producer_dir = agent_dir_for(cfg, "alpha")
+    producer_queue = producer_dir / (producer_agent.session_dirs().get("queue") or "queue")
+
+    compound_loop_worker.main(["--profile", "alpha"])
+
+    assert producer_queue.is_dir(), (
+        "the worker did not create the queue the producer writes to; it created "
+        f"{sorted(p.name for p in profile_home.iterdir()) if profile_home.is_dir() else []}"
     )
