@@ -335,8 +335,19 @@ class ClaudeCodeAdapter:
         Preference order:
           1. ~/.local/share/claude/versions/<newest mtime> — Claude Code's
              version-manager dir, picks the most recently installed build.
-          2. shutil.which('claude'), filtered to skip the lh entrypoint dir
-             (so a `claude` shim that calls `lh run` cannot recurse).
+          2. shutil.which('claude'), unfiltered.
+
+        Step 1 is the whole recursion guard, and step 2 carries an accepted
+        risk: `lh run` exec's what this returns, so a PATH `claude` that is a
+        wrapper calling `lh run` would fork-bomb. Nothing rejects it. Keying a
+        filter on the `lh` entrypoint directory is what the guard cannot be —
+        `uv tool install` puts `lh` and `claude` in the same `~/.local/bin`,
+        so it would reject the genuine binary and leave `lh run` with
+        `LaunchError("binary-not-found")` on every machine without a
+        version-manager dir. The risk stays open because it needs that dir to
+        be absent *and* a wrapper on PATH; a shell alias or function, which is
+        how re-entry is normally spelled, is invisible to `shutil.which`.
+        Both halves are pinned in `tests/unit/test_agent_claude.py`.
         """
         versions_dir = Path.home() / ".local" / "share" / "claude" / "versions"
         if versions_dir.is_dir():

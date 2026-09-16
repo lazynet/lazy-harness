@@ -80,3 +80,19 @@ The *Consequences* promise — one new file, one registry entry, zero changes
 elsewhere — was tested for the first time by `CodexAdapter` and did not hold
 unassisted: the Protocol had to shed two methods first. That is the promise
 working as a signal, which is what the second *Consequences* bullet asks for.
+
+**2026-09-16 — the recursion constraint is an ordering, not a filter.** The
+`resolve_binary` bullet above reads as though a shim is rejected. Nothing
+rejects one: `claude_code.py` prefers the version-manager directory and then
+returns `shutil.which("claude")` unfiltered, so with that directory absent a
+PATH `claude` wrapping `lh run` is returned and exec'd. The constraint is
+recorded here as **accepted**, not fixed, on two measurements. Keying a filter
+on the `lh` entrypoint directory would reject the genuine binary — `uv tool
+install` puts `lh` and `claude` in the same `~/.local/bin`, and the resulting
+`LaunchError("binary-not-found")` breaks `lh run` outright, a worse failure
+than the one it prevents. And the recursion needs the version dir absent *and*
+an executable wrapper on PATH; the ordinary spelling of re-entry is a shell
+alias or function, which `shutil.which` cannot see. Both branches are pinned by
+`test_a_recursive_claude_shim_on_path_loses_to_the_versioned_build` and
+`test_a_recursive_claude_shim_is_returned_when_no_versioned_build_exists`, so
+closing the risk later means changing a test that asserts it is open.
