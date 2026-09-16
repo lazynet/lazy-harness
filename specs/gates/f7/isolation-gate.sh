@@ -159,8 +159,29 @@
 # counting. Do not "fix" this line.
 set -uo pipefail
 
-LH_BIN="${1:-lh}"
-command -v "$LH_BIN" >/dev/null 2>&1 || { echo "harness error: $LH_BIN not executable" >&2; exit 2; }
+# RESOLVED TO AN ABSOLUTE PATH, and refused if it cannot be. `command -v`
+# answers against THIS shell's PATH, but invoke() runs every hook under
+# `env -i PATH=/usr/bin:/bin` (see CHILD_PATH), where a bare name like `lh`
+# and a relative path are both unreachable. invoke() discards stdout and
+# stderr and returns 0 unconditionally, so the child's 127 is invisible and
+# every assertion fails with "no entry written anywhere the gate watches" —
+# a green production binary reported as 44 leaks. That false finding was
+# filed twice before this line was fixed. Accepting only an absolute path
+# makes the parent's answer and the child's lookup the same answer.
+LH_BIN_ARG="${1:-lh}"
+LH_BIN="$(command -v "$LH_BIN_ARG" 2>/dev/null || true)"
+case "$LH_BIN" in
+  /*) ;;
+  *)
+    echo "harness error: $LH_BIN_ARG did not resolve to an absolute executable." >&2
+    echo "  the hooks run under 'env -i PATH=/usr/bin:/bin', where a bare name" >&2
+    echo "  or a relative path cannot be found — and the invocation discards both" >&2
+    echo "  streams and returns 0, so that would surface as failed assertions" >&2
+    echo "  rather than as an error. Pass an absolute path: \$(command -v lh)." >&2
+    exit 2
+    ;;
+esac
+[ -x "$LH_BIN" ] || { echo "harness error: $LH_BIN is not executable" >&2; exit 2; }
 
 ROOT="${F7_GATE_ROOT:-$(mktemp -d -t f7-gate)}"
 [ -d "$ROOT" ] || { echo "harness error: F7_GATE_ROOT=$ROOT is not a directory" >&2; exit 2; }
