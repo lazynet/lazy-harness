@@ -26,19 +26,26 @@ Steps 4 and 5 can take 30–120 seconds and call another LLM. The naive implemen
 
 Split the compound loop into **a fast synchronous producer (the hook) and a slow asynchronous consumer (the worker)**, with a file-based queue between them.
 
-> **Path note (2026-09-15).** The `~/.claude/...` spellings below were written when one agent meant
-> one fixed location. They are now one possible result of a resolution, not the contract, and this
-> producer does **not** read the profile it was invoked with. `compound_loop.py:81-86` calls
-> `get_agent(cfg.agent.type)` — the *global* adapter — then `agent_runtime_dir(agent)` with no
-> `profile_config_dir`, and derives `agent_dir / (subdirs.get("queue") or "queue")` for the queue and
-> `log_dir / "compound-loop.log"` at `:132` for the worker's log. `compound_loop_worker.py:98-105`
-> repeats the same resolution. So the chain is: the global `[agent].type` picks the adapter, that
-> adapter's own environment variable wins if set (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, …), and
-> otherwise the adapter's global fallback applies. `core/paths.py` (`agent_runtime_dir`) is the
-> source of truth. The spellings below are what a single-profile Claude Code install with no
-> environment override resolves to; under any other combination they may differ — an override can
-> also happen to name the same directory. Routing these two
-> through the invoked profile is open work, tracked in `specs/backlog.md`.
+> **Path note (2026-09-15, corrected 2026-09-16).** The `~/.claude/...` spellings below were
+> written when one agent meant one fixed location. They are now one possible result of a
+> resolution, not the contract.
+>
+> *What the note said until 2026-09-16, and why it is kept:* this producer did **not** read the
+> profile it was invoked with — `compound_loop.py:81-86` called `get_agent(cfg.agent.type)`, the
+> *global* adapter, then `agent_runtime_dir(agent)` with no `profile_config_dir`, and
+> `compound_loop_worker.py:98-105` repeated it. That routing was open work.
+>
+> *It closed with the step 5 migrations (#314→#328), and the entry is `[x]` in
+> `specs/backlog.md`.* Both readers now go through one helper: the producer at
+> `hooks/builtins/compound_loop.py:65` is `agent, agent_dir = agent_dir_for(cfg, event.profile)`,
+> and `knowledge/compound_loop_worker.py:92-114` (`_agent_dir_for_profile`) delegates to the same
+> `_shared.py:agent_dir_for` whenever a profile is present, resolving globally **only** on the
+> empty-profile branch. So the chain is now: the *invoked profile* picks the adapter via
+> `agent_for_profile`, that adapter's own environment variable wins if set (`CLAUDE_CONFIG_DIR`,
+> `CODEX_HOME`, …), and otherwise the adapter's fallback applies. `core/paths.py`
+> (`agent_runtime_dir`) remains the source of truth for the last step. The spellings below are
+> what a single-profile Claude Code install with no environment override resolves to; under any
+> other combination they may differ — an override can also happen to name the same directory.
 
 - **Producer — `src/lazy_harness/hooks/builtins/compound_loop.py`.** Runs inside Claude Code's `Stop` hook. All it does:
   1. Read config, check `compound_loop.enabled`, bail if disabled.
