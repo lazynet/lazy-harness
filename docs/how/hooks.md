@@ -445,12 +445,18 @@ Responsibility: keep a profile's composed `CLAUDE.md` in sync with its segmented
 
 Mechanics:
 
-1. Scope check — the hook only acts on `Edit` / `Write` tool calls whose `file_path` basename is one of `CLAUDE.head.md`, `CLAUDE.tail.md`, or `CLAUDE.common.md`. Every other tool / path: instant exit 0.
+1. Scope check — the hook only acts on `Edit` / `Write` tool calls whose edited path's basename is one of `CLAUDE.head.md`, `CLAUDE.tail.md`, or `CLAUDE.common.md`. Every other tool / path: it abstains without doing anything.
 2. Walk parent dirs of the edited file to find the enclosing `profiles/` root.
-3. Call `sync_profiles(<profiles_dir>)` to regenerate every profile's composed `CLAUDE.md` from its segments.
-4. Fail-soft: any exception is swallowed and the hook still exits 0. A sync failure must never block the agent's turn.
+3. Call `sync_profiles(<profiles_dir>, <adapter>)` to regenerate every profile's composed system doc from its segments.
+4. Fail-soft: any exception is swallowed and the hook still abstains. A sync failure must never block the agent's turn.
 
-**Where it writes:** each profile's `CLAUDE.md` under `<profiles_dir>/<name>/CLAUDE.md` (in place). The segment files themselves are not touched.
+**Where it writes:** each profile's system doc under `<profiles_dir>/<name>/<doc>` (in place). The segment files themselves are not touched. Note the scope of step 3: the tree is chosen by the *edited path*, and every profile under it is regenerated — not only the one whose segment was touched.
+
+**Which agent's doc name it uses.** The one the hook was invoked under: the adapter is resolved from `--profile`, and `system_doc_name()` is read off it (`CLAUDE.md` for Claude Code, `AGENTS.md` for Codex). Before that it read the global `[agent].type`, so on a machine whose profiles run different agents a segment edit regenerated the wrong agent's contract file and left the right one stale.
+
+The segment *filenames* it watches are still Claude Code's, which is why the hook's own name is. A profile running another agent has its doc regenerated under that agent's name, but only an edit to a `CLAUDE.*` segment triggers it.
+
+**Tool scope, deliberately narrower than the event.** `PostToolUse` delivers `NotebookEdit` as a file modification alongside `Edit` and `Write`, and this hook matches on the *filename* rather than an extension — so a notebook named `CLAUDE.head.md` would clear the second gate. The tool-name check is kept for that reason and is not a redundant restatement of the operation.
 
 ### `engram-persist` — runs on `Stop`
 
