@@ -301,9 +301,21 @@ it is most of the signal.
 
 So `resolve_launch` returns the plan and writes nothing; the write happens after
 every validation and after the dry-run diversion, immediately before
-`os.execvpe` (`cli/run_cmd.py:101`) and before the subprocess spawn in
+`os.execvpe` (`cli/run_cmd.py:105` since the write landed above it) and
+before the subprocess spawn in
 `lh exec`. **The unit is a launch actually started**, not a launch attempted.
 A failure to write must never block the launch.
+
+**Shipped 2026-09-16.** The table is in `monitoring/db.py` under the same
+`CREATE TABLE IF NOT EXISTS` pass as the other five, so every metrics DB on
+disk gains it on the next open. `monitoring/launches.py:record_launch` is the
+one write path both launchers call — fail-soft, one line to stderr, never
+propagating — and it is called from `cli/run_cmd.py` immediately before
+`os.execvpe` and from `cli/exec_cmd.py` after the empty-prompt refusal and
+before the spawn, exactly as this decision requires. `resolve_launch` still
+writes nothing. The read side is `MetricsDB.launch_counts` for the adoption
+check's own grouping and `MetricsDB.launch_to_session_ratio` for the
+calibration below. No CLI surfaces either yet; the horizon does not need one.
 
 Rewritten criterion, replacing the parent's:
 
@@ -1058,6 +1070,19 @@ sequences them. Reverting a segment rename means both, in that order.
    says. What this measurement adds is that there is no interim proxy to start
    the clock against in the meantime, so the parent's step 9 must not be treated
    as the clock's start until the table exists and has accumulated a window.
+
+   **Still open 2026-09-16; the instrument exists now, the number does not.**
+   `MetricsDB.launch_to_session_ratio(days=...)` implements exactly the
+   measurement described above: launches against `COUNT(DISTINCT session)` from
+   `session_stats`, both halves cut at one instant floored to the same local
+   midnight, because `launches.ts` is an epoch and `session_stats.date` a local
+   day and a window bounding only the numerator would divide a month of
+   launches by every session ever ingested. The helper returns `ratio: None`
+   for a profile whose window holds no sessions — uncalibrated, not infinite.
+   What is still missing is elapsed time: the table starts empty on every
+   machine, so the first honest reading is one accumulated window after this
+   ships. The rule in decision 1 is unchanged — no ratio, no threshold, no
+   horizon.
 2. **Copilot's real `preToolUse` payload, and whether it honours `deny`.**
    **Closed 2026-09-13 by measurement against copilot 1.0.83** — the payload is
    the camelCase shape with `toolArgs` as a nested object, `deny` is honoured, a
