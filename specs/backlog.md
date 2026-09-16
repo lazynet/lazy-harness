@@ -503,8 +503,20 @@ arreglo:
 
 Los tres últimos **no** gatean en `operation`: pasan el gate por `native_name`
 (`INSPECTED_TOOLS = {"Edit","Write"}`) y mueren un paso más abajo iterando `tool.edits`, que el
-adapter nunca construye. Arreglar `_TOOL_OPERATIONS` sin construir `edits` los deja inertes
-igual, y ése es el motivo para no tratar esto como un mapeo faltante.
+adapter nunca construye.
+
+**Corrección 2026-09-16, medida corriendo los hooks y no leyéndolos — el split de dos mecanismos
+de arriba es correcto sobre dónde retorna cada hook *primero* y equivocado sobre qué se sigue de
+eso.** `post-tool-use-format` y `pre-tool-use-read-size` tampoco reviven con el mapa solo: el
+gate de `operation` es el **primero de dos**, y abajo iteran `tool.edits`
+(`post_tool_use_format.py:36`) y `tool.reads` (`pre_tool_use_read_size.py:119`). Medido con
+`operation` ya mapeado y las estructuras vacías: `post_tool_use_format.main()` deja el archivo
+intacto (`'x   =    1\n'`, contra `'x = 1\n'` cuando `edits` viene construido) y
+`pre_tool_use_read_size.main()` devuelve `system_message` vacío (contra el `WARN: ... 5000
+lines` con `reads` construido). Así que **los cinco** necesitan la estructura y arreglar
+`_TOOL_OPERATIONS` no revive a ninguno: no es un arreglo parcial, es un **no-op** que deja el
+gate verde por el mismo motivo por el que ya estaba verde. Ése es el motivo para no tratar esto
+como un mapeo faltante, y es más fuerte que el que decía esta entrada.
 
 **Inerte ≠ ausente, y los dos conviven en el mismo hook.** `signal_gaps` omite `session-export`
 y `stop-context-rotate` en Codex y el deploy lo **nombra**; eso es ausencia declarada y no es
@@ -515,10 +527,23 @@ rechazado, con el veredicto en el envelope anidado y exit 0, que es lo que
 guard que funciona para una mitad de su denylist y calla para la otra no se distingue, desde
 afuera, de uno que pasó.
 
-**Acción:** un gate propio, no una extensión de F7. Precondición barata y ya nombrada por el
-`CLAUDE.md`: las probes primero — el dialecto real de Codex para un edit, registrado en un
-`codex-evidence.md`, antes del primer test. Sin eso el gate mediría el mapa que ya está escrito
-en `_TOOL_OPERATIONS` contra sí mismo.
+**Acción — hecha a medias, y la mitad que falta es la precondición.** El gate propio existe:
+`specs/gates/f8/translation-gate.sh`, sibling de F7 y no una extensión suya. Deriva el scope de
+`list_builtin_hooks()`, parte por `BuiltinHookSpec.operations`, alimenta un payload **por
+operación declarada** a los dos adapters, computa el set inerte y lo compara contra una lista
+checkeada en el repo **fallando en las dos direcciones** — un builtin que se volvió inerte y uno
+que dejó de serlo. No cuenta y pasa. La discriminación son cuatro translators intercambiables por
+`$1` (`real-translate.sh` y tres `fake-translate-*.sh`), con los exit codes medidos en la cabecera
+del gate.
+
+Lo que **no** se hizo es la precondición que esta entrada nombra: las probes del dialecto real de
+Codex para un edit, en un `codex-evidence.md`. Se intentaron el 2026-09-16 contra `codex-cli
+0.154.0` con un `CODEX_HOME` descartable y un `hooks.json` que volcaba el payload, y la política
+de la sesión las rechazó antes de que `codex exec` corriera. El gate igual es sólido para lo que
+afirma —qué builtins quedan inertes **a través del par de adapters shippeado**, que está
+determinado por esos dos objetos— y explícitamente no afirma nada sobre el binario; su cabecera
+lo dice en esos términos. **Queda abierto:** correr las probes y, si el dialecto real difiere,
+alimentar el gate con el payload de cada agente en vez de uno solo en dialecto Claude Code.
 
 ### Dos hooks resuelven el profile de verdad y F7 no tiene canal para verlo
 
