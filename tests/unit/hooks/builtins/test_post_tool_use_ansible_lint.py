@@ -297,8 +297,14 @@ def test_the_inspected_tools_are_a_strict_subset_of_the_declared_operation() -> 
 
     modify = {t for t, op in _TOOL_OPERATIONS.items() if op is Operation.MODIFY_FILE}
 
-    assert INSPECTED_TOOLS < modify, (
-        f"INSPECTED_TOOLS={sorted(INSPECTED_TOOLS)} no longer narrows MODIFY_FILE={sorted(modify)}"
+    # Scoped to the names Claude Code emits, because the trap is Claude Code's:
+    # `INSPECTED_TOOLS` also carries Codex's `apply_patch`, which no Claude
+    # payload can name. `NotebookEdit` is the gap the narrowing exists for and
+    # the strict subset is what asserts it is still there.
+    claude_side = INSPECTED_TOOLS & frozenset(_TOOL_OPERATIONS)
+
+    assert claude_side < modify, (
+        f"INSPECTED_TOOLS={sorted(claude_side)} no longer narrows MODIFY_FILE={sorted(modify)}"
     )
 
 

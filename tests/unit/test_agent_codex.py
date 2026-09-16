@@ -642,3 +642,179 @@ def test_one_plan_retires_hooks_json_while_writing_config_toml() -> None:
     assert by_path[HOOKS_JSON].artifact is None
     assert by_path[CONFIG_TOML].artifact is not None
     assert _parsed(ops)["projects"]["/Users/someone/repos/one"]["trust_level"] == "trusted"
+
+
+# --- apply_patch: the native edit path, probe 4c --------------------------
+#
+# Every blob below is Codex's own, copied from
+# `specs/designs/codex-evidence.md` §1 (:335) — a single-file `*** Update
+# File:` section under `tool_input.command`, the *same* key `Bash` uses. The
+# multi-file, `*** Add File:` and `*** Delete File:` shapes are the format's,
+# never observed from the binary (evidence §2, "untested for `apply_patch`"),
+# and the tests over them say so where they assert.
+
+_APPLY_PATCH_BLOB = (
+    "*** Begin Patch\n"
+    "*** Update File: /private/tmp/codex-step4-wd/target.txt\n"
+    "@@\n"
+    "-untouched\n"
+    "+touched\n"
+    "*** End Patch"
+)
+
+_APPLY_PATCH: dict = {
+    "session_id": "01a0a301-0d88-7c91-9483-5276101d5acb",
+    "transcript_path": (
+        "/private/tmp/codex-step4-probe/sessions/2026/09/14/"
+        "rollout-2026-09-14T23-59-10-01a0a301-0d88-7c91-9483-5276101d5acb.jsonl"
+    ),
+    "cwd": "/private/tmp/codex-step4-wd",
+    "hook_event_name": "PreToolUse",
+    "tool_name": "apply_patch",
+    "tool_input": {"command": _APPLY_PATCH_BLOB},
+    "tool_use_id": "call_apply_patch",
+}
+
+
+def _tool_for(blob: object):
+    payload = dict(_APPLY_PATCH, tool_input={"command": blob})
+    return _adapter().parse_hook_input("pre_tool_use", payload, profile="probe").tool
+
+
+def test_apply_patch_is_an_edit_rather_than_an_unmapped_tool() -> None:
+    """Probe 4c: `PreToolUse` fires with `tool_name: "apply_patch"` literally.
+
+    Before this mapping the native edit path parsed with `operation=None`, which
+    reads as "no builtin guards this" rather than "this modifies a file"."""
+    tool = _adapter().parse_hook_input("pre_tool_use", _APPLY_PATCH, profile="probe").tool
+    assert tool is not None
+    assert tool.native_name == "apply_patch"
+    assert tool.operation is Operation.MODIFY_FILE
+
+
+def test_the_patch_blob_becomes_a_file_edit_carrying_the_embedded_path() -> None:
+    """The path is inside the blob text, not in a structured field — which is
+    why mapping the operation alone revives none of the five builtins."""
+    tool = _tool_for(_APPLY_PATCH_BLOB)
+    assert tool is not None
+    assert [str(e.path) for e in tool.edits] == ["/private/tmp/codex-step4-wd/target.txt"]
+    assert tool.edits[0].is_create is False
+    assert tool.edits[0].replacements == (("untouched", "touched"),)
+
+
+def test_apply_patch_leaves_command_unset() -> None:
+    """A patch blob is not a shell command, and two builtins read `command` as
+    one: `pre_tool_use_security.py:362` and `pre_tool_use_git_scope.py:402` both
+    scan it for shell syntax. Feeding them patch text would match on the
+    *content* of an edit. The blob stays reachable through `raw_input`."""
+    tool = _tool_for(_APPLY_PATCH_BLOB)
+    assert tool is not None
+    assert tool.command is None
+    assert tool.raw_input == {"command": _APPLY_PATCH_BLOB}
+
+
+def test_bash_still_carries_its_command() -> None:
+    """The regression the line above could cause: `command` is keyed on the tool,
+    not on the key being absent."""
+    tool = _adapter().parse_hook_input("pre_tool_use", _PRE_TOOL_USE, profile="probe").tool
+    assert tool is not None
+    assert tool.command == "touch /private/tmp/codex-step4-wd/MARKER_ALLOW"
+
+
+def test_a_two_file_blob_yields_one_edit_per_section() -> None:
+    """Plural because the format is plural. Unprobed: no run forced a multi-file
+    `apply_patch` (evidence §2), so this asserts the parser is generic over
+    sections rather than that Codex emits them."""
+    blob = (
+        "*** Begin Patch\n"
+        "*** Update File: /w/a.txt\n"
+        "@@\n"
+        "-alpha\n"
+        "+ALPHA\n"
+        "*** Update File: /w/b.txt\n"
+        "@@\n"
+        "-beta\n"
+        "+BETA\n"
+        "*** End Patch"
+    )
+    tool = _tool_for(blob)
+    assert tool is not None
+    assert [str(e.path) for e in tool.edits] == ["/w/a.txt", "/w/b.txt"]
+    assert tool.edits[1].replacements == (("beta", "BETA"),)
+
+
+def test_context_and_several_hunks_become_several_replacement_pairs() -> None:
+    """`FileEdit.replacements` is what `pre-tool-use-memory-size` replays to
+    predict the post-edit size (`pre_tool_use_memory_size.py:148`), so a hunk
+    has to round-trip through `str.replace`: context lines belong on both sides
+    of the pair or the replacement finds nothing."""
+    blob = (
+        "*** Begin Patch\n"
+        "*** Update File: /w/a.txt\n"
+        "@@ def one():\n"
+        " keep\n"
+        "-old\n"
+        "+new\n"
+        "@@\n"
+        "-second\n"
+        "+SECOND\n"
+        "*** End Patch"
+    )
+    tool = _tool_for(blob)
+    assert tool is not None
+    assert tool.edits[0].replacements == (
+        ("keep\nold", "keep\nnew"),
+        ("second", "SECOND"),
+    )
+
+
+def test_an_add_file_section_is_a_create_carrying_its_whole_content() -> None:
+    """Unprobed shape, derived from the format: every body line of an add is a
+    `+` line, so the added lines *are* the file."""
+    blob = "*** Begin Patch\n*** Add File: /w/new.txt\n+one\n+two\n*** End Patch"
+    tool = _tool_for(blob)
+    assert tool is not None
+    assert len(tool.edits) == 1
+    assert tool.edits[0].is_create is True
+    assert tool.edits[0].content == "one\ntwo\n"
+
+
+def test_a_delete_section_yields_no_edit_because_file_edit_cannot_say_delete() -> None:
+    """The deliberate gap, not an oversight. `FileEdit` has `is_create` and no
+    counterpart, so a delete emitted as an edit would tell every reader the path
+    is still there: `post_tool_use_format.py:37` would format a file that is
+    gone. Widening `FileEdit` on a section shape no probe has seen would be the
+    guess this adapter exists to refuse — the header names it as a follow-up."""
+    blob = "*** Begin Patch\n*** Delete File: /w/gone.txt\n*** End Patch"
+    tool = _tool_for(blob)
+    assert tool is not None
+    assert tool.operation is Operation.MODIFY_FILE
+    assert tool.edits == ()
+
+
+def test_a_blob_with_no_file_section_abstains() -> None:
+    """The must-fail half of the parser's contract: no section, no edit, and the
+    five builtins gated on `tool.edits` return without acting."""
+    tool = _tool_for("*** Begin Patch\n@@\n-a\n+b\n*** End Patch")
+    assert tool is not None
+    assert tool.edits == ()
+
+
+@pytest.mark.parametrize("blob", [None, 7, ["*** Begin Patch"], {"a": 1}, ""])
+def test_a_command_that_is_not_patch_text_abstains_rather_than_raising(blob: object) -> None:
+    """Valid JSON of the wrong type, the payload hazard this repo tests for
+    everywhere else. A hook that raises here exits non-zero on a PreToolUse."""
+    tool = _tool_for(blob)
+    assert tool is not None
+    assert tool.native_name == "apply_patch"
+    assert tool.edits == ()
+    assert tool.command is None
+
+
+def test_an_absent_tool_input_still_parses_as_an_edit() -> None:
+    payload = dict(_APPLY_PATCH)
+    del payload["tool_input"]
+    tool = _adapter().parse_hook_input("pre_tool_use", payload, profile="probe").tool
+    assert tool is not None
+    assert tool.operation is Operation.MODIFY_FILE
+    assert tool.edits == ()

@@ -270,5 +270,14 @@ def test_the_deployed_matcher_still_reaches_every_inspected_tool() -> None:
     generated = ClaudeCodeAdapter()._generate_hook_config({"post_tool_use": ["cmd"]})
     matcher = generated["PostToolUse"][0]["matcher"]
 
-    uncovered = sorted(t for t in INSPECTED_TOOLS if matcher not in ("", "*") and t not in matcher)
+    # The Claude Code names only: `INSPECTED_TOOLS` spans agents and this
+    # matcher is one agent's. `tests/unit/test_hook_matcher_coverage.py` holds
+    # the same rule for every builtin and explains the narrowing there.
+    from lazy_harness.agents.claude_code import _TOOL_OPERATIONS
+
+    uncovered = sorted(
+        t
+        for t in INSPECTED_TOOLS & frozenset(_TOOL_OPERATIONS)
+        if matcher not in ("", "*") and t not in matcher
+    )
     assert uncovered == [], f"matcher {matcher!r} never reaches {uncovered}"

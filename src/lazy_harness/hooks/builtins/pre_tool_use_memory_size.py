@@ -26,6 +26,7 @@ from typing import NamedTuple
 # against module globals and raises `NameError` on a name that only exists for
 # the type checker.
 from lazy_harness.agents.base import FileEdit, HookDecision, HookEvent
+from lazy_harness.hooks.builtins._shared import EDIT_TOOLS
 
 # The tool names this hook inspects. `tests/unit/test_hook_matcher_coverage.py`
 # asserts the matcher the registry deploys covers every one of them, so the gate
@@ -41,7 +42,11 @@ from lazy_harness.agents.base import FileEdit, HookDecision, HookEvent
 # called `CLAUDE.md` would clear them. The suffix exclusion the migration plan
 # offers as an alternative is therefore a no-op here, and the native-name gate
 # is the only narrowing that holds.
-INSPECTED_TOOLS = frozenset({"Edit", "Write"})
+#
+# The value is `_shared.EDIT_TOOLS`, not a copy: four builtins gate on this set,
+# and while each kept its own literal, a widening reached three of them and
+# missed the fourth.
+INSPECTED_TOOLS = EDIT_TOOLS
 
 MAX_LINES = 200
 
@@ -138,20 +143,39 @@ def _projected_text(tool_name: str, edit: FileEdit) -> str | None:
         # before the migration; both are silent, and `""` is the honest one.
         return edit.content if edit.content is not None else ""
 
+    # The third gate this hook had for Codex's native edit path, and the one the
+    # evidence's two-fix account does not name. Mapping `apply_patch` to
+    # `MODIFY_FILE` and adding it to `EDIT_TOOLS` both landed above; the call
+    # still died here, because a tool name that is neither `Write` nor `Edit`
+    # fell through to `None` and the hook went quiet. `apply_patch` carries both
+    # shapes in one blob — an `*** Add File:` section is the `Write` shape and
+    # an `*** Update File:` section is the `Edit` shape — so it is the one tool
+    # whose branch is chosen by the `FileEdit`, not by the name.
+    if tool_name == "apply_patch":
+        return (edit.content or "") if edit.is_create else _replayed(edit)
+
     if tool_name == "Edit":
-        if not edit.path.is_file():
-            return None
-        try:
-            current = edit.path.read_text()
-        except OSError:
-            return None
-        for old, new in edit.replacements:
-            current = (
-                current.replace(old, new) if edit.replace_all else current.replace(old, new, 1)
-            )
-        return current
+        return _replayed(edit)
 
     return None
+
+
+def _replayed(edit: FileEdit) -> str | None:
+    """The file on disk with this edit's replacements applied, or None.
+
+    Extracted rather than duplicated for `apply_patch`: the `replace_all` and
+    read-failure branches are the part a second copy would drift on, and this
+    hook's acceptance test is byte identity with what it emitted before.
+    """
+    if not edit.path.is_file():
+        return None
+    try:
+        current = edit.path.read_text()
+    except OSError:
+        return None
+    for old, new in edit.replacements:
+        current = current.replace(old, new) if edit.replace_all else current.replace(old, new, 1)
+    return current
 
 
 class _Warning(NamedTuple):
