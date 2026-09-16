@@ -567,11 +567,17 @@ def test_transcript_reader_falls_back_to_the_global_agent_without_a_config(
 
 
 def test_transcript_reader_is_none_for_an_unregistered_agent(tmp_path: Path, monkeypatch) -> None:
-    """A typo in `[profiles.<name>].agent` leaves the hook without a signal."""
+    """A typo in `[profiles.<name>].agent` leaves the hook without a signal.
+
+    The name has to be one no adapter answers to. This read `"codex"` while
+    Codex had no reader, which made it a second copy of the test above rather
+    than a test of an unresolvable name — and it went green for the wrong
+    reason the moment `CodexAdapter` grew one (ADR-048).
+    """
     from lazy_harness.hooks.builtins._shared import transcript_reader
 
     monkeypatch.setattr(
-        "lazy_harness.core.paths.config_file", lambda: _profile_config(tmp_path, "codex")
+        "lazy_harness.core.paths.config_file", lambda: _profile_config(tmp_path, "claude-kode")
     )
 
     assert transcript_reader("lazy") is None
