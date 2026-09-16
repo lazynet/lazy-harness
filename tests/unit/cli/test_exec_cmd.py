@@ -19,6 +19,8 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+from tests.conftest import timeout_when_agent_is_ready
+
 ECHO_AGENT = """
     import json, os, sys
     prompt = sys.stdin.read()
@@ -391,7 +393,10 @@ def test_exec_dry_run_reports_the_plan_without_spawning(harness_config: Path) ->
 SPAWNER_AGENT = """
     import os, subprocess, sys, time
     child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
-    open(os.environ["PIDFILE"], "w").write(str(child.pid))
+    # Renamed into place rather than written in place: this path is also what
+    # says the fork is done, and a half-written file reads back as a pid.
+    open(os.environ["PIDFILE"] + ".partial", "w").write(str(child.pid))
+    os.replace(os.environ["PIDFILE"] + ".partial", os.environ["PIDFILE"])
     sys.stdin.read()
     time.sleep(120)
 """
@@ -418,7 +423,8 @@ def test_exec_timeout_kills_the_whole_process_group(
     pidfile = tmp_path / "grandchild.pid"
     monkeypatch.setenv("PIDFILE", str(pidfile))
 
-    _invoke(["--timeout", "1"])
+    with timeout_when_agent_is_ready(pidfile):
+        _invoke(["--timeout", "1"])
 
     grandchild = int(pidfile.read_text())
     deadline = time.time() + 5
@@ -769,6 +775,7 @@ def test_exec_leaves_cost_source_null_when_the_agent_reported_no_cost(
 # total.
 TIMEOUT_TRANSCRIPT_AGENT = """
     import json, os, sys, time
+    time.sleep(float(os.environ.get("AGENT_START_DELAY", "0")))
     argv = sys.argv[1:]
     session_id = argv[argv.index("--session-id") + 1]
     project = os.path.join(os.environ["CLAUDE_CONFIG_DIR"], "projects", "-fake-project")
@@ -784,17 +791,26 @@ TIMEOUT_TRANSCRIPT_AGENT = """
                 "usage": {"input_tokens": 200000, "output_tokens": 40000},
             },
         }) + "\\n")
+    # Renamed into place only once the transcript above is closed: this path
+    # is what says the agent may now be killed.
+    open(os.environ["READYFILE"] + ".partial", "w").close()
+    os.replace(os.environ["READYFILE"] + ".partial", os.environ["READYFILE"])
     time.sleep(60)
 """
 
 
-def test_exec_bills_a_timed_out_run_from_its_transcript(harness_config: Path) -> None:
+def test_exec_bills_a_timed_out_run_from_its_transcript(
+    harness_config: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The most expensive outcome `lh exec` has reported `cost_usd: null` while
     the ingest billed the same run. The transcript is written at the stem this
     command pinned before spawning, so the kill does not destroy the figure."""
     _write_agent(TIMEOUT_TRANSCRIPT_AGENT)
+    ready = tmp_path / "transcript-written"
+    monkeypatch.setenv("READYFILE", str(ready))
 
-    code, envelope = _invoke(["--timeout", "1"])
+    with timeout_when_agent_is_ready(ready):
+        code, envelope = _invoke(["--timeout", "1"])
 
     assert code == 124
     assert envelope["error"]["kind"] == "timeout"
@@ -802,6 +818,29 @@ def test_exec_bills_a_timed_out_run_from_its_transcript(harness_config: Path) ->
     assert envelope["cost_source"] == "transcript"
     assert envelope["prompt_tokens"] == 200_000
     assert envelope["output_tokens"] == 40_000
+
+
+def test_a_child_slower_to_start_than_the_budget_is_still_billed(
+    harness_config: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The guard against the kill going back to a wall clock.
+
+    A child that has not finished writing its transcript when the deadline
+    lands is what a loaded machine produces by itself — interpreter startup
+    alone spends the budget. Declared here instead of waited for, so the
+    failure is the same on every machine rather than only on a busy one.
+    """
+    _write_agent(TIMEOUT_TRANSCRIPT_AGENT)
+    ready = tmp_path / "transcript-written"
+    monkeypatch.setenv("READYFILE", str(ready))
+    monkeypatch.setenv("AGENT_START_DELAY", "0.5")
+
+    with timeout_when_agent_is_ready(ready):
+        code, envelope = _invoke(["--timeout", "0.1"])
+
+    assert code == 124
+    assert envelope["cost_usd"] == 2.0
+    assert envelope["cost_source"] == "transcript"
 
 
 # --- the mute failure (ADR-038, C4) ----------------------------------------
@@ -936,14 +975,17 @@ def test_every_envelope_has_the_same_keys_whatever_the_outcome(
 
 
 def test_a_timeout_reports_the_cost_fields_the_success_path_reports(
-    harness_config: Path,
+    harness_config: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Identical keys, deliberately non-identical values: `num_turns` and
     `duration_ms` stay null on a timeout even when `cost_usd` carries a figure,
     so `cost_usd` implies nothing beyond `cost_source`."""
     _write_agent(TIMEOUT_TRANSCRIPT_AGENT)
+    ready = tmp_path / "transcript-written"
+    monkeypatch.setenv("READYFILE", str(ready))
 
-    _, envelope = _invoke(["--timeout", "1"])
+    with timeout_when_agent_is_ready(ready):
+        _, envelope = _invoke(["--timeout", "1"])
 
     assert envelope["cost_usd"] is not None
     assert envelope["cost_source"] == "transcript"

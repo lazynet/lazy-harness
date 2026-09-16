@@ -31,6 +31,7 @@ from lazy_harness.plugins.contracts import (
     SinkHealth,
     SinkWriteResult,
 )
+from tests.conftest import timeout_when_agent_is_ready
 
 # Writes a transcript under the session id it was told to use, exactly where
 # the ingest looks for one, then reports that id back in its envelope.
@@ -69,6 +70,10 @@ HANGING_AGENT = """
                               "cache_creation_input_tokens": 0}},
     }) + "\\n")
     sys.stdout.flush()
+    # Renamed into place only once the transcript above is on disk: this path
+    # is what says the agent may now be killed.
+    open(os.environ["READYFILE"] + ".partial", "w").close()
+    os.replace(os.environ["READYFILE"] + ".partial", os.environ["READYFILE"])
     time.sleep(120)
 """
 
@@ -166,7 +171,9 @@ def test_the_workload_reaches_the_ingested_event(channel: dict[str, Path]) -> No
     assert sink.events[0].workload == "vault-pass"
 
 
-def test_attribution_survives_the_timeout(channel: dict[str, Path]) -> None:
+def test_attribution_survives_the_timeout(
+    channel: dict[str, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The most expensive outcome `lh exec` has, and the reason the write is
     pre-spawn: the kill must not outrun the attribution row.
 
@@ -174,8 +181,11 @@ def test_attribution_survives_the_timeout(channel: dict[str, Path]) -> None:
     ingest puts that cost in the store `lh status --by workload` reads, so the
     row is still what makes the run answerable by caller."""
     _write_agent(HANGING_AGENT)
+    ready = tmp_path / "transcript-written"
+    monkeypatch.setenv("READYFILE", str(ready))
 
-    code, envelope = _exec(["--workload", "vault-pass", "--timeout", "2"])
+    with timeout_when_agent_is_ready(ready):
+        code, envelope = _exec(["--workload", "vault-pass", "--timeout", "2"])
 
     assert code == 124
     assert envelope["error"]["kind"] == "timeout"
