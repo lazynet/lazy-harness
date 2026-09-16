@@ -561,6 +561,8 @@ That distinction decides two rows. `session-end` (`session_end.py:115`, `:152`) 
 
   The fix is `agent_dir_for(cfg, event.profile)` and the adapter's own credentials location, but **note the scope**: this hook reads a Claude Code credentials file by name, so the per-profile fix and the per-agent one are different changes. Task 9 does the first and records the second.
 
+  **Resolved, 2026-09-16, in the two halves this note predicted.** The per-profile half landed with Task 9 (`agent_dir_for`). The per-agent half landed in ADR-045 (#351): `AgentAdapter.credentials_file() -> str | None`, called at `session_start_preflight.py:127` after `agent_dir_for` resolves the directory at `:283`. `_credentials_path` is gone — `grep -rn _credentials_path src/` is empty.
+
 **Row 12 is left unresolved on purpose, and task 12's first job is to resolve it.** The table asserts nothing it knows to be wrong.
 
   `herdr-context-gauge` *handles* four events and special-cases two: `main` branches on `PostToolUse` (`:172`) and `SessionEnd` (`:175`) and falls through for everything else. Its docstring claims three (`:12-13`) and `docs/how/hooks.md:486` names four. But which events it actually receives is the operator's placement, not the code's: `BuiltinHookSpec.event` is already unset (`loader.py:109`) and `plugins/builtins.py:62` says so. So `event=` **stays unset** — not a guess at `post_tool_use` — and that is safe because a payload naming its own event wins over the registry (`runner._canonical_event`).
