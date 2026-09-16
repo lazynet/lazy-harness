@@ -524,67 +524,6 @@ def test_doctor_still_reports_the_deprecated_single_backend_form(
     assert "ollama" in out
 
 
-def _cfg_with_agents(global_agent: str, profile_agents: dict[str, str]):
-    from lazy_harness.core.config import (
-        AgentConfig,
-        Config,
-        HarnessConfig,
-        ProfileEntry,
-        ProfilesConfig,
-    )
-
-    return Config(
-        harness=HarnessConfig(version="1"),
-        agent=AgentConfig(type=global_agent),
-        profiles=ProfilesConfig(
-            default=next(iter(profile_agents)),
-            items={
-                name: ProfileEntry(config_dir=f"~/.cfg-{name}", agent=agent)
-                for name, agent in profile_agents.items()
-            },
-        ),
-    )
-
-
-def test_doctor_warns_a_profile_agent_the_deploy_path_does_not_honour_yet() -> None:
-    """`[profiles.<name>].agent` is honoured by `.envrc` but not by hook or MCP
-    config generation, which still resolves the global agent for every profile.
-
-    A profile declaring its own agent therefore receives the global agent's
-    settings.json shape, silently. Until the remaining `cfg.agent.type` readers
-    move, the gap has to be visible rather than found via a broken profile.
-    """
-    from rich.console import Console
-
-    from lazy_harness.cli.doctor_cmd import _render_unhonoured_profile_agents
-
-    cfg = _cfg_with_agents("claude-code", {"personal": "", "experiment": "null"})
-
-    console = Console(force_terminal=False, width=200)
-    with console.capture() as cap:
-        _render_unhonoured_profile_agents(console, cfg)
-    out = cap.get()
-
-    assert "experiment" in out, out
-    assert "null" in out, out
-    assert "personal" not in out, "a profile inheriting the global agent is not a warning"
-
-
-def test_doctor_is_silent_when_no_profile_declares_a_divergent_agent() -> None:
-    from rich.console import Console
-
-    from lazy_harness.cli.doctor_cmd import _render_unhonoured_profile_agents
-
-    # "work" declares an agent, but the same one: nothing diverges.
-    cfg = _cfg_with_agents("claude-code", {"personal": "", "work": "claude-code"})
-
-    console = Console(force_terminal=False, width=200)
-    with console.capture() as cap:
-        _render_unhonoured_profile_agents(console, cfg)
-
-    assert cap.get() == ""
-
-
 _SIGNAL_GAP_TOML = (
     '[harness]\nversion = "1"\n'
     '[agent]\ntype = "claude-code"\n'

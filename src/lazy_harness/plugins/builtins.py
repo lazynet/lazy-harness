@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from lazy_harness.agents.registry import list_agents
 from lazy_harness.knowledge import graphify
 from lazy_harness.memory import engram
 from lazy_harness.plugins.capabilities import Capability, CapabilityRegistry, Cardinality
@@ -151,21 +152,28 @@ _SINKS = [
 
 # Exclusive choices: the config field holds the selected name, and every
 # sibling reads the same field.
+#: Human labels only. The *set* is the agent registry's, so the two cannot
+#: drift: this list was written by hand and had already lost `codex`, which
+#: resolves, deploys and runs — a per-profile report for a Codex profile would
+#: have shown every agent off. A name with no label renders as itself.
+_AGENT_SUMMARIES = {
+    "claude-code": "Claude Code",
+    "codex": "Codex",
+    "null": "No agent — generate nothing",
+}
+
 _AGENTS = [
     Capability(
-        name="claude-code",
+        name=name,
         kind="agent",
         cardinality=Cardinality.ONE,
         config_path="agent.type",
-        summary="Claude Code",
-    ),
-    Capability(
-        name="null",
-        kind="agent",
-        cardinality=Cardinality.ONE,
-        config_path="agent.type",
-        summary="No agent — generate nothing",
-    ),
+        summary=_AGENT_SUMMARIES.get(name, name),
+        # `[profiles.<name>].agent` overrides `[agent].type`, so this reports
+        # per profile and refuses to be toggled. See `Capability.per_profile`.
+        per_profile=True,
+    )
+    for name in list_agents()
 ]
 
 _LLM_BACKENDS = [

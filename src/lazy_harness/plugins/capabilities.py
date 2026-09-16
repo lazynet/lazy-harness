@@ -75,6 +75,16 @@ class Capability:
     # and a registry that did not know would report them ON for an agent that
     # will never deploy them.
     requires_system_doc: bool = False
+    # True when `config_path` names only the *default* and the effective answer
+    # is per profile — today that is the agent, which `[profiles.<name>].agent`
+    # overrides. ADR-035 declared the agent `Cardinality.ONE` at
+    # `config_path="agent.type"`; the true cardinality is one per profile, which
+    # a single dotted path cannot express.
+    #
+    # It makes `state()` take a `profile`, and it makes `toggle()` refuse: see
+    # `CapabilityRegistry.toggle` for why the registry reports this and does not
+    # write it.
+    per_profile: bool = False
 
 
 class _Absent:
@@ -124,23 +134,56 @@ def _resolve(cfg: Config, dotted: str, *, owner: str = "") -> object:
     return current
 
 
-def _agent_has_system_doc(cfg: Config) -> bool:
-    """Whether the selected agent keeps a file-based system instruction doc.
+def _agent_has_system_doc(cfg: Config, profile: str = "") -> bool:
+    """Whether the agent this profile runs keeps a file-based system doc.
 
     Read from the config the caller already passed rather than taken as a
     parameter: the agent is part of the configuration being asked about, and a
     second source for it is a second thing that can disagree. Imported inside
     the function so `plugins` does not take an import-time dependency on
     `agents`.
+
+    Resolved through `agent_for_profile`, which is where every other path in
+    the framework resolves it. Reading `[agent].type` here reported a
+    system-doc hook ON for a profile running an agent that has no such doc —
+    the state `merge_with_defaults` drops, so the hook was never deployed and
+    the registry said otherwise.
+
+    An empty profile is "nobody said" and `agent_for_profile` answers with the
+    global default, which is the same contract it gives an unknown name.
     """
-    from lazy_harness.agents.registry import AgentNotFoundError, get_agent
+    from lazy_harness.agents.registry import AgentNotFoundError, agent_for_profile
 
     try:
-        return bool(get_agent(cfg.agent.type).system_doc_name())
+        return bool(agent_for_profile(cfg, profile).system_doc_name())
     except AgentNotFoundError:
         # An unknown agent is `check_config`'s failure to report. Assuming it
         # has a system doc keeps this answer the same as the old default set.
         return True
+
+
+def _per_profile_value(cap: Capability, cfg: Config, profile: str) -> object:
+    """The effective value of a `per_profile` capability's switch, for one profile.
+
+    Resolution lives with the thing being resolved rather than being rebuilt
+    here from `config_path`: the agent's per-profile override is
+    `[profiles.<name>].agent`, and `agent_for_profile` is the one importable
+    place that reads it. Deriving the profile field from `config_path` would be
+    a second answer — `"agent.type"` does not spell `"agent"`.
+
+    An unknown kind raises rather than falling through to the global value: a
+    capability that declares `per_profile` and has no per-profile resolution is
+    a registration bug, and answering globally would hide it behind the exact
+    answer the flag exists to replace.
+    """
+    if cap.kind == "agent":
+        from lazy_harness.agents.registry import agent_for_profile
+
+        return agent_for_profile(cfg, profile).name
+    raise ValueError(
+        f"capability {cap.name!r} declares per_profile but kind {cap.kind!r} has no "
+        "per-profile resolution registered"
+    )
 
 
 class CapabilityRegistry:
@@ -161,7 +204,21 @@ class CapabilityRegistry:
             raise KeyError(f"no capability registered under {name!r}")
         return self._caps[name]
 
-    def state(self, cap: Capability, cfg: Config, *, probe: Probe = which_probe) -> CapabilityState:
+    def state(
+        self,
+        cap: Capability,
+        cfg: Config,
+        *,
+        probe: Probe = which_probe,
+        profile: str = "",
+    ) -> CapabilityState:
+        """What this capability is doing, optionally for one profile.
+
+        `profile` is read only by a `per_profile` capability, where
+        `config_path` names the default and `[profiles.<name>]` overrides it.
+        An empty `profile` is "nobody said" and keeps the global answer, which
+        is the contract `agent_for_profile` already applies to an unknown name.
+        """
         # An empty path means there is no switch. `knowledge.search` carries
         # only `engine`, so qmd has no on/off key, and inventing one to satisfy
         # the model would be a config schema change disguised as a refactor.
@@ -176,7 +233,10 @@ class CapabilityRegistry:
                 )
             return CapabilityState.ACTIVE if probe(cap.binary) else CapabilityState.MISSING
 
-        value = _resolve(cfg, cap.config_path, owner=cap.name)
+        if cap.per_profile and profile:
+            value: object = _per_profile_value(cap, cfg, profile)
+        else:
+            value = _resolve(cfg, cap.config_path, owner=cap.name)
         if value is ABSENT:
             # Undeclared, so the framework default decides. This is the rule
             # `merge_with_defaults` applies, and two answers to "is this on"
@@ -204,7 +264,7 @@ class CapabilityRegistry:
                 f"{type(value).__name__}, which names a section rather than a switch"
             )
 
-        if enabled and cap.requires_system_doc and not _agent_has_system_doc(cfg):
+        if enabled and cap.requires_system_doc and not _agent_has_system_doc(cfg, profile):
             enabled = False
 
         if not cap.binary:
@@ -222,7 +282,33 @@ class CapabilityRegistry:
 
         Refuses a capability with no switch rather than returning the config
         unchanged, which would let a surface render a toggle that does nothing.
+
+        **The registry reports per-profile state; it does not write it.**
+        `toggle` sets a value by walking `config_path` with getattr/setattr, and
+        `[profiles.<name>].agent` is not on that path: the name is a runtime
+        value and `ProfilesConfig.items` is a plain dict, so writing it means a
+        second write mechanism in a method that has exactly one. Three reasons
+        to refuse instead:
+
+        - Writing `config_path` anyway is the silent failure. A surface that
+          toggled the agent moved `[agent].type` while every profile declaring
+          its own carried on unchanged, and nothing said so.
+        - Choosing an agent for a profile is not a toggle. `Cardinality.ONE`
+          already refuses `enabled=False` because deselecting an exclusive
+          choice names nothing; per profile, `enabled=True` is equally
+          incomplete without a profile, and the registry cannot invent which.
+        - No caller wants the writer. `lh profile add` and the config file are
+          the surfaces that set a profile's agent. A writer with no caller is a
+          promise with no implementation in the other direction.
+
+        The refusal names the key to edit, which is the thing the caller needs.
         """
+        if cap.per_profile:
+            raise ValueError(
+                f"capability {cap.name!r} is resolved per profile; set "
+                f"`[profiles.<name>].agent` (or `{cap.config_path}` for the default) "
+                "in config.toml — the registry reports this, it does not write it"
+            )
         if not cap.config_path:
             raise ValueError(f"capability {cap.name!r} has no config switch to set")
 
