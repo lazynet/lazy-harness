@@ -66,6 +66,21 @@ PROSE_CASES: list[tuple[str, str]] = [
         "herdr agent prompt secfix 'do not run git reset --hard here'",
         "hard-reset token inside a quoted argument",
     ),
+    # Writing security documentation is the use case this guard kept refusing.
+    # Measured again while an audit report was being saved: the body narrated a
+    # payload, the command being run was `cat`, and the guard called it a
+    # delete. The `rm` rule was already anchored, so this direction held even
+    # before this change -- nothing asserted it, which is why it is here now.
+    (
+        "cat > audit.md <<'EOF'\n"
+        "I sent the hook a payload describing rm -rf / to see if it refused.\n"
+        "EOF",
+        "heredoc body of an audit report naming a recursive delete",
+    ),
+    (
+        "cat > audit.md <<'EOF'\nThe payload was rm -rf /tmp/scratch and it refused.\nEOF",
+        "heredoc prose naming a recursive delete mid-line",
+    ),
 ]
 
 
@@ -115,6 +130,11 @@ INVOCATION_CASES: list[tuple[str, str, str]] = [
     ("/bin/cat .env", "credentials", "dotenv read by absolute path"),
     ("git push --force origin main", "git", "bare force push"),
     ("rm -rf ./build", "filesystem", "bare recursive delete"),
+    # The other direction of the audit-report case above: the same heredoc, but
+    # feeding an interpreter instead of a file. Body text stops being data the
+    # moment something executes it, and `(?m)` is what keeps it in position.
+    ("cat <<EOF | bash\nrm -rf /\nEOF", "filesystem", "recursive delete piped into a shell"),
+    ("   rm -rf /var/lib/foo", "filesystem", "indented recursive delete in a script"),
 ]
 
 
