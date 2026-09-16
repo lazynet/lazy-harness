@@ -138,12 +138,19 @@ def test_a_line_without_an_equals_sign_is_reported_and_skipped(
     assert "flex.env" in capsys.readouterr().err
 
 
-def test_an_unreadable_file_is_reported_and_the_launch_continues(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """Degrade rather than crash: `lh run` execs the agent, and a permission
-    problem on one profile's secrets must not be an unhandled traceback."""
-    from lazy_harness.core.secrets import overlay_profile_secrets
+def test_an_unreadable_declared_file_refuses_instead_of_inheriting(tmp_path: Path) -> None:
+    """ADR-045 D2 — and the rewrite of the test that pinned the opposite.
+
+    The old contract degraded to "no overlay" and let the launch continue, so a
+    profile whose own credential could not be read authenticated as whichever
+    account the ambient environment happened to carry. That is F2, measured on
+    2026-09-16: availability bought with account identity, traded silently.
+
+    Nobody provisions a secrets file by accident. Its presence is the profile
+    saying it carries its own account, so an unreadable one stops the launch
+    rather than borrowing somebody else's.
+    """
+    from lazy_harness.core.secrets import SecretsError, overlay_profile_secrets
 
     secrets_dir = tmp_path / "secrets"
     secrets_dir.mkdir()
@@ -152,12 +159,61 @@ def test_an_unreadable_file_is_reported_and_the_launch_continues(
     denied.chmod(0o000)
 
     try:
-        result = overlay_profile_secrets({"A": "1"}, "flex", secrets_dir=secrets_dir)
+        with pytest.raises(SecretsError, match=r"flex\.env"):
+            overlay_profile_secrets({"A": "1"}, "flex", secrets_dir=secrets_dir)
     finally:
         denied.chmod(0o600)
 
-    assert result == {"A": "1"}
-    assert "flex.env" in capsys.readouterr().err
+
+def test_a_file_that_is_not_text_refuses(tmp_path: Path) -> None:
+    """A decode failure says the same thing a permission failure says: the
+    profile declared a secrets file and the harness cannot read what is in it.
+
+    Collapsing this one into the fail-open branch would let a truncated or
+    half-written file through as "no overlay", which is the same wrong-identity
+    launch with a different errno.
+    """
+    from lazy_harness.core.secrets import SecretsError, overlay_profile_secrets
+
+    secrets_dir = tmp_path / "secrets"
+    secrets_dir.mkdir()
+    blob = secrets_dir / "flex.env"
+    blob.write_bytes(b"TOKEN=\xff\xfe\x00\n")
+    blob.chmod(0o600)
+
+    with pytest.raises(SecretsError, match=r"flex\.env"):
+        overlay_profile_secrets({}, "flex", secrets_dir=secrets_dir)
+
+
+def test_a_secrets_directory_that_cannot_be_traversed_refuses(tmp_path: Path) -> None:
+    """The case the old existence gate turned into a raw traceback.
+
+    `Path.is_file()` does not swallow `EACCES` — `_ignore_error` lists ENOENT,
+    ENOTDIR, EBADF and ELOOP and nothing else — so `if not path.is_file()` on a
+    file whose parent cannot be traversed raised `PermissionError` from outside
+    the `except OSError` that wrapped only the read, and `lh run` printed a
+    traceback. Branching on the errno of the read itself gives the same case a
+    typed refusal.
+
+    The first block is the premise, pinned rather than assumed: if a future
+    Python starts ignoring `EACCES` here, this test says so instead of quietly
+    changing what it covers.
+    """
+    from lazy_harness.core.secrets import SecretsError, overlay_profile_secrets
+
+    secrets_dir = tmp_path / "secrets"
+    secrets_dir.mkdir()
+    (secrets_dir / "flex.env").write_text("TOKEN=flex\n")
+    (secrets_dir / "flex.env").chmod(0o600)
+    secrets_dir.chmod(0o000)
+
+    try:
+        with pytest.raises(PermissionError):
+            (secrets_dir / "flex.env").is_file()
+        with pytest.raises(SecretsError, match=r"flex\.env"):
+            overlay_profile_secrets({"A": "1"}, "flex", secrets_dir=secrets_dir)
+    finally:
+        secrets_dir.chmod(0o700)
 
 
 def test_a_profile_name_cannot_escape_the_secrets_directory(tmp_path: Path) -> None:
@@ -259,3 +315,42 @@ def test_os_environ_is_untouched_by_the_overlay(tmp_path: Path, monkeypatch) -> 
     overlay_profile_secrets(dict(os.environ), "flex", secrets_dir=secrets_dir)
 
     assert os.environ["LH_TEST_ONLY"] == "from-env"
+
+
+def test_an_unreadable_secrets_file_refuses_the_launch(tmp_path: Path, monkeypatch) -> None:
+    """The refusal reaches the caller through `LaunchError`, not as an `OSError`
+    surfacing three frames below `lh run`.
+
+    `kind` is the machine-readable half, asserted on its own: the message is
+    free to be reworded, the tag is the contract `binary-not-found` and
+    `unknown-profile` already established.
+    """
+    from lazy_harness.agents.launch import LaunchError, resolve_launch
+    from lazy_harness.core.config import Config, ProfileEntry
+
+    versions = Path.home() / ".local" / "share" / "claude" / "versions"
+    versions.mkdir(parents=True, exist_ok=True)
+    binary = versions / "0.0.1-fake"
+    binary.write_text("#!/bin/sh\nexit 0\n")
+    binary.chmod(0o755)
+
+    secrets_dir = tmp_path / "secrets"
+    secrets_dir.mkdir()
+    denied = secrets_dir / "flex.env"
+    denied.write_text("CLAUDE_CODE_OAUTH_TOKEN=flex-token\n")
+    denied.chmod(0o000)
+
+    cfg = Config()
+    cfg.secrets.dir = str(secrets_dir)
+    cfg.profiles.default = "flex"
+    cfg.profiles.items = {"flex": ProfileEntry(config_dir=str(tmp_path / "cfg"), roots=[])}
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "lazy-token")
+
+    try:
+        with pytest.raises(LaunchError) as excinfo:
+            resolve_launch(cfg, cwd=tmp_path)
+    finally:
+        denied.chmod(0o600)
+
+    assert excinfo.value.kind == "secrets-unreadable"
+    assert "flex.env" in str(excinfo.value)
