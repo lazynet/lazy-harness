@@ -38,7 +38,7 @@ CREATE TABLE session_stats (
 CREATE INDEX idx_stats_date ON session_stats(date);
 ```
 
-The `UNIQUE(session, model)` constraint makes re-ingestion idempotent: running the collector against a session that already has stats is a no-op via `INSERT OR IGNORE`. Every view is a parametric SQL query, not a derived table.
+The `UNIQUE(session, model)` constraint makes re-ingestion idempotent: running the collector against a session that already has stats overwrites the row via `ON CONFLICT(session, model) DO UPDATE`, so a transcript that has grown since the last run stores the new total instead of adding to the old one. `INSERT OR IGNORE`, which would keep the first row and discard the update, survives as `MetricsDB.insert_stats` with no caller outside `tests/unit/test_db.py`. Every view is a parametric SQL query, not a derived table.
 
 Pricing lives in `config.toml` under `[monitoring.pricing]`, a dict keyed by model name with input/output/cache-read/cache-create rates. `pricing.py` computes cost on ingest, not on query — the cost column is a materialized result so views never touch pricing.
 
@@ -84,6 +84,13 @@ Tables now created by `MetricsDB._create_tables`:
 deterministically from `(profile, session, model)` so the remote sink has a stable
 idempotency key; `host` and `workload` are deliberately not backfilled, because nothing
 on disk can say which machine wrote a historical row.
+
+The idempotence sentence under **Decision** has been corrected in place rather than
+annotated here, because it never described the shipped collector: `ingest.py` called
+`upsert_stats` from the first ingest pipeline (#1), a day before this ADR was filed, and
+`insert_stats` has never had a caller outside the tests. What was decided — that
+`UNIQUE(session, model)` is what makes re-ingest safe — holds; only the statement named
+the wrong mechanism, and an overwrite is not a no-op.
 
 The last consequence listed above anticipated the shape of this growth: new features
 would add columns or a table rather than restructure. That is what happened. What it did

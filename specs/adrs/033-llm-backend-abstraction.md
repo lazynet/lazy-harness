@@ -118,7 +118,8 @@ class ClaudeBackend:
 
     def complete(self, prompt: str, model: str, timeout: int) -> str:
         result = subprocess.run(
-            ["claude", "-p", prompt, "--model", model],
+            ["claude", "-p", "--model", model, "--output-format", "text"],
+            input=prompt,
             capture_output=True, text=True, timeout=timeout,
         )
         if result.returncode != 0:
@@ -334,6 +335,31 @@ can flip only `backend` without changing their agent config.
   running a different agent CLI and has not installed Claude Code, they must
   set `backend` explicitly. The default remains `"claude"` to preserve zero
   regression; an explicit error message guides the fix.
+
+## Evolution
+
+**2026-09-09 (PR #238): `complete` grew a keyword-only `schema`, and the error type
+grew a subclass.** The Protocol block above records the signature as decided on
+2026-06-11. The live contract in `llm/base.py` is
+
+    def complete(self, prompt: str, model: str, timeout: int, *, schema: dict | None = None) -> str
+
+The parameter is load-bearing rather than decorative. `OpenAICompatibleBackend`
+turns it into `response_format: {"type": "json_schema", ...}`, which Ollama, MLX
+and LM Studio all honour, while `ClaudeBackend` accepts and ignores it because
+`claude -p` has no equivalent flag and growing its argv would pass the binary an
+unknown option. The caller cannot tell which of the two it got, so it validates
+the result either way. `base.py` also adds `LLMTimeoutError`, a subclass of
+`LLMBackendError` so that every existing caller keeps working: the kind cannot be
+recovered from the message — `str(httpx.ReadTimeout(""))` is empty — and a timeout
+misreported as unreachable takes the wrong exit code.
+
+The "intentionally minimal" note above still holds for what it actually claimed.
+Single-turn remains single-turn; streaming, tool use and multi-turn context are
+still absent. What it did not anticipate is that constraining the *shape* of a
+single-turn answer is a provider capability the framework would want to use.
+[ADR-039](039-role-routed-inference.md) shipped both changes, alongside the
+`run_inference` rerouting already noted below.
 
 ## Implementation
 
