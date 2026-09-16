@@ -466,7 +466,7 @@ Inventario por **mecanismo**, no por grafía: diez builtins escriben `hooks.log`
 | `session-end` | `:89` boot, `:107-108` post-config | literal + `cfg.agent.type` |
 | ~~`pre-compact`~~ | cerrado — ver la actualización debajo de la tabla | — |
 | `pre-tool-use-memory-size` | `:170` | literal |
-| `pre-tool-use-read-size` | `:69` | literal |
+| ~~`pre-tool-use-read-size`~~ | cerrado — ver la actualización debajo de la tabla | — |
 | `post-tool-use-format` | `:67` | literal |
 | ~~`post-tool-use-ansible-lint`~~ | cerrado — ver la actualización debajo de la tabla | — |
 
@@ -483,6 +483,8 @@ Medido por el gate de aislamiento el 2026-09-15 contra 0.67.1: **siete** de los 
 Lo que cerró junto con esto, y no estaba en este inventario: `pre-compact` escribía `pre-compact-summary.md` en el dir global mientras `context-inject` —migrado en el #300— lo leía en el del profile. Los dos procesos salían 0. Cubierto ahora por `tests/integration/test_pre_compact_context_inject_pair.py`, que invoca los dos lados.
 
 **Actualización 2026-09-15 — `post-tool-use-ansible-lint` también sale** (task 15 del step 5). `_write_hook_log` ahora carga config y resuelve `agent_dir_for(cfg, profile)` con el profile que el hook recibió, y `main(event)` se lo pasa. Medido contra la grafía vieja: bajo `--profile gate` la línea caía en `~/.claude/logs/hooks.log`. El gate de `specs/gates/f7` lo mueve solo de `KNOWN_GAP_HOOKS` a `ASSERTED_HOOKS` — deriva las dos listas de `builtin_migrated()`, no de una lista escrita a mano — y ya tenía su fixture de playbook. Cubierto además por los dos casos nuevos en `tests/integration/test_hook_log_profile_isolation.py`, presencia y ausencia, con `PATH` vaciado para que la rama binary-missing sea determinista en cualquier máquina.
+
+**Actualización 2026-09-15 — `pre-tool-use-read-size` también sale** (task 16 del step 5). `_log_warning` carga config y resuelve `agent_dir_for(cfg, profile)` con el profile que `main(event)` recibe, en vez del `get_agent("claude-code")` literal de `:69`. Medido contra la grafía vieja: bajo `--profile gate` la línea caía en `~/.claude/logs/hooks.log` y el dir del profile no llegaba a existir. El gate de `specs/gates/f7` lo mueve solo de `KNOWN_GAP_HOOKS` a `ASSERTED_HOOKS` y ya tenía su fixture (`payload_for`, `isolation-gate.sh:292`). Cubierto además por los dos casos nuevos en `tests/integration/test_hook_log_profile_isolation.py`, presencia y ausencia, los dos vistos fallando contra el hook sin migrar. Queda **uno**: `pre-tool-use-memory-size`.
 
 **Por qué no se arregló con los otros dos.** El dato existe y muere en el dispatch: `deploy/engine.py:136` emite `{binary} hook {name} --profile {profile}` para *todos* los builtins, pero `cli/hooks_cmd.py` llama `main_fn()` **sin argumentos** en la rama no-migrada. Ninguno de los ocho tiene `event` ni profile en scope — `pre-compact` incluido, que es unmigrated igual que los otros siete. Plumbearlo obliga a tocar esa rama transitoria, que el step 5 borra junto con `BuiltinHookSpec.migrated`.
 

@@ -45,6 +45,20 @@ _NO_OBJECTION: dict[str, dict[str, object]] = {
         "tool_name": "Bash",
         "tool_input": {"command": "ls -la"},
     },
+    # The silent branch, reached by naming a file that is not there: the
+    # emitting branch needs a file past `MAX_LINES` on disk, which a literal
+    # payload cannot create. That branch carries a `systemMessage` and no
+    # verdict, and `test_pre_tool_use_read_size_goldens.py::
+    # test_the_warning_carries_no_permission_decision` is where its bytes are
+    # asserted. The risk this entry covers is the other direction: a warning
+    # hook on the one event Claude Code honours `DENY` on, whose silence must
+    # not start carrying a permission decision.
+    "pre-tool-use-read-size": {
+        "hook_event_name": "PreToolUse",
+        "session_id": "s1",
+        "tool_name": "Read",
+        "tool_input": {"file_path": "/nonexistent/lazy-harness/abstention-probe.md"},
+    },
     "session-export": {
         "hook_event_name": "Stop",
         "session_id": "s1",

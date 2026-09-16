@@ -758,3 +758,65 @@ def test_ansible_lint_writes_nothing_outside_the_invoked_profile(
     assert "ansible-lint unavailable" in (harness_config / "logs" / "hooks.log").read_text()
     assert _files_under(home_dir) == before_home
     assert (_files_under(other) if other.exists() else set()) == before_other
+
+
+@pytest.fixture
+def oversized_file(tmp_path: Path) -> Path:
+    """A file past `MAX_LINES`, which is the only branch that writes a log line.
+
+    `pre-tool-use-read-size` logs nothing on any of its silent paths, so a
+    bounded read or a small file leaves this gate with no evidence to place.
+    """
+    big = tmp_path / "big.md"
+    big.write_text("key: value\n" * 3000)
+    return big
+
+
+def _read_size_payload(target: Path) -> dict[str, object]:
+    return {
+        "hook_event_name": "PreToolUse",
+        "session_id": "isolation-test",
+        "tool_name": "Read",
+        "tool_input": {"file_path": str(target)},
+    }
+
+
+def test_read_size_logs_into_the_invoked_profile(
+    harness_config: Path, oversized_file: Path
+) -> None:
+    """`_log_warning` resolved `get_agent("claude-code")` and no profile.
+
+    `docs/how/hooks.md` named this hook as one of the two that still resolved
+    the directory globally. Under `--profile gate` the one line it writes landed
+    in whatever directory the *global* agent pointed at — `~/.claude`, once
+    `CLAUDE_CONFIG_DIR` is cleared.
+    """
+    exit_code = _run_hook("pre-tool-use-read-size", "gate", _read_size_payload(oversized_file))
+
+    assert exit_code == 0
+    log = (harness_config / "logs" / "hooks.log").read_text()
+    assert "pre-tool-use-read-size: unbounded read:" in log
+    assert "3000 lines ~8250 tokens" in log
+
+
+def test_read_size_writes_nothing_outside_the_invoked_profile(
+    harness_config: Path, oversized_file: Path, home_dir: Path, tmp_path: Path
+) -> None:
+    """The half that fails before the migration.
+
+    Presence alone passes either way: `~/.claude` is a directory the hook is
+    entitled to create, so the leak looks exactly like a first run.
+    """
+    other = tmp_path / "other-home"
+    before_home = _files_under(home_dir)
+    before_other = _files_under(other) if other.exists() else set()
+
+    exit_code = _run_hook("pre-tool-use-read-size", "gate", _read_size_payload(oversized_file))
+
+    assert exit_code == 0
+    assert (
+        "pre-tool-use-read-size: unbounded read:"
+        in (harness_config / "logs" / "hooks.log").read_text()
+    )
+    assert _files_under(home_dir) == before_home
+    assert (_files_under(other) if other.exists() else set()) == before_other
