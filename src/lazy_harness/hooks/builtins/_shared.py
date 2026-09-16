@@ -197,9 +197,10 @@ def profile_name() -> str:
             raw = os.environ.get(env_var, "") if env_var else ""
             if not raw:
                 continue
-            if Path(os.path.expanduser(raw)).resolve() == Path(
-                os.path.expanduser(entry_dir)
-            ).resolve():
+            if (
+                Path(os.path.expanduser(raw)).resolve()
+                == Path(os.path.expanduser(entry_dir)).resolve()
+            ):
                 return name
     except Exception:
         return ""
