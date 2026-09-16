@@ -223,6 +223,11 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
         matcher="Read",
         event="pre_tool_use",
         operations=frozenset({Operation.READ_FILE}),
+        # No `signals`: this hook sizes the file the tool call names and reads
+        # nothing else. It never opens a transcript, so declaring one would make
+        # `deploy` omit a working warning on any agent whose reader cannot supply
+        # a signal the hook does not touch.
+        migrated=True,
     ),
     "pre-tool-use-security": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.pre_tool_use_security",

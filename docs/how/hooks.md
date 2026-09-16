@@ -388,7 +388,7 @@ Responsibility: warn — never block — when a `Read` without `offset` or `limi
 Mechanics:
 
 1. Scope check — only `Read` tool calls. Every other tool: instant exit 0.
-2. If the call already carries `offset` or `limit`, the caller has bounded the read; exit 0.
+2. If the call already carries a numeric `offset` or `limit`, the caller has bounded the read; exit 0. A value that is not an integer is not a bound — the normalised `ToolCall` carries `None` for it — so such a call is reported as unbounded.
 3. Size the target file. Missing, unreadable, or empty files exit 0 — this hook never speaks about a read that is going to fail anyway.
 4. Above 500 lines, emit a top-level `systemMessage` reporting the line count and an estimated token cost, and suggesting `offset`/`limit` or `Grep` to locate the region first.
 5. Always exit 0. This is a warning hook, not a guard.
@@ -811,6 +811,6 @@ Most built-in hooks append a line to `logs/hooks.log` with their name, the cwd, 
 
 Neither file sits at a fixed path. Both live in the agent runtime directory, which resolves in this order: the agent's own environment variable (`CLAUDE_CONFIG_DIR` and its equivalents), then the profile's `config_dir`, then the agent's global link (`~/.claude`), then `~/.<agent>`. On a single-profile Claude Code install that lands in `~/.claude/logs/`; with profiles declared, the launcher exports the environment variable, so it lands in the profile's own directory — see [profiles and deploy](profiles-and-deploy.md).
 
-The second step, the profile's `config_dir`, is what a hook falls back on when the environment variable is absent, and eight hooks read it today: `context-inject`, `session-export`, `session-end`, `compound-loop`, `pre-compact`, `post-tool-use-format`, `post-tool-use-ansible-lint` and the block log of `pre-tool-use-security` resolve the directory from the profile they were invoked with — and so does the compound-loop worker, which inherits the profile the producer spawns it with. The other two that write this file — `pre-tool-use-memory-size`, `pre-tool-use-read-size` — resolve it globally instead, so on a profile whose agent differs from the global `[agent].type` they write under the wrong agent. That is open work, tracked in the backlog against the hook migration.
+The second step, the profile's `config_dir`, is what a hook falls back on when the environment variable is absent, and nine hooks read it today: `context-inject`, `session-export`, `session-end`, `compound-loop`, `pre-compact`, `post-tool-use-format`, `post-tool-use-ansible-lint`, `pre-tool-use-read-size` and the block log of `pre-tool-use-security` resolve the directory from the profile they were invoked with — and so does the compound-loop worker, which inherits the profile the producer spawns it with. The one remaining hook that writes this file — `pre-tool-use-memory-size` — resolves it globally instead, so on a profile whose agent differs from the global `[agent].type` it writes under the wrong agent. That is open work, tracked in the backlog against the hook migration.
 
 `lh status hooks` surfaces a summary view over `hooks.log` so you do not have to tail it by hand.

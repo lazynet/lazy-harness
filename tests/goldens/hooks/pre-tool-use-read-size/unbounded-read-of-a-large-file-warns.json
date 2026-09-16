@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"systemMessage\": \"WARN: <work>/big.md is 3000 lines (~8250 tokens) and this Read is unbounded. Pass offset/limit for the region you need, or use Grep to locate it first.\"}\n"
+}
