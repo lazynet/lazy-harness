@@ -104,24 +104,14 @@ desde `:367-369` cuando el step 3 insertó los helpers de merge arriba de la cla
 - [x] **Multi-file config planning — step 7, ADR-042** — [ADR-042](adrs/042-multi-file-config-planning.md) registra las decisiones. `plan_config` ya devolvía varios targets, pero los deletes eran alcanzables solo desde el motor y no desde ningún adapter, y el abort por mtime/size estaba ausente (`grep 'st_mtime\|st_size'` sobre `deploy/` y `agents/` no daba nada). Se agregó el abort — el engine graba `(st_mtime_ns, st_size)` de cada target al leer, incluidos los que no existen, y levanta `ConfigTargetChangedError` para todo el plan si algo se movió entre planificar y aplicar — más `CodexAdapter` escribiendo `[mcp_servers.<id>]` en el propio `config.toml` de Codex (mergeado con tomlkit, sin tocar `[projects.*]`) y el retiro de `hooks.json` cuando corresponde. `config_targets()` de `CodexAdapter` se ensanchó; `deploy/engine.py` y `deploy/snapshot.py` heredan el ensanche sin re-listar paths propios. PR #341, mergeado el 2026-09-16; entra en 0.68.0.
 - [x] **El agente resuelto por perfil en todo el árbol — step 6** — los dos readers de `deploy/`, el launcher (`agents/launch.py:65`, ahora `agent_for_profile(cfg, resolution.name)`) y los readers de hook/worker/CLI resuelven el agente por perfil; `Capability` ganó un campo `per_profile` reportado por `lh doctor`. Lo que queda, medido el 2026-09-16 (`grep -rn "get_agent(" src/ | grep -v hooks/builtins`): cinco sitios siguen leyendo `cfg.agent.type`. `cli/memory_cmd.py:250` y `knowledge/compound_loop_worker.py:115` están detrás de un chequeo explícito de "no hay perfil resuelto" (`if not profile:` / `resolve_profile(None)` vacío) antes de caer al global. `monitoring/statusline.py:44` comparte la misma forma de fallback (`cfg.agent.type if cfg is not None else "claude-code"`) pero su función no recibe parámetro de perfil en absoluto, así que ahí no hay una rama de "sin perfil" — es el único camino. `cli/profile_cmd.py:308` y `cli/doctor_cmd.py:474` leen `cfg.agent.type` sin ternario ni rama de perfil. Si eso cierra el step 6 o es el alcance remanente queda para revisión humana — ver [ADR-041](adrs/041-multi-agent-hook-contract.md) §3. PR #342, mergeado el 2026-09-16; entra en 0.68.0.
 - [x] **`system_docs()` reemplaza `system_doc_name()` — step 8, ADR-043** — [ADR-043](adrs/043-system-docs-by-role.md) registra la decisión. El método del Protocol pasa de nombrar un único archivo de sistema a devolver los documentos del agente por rol, lo que un adapter con más de un archivo de sistema necesita. `agents/base.py`, `agents/claude_code.py`, `agents/codex.py` y `agents/registry.py` migran; `core/sync_agent_md.py` resuelve el nombre por rol en vez de uno fijo. PR #344, mergeado el 2026-09-16; entra en 0.68.0.
+- [x] **La tabla `launches` — el numerador que el ratio del kill-criteria necesitaba** — la tabla append-only del diseño (`:281-335`, `entry ∈ 'run' | 'exec'`) no existía; `grep -rn "CREATE TABLE launches" .` sólo matcheaba el bloque SQL del propio diseño. `monitoring/launches.py:record_launch` es el único write path de los dos launchers, fail-soft por construcción (incluido el `ValueError` de un `entry` desconocido), escrito después de toda validación y de la desviación por `--dry-run` (`cli/run_cmd.py` antes de `os.execvpe`, `cli/exec_cmd.py` antes del spawn y después del rechazo de prompt vacío). `MetricsDB.launch_to_session_ratio(days=...)` implementa la mitad de lectura que el diseño (`:1035-1056`) daba por no-computable: la falta era la del numerador, no la de la medición, así que el helper devuelve `ratio: None` sin denominador — nunca un cero fabricado — con las dos mitades cortadas al mismo instante para no dividir una acumulación contra una ventana. `docs/architecture/overview.md:166` declaraba un schema de una sola tabla, falso desde `session_attribution`; corregido a las seis. 11 tests nuevos; mutation check borrando cada llamada a `record_launch` a mano. PR #346, mergeado el 2026-09-16; entra en 0.69.0.
+- [x] **`CodexAdapter` para real — step 9, ADR-044, y cuatro fixes en vez de dos** — el evidence (`specs/designs/codex-evidence.md`) cerró el dialecto de edición de Codex: elige de forma no determinística entre `Bash` con un heredoc de python y su `apply_patch` nativo, que llega con `tool_name: "apply_patch"` y el blob de patch bajo `tool_input.command` — la misma clave que usa `Bash`. El evidence nombraba dos fixes necesarios; shippearlos encontró un tercero y un cuarto: `_TOOL_OPERATIONS["apply_patch"] = MODIFY_FILE`, `"apply_patch"` en `_shared.EDIT_TOOLS` (una sola respuesta importable, asertada por identidad y no por igualdad — antes cuatro copias), `_parse_patch` armando `FileEdit`s desde el blob, y `pre_tool_use_memory_size._projected_text`, que ramifica por nombre de tool y se quedaba mudo con los otros tres puestos — un cuarto gate que la tabla de reconciliación del evidence no nombraba. Decisiones: `ToolCall.command` queda sin setear para `apply_patch` (el blob es contenido de edición, no algo a ejecutar); una sección `*** Delete File:` no produce ningún `FileEdit` (ver entrada nueva de Prioridad MEDIA); `pre-tool-use-read-size` queda deliberadamente sin ensanchar (gatea `READ_FILE`, no edits); y `lh doctor` reporta dos estados donde Codex tiene tres — `untrusted`, `unknown` y entries huérfanas, nunca `trusted`, porque leer `trusted_hash` de vuelta sólo prueba que se guardó un hash, no que siga vigente. **Techo medido, no implícito:** el path `Bash` es estructuralmente no-gateable como edit — `tool_input` es un script de shell arbitrario sin path que extraer — así que un adapter completamente arreglado gatea sólo la mitad de los edits de Codex; ADR-044 lo registra como consecuencia, no como TODO. El gate F8 se re-midió, no se predijo: cuatro builtins salen de `EXPECTED_INERT` y `fake-translate-operations-only.sh` pasa de exit 0 a exit 1. 4029 passed (baseline 3970 en `7169ccc`). PR #348, mergeado el 2026-09-16; entra en 0.69.0.
+- [x] **F1 cerrado — el guard de seguridad evalúa por segmento de shell y las reglas de git matchean a través de opciones globales reconocidas** — `should_block` ahora evalúa por segmento (`;`, `&&`, `||`, `&` bare, newline), así que un `allow_pattern` sólo rescata el segmento que matchea; y las reglas de git matchean a través de opciones globales reconocidas (`-C`, `-c`, `--git-dir=`, `--work-tree=`, `--no-pager`) vía `_normalise_git_globals`. Límites conocidos registrados en la entrada nueva de Prioridad MEDIA. PR #347, mergeado el 2026-09-16; entra en 0.69.0.
+- [x] **Los cinco builtins inertes bajo Codex ya no lo están, y la mitad que falta es estructural** — el probe contra `codex-cli 0.154.0` (2026-09-16, seis corridas, `specs/designs/codex-evidence.md`) cerró el dialecto: Codex elige de forma no determinística entre `Bash` con un heredoc de python y su `apply_patch` nativo, que llega con `tool_name: "apply_patch"` y el blob de patch bajo `tool_input.command` — la misma clave que usa `Bash`. Hicieron falta **cuatro** arreglos, no dos: la entrada en `_TOOL_OPERATIONS`, `"apply_patch"` en `_shared.EDIT_TOOLS` (una sola respuesta importable, antes cuatro copias), el parser del blob a `FileEdit`, y `_projected_text` de `pre-tool-use-memory-size`, que ramifica por nombre de tool y se quedaba mudo con los otros tres puestos — un cuarto gate que la tabla de reconciliación del evidence no nombra. El gate F8 ahora alimenta cada pierna con su propio dialecto y cuatro builtins salieron de `EXPECTED_INERT`; `fake-translate-operations-only.sh` pasó de exit 0 a exit 1, que es la prueba de que el parser es la parte que carga. **Techo medido:** el path `Bash` es estructuralmente no-gateable como edit — `tool_input` es un script de shell arbitrario sin path que extraer — así que un adapter completamente arreglado gatea la mitad de los edits de Codex. ADR-044 lo registra como consecuencia, no como TODO. `pre-tool-use-read-size` sigue inerte a propósito: gatea `READ_FILE` sobre `tool.reads`, y el dialecto de lectura de Codex no lo tocó ningún probe. PR #348, mergeado el 2026-09-16; entra en 0.69.0.
 
 ---
 
 ## Open — Prioridad ALTA
-
-### F1 — El guard de seguridad tiene dos bypasses independientes: allow-pattern de comando entero y reconocimiento de git incompleto
-
-**Por qué:** re-medido hoy contra `hooks/builtins/pre_tool_use_security.py:272` (`should_block`) y `:88` (reglas de git); confirma dos mecanismos distintos, con dos fixes distintos:
-
-(a) `:281` busca cada `allow_pattern` contra el string del comando **entero**, no contra el sub-string que matcheó la regla bloqueada — una excepción legítima para rescatar una operación rescata también cualquier otra operación destructiva encadenada en el mismo comando (por ejemplo, después de `;` o `&&`).
-
-(b) las reglas de git (`git push --force`, `git reset --hard`) exigen que el subcomando esté inmediatamente después de `git` y que el flag guardado esté inmediatamente después del subcomando — un flag insertado entre medio (p. ej. `-C <path>`), o que llegue después de otros argumentos en vez de justo después del subcomando, produce abstención en vez de bloqueo. Que `--force-with-lease` pase es correcto por diseño (la regla se llama "Force-push without lease"), no es un hueco.
-
-El payload que demuestra (a) y (b) no va a este archivo, por la regla de repo público: `specs/codebase-audit-2026-09-16.md` trae el mecanismo sin el string que lo evade.
-
-**Fuente:** hallazgo F1 de `specs/codebase-audit-2026-09-16.md`, los dos mecanismos re-verificados a mano el 2026-09-16 con una probe directa contra `should_block` y contra las reglas de git.
-
-**Registrado sin fix en esta entrada** — el arreglo va en una tanda propia, separada de los steps 6-9 del multi-agente.
 
 ### F2 — La caída de credenciales de perfil preserva la cuenta heredada
 
@@ -449,6 +439,62 @@ Cada una mezcla responsabilidades no relacionadas: recolección de contexto y re
 
 **Fuente:** hallazgo F9 de `specs/codebase-audit-2026-09-16.md`.
 
+### El guard de git normaliza un set fijo de opciones globales
+
+**Por qué:** `_normalise_git_globals` (cierre de F1, #347) sólo despoja un juego reconocido de opciones globales (`-C`, `-c`, `--git-dir=`, `--work-tree=`, `--no-pager`), y sólo una por pasada. Una opción que toma argumento repetida inmediatamente contra sí misma puede parsearse mal y dejar el subcomando real sin alcanzar, así que la regla se abstiene en vez de bloquear — valores distintos pasados de forma normal (por ejemplo dos `-C` a targets distintos) no lo sufren. Una opción global fuera de ese set reconocido también hace abstener a las reglas de git, igual que antes del fix.
+
+**Fuente:** PR #347, sección "Known limits" — atacado el guard terminado con variantes realistas, no fixeado por estar fuera del alcance de esa lane.
+
+**Acción:** ninguna propuesta en esta entrada.
+
+### Falso positivo del hook de seguridad con backticks en el argumento de otro comando
+
+**Por qué:** el `pre_tool_use_security` desplegado interpreta cualquier backtick como operador de command substitution, sin distinguir el que abre shell real del que sólo aparece dentro de un argumento citado de otro comando. Bloqueó una llamada a `gh pr create --body` cuyo texto citaba, entre backticks de markdown, un comando destructivo mencionado como prosa — evaluó esa cita como si fuera una invocación de git real, no el contenido de un PR body.
+
+**Fuente:** surgido dos veces durante la lane de #347, al redactar el body de su propio PR. Mecanismo emparentado con *Falso positivo del PreToolUse de seguridad con backticks de markdown* (Prioridad BAJA), pero disparado dentro del argumento de otro comando, no de un heredoc.
+
+**Acción:** ninguna propuesta en esta entrada — mecanismo registrado, sin repro (regla de repo público).
+
+### `pre_tool_use_security.FILE_TOOLS` no incluye `apply_patch`
+
+**Por qué:** `INSPECTED_TOOLS` de `pre_tool_use_security.py:219` es `COMMAND_TOOLS | FILE_TOOLS`, y `FILE_TOOLS` no tiene `apply_patch` — su rama `modify_file` sobrevive la traducción de #348 (el gate F8 lo registra) pero el propio gate de nombre de tool del hook lo sigue perdiendo. El gate de cobertura de matchers ya es agent-aware, así que agregarlo no exige `apply_patch` en el matcher de Claude Code. `pre_tool_use_git_scope.py` no necesita nada — `INSPECTED_TOOLS = frozenset({"Bash"})` ya alcanza los `Bash` de Codex; se deja constancia para que la omisión se lea como decisión y no como olvido.
+
+**Fuente:** #348, follow-ups 1 y 2.
+
+**Acción:** ninguna propuesta en esta entrada — otra lane es dueña de `pre_tool_use_security.py`.
+
+### `FileEdit` no puede expresar un delete
+
+**Por qué:** `FileEdit` tiene `is_create` y ningún equivalente para un delete; un `*** Delete File:` de `apply_patch` no produce ningún `FileEdit`, así que todo lector ve el path como si siguiera ahí. `post-tool-use-sync-claude` es el lector concreto que pierde un segmento de system-doc borrado. Ensanchar el tipo es el fix honesto pero exige auditar cada path que lo nombra, y ningún probe vio a Codex emitir esa forma todavía.
+
+**Fuente:** #348, follow-up 3.
+
+**Acción:** correr la probe de delete-spelling primero (probe 2 del report de #348); ensanchar `FileEdit` recién si Codex confirma la forma.
+
+### `lh deploy` no imprime la instrucción de re-trust
+
+**Por qué:** el diseño (`specs/designs/2026-09-13-multi-agent-harness-design.md:831`) dice que `lh deploy` imprime la instrucción de re-trust cada vez que cambia una declaración de hook; hoy `lh doctor` reporta el estado (`untrusted`/`unknown`) pero `deploy` no imprime nada en el momento del cambio.
+
+**Fuente:** #348, follow-up 5.
+
+**Acción:** ninguna propuesta en esta entrada.
+
+### Trust de capa proyecto de Codex
+
+**Por qué:** el diseño (`:730-746`) deja alcanzable y silencioso el estado "deployed, hook-trusted, and still not running" en la capa de proyecto de `~/.codex/config.toml` (`[projects.*]`). Si el harness alguna vez escribe hooks de capa proyecto, `lh doctor` va a necesitar leer esa sección para no reportar un trust que no aplica.
+
+**Fuente:** #348, follow-up 6.
+
+**Acción:** ninguna propuesta en esta entrada — el harness no escribe `[projects.*]` hoy.
+
+### Nada muestra los contadores de `launches` a un humano
+
+**Por qué:** `MetricsDB.launch_counts` y `launch_to_session_ratio` (#346) no tienen ningún consumidor visible — ni CLI ni línea de `lh doctor`. `docs/reference/cli.md:572` documenta `lh metrics loops` sobre `loop_events`; `lh metrics launches` (o una línea de doctor) es la forma obvia, pero el diseño no nombra ningún subcomando y #346 no inventó uno.
+
+**Fuente:** #346, follow-up 1.
+
+**Acción:** ninguna propuesta en esta entrada.
+
 ---
 
 ## Open — Prioridad BAJA
@@ -540,6 +586,14 @@ Pasó con `pre-tool-use-git-scope` en 0.57.0 — registrado, default-on, testead
 
 La auditoría es tres líneas contra `DEFAULT_HOOKS` y el `config.toml`, comparando por evento e ignorando los extra deliberados (`herdr-context-gauge`, `post-tool-use-ansible-lint`). Es la forma que debería tomar el check de `lh doctor`.
 
+### `pre-tool-use-read-size` sigue inerte bajo Codex
+
+**Por qué:** el hook gatea en `operation is Operation.READ_FILE` sobre `tool.reads`; el dialecto de lectura real de Codex no lo tocó ningún probe todavía — sólo el de edición (`Bash` y `apply_patch`) se midió contra el binario. Sigue en `EXPECTED_INERT` hasta que la probe 3 de #348 ("Read dialect") corra y diga qué `tool_name` usa Codex para leer.
+
+**Fuente:** #348, probe 3 pendiente.
+
+**Acción:** correr la probe 3 desde una terminal Aqua; recién ahí decidir si hay algo que ensanchar.
+
 ## Multi-agente — items declarados, deliberadamente no cableados
 
 Salen de [`designs/2026-09-13-multi-agent-blast-radius-design.md`](designs/2026-09-13-multi-agent-blast-radius-design.md) y de [`designs/2026-09-13-multi-agent-harness-design.md`](designs/2026-09-13-multi-agent-harness-design.md), y están acá por el gate del `CLAUDE.md`: *un `config.toml` sin una entrada puede ser una decisión y no un olvido, así que grepeá el backlog antes de cablear*. Si encontrás alguno de estos sin implementar, **no es un descuido** — leé la condición de arranque antes de tocarlo.
@@ -595,82 +649,6 @@ Lo que sí existe es el principio, escrito en otro lado: `agents/launch.py:77-79
 **Acción:** un método en el adapter —`credentials_file() -> str | None`— y que `None` sea una respuesta de primera clase, no un archivo faltante. Con `None` el check tiene que decir que **no puede hablar por ese agente**, que es un estado distinto de `unknown`; si se colapsan, el preflight reporta lo mismo para un login roto que para un agente cuyo login no sabe mirar. Precondición barata: leer dónde deja las credenciales cada adapter shippeado antes de fijar la firma — el gate del `CLAUDE.md` sobre adapters de binarios externos pide las probes primero, no durante la implementación.
 
 **Alcance: separado a propósito.** La Task 9 arregló la resolución per-profile y **no** esto, porque son dos cambios distintos con dos tests distintos: el primero se mide con dos profiles del mismo agente y verdicts opuestos, el segundo necesita un profile de otro agente. Meterlos en el mismo PR hubiera hecho que el golden de byte-identity cubriera uno de los dos y no el otro.
-
-### El gate F7 mide aislamiento de directorios y no traducción de wire format
-
-**Por qué:** es la mitad que la opción 2 dejó explícitamente afuera al cerrar *El gate F7 suprime
-la evidencia que mide* (ver §Done). El gate le da a cada hook un payload en el dialecto de Claude
-Code y usa el split de lanes para garantizar que ese dialecto le llegue a un adapter que lo
-entiende. Lo que nadie mide es la traducción en sí: que un payload en el dialecto *de cada agente*
-llegue al hook con el mismo `ToolCall`. Hoy `payload_for` escribe un solo dialecto y eso es
-deliberado — dos propiedades detrás de un exit code no pueden decir cuál se rompió.
-
-**Fuente:** medido el 2026-09-15 contra los adapters shippeados. `CodexAdapter._TOOL_OPERATIONS`
-(`agents/codex.py:92`) mapea **un solo** tool, `Bash -> RUN_COMMAND`, así que
-`{"tool_name":"Edit","tool_input":{"file_path":"/a/b.py"}}` llega como
-`ToolCall(native_name='Edit', operation=None, edits=())` y todo hook que gatea en
-`operation is MODIFY_FILE` se abstiene. Eso no es un bug del adapter: Codex no tiene ese tool con
-ese nombre. Lo que falta es un gate que le pregunte al adapter cuál **sí** tiene, y que falle
-cuando un hook declarado sobre `MODIFY_FILE` no es alcanzable en un agente que modifica archivos.
-
-**Inventario medido 2026-09-15**, corriendo cada hook con `lh hook <name> --profile <p>` contra
-un profile `agent = "codex"` y uno `agent = "claude-code"`, mismo payload `PostToolUse`/`Edit`,
-y comparando exit code y efecto en disco. De los 18 builtins, **once no leen `event.tool`** y la
-tesis no los toca. De los siete que sí, **cinco quedan inertes en un profile Codex** — corren,
-no ven nada, salen 0 — y lo hacen por **dos mecanismos distintos**, que es el dato que cambia el
-arreglo:
-
-| Hook | Dónde muere | Mecanismo |
-|---|---|---|
-| `post-tool-use-format` | `:32` | gatea en `operation is not MODIFY_FILE` |
-| `pre-tool-use-read-size` | gate de `operation` | ídem |
-| `pre-tool-use-memory-size` | `:225` pasa, `:234` no | pasa el gate de `native_name`, itera `tool.edits` vacío |
-| `post-tool-use-sync-claude` | `:76` pasa, `:78` no | ídem |
-| `post-tool-use-ansible-lint` | gate de `native_name` pasa | ídem |
-
-Los tres últimos **no** gatean en `operation`: pasan el gate por `native_name`
-(`INSPECTED_TOOLS = {"Edit","Write"}`) y mueren un paso más abajo iterando `tool.edits`, que el
-adapter nunca construye.
-
-**Corrección 2026-09-16, medida corriendo los hooks y no leyéndolos — el split de dos mecanismos
-de arriba es correcto sobre dónde retorna cada hook *primero* y equivocado sobre qué se sigue de
-eso.** `post-tool-use-format` y `pre-tool-use-read-size` tampoco reviven con el mapa solo: el
-gate de `operation` es el **primero de dos**, y abajo iteran `tool.edits`
-(`post_tool_use_format.py:36`) y `tool.reads` (`pre_tool_use_read_size.py:119`). Medido con
-`operation` ya mapeado y las estructuras vacías: `post_tool_use_format.main()` deja el archivo
-intacto (`'x   =    1\n'`, contra `'x = 1\n'` cuando `edits` viene construido) y
-`pre_tool_use_read_size.main()` devuelve `system_message` vacío (contra el `WARN: ... 5000
-lines` con `reads` construido). Así que **los cinco** necesitan la estructura y arreglar
-`_TOOL_OPERATIONS` no revive a ninguno: no es un arreglo parcial, es un **no-op** que deja el
-gate verde por el mismo motivo por el que ya estaba verde. Ése es el motivo para no tratar esto
-como un mapeo faltante, y es más fuerte que el que decía esta entrada.
-
-**Inerte ≠ ausente, y los dos conviven en el mismo hook.** `signal_gaps` omite `session-export`
-y `stop-context-rotate` en Codex y el deploy lo **nombra**; eso es ausencia declarada y no es
-este problema. Lo que sí es este problema es que `pre-tool-use-security` está en las dos
-columnas a la vez: bajo Codex su rama `RUN_COMMAND` bloquea de verdad —`terraform destroy`
-rechazado, con el veredicto en el envelope anidado y exit 0, que es lo que
-`CodexAdapter.format_hook_output` documenta— mientras su rama `READ_FILE` no llega a correr. Un
-guard que funciona para una mitad de su denylist y calla para la otra no se distingue, desde
-afuera, de uno que pasó.
-
-**Acción — hecha a medias, y la mitad que falta es la precondición.** El gate propio existe:
-`specs/gates/f8/translation-gate.sh`, sibling de F7 y no una extensión suya. Deriva el scope de
-`list_builtin_hooks()`, parte por `BuiltinHookSpec.operations`, alimenta un payload **por
-operación declarada** a los dos adapters, computa el set inerte y lo compara contra una lista
-checkeada en el repo **fallando en las dos direcciones** — un builtin que se volvió inerte y uno
-que dejó de serlo. No cuenta y pasa. La discriminación son cuatro translators intercambiables por
-`$1` (`real-translate.sh` y tres `fake-translate-*.sh`), con los exit codes medidos en la cabecera
-del gate.
-
-Lo que **no** se hizo es la precondición que esta entrada nombra: las probes del dialecto real de
-Codex para un edit, en un `codex-evidence.md`. Se intentaron el 2026-09-16 contra `codex-cli
-0.154.0` con un `CODEX_HOME` descartable y un `hooks.json` que volcaba el payload, y la política
-de la sesión las rechazó antes de que `codex exec` corriera. El gate igual es sólido para lo que
-afirma —qué builtins quedan inertes **a través del par de adapters shippeado**, que está
-determinado por esos dos objetos— y explícitamente no afirma nada sobre el binario; su cabecera
-lo dice en esos términos. **Queda abierto:** correr las probes y, si el dialecto real difiere,
-alimentar el gate con el payload de cada agente en vez de uno solo en dialecto Claude Code.
 
 ### Dos hooks resuelven el profile de verdad y F7 no tiene canal para verlo
 

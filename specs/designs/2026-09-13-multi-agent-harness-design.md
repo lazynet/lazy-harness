@@ -1473,7 +1473,7 @@ against a version that will not ship.
 
 ## Implementation sequence
 
-> **Status, 2026-09-16 — steps 0 to 8 are shipped; step 9 is next.**
+> **Status, 2026-09-16 — steps 0 to 9 are shipped; steps 10 to 12 are next.**
 >
 > | Step | State | Released in |
 > |------|-------|-------------|
@@ -1486,7 +1486,8 @@ against a version that will not ship.
 > | 6 — `per_profile` on `Capability` and the `cfg.agent.type` readers | done | 0.68.0 |
 > | 7 — multi-file config planning (ADR-042) | done | 0.68.0 |
 > | 8 — `system_docs()` replaces `system_doc_name()` (ADR-043) | done | 0.68.0 |
-> | 9 to 12 | not started | — |
+> | 9 — **`CodexAdapter` for real**, with hook trust in `lh doctor` | done | 0.69.0 |
+> | 10 to 12 | not started | — |
 >
 > Step 4 spans three releases. 0.66.0 carried the adapter, the Protocol cleanup
 > and the missing-signals line (#289, #290); 0.67.0 carries the three defects
@@ -1510,6 +1511,19 @@ against a version that will not ship.
 > removing it outright; `docs/roadmap.md`'s own item names the five call sites
 > that branch still guards and leaves open whether that closes the item or is
 > the remaining scope.
+>
+> **Step 9 landed 2026-09-16**, right after the `v0.68.0` cut: the real
+> `CodexAdapter` (ADR-044) replaces the step-4 throwaway, four fixes deep rather
+> than the two the evidence named — `_TOOL_OPERATIONS["apply_patch"]`,
+> `_shared.EDIT_TOOLS` widened, the patch blob parsed into `FileEdit`s, and
+> `pre_tool_use_memory_size._projected_text`'s silent branch — all in #348.
+> `specs/backlog.md` §Done has the per-fix record.
+>
+> The `launches` table (#346) shipped the same day, ahead of step 9 in merge
+> order, because the blast-radius design's kill criterion had no numerator
+> without it. **The horizon does not start at #348's merge**: the table is
+> empty on the day it ships, and the first honest launch-to-session ratio is
+> one accumulated window later (#346's report, follow-up 3).
 >
 > **The gate passed on 2026-09-15, on the third run.** Each run settled a
 > different half, so the pass is composite and is written that way rather than

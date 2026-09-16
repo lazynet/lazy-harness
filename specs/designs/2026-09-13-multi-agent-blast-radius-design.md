@@ -317,6 +317,10 @@ writes nothing. The read side is `MetricsDB.launch_counts` for the adoption
 check's own grouping and `MetricsDB.launch_to_session_ratio` for the
 calibration below. No CLI surfaces either yet; the horizon does not need one.
 
+`lh exec --role` (inference mode) never calls `resolve_launch` and starts no
+agent binary, so it has no profile or agent to record — it is not a launch
+under this unit.
+
 Rewritten criterion, replacing the parent's:
 
 - **Baseline:** zero launches on any non-Claude profile.

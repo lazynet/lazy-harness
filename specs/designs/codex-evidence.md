@@ -404,6 +404,16 @@ the whole defect. It isn't. Two independent gaps stack:
    their own: every one of the five builtins gated on `tool.edits` needs the
    parser too.
 
+**Correction, 2026-09-16, after #348.** Shipping the fixes above found one
+more, absent from this reconciliation: `pre_tool_use_memory_size._projected_text`
+branches on the *tool name* — `"Write"` takes `content`, `"Edit"` replays
+`replacements`, anything else falls through to `None` and the hook goes quiet.
+`apply_patch` carries both shapes in one blob, so it is the one tool whose
+branch is chosen by the `FileEdit` it carries, not by its name. With
+`_TOOL_OPERATIONS`, `INSPECTED_TOOLS` and the patch parser all in place, this
+builtin still stayed silent — a fourth fix, not the three implied above.
+Closed in #348; `specs/backlog.md` §Done has the record.
+
 **The `Bash` path is structurally different, not just currently unmapped: it
 cannot be gated as an edit at all with information the hook has.** `tool_input`
 for a `Bash`-mediated edit is `{"command": "<arbitrary shell script>"}` — there
