@@ -32,6 +32,24 @@ def _covers(matcher: str, tool: str) -> bool:
     return matcher in ("", "*") or tool in matcher.split("|")
 
 
+def _emitted_by(agent: str) -> frozenset[str]:
+    """Every native tool name one adapter can put on the hook wire.
+
+    Read off the adapter's own `_TOOL_OPERATIONS`, the same private read this
+    file already makes of `_BUILTIN_HOOKS` and for the same reason: if the name
+    moves, this returns nothing and the assertions below fail loudly instead of
+    passing over an empty set.
+    """
+    import importlib
+
+    module = importlib.import_module(f"lazy_harness.agents.{agent}")
+    return frozenset(module._TOOL_OPERATIONS)
+
+
+def _every_emitted_name() -> frozenset[str]:
+    return _emitted_by("claude_code") | _emitted_by("codex")
+
+
 def test_security_hook_is_deployed_for_every_tool_it_inspects() -> None:
     """The tool names are spelled out: they are the contract with the agent."""
     matcher = _deployed_matcher("pre-tool-use-security", "pre_tool_use")
@@ -133,6 +151,7 @@ def test_every_builtin_gating_on_tools_declares_what_it_inspects() -> None:
 
 def test_deployed_matcher_covers_every_tool_each_builtin_inspects() -> None:
     """The gate the `pre-tool-use-security` matcher bug slipped through."""
+    claude_names = _emitted_by("claude_code")
     gaps: dict[str, list[str]] = {}
     for name in _builtins_gating_on_tools():
         inspected = _inspected_tools(name)
@@ -143,10 +162,50 @@ def test_deployed_matcher_covers_every_tool_each_builtin_inspects() -> None:
         events = [fixed] if fixed else list(_CC_TOOL_EVENTS)
         for event in events:
             matcher = _deployed_matcher(name, str(event))
-            uncovered = sorted(t for t in inspected if not _covers(matcher, t))
+            # Narrowed to the names *this* agent can emit. `INSPECTED_TOOLS` is
+            # a set of native names across agents — it carries Codex's
+            # `apply_patch` since the native edit path was measured — and a
+            # Claude Code matcher naming a tool Claude Code does not have would
+            # be noise in the user's settings.json standing in for a guarantee.
+            # The intersection keeps every tooth: a name Claude *can* emit and
+            # the matcher misses still fails here, which is the whole incident
+            # this file was written after.
+            uncovered = sorted(t for t in inspected & claude_names if not _covers(matcher, t))
             if uncovered:
                 gaps[f"{name}@{event}"] = uncovered
     assert gaps == {}, f"matchers that never reach the inspected tools: {gaps}"
+
+
+def test_every_inspected_tool_name_is_one_some_agent_emits() -> None:
+    """The other direction the intersection above opens, closed here.
+
+    Once a matcher is only checked against the names one agent can emit, a
+    misspelling in `INSPECTED_TOOLS` — `apply-patch`, `applypatch` — stops
+    failing that check and starts silently gating nothing under the agent it was
+    added for. A name no adapter can produce is that typo.
+    """
+    emitted = _every_emitted_name()
+    unreachable = {
+        name: sorted(tools - emitted)
+        for name in _builtins_gating_on_tools()
+        if (tools := _inspected_tools(name)) is not None and tools - emitted
+    }
+    assert unreachable == {}, f"inspected names no adapter emits: {unreachable}"
+
+
+def test_the_codex_side_reaches_its_edit_tool_without_a_matcher() -> None:
+    """Codex's half of the same guarantee, which is not a matcher at all.
+
+    `CodexAdapter._hook_groups` omits `matcher` rather than emitting an empty
+    one, and the omitted form is the only shape observed firing on every tool
+    call. So the Claude-side intersection above is not a hole: under Codex the
+    hook is invoked for `apply_patch` because it is invoked for everything.
+    """
+    from lazy_harness.agents.codex import CodexAdapter
+
+    groups = CodexAdapter()._hook_groups({"post_tool_use": [HookEntry(command="cmd")]})
+    assert "matcher" not in groups["PostToolUse"][0]
+    assert "apply_patch" in _emitted_by("codex")
 
 
 def _module_of(name: str) -> str:

@@ -16,6 +16,7 @@ from pathlib import Path
 # against module globals and raises `NameError` on a name that only exists for
 # the type checker.
 from lazy_harness.agents.base import HookDecision, HookEvent
+from lazy_harness.hooks.builtins._shared import EDIT_TOOLS
 
 # The tool names this hook inspects. `tests/unit/test_hook_matcher_coverage.py`
 # asserts the matcher the registry deploys covers every one of them, so the gate
@@ -30,7 +31,11 @@ from lazy_harness.agents.base import HookDecision, HookEvent
 # notebook's path end `.ipynb` — so swapping the gate would run `ansible-lint`
 # on notebooks for the first time. Widening this hook's reach is a decision to
 # take deliberately, not one to let ride in as a refactor.
-INSPECTED_TOOLS = frozenset({"Edit", "Write"})
+#
+# The value is `_shared.EDIT_TOOLS`, not a copy: four builtins gate on this set,
+# and while each kept its own literal, a widening reached three of them and
+# missed the fourth.
+INSPECTED_TOOLS = EDIT_TOOLS
 
 ANSIBLE_LINT_TIMEOUT_SECS = 30
 MAX_CONTEXT_CHARS = 4000

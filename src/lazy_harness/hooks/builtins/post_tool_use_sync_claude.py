@@ -27,11 +27,13 @@ from pathlib import Path
 # forward reference `from __future__ import annotations` leaves behind.
 from lazy_harness.agents.base import HookDecision, HookEvent
 from lazy_harness.core.sync_agent_md import segment_filenames, sync_profiles
+from lazy_harness.hooks.builtins._shared import EDIT_TOOLS
 
-# The tool names this hook inspects. `tests/unit/test_hook_matcher_coverage.py`
-# asserts the matcher the registry deploys covers every one of them, so the gate
-# below and the subscription declared outside cannot drift apart.
-INSPECTED_TOOLS = frozenset({"Edit", "Write"})
+# The tool names this hook inspects — `_shared.EDIT_TOOLS`, not a copy of it.
+# `tests/unit/test_hook_matcher_coverage.py` asserts the matcher the registry
+# deploys covers every one of them, so the gate below and the subscription
+# declared outside cannot drift apart.
+INSPECTED_TOOLS = EDIT_TOOLS
 
 # Derived from the segment roles the generator declares, not listed here
 # (decision 5, ADR-043). A static list is how renaming the segments stops firing

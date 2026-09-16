@@ -1,14 +1,32 @@
-"""Codex CLI adapter — the throwaway that runs step 4's contract gate.
+"""Codex CLI adapter — the whole eighteen-builtin surface, not step 4's gate.
 
-Deliberately the smallest thing that can carry three builtins to a real Codex
-session. The adapter step 9 ships is a different object; this one exists to make
-the canonical hook contract fail where it is going to fail, while three hooks
-depend on it instead of eighteen.
+The throwaway this replaces carried three builtins to a real Codex session to
+make the canonical hook contract fail where it was going to fail. It did, twice
+over: the contract froze at ADR-041, and the F8 translation gate then named five
+builtins that deployed, ran, exited 0 and enforced nothing, because the
+`ToolCall` this adapter handed them came back with the field they gate on
+emptied. Closing that is what makes this the real one.
 
 Everything here is pinned to behaviour **observed** against `codex-cli 0.154.0`
 with `CODEX_HOME` pointed at a disposable directory. Where the binary was not
 exercised, the adapter declares nothing rather than mirroring Claude Code: a
-guess that reads as a capability is what the gate is supposed to catch.
+guess that reads as a capability is the failure this file exists to avoid, and
+the previous revision of the design shipped six of them.
+
+Two absences are decisions and not gaps, both recorded so a later reader does
+not close them by symmetry with `ClaudeCodeAdapter`:
+
+`SessionPinningAgent` is **unimplementable** here. `codex exec` at 0.154.0 has
+no `--session-id`; six candidate spellings were rejected by the argument parser,
+`ConfigToml`'s 101 fields carry no session id, and the decisive behavioural run
+is `CODEX_SESSION_ID=<fixed uuid> codex exec --json` exiting 0 while
+`thread.started` carries a UUIDv7 Codex generated. The id is born on Codex's
+side, so the harness reconciles it after the fact or not at all.
+
+`HeadlessAgent` is **unclaimed**, which is weaker and deliberate. `codex exec
+--json` is read off the binary's strings and has never been driven end to end by
+the harness; declaring the Protocol would make `lh exec` route work to a parser
+nobody has fed. It waits on a run, not on a design decision.
 """
 
 from __future__ import annotations
@@ -19,6 +37,7 @@ from pathlib import Path
 
 from lazy_harness.agents.base import (
     ConfigArtifact,
+    FileEdit,
     HookDecision,
     HookEntry,
     HookEvent,
@@ -76,7 +95,7 @@ class CodexConfigUnreadableError(RuntimeError):
 
     def __init__(self, detail: str) -> None:
         super().__init__(
-            f"{_CONFIG_FILE} does not parse as TOML ({detail}). It carries project "
+            f"{CONFIG_FILE} does not parse as TOML ({detail}). It carries project "
             f"trust and hook approvals that cannot be reconstructed, so it is left "
             f"untouched. Fix the file and re-run."
         )
@@ -135,12 +154,138 @@ _HOOK_EVENTS: dict[str, HookSupport] = {
     "permission_request": HookSupport("PermissionRequest"),
 }
 
+# Codex's native edit tool, and the vocabulary of the blob it arrives with.
+#
+# `apply_patch`'s `tool_input` is `{"command": "<patch text>"}` — the *same* key
+# `Bash` uses, carrying something that is not a shell command at all (probe 4c,
+# 0.154.0). The three section headers are the format's; only `*** Update File:`
+# was ever observed. `_parse_patch` recognises all three because it has to
+# delimit sections correctly either way, and a header it did not know would
+# swallow the next file's body into the previous file's hunks.
+_APPLY_PATCH = "apply_patch"
+_PATCH_END = "*** End Patch"
+_SECTION_HEADERS: dict[str, str] = {
+    "*** Update File: ": "update",
+    "*** Add File: ": "add",
+    "*** Delete File: ": "delete",
+}
+
+
+def _hunk_pair(lines: list[str]) -> tuple[str, str] | None:
+    """One `@@` hunk as the `(old, new)` pair `FileEdit.replacements` holds.
+
+    Unified-diff semantics, because that is what the pair is replayed through:
+    `pre_tool_use_memory_size.py:148` does `current.replace(old, new)` against
+    the file on disk, so a context line dropped from either side leaves an `old`
+    that matches nothing and a prediction of no change at all. Context lines go
+    on **both** sides; `-` lines only on the left, `+` only on the right.
+
+    `None` for a hunk that changes nothing, which keeps a pure-context hunk from
+    contributing an identity replacement.
+    """
+    old: list[str] = []
+    new: list[str] = []
+    for line in lines:
+        marker, text = (line[:1], line[1:]) if line else (" ", "")
+        if marker == "-":
+            old.append(text)
+        elif marker == "+":
+            new.append(text)
+        else:
+            old.append(text)
+            new.append(text)
+    before, after = "\n".join(old), "\n".join(new)
+    return None if before == after else (before, after)
+
+
+def _parse_patch(blob: str) -> tuple[FileEdit, ...]:
+    """The `*** Update File:` / `*** Add File:` sections of a blob, as `FileEdit`s.
+
+    The one piece without which mapping `apply_patch` to `MODIFY_FILE` revives
+    nothing: five builtins gate on `operation` or on the tool name and then die
+    iterating `tool.edits`, which stayed `()` for every tool this adapter parsed
+    until this function existed.
+
+    **A `*** Delete File:` section produces no `FileEdit`, deliberately.**
+    `FileEdit` carries `is_create` and no counterpart, so a delete emitted as an
+    edit tells every reader the path is still there — `post_tool_use_format`
+    would run a formatter over a file that is gone. Widening `FileEdit` is the
+    honest fix and it is not this step's: the delete spelling is the format's,
+    not one any probe has seen Codex emit (evidence §2).
+
+    Anything that is not patch text yields `()`. The blob is model-authored and
+    arrives on the same key a shell command does, so "unparseable" is an
+    ordinary input here, never an error.
+    """
+    edits: list[FileEdit] = []
+    kind: str | None = None
+    path: Path | None = None
+    hunks: list[list[str]] = []
+
+    def flush() -> None:
+        if kind is None or path is None:
+            return
+        if kind == "update":
+            pairs = tuple(p for h in hunks if (p := _hunk_pair(h)) is not None)
+            edits.append(FileEdit(path=path, replacements=pairs))
+        elif kind == "add":
+            body = "".join(
+                line[1:] + "\n" for hunk in hunks for line in hunk if line.startswith("+")
+            )
+            edits.append(FileEdit(path=path, is_create=True, content=body))
+
+    for line in blob.splitlines():
+        header = next(
+            (
+                (k, line[len(prefix) :])
+                for prefix, k in _SECTION_HEADERS.items()
+                if line.startswith(prefix)
+            ),
+            None,
+        )
+        if header is not None:
+            flush()
+            kind, path, hunks = header[0], Path(header[1].strip()), []
+            continue
+        if kind is None:
+            continue
+        if line == _PATCH_END:
+            flush()
+            kind, path, hunks = None, None, []
+            continue
+        if line.startswith("@@"):
+            hunks.append([])
+            continue
+        if kind == "delete":
+            continue
+        if not hunks:
+            hunks.append([])
+        hunks[-1].append(line)
+    flush()
+    return tuple(edits)
+
+
 # Codex normalises its native tool name to Claude's on the hook wire: the model's
 # own reasoning in the same transcript says it is calling `exec_command`, and the
-# payload says `Bash`. Only the shell tool was exercised, so only the shell tool
-# is mapped — a tool absent here parses with `operation=None`, which is "this
-# ran, and no builtin has been written to guard it", not "this is harmless".
-_TOOL_OPERATIONS: dict[str, Operation] = {"Bash": Operation.RUN_COMMAND}
+# payload says `Bash`. A tool absent here parses with `operation=None`, which is
+# "this ran, and no builtin has been written to guard it", not "this is
+# harmless".
+#
+# Two entries, because Codex has two edit paths and picks between them
+# non-deterministically (six runs, 0.154.0, `specs/designs/codex-evidence.md`
+# §2). `apply_patch` is the native one, and probe 4c caught it firing
+# `PreToolUse` with that literal name. The other is `Bash` running a python
+# heredoc, and it is **deliberately not** mapped to `MODIFY_FILE`: its
+# `tool_input.command` is an arbitrary shell script with no path to extract, so
+# from a hook's point of view it is a command whatever it goes on to write.
+# Mapping it would hand five builtins a `MODIFY_FILE` they cannot act on and an
+# `edits` tuple that is empty for a structural reason. Half of Codex's edits are
+# therefore ungateable as edits, and that is a property of the agent, not a gap
+# here.
+_TOOL_OPERATIONS: dict[str, Operation] = {
+    "Bash": Operation.RUN_COMMAND,
+    _APPLY_PATCH: Operation.MODIFY_FILE,
+}
 
 # The file the harness owns, and the decision behind it.
 #
@@ -158,11 +303,15 @@ _TOOL_OPERATIONS: dict[str, Operation] = {"Bash": Operation.RUN_COMMAND}
 # the key is not, so moving a hook from `hooks.json` to `config.toml` (or back)
 # re-prompts for every hook even though nothing about the hook changed. Switching
 # representation costs a full re-trust; it is not a refactor.
-_HOOKS_FILE = "hooks.json"
+#
+# Public because `agents/codex_trust.py` reads the same two documents back:
+# the trust key embeds the declaring file's path, so a second spelling of
+# either name is a report keyed on a file nothing writes.
+HOOKS_FILE = "hooks.json"
 
 # The file Codex writes to *itself*, mid-session. The adapter merges into it
 # and never owns it — see `_plan_mcp` for what that costs and buys.
-_CONFIG_FILE = "config.toml"
+CONFIG_FILE = "config.toml"
 _MCP_SECTION = "mcp_servers"
 
 # The only free-text slot the document has: the top level accepts `description`
@@ -175,8 +324,69 @@ _MCP_SECTION = "mcp_servers"
 _DESCRIPTION = "Managed by lazy-harness. Edits are overwritten on the next deploy."
 
 
+def trust_keys(hooks_file: Path, raw: str) -> tuple[tuple[tuple[str, str], ...], tuple[str, ...]]:
+    """Codex's trust-state key for every handler a `hooks.json` declares.
+
+    The formula is `<absolute path of the declaring file>:<snake_case event>:<group
+    index>:<handler index>`, **measured** on 0.154.0 by the probe that found a
+    byte-identical handler reading `Trusted` from `hooks.json` while the
+    `config.toml` declaration of the same thing read `new · review required`,
+    both carrying the same `trusted_hash`. Two details that probe settled and
+    this function depends on: the key uses the **snake_case** event name even
+    though the declaration must be PascalCase — both casings live in one file,
+    in different roles — and both indices are *positions*, which is why a
+    redeploy that reorders a group re-prompts for everything below it.
+
+    The path is resolved: a relative one keys every hook under a string Codex
+    never wrote, and every hook would then read untrusted forever.
+
+    Returns `(declared, ignored)`. `declared` pairs each key with a human label,
+    because a key is an absolute path plus three integers and says nothing to a
+    reader. `ignored` names the event keys in the document that this Codex does
+    not deliver — a hand-edited file can carry anything, and silently skipping
+    one would report "all trusted" over a declaration nobody looked at.
+
+    Anything that is not the expected shape declares nothing. This reads a file
+    on the user's disk to build a diagnostic; raising here would take the twelve
+    other sections of `lh doctor` down with it.
+    """
+    try:
+        document = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return (), ()
+    if not isinstance(document, dict):
+        return (), ()
+    hooks = document.get("hooks")
+    if not isinstance(hooks, dict):
+        return (), ()
+
+    canonical = {support.native_name: name for name, support in _HOOK_EVENTS.items()}
+    declaring = hooks_file.resolve()
+    declared: list[tuple[str, str]] = []
+    ignored: list[str] = []
+    for native, groups in hooks.items():
+        event = canonical.get(str(native))
+        if event is None:
+            ignored.append(str(native))
+            continue
+        if not isinstance(groups, list):
+            continue
+        for group_index, group in enumerate(groups):
+            handlers = group.get("hooks") if isinstance(group, dict) else None
+            if not isinstance(handlers, list):
+                continue
+            for handler_index in range(len(handlers)):
+                declared.append(
+                    (
+                        f"{declaring}:{event}:{group_index}:{handler_index}",
+                        f"{event}[{group_index}]",
+                    )
+                )
+    return tuple(declared), tuple(ignored)
+
+
 class CodexAdapter:
-    """Codex CLI, as much of it as step 4's gate needs."""
+    """Codex CLI — the full `AgentAdapter` and `ConfigPlanner` surface."""
 
     @property
     def name(self) -> str:
@@ -239,10 +449,27 @@ class CodexAdapter:
         arguments = payload.get("tool_input")
         arguments = arguments if isinstance(arguments, dict) else {}
         command = arguments.get("command")
+        command = command if isinstance(command, str) else None
+        if name == _APPLY_PATCH:
+            # `command` is left unset on purpose. Two builtins read it as shell
+            # text — `pre_tool_use_security.py:362` and
+            # `pre_tool_use_git_scope.py:402` both scan `tool.command` for shell
+            # syntax — and a patch blob would put the *content of an edit* in
+            # front of a command denylist, matching on lines the model is
+            # writing into a file rather than on anything being executed. The
+            # blob stays reachable through `raw_input` for an adapter; a builtin
+            # reading it there is a normalisation that failed, which is what
+            # that field's own docstring says.
+            return ToolCall(
+                native_name=name,
+                operation=_TOOL_OPERATIONS.get(name),
+                edits=_parse_patch(command) if command else (),
+                raw_input=arguments,
+            )
         return ToolCall(
             native_name=name,
             operation=_TOOL_OPERATIONS.get(name),
-            command=command if isinstance(command, str) else None,
+            command=command,
             raw_input=arguments,
         )
 
@@ -300,7 +527,7 @@ class CodexAdapter:
         no second home: `[mcp_servers.<id>]` is where Codex reads servers, so the
         only choice there is to merge carefully or not to ship them at all.
         """
-        return [Path(_HOOKS_FILE), Path(_CONFIG_FILE)]
+        return [Path(HOOKS_FILE), Path(CONFIG_FILE)]
 
     def plan_config(
         self,
@@ -324,10 +551,10 @@ class CodexAdapter:
         whose top level accepts only `description` and `hooks`.
         """
         ops: list[WriteOp] = []
-        hooks_op = self._plan_hooks(hooks, existing.get(Path(_HOOKS_FILE)))
+        hooks_op = self._plan_hooks(hooks, existing.get(Path(HOOKS_FILE)))
         if hooks_op is not None:
             ops.append(hooks_op)
-        mcp_op = self._plan_mcp(servers, existing.get(Path(_CONFIG_FILE)))
+        mcp_op = self._plan_mcp(servers, existing.get(Path(CONFIG_FILE)))
         if mcp_op is not None:
             ops.append(mcp_op)
         return ops
@@ -350,15 +577,15 @@ class CodexAdapter:
         groups = self._hook_groups(hooks)
         if not groups:
             if _is_harness_written(existing_raw):
-                return WriteOp(artifact=None, relative_path=Path(_HOOKS_FILE))
+                return WriteOp(artifact=None, relative_path=Path(HOOKS_FILE))
             return None
         document = {"description": _DESCRIPTION, "hooks": groups}
         return WriteOp(
             artifact=ConfigArtifact(
-                relative_path=Path(_HOOKS_FILE),
+                relative_path=Path(HOOKS_FILE),
                 content=json.dumps(document, indent=2) + "\n",
             ),
-            relative_path=Path(_HOOKS_FILE),
+            relative_path=Path(HOOKS_FILE),
         )
 
     def _plan_mcp(self, servers: dict[str, dict], existing_raw: str | None) -> WriteOp | None:
@@ -402,10 +629,10 @@ class CodexAdapter:
 
         return WriteOp(
             artifact=ConfigArtifact(
-                relative_path=Path(_CONFIG_FILE),
+                relative_path=Path(CONFIG_FILE),
                 content=tomlkit.dumps(document),
             ),
-            relative_path=Path(_CONFIG_FILE),
+            relative_path=Path(CONFIG_FILE),
             preserved=preserved,
         )
 
@@ -440,11 +667,23 @@ class CodexAdapter:
     # --- the rest of the adapter surface ---
 
     def global_config_link(self) -> Path | None:
-        """None, deliberately.
+        """None — and the reason is no longer the throwaway's.
 
-        Step 4 runs against a throwaway profile precisely so a failing gate
-        cannot take a daily one with it. Linking `~/.codex` at the user's real
-        Codex home would reintroduce exactly that blast radius.
+        Step 4 answered `None` to keep a failing gate from taking a daily
+        profile with it, and `core/paths.py:162-171` records that the reasoning
+        did not hold: resolution's last resort is `~/.<agent name>`, so a hook
+        running under a Codex profile with no `CODEX_HOME` set wrote into
+        `~/.codex` anyway — the directory `None` was supposedly protecting.
+
+        The answer survives its justification because a better one arrived.
+        `ensure_symlink` **renames an existing target to `<name>.bak`** before
+        linking (`deploy/symlinks.py:16-21`), and `~/.codex` is not an empty
+        mount point: it holds `auth.json`, and the `config.toml` carrying the
+        `[hooks.state]` approvals the user granted by hand and the `[projects.*]`
+        trust levels beside them. None of that is reconstructible, which is the
+        same reason `_plan_mcp` merges that file instead of owning it. Claude
+        Code can link `~/.claude` because the harness owns what is under it;
+        Codex's home is shared with the vendor.
         """
         return None
 

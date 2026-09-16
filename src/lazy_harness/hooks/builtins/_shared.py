@@ -19,6 +19,27 @@ if TYPE_CHECKING:  # pragma: no cover - imported for typing only
     from lazy_harness.core.config import Config
 
 
+# The native tool names that mean "this call edits a file", for every agent the
+# harness runs. The one importable answer, because four builtins gate on it and
+# the last time each kept its own copy three of them were widened for Codex's
+# `apply_patch` and the fourth was not.
+#
+# `Edit` and `Write` are Claude Code's; `apply_patch` is Codex's native edit
+# path, observed firing `PreToolUse` under that literal name (probe 4c, 0.154.0,
+# `specs/designs/codex-evidence.md` §2). Codex's *other* edit path is `Bash`
+# running a heredoc, and it is absent on purpose: a shell call carries no path
+# to gate on, so it is a command whatever it writes.
+#
+# **`NotebookEdit` is deliberately excluded, and that is the whole reason this
+# is a tool-name set and not `Operation.MODIFY_FILE`.** The adapters map
+# `NotebookEdit` to `MODIFY_FILE` (`claude_code.py:97`), and every builtin
+# below re-checks the path by *name* — `CLAUDE.md`, `MEMORY.md`, `.yml` — never
+# by suffix, so a notebook whose normalised path is named `CLAUDE.md` clears
+# the second gate. Switching these four to the operation would widen them onto
+# notebooks for the first time, with nothing on any channel to say so.
+EDIT_TOOLS: frozenset[str] = frozenset({"Edit", "Write", "apply_patch"})
+
+
 def make_log(hook_name: str) -> Callable[[Path, str], None]:
     """Build a fail-soft logger that prefixes lines with `<ts> <hook_name>:`."""
 

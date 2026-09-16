@@ -81,9 +81,6 @@ class NullAdapter:
 
 _AGENTS: dict[str, type] = {
     "claude-code": ClaudeCodeAdapter,
-    # Throwaway, for step 4's contract gate — registered so that
-    # `[profiles.<name>].agent = "codex"` resolves and a throwaway profile can be
-    # deployed to without any daily profile changing agent.
     "codex": CodexAdapter,
     "null": NullAdapter,
 }

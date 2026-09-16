@@ -15,6 +15,7 @@ from rich.markup import escape
 
 from lazy_harness import __version__
 from lazy_harness.agents.base import AgentAdapter
+from lazy_harness.agents.codex_trust import CodexHookTrust, collect_codex_trust
 from lazy_harness.agents.registry import AgentNotFoundError, get_agent
 from lazy_harness.core.artifact_version import ArtifactVersionReport, is_newer
 from lazy_harness.core.config import Config, ConfigError, load_config
@@ -415,6 +416,80 @@ def _render_hook_signals(console: Console, gaps: list[HookSignalGap]) -> None:
     )
 
 
+def _render_codex_trust(console: Console, reports: list[CodexHookTrust]) -> None:
+    """What Codex will refuse to run, and how far that can be established.
+
+    Reporting, never failing, and the reason is not the same as
+    `_render_hook_signals`'s: *untrusted is the expected state right after a
+    deploy*. The design's own acceptance run is "deploy, confirm the hooks are
+    reported untrusted and do not fire, trust them, confirm they fire" — so an
+    `lh doctor` that exited 1 on it would paint the documented happy path red
+    and teach the reader to ignore the section.
+
+    Silent when no profile runs Codex, and when a Codex profile has no deployed
+    `hooks.json`: a line on every run saying a profile has nothing to trust
+    trains the reader past the line that matters.
+
+    The vocabulary is deliberately two-thirds of Codex's. Codex decides between
+    `Trusted` and `Modified` by comparing the stored hash with one it recomputes,
+    and computing that second hash means reimplementing its TOML normalisation —
+    silently wrong on any upstream change, with no signal until hooks stop
+    firing. So a stored hash is reported as `unknown`, and nothing here is ever
+    called trusted.
+    """
+    if not reports:
+        return
+    console.print("\n[bold]Codex hook trust[/bold]")
+    for report in reports:
+        name = escape(report.profile)
+        if report.unreadable:
+            console.print(
+                f"  [yellow]![/yellow] {name} — trust state not readable: "
+                f"{escape(report.unreadable)}"
+            )
+            continue
+        if report.untrusted:
+            console.print(
+                f"  [yellow]![/yellow] {name} — {len(report.untrusted)} of {report.declared} "
+                f"deployed {_hooks(len(report.untrusted))} untrusted: "
+                f"{escape(', '.join(report.untrusted))}"
+            )
+        if report.unknown:
+            console.print(
+                f"  [grey50]·[/grey50] {name} — {len(report.unknown)} "
+                f"{_hooks(len(report.unknown))} {_carry(len(report.unknown))} a stored hash; "
+                f"whether it still matches is not determinable without Codex's own "
+                f"normalisation"
+            )
+        if report.orphaned:
+            console.print(
+                f"  [yellow]![/yellow] {name} — {len(report.orphaned)} orphaned trust "
+                f"{'entry' if len(report.orphaned) == 1 else 'entries'} for handlers "
+                f"{contract_path(report.hooks_file)} no longer declares; the key indexes "
+                f"the group's position, so a redeploy that reorders one strands its approval"
+            )
+        if report.ignored_events:
+            console.print(
+                f"  [yellow]![/yellow] {name} — {escape(', '.join(report.ignored_events))} "
+                f"in {contract_path(report.hooks_file)} "
+                f"{'is an event' if len(report.ignored_events) == 1 else 'are events'} "
+                f"this Codex does not deliver; nothing is installed for it and nothing warns"
+            )
+    console.print(
+        "      [dim]Codex will not run a hook it has not approved, and says nothing when it "
+        "skips one. Approve them in Codex's own review screen — `lh deploy` cannot: the "
+        "User config layer it writes to is never Managed.[/dim]"
+    )
+
+
+def _hooks(n: int) -> str:
+    return "hook" if n == 1 else "hooks"
+
+
+def _carry(n: int) -> str:
+    return "carries" if n == 1 else "carry"
+
+
 def _project_memory_dir(agent: AgentAdapter, cfg: Config | None, profile: str) -> Path:
     """Memory dir for the current project, canonicalised across worktrees.
 
@@ -564,6 +639,7 @@ def doctor() -> None:
     reports = collect_artifact_version_reports(cfg, config_dir() / "profiles")
     _render_artifact_versions(console, reports)
     _render_hook_signals(console, collect_hook_signal_gaps(cfg))
+    _render_codex_trust(console, collect_codex_trust(cfg))
 
     console.print()
     if ok:

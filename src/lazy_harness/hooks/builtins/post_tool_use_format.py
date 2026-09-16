@@ -10,6 +10,7 @@ from __future__ import annotations
 import subprocess
 
 from lazy_harness.agents.base import HookDecision, HookEvent, Operation
+from lazy_harness.hooks.builtins._shared import EDIT_TOOLS
 
 # The tool names this hook inspects. `tests/unit/test_hook_matcher_coverage.py`
 # asserts the matcher the registry deploys covers every one of them, so the gate
@@ -21,7 +22,11 @@ from lazy_harness.agents.base import HookDecision, HookEvent, Operation
 # check below would not catch the difference — nothing in `ToolCall` makes a
 # notebook's path end in `.ipynb`, so a `NotebookEdit` naming `notebook.py`
 # would get Ruff run over a file that was never Python source.
-INSPECTED_TOOLS = frozenset({"Edit", "Write"})
+#
+# The value is `_shared.EDIT_TOOLS`, not a copy: four builtins gate on this set,
+# and while each kept its own literal, a widening reached three of them and
+# missed the fourth.
+INSPECTED_TOOLS = EDIT_TOOLS
 
 RUFF_TIMEOUT_SECS = 10
 
