@@ -164,3 +164,35 @@ blast-radius shrinking; `core/paths.py:162-171` already records that the
 justification did not hold, because the last-resort fallback is `~/.<agent
 name>` — the very directory `None` was protecting. The answer is unchanged and
 the reason is now the right one.
+
+## Evolution
+
+**2026-09-16 — probes 5-8 closed three of this ADR's open questions.**
+`specs/designs/codex-evidence.md` ran four more probes against `codex-cli
+0.154.0` (model `gpt-5.6-sol`, a different model than the six above):
+
+- **Multi-file `apply_patch` is one blob, not one call per file.** Probe 5
+  forced a two-file native edit and got one `PreToolUse` record, `tool_name:
+  apply_patch`, one `*** Begin Patch`/`*** End Patch` pair carrying two
+  `*** Update File:` sections. The "Multi-file blobs parse but were never
+  observed" line in Consequences is now observed; `_parse_patch` needed no
+  change, since it already parses N sections generically.
+- **The delete spelling this ADR left unprobed is now measured.** Probe 6
+  got a single-section blob with the literal header `*** Delete File: <abs
+  path>` and no diff body; the file was removed. Consequences said widening
+  `FileEdit` for a delete "is not taken here: the delete spelling is the
+  patch format's, not one any probe has seen Codex emit" — that reason no
+  longer holds. The widening itself stays out of scope for this ADR and is
+  tracked as a separate backlog item pointed at its own ADR (046).
+- **Codex 0.154.0 has no native read tool.** Probe 7 asked for a native read
+  and got `PreToolUse` with `tool_name: list_mcp_resources`, empty
+  `tool_input`, then a refusal — no built-in text-file reader in the
+  session. Reads go through `Bash` the same way edits sometimes do, so
+  `pre-tool-use-read-size` sits under the same structural ceiling this ADR
+  already records for the `Bash` edit path (Consequences, "Only half of
+  Codex's edits are gateable"): there is no read dialect to gate, not a
+  mapping this adapter is missing.
+
+Decision and Consequences are left as written; they described the evidence
+as it stood on 2026-09-16 before these four probes, and the corrections
+above are additive.
