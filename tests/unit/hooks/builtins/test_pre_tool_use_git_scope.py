@@ -787,6 +787,14 @@ class TestRegistration:
         assert builtin_signals("pre-tool-use-git-scope") == frozenset()
 
     def test_runs_through_the_runner_rather_than_owning_stdin(self) -> None:
-        from lazy_harness.hooks.loader import _BUILTIN_HOOKS
+        """`main(event)` is the contract the single dispatch calls, not a flag.
 
-        assert _BUILTIN_HOOKS["pre-tool-use-git-scope"].migrated is True
+        The registry marker this used to read is gone; the signature is what
+        both entry points now depend on, and it is what a module reverting to
+        an stdin-owning `main()` would break.
+        """
+        import inspect
+
+        from lazy_harness.hooks.builtins import pre_tool_use_git_scope
+
+        assert list(inspect.signature(pre_tool_use_git_scope.main).parameters) == ["event"]

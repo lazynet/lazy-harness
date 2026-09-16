@@ -5,17 +5,24 @@
 # That is the whole question, and it is the ONLY question. Sections A, B and C
 # of the original step 4 gate are settled and are not re-run here.
 #
-# SCOPE IS DERIVED, NOT TYPED. The asserted set is every builtin the registry
-# marks `migrated=True` (`hooks/loader.py`, read through the public
-# `list_builtin_hooks()` + `builtin_migrated()`), minus the skip list below.
-# The known-gap set is every builtin it marks `migrated=False`. An unmigrated
-# builtin reaches `main()` through `cli/hooks_cmd.py`'s unmigrated branch, which
-# calls `main_fn()` with NO arguments — the `--profile` click option is parsed
-# and discarded — and which assumes Claude Code's wire format outright
-# (`loader.PRE_RUNNER_AGENT`). It has no profile to honour, so it is counted,
-# not failed. Deriving both lists is the point: the gap set empties itself as
-# the migrations land, and this script cannot drift from the registry the way a
-# hand-typed list did (it claimed three migrated when eight were).
+# SCOPE IS DERIVED, NOT TYPED. The asserted set is every builtin in the registry
+# (`hooks/loader.py`, read through the public `list_builtin_hooks()`), minus the
+# skip list below.
+#
+# There is no known-gap set any more. It used to be every builtin the registry
+# marked `migrated=False` — reached through `cli/hooks_cmd.py`'s pre-runner
+# branch, which called `main()` with NO arguments and assumed Claude Code's wire
+# format outright (`loader.PRE_RUNNER_AGENT`), so it had no profile to honour and
+# was counted rather than failed. Step 5 migrated the last one and deleted the
+# field, the constant and both branches, so the distinction has no source left to
+# be derived from and is gone rather than permanently empty.
+#
+# What replaces it as evidence is the COVERAGE ASSERTION below: the asserted
+# lanes plus the skip list must account for every name `list_builtin_hooks()`
+# returns, and each skipped name must still be in the registry. A builtin added
+# later is in scope by default and a stale skip entry fails the gate, which is
+# what stops this script drifting from the registry the way a hand-typed list did
+# (it claimed three migrated when eight were).
 #
 # ---------------------------------------------------------------------------
 # TWO LANES, ALSO DERIVED. THIS IS THE 2026-09-15 REPAIR.
@@ -31,7 +38,7 @@
 #   claude -> ToolCall(native_name='Edit', operation=MODIFY_FILE,
 #                      edits=(FileEdit(path=/a/b.py),))
 #
-# A correctly migrated hook abstains on that empty `ToolCall` and writes
+# A correct hook abstains on that empty `ToolCall` and writes
 # nothing — `post_tool_use_format.py:32` returns on `operation is not
 # MODIFY_FILE`. Section 10 read "wrote nothing" as a leak and failed the hook
 # for honouring its own contract. The gate was suppressing the evidence it
@@ -43,7 +50,7 @@
 # resolutions give the same path and the gate proves nothing.
 #
 #   codex lane   profile declares `agent = "codex"`, global `[agent].type`
-#                stays `claude-code`. Every migrated builtin that declares NO
+#                stays `claude-code`. Every builtin that declares NO
 #                `operations` — a lifecycle hook, whose payload crosses both
 #                adapters losslessly. The divergence is the ADAPTER: a build
 #                resolving the agent globally picks claude-code, reads
@@ -73,7 +80,7 @@
 # work in `specs/backlog.md`.
 #
 # ---------------------------------------------------------------------------
-# SIX HOOKS ARE SKIPPED, AND EVERY REASON IS THE SAME ONE: no sink under the
+# SEVEN HOOKS ARE SKIPPED, AND EVERY REASON IS THE SAME ONE: no sink under the
 # agent runtime dir, so this gate has no site to observe. Verified per hook, by
 # reading the sink rather than by one run coming up empty:
 #
@@ -95,6 +102,19 @@
 #                            (`:242`). Its per-profile resolution is real and
 #                            worth asserting — through the stdout channel, which
 #                            is not this gate's. Recorded in `specs/backlog.md`.
+#   pre-tool-use-git-scope   writes NOTHING. It refuses on stderr and exits 2
+#                            and that is its whole output — grep the module for
+#                            `make_log`, `agent_dir_for` or `hooks.log` and
+#                            there are zero hits. It is NOT
+#                            `pre-tool-use-security`, which does log its
+#                            refusals (`pre_tool_use_security.py:301-309`); the
+#                            two share a payload fixture because they read the
+#                            same `Bash` command, and that adjacency is what put
+#                            a sink assertion on the one that has none. Found by
+#                            running this gate after PR #326 migrated it: four
+#                            assertions failing with "no entry written anywhere
+#                            the gate watches", which is what a hook with no
+#                            sink looks like from here.
 #   post-tool-use-sync-claude  writes NOTHING under the agent runtime dir, and
 #                            says so itself: *"The directory half is unused:
 #                            this hook writes nothing under the agent's runtime
@@ -115,12 +135,12 @@
 # them here is the gate's own documented criterion applied consistently, not an
 # exemption from the contract.
 #
-#   engram-persist is migrated and writes no `hooks.log` line either, but it is
-#   NOT skipped: it writes `engram_persist_metrics.jsonl` under the profile's
+#   engram-persist writes no `hooks.log` line either, but it is NOT
+#   skipped: it writes `engram_persist_metrics.jsonl` under the profile's
 #   logs dir, carrying the cwd basename as `project_key`. That is a second
 #   evidence channel, and WATCHED_LOGS covers it.
 #
-# pre-compact is migrated and IS invoked here. It was absent from the step 4
+# pre-compact IS invoked here. It was absent from the step 4
 # counts only because that gate never called it — not because it was clean.
 #
 # Usage:
@@ -230,20 +250,19 @@ GATE_PYTHON="$(derive_python)" || {
   exit 2
 }
 
-# `list_builtin_hooks` + `builtin_migrated` are the public read side of
-# `_BUILTIN_HOOKS`. Going through them rather than the private dict keeps this
-# working against a shipped binary whose internals have moved on. `operations`
-# has no public reader yet, so the lane comes off the spec directly — the one
-# private read here, and the reason a missing `_BUILTIN_HOOKS` must exit 2.
+# `list_builtin_hooks` is the public read side of `_BUILTIN_HOOKS`. Going through
+# it rather than the private dict keeps this working against a shipped binary
+# whose internals have moved on. `operations` has no public reader yet, so the
+# lane comes off the spec directly — the one private read here, and the reason a
+# missing `_BUILTIN_HOOKS` must exit 2.
 REGISTRY="$("$GATE_PYTHON" -c '
-from lazy_harness.hooks.loader import _BUILTIN_HOOKS, builtin_migrated, list_builtin_hooks
+from lazy_harness.hooks.loader import _BUILTIN_HOOKS, list_builtin_hooks
 for name in sorted(list_builtin_hooks()):
     spec = _BUILTIN_HOOKS[name]
-    state = "migrated" if builtin_migrated(name) else "gap"
     # Declared operations = "this hook reads event.tool". Its dialect has to
     # survive the adapter, so it runs in the claude lane.
     lane = "claude" if spec.operations else "codex"
-    print(name, state, lane)
+    print(name, lane)
 ' 2>/dev/null)"
 [ -n "$REGISTRY" ] || { echo "harness error: registry query returned nothing" >&2; exit 2; }
 
@@ -257,35 +276,72 @@ SKIPPED_HOOKS=(
   stop-context-rotate
   session-start-preflight
   post-tool-use-sync-claude
+  pre-tool-use-git-scope
 )
 is_skipped() { case " ${SKIPPED_HOOKS[*]} " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
-declare -a CODEX_LANE=() CLAUDE_LANE=() KNOWN_GAP_CODEX=() KNOWN_GAP_CLAUDE=()
-while read -r name state lane; do
+declare -a CODEX_LANE=() CLAUDE_LANE=() SKIPPED_SEEN=() REGISTERED=() UNLANED=()
+while read -r name lane; do
   [ -n "$name" ] || continue
-  if [ "$state" = migrated ]; then
-    is_skipped "$name" && continue
-    [ "$lane" = claude ] && CLAUDE_LANE+=("$name") || CODEX_LANE+=("$name")
-  else
-    [ "$lane" = claude ] && KNOWN_GAP_CLAUDE+=("$name") || KNOWN_GAP_CODEX+=("$name")
+  REGISTERED+=("$name")
+  if is_skipped "$name"; then
+    SKIPPED_SEEN+=("$name")
+    continue
   fi
+  # A `case`, not `[ "$lane" = claude ] && A || B`. That idiom has no third
+  # outcome: anything not spelled `claude` lands in the codex lane, so an
+  # unlaned row was silently absorbed there and the arithmetic below could
+  # never see it. Measured against a registry emitting a hook with no lane: the
+  # gate ran to completion and failed with `did not reach .../profile-codex;
+  # found: (no entry written anywhere the gate watches)` — a tool-reading hook
+  # abstaining correctly under the codex adapter, which is precisely the
+  # false-leak diagnostic the lane split exists to eliminate. A silent fallback
+  # here does not lose a check, it reintroduces the defect.
+  case "$lane" in
+    claude) CLAUDE_LANE+=("$name") ;;
+    codex)  CODEX_LANE+=("$name") ;;
+    *)      UNLANED+=("$name [lane=${lane:-<none>}]") ;;
+  esac
 done <<< "$REGISTRY"
+
+# COVERAGE. Asserted before anything runs, because every later assertion is
+# scoped by these lanes: a name that silently fell out of them cannot fail a
+# check it is never fed to, and a green run would then be reporting on a smaller
+# question than the one it names. Three directions, none a restatement of
+# another — a builtin the registry emits with no lane, a builtin that reached
+# neither a lane nor the skip list, and a skip entry left behind by a hook that
+# was renamed or deleted. Each was proved by making it fire.
+COVERAGE_ERRORS=0
+if [ "${#UNLANED[@]}" -gt 0 ]; then
+  echo "harness error: registry rows with no lane: ${UNLANED[*]}" >&2
+  COVERAGE_ERRORS=$((COVERAGE_ERRORS + 1))
+fi
+in_scope=$(( ${#CODEX_LANE[@]} + ${#CLAUDE_LANE[@]} + ${#SKIPPED_SEEN[@]} ))
+if [ "$in_scope" -ne "${#REGISTERED[@]}" ]; then
+  echo "harness error: $in_scope of ${#REGISTERED[@]} registered builtins accounted for" >&2
+  COVERAGE_ERRORS=$((COVERAGE_ERRORS + 1))
+fi
+for skipped in "${SKIPPED_HOOKS[@]}"; do
+  case " ${REGISTERED[*]} " in
+    *" $skipped "*) ;;
+    *) echo "harness error: SKIPPED_HOOKS names '$skipped', which the registry does not" >&2
+       COVERAGE_ERRORS=$((COVERAGE_ERRORS + 1)) ;;
+  esac
+done
+[ "$COVERAGE_ERRORS" -eq 0 ] || exit 2
 
 LANES=(codex claude)
 lane_profile() { case "$1" in codex) printf '%s' "$PROFILE_CODEX" ;; claude) printf '%s' "$PROFILE_CLAUDE" ;; esac; }
 lane_dir()     { case "$1" in codex) printf '%s' "$PROFILE_CODEX_DIR" ;; claude) printf '%s' "$PROFILE_CLAUDE_DIR" ;; esac; }
 other_lane()   { case "$1" in codex) printf 'claude' ;; claude) printf 'codex' ;; esac; }
 lane_hooks()   { case "$1" in codex) printf '%s\n' "${CODEX_LANE[@]:-}" ;; claude) printf '%s\n' "${CLAUDE_LANE[@]:-}" ;; esac; }
-lane_gap()     { case "$1" in codex) printf '%s\n' "${KNOWN_GAP_CODEX[@]:-}" ;; claude) printf '%s\n' "${KNOWN_GAP_CLAUDE[@]:-}" ;; esac; }
 
 FAILURES=0
 declare -a FAIL_LINES=()
-declare -a GAP_LINES=()
 
 fail() { FAILURES=$((FAILURES + 1)); FAIL_LINES+=("$1"); echo "  FAIL: $1"; }
 ok()   { echo "  ok:   $1"; }
 info() { echo "  --    $1"; }
-gap()  { GAP_LINES+=("$1"); echo "  GAP:  $1"; }
 
 # --- fingerprinting --------------------------------------------------------
 watched_files() {
@@ -377,8 +433,8 @@ EOF
 
 # --- invocation ------------------------------------------------------------
 # Each invocation gets a unique, unrepeatable cwd, used both as the process cwd
-# (an unmigrated hook logs `Path.cwd()`) and in the payload (a migrated one logs
-# `event.cwd`). Hooks that log neither get the token through a fixture path.
+# and in the payload (`event.cwd`), so a hook that logs either carries the token.
+# Hooks that log neither get it through a fixture path.
 invoke() {
   local lane="$1" hook="$2" scenario="$3" mode="$4" payload="$5"
   local tag="$RUN_TOKEN-$scenario-$mode-$hook"
@@ -443,7 +499,7 @@ payload_for() {
       printf '{"cwd":"__CWD__","session_id":"%s"}' "$RUN_TOKEN" ;;
     # The security hook logs the COMMAND, not the cwd, so the token rides
     # inside the command text.
-    pre-tool-use-security|pre-tool-use-git-scope)
+    pre-tool-use-security)
       printf '{"tool_name":"Bash","tool_input":{"command":"rm -rf /tmp/__TAG__-secblock"}}' ;;
     pre-tool-use-memory-size)
       mkdir -p "$FIXTURES/$tag/memory"
@@ -470,11 +526,11 @@ payload_for() {
 }
 
 # The string that attributes an entry to one hook in one scenario/mode. Default
-# is the tag, which rides in the cwd; the security hooks put it in the command.
+# is the tag, which rides in the cwd; the security hook puts it in the command.
 needle_for() {
   local hook="$1" tag="$2"
   case "$hook" in
-    pre-tool-use-security|pre-tool-use-git-scope) printf '%s-secblock' "$tag" ;;
+    pre-tool-use-security) printf '%s-secblock' "$tag" ;;
     *) printf '%s' "$tag" ;;
   esac
 }
@@ -497,16 +553,14 @@ echo "token:   $RUN_TOKEN"
 echo "global:  [agent].type = claude-code"
 echo "lane codex:  --profile $PROFILE_CODEX  (agent = codex, diverges from global)"
 echo "  asserted:  ${CODEX_LANE[*]:-(none)}"
-echo "  known gap: ${KNOWN_GAP_CODEX[*]:-(none)}"
 echo "lane claude: --profile $PROFILE_CLAUDE (agent = claude-code, diverges by config_dir)"
 echo "  asserted:  ${CLAUDE_LANE[*]:-(none)}"
-echo "  known gap: ${KNOWN_GAP_CLAUDE[*]:-(none)}"
-echo "skipped: ${SKIPPED_HOOKS[*]} — migrated, but no sink under the agent runtime dir"
+echo "skipped: ${SKIPPED_SEEN[*]} — no sink under the agent runtime dir"
 echo "watched: ${WATCHED_LOGS[*]}"
 echo
 
 [ "$(( ${#CODEX_LANE[@]} + ${#CLAUDE_LANE[@]} ))" -gt 0 ] || {
-  echo "harness error: nothing to assert — every migrated builtin is skipped" >&2
+  echo "harness error: nothing to assert — every registered builtin is skipped" >&2
   exit 2
 }
 # A lane with no hooks measures nothing, and an empty claude lane is the exact
@@ -554,7 +608,7 @@ for scenario in "${HARD_SCENARIOS[@]}"; do
   done
 done
 
-echo "== section 10: migrated hooks land under the invoked profile's config dir =="
+echo "== section 10: hooks land under the invoked profile's config dir =="
 declare -A LANE_HITS
 for lane in "${LANES[@]}"; do
   LANE_HITS["$lane"]="$(token_hits_whole "$(lane_dir "$lane")")"
@@ -680,48 +734,21 @@ for scenario in "${SOFT_SCENARIOS[@]}"; do
 done
 echo
 
-echo "== KNOWN GAP — unmigrated builtins, tracked to step 5, NOT asserted =="
-GAP_TOTAL=0
-if [ "$(( ${#KNOWN_GAP_CODEX[@]} + ${#KNOWN_GAP_CLAUDE[@]} ))" -eq 0 ]; then
-  echo "  (empty — every builtin in the registry is migrated)"
-else
-  echo "  These reach main() with no arguments (cli/hooks_cmd.py unmigrated branch)"
-  echo "  and assume Claude Code's wire format (loader.PRE_RUNNER_AGENT). They have"
-  echo "  no profile to honour, so they are counted here, not failed. A PASS below"
-  echo "  means the MIGRATED hooks are isolated — it does NOT mean nothing leaks."
-  echo "  The count is lower than a single-profile run's: an unmigrated hook in the"
-  echo "  claude lane's agentenv mode reads CLAUDE_CONFIG_DIR and lands in the"
-  echo "  profile dir by accident, which is not a leak even though it is not"
-  echo "  obedience either. noenv is the mode that exposes them."
-  for scenario in "${HARD_SCENARIOS[@]}"; do
-    write_config "$scenario"
-    for lane in "${LANES[@]}"; do
-      for mode in "${MODES[@]}"; do
-        run_set "$lane" "$scenario" "$mode" $(lane_gap "$lane")
-      done
-    done
-  done
-  for lane in "${LANES[@]}"; do
-    while read -r hook; do
-      [ -n "$hook" ] || continue
-      n=$( { token_hits_whole "$GLOBAL_SCRATCH"; token_hits_whole "$FAKE_HOME"; } \
-           | grep -c -- "-$hook" || true )
-      GAP_TOTAL=$((GAP_TOTAL + n))
-      gap "$hook ($lane lane) — $n entr(y/ies) leaked outside the profile dir"
-    done < <(lane_gap "$lane")
-  done
-  gap "TOTAL unmigrated entries leaked: $GAP_TOTAL"
-fi
+echo "== SCOPE — every registered builtin is accounted for =="
+echo "  registry:   ${#REGISTERED[@]} builtin(s) from list_builtin_hooks()"
+echo "  asserted:   $(( ${#CODEX_LANE[@]} + ${#CLAUDE_LANE[@]} )) (${#CODEX_LANE[@]} codex lane, ${#CLAUDE_LANE[@]} claude lane)"
+echo "  skipped:    ${#SKIPPED_SEEN[@]} — no sink under the agent runtime dir; see the header for each"
+echo "  known gaps: 0 — the pre-runner branch and its flag no longer exist (step 5, tasks 19/20)"
 echo
 
 if [ "$FAILURES" -eq 0 ]; then
-  echo "PASS — migrated hook evidence stays inside the profile that invoked them"
-  echo "       (known gap still open: $GAP_TOTAL unmigrated entr(y/ies) leaked — step 5)"
+  echo "PASS — hook evidence stays inside the profile that invoked them"
+  echo "       scope: $(( ${#CODEX_LANE[@]} + ${#CLAUDE_LANE[@]} )) asserted, ${#SKIPPED_SEEN[@]} skipped, ${#REGISTERED[@]} registered"
   echo "       evidence: $RUN"
   exit 0
 fi
 echo "FAIL — $FAILURES assertion(s) failed"
 printf '%s\n' "${FAIL_LINES[@]}" | sed 's/^/  * /'
-echo "known gap (not counted above): $GAP_TOTAL unmigrated entr(y/ies) leaked — step 5"
+echo "scope: $(( ${#CODEX_LANE[@]} + ${#CLAUDE_LANE[@]} )) asserted, ${#SKIPPED_SEEN[@]} skipped, ${#REGISTERED[@]} registered"
 echo "evidence kept under: $RUN"
 exit 1

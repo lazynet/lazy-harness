@@ -178,8 +178,7 @@ def test_declares_the_signal_it_reads_and_nothing_more() -> None:
     """`TOKEN_USAGE` alone, and declared as a plain frozenset.
 
     `deploy` refuses to install a hook whose declared signals the profile's
-    agent does not supply, and `signal_gaps.gaps_for_profile` reads the field
-    regardless of `migrated` — so a signal this hook does not read in its own
+    agent does not supply — so a signal this hook does not read in its own
     process would silently undeploy a working hook. It reads exactly one:
     `context_tokens` sums the last assistant turn's usage counters.
     """
@@ -189,7 +188,6 @@ def test_declares_the_signal_it_reads_and_nothing_more() -> None:
 
     assert builtin_signals("stop-context-rotate") == frozenset({Signal.TOKEN_USAGE})
     assert spec.signals == frozenset({Signal.TOKEN_USAGE})
-    assert spec.migrated is True
     assert spec.blocking is False
     assert spec.operations == frozenset()
 

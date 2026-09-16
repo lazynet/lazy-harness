@@ -8,7 +8,7 @@ import sys
 import time
 from dataclasses import dataclass
 
-from lazy_harness.hooks.loader import _BUILTIN_HOOKS, HookInfo
+from lazy_harness.hooks.loader import HookInfo
 from lazy_harness.hooks.runner import resolve_profile
 
 #: How to reach the installed CLI from a known interpreter. `sys.executable` is
@@ -39,12 +39,16 @@ def execute_hook(
 ) -> HookResult:
     """Run one hook and report its three channels.
 
-    A migrated builtin is reached through the command the agent's settings file
-    invokes — `lh hook <name> --profile <profile>` — so `lh hooks run` debugs
-    the deployed path rather than a second execution mechanism. Everything else
-    is still the hook *file*: an unmigrated builtin, whose `main()` reads stdin
-    and exits by itself, and a user hook, which the registry never heard of and
-    which has no `main(event)` to call at all.
+    A builtin is reached through the command the agent's settings file invokes
+    — `lh hook <name> --profile <profile>` — so `lh hooks run` debugs the
+    deployed path rather than a second execution mechanism. A user hook is
+    still the hook *file*: the registry never heard of it, so there is no
+    `main(event)` to call and no profile to hand one.
+
+    The branch reads `is_builtin` and nothing else. It used to consult
+    `BuiltinHookSpec.migrated` as well, which was the transitional answer to
+    "does this module's `main()` take an argument"; with every builtin on the
+    contract the question has one answer and the flag is gone.
 
     Both go through one `subprocess.run`, which is what makes `timeout` mean
     something on either. Calling the runner in this process could not: Python
@@ -55,8 +59,7 @@ def execute_hook(
     quoting in `deploy.engine.hook_command` exists because *that* command is a
     string in a settings file.
     """
-    spec = _BUILTIN_HOOKS.get(hook.name) if hook.is_builtin else None
-    if spec is not None and spec.migrated:
+    if hook.is_builtin:
         cmd = [
             sys.executable,
             "-c",

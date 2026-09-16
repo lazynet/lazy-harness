@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -25,7 +26,13 @@ from lazy_harness.agents.base import HookDecision, HookEvent
 from lazy_harness.cli.main import cli
 from lazy_harness.deploy.engine import hook_command
 from lazy_harness.hooks.engine import execute_hook, run_hooks_for_event
-from lazy_harness.hooks.loader import _BUILTIN_HOOKS, BuiltinHookSpec, HookInfo
+from lazy_harness.hooks.loader import (
+    _BUILTIN_HOOKS,
+    BuiltinHookSpec,
+    HookInfo,
+    list_builtin_hooks,
+    resolve_hook,
+)
 
 PRE_TOOL_USE = {
     "hook_event_name": "PreToolUse",
@@ -49,7 +56,6 @@ def register(
     name: str,
     main: object,
     *,
-    migrated: bool,
     blocking: bool = False,
 ) -> None:
     """Register a builtin backed by a module built for this test."""
@@ -58,9 +64,7 @@ def register(
     module.main = main  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, module_name, module)
     monkeypatch.setitem(
-        _BUILTIN_HOOKS,
-        name,
-        BuiltinHookSpec(module=module_name, blocking=blocking, migrated=migrated),
+        _BUILTIN_HOOKS, name, BuiltinHookSpec(module=module_name, blocking=blocking)
     )
 
 
@@ -73,7 +77,7 @@ def test_hook_invoke_passes_an_explicit_profile_to_the_runner(
         seen.append(event.profile)
         return HookDecision()
 
-    register(monkeypatch, "spy", main, migrated=True)
+    register(monkeypatch, "spy", main)
 
     result = CliRunner().invoke(
         cli, ["hook", "spy", "--profile", "flex"], input=json.dumps(PRE_TOOL_USE)
@@ -101,7 +105,7 @@ def test_the_deployed_command_invokes_cleanly_for_an_awkward_profile(
         seen.append(event.profile)
         return HookDecision()
 
-    register(monkeypatch, "spy", main, migrated=True)
+    register(monkeypatch, "spy", main)
     hook = HookInfo(name="spy", path=Path("/nonexistent/spy.py"), is_builtin=True)
 
     argv = shlex.split(hook_command(hook, profile=profile))
@@ -130,7 +134,7 @@ def test_hook_invoke_falls_back_to_todays_profile_resolution(
         seen.append(event.profile)
         return HookDecision()
 
-    register(monkeypatch, "spy", main, migrated=True)
+    register(monkeypatch, "spy", main)
 
     result = CliRunner().invoke(cli, ["hook", "spy"], input=json.dumps(PRE_TOOL_USE))
 
@@ -138,21 +142,7 @@ def test_hook_invoke_falls_back_to_todays_profile_resolution(
     assert seen == ["from-environment"]
 
 
-def test_an_unmigrated_builtin_is_still_called_with_no_arguments(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The marker routes, and until a module migrates it routes to the old path."""
-    calls: list[str] = []
-
-    register(monkeypatch, "legacy", lambda: calls.append("no-args"), migrated=False)
-
-    result = CliRunner().invoke(cli, ["hook", "legacy"], input=json.dumps(PRE_TOOL_USE))
-
-    assert result.exit_code == 0, result.output
-    assert calls == ["no-args"]
-
-
-def test_the_engine_reaches_a_migrated_builtin_through_the_deployed_command() -> None:
+def test_the_engine_reaches_a_builtin_through_the_deployed_command() -> None:
     """The path on the `HookInfo` does not exist, so the file route cannot answer.
 
     This replaces an assertion that the engine ran a migrated builtin *in this
@@ -198,7 +188,7 @@ def test_a_migrated_builtin_is_held_to_its_timeout(
     (slow / "sitecustomize.py").write_text("import time\n\ntime.sleep(30)\n")
     inherited = os.environ.get("PYTHONPATH")
     monkeypatch.setenv("PYTHONPATH", os.pathsep.join(p for p in (str(slow), inherited) if p))
-    register(monkeypatch, "spy", lambda event: HookDecision(), migrated=True)
+    register(monkeypatch, "spy", lambda event: HookDecision())
     hook = HookInfo(name="spy", path=Path("/nonexistent/spy.py"), is_builtin=True)
 
     result = execute_hook(
@@ -210,18 +200,72 @@ def test_a_migrated_builtin_is_held_to_its_timeout(
     assert "timed out after 1s" in result.stderr
 
 
-def test_the_engine_still_executes_an_unmigrated_builtin_as_a_file(
+def _spy_on_argv(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
+    """Record the argv `execute_hook` builds instead of spawning it.
+
+    The dispatch is the thing under test and it is not observable from the
+    child's output: a builtin registered into *this* process does not exist on
+    the other side of the process boundary, so the CLI route answers `Unknown
+    hook` and exits 0 — the same exit code a file route reporting nothing gives.
+    """
+    seen: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        seen.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr("lazy_harness.hooks.engine.subprocess.run", fake_run)
+    return seen
+
+
+def test_the_engine_executes_a_registered_builtin_through_the_cli(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Nothing is migrated yet, so `lh hooks run` must keep running the module."""
+    """One execution mechanism for builtins, whatever the registry says about them.
+
+    Asserted on the argv rather than on output: the defect this catches is a
+    builtin spawned as a script, which on a `main(event)` fails at `__main__`
+    and reports a non-zero exit that reads like the hook having an opinion.
+
+    The `HookInfo` carries a real, runnable script so that the file route is
+    available rather than merely unreachable: pointed at a nonexistent path the
+    assertion would hold on an engine that still took that branch and simply
+    failed to spawn.
+    """
     script = tmp_path / "legacy_hook.py"
     script.write_text("print('from the file')\n")
-    register(monkeypatch, "legacy", lambda: None, migrated=False)
-    hook = HookInfo(name="legacy", path=script, is_builtin=True)
+    register(monkeypatch, "legacy", lambda: None)
+    seen = _spy_on_argv(monkeypatch)
 
-    results = run_hooks_for_event([hook], event="pre_tool_use", payload=PRE_TOOL_USE)
+    run_hooks_for_event(
+        [HookInfo(name="legacy", path=script, is_builtin=True)],
+        event="pre_tool_use",
+        payload=PRE_TOOL_USE,
+        profile="lazy",
+    )
 
-    assert results[0].stdout.strip() == "from the file"
+    assert seen[0][1:2] == ["-c"], seen
+    assert seen[0][3:] == ["hook", "legacy", "--profile", "lazy"], seen
+
+
+def test_every_shipped_builtin_is_executed_through_the_cli(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The regression pin over the registry the harness actually ships.
+
+    Green the moment it is written — the test above is what has a red phase.
+    This one holds the answer for a builtin added later, whose author has no
+    reason to read the branch it would otherwise fall through.
+    """
+    seen = _spy_on_argv(monkeypatch)
+
+    for name in list_builtin_hooks():
+        info = resolve_hook(name)
+        assert info is not None, name
+        execute_hook(info, event="session_start", payload={}, profile="lazy")
+
+    assert all(cmd[1:2] == ["-c"] for cmd in seen), seen
+    assert not any(cmd[-1].endswith(".py") for cmd in seen), seen
 
 
 def test_the_engine_still_executes_a_user_hook_as_a_file(tmp_path: Path) -> None:

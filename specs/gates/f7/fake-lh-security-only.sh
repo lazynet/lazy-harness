@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Control shim for isolation-gate.sh — the MUST-FAIL half of the both-directions
 # check. Emulates a build in which ONLY pre-tool-use-security honours the
-# invoking profile; every other migrated hook still resolves globally and leaks
+# invoking profile; every other hook still resolves globally and leaks
 # into $CLAUDE_CONFIG_DIR — or, in the claude lane's `noenv` mode where that var
 # is deliberately absent, into $HOME/.claude. Both are outside the invoking
 # profile, and the gate must catch either and exit 1.

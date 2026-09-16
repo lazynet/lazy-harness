@@ -153,11 +153,9 @@ def _blockable_placements(name: str, spec: BuiltinHookSpec) -> bool:
 
 
 def _hooks_with_a_verdict() -> list[str]:
-    """Migrated hooks wired to an event this agent honours a verdict on."""
+    """Builtins wired to an event this agent honours a verdict on."""
     return sorted(
-        name
-        for name, spec in _BUILTIN_HOOKS.items()
-        if spec.migrated and _blockable_placements(name, spec)
+        name for name, spec in _BUILTIN_HOOKS.items() if _blockable_placements(name, spec)
     )
 
 

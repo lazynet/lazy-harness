@@ -79,22 +79,6 @@ class BuiltinHookSpec:
     omit the retract too and strand a dead session's gauge on its pane.
     """
 
-    migrated: bool = False
-    """Whether this builtin's `main()` takes a `HookEvent` and returns a decision.
-
-    TRANSITIONAL. The runner and the eighteen builtins cannot move in one
-    commit, so both entry points route on this field: `True` goes through
-    `hooks.runner.run_hook`, `False` through the pre-runner path that calls
-    `main()` with no arguments and lets it own stdin, both channels and the
-    exit code.
-
-    Declared here rather than inferred from the module — a signature check
-    would read the same today and lie the moment a migrated `main()` grows a
-    default. Step 5 of
-    `specs/designs/2026-09-13-multi-agent-harness-design.md` migrates the last
-    builtin and deletes this field along with the branches that read it.
-    """
-
     def matcher_for(self, event: str | None) -> str | None:
         if isinstance(self.matcher, Mapping):
             return self.matcher.get(event) if event else None
@@ -125,12 +109,10 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
     "compound-loop": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.compound_loop",
         event="session_stop",
-        migrated=True,
     ),
     "context-inject": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.context_inject",
         event="session_start",
-        migrated=True,
     ),
     "engram-persist": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.engram_persist",
@@ -141,7 +123,6 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
         # `failures.jsonl` beside it. Declaring one would make `deploy` refuse
         # to install it on an agent whose reader cannot supply a signal the
         # hook never touches.
-        migrated=True,
     ),
     "herdr-context-gauge": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.herdr_context_gauge",
@@ -161,7 +142,6 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
             "session_stop": frozenset({Signal.TOKEN_USAGE}),
             "session_start": frozenset({Signal.TOKEN_USAGE}),
         },
-        migrated=True,
     ),
     "post-tool-use-ansible-lint": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.post_tool_use_ansible_lint",
@@ -172,13 +152,11 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
         # linter's own output, never the transcript. Declaring one would make
         # `deploy` refuse to install it on an agent whose reader cannot supply a
         # signal the hook never touches.
-        migrated=True,
     ),
     "post-tool-use-format": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.post_tool_use_format",
         event="post_tool_use",
         operations=frozenset({Operation.MODIFY_FILE}),
-        migrated=True,
     ),
     "post-tool-use-sync-claude": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.post_tool_use_sync_claude",
@@ -189,7 +167,6 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
         # edited path out of the tool call and the segment files off disk.
         # Declaring one would make `deploy` refuse to install it on an agent
         # whose reader cannot supply a signal the hook never touches.
-        migrated=True,
     ),
     "pre-compact": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.pre_compact",
@@ -203,7 +180,6 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
         # not happen and let `deploy` omit the hook on an agent whose reader
         # lacks them — losing `build_memory_tails`, the part that works, over a
         # transcript read that does not.
-        migrated=True,
     ),
     "pre-tool-use-git-scope": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.pre_tool_use_git_scope",
@@ -216,7 +192,6 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
         # Declaring one would make `deploy` refuse to install a blocking guard
         # on an agent whose reader cannot supply a signal the hook never
         # touches — and an uninstalled guard is silent, not loud.
-        migrated=True,
     ),
     "pre-tool-use-memory-size": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.pre_tool_use_memory_size",
@@ -227,7 +202,6 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
         # already on disk. It never opens a transcript, so declaring one would
         # make `deploy` omit a working warning on any agent whose reader cannot
         # supply a signal the hook never touches.
-        migrated=True,
     ),
     "pre-tool-use-read-size": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.pre_tool_use_read_size",
@@ -238,7 +212,6 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
         # nothing else. It never opens a transcript, so declaring one would make
         # `deploy` omit a working warning on any agent whose reader cannot supply
         # a signal the hook does not touch.
-        migrated=True,
     ),
     "pre-tool-use-security": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.pre_tool_use_security",
@@ -246,7 +219,6 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
         event="pre_tool_use",
         blocking=True,
         operations=frozenset({Operation.RUN_COMMAND, Operation.READ_FILE, Operation.MODIFY_FILE}),
-        migrated=True,
     ),
     "session-start-preflight": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.session_start_preflight",
@@ -255,12 +227,10 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
         # `PATH`. It never opens a transcript, so declaring one would make
         # `deploy` omit a working preflight on any agent whose reader cannot
         # supply a signal it does not touch.
-        migrated=True,
     ),
     "session-end": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.session_end",
         event="session_end",
-        migrated=True,
     ),
     "session-export": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.session_export",
@@ -271,19 +241,16 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
         # later, out of process, so declaring MESSAGES for them would make
         # `deploy` omit them on an agent whose reader never has to supply it.
         signals=frozenset({Signal.MESSAGES}),
-        migrated=True,
     ),
     "stop-context-rotate": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.stop_context_rotate",
         event="session_stop",
         signals=frozenset({Signal.TOKEN_USAGE}),
-        migrated=True,
     ),
     "stop-verify-guard": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.stop_verify_guard",
         event="session_stop",
         signals=frozenset({Signal.GOAL_STATUS}),
-        migrated=True,
     ),
     "user-prompt-goal": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.user_prompt_goal",
@@ -293,7 +260,6 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
         # by the compound-loop worker from the transcript, out of process, so
         # declaring one here would make `deploy` omit a working sensor on any
         # agent whose reader cannot supply a signal the hook never touches.
-        migrated=True,
     ),
 }
 
@@ -351,29 +317,6 @@ def resolve_hooks_for_event(
     if not event_cfg:
         return []
     return resolve_script_names(event_cfg.scripts, user_hooks_dir, event)
-
-
-PRE_RUNNER_AGENT = "claude-code"
-"""The agent whose wire format the unmigrated `main()` path assumes.
-
-TRANSITIONAL, and paired with `BuiltinHookSpec.migrated`. A builtin that has not
-moved to the runner reads stdin itself, in Claude Code's shape, and exits with
-its own code — so deploying one to any other agent is a guess. Named here rather
-than spelled in the deploy path so that step 5 deletes the field, this constant
-and the branches reading either, together.
-"""
-
-
-def builtin_migrated(name: str) -> bool:
-    """Whether a builtin goes through the runner, False for anything unregistered.
-
-    The read side of `BuiltinHookSpec.migrated`, for the same reason
-    `builtin_signals` exists: callers stop reaching into `_BUILTIN_HOOKS`. A
-    user hook answers False because the pre-runner path is exactly what it gets
-    — the registry never heard of it and it has no `main(event)` to call.
-    """
-    spec = _BUILTIN_HOOKS.get(name)
-    return spec.migrated if spec is not None else False
 
 
 def builtin_signals(name: str, event: str | None = None) -> frozenset[Signal]:

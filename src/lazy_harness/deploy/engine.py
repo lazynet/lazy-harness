@@ -201,38 +201,6 @@ def _report_omitted(
     return kept
 
 
-def _warn_unmigrated(hooks: list[HookInfo], profile: str, agent_name: str) -> None:
-    """Name each pre-runner builtin this deploy is about to hand a foreign agent.
-
-    TRANSITIONAL, and it disappears with `BuiltinHookSpec.migrated` at step 5.
-    An unmigrated `main()` reads stdin in Claude Code's shape, writes both
-    channels and owns its exit code; another agent may format its payload
-    differently and read its exit code differently, and the hook has no way to
-    say so. A default `lh deploy` to a Codex profile ships four of these.
-
-    A warning rather than a refusal on purpose. Fifteen builtins are still on
-    this path, so refusing would leave a non-Claude-Code profile with almost no
-    hooks — trading an unverified hook for no hook at all, which is the worse
-    end of the step 5 transition, not the safer one.
-
-    Builtins only. A user hook takes the same path and gets no warning: the
-    harness did not ship it, `migrated` does not describe it, and telling
-    someone their own script is not migrated to an internal runner names nothing
-    they can act on.
-    """
-    from lazy_harness.hooks.loader import PRE_RUNNER_AGENT, builtin_migrated
-
-    if agent_name == PRE_RUNNER_AGENT:
-        return
-    for hook in hooks:
-        if not hook.is_builtin or builtin_migrated(hook.name):
-            continue
-        click.echo(
-            f"  ⚠  {hook.name} in '{profile}': not migrated to the runner, so it reads "
-            f"Claude Code-shaped stdin and owns its own exit code on agent '{agent_name}'"
-        )
-
-
 def _hook_entries_for(cfg: Config, profile: str, binary: str) -> dict[str, list[HookEntry]]:
     """The hook entries one profile's config gets, as agent-neutral records.
 
@@ -270,7 +238,6 @@ def _hook_entries_for(cfg: Config, profile: str, binary: str) -> dict[str, list[
         hooks = resolve_script_names(script_names, event=event_name)
         if not hooks:
             continue
-        _warn_unmigrated(hooks, profile, agent.name)
         entries[event_name] = [
             HookEntry(
                 command=hook_command(hook, profile=profile, binary=binary),

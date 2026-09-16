@@ -30,14 +30,20 @@ def test_an_unknown_hook_name_is_reported_and_exits_zero() -> None:
 
 
 def test_an_unexpected_error_inside_a_hook_still_exits_zero(monkeypatch) -> None:
-    """The guard covered ImportError only, so anything else — including the
-    registry type confusion this file exists for — escaped as a traceback."""
-    import lazy_harness.cli.hooks_cmd as hooks_cmd
+    """The guard covers anything, not one exception type it was written for.
 
-    def boom(_name: str):
+    It used to be a bare `except ImportError` around `importlib.import_module`
+    in this command, and the registry type confusion this file exists for
+    escaped it as a traceback. The command no longer imports anything — every
+    builtin goes through `run_hook` — so the guard is the runner's, and this
+    breaks the module load it makes to prove the same property there.
+    """
+    from lazy_harness.hooks import runner
+
+    def boom(_module_path: str):
         raise RuntimeError("kaboom")
 
-    monkeypatch.setattr(hooks_cmd.importlib, "import_module", boom)
+    monkeypatch.setattr(runner, "_load_main", boom)
 
     result = CliRunner().invoke(cli, ["hook", "pre-compact"], input="{}")
 
