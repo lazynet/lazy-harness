@@ -694,6 +694,10 @@ deny funciona en los dos paths, y `apply_patch` SÍ dispara `PreToolUse` con
 padre (`specs/designs/2026-09-13-multi-agent-harness-design.md`, tabla de
 claims y tabla de providers).
 
+**§5 (Rollout format) se agregó después y también está cerrada** — medida el
+2026-09-16 contra los mismos 15 rollouts de `codex-cli 0.154.0` (step 12, PR
+#355), fuera del alcance de las seis corridas de arriba.
+
 **Conclusión F8, cerrada:** mapear `apply_patch -> MODIFY_FILE` en
 `_TOOL_OPERATIONS` es necesario pero no suficiente — hace falta además sumar
 `"apply_patch"` a `INSPECTED_TOOLS` y, más importante, parsear el blob de patch
