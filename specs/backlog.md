@@ -103,6 +103,30 @@ desde `:367-369` cuando el step 3 insertó los helpers de merge arriba de la cla
 
 ---
 
+## Open — Prioridad ALTA
+
+### F1 — El guard de seguridad tiene dos bypasses independientes: allow-pattern de comando entero y reconocimiento de git incompleto
+
+**Por qué:** re-medido hoy contra `hooks/builtins/pre_tool_use_security.py:272` (`should_block`) y `:88` (reglas de git); confirma dos mecanismos distintos, con dos fixes distintos:
+
+(a) `:281` busca cada `allow_pattern` contra el string del comando **entero**, no contra el sub-string que matcheó la regla bloqueada — una excepción legítima para rescatar una operación rescata también cualquier otra operación destructiva encadenada en el mismo comando (por ejemplo, después de `;` o `&&`).
+
+(b) las reglas de git (`git push --force`, `git reset --hard`) exigen que el subcomando esté inmediatamente después de `git` y que el flag guardado esté inmediatamente después del subcomando — un flag insertado entre medio (p. ej. `-C <path>`), o que llegue después de otros argumentos en vez de justo después del subcomando, produce abstención en vez de bloqueo. Que `--force-with-lease` pase es correcto por diseño (la regla se llama "Force-push without lease"), no es un hueco.
+
+El payload que demuestra (a) y (b) no va a este archivo, por la regla de repo público: `specs/codebase-audit-2026-09-16.md` trae el mecanismo sin el string que lo evade.
+
+**Fuente:** hallazgo F1 de `specs/codebase-audit-2026-09-16.md`, los dos mecanismos re-verificados a mano el 2026-09-16 con una probe directa contra `should_block` y contra las reglas de git.
+
+**Registrado sin fix en esta entrada** — el arreglo va en una tanda propia, separada de los steps 6-9 del multi-agente.
+
+### F2 — La caída de credenciales de perfil preserva la cuenta heredada
+
+**Por qué:** medido por la auditoría del 2026-09-16 con una probe mockeada, no re-verificado en esta pasada. `core/secrets.py:82` y `agents/launch.py:76`: el launch copia el environment heredado completo; un archivo de secreto ausente **o** con error de lectura lo devuelve sin modificar. Una probe mockeada con el archivo de la cuenta B ilegible preservó el `CLAUDE_CODE_OAUTH_TOKEN` de la cuenta A. El comportamiento es intencional y está cubierto por `tests/unit/core/test_secrets.py:141` — la auditoría lo marca como riesgo arquitectural (disponibilidad por encima de identidad de cuenta), no como test faltante.
+
+**Registrado sin fix en esta entrada** — igual que F1, el arreglo va en una tanda propia.
+
+---
+
 ## Open — Prioridad MEDIA
 
 ### `release-please` deja `uv.lock` un release atrás
@@ -375,6 +399,52 @@ actuales. Si la cola es corta, el allowlist es viable y va como ADR con período
 sombra (registrar lo que *habría* bloqueado, sin bloquear). Si es larga, queda denylist y
 lo que corresponde es el ataque adversarial periódico que el gate ya pide.
 
+### F4 — El dry-run de `lh metrics ingest` igual dispara delivery remoto
+
+**Por qué:** re-verificado hoy. `cli/metrics_cmd.py:50-66`: `dry_run` sólo cambia el DB a `:memory:` (`:52`); los sinks configurados se construyen igual, `ingest_all` corre igual, y por cada `HttpRemoteSink` el comando llama `sink.drain(batch_size=0)` (`:64`) sin ninguna guarda de `dry_run`, adentro de un `except Exception: pass` pelado (`:65-66`) que además silencia un POST remoto fallido. Con un sink HTTP habilitado, un "dry run" transmite metadata (usuario, tenant, profile, project, session, host — `monitoring/ingest.py:205`) y actualiza el colector remoto. El help de la flag promete sólo "no database writes".
+
+**Fuente:** hallazgo F4 de `specs/codebase-audit-2026-09-16.md`, re-verificado a mano el 2026-09-16 leyendo `metrics_cmd.py` directo.
+
+**Acción:** cortar la construcción/drain de sinks remotos cuando `dry_run=True`, y no tapar el POST fallido con un `except` pelado.
+
+### F3 — El ack de delivery del outbox no identifica la versión del payload reclamado
+
+**Por qué:** medido por la auditoría del 2026-09-16 con una reproducción en SQLite en memoria, no re-verificado en esta pasada. `monitoring/db.py:466` y `:542`: reencolar un payload cambiado reemplaza su contenido y vuelve la fila a `pending`; `outbox_mark_sent` reconoce delivery usando sólo `sink_name` + `event_id`, sin versión. Secuencia reproducida: worker reclama v1 → ingest reemplaza con v2 → worker acknowledgea v1 → la DB queda con v2 en estado `sent`. Una request vieja exitosa puede suprimir la entrega de datos más nuevos, porque el claim transaccional no protege el ack posterior.
+
+**Fuente:** hallazgo F3 de `specs/codebase-audit-2026-09-16.md`.
+
+### F5 — Retry y lease del outbox de métricas chocan con la ejecución real
+
+**Por qué:** medido por la auditoría del 2026-09-16 con una probe en memoria, no re-verificado en esta pasada. `monitoring/sinks/worker.py:44` y `db.py:712`: cada drain limpia los timestamps de retry pendientes antes de reclamar trabajo — un evento demorado 300s queda elegible de inmediato. Los workers además reclaman un batch entero bajo un lease único de 60s y mandan requests secuenciales, con 50 requests por default y timeout de 5s (`sink_setup.py:153`). Invocaciones frecuentes anulan el backoff exponencial; un batch lento puede exceder el lease y otro worker reclama entregas sin terminar. La idempotencia del receiver puede acotar duplicados, no eliminar tráfico redundante ni acks stale.
+
+**Fuente:** hallazgo F5 de `specs/codebase-audit-2026-09-16.md`.
+
+### F6 — El `.envrc` generado interpola paths sin escapar shell
+
+**Por qué:** medido por la auditoría del 2026-09-16 con una probe de rendering puro, no re-verificado en esta pasada. `core/envrc.py:35`: el generador envuelve el path en comillas dobles sin escapar sustituciones de comando ni comillas embebidas. Un segmento de path configurado que contenga `$(...)` o backticks se emite tal cual dentro de la línea `export` entre comillas dobles, y al sourcear el archivo esa sustitución se evalúa en vez de preservarse como string literal. La explotación requiere control sobre el path configurado y ejecución del archivo generado — la CLI ya exige `direnv allow` antes de aplicar un `.envrc` actualizado (`cli/profile_cmd.py:280`).
+
+**Fuente:** hallazgo F6 de `specs/codebase-audit-2026-09-16.md`.
+
+### F7 — Los locks del compound-loop worker no cubren la persistencia compartida de memoria
+
+**Por qué:** medido por la auditoría del 2026-09-16 por inspección de fuente, no reproducido contra un fallo real de filesystem. `knowledge/compound_loop_worker.py:139` y `compound_loop.py:919`: los workers lockean su cola por-perfil, pero los destinos de memoria pueden converger en el mismo directorio de proyecto del knowledge store (`core/memory_store.py:43`). Las escrituras usan un `.tmp` determinístico; las actualizaciones de propuesta leen el documento existente, concatenan y reemplazan sin lock de destino (`compound_loop.py:1071`). Dos workers de distinto perfil procesando el mismo proyecto pueden pisarse cambios o colisionar en el temporal — el reemplazo atómico evita visibilidad parcial, no serializa escrituras concurrentes. Es una race derivada del código fuente, no una falla de filesystem reproducida.
+
+**Fuente:** hallazgo F7 de `specs/codebase-audit-2026-09-16.md`.
+
+### F9 — Tres funciones de orquestación concentran la complejidad del repo
+
+**Por qué:** medido por la auditoría del 2026-09-16 con un heurístico de screening (conteo de branches/booleanos/handlers/generators vía AST, explícitamente no una métrica de complejidad cognitiva estandarizada), no re-verificado en esta pasada.
+
+| Función | Líneas físicas | AST branch score* |
+|---|---:|---:|
+| `hooks/builtins/context_inject.py:main:729` | 181 | 44 |
+| `monitoring/views/overview.py:render:32` | 174 | 37 |
+| `cli/exec_cmd.py:319` | 171 | 35 |
+
+Cada una mezcla responsabilidades no relacionadas: recolección de contexto y rendering; inspección de DB/filesystem/scheduler y presentación; o planificación de launch, manejo de proceso, billing y serialización de resultado. `overview.render` además trae todas las estadísticas históricas a memoria antes de agregar (`overview.py:65`, `db.py:400`) — el costo de memoria y procesamiento crece con el historial retenido.
+
+**Fuente:** hallazgo F9 de `specs/codebase-audit-2026-09-16.md`.
+
 ---
 
 ## Open — Prioridad BAJA
@@ -390,6 +460,14 @@ lo que corresponde es el ataque adversarial periódico que el gate ya pide.
 **Por qué NO se arregla ya:** el hook falla hacia el lado seguro y el workaround (sacar los backticks) es trivial. Parsear heredocs para distinguir texto de comando no es barato, y un parser incompleto de shell es peor que el falso positivo actual — daría una falsa sensación de precisión sobre una superficie que hoy es deliberadamente conservadora.
 
 **Acción:** ninguna por ahora. Si el falso positivo se vuelve frecuente al documentar, la salida más barata es un `allow_patterns` en el config del profile, no tocar `_COMMAND_START`.
+
+### F10 — `PluginRegistry` no tiene un solo caller en `src/`
+
+**Por qué:** re-verificado hoy. `plugins/registry.py:24`: `grep -rn "PluginRegistry" src/` devuelve dos resultados — la propia definición de la clase y un comentario en `plugins/builtins.py:131` que afirma que "`PluginRegistry` still resolves the implementation classes". La construcción de sinks en runtime instancia built-ins directamente y rechaza sinks de extensión (`monitoring/sink_setup.py:134`); el registry no participa en ningún camino real. El repo mantiene y testea una abstracción de extensión que el runtime no usa, con un comentario que afirma lo contrario.
+
+**Fuente:** hallazgo F10 de `specs/codebase-audit-2026-09-16.md`, re-verificado a mano el 2026-09-16 con el mismo grep.
+
+**Acción:** remover o diferir `PluginRegistry` hasta que haya un consumidor real, y corregir el comentario de `builtins.py:131` en cualquier caso.
 
 ### El shim `core/sync_claude.py` no tiene un solo importador
 
@@ -495,6 +573,8 @@ Arreglarlo requiere que la clasificación conozca los hooks configurados, o sea 
 El resultado no es un error: es un `unknown`. `check_auth` devuelve `("auth", "unknown", "could not read the credentials file")` para cualquier cosa que no pueda abrir, que es exactamente la degradación correcta para un archivo corrupto y exactamente la equivocada para un agente que nunca tuvo ese archivo. Las dos situaciones quedan indistinguibles en la consola, y la segunda no se arregla loguéandose de nuevo.
 
 **Fuente:** medido el 2026-09-15. `AgentAdapter` (`agents/base.py:480-505`) declara `global_config_link()`, `mcp_config_file()`, `session_dirs()` y `system_doc_name()` — el patrón "este agente guarda X acá" ya existe y tiene cuatro instancias. Ninguna es para credenciales. `grep -rn "\.credentials\.json" src/` devuelve **un solo** call site en todo el árbol, y es este builtin.
+
+**Confirmado en vivo el 2026-09-16 — no es sólo el caso hipotético de un adapter no-Claude, es este mismo agente en macOS ahora mismo.** El profile `lazy` (este mismo checkout) tenía `claude auth login` corrido con éxito hoy: el keychain (`security find-generic-password -l "Claude Code-credentials-49ae4d6b"`, el sufijo es el sha256 de `config_dir` en hex) muestra `mdat` = `20260916124629Z`. `~/.claude-lazy/.credentials.json` quedó con mtime del 2026-09-08 — nunca se reescribió — con `refreshTokenExpiresAt` vencido. `check_auth` (`:89-128`) lee sólo ese archivo y devuelve **`fail`**, no `unknown`: el archivo abre, parsea, y tiene un shape válido, así que ninguna rama de degradación de `check_auth` aplica — el JSON simplemente quedó viejo. El preflight de esta misma sesión lo reportó así (`auth [FAIL] — refresh token expired 33 h ago`) mientras el login real, en el keychain, estaba sano. macOS guarda la credencial viva en el keychain y deja un archivo espejo que nada re-sincroniza; el caso ya registrado arriba (adapter no-Claude → `unknown`) sigue siendo real, pero no es el que ocurre hoy — el que ocurre hoy es un `fail` falso sobre el agente Claude Code mismo, en la plataforma donde este repo corre. El costo es el que el propio docstring de `check_auth` anticipa: un falso `fail` entrena al lector a ignorar el bloque entero.
 
 Lo que sí existe es el principio, escrito en otro lado: `agents/launch.py:77-79` dice «the agent's credential is one global variable and its stored credentials live inside `config_dir`, so a second profile backed by a second account would otherwise authenticate as the first — silently». O sea, el launcher ya trata la ubicación de credenciales como algo que cuelga del `config_dir` del profile — que es exactamente lo que la Task 9 le hizo al preflight. Lo que falta es que el *nombre* salga del adapter en vez del builtin.
 
