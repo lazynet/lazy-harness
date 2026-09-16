@@ -245,4 +245,10 @@ def test_handoff_now_looks_where_the_session_end_hook_writes(
     # No transcript exists either way; what the diagnostic *names* is the whole
     # question, and it is the one thing the command reports about the directory
     # it resolved.
-    assert "threads" in result.output, result.output
+    #
+    # Whitespace is stripped because rich wraps to the terminal width, which
+    # differs between a developer's terminal and CI: asserting on the rendered
+    # line asserts on the width it happened to render at, and `threads` came
+    # back split as `thread\ns` on a narrower one.
+    rendered = "".join(result.output.split())
+    assert f"{profile_home.name}/threads/" in rendered, result.output
