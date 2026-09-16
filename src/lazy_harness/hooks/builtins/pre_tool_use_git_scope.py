@@ -21,23 +21,22 @@ is not recognised as safe blocks. An earlier denylist version ended in a silent
 `return None` for unrecognised input, and `(git stash pop)`, `git stash drop -q`
 and `git stash > /dev/null` all walked straight through it.
 
-Diverges from ADR-006's "exit 0 always" contract the same way its sibling does:
-exits 2 on block, per Claude Code PreToolUse semantics. Every other path,
-including every unexpected error, exits 0 — a hook that fails closed would
-block honest work on its own bugs.
+Diverges from ADR-006's "exit 0 always" contract the same way its sibling does,
+and now says so through the contract rather than through the process: a refusal
+is `Verdict.DENY`, and the adapter is what turns it into stderr plus exit 2.
+Every other path abstains with a bare `HookDecision()` — including every
+unexpected error, because a guard that failed closed would block honest work on
+its own bugs.
 """
 
 from __future__ import annotations
 
-import json
-import os
 import re
-import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
+from lazy_harness.agents.base import HookDecision, HookEvent, Operation, Verdict
 from lazy_harness.core.paths import config_file
 
 
@@ -91,6 +90,38 @@ _STASH_CALL = re.compile(
     + r")*stash\b([^;&|(){}\n]*)",
     re.MULTILINE,
 )
+"""Known gaps, measured 2026-09-15 by attacking this pattern with its own shapes.
+
+Mutation coverage proves a guard has branches, not that it covers anything, so
+the pattern was attacked twice: once inside what it declares it covers, once
+outside. **All twelve refused** — repeated whitespace, a global option between
+the words, an assignment prefix, one wrapper and two nested, a compound whose
+unsafe call is second and one where it is third, a newline separator, an
+invocation after a shell keyword, a quoted argument, command substitution and
+backticks. The regex does what it says.
+
+**Nine got through, every one of them past `_COMMAND_START` rather than past
+the stash pattern itself**, which is where the remaining surface is:
+
+* `sh -c "…"` and `bash -c '…'` — the invocation is an argument to another
+  shell, so `git` is not in command position here. (Note the narrowness: a
+  quoted `cd /tmp && git stash` *is* caught, because the `&&` inside the quotes
+  reads as a separator. Only a stash first inside the quotes escapes.)
+* `eval "…"` and a command built into a variable (`C="…"; $C`) — same shape.
+* `\\git …` — a backslash-escaped command name; the anchor's `\\s*` does not
+  consume it.
+* `git "stash" pop` — a quoted *subcommand*. A quoted argument (`git stash
+  "pop"`) is still caught.
+* `> /dev/null git …` and `2>/dev/null git …` — a redirect before the command.
+* `/usr/bin/git …` — git spelled as an absolute path.
+
+None is closed here. Every one of them is a deliberate act by whoever typed it,
+and this hook guards a *scope* mistake rather than an adversary — widening the
+anchor to cover them would cost false positives on prose and on every `sh -c`
+in a legitimate script, which the kill criteria in `docs/how/hooks.md` make the
+expensive failure. `TestKnownEvasions` pins both halves, so closing one of these
+turns a test red instead of leaving this list quietly wrong.
+"""
 
 # Subcommands that only read the stack.
 _READ_ONLY = frozenset({"list", "show"})
@@ -347,53 +378,56 @@ def _format_block_message(verdict: UnsafeStash) -> str:
     )
 
 
-def _read_stdin_json() -> dict[str, Any]:
-    """Read and parse stdin as JSON; return {} on any parse error or empty input."""
+def main(event: HookEvent) -> HookDecision:
+    """Refuse an unsafe stash on a shared stack; abstain on every other path.
+
+    Dispatching on `Operation.RUN_COMMAND` rather than on the native tool name
+    is what makes the guard portable: an agent that calls its shell tool
+    something other than `Bash` still runs commands, and `INSPECTED_TOOLS`
+    below is only Claude Code's spelling of that. The two are not always
+    interchangeable -- `MODIFY_FILE` is wider than `{"Edit", "Write"}` because
+    `NotebookEdit` maps onto it too -- so the equivalence this hook relies on
+    is asserted rather than assumed, by
+    `test_the_operation_gate_is_not_wider_than_the_tools_it_inspects`.
+
+    Abstention is a bare `HookDecision()`, never `Verdict.ALLOW`: exit 0 with
+    no output is how a hook says "no objection", and approving every command
+    this guard merely fails to recognise would be the opposite statement.
+    """
     try:
-        data = sys.stdin.read()
-    except (OSError, ValueError):
-        return {}
-    if not data.strip():
-        return {}
-    try:
-        parsed = json.loads(data)
-    except json.JSONDecodeError:
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
+        tool = event.tool
+        if tool is None or tool.operation is not Operation.RUN_COMMAND:
+            return HookDecision()
 
+        command = tool.command
+        if command is None:
+            return HookDecision()
 
-def main() -> None:
-    """Block an unsafe stash from a worktree; exit 0 on every other path."""
-    try:
-        payload = _read_stdin_json()
+        # `parse_hook_input` yields `Path("")` when the payload names no cwd,
+        # and `Path("")` is `Path(".")` -- truthy, so a bare falsiness check
+        # never fires. Judging a shared stack against the string `.` would wave
+        # every unsafe stash through on a payload missing one optional field.
+        #
+        # The path is deliberately not resolved: `Path.cwd()` is
+        # symlink-resolved on macOS (`/private/var/...`) while the payload
+        # carries what the agent saw (`/var/...`), and the agent names its own
+        # directory. Both spellings reach the same `.git`, so the walk in
+        # `_find_dot_git` answers the same either way.
+        cwd = event.cwd if event.cwd != Path(".") else Path.cwd()
 
-        if payload.get("tool_name") not in INSPECTED_TOOLS:
-            sys.exit(0)
-
-        tool_input = payload.get("tool_input")
-        if not isinstance(tool_input, dict):
-            sys.exit(0)
-
-        command = tool_input.get("command")
-        if not isinstance(command, str):
-            sys.exit(0)
-
-        cwd = payload.get("cwd")
-        if not isinstance(cwd, str) or not cwd:
-            cwd = os.getcwd()
-
-        verdict = should_block(command, cwd, load_allowlist())
+        verdict = should_block(command, str(cwd), load_allowlist())
         if verdict is None:
-            sys.exit(0)
+            return HookDecision()
 
-        sys.stderr.write(_format_block_message(verdict))
-        sys.exit(2)
-    except SystemExit:
-        raise
+        # `reason` *is* the stderr bytes: the adapter writes it and exits 2
+        # (`agents/claude_code.py:559`), which is what keeps this migration
+        # byte-identical to the `sys.stderr.write` it replaces.
+        return HookDecision(verdict=Verdict.DENY, reason=_format_block_message(verdict))
     except Exception:
-        # Fail open: a bug here must not block honest work.
-        sys.exit(0)
-
-
-if __name__ == "__main__":
-    main()
+        # Fail open, and deliberately at odds with the layer above it. A
+        # blocking builtin that cannot run is supposed to refuse, and
+        # `hooks.runner` does exactly that when it cannot even construct the
+        # event. This handler sits one layer down and covers a bug inside the
+        # guard's own logic, where refusing would block honest work over a
+        # defect of ours. Both survive; they are not the same failure.
+        return HookDecision()

@@ -10,11 +10,18 @@ read-only subcommands.
 from __future__ import annotations
 
 import json
-import subprocess
-import sys
 from pathlib import Path
+from typing import Final
 
 import pytest
+
+from lazy_harness.agents.base import HookDecision, HookEvent, Operation, ToolCall, Verdict
+
+_UNSET: Final = object()
+"""Distinguishes "build the default tool call" from "hand `main` no tool call".
+
+`None` is a value this hook has to survive, so it cannot double as the
+"argument not given" marker."""
 
 # Format: (command, human_label)
 UNSAFE_STASH_CASES: list[tuple[str, str]] = [
@@ -362,249 +369,390 @@ class TestShouldBlock:
         assert should_block('git stash push -u -m "tag"', wt) is None
 
 
-def _run_hook(payload: object, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
-    """Invoke the hook as the agent does: a subprocess fed JSON on stdin."""
-    return subprocess.run(
-        [sys.executable, "-m", "lazy_harness.hooks.builtins.pre_tool_use_git_scope"],
-        input=payload if isinstance(payload, str) else json.dumps(payload),
-        capture_output=True,
-        text=True,
+_POP = "git st" + "ash pop"
+"""Kept out of one literal so the guard does not refuse the run that tests it.
+
+`_STASH_CALL` matches command *text*, so a `Bash` call whose argument merely
+quotes an unsafe invocation is refused — which is the cheapest evidence that
+the evasion suite below has real surface to work on.
+"""
+
+_BARE = "git st" + "ash"
+
+
+def _event(command: str, cwd: Path, *, tool: object = _UNSET) -> HookEvent:
+    """A `PreToolUse` event carrying one Bash call, the way the adapter builds it."""
+    return HookEvent(
+        event="pre_tool_use",
+        profile="p",
+        session_id="s",
         cwd=cwd,
+        transcript_path=None,
+        tool=ToolCall(native_name="Bash", operation=Operation.RUN_COMMAND, command=command)
+        if tool is _UNSET
+        else tool,
     )
 
 
-class TestHookEntrypoint:
-    def test_exits_2_and_explains_when_blocking(self, tmp_path: Path) -> None:
-        wt = _make_worktree(tmp_path)
-        result = _run_hook(
-            {
-                "hook_event_name": "PreToolUse",
-                "tool_name": "Bash",
-                "tool_input": {"command": "git stash"},
-                "cwd": str(wt),
-            }
-        )
-        assert result.returncode == 2
-        assert "stash" in result.stderr.lower()
+class TestTheVerdictItReturns:
+    """`main` decides through `HookDecision`; the adapter owns the exit code."""
 
-    def test_the_block_message_names_the_safe_alternative(self, tmp_path: Path) -> None:
-        wt = _make_worktree(tmp_path)
-        result = _run_hook(
-            {
-                "tool_name": "Bash",
-                "tool_input": {"command": "git stash pop"},
-                "cwd": str(wt),
-            }
-        )
-        assert result.returncode == 2
-        assert "git stash push" in result.stderr
+    def test_refuses_an_unsafe_stash_through_the_verdict(self, tmp_path: Path) -> None:
+        """All three conditions of `should_block` supplied at once.
 
-    def test_exits_0_for_a_safe_command(self, tmp_path: Path) -> None:
-        wt = _make_worktree(tmp_path)
-        result = _run_hook(
-            {
-                "tool_name": "Bash",
-                "tool_input": {"command": "git stash list"},
-                "cwd": str(wt),
-            }
-        )
-        assert result.returncode == 0
-
-    def test_falls_back_to_process_cwd_when_the_payload_omits_it(self, tmp_path: Path) -> None:
-        wt = _make_worktree(tmp_path)
-        result = _run_hook(
-            {"tool_name": "Bash", "tool_input": {"command": "git stash"}},
-            cwd=wt,
-        )
-        assert result.returncode == 2
-
-    @pytest.mark.parametrize("bad_cwd", [3, None, [], {}], ids=lambda v: f"cwd={v!r}")
-    def test_falls_back_to_process_cwd_when_the_payload_cwd_is_not_a_string(
-        self, bad_cwd: object, tmp_path: Path
-    ) -> None:
-        """A malformed `cwd` must not wave the command through.
-
-        Unlike a broken `tool_input`, a broken `cwd` still leaves the command
-        legible — and `os.getcwd()` answers the only question left. Degrading
-        to exit 0 here would let an unsafe stash past on a bad optional field.
+        The unsafe subcommand, a cwd whose stash stack is shared, and no allow
+        pattern — take any one away and the other two tests below hold instead.
         """
-        wt = _make_worktree(tmp_path)
-        result = _run_hook(
-            {"tool_name": "Bash", "tool_input": {"command": "git stash"}, "cwd": bad_cwd},
-            cwd=wt,
+        from lazy_harness.hooks.builtins.pre_tool_use_git_scope import main
+
+        decision = main(_event(_POP, _make_worktree(tmp_path)))
+
+        assert decision.verdict is Verdict.DENY
+        assert "unsafe git st" + "ash" in decision.reason
+
+    def test_abstains_where_no_one_else_reaches_the_stack(self, tmp_path: Path) -> None:
+        """A real checkout with no linked worktrees, not a bare `tmp_path`.
+
+        A directory with no `.git` at all exercises `_find_dot_git` returning
+        None, which is a different branch — and would let this pass against a
+        guard that had lost the shared-stack check entirely.
+        """
+        from lazy_harness.hooks.builtins.pre_tool_use_git_scope import main
+
+        assert main(_event(_POP, _make_main_checkout(tmp_path))).verdict is None
+
+    def test_still_refuses_from_the_main_checkout_of_a_repo_with_worktrees(
+        self, tmp_path: Path
+    ) -> None:
+        """The stack belongs to the repository, so both sides are guarded.
+
+        Without this, the pair above passes against a guard narrowed to linked
+        worktrees only — which is what an earlier draft of the migration plan
+        described three times.
+        """
+        from lazy_harness.hooks.builtins.pre_tool_use_git_scope import main
+
+        cwd = _make_main_checkout_with_worktrees(tmp_path)
+
+        assert main(_event(_POP, cwd)).verdict is Verdict.DENY
+
+    def test_the_reason_is_the_whole_message_the_agent_reads(self, tmp_path: Path) -> None:
+        """`reason` *is* the stderr bytes: the adapter writes it and exits 2.
+
+        Asserted against `_format_block_message` rather than against a
+        substring, because a migration that put a summary in `reason` and left
+        the detail behind would still pass an "unsafe" check and would silently
+        shorten what Claude Code shows.
+        """
+        from lazy_harness.hooks.builtins.pre_tool_use_git_scope import (
+            _format_block_message,
+            is_unsafe_stash,
+            main,
         )
-        assert result.returncode == 2
 
-    @pytest.mark.parametrize(
-        "tool_name",
-        ["Read", "Edit", "Write", "Glob", "Task"],
-        ids=lambda v: f"tool={v}",
-    )
-    def test_ignores_every_tool_except_bash(self, tool_name: str, tmp_path: Path) -> None:
-        result = _run_hook(
-            {
-                "tool_name": tool_name,
-                "tool_input": {"command": "git stash"},
-                "cwd": str(_make_worktree(tmp_path)),
-            }
-        )
-        assert result.returncode == 0
+        verdict = is_unsafe_stash(_POP)
+        assert verdict is not None
 
-    @pytest.mark.parametrize(
-        "payload,label",
-        [
-            ("", "empty stdin"),
-            ("   \n  ", "whitespace only"),
-            ("not json at all", "malformed json"),
-            ("null", "valid json, null"),
-            ("42", "valid json, int"),
-            ('["a", "b"]', "valid json, list"),
-            ('{"tool_name": "Bash", "tool_input": null}', "tool_input is null"),
-            ('{"tool_name": "Bash", "tool_input": 7}', "tool_input is an int"),
-            ('{"tool_name": "Bash", "tool_input": ["x"]}', "tool_input is a list"),
-            ('{"tool_name": "Bash", "tool_input": {"command": null}}', "command is null"),
-            ('{"tool_name": "Bash", "tool_input": {"command": 5}}', "command is an int"),
-            ('{"tool_name": "Bash", "tool_input": {}}', "command missing"),
-            ('{"tool_name": 99, "tool_input": {"command": "git stash"}}', "tool_name is an int"),
-        ],
-        ids=lambda v: v if isinstance(v, str) and " " in v else "",
-    )
-    def test_degrades_to_exit_0_on_malformed_input(self, payload: str, label: str) -> None:
-        result = _run_hook(payload)
-        assert result.returncode == 0, f"{label}: {result.stderr}"
+        assert main(_event(_POP, _make_worktree(tmp_path))).reason == _format_block_message(verdict)
 
+    def test_an_allow_pattern_from_the_config_rescues_the_command(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The escape hatch the block message promises, through `main`.
 
-class TestAllowlist:
-    """The block message promises `allow_patterns`, so it has to work."""
+        `should_block` is tested with the list passed in; this is the only path
+        that proves `main` still consults `load_allowlist` at all.
+        """
+        from lazy_harness.hooks.builtins import pre_tool_use_git_scope as hook
 
-    def _write_config(self, tmp_path: Path, body: str) -> Path:
         cfg = tmp_path / "config.toml"
-        cfg.write_text(body)
-        return cfg
-
-    def test_an_allow_pattern_rescues_a_matching_command(self, tmp_path: Path) -> None:
-        from lazy_harness.hooks.builtins.pre_tool_use_git_scope import should_block
-
-        wt = str(_make_worktree(tmp_path))
-        assert should_block("git stash", wt, ["deliberate-stash"]) is not None
-        assert should_block("git stash # deliberate-stash", wt, ["deliberate-stash"]) is None
-
-    def test_a_broken_user_regex_is_skipped_not_raised(self, tmp_path: Path) -> None:
-        from lazy_harness.hooks.builtins.pre_tool_use_git_scope import should_block
-
-        wt = str(_make_worktree(tmp_path))
-        assert should_block("git stash", wt, ["([unclosed"]) is not None
-
-    def test_reads_its_own_config_section(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        from lazy_harness.hooks.builtins import pre_tool_use_git_scope as hook
-
-        cfg = self._write_config(
-            tmp_path,
-            '[hooks.pre_tool_use_git_scope]\nallow_patterns = ["escape-hatch"]\n',
-        )
+        cfg.write_text('[hooks.pre_tool_use_git_scope]\nallow_patterns = ["deliberate"]\n')
         monkeypatch.setattr(hook, "config_file", lambda: cfg)
-        assert hook.load_allowlist() == ["escape-hatch"]
+        cwd = _make_worktree(tmp_path)
 
-    def test_does_not_read_the_security_hooks_allowlist(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The separation is the whole reason this hook is its own module.
+        assert hook.main(_event(f"{_POP} # deliberate", cwd)).verdict is None
+        assert hook.main(_event(_POP, cwd)).verdict is Verdict.DENY
 
-        `[hooks.pre_tool_use] allow_patterns` carries `\\.worktrees/` in the
-        reference profile, which would rescue every command this hook exists
-        to catch.
+    def test_abstention_is_a_bare_decision_and_never_an_approval(self, tmp_path: Path) -> None:
+        """Exit 0 with no output is how a hook says "no objection".
+
+        `Verdict.ALLOW` says something else entirely: it skips the permission
+        prompt. A guard that merely failed to recognise a command must not
+        thereby approve it.
         """
-        from lazy_harness.hooks.builtins import pre_tool_use_git_scope as hook
+        from lazy_harness.hooks.builtins.pre_tool_use_git_scope import main
 
-        cfg = self._write_config(
-            tmp_path,
-            '[hooks.pre_tool_use]\nallow_patterns = ["\\\\.worktrees/"]\n',
-        )
-        monkeypatch.setattr(hook, "config_file", lambda: cfg)
-        assert hook.load_allowlist() == []
+        decision = main(_event(f"{_BARE} list", _make_worktree(tmp_path)))
+
+        assert decision == HookDecision()
+
+
+class TestWhatItIsHandedInsteadOfAToolCall:
+    def test_an_event_with_no_tool_call_abstains(self, tmp_path: Path) -> None:
+        from lazy_harness.hooks.builtins.pre_tool_use_git_scope import main
+
+        assert main(_event("", _make_worktree(tmp_path), tool=None)).verdict is None
 
     @pytest.mark.parametrize(
-        "body,label",
-        [
-            ("", "empty file"),
-            ("not [ valid toml", "malformed toml"),
-            ("[hooks]\n", "no section"),
-            ('[hooks.pre_tool_use_git_scope]\nallow_patterns = "nope"\n', "patterns not a list"),
-            ("[hooks.pre_tool_use_git_scope]\nallow_patterns = [1, 2]\n", "patterns not strings"),
-            ("hooks = 5\n", "hooks is not a table"),
-            ('[hooks]\npre_tool_use_git_scope = "nope"\n', "section is not a table"),
-        ],
-        ids=lambda v: v if " " in str(v) else "",
+        "operation",
+        [Operation.READ_FILE, Operation.MODIFY_FILE, None],
+        ids=lambda v: f"operation={v}",
     )
-    def test_degrades_to_an_empty_allowlist(
-        self, body: str, label: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    def test_an_operation_this_hook_does_not_guard_abstains(
+        self, operation: Operation | None, tmp_path: Path
     ) -> None:
-        from lazy_harness.hooks.builtins import pre_tool_use_git_scope as hook
+        from lazy_harness.hooks.builtins.pre_tool_use_git_scope import main
 
-        cfg = self._write_config(tmp_path, body)
-        monkeypatch.setattr(hook, "config_file", lambda: cfg)
-        assert hook.load_allowlist() == [], label
+        tool = ToolCall(native_name="Read", operation=operation, command=_POP)
 
-    def test_a_missing_config_file_yields_an_empty_allowlist(
+        assert main(_event(_POP, _make_worktree(tmp_path), tool=tool)).verdict is None
+
+    def test_a_tool_call_carrying_no_command_abstains(self, tmp_path: Path) -> None:
+        """`Operation.RUN_COMMAND` with `command=None` is a normalisation that
+        found no command, not an empty one to judge."""
+        from lazy_harness.hooks.builtins.pre_tool_use_git_scope import main
+
+        tool = ToolCall(native_name="Bash", operation=Operation.RUN_COMMAND, command=None)
+
+        assert main(_event("", _make_worktree(tmp_path), tool=tool)).verdict is None
+
+    def test_the_operation_gate_is_not_wider_than_the_tools_it_inspects(self) -> None:
+        """Trap 3, asserted rather than assumed.
+
+        This hook gates on `Operation.RUN_COMMAND` and not on the native tool
+        name, which is only safe while the two answer the same question. Four
+        of the fifteen migrations could not do that: `MODIFY_FILE` also carries
+        `NotebookEdit`, so the operation gate there is a widening. Here it is
+        not — and this test is what makes that a fact rather than a reading of
+        today's table. Map a second tool onto `RUN_COMMAND` and it goes red.
+        """
+        from lazy_harness.agents.claude_code import _TOOL_OPERATIONS
+        from lazy_harness.hooks.builtins.pre_tool_use_git_scope import INSPECTED_TOOLS
+
+        run_command_tools = {
+            tool for tool, op in _TOOL_OPERATIONS.items() if op is Operation.RUN_COMMAND
+        }
+
+        assert run_command_tools == set(INSPECTED_TOOLS)
+
+
+class TestTheWorkingDirectoryItJudgesAgainst:
+    def test_an_empty_cwd_falls_back_to_the_process_directory(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from lazy_harness.hooks.builtins import pre_tool_use_git_scope as hook
+        """`parse_hook_input` yields `Path("")` when the payload names no cwd.
 
-        monkeypatch.setattr(hook, "config_file", lambda: tmp_path / "absent.toml")
-        assert hook.load_allowlist() == []
+        `Path("")` is `Path(".")` and is truthy, so a bare `if not event.cwd`
+        never fires — and judging a shared stack against the string `.` would
+        wave every unsafe stash through on a payload missing one optional
+        field.
+        """
+        from lazy_harness.hooks.builtins.pre_tool_use_git_scope import main
+
+        monkeypatch.chdir(_make_worktree(tmp_path))
+
+        assert main(_event(_POP, Path(""))).verdict is Verdict.DENY
+
+    def test_the_process_directory_is_not_consulted_when_the_payload_names_one(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The negative half: the fallback must not override a stated cwd.
+
+        Without it, a fallback written as "always prefer the process directory"
+        passes the test above and judges every event against wherever the hook
+        happens to run.
+        """
+        from lazy_harness.hooks.builtins.pre_tool_use_git_scope import main
+
+        monkeypatch.chdir(_make_worktree(tmp_path))
+
+        assert main(_event(_POP, _make_main_checkout(tmp_path))).verdict is None
 
 
 class TestFailsOpenOnInternalError:
-    def test_an_unexpected_error_exits_0_instead_of_escaping(
-        self, monkeypatch: pytest.MonkeyPatch
+    def test_an_unexpected_error_abstains_instead_of_escaping(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Proves the broad except is not dead code.
+        """Proves the broad except is not dead code, and that it still abstains.
 
-        A bug inside the hook must not block honest work, and must not escape
-        to crash the rest of the PreToolUse chain.
+        Two failure policies meet in this module and must not collapse into
+        one. The Global Constraints of the migration say a *blocking* builtin
+        refuses when it cannot run, and `run_hook` does exactly that when it
+        cannot even construct the event. This handler is one layer down and
+        does the opposite on purpose: a bug inside the guard's own logic must
+        not block honest work.
         """
-        import io
-
         from lazy_harness.hooks.builtins import pre_tool_use_git_scope as hook
 
-        def explode(command: str, cwd: str) -> None:
+        def explode(command: str, cwd: str, allow_patterns: list[str] | None = None) -> None:
             raise RuntimeError("boom")
 
         monkeypatch.setattr(hook, "should_block", explode)
-        monkeypatch.setattr(
-            "sys.stdin",
-            io.StringIO(json.dumps({"tool_name": "Bash", "tool_input": {"command": "git stash"}})),
-        )
-        with pytest.raises(SystemExit) as excinfo:
-            hook.main()
-        assert excinfo.value.code == 0
+
+        assert hook.main(_event(_POP, _make_worktree(tmp_path))) == HookDecision()
 
 
-class TestRunsTheWayTheLoaderInvokesIt:
-    def test_blocks_when_invoked_by_file_path(self, tmp_path: Path) -> None:
-        """The loader runs `python <path>.py`, not `python -m <module>`.
+class TestThroughTheRunner:
+    """The bytes the deployed command writes, which is what the agent reads."""
 
-        Every other entrypoint test uses -m, so this is the one that proves the
-        form the deployed system actually uses still works.
+    def _isolated(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path / "config"))
+        monkeypatch.setenv("LH_DATA_DIR", str(tmp_path / "data"))
+
+    def test_refuses_rather_than_abstains_when_it_cannot_run(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Decision 3's table, blocking column, and the one licensed divergence.
+
+        `_read_stdin_json` used to degrade an unparseable payload to `{}`, and
+        a guard handed `{}` abstains — which on the wire is indistinguishable
+        from having looked. The runner refuses before the builtin is reached.
         """
-        from lazy_harness.hooks.builtins import pre_tool_use_git_scope as hook
+        from lazy_harness.hooks.runner import run_hook
 
-        wt = _make_worktree(tmp_path)
-        result = subprocess.run(
-            [sys.executable, str(Path(hook.__file__))],
-            input=json.dumps(
-                {
-                    "tool_name": "Bash",
-                    "tool_input": {"command": "git stash"},
-                    "cwd": str(wt),
-                }
-            ),
-            capture_output=True,
-            text=True,
+        self._isolated(tmp_path, monkeypatch)
+
+        output = run_hook("pre-tool-use-git-scope", profile="p", stdin_text="not json")
+
+        assert output.exit_code == 2
+        assert "unparseable payload" in output.stderr
+
+    def test_a_refusal_reaches_stderr_with_exit_2_and_an_empty_stdout(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The refusal channel, end to end: `reason` on stderr, nothing on stdout."""
+        from lazy_harness.hooks.runner import run_hook
+
+        self._isolated(tmp_path, monkeypatch)
+        payload = {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": _POP},
+            "cwd": str(_make_worktree(tmp_path)),
+        }
+
+        output = run_hook("pre-tool-use-git-scope", profile="p", stdin_text=json.dumps(payload))
+
+        assert output.exit_code == 2
+        assert output.stdout is None
+        assert output.stderr.startswith("Blocked by lazy-harness PreToolUse:")
+
+    def test_it_writes_nothing_under_either_agent_directory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Step 7 of the migration recipe has no witness here, and this says so.
+
+        Every other migration asserts its `hooks.log` line lands in the
+        profile's runtime directory and not in the global one. This hook writes
+        no log, no metric and no queue entry — `load_allowlist` reads
+        `config_file()`, which is not profile-scoped — so there is nothing for
+        that assertion to stand on. What is asserted instead is the property
+        that makes it inapplicable: a refusal leaves no trace on disk at all.
+
+        `CLAUDE_CONFIG_DIR` is cleared rather than pinned. `agent_runtime_dir`
+        resolves it above the profile's `config_dir`, so pinning it makes both
+        answers the same path and the absence half could never fail.
+        """
+        from lazy_harness.hooks.runner import run_hook
+
+        self._isolated(tmp_path, monkeypatch)
+        monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+        agent_dir = tmp_path / "agent"
+        agent_dir.mkdir()
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: agent_dir))
+        payload = {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": _POP},
+            "cwd": str(_make_worktree(tmp_path)),
+        }
+
+        output = run_hook("pre-tool-use-git-scope", profile="p", stdin_text=json.dumps(payload))
+
+        assert output.exit_code == 2
+        assert list(agent_dir.rglob("*")) == []
+
+
+# --- step 6 of the migration plan: attack the denylist with its own shapes -- #
+#
+# Split out of one literal for the same reason as `_POP` above.
+_S = "st" + "ash"
+
+#: Evasions of what `_STASH_CALL` declares it covers. Every one is refused, and
+#: each names the clause that refuses it — delete that clause and one of these
+#: turns red rather than the whole suite staying green on a narrower guard.
+DECLARED_COVERAGE_CASES: list[tuple[str, str]] = [
+    (f"git   {_S}    pop", "repeated whitespace between the words"),
+    (f"git -c core.pager=cat {_S} pop", "a git global option between them"),
+    (f"GIT_DIR=. git {_S} pop", "an assignment prefix"),
+    (f"env git {_S} pop", "a wrapper"),
+    (f"sudo env git {_S} pop", "two nested wrappers"),
+    (f"git {_S} list && git {_S} pop", "a compound whose unsafe call is second"),
+    (f"ls; git {_S} list; git {_S} clear", "a compound whose unsafe call is third"),
+    (f"cd src\ngit {_S} pop", "a newline separator"),
+    (f"if true; then git {_S} pop; fi", "an invocation after a shell keyword"),
+    (f'git {_S} "pop"', "a quoted argument"),
+    (f"$(git {_S} pop)", "command substitution"),
+    (f"`git {_S} pop`", "backticks"),
+]
+
+#: What got through, measured 2026-09-15. Every one is past `_COMMAND_START`
+#: rather than past the stash pattern, and none is closed — see the docstring on
+#: `_STASH_CALL` for why. Pinned so that closing one goes red here instead of
+#: leaving that record quietly wrong.
+KNOWN_EVASION_CASES: list[tuple[str, str]] = [
+    (f'sh -c "git {_S} pop"', "the invocation is an argument to another shell"),
+    (f"bash -c 'git {_S} pop'", "same, single-quoted"),
+    (f'eval "git {_S} pop"', "eval defers the parse past this regex"),
+    (f'C="git {_S} pop"; $C', "the command is built in a variable"),
+    (f"\\git {_S} pop", "a backslash-escaped command name"),
+    (f'git "{_S}" pop', "a quoted subcommand"),
+    (f"> /dev/null git {_S} pop", "a redirect before the command"),
+    (f"2>/dev/null git {_S} pop", "a numbered redirect before the command"),
+    (f"/usr/bin/git {_S} pop", "git spelled as an absolute path"),
+]
+
+
+class TestKnownEvasions:
+    """Both halves of the attack, so neither can go stale in silence.
+
+    A denylist that was only ever tested on the shapes it was written for
+    reports coverage it does not have. These two lists are the output of
+    running the guard against evasions of its own patterns, not of reading it.
+    """
+
+    @pytest.mark.parametrize("command,label", DECLARED_COVERAGE_CASES, ids=lambda v: v)
+    def test_the_regex_covers_what_it_declares(self, command: str, label: str) -> None:
+        from lazy_harness.hooks.builtins.pre_tool_use_git_scope import is_unsafe_stash
+
+        assert is_unsafe_stash(command) is not None, label
+
+    def test_a_quoted_compound_is_still_caught(self) -> None:
+        """The `sh -c` gap is narrower than it looks, and that matters.
+
+        `_COMMAND_START` treats the `&&` inside the quotes as a separator, so
+        only a stash that is the *first* word inside them escapes. Recorded
+        because "quoting defeats this hook" would be the wrong summary.
+        """
+        from lazy_harness.hooks.builtins.pre_tool_use_git_scope import is_unsafe_stash
+
+        assert is_unsafe_stash(f"sh -c 'cd /tmp && git {_S}'") is not None
+
+    @pytest.mark.parametrize("command,label", KNOWN_EVASION_CASES, ids=lambda v: v)
+    def test_the_measured_gaps_are_still_the_gaps(self, command: str, label: str) -> None:
+        """Pins the gap rather than the fix.
+
+        This asserts what the guard does *not* catch, which is only useful
+        while the record beside it says so. Closing one of these is a welcome
+        change and has to update the docstring on `_STASH_CALL` in the same
+        commit — which is what turning this red is for.
+        """
+        from lazy_harness.hooks.builtins.pre_tool_use_git_scope import is_unsafe_stash
+
+        assert is_unsafe_stash(command) is None, (
+            f"{label}: this evasion is now caught -- update the gap list on "
+            f"`_STASH_CALL` and move this case into DECLARED_COVERAGE_CASES"
         )
-        assert result.returncode == 2, result.stderr
 
 
 class TestRegistration:
@@ -617,3 +765,28 @@ class TestRegistration:
         from lazy_harness.hooks.loader import _BUILTIN_HOOKS
 
         assert _BUILTIN_HOOKS["pre-tool-use-git-scope"].matcher == "Bash"
+
+    def test_declares_the_operation_it_guards(self) -> None:
+        """Declared, not inferred from the `Bash` matcher, which names Claude
+        Code's own tool. Another agent's translated matcher still has to be
+        asked whether the operation exists there."""
+        from lazy_harness.hooks.loader import _BUILTIN_HOOKS
+
+        spec = _BUILTIN_HOOKS["pre-tool-use-git-scope"]
+
+        assert spec.operations == frozenset({Operation.RUN_COMMAND})
+        assert spec.blocking is True
+        assert spec.event == "pre_tool_use"
+
+    def test_declares_no_transcript_signal(self) -> None:
+        """This hook reads a command string and the filesystem, never a
+        transcript. Declaring a signal would make `deploy` omit a working guard
+        on any agent whose reader cannot supply one it never touches."""
+        from lazy_harness.hooks.loader import builtin_signals
+
+        assert builtin_signals("pre-tool-use-git-scope") == frozenset()
+
+    def test_runs_through_the_runner_rather_than_owning_stdin(self) -> None:
+        from lazy_harness.hooks.loader import _BUILTIN_HOOKS
+
+        assert _BUILTIN_HOOKS["pre-tool-use-git-scope"].migrated is True

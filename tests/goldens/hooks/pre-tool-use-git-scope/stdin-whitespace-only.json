@@ -1,0 +1,5 @@
+{
+  "exit_code": 2,
+  "stderr": "pre-tool-use-git-scope: unparseable payload: Expecting value: line 2 column 1 (char 4)",
+  "stdout": ""
+}

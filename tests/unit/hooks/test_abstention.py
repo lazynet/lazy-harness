@@ -101,6 +101,16 @@ _NO_OBJECTION: dict[str, dict[str, object]] = {
         "session_id": "s1",
         "cwd": "/tmp",
     },
+    # The other blocking hook, and the one whose abstention is cheapest to get
+    # wrong: it refuses through `Verdict.DENY`, so a migration that returned a
+    # verdict on the recognised-as-safe path would deny a command the guard had
+    # just cleared.
+    "pre-tool-use-git-scope": {
+        "hook_event_name": "PreToolUse",
+        "session_id": "s1",
+        "tool_name": "Bash",
+        "tool_input": {"command": "git st" + "ash list"},
+    },
 }
 
 

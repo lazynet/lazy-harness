@@ -211,6 +211,12 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
         event="pre_tool_use",
         blocking=True,
         operations=frozenset({Operation.RUN_COMMAND}),
+        # No `signals`: this hook reads the command string off the tool call and
+        # the checkout's `.git` off the filesystem, never the transcript.
+        # Declaring one would make `deploy` refuse to install a blocking guard
+        # on an agent whose reader cannot supply a signal the hook never
+        # touches — and an uninstalled guard is silent, not loud.
+        migrated=True,
     ),
     "pre-tool-use-memory-size": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.pre_tool_use_memory_size",
