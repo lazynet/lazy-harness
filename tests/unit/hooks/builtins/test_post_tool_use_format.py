@@ -244,7 +244,6 @@ def test_the_registry_declares_what_this_hook_reasons_about() -> None:
 
     spec = _BUILTIN_HOOKS["post-tool-use-format"]
 
-    assert spec.migrated is True
     assert spec.event == "post_tool_use"
     assert spec.operations == frozenset({Operation.MODIFY_FILE})
     assert spec.blocking is False

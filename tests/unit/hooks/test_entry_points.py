@@ -56,7 +56,6 @@ def register(
     name: str,
     main: object,
     *,
-    migrated: bool,
     blocking: bool = False,
 ) -> None:
     """Register a builtin backed by a module built for this test."""
@@ -65,9 +64,7 @@ def register(
     module.main = main  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, module_name, module)
     monkeypatch.setitem(
-        _BUILTIN_HOOKS,
-        name,
-        BuiltinHookSpec(module=module_name, blocking=blocking, migrated=migrated),
+        _BUILTIN_HOOKS, name, BuiltinHookSpec(module=module_name, blocking=blocking)
     )
 
 
@@ -80,7 +77,7 @@ def test_hook_invoke_passes_an_explicit_profile_to_the_runner(
         seen.append(event.profile)
         return HookDecision()
 
-    register(monkeypatch, "spy", main, migrated=True)
+    register(monkeypatch, "spy", main)
 
     result = CliRunner().invoke(
         cli, ["hook", "spy", "--profile", "flex"], input=json.dumps(PRE_TOOL_USE)
@@ -108,7 +105,7 @@ def test_the_deployed_command_invokes_cleanly_for_an_awkward_profile(
         seen.append(event.profile)
         return HookDecision()
 
-    register(monkeypatch, "spy", main, migrated=True)
+    register(monkeypatch, "spy", main)
     hook = HookInfo(name="spy", path=Path("/nonexistent/spy.py"), is_builtin=True)
 
     argv = shlex.split(hook_command(hook, profile=profile))
@@ -137,7 +134,7 @@ def test_hook_invoke_falls_back_to_todays_profile_resolution(
         seen.append(event.profile)
         return HookDecision()
 
-    register(monkeypatch, "spy", main, migrated=True)
+    register(monkeypatch, "spy", main)
 
     result = CliRunner().invoke(cli, ["hook", "spy"], input=json.dumps(PRE_TOOL_USE))
 
@@ -145,21 +142,7 @@ def test_hook_invoke_falls_back_to_todays_profile_resolution(
     assert seen == ["from-environment"]
 
 
-def test_an_unmigrated_builtin_is_still_called_with_no_arguments(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The marker routes, and until a module migrates it routes to the old path."""
-    calls: list[str] = []
-
-    register(monkeypatch, "legacy", lambda: calls.append("no-args"), migrated=False)
-
-    result = CliRunner().invoke(cli, ["hook", "legacy"], input=json.dumps(PRE_TOOL_USE))
-
-    assert result.exit_code == 0, result.output
-    assert calls == ["no-args"]
-
-
-def test_the_engine_reaches_a_migrated_builtin_through_the_deployed_command() -> None:
+def test_the_engine_reaches_a_builtin_through_the_deployed_command() -> None:
     """The path on the `HookInfo` does not exist, so the file route cannot answer.
 
     This replaces an assertion that the engine ran a migrated builtin *in this
@@ -205,7 +188,7 @@ def test_a_migrated_builtin_is_held_to_its_timeout(
     (slow / "sitecustomize.py").write_text("import time\n\ntime.sleep(30)\n")
     inherited = os.environ.get("PYTHONPATH")
     monkeypatch.setenv("PYTHONPATH", os.pathsep.join(p for p in (str(slow), inherited) if p))
-    register(monkeypatch, "spy", lambda event: HookDecision(), migrated=True)
+    register(monkeypatch, "spy", lambda event: HookDecision())
     hook = HookInfo(name="spy", path=Path("/nonexistent/spy.py"), is_builtin=True)
 
     result = execute_hook(
@@ -244,14 +227,14 @@ def test_the_engine_executes_a_registered_builtin_through_the_cli(
     builtin spawned as a script, which on a `main(event)` fails at `__main__`
     and reports a non-zero exit that reads like the hook having an opinion.
 
-    The spec is registered with the transitional flag *off* on purpose. Every
-    builtin in the shipped registry carries it on, so a test that only walked
-    `list_builtin_hooks()` would pass before the change as readily as after and
-    cover nothing. This is the one shape that still separates the two branches.
+    The `HookInfo` carries a real, runnable script so that the file route is
+    available rather than merely unreachable: pointed at a nonexistent path the
+    assertion would hold on an engine that still took that branch and simply
+    failed to spawn.
     """
     script = tmp_path / "legacy_hook.py"
     script.write_text("print('from the file')\n")
-    register(monkeypatch, "legacy", lambda: None, migrated=False)
+    register(monkeypatch, "legacy", lambda: None)
     seen = _spy_on_argv(monkeypatch)
 
     run_hooks_for_event(

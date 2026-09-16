@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib
 import sys
 
 import click
@@ -81,47 +80,28 @@ def hooks_list() -> None:
     help="Profile this hook runs under. Optional while deployed commands omit it.",
 )
 def hook_invoke(name: str, profile: str | None) -> None:
-    """Invoke a built-in hook by name. Called from settings.json by Claude Code.
+    """Invoke a built-in hook by name. Called from settings.json by the agent.
 
-    A migrated builtin goes through `hooks.runner.run_hook`, which parses the
-    payload through the agent adapter and serialises the decision back; an
-    unmigrated one is imported and its `main()` called with no arguments, the
-    way this command always has. `BuiltinHookSpec.migrated` is what decides,
-    and that branch disappears with the field at step 5 of the design.
+    Every builtin goes through `hooks.runner.run_hook`, which parses the payload
+    through the profile's agent adapter and serialises the decision back. The
+    second mechanism this command used to carry — import the module, call
+    `main()` with no arguments, let it own stdin, both channels and its exit
+    code — routed on `BuiltinHookSpec.migrated` and disappeared with it.
+
+    An unknown name exits 0, not 1. This runs inside the agent's hook dispatch,
+    where a non-zero exit is a verdict on the operation rather than a report on
+    the harness: a typo in a settings file would otherwise block tool calls.
     """
     spec = _BUILTIN_HOOKS.get(name)
     if spec is None:
         click.echo(f"Unknown hook: {name}", err=True)
         sys.exit(0)
-    if spec.migrated:
-        output = run_hook(name, profile=resolve_profile(profile), stdin_text=sys.stdin.read())
-        if output.stdout:
-            click.echo(output.stdout, nl=False)
-        if output.stderr:
-            click.echo(output.stderr, nl=False, err=True)
-        sys.exit(output.exit_code)
-    try:
-        # `_BUILTIN_HOOKS` maps to `BuiltinHookSpec`, not to a module path.
-        # Passing the record straight to `import_module` raised an
-        # `AttributeError` outside the guard below, so this entry point exited
-        # 1 with a traceback the first time anything called it.
-        module = importlib.import_module(spec.module)
-        main_fn = getattr(module, "main", None)
-        if main_fn is None:
-            click.echo(f"Hook {name} has no main()", err=True)
-            sys.exit(0)
-        main_fn()
-    except SystemExit:
-        # The exit code is the hook's verdict, not just its status: Claude Code
-        # reads 2 on PreToolUse as "block this tool call". Swallowing it here
-        # left `pre-tool-use-security` writing a refusal to stderr while the
-        # command ran anyway.
-        raise
-    except Exception as e:  # noqa: BLE001 — hooks must never bubble up to Claude Code
-        # Widened from ImportError: a hook that fails has to degrade, and the
-        # narrow clause is what let the registry mistake above escape.
-        click.echo(f"Hook {name} raised: {type(e).__name__}: {e}", err=True)
-    sys.exit(0)
+    output = run_hook(name, profile=resolve_profile(profile), stdin_text=sys.stdin.read())
+    if output.stdout:
+        click.echo(output.stdout, nl=False)
+    if output.stderr:
+        click.echo(output.stderr, nl=False, err=True)
+    sys.exit(output.exit_code)
 
 
 @hooks.command("run")
@@ -135,7 +115,7 @@ def hooks_run(event: str, profile: str | None) -> None:
     """Run hooks for an event (for debugging).
 
     The same mechanism `lh hook` uses, so what a developer debugs here is what
-    the agent will see: migrated builtins go through the runner, and the
+    the agent will see: every builtin goes through the runner, and the
     profile resolves through `resolve_profile` on both paths.
     """
     console = Console()

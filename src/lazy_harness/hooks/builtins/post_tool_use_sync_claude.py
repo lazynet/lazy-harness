@@ -18,7 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 
 # `HookEvent` is imported at runtime, not under `TYPE_CHECKING`:
-# `test_migrated_agrees_with_the_signature_in_both_directions` resolves this
+# `test_every_builtin_main_takes_an_event_and_returns_a_decision` resolves this
 # module's annotations with `typing.get_type_hints`, which evaluates the
 # forward reference `from __future__ import annotations` leaves behind.
 from lazy_harness.agents.base import HookDecision, HookEvent

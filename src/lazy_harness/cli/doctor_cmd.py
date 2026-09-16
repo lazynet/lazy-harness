@@ -169,8 +169,9 @@ def _engram_persist_metrics_path(agent: AgentAdapter, cfg: Config | None, profil
     under the profile. `test_doctor_reads_the_engram_metrics_the_hook_writes`
     asserts the two answers against each other.
 
-    An empty profile keeps the global answer, which is what an unmigrated hook
-    still writes.
+    An empty profile is "nobody said" and keeps the global answer. That is
+    `agent_runtime_dir`'s own contract for an absent `profile_config_dir`,
+    not a second rule invented here.
     """
     if profile:
         from lazy_harness.hooks.builtins._shared import agent_dir_for

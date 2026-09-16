@@ -1,10 +1,9 @@
 """The builtin registry mirrors the builtins directory, entry for entry.
 
-`BuiltinHookSpec.migrated` decides which execution path a builtin takes, so a
-module the registry does not carry is a hook with no declared path rather than
-a hook with a safe default: neither entry point would ever reach it. The list
-is static and the directory is not, so completeness is asserted against the
-glob rather than maintained by hand.
+Both entry points resolve a builtin through this registry, so a module it does
+not carry is a hook neither would ever reach — not a hook with a safe default.
+The list is static and the directory is not, so completeness is asserted
+against the glob rather than maintained by hand.
 """
 
 from __future__ import annotations
@@ -21,7 +20,8 @@ from lazy_harness.agents.base import HookDecision, HookEvent
 from lazy_harness.agents.claude_code import ClaudeCodeAdapter
 from lazy_harness.hooks.loader import _BUILTIN_HOOKS
 
-_BUILTINS_DIR = Path(__file__).resolve().parents[3] / "src" / "lazy_harness" / "hooks" / "builtins"
+_SRC = Path(__file__).resolve().parents[3] / "src" / "lazy_harness"
+_BUILTINS_DIR = _SRC / "hooks" / "builtins"
 
 #: Not hooks: the package marker and the helpers every hook imports.
 _NOT_HOOKS = {"__init__", "_shared"}
@@ -50,28 +50,22 @@ def test_each_registered_name_maps_to_a_module_of_its_own() -> None:
     assert len(_modules_in_registry()) == len(_BUILTIN_HOOKS)
 
 
-def test_migrated_agrees_with_the_signature_in_both_directions() -> None:
-    """Flipping `migrated` and changing the signature are one change, both ways.
+def test_every_builtin_main_takes_an_event_and_returns_a_decision() -> None:
+    """The contract the single dispatch now assumes, with nothing left to route on.
 
-    `True` on a module whose `main()` still takes no arguments hands it an
-    event object; `False` on one that takes an event calls it with nothing. The
-    field is what both entry points route on, so either mismatch is a hook that
-    raises on its first real invocation and nowhere earlier.
+    `execute_hook` and `lh hook` both call `run_hook`, which calls `main(event)`
+    unconditionally. A module whose `main()` takes no argument used to be
+    routed elsewhere by `BuiltinHookSpec.migrated`; with that field gone, it is
+    a `TypeError` on the hook's first real invocation and nowhere earlier.
 
     Read off every registered module rather than checked against a literal
-    list. A list has to be appended to by each of step 5's fifteen migrations —
-    fifteen edits to one line, in fifteen branches — and it only ever restates
-    what `inspect.signature` can be asked directly.
+    list, which would only restate what `inspect.signature` can be asked
+    directly.
     """
     for name, spec in _BUILTIN_HOOKS.items():
         module = importlib.import_module(spec.module)
-        takes_event = list(inspect.signature(module.main).parameters) == ["event"]
-        assert spec.migrated == takes_event, (
-            f"{name}: migrated={spec.migrated} but main() "
-            f"{'takes' if takes_event else 'does not take'} an event"
-        )
-        if not spec.migrated:
-            continue
+        params = list(inspect.signature(module.main).parameters)
+        assert params == ["event"], f"{name}: main{tuple(params)} does not take an event"
         hints = typing.get_type_hints(module.main)
         assert hints["event"] is HookEvent, name
         assert hints["return"] is HookDecision, name
@@ -89,18 +83,17 @@ EVENTLESS_BY_DESIGN = {
 }
 
 
-def test_every_migrated_builtin_declares_the_event_it_is_wired_to() -> None:
+def test_every_builtin_declares_the_event_it_is_wired_to() -> None:
     """The runner's fallback when a payload does not name one — see `loader`.
 
-    `lh hook <name>` has no event flag, so a migrated hook with no declared
-    event cannot be parsed or serialised at all on that path. Every migrated
-    builtin therefore declares one, except those `EVENTLESS_BY_DESIGN` names
-    and justifies.
+    `lh hook <name>` has no event flag, so a hook with no declared event cannot
+    be parsed or serialised at all on that path. Every builtin therefore
+    declares one, except those `EVENTLESS_BY_DESIGN` names and justifies.
     """
     undeclared = sorted(
         name
         for name, spec in _BUILTIN_HOOKS.items()
-        if spec.migrated and not spec.event and name not in EVENTLESS_BY_DESIGN
+        if not spec.event and name not in EVENTLESS_BY_DESIGN
     )
     assert undeclared == []
 
@@ -109,7 +102,6 @@ def test_the_exemption_list_names_only_hooks_that_are_actually_exempt() -> None:
     """A stale entry here would license a hook that has since declared an event."""
     for name in EVENTLESS_BY_DESIGN:
         spec = _BUILTIN_HOOKS[name]
-        assert spec.migrated, f"{name} is exempt from a rule that only binds migrated hooks"
         assert spec.event is None, f"{name} declares event={spec.event!r} and needs no exemption"
 
 
@@ -184,44 +176,60 @@ def test_an_eventless_hook_runs_when_the_payload_names_the_event(
     assert output.stderr in (None, "")
 
 
-def test_no_unmigrated_builtin_declares_a_signal() -> None:
-    """`signals` is the one spec field that is live before the migration.
-
-    `event`, `operations` and `blocking` are inert while `migrated` is False:
-    `runner.run_hook` is the only reader of the first and third and both entry
-    points reach it only for a migrated spec (`engine.py:59`,
-    `cli/hooks_cmd.py:96`), and `operations` has no reader in `src/` at all.
-    So step 5 can declare those early, in one reviewable diff.
-
-    `signals` cannot travel with them, and not because migration changes what
-    it does -- measured, it changes nothing. `signal_gaps.gaps_for_profile`
-    reads it through `loader.builtin_signals` without consulting `migrated`,
-    and `deploy.engine` leaves a hook with an undeliverable signal out of the
-    generated settings. Against a profile whose agent supplies no
-    `TranscriptReader` -- `codex.py` ships none today, so it delivers the empty
-    set -- `session-export` declaring `MESSAGES` produces the same omission at
-    `migrated=False` and at `migrated=True`.
-
-    That symmetry is the reason for the gate rather than an argument against
-    it. The other three fields are inert, so declaring them early costs
-    nothing if a row is wrong. `signals` is live in both states, so a wrong row
-    silently undeploys a working hook the moment any profile runs a reader-less
-    agent -- and a bulk commit declaring fourteen of them carries evidence for
-    none. Hence: a builtin's `signals` lands in the commit that migrates it,
-    beside the golden and the isolation assertion that show what that hook
-    actually reads.
-    """
-    early = sorted(
-        name for name, spec in _BUILTIN_HOOKS.items() if spec.signals and not spec.migrated
-    )
-    assert early == [], (
-        f"signals declared before migration, undeployable on a reader-less agent: {early}"
-    )
-
-
 def test_a_declared_event_is_one_the_agent_delivers() -> None:
     """A canonical name no adapter knows would fail only at hook time."""
     supported = set(ClaudeCodeAdapter().hook_events())
     for name, spec in _BUILTIN_HOOKS.items():
         if spec.event is not None:
             assert spec.event in supported, f"{name}: {spec.event}"
+
+
+def test_no_transitional_migration_field_survives() -> None:
+    """The field, the constant and the branches reading them die together.
+
+    Asserted on the declaration rather than on behaviour: a leftover
+    `migrated=True` on every spec is inert and would never fail a behavioural
+    test, while still being the forked answer the design set out to remove.
+
+    Asserted on the dataclass fields and the call graph rather than on the
+    source text, because a substring check over a file passes or fails on the
+    comments explaining the removal as readily as on the removal itself.
+    """
+    import ast
+    import dataclasses
+
+    from lazy_harness.hooks import loader as loader_module
+
+    # The field, not the word: `"migrated" not in source` also matches the
+    # prose explaining why it is gone, so it passes on a file that still
+    # declares it under a comment and fails on one that merely mentions it.
+    fields = {f.name for f in dataclasses.fields(loader_module.BuiltinHookSpec)}
+    assert "migrated" not in fields, fields
+    assert not hasattr(loader_module, "PRE_RUNNER_AGENT")
+    assert not hasattr(loader_module, "builtin_migrated")
+
+    # The dispatch, not the import: `importlib` may return to `hooks_cmd.py`
+    # for an unrelated reason, and its absence would then read as proof of
+    # something it never established. Assert on the call graph instead.
+    tree = ast.parse((_SRC / "cli" / "hooks_cmd.py").read_text(encoding="utf-8"))
+    called = {
+        node.func.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    }
+    assert "import_module" not in called, "the pre-runner dispatch still imports a builtin"
+
+
+def test_the_deploy_has_no_pre_runner_warning_left_to_emit() -> None:
+    """`_warn_unmigrated` outlived what it warned about, and it is not inert.
+
+    It is called on every event of every deploy (`deploy/engine.py`), so a
+    survivor is a per-profile loop over every hook computing an answer that is
+    now always "nothing to say". Asserted on the module rather than on the
+    absence of a line in some captured output: the warning only ever fired for
+    a non-Claude-Code agent, so an output check on the default profile passes
+    with the function fully intact.
+    """
+    from lazy_harness.deploy import engine as deploy_engine
+
+    assert not hasattr(deploy_engine, "_warn_unmigrated")

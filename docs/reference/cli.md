@@ -34,17 +34,6 @@ the same resolver, so a hook doctor names is a hook deploy leaves out. It applie
 to hooks you declared explicitly in `config.toml`, not only to the defaults: a
 capability the agent lacks is not something a declaration can override.
 
-A second, separate line warns about built-ins that still predate the hook runner:
-
-```
-  ⚠  pre-compact in 'throwaway': not migrated to the runner, so it reads Claude Code-shaped stdin and owns its own exit code on agent 'codex'
-```
-
-Unlike the omission, this hook **is** deployed. The warning says it will run
-against an agent whose stdin shape it was never written for, which is expected
-while the migration of the remaining built-ins is in progress. It does not block
-the deploy and never appears for `claude-code` profiles.
-
 `--profile` narrows the run to one profile: its symlinks, its `settings.json`
 and its MCP config are written, and no other profile is touched. The agent's
 global config link (`~/.claude`) points at the **default** profile, so it is

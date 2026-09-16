@@ -333,11 +333,11 @@ def test_the_worker_drains_the_queue_the_producer_writes_to(
 def test_the_worker_without_a_profile_resolves_where_it_always_did(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The fallback that keeps an unmigrated producer working.
+    """The fallback for a producer that names no profile.
 
-    `compound-loop` passes a profile only once it has migrated. Until then the
-    producer still resolves globally, so a worker that resolved per profile
-    regardless would break the pair in the other direction.
+    An empty profile is "nobody said", and `agent_runtime_dir` resolves it
+    globally. A worker that resolved per profile regardless would break the
+    pair in the other direction, draining a directory nothing writes to.
     """
     from lazy_harness.agents.registry import get_agent
     from lazy_harness.core.config import load_config

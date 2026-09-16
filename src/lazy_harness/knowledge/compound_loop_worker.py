@@ -92,17 +92,16 @@ def _drain_queue(
 def _agent_dir_for_profile(cfg: Config | None, profile: str) -> Path:
     """The runtime dir this worker drains, for the profile that queued the task.
 
-    The producer names its queue with `agent_dir_for(cfg, event.profile)` once
-    it has migrated, so the worker has to answer the same question the same
-    way or the pair stops meeting — the producer writing under the profile and
+    The producer names its queue with `agent_dir_for(cfg, event.profile)`, so
+    the worker has to answer the same question the same way or the pair stops
+    meeting — the producer writing under the profile and
     the worker draining the global directory, both exiting 0, every queued task
     orphaned. `test_the_worker_drains_the_queue_the_producer_writes_to` asserts
     the two answers against each other.
 
-    An empty profile is "nobody said", which is what an unmigrated producer
-    still means: it resolves globally, so the worker must too. That is
-    `agent_runtime_dir`'s own contract for an empty `profile_config_dir`, not a
-    second rule invented here.
+    An empty profile is "nobody said": it resolves globally, so the worker
+    must too. That is `agent_runtime_dir`'s own contract for an empty
+    `profile_config_dir`, not a second rule invented here.
     """
     try:
         agent = get_agent(cfg.agent.type if cfg is not None else "claude-code")

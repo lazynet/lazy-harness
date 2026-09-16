@@ -349,7 +349,6 @@ def test_the_registry_declares_what_this_hook_acts_on() -> None:
     assert spec.event == "post_tool_use"
     assert spec.operations == frozenset({Operation.MODIFY_FILE})
     assert spec.blocking is False
-    assert spec.migrated is True
 
 
 def test_this_hook_declares_no_transcript_signal() -> None:
