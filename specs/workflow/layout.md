@@ -29,6 +29,7 @@ docs/                # MkDocs site source — PUBLIC, published to GitHub Pages
 
 specs/               # Internal design artifacts — NOT published
 ├── adrs/            # Active Architecture Decision Records
+│                   # README.md is the index and defines the Status vocabulary
 ├── designs/         # Long-form design specs from brainstorming
 ├── workflow/        # Internal contributor workflow (this directory)
 └── archive/         # ARCHIVED — do not edit for cleanup
