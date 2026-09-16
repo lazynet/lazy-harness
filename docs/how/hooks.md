@@ -262,7 +262,19 @@ Categories shipped:
 | `credentials` | reads of `.env` (excluding `.env.example` / `.sample` / `.template`), `.ssh/id_*` private keys (excluding `*.pub`), `.aws/credentials` & `.aws/config`, any `.pem` / `.key` / `.p12` |
 | `credentials` (path guard) | any file tool reaching a `SECRET_PATH_GLOBS` entry — see below |
 
-The `rm` rule only fires when `rm` appears in a **command position** — at the start of the command, after a `;`, `&&`, `||`, `|` or `(`, or after an exec wrapper such as `sudo`, `xargs` or `sh -c`. A command that merely mentions the string, like `grep -rn "rm -rf" src`, is not a delete and is not blocked.
+Every rule above except `sql` only fires when its token appears in a **command
+position** — at the start of a line, after a `;`, `&&`, `||`, `|` or `(`, or
+after a wrapper that execs its argument such as `sudo`, `xargs`, `eval` or
+`sh -c`. A command that merely mentions the string is not an invocation and is
+not blocked: `grep -rn "rm -rf" src` is a search, `git commit -m "docs: ban
+terraform destroy"` is a commit message, and a heredoc body written into a file
+is prose. A command's arguments also end at the line break, so a `cat` opening a
+heredoc cannot reach a secrets filename named in the body.
+
+`sql` is the exception, and deliberately: `DROP TABLE` is never the command being
+run, it is the argument of one (`psql -c "DROP TABLE users"`), so it is matched
+anywhere in the string. Prose naming `DROP TABLE` is blocked as a result — use
+`allow_patterns` if you need to write it.
 
 **Secret-path guard on the file tools.** The regex rules above only see shell
 commands; a `Read` of the same file is a different tool call, so the hook matches

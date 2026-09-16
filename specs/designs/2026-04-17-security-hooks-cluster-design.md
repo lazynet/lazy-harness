@@ -119,28 +119,31 @@ class BlockDecision:
 
 BLOCK_RULES: tuple[BlockRule, ...] = (
     BlockRule("filesystem",  re.compile(_COMMAND_START + r"rm\s+(?=…recursive flag…)(?=…force flag…)\S+.*"),           "Recursive delete"),
-    BlockRule("filesystem",  re.compile(r"\btruncate\s+(-s\s+\d+\s+)?[^\s-]"),                                        "File truncation"),
-    BlockRule("git",         re.compile(r"\bgit\s+push\s+(--force\b|-f\b)(?!.*--force-with-lease)"),                  "Force-push without lease"),
-    BlockRule("git",         re.compile(r"\bgit\s+reset\s+--hard\b"),                                                 "Hard reset discards work"),
-    BlockRule("git",         re.compile(r"\bgit\s+add\s+(-f\b|--force\b)[^|;&]*(\.env|\.pem|\.key|\.p12|credentials|id_rsa|id_ed25519)"), "Forced add of secret"),
+    BlockRule("filesystem",  re.compile(_COMMAND_START + r"truncate\s+(-s\s+\d+\s+)?[^\s-]"),                         "File truncation"),
+    BlockRule("git",         re.compile(_COMMAND_START + r"git\s+push\s+(--force\b|-f\b)(?!.*--force-with-lease)"),   "Force-push without lease"),
+    BlockRule("git",         re.compile(_COMMAND_START + r"git\s+reset\s+--hard\b"),                                  "Hard reset discards work"),
+    BlockRule("git",         re.compile(_COMMAND_START + r"git\s+add\s+(-f\b|--force\b)[^|;&\n]*(\.env|\.pem|\.key|\.p12|credentials|id_rsa|id_ed25519)"), "Forced add of secret"),
     BlockRule("sql",         re.compile(r"\b(drop|truncate)\s+(table|database)\b", re.IGNORECASE),                    "SQL destruction"),
-    BlockRule("terraform",   re.compile(r"\bterraform\s+destroy\b"),                                                  "Infra destruction"),
-    BlockRule("terraform",   re.compile(r"\bterraform\s+apply\s+[^|;&]*-auto-approve\b"),                             "Skips plan review"),
-    BlockRule("terraform",   re.compile(r"\bterraform\s+apply\s+[^|;&]*-replace=\S+"),                                "Forces resource recreation"),
-    BlockRule("terraform",   re.compile(r"\bterraform\s+state\s+(rm|push)\b"),                                        "State mutation"),
-    BlockRule("credentials", re.compile(r"\b(cat|bat|less|more|head|tail|grep|rg|awk|sed)\b[^|;&]*(?<!\w)(?<!\w\\)\\?\.env\b(?!\.(example|sample|template))"), "Read of .env"),
-    BlockRule("credentials", re.compile(r"\b(cat|bat|less|more|head|tail)\b[^|;&]*\.ssh/id_\S+"),                     "Read of SSH private key"),
-    BlockRule("credentials", re.compile(r"\b(cat|bat|less|more|head|tail)\b[^|;&]*\.aws/(credentials|config)\b"),     "Read of AWS credentials"),
-    BlockRule("credentials", re.compile(r"\b(cat|bat|less|more|head|tail)\b[^|;&]*\.(pem|key|p12)\b"),                "Read of cert/key file"),
+    BlockRule("terraform",   re.compile(_COMMAND_START + r"terraform\s+destroy\b"),                                   "Infra destruction"),
+    BlockRule("terraform",   re.compile(_COMMAND_START + r"terraform\s+apply\s+[^|;&\n]*-auto-approve\b"),            "Skips plan review"),
+    BlockRule("terraform",   re.compile(_COMMAND_START + r"terraform\s+apply\s+[^|;&\n]*-replace=\S+"),               "Forces resource recreation"),
+    BlockRule("terraform",   re.compile(_COMMAND_START + r"terraform\s+state\s+(rm|push)\b"),                         "State mutation"),
+    BlockRule("credentials", re.compile(_COMMAND_START + r"(cat|bat|less|more|head|tail|grep|rg|awk|sed)\b[^|;&\n]*(?<!\w)(?<!\w\\)\\?\.env\b(?!\.(example|sample|template))"), "Read of .env"),
+    BlockRule("credentials", re.compile(_COMMAND_START + r"(cat|bat|less|more|head|tail)\b[^|;&\n]*\.ssh/id_\S+"),    "Read of SSH private key"),
+    BlockRule("credentials", re.compile(_COMMAND_START + r"(cat|bat|less|more|head|tail)\b[^|;&\n]*\.aws/(credentials|config)\b"), "Read of AWS credentials"),
+    BlockRule("credentials", re.compile(_COMMAND_START + r"(cat|bat|less|more|head|tail)\b[^|;&\n]*\.(pem|key|p12)\b"), "Read of cert/key file"),
 )
 ```
 
 Pattern authoring notes:
 
-- The `[^|;&]*` guard prevents matches where the credentials path is on the *right* side of a pipe / semicolon / ampersand (i.e., legitimate commands that only reference a sensitive path as a pipe sink, such as `some-generator | tee out.pem`). The intent is to catch direct *reads*, not all mentions.
+- The `[^|;&\n]*` guard prevents matches where the credentials path is on the *right* side of a pipe / semicolon / ampersand (i.e., legitimate commands that only reference a sensitive path as a pipe sink, such as `some-generator | tee out.pem`). The intent is to catch direct *reads*, not all mentions. The newline belongs in that class for the same reason the separators do: a command's arguments end at the line break, and without it a `cat` opening a heredoc on the first line reaches a secrets filename written in the body three lines down.
 - `(?!--force-with-lease)` negative-lookahead on `git push --force` allows the safer lease variant through.
 - The `rm` rule matches recursion and force as two **independent** lookaheads, so a single flag letter never implies the other: `rm -rf`, `rm -fr`, `rm -r -f`, `rm --recursive --force` block; `rm -f file`, `rm -r dir` stay allowed. Matching a combined flag cluster with one `-\S*f\S*`-style expression conflates the two and blocks every forced single-file delete under a "Recursive delete" label.
-- The `rm` rule is anchored to a **command position** (`_COMMAND_START`: start of string, after `;`/`&`/`|`/`(`/backtick, or after an exec wrapper such as `sudo`/`xargs`/`sh -c`), with an optional leading path so `/bin/rm` still matches. Without that anchor the pattern also fires on commands that merely *mention* `rm -rf` inside a quoted argument — `grep -rn "rm -rf" src`, `git commit -m "fix: rm -rf guard"` — which is the dominant false-positive class in practice. The trade-off is deliberate: text passed to an interpreter through a channel the anchor cannot see (a heredoc, a generated script file) is no longer caught by this rule.
+- **Every rule whose token names an executable is anchored to a command position** (`_COMMAND_START`: start of a *line*, after `;`/`&`/`|`/`(`/backtick, or after a wrapper that execs its argument — `sudo`/`xargs`/`eval`/`sh -c` and its flag-cluster spellings such as `-lc`), with an optional leading path so `/bin/rm` still matches, and an optional quote so a command inside an interpreter's own string — `python3 -c '… os.system("…")'` — is still reached. Without that anchor a pattern also fires on commands that merely *mention* the token inside a quoted argument — `grep -rn "rm -rf" src`, `git commit -m "fix: rm -rf guard"`, `herdr agent prompt <pane> '<prose>'` — which is the dominant false-positive class in practice, measured three times against `terraform destroy` alone.
+    - `sql` is the single deliberate exemption: `DROP TABLE` is never the executable, it is the argument of one (`psql -c "DROP TABLE users"`), so anchoring it would delete the rule rather than narrow it. The cost is that prose naming `DROP TABLE` still trips it.
+    - `(?m)` is what makes `^` mean start-of-line, so a command on the second line of a multi-line script — or of a heredoc body piped into a shell — stays in command position. It has to sit at index 0 of the expression: Python accepts a global inline flag only at the start.
+    - **Known escapes, measured rather than assumed.** A command the shell reaches only indirectly is outside the anchor: a token assembled from fragments (`"terra"+"form destroy"`), a subcommand held in a variable (`T=destroy; terraform $T`), and a string built inside a command substitution (`eval $(echo …)`) all pass. `git push origin main --force` passes for an unrelated reason — that rule requires the flag adjacent to the subcommand. None is closed on purpose: each is a deliberate act, this hook guards a mistake rather than an adversary, and the widenings that would close them cost false positives on ordinary prose.
 - `re.IGNORECASE` only on the SQL patterns — SQL is case-insensitive by convention; the rest are shell tokens that are case-sensitive.
 
 **Pure logic:**
