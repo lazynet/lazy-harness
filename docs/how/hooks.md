@@ -584,7 +584,7 @@ The action verbs monitored (English + Spanish): `add`, `agregá`, `agrega`, `arr
 
 Mechanics:
 
-1. Read the user's submitted prompt from stdin JSON (field `prompt`).
+1. Read the user's submitted prompt off the hook event (`event.prompt`); the runner parses the payload and the agent adapter normalises it, so the hook never touches stdin.
 2. Call `is_non_trivial(prompt)` to classify it.
 3. If the prompt is non-trivial, insert a row into the `loop_events` table of `metrics.db` with `kind="nontrivial_prompt"`, `session=<from payload>`, `project=<cwd from payload>`, and a server-generated timestamp.
 4. If the prompt is trivial, record nothing.

@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"UserPromptSubmit\", \"additionalContext\": \"Antes de ejecutar: declar\\u00e1 el criterio de \\u00e9xito verificable de esta tarea (qu\\u00e9 comando o comprobaci\\u00f3n demuestra que est\\u00e1 hecha), o us\\u00e1 /goal para fijarlo.\"}}\n"
+}

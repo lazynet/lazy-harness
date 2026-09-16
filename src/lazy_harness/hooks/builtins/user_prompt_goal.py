@@ -4,15 +4,15 @@ Ships as a sensor. Injection is gated behind `[loops] inject_goal_prompt`,
 which stays false until a baseline exists — see the phase 0 rationale in
 specs/designs/2026-08-16-loop-engineering-design.md.
 
-Fail-soft: every path exits 0. A hook that raises takes down the chain.
+Fail-soft: every path abstains. A hook that raises takes down the chain.
 """
 
 from __future__ import annotations
 
-import json
 import re
-import sys
 from pathlib import Path
+
+from lazy_harness.agents.base import HookDecision, HookEvent
 
 _ACTION_VERBS = frozenset(
     {
@@ -70,20 +70,6 @@ def is_non_trivial(prompt: str) -> bool:
     return bool(words & _ACTION_VERBS)
 
 
-def _read_stdin_json() -> dict[str, object]:
-    try:
-        data = sys.stdin.read()
-    except (OSError, ValueError):
-        return {}
-    if not data.strip():
-        return {}
-    try:
-        parsed = json.loads(data)
-    except json.JSONDecodeError:
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
-
-
 def _db_path() -> Path:
     from lazy_harness.monitoring.db import resolve_db_path
 
@@ -106,47 +92,36 @@ _INJECTION_TEXT = (
 )
 
 
-def _emit_injection() -> None:
-    print(
-        json.dumps(
-            {
-                "hookSpecificOutput": {
-                    "hookEventName": "UserPromptSubmit",
-                    "additionalContext": _INJECTION_TEXT,
-                }
-            }
-        )
-    )
-
-
-def main() -> None:
+def main(event: HookEvent) -> HookDecision:
     try:
-        payload = _read_stdin_json()
-        prompt = payload.get("prompt")
+        prompt = event.prompt
         if not isinstance(prompt, str) or not is_non_trivial(prompt):
-            sys.exit(0)
+            return HookDecision()
 
-        session = payload.get("session_id")
-        cwd = payload.get("cwd")
-        from lazy_harness.hooks.builtins._shared import profile_name, project_key
+        from lazy_harness.hooks.builtins._shared import project_key
         from lazy_harness.monitoring.db import MetricsDB
 
+        # `parse_hook_input` yields `Path("")` -- which is `Path(".")` -- when
+        # the payload names no cwd, and `project_key` would resolve that to
+        # whatever directory the agent happened to spawn the hook in. This
+        # column is a metrics label rather than a path the hook writes to, so
+        # an unattributed row beats one attributed to the wrong project.
         MetricsDB(_db_path()).record_loop_event(
-            session=session if isinstance(session, str) else "",
+            session=event.session_id,
             kind="nontrivial_prompt",
-            project=project_key(Path(cwd)) if isinstance(cwd, str) and cwd else "",
-            profile=profile_name(),
+            project=project_key(event.cwd) if event.cwd != Path(".") else "",
+            # The profile the command was invoked under, not the one the
+            # ambient `CLAUDE_CONFIG_DIR` names: every profile records into a
+            # single store, and `profile_name()` answered `""` for every hook
+            # run under an explicit `--profile`.
+            profile=event.profile,
         )
 
         if _injection_enabled():
-            _emit_injection()
+            return HookDecision(additional_context=_INJECTION_TEXT)
     except Exception:
-        # A hook must degrade, never crash the chain: any failure here (bad
-        # payload shape, an unwritable metrics store) is swallowed so the
-        # session continues uninterrupted.
+        # A hook must degrade, never crash the chain: any failure here (an
+        # unwritable metrics store, a prompt of a shape the adapter let
+        # through) is swallowed so the session continues uninterrupted.
         pass
-    sys.exit(0)
-
-
-if __name__ == "__main__":
-    main()
+    return HookDecision()

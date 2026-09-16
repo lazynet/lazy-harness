@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stderr": "user-prompt-goal: unparseable payload: expected an object, got list",
+  "stdout": ""
+}
