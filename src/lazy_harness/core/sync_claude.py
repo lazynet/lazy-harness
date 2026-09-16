@@ -1,6 +1,6 @@
 """Compatibility shim — re-exports from sync_agent_md.
 
-Renamed in ADR-031. This module will be removed in a future release.
+Renamed in ADR-032. This module will be removed in a future release.
 """
 
 from lazy_harness.core.sync_agent_md import (
