@@ -335,3 +335,18 @@ def test_profile_sync_claude_md_no_profiles_dir(home_dir: Path) -> None:
     result = runner.invoke(cli, ["profile", "sync-claude-md"])
     assert result.exit_code == 0
     assert "no profiles" in result.output.lower()
+
+
+def test_profile_sync_names_the_destination_it_wrote(home_dir: Path) -> None:
+    """One profile can yield several lines now (ADR-043), one per destination.
+
+    Printing the profile name alone repeated the same word once per file and
+    told the reader nothing about which of them changed.
+    """
+    _seed_segmented_profile(home_dir)
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["profile", "sync-claude-md"])
+
+    assert result.exit_code == 0
+    assert "CLAUDE.md" in result.output

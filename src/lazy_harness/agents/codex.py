@@ -457,8 +457,9 @@ class CodexAdapter:
         No log or queue directory was observed."""
         return {"sessions": "sessions", "logs": "", "queue": ""}
 
-    def system_doc_name(self) -> str:
-        return "AGENTS.md"
+    def system_docs(self) -> list[Path]:
+        """`AGENTS.md`, the format Codex helped standardise — one destination."""
+        return [Path("AGENTS.md")]
 
     def process_name(self) -> str:
         return "codex"

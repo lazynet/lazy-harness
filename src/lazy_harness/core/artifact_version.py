@@ -150,18 +150,29 @@ def _envrc_reports(profile: str, roots: list[str]) -> list[ArtifactVersionReport
     return reports
 
 
-def _doc_report(profile: str, profiles_dir: Path, doc_name: str) -> ArtifactVersionReport | None:
-    if not doc_name:
-        return None
-    doc = profiles_dir / profile / doc_name
-    if not doc.is_file():
-        return None
-    return ArtifactVersionReport(
-        profile=profile,
-        kind=doc_name,
-        path=doc,
-        lh_version=extract_from_text(doc.read_text()),
-    )
+def _doc_reports(profile: str, profiles_dir: Path, docs: list[Path]) -> list[ArtifactVersionReport]:
+    """One report per destination the agent loads (ADR-043).
+
+    `system_docs()` can name more than one path, and each is separately
+    deployed, so each carries its own stamp. Reporting only the first would let
+    a stale second destination read as clean. `kind` is the destination spelled
+    relative to the profile dir, because two destinations can share a basename
+    under different subdirectories.
+    """
+    reports: list[ArtifactVersionReport] = []
+    for rel in docs:
+        doc = profiles_dir / profile / rel
+        if not doc.is_file():
+            continue
+        reports.append(
+            ArtifactVersionReport(
+                profile=profile,
+                kind=rel.as_posix(),
+                path=doc,
+                lh_version=extract_from_text(doc.read_text()),
+            )
+        )
+    return reports
 
 
 def collect_artifact_version_reports(
@@ -176,7 +187,8 @@ def collect_artifact_version_reports(
     The agent is resolved per profile via `agent_for_profile`, not once above
     this loop: `[profiles.<name>].agent` can override the global agent, and a
     doc name read off the wrong adapter probes the wrong file — the same
-    defect `agent_for_profile` itself was added to fix for deploy.
+    defect `agent_for_profile` itself was added to fix for deploy. An agent
+    that loads several destinations contributes one report each (ADR-043).
     """
     reports: list[ArtifactVersionReport] = []
     for name, entry in cfg.profiles.items.items():
@@ -185,7 +197,5 @@ def collect_artifact_version_reports(
         if settings_report is not None:
             reports.append(settings_report)
         reports.extend(_envrc_reports(name, entry.roots))
-        doc_report = _doc_report(name, profiles_dir, agent.system_doc_name())
-        if doc_report is not None:
-            reports.append(doc_report)
+        reports.extend(_doc_reports(name, profiles_dir, agent.system_docs()))
     return reports

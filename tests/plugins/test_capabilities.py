@@ -647,3 +647,51 @@ def test_a_system_doc_hook_is_reported_off_for_the_profile_that_cannot_load_it()
 
     assert reg.state(cap, cfg, profile="lazy") is CapabilityState.ON
     assert reg.state(cap, cfg, profile="blank") is CapabilityState.OFF
+
+
+def test_a_multi_destination_agent_reports_its_system_doc_hook_on() -> None:
+    """ADR-043 — the registry's gate reads `system_docs()`.
+
+    An adapter that answers only the widened method is the assertion: while the
+    gate called `system_doc_name()`, a Copilot-shaped adapter with two
+    destinations raised rather than reporting ON.
+    """
+    from pathlib import Path
+
+    from lazy_harness.agents import registry
+    from lazy_harness.core.config import ProfileEntry
+    from lazy_harness.plugins.capabilities import (
+        Capability,
+        CapabilityRegistry,
+        CapabilityState,
+        Cardinality,
+    )
+
+    class _TwoDocs(registry.NullAdapter):
+        @property
+        def name(self) -> str:
+            return "two-docs"
+
+        def system_docs(self) -> list[Path]:
+            return [Path("copilot-instructions.md"), Path("instructions/lh.instructions.md")]
+
+    registry._AGENTS["two-docs"] = _TwoDocs
+    try:
+        cap = Capability(
+            name="post-tool-use-sync-claude",
+            kind="hook",
+            cardinality=Cardinality.MANY,
+            config_path="context_inject.enabled",
+            summary="Regenerate the system doc",
+            requires_system_doc=True,
+        )
+        reg = CapabilityRegistry()
+        reg.register(cap)
+
+        cfg = _two_agent_cfg()
+        cfg.profiles.items["multi"] = ProfileEntry(config_dir="~/.multi", agent="two-docs")
+        cfg.context_inject.enabled = True
+
+        assert reg.state(cap, cfg, profile="multi") is CapabilityState.ON
+    finally:
+        del registry._AGENTS["two-docs"]

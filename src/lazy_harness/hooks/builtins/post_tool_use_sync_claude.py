@@ -1,13 +1,17 @@
 """PostToolUse hook — regenerate a profile tree's system doc after segment edits.
 
-Triggers when an Edit/Write touches a `CLAUDE.head.md`, `CLAUDE.tail.md`, or
-`CLAUDE.common.md` inside a `.../profiles/<dir>/` tree, and re-runs the
-segmented system-doc generator against that tree.
+Triggers when an Edit/Write touches a segment file — `head.md`, `common.md`,
+`tail.md`, an `_common/<agent>.md`, or one of their legacy stem-keyed spellings
+— inside a `.../profiles/<dir>/` tree, and re-runs the segmented system-doc
+generator against that tree. The trigger set is derived from the generator's
+own segment roles (`segment_filenames()`), so a rename of the segments cannot
+leave this hook watching names nobody edits any more.
 
-The name it writes is the invoked profile's agent's, not this hook's: the
-generator reads `system_doc_name()` off the adapter it is handed, so a profile
-running Codex gets `AGENTS.md` regenerated from its `AGENTS.*` segments. Only
-the *trigger* is Claude Code-specific, which is why the hook's name is.
+The destinations it writes are the invoked profile's agent's, not this hook's:
+the generator reads `system_docs()` off the adapter it is handed, so a profile
+running Codex gets `AGENTS.md` regenerated from the same segments. Nothing in
+the trigger is Claude Code-specific any more; the hook's *name* still is, and
+decision 5 renames it in its own change.
 
 Fail-soft: any error is swallowed and the hook abstains, because a sync
 failure must never block the agent's progress.
@@ -22,21 +26,24 @@ from pathlib import Path
 # module's annotations with `typing.get_type_hints`, which evaluates the
 # forward reference `from __future__ import annotations` leaves behind.
 from lazy_harness.agents.base import HookDecision, HookEvent
-from lazy_harness.core.sync_agent_md import sync_profiles
+from lazy_harness.core.sync_agent_md import segment_filenames, sync_profiles
 
-# Segment filenames are Claude Code-specific. A future adapter extension may
-# make these dynamic; for now the hook name intentionally stays claude-specific.
 # The tool names this hook inspects. `tests/unit/test_hook_matcher_coverage.py`
 # asserts the matcher the registry deploys covers every one of them, so the gate
 # below and the subscription declared outside cannot drift apart.
 INSPECTED_TOOLS = frozenset({"Edit", "Write"})
 
-SEGMENT_FILES = {"CLAUDE.head.md", "CLAUDE.tail.md", "CLAUDE.common.md"}
+# Derived from the segment roles the generator declares, not listed here
+# (decision 5, ADR-043). A static list is how renaming the segments stops firing
+# the hook that regenerates the document from them: the rename lands, the hook
+# keeps watching three filenames nobody edits any more, and the deployed
+# contract file quietly goes stale with nothing on any channel to say so.
+SEGMENT_FILES = segment_filenames()
 
 
 def _profiles_dir_for(path: Path) -> Path | None:
     """If `path` lives at `<profiles>/<name>/<segment>` or
-    `<profiles>/_common/CLAUDE.common.md`, return `<profiles>`. Else None."""
+    `<profiles>/_common/<segment>`, return `<profiles>`. Else None."""
     parts = path.parts
     for i in range(len(parts) - 2, -1, -1):
         if parts[i] == "profiles":
@@ -97,7 +104,7 @@ def main(event: HookEvent) -> HookDecision:
         # The directory half is unused: this hook writes nothing under the
         # agent's runtime dir. What it needs from `agent_dir_for` is the other
         # half — which agent *this profile* runs, rather than whichever one
-        # `[agent].type` names globally. `system_doc_name()` is read off that
+        # `[agent].type` names globally. `system_docs()` is read off that
         # adapter, so resolving it globally wrote one agent's contract file
         # into a profile running another.
         # The firing profile's adapter is the fallback for a directory the

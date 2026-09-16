@@ -72,8 +72,8 @@ class NullAdapter:
     def session_dirs(self) -> dict[str, str]:
         return {"sessions": "", "logs": "", "queue": ""}
 
-    def system_doc_name(self) -> str:
-        return ""
+    def system_docs(self) -> list[Path]:
+        return []
 
     def process_name(self) -> str:
         return ""

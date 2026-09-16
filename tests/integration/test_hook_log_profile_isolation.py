@@ -621,7 +621,7 @@ def test_sync_claude_regenerates_the_doc_of_the_agent_the_invoked_profile_runs(
 
     Every directory-placement case above is about where an audit line lands.
     This hook appends no log line and keeps no cursor; what it resolves per
-    profile is the **adapter**, and the adapter decides `system_doc_name()` —
+    profile is the **adapter**, and the adapter decides `system_docs()` —
     which file the profile's contract is written to. Before the migration it
     read the global `[agent].type`, so a session running under a profile that
     declares its own agent regenerated the *other* agent's contract file.
@@ -638,7 +638,7 @@ def test_sync_claude_regenerates_the_doc_of_the_agent_the_invoked_profile_runs(
     reads a runtime directory. The mask this test has to defeat is the *global*
     `[agent].type`, which is why `gate` declares an agent of its own.
     """
-    from lazy_harness.core.sync_agent_md import render_agent_md
+    from lazy_harness.core.sync_agent_md import legacy_segment_names, render_agent_md
 
     exit_code = _run_hook(
         "post-tool-use-sync-claude",
@@ -648,7 +648,10 @@ def test_sync_claude_regenerates_the_doc_of_the_agent_the_invoked_profile_runs(
 
     assert exit_code == 0
     assert (cross_agent_config / "alpha" / "CLAUDE.md").read_text() == render_agent_md(
-        "CLAUDE", "alpha HEAD\n", "SHARED RULES\n", "alpha TAIL\n"
+        "alpha HEAD\n",
+        "SHARED RULES\n",
+        "alpha TAIL\n",
+        names=legacy_segment_names("CLAUDE"),
     )
     # The absence half: the global agent's contract is the file the pre-migration
     # hook wrote, so asserting only on `CLAUDE.md` would pass against a hook that

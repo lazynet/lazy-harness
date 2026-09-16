@@ -36,7 +36,7 @@ def test_null_adapter_satisfies_protocol() -> None:
     assert isinstance(adapter, AgentAdapter)
     assert adapter.global_config_link() is None
     assert adapter.mcp_config_file() == ""
-    assert adapter.system_doc_name() == ""
+    assert adapter.system_docs() == []
     assert adapter.session_dirs() == {"sessions": "", "logs": "", "queue": ""}
     assert adapter.process_name() == ""
 
@@ -107,8 +107,8 @@ def test_an_adapter_without_the_generators_still_satisfies_the_protocol() -> Non
         def session_dirs(self) -> dict[str, str]:
             return {"sessions": "", "logs": "", "queue": ""}
 
-        def system_doc_name(self) -> str:
-            return ""
+        def system_docs(self) -> list[Path]:
+            return []
 
         def process_name(self) -> str:
             return ""

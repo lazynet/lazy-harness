@@ -255,7 +255,7 @@ def test_what_it_writes_is_the_segments_joined_by_the_shipped_generator(tmp_path
     Without it every positive case above would pass against a hook that
     truncated the doc, and the gate tests would read as green.
     """
-    from lazy_harness.core.sync_agent_md import render_agent_md
+    from lazy_harness.core.sync_agent_md import legacy_segment_names, render_agent_md
 
     case = next(c for c in CASES if c.id == "a-head-edit-regenerates-every-profile-in-the-tree")
     world = _build(tmp_path, case)
@@ -263,7 +263,12 @@ def test_what_it_writes_is_the_segments_joined_by_the_shipped_generator(tmp_path
     run_through_runner(HOOK, stdin_text=world.stdin, cwd=world.work, env=world.env)
 
     for name in PROFILES:
-        expected = render_agent_md("CLAUDE", f"{name} HEAD\n", "SHARED RULES\n", f"{name} TAIL\n")
+        expected = render_agent_md(
+            f"{name} HEAD\n",
+            "SHARED RULES\n",
+            f"{name} TAIL\n",
+            names=legacy_segment_names("CLAUDE"),
+        )
         assert (world.root / "profiles" / name / "CLAUDE.md").read_text(
             encoding="utf-8"
         ) == expected
@@ -311,3 +316,27 @@ def test_an_unusable_payload_warns_instead_of_running_silently(case_id: str) -> 
     assert golden["exit_code"] == 0
     assert golden["stdout"] == ""
     assert golden["stderr"].startswith(f"{HOOK}: unparseable payload: ")
+
+
+def test_the_trigger_set_is_derived_from_the_segment_roles() -> None:
+    """Decision 5 — `SEGMENT_FILES` is computed, not listed.
+
+    A static list is how renaming the segments stops firing the hook that
+    regenerates the document from them: the rename lands, the hook keeps
+    watching three filenames nobody edits any more, and the deployed contract
+    file quietly goes stale.
+    """
+    from lazy_harness.core.sync_agent_md import segment_filenames
+    from lazy_harness.hooks.builtins.post_tool_use_sync_claude import SEGMENT_FILES
+
+    assert SEGMENT_FILES == segment_filenames()
+
+
+def test_an_edit_to_a_role_named_segment_regenerates_the_tree(tmp_path: Path) -> None:
+    """The hook fires on the role names, not only on the legacy ones."""
+    from lazy_harness.hooks.builtins.post_tool_use_sync_claude import _trees_touched
+
+    tree = tmp_path / "profiles"
+    assert _trees_touched((tree / "lazy" / "head.md",)) == [tree]
+    assert _trees_touched((tree / "_common" / "common.md",)) == [tree]
+    assert _trees_touched((tree / "_common" / "claude-code.md",)) == [tree]
