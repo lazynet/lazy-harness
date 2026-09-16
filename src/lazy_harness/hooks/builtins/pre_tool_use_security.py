@@ -269,13 +269,50 @@ def _safe_search(pattern: str, text: str) -> bool:
         return False
 
 
+# Global git options this hook recognises between `git` and its subcommand.
+# Options that take a value are listed with the flag alone; both the `=`-joined
+# and space-separated spellings are matched. Anything not named here (e.g.
+# `--namespace=`, `--exec-path`) still makes the git rules abstain, same as
+# before this normalisation existed.
+_GIT_GLOBAL_OPTIONS_WITH_ARG = ("-C", "-c", "--git-dir", "--work-tree")
+_GIT_GLOBAL_OPTIONS_BARE = ("--no-pager",)
+_GIT_GLOBAL_OPTION_AFTER_GIT = re.compile(
+    r"\bgit\s+(?:"
+    + "|".join(re.escape(opt) + r"(?:=\S+|\s+\S+)" for opt in _GIT_GLOBAL_OPTIONS_WITH_ARG)
+    + "|"
+    + "|".join(re.escape(opt) for opt in _GIT_GLOBAL_OPTIONS_BARE)
+    + r")"
+)
+
+
+def _normalise_git_globals(command: str) -> str:
+    """Collapse `git <global-opts> <subcommand>` to `git <subcommand>`.
+
+    The git rules match `git\\s+<subcommand>` right after `git`; a global
+    option in between (`-C <path>`, `-c k=v`, `--git-dir=...`) otherwise makes
+    them abstain. Repeated substitution handles several stacked options. Text
+    before `git` is never touched, so `_COMMAND_START`'s position check still
+    applies to the same offset it would have without normalisation.
+    """
+    normalised = command
+    while True:
+        rewritten = _GIT_GLOBAL_OPTION_AFTER_GIT.sub("git", normalised, count=1)
+        if rewritten == normalised:
+            return normalised
+        normalised = rewritten
+
+
 def should_block(command: str, allow_patterns: list[str]) -> BlockDecision | None:
     """Return BlockDecision if command matches a rule and no allow_pattern rescues it.
 
-    First match wins; later rules are not evaluated even if more specific.
+    First match wins; later rules are not evaluated even if more specific. Git
+    rules match against a normalised copy of `command` (see
+    `_normalise_git_globals`) so a global option before the subcommand cannot
+    make them abstain; every other category matches the command as given.
     """
     for rule in BLOCK_RULES:
-        match = rule.pattern.search(command)
+        subject = _normalise_git_globals(command) if rule.category == "git" else command
+        match = rule.pattern.search(subject)
         if match is None:
             continue
         if any(_safe_search(ap, command) for ap in allow_patterns):

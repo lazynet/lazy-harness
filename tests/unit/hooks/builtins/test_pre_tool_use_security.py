@@ -133,6 +133,54 @@ def test_should_block_matrix(command: str, expected_category: str | None, label:
         assert decision.rule.category == expected_category
 
 
+# A git global option between `git` and its subcommand must not make the rule
+# abstain. Format: (command, expected_category_or_None, label)
+GIT_GLOBAL_OPTION_CASES: list[tuple[str, str | None, str]] = [
+    ("git -C /tmp/repo push --force origin main", "git", "force push after -C"),
+    ("git -c user.name=x push --force origin main", "git", "force push after -c"),
+    (
+        "git --git-dir=/tmp/repo/.git reset --hard HEAD~1",
+        "git",
+        "hard reset after --git-dir=",
+    ),
+    (
+        "git --work-tree=/tmp --git-dir=/tmp/.git reset --hard",
+        "git",
+        "hard reset after stacked --work-tree= and --git-dir=",
+    ),
+    ("git --no-pager push --force origin main", "git", "force push after --no-pager"),
+    (
+        "git -C /tmp -c user.email=a@b push --force origin main",
+        "git",
+        "force push after stacked -C and -c",
+    ),
+    (
+        "git -C /tmp/repo push --force-with-lease origin main",
+        None,
+        "lease still safe after -C",
+    ),
+    ("git -C /tmp/repo status", None, "uncovered subcommand after -C"),
+]
+
+
+@pytest.mark.parametrize(
+    "command,expected_category,label",
+    GIT_GLOBAL_OPTION_CASES,
+    ids=[c[2] for c in GIT_GLOBAL_OPTION_CASES],
+)
+def test_should_block_git_rules_survive_global_options(
+    command: str, expected_category: str | None, label: str
+) -> None:
+    from lazy_harness.hooks.builtins.pre_tool_use_security import should_block
+
+    decision = should_block(command, allow_patterns=[])
+    if expected_category is None:
+        assert decision is None, f"expected allow for {label}: {command!r}"
+    else:
+        assert decision is not None, f"expected block for {label}: {command!r}"
+        assert decision.rule.category == expected_category
+
+
 def test_should_block_allowlist_rescues_match() -> None:
     from lazy_harness.hooks.builtins.pre_tool_use_security import should_block
 
