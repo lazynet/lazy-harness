@@ -580,6 +580,18 @@ class ClaudeCodeAdapter:
     def session_dirs(self) -> dict[str, str]:
         return {"sessions": "projects", "logs": "logs", "queue": "queue"}
 
+    def credentials_file(self) -> str | None:
+        """`.credentials.json`, whose freshness is platform-dependent.
+
+        On Linux it is the store. On macOS the live credential is in the
+        keychain and this file is a mirror nothing re-synchronises — measured on
+        2026-09-16, a profile logged in that morning still carried a file from
+        eight days earlier with an expired refresh token. The name is still
+        correct on both; what differs is how much a reader may conclude from it,
+        which is the preflight's call to make and not this one's (ADR-045 D6).
+        """
+        return ".credentials.json"
+
     def system_docs(self) -> list[Path]:
         """Claude Code reads `CLAUDE.md` and nothing else — one destination."""
         return [Path("CLAUDE.md")]

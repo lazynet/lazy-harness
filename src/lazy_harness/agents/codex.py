@@ -696,6 +696,19 @@ class CodexAdapter:
         No log or queue directory was observed."""
         return {"sessions": "sessions", "logs": "", "queue": ""}
 
+    def credentials_file(self) -> str | None:
+        """None — the path is on record, the shape is not.
+
+        `specs/designs/codex-evidence.md` names `~/.codex/auth.json`; all six
+        probes copy it into their disposable `CODEX_HOME`. None of them opened
+        it. The preflight parses Claude Code's `claudeAiOauth` envelope, so
+        answering `"auth.json"` here would route this file at a parser that
+        cannot read it and report "unexpected shape" — the same conflation
+        `None` exists to remove. The probe that would change this answer is
+        listed with the change that added the member (ADR-045 A4).
+        """
+        return None
+
     def system_docs(self) -> list[Path]:
         """`AGENTS.md`, the format Codex helped standardise — one destination."""
         return [Path("AGENTS.md")]

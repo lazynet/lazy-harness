@@ -107,13 +107,15 @@ Responsibility: report the things that strand a session partway through, before 
 
 | Check | Reports |
 |---|---|
-| `auth` | Remaining life of the refresh token: `fail` once expired, `warn` under 12 hours, `unknown` for a shape it does not recognise |
+| `auth` | Remaining life of the refresh token: `fail` once expired, `warn` under 12 hours, `unknown` for a shape it does not recognise, `n/a` for an agent whose credentials it cannot read at all |
 | `git` | The `origin` remote and the `user.email` commits would carry |
 | `path` | Tools resolving to more than one copy on `PATH` |
 
 **Which profile's login it checks.** The one the hook was invoked under: the credentials file is read from the agent runtime directory that `--profile` resolves to, following the same resolution order as [the hook log](#observability). Before that it resolved `CLAUDE_CONFIG_DIR` on its own and fell back to `~/.claude`, so on a machine with several profiles the preflight could report a healthy login for a profile the session was not running under — the one failure the check exists to catch.
 
-The filename it looks for is Claude Code's. On a profile running another agent the check has nothing to read and reports `unknown`; moving the location onto the adapter is open work, tracked in the backlog.
+**Which file it reads, and whether that file is the store.** The filename comes from the agent adapter's `credentials_file()`, not from the hook. An adapter that answers `None` — because its agent keeps credentials somewhere with no file to read, or in a format this check has not been taught to parse — gets `n/a`, naming the agent. That is deliberately *not* `unknown`: "this check could not tell" and "this check does not apply to your agent" are different findings, and only the first is worth acting on. The Codex adapter answers `None` today; its credentials file is known by path and unprobed by shape.
+
+On macOS the live Claude Code credential is in the keychain and the file beside it is a mirror nothing re-synchronises. Measured on a profile logged in that same morning: the keychain entry was hours old, the file eight days old with an expired refresh token, and the check reported `fail` against a login that was working. So where the file is a mirror, a `fail` or a `warn` derived from it degrades to `unknown` and says why; a `pass` survives, because a mirror is written *from* the store and never ahead of it. The keychain itself is not read — see the paragraph below for why nothing here spawns a credential helper.
 
 **The auth check reads a file and spawns nothing.** Running an auth CLI from inside a hook is exactly what an operator rule elsewhere forbids: a credential helper that cannot reach the keychain — as happens in launchd's Background domain — has deleted a credential store before now. A read cannot do that.
 

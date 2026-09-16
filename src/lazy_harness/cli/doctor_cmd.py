@@ -27,6 +27,7 @@ from lazy_harness.core.paths import (
     expand_path,
 )
 from lazy_harness.core.profiles import list_profiles
+from lazy_harness.core.secrets import secrets_dir_for
 from lazy_harness.hooks.runner import resolve_profile
 from lazy_harness.hooks.signal_gaps import HookSignalGap, collect_hook_signal_gaps
 from lazy_harness.llm import LLMBackendError, LLMBackendNotFoundError
@@ -350,6 +351,48 @@ def _render_memory_hygiene(console: Console, memory_dir: Path, now: datetime | N
     return ok
 
 
+def _render_profile_secrets(console: Console, cfg: Config) -> None:
+    """Profiles taking their credentials from the ambient environment (ADR-045 D3).
+
+    The launch refuses a secrets file it cannot read; it cannot refuse a file
+    that was never written, because exactly one profile is entitled to have
+    none — the one the global environment is already set up for. Every *other*
+    profile with no file of its own launches under whichever account that
+    environment carries, which is the silent wrong-identity launch F2 measured.
+
+    The line names no environment variable and prints nothing out of the file.
+    Naming the variable would mean enumerating which variables are credentials
+    per agent, and an enumeration that misses one reports "clean" for the
+    profile it missed — the statement that needs no list is the one that cannot
+    be wrong (ADR-045 A2).
+    """
+    secrets_dir = secrets_dir_for(cfg)
+    inheriting: list[str] = []
+    for name in sorted(cfg.profiles.items):
+        if name == cfg.profiles.default:
+            continue
+        try:
+            has_own = (secrets_dir / f"{name}.env").is_file()
+        except OSError:
+            # `is_file()` raises rather than answering False when the directory
+            # cannot be traversed. Such a profile is not inheriting quietly —
+            # `resolve_launch` refuses it outright — so silence here is the
+            # accurate answer rather than the lenient one.
+            has_own = True
+        if not has_own:
+            inheriting.append(name)
+
+    if not inheriting:
+        return
+
+    console.print("\n[bold]Profile credentials[/bold]")
+    for name in inheriting:
+        console.print(
+            f"  [yellow]![/yellow] {name} — no {name}.env in "
+            f"{contract_path(secrets_dir)}; inherits the ambient environment's credentials"
+        )
+
+
 def _render_artifact_versions(
     console: Console,
     reports: list[ArtifactVersionReport],
@@ -564,6 +607,8 @@ def doctor() -> None:
             cdir = contract_path(p.config_dir)
             console.print(f"  [red]✗[/red] {label} — {cdir} [red](missing)[/red]")
             ok = False
+
+    _render_profile_secrets(console, cfg)
 
     if cfg.knowledge.root:
         kp = expand_path(cfg.knowledge.root)

@@ -63,6 +63,9 @@ class _TwoDestinations:
     def system_docs(self) -> list[Path]:
         return [Path("copilot-instructions.md"), Path("instructions/harness.instructions.md")]
 
+    def credentials_file(self) -> str | None:
+        return None
+
     def process_name(self) -> str:
         return ""
 

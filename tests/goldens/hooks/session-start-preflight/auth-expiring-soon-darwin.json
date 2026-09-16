@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"SessionStart\", \"additionalContext\": \"## Preflight\\n\\n- **auth** [?] \\u2014 credentials live in the keychain on macOS; the file is a mirror the harness cannot verify\\n- Clear: git, path.\"}}\n"
+}

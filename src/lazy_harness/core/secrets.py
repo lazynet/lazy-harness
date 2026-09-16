@@ -14,6 +14,13 @@ the inherited environment, so the selection happens on its own.
 
 The file format and its `0600` mode are a contract with whatever provisions the
 machine. Changing either is a coordinated change, not a local one.
+
+**A file inside this directory is the declaration** (ADR-045). No file means the
+profile takes its values from the global environment, which is the default
+profile's ordinary case on every machine. A file that exists and cannot be read
+means somebody said this profile carries its own account and the harness cannot
+honour it — so the launch stops, rather than inheriting whichever account the
+ambient environment happened to carry.
 """
 
 from __future__ import annotations
@@ -37,6 +44,16 @@ def secrets_dir_for(cfg: Config) -> Path:
     if cfg.secrets.dir:
         return expand_path(cfg.secrets.dir)
     return default_secrets_dir()
+
+
+class SecretsError(Exception):
+    """A profile's declared secrets file exists and could not be read.
+
+    Deliberately not an `OSError`: the caller is `resolve_launch`, which turns
+    every resolution failure into a `LaunchError` carrying a stable `kind`. A
+    bare `OSError` escaping this module would reach `lh run` as a traceback
+    from three frames down.
+    """
 
 
 def _warn(message: str) -> None:
@@ -75,9 +92,11 @@ def overlay_profile_secrets(
     Returns a new mapping; the caller's is untouched, so one profile's token
     cannot leak into anything else running in this process.
 
-    Every failure degrades to "no overlay" with a message on stderr rather than
-    raising: the caller is about to exec the agent, and a permissions problem
-    on one profile's secrets is not a reason to produce a traceback instead.
+    Raises `SecretsError` when the file exists and cannot be read or decoded.
+    An absent file returns the environment unchanged — that is the default
+    profile, not a failure. ADR-045 D2 records why the two are not one branch:
+    availability is the right trade for a profile that never declared its own
+    account, and the wrong one for a profile that did.
     """
     result = dict(env)
 
@@ -92,19 +111,31 @@ def overlay_profile_secrets(
         _warn(f"profile {profile!r} names a secrets file outside {secrets_dir}, ignored")
         return result
 
-    if not path.is_file():
+    # Keyed on the errno of the read, not on a prior `Path.is_file()`. That gate
+    # did not answer False for a file whose *parent* cannot be traversed — it
+    # raised `PermissionError`, from outside the `except OSError` that wrapped
+    # only the read, so the case reached `lh run` as a traceback.
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
         # The default profile takes its values from the global environment and
         # has no file. That is the normal case.
         return result
+    except (OSError, UnicodeDecodeError) as e:
+        raise SecretsError(
+            f"profile {profile!r} declares {path.name} and it cannot be read: {e}. "
+            f"Fix the file or remove it; launching would authenticate as whichever "
+            f"account the environment already carries."
+        ) from e
 
     try:
         mode = path.stat().st_mode
-        if mode & (stat.S_IRWXG | stat.S_IRWXO):
-            # Refusing would not un-leak a secret that is already readable, and
-            # would break the launch. Saying nothing would let it persist.
-            _warn(f"{path.name} is mode {mode & 0o777:04o}; secrets files should be 0600")
-        result.update(parse_env_file(path.read_text(), source=path.name))
-    except OSError as e:
-        _warn(f"could not read {path.name}: {e}")
+    except OSError:  # pragma: no cover - the read above already succeeded
+        mode = 0
+    if mode & (stat.S_IRWXG | stat.S_IRWXO):
+        # Refusing would not un-leak a secret that is already readable, and
+        # would break the launch. Saying nothing would let it persist.
+        _warn(f"{path.name} is mode {mode & 0o777:04o}; secrets files should be 0600")
 
+    result.update(parse_env_file(raw, source=path.name))
     return result

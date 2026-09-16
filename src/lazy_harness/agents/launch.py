@@ -15,7 +15,7 @@ from lazy_harness.agents.registry import AgentNotFoundError, agent_for_profile
 from lazy_harness.core.config import Config
 from lazy_harness.core.paths import expand_path
 from lazy_harness.core.profiles import ProfileError, resolve_profile_with_source
-from lazy_harness.core.secrets import overlay_profile_secrets, secrets_dir_for
+from lazy_harness.core.secrets import SecretsError, overlay_profile_secrets, secrets_dir_for
 
 
 class LaunchError(Exception):
@@ -82,7 +82,14 @@ def resolve_launch(
     # would otherwise authenticate as the first — silently.
     if adapter.env_var():
         env[adapter.env_var()] = str(config_dir)
-    env = overlay_profile_secrets(env, resolution.name, secrets_dir=secrets_dir_for(cfg))
+    # A declared secrets file that cannot be read stops the launch (ADR-045 D2).
+    # Continuing would exec the agent with whichever account the ambient
+    # environment already carries, which is the one thing the file exists to
+    # prevent — and it would do it with nothing on the channel to say so.
+    try:
+        env = overlay_profile_secrets(env, resolution.name, secrets_dir=secrets_dir_for(cfg))
+    except SecretsError as e:
+        raise LaunchError("secrets-unreadable", str(e)) from e
 
     return LaunchPlan(
         profile=resolution.name,

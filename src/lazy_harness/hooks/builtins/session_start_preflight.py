@@ -24,6 +24,14 @@ constantly and is refreshed transparently; measured on a live profile,
 because the refresh token still had 84 hours. Reading the wrong field makes
 the check cry wolf on every session, and a preflight nobody reads is worse
 than none.
+
+**Which file, and whether it is the store, are both the adapter's business.**
+The filename comes from `credentials_file()`, and `None` — an agent with no
+file this check can parse — reports `n/a`, not `unknown`: "could not tell" and
+"does not apply to this agent" are different findings and only one of them is
+fixed by logging in again. On macOS the live Claude Code credential is in the
+keychain and the file is a mirror nothing re-synchronises, so a verdict derived
+from it is downgraded rather than trusted. Both are ADR-045.
 """
 
 from __future__ import annotations
@@ -32,6 +40,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,15 +52,26 @@ from typing import Literal
 # the type checker. Importing here is also what takes a migrated module off
 # `test_import_safety.GUARDED_HOOKS` — it is no longer invoked as a bare script,
 # so the guarantee the ImportError guard carried moves to the runner's policy.
-from lazy_harness.agents.base import HookDecision, HookEvent
+from lazy_harness.agents.base import AgentAdapter, HookDecision, HookEvent
 
-Status = Literal["pass", "warn", "fail", "unknown"]
+Status = Literal["pass", "warn", "fail", "unknown", "n/a"]
 
 # Below this much life left in the refresh token, say so before the session
 # gets long enough to lose work to it.
 _WARN_WITHIN_SECONDS = 12 * 3600
 
-_STATUS_MARK = {"pass": "ok", "warn": "warn", "fail": "FAIL", "unknown": "?"}
+_STATUS_MARK = {"pass": "ok", "warn": "warn", "fail": "FAIL", "unknown": "?", "n/a": "n/a"}
+
+#: Where an agent keeps the credential the file only mirrors. Keyed by platform
+#: because the claim is about one agent's store on one operating system: macOS
+#: having a keychain says nothing about an agent that never used it.
+_MIRRORED_AGENTS_BY_PLATFORM: dict[str, frozenset[str]] = {"darwin": frozenset({"claude-code"})}
+
+#: Said instead of a verdict the file cannot support. Names the store, so the
+#: reader knows there is nothing to fix rather than a check to re-run.
+_MIRROR_DETAIL = (
+    "credentials live in the keychain on macOS; the file is a mirror the harness cannot verify"
+)
 
 
 @dataclass(frozen=True)
@@ -63,35 +83,72 @@ class Check:
     detail: str
 
 
-def _credentials_path(agent_dir: Path) -> Path:
-    """The credentials file of the agent dir the *invoked profile* resolves to.
+def credentials_are_mirrored(agent: str, platform: str | None = None) -> bool:
+    """True when this agent keeps the live credential somewhere this hook cannot read.
 
-    This used to read `CLAUDE_CONFIG_DIR` itself and fall back to `~/.claude` —
-    the "resolve globally, ignore the profile" shape PR #300 fixed for
-    `hooks.log`, wearing a different mask. A hook invoked with `--profile p`
-    checked whichever profile the ambient environment named, so the preflight
-    could report a healthy login for a profile the session was not running
-    under: exactly the failure this check exists to catch. `agent_dir_for`
-    closes that half.
+    Measured on 2026-09-16: a profile that had run `claude auth login` that
+    morning showed a keychain entry hours old
+    (`Claude Code-credentials-<sha256(config_dir) prefix>`) while
+    `.credentials.json` still carried an eight-day-old mtime and an expired
+    `refreshTokenExpiresAt`. The file opens, parses and has a valid shape, so no
+    degradation branch applies and the check returned `fail` against a login
+    that was healthy the whole time.
 
-    **The other half is deliberately still open, and is not this hook's to
-    close.** `.credentials.json` is a *Claude Code* filename. Another adapter
-    keeps its credentials somewhere else entirely — or in a keychain, with no
-    file to read — so the location belongs on the adapter, beside
-    `session_dirs()` and `global_config_link()`, rather than written out here.
-    Until it moves, this check silently reports `unknown` on any non-Claude
-    profile instead of saying it cannot speak for that agent. Recorded in
-    `specs/backlog.md`.
+    The keychain is deliberately *not* read to settle it.
+    `security find-generic-password` from launchd's Background domain — where a
+    hook runs — has deleted a credential store on this machine twice. A check
+    that admits a blind spot is usable; one that destroys credentials to remove
+    it is not (ADR-045 D7).
     """
-    return agent_dir / ".credentials.json"
+    return agent in _MIRRORED_AGENTS_BY_PLATFORM.get(platform or sys.platform, frozenset())
 
 
-def check_auth(credentials_path: Path, now: float | None = None) -> Check:
+def auth_check(
+    adapter: AgentAdapter,
+    agent_dir: Path,
+    *,
+    now: float | None = None,
+    platform: str | None = None,
+) -> Check:
+    """The auth verdict for the *invoked profile's* agent and directory.
+
+    The directory half was closed first: a hook invoked with `--profile p` used
+    to check whichever profile the ambient environment named, so the preflight
+    could report a healthy login for a profile the session was not running
+    under — exactly the failure this check exists to catch.
+
+    This closes the other half. `.credentials.json` is a Claude Code filename;
+    another adapter keeps its credentials elsewhere, or in a keychain with no
+    file to read, so the name comes from `credentials_file()` and `None` is an
+    answer rather than a missing file. Collapsing `None` into `unknown` would
+    report the same thing for a broken login and for an agent whose login this
+    check never knew how to look at.
+    """
+    name = adapter.credentials_file()
+    if not name:
+        return Check(
+            "auth",
+            "n/a",
+            f"{adapter.name} exposes no credentials file this check can read",
+        )
+    return check_auth(
+        agent_dir / name,
+        now,
+        mirrored=credentials_are_mirrored(adapter.name, platform),
+    )
+
+
+def check_auth(
+    credentials_path: Path, now: float | None = None, *, mirrored: bool = False
+) -> Check:
     """Report on the refresh token's remaining life, reading only the file.
 
     Returns `unknown` rather than `fail` for any shape this does not
     understand: reporting a healthy login as dead trains the reader to skip
     the whole block.
+
+    `mirrored` says the file is a copy of a store this hook does not read, so
+    an unhappy verdict derived from it is not evidence of an unhappy login.
     """
     moment = time.time() if now is None else now
     try:
@@ -116,6 +173,12 @@ def check_auth(credentials_path: Path, now: float | None = None) -> Check:
         return Check("auth", "unknown", "no refresh-token expiry recorded")
 
     remaining = expires_at / 1000 - moment
+    if mirrored and remaining <= _WARN_WITHIN_SECONDS:
+        # `pass` deliberately survives this guard. A mirror is rewritten *from*
+        # the store and never ahead of it, so a file claiming the refresh token
+        # is good is a lower bound on the truth; a file claiming it is dead is
+        # only evidence that nothing rewrote the file.
+        return Check("auth", "unknown", _MIRROR_DETAIL)
     if remaining <= 0:
         return Check(
             "auth",
@@ -214,10 +277,10 @@ def main(event: HookEvent) -> HookDecision:
             except ConfigError:
                 cfg = None
 
-        # The adapter half is unused here on purpose: unlike the hooks that
-        # write under `session_dirs()`, this one only reads a file whose name
-        # it still owns. That is the part `specs/backlog.md` keeps open.
-        agent_dir = agent_dir_for(cfg, event.profile)[1]
+        # Both halves of the pair are used now: the directory scopes the check
+        # to the invoked profile, and the adapter names the file inside it — or
+        # declines to, which is a verdict of its own.
+        adapter, agent_dir = agent_dir_for(cfg, event.profile)
 
         # `parse_hook_input` yields `Path("")` — which is `Path(".")`, and
         # truthy — for a payload that names no cwd, so an `or Path.cwd()` would
@@ -228,7 +291,7 @@ def main(event: HookEvent) -> HookDecision:
         cwd = event.cwd if event.cwd != Path(".") else Path.cwd()
 
         checks = [
-            check_auth(_credentials_path(agent_dir)),
+            auth_check(adapter, agent_dir),
             check_git_identity(str(cwd)),
             check_path_duplicates(),
         ]

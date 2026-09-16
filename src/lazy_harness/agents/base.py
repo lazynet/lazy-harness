@@ -504,6 +504,23 @@ class AgentAdapter(Protocol):
         """
         ...
 
+    def credentials_file(self) -> str | None:
+        """Filename inside the config dir holding credentials this harness can read.
+
+        `None` is a first-class answer and a *different* statement from a file
+        that is missing or corrupt: it says the harness cannot speak for this
+        agent's login at all, because the agent keeps it somewhere with no file
+        to read, or in a format nothing here has been taught to parse. A check
+        that collapses the two reports the same thing for a dead login and for
+        an agent whose login it never knew how to look at.
+
+        Claude Code: '.credentials.json'. Return None rather than a name whose
+        *shape* is unprobed — the filename and the envelope inside it are
+        equally agent-specific, and a name alone only moves the wrong answer
+        one layer down (ADR-045 D4).
+        """
+        ...
+
     def system_docs(self) -> list[Path]:
         """Paths, relative to the profile's config dir, this agent actually loads.
 

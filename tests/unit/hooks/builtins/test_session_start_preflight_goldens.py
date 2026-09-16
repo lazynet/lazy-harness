@@ -16,6 +16,14 @@ it hides is pinned instead by `TestCheckAuth`, which injects `now`. That split
 is deliberate: the golden owns the channel and the wording, the unit test owns
 the number.
 
+**The platform cannot be pinned, so three cases carry two goldens.** ADR-045 D6
+downgrades a file-derived `fail` or `warn` to `unknown` where the file is a
+mirror of the keychain, which is macOS and only macOS. Normalising that away
+would freeze the one property the branch exists to produce, so the affected
+cases are keyed instead: the runner asserts its own platform's bytes, and the
+committed bytes of *both* are asserted from either runner by the two named
+tests below. CI runs Linux and macOS.
+
 `GIT_CONFIG_NOSYSTEM` is pinned for the same reason `pinned_env` pins `PATH`.
 `check_git_identity` shells out to `git config user.email`, and a machine
 carrying one in `/etc/gitconfig` would turn the `git`-warn case into a pass —
@@ -144,6 +152,24 @@ CASES: list[Case] = [
 #: migration `_read_stdin_json` degraded them to `{}` and ran the hook against
 #: `os.getcwd()`, which is why these two goldens are the licensed divergence.
 UNUSABLE_PAYLOAD_CASE_IDS: frozenset[str] = frozenset({"stdin-empty", "stdin-malformed-json"})
+
+#: Whether the agent under test keeps its live credential off the filesystem.
+_MIRRORED = sys.platform == "darwin"
+
+
+def _is_mirror_sensitive(case: Case) -> bool:
+    """Whether this case's auth verdict comes from the file's expiry.
+
+    Derived from the fixture rather than listed beside it: a new case planting
+    an expired file would otherwise keep asserting the Linux golden on macOS and
+    fail with a diff nobody could read as "you forgot to capture the pair".
+    """
+    return case.credentials == _EXPIRED or case.expires_in_hours is not None
+
+
+def _case_id(case: Case) -> str:
+    """The golden this platform must match for `case`."""
+    return f"{case.id}-darwin" if _MIRRORED and _is_mirror_sensitive(case) else case.id
 
 
 @dataclass
@@ -275,7 +301,7 @@ def test_golden(case: Case, tmp_path: Path) -> None:
 
     run = run_through_runner(HOOK, stdin_text=world.stdin, cwd=world.work, env=world.env)
 
-    assert_golden(HOOK, case.id, _normalise_hours(run))
+    assert_golden(HOOK, _case_id(case), _normalise_hours(run))
 
 
 def test_case_ids_are_unique() -> None:
@@ -291,7 +317,7 @@ def test_no_golden_leaks_a_path_from_the_machine_that_captured_it(tmp_path: Path
     fixtures pin all three to literals; this asserts nothing else got in.
     """
     for case in CASES:
-        golden = json.loads(golden_path(HOOK, case.id).read_text())
+        golden = json.loads(golden_path(HOOK, _case_id(case)).read_text())
         blob = golden["stdout"] + golden["stderr"]
         assert "/Users/" not in blob, case.id
         assert "/home/" not in blob, case.id
@@ -317,6 +343,9 @@ def test_the_expired_branch_names_the_check_and_the_remedy() -> None:
 
     `[FAIL]` rather than `[?]` matters: `unknown` is what an unreadable file
     reports, and conflating the two is what trains a reader to skip the block.
+
+    Asserted against the committed golden rather than a live run, so both halves
+    of the platform pair are checked from either runner.
     """
     golden = json.loads(golden_path(HOOK, "auth-expired").read_text())
     body = json.loads(golden["stdout"])["hookSpecificOutput"]["additionalContext"]
@@ -325,6 +354,40 @@ def test_the_expired_branch_names_the_check_and_the_remedy() -> None:
     assert "- **auth** [FAIL] — refresh token expired <N> h ago" in body
     assert "claude auth login" in body
     assert "- Clear: git, path." in body
+
+
+def test_the_expired_branch_on_a_mirror_says_so_instead_of_failing() -> None:
+    """The macOS half of the same pair — the false FAIL this change removes.
+
+    Measured 2026-09-16: a profile logged in that morning reported
+    `auth [FAIL] — refresh token expired 33 h ago` while the keychain entry was
+    hours old and the login worked. The file is a mirror nothing rewrites, so
+    the honest answer names the store rather than the expiry, and the remedy
+    line is gone — there is nothing for the reader to re-run.
+    """
+    golden = json.loads(golden_path(HOOK, "auth-expired-darwin").read_text())
+    body = json.loads(golden["stdout"])["hookSpecificOutput"]["additionalContext"]
+
+    assert golden["exit_code"] == 0
+    assert "- **auth** [?] — credentials live in the keychain on macOS" in body
+    assert "[FAIL]" not in body
+    assert "claude auth login" not in body
+    assert "- Clear: git, path." in body
+
+
+def test_every_mirror_sensitive_case_carries_both_goldens() -> None:
+    """Neither runner can capture the other's bytes, so absence must be loud.
+
+    Without this, a case captured on one platform alone fails on the other with
+    "golden was never captured", which reads as a harness fault rather than as
+    the missing half of a deliberate pair.
+    """
+    sensitive = [c for c in CASES if _is_mirror_sensitive(c)]
+
+    assert sensitive, "the fixture no longer exercises a file-derived verdict"
+    for case in sensitive:
+        assert golden_path(HOOK, case.id).is_file(), case.id
+        assert golden_path(HOOK, f"{case.id}-darwin").is_file(), case.id
 
 
 def test_an_unreadable_credentials_file_reports_unknown_and_never_fail() -> None:
@@ -343,7 +406,7 @@ def test_an_unreadable_credentials_file_reports_unknown_and_never_fail() -> None
 def test_no_golden_carries_a_token_value() -> None:
     """The block is injected into the transcript; the fixtures plant tokens."""
     for case in CASES:
-        golden = json.loads(golden_path(HOOK, case.id).read_text())
+        golden = json.loads(golden_path(HOOK, _case_id(case)).read_text())
         blob = golden["stdout"] + golden["stderr"]
         assert '"accessToken"' not in blob, case.id
         assert "refreshToken" not in blob, case.id
@@ -380,7 +443,8 @@ def _context(run: HookRun) -> str:
 def test_the_auth_check_reads_the_invoked_profiles_credentials(tmp_path: Path) -> None:
     """Defect F7 in its second spelling, and the reason this task exists.
 
-    `_credentials_path` resolved `CLAUDE_CONFIG_DIR` itself and fell back to
+    `_credentials_path` — the helper `auth_check` replaced — resolved
+    `CLAUDE_CONFIG_DIR` itself and fell back to
     `~/.claude` — "resolve globally, ignore the profile", the same shape PR #300
     fixed for `hooks.log` wearing a different mask. A hook invoked with
     `--profile gate` checked whichever profile the ambient environment named, so
@@ -400,7 +464,15 @@ def test_the_auth_check_reads_the_invoked_profiles_credentials(tmp_path: Path) -
 
     body = _context(_run(world, profile="gate"))
 
-    assert "- **auth** [FAIL] — refresh token expired" in body
+    # The verdict's *wording* is the platform's; what this test measures is
+    # which directory produced it. Both spellings are unhappy and the healthy
+    # one collapses to "All clear", so the pair still carries opposite answers.
+    unhappy = (
+        "- **auth** [?] — credentials live in the keychain on macOS"
+        if _MIRRORED
+        else "- **auth** [FAIL] — refresh token expired"
+    )
+    assert unhappy in body
     assert "All clear" not in body
 
 
