@@ -80,7 +80,7 @@
 # work in `specs/backlog.md`.
 #
 # ---------------------------------------------------------------------------
-# SIX HOOKS ARE SKIPPED, AND EVERY REASON IS THE SAME ONE: no sink under the
+# SEVEN HOOKS ARE SKIPPED, AND EVERY REASON IS THE SAME ONE: no sink under the
 # agent runtime dir, so this gate has no site to observe. Verified per hook, by
 # reading the sink rather than by one run coming up empty:
 #
@@ -102,6 +102,19 @@
 #                            (`:242`). Its per-profile resolution is real and
 #                            worth asserting — through the stdout channel, which
 #                            is not this gate's. Recorded in `specs/backlog.md`.
+#   pre-tool-use-git-scope   writes NOTHING. It refuses on stderr and exits 2
+#                            and that is its whole output — grep the module for
+#                            `make_log`, `agent_dir_for` or `hooks.log` and
+#                            there are zero hits. It is NOT
+#                            `pre-tool-use-security`, which does log its
+#                            refusals (`pre_tool_use_security.py:301-309`); the
+#                            two share a payload fixture because they read the
+#                            same `Bash` command, and that adjacency is what put
+#                            a sink assertion on the one that has none. Found by
+#                            running this gate after PR #326 migrated it: four
+#                            assertions failing with "no entry written anywhere
+#                            the gate watches", which is what a hook with no
+#                            sink looks like from here.
 #   post-tool-use-sync-claude  writes NOTHING under the agent runtime dir, and
 #                            says so itself: *"The directory half is unused:
 #                            this hook writes nothing under the agent's runtime
@@ -263,6 +276,7 @@ SKIPPED_HOOKS=(
   stop-context-rotate
   session-start-preflight
   post-tool-use-sync-claude
+  pre-tool-use-git-scope
 )
 is_skipped() { case " ${SKIPPED_HOOKS[*]} " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
@@ -467,7 +481,7 @@ payload_for() {
       printf '{"cwd":"__CWD__","session_id":"%s"}' "$RUN_TOKEN" ;;
     # The security hook logs the COMMAND, not the cwd, so the token rides
     # inside the command text.
-    pre-tool-use-security|pre-tool-use-git-scope)
+    pre-tool-use-security)
       printf '{"tool_name":"Bash","tool_input":{"command":"rm -rf /tmp/__TAG__-secblock"}}' ;;
     pre-tool-use-memory-size)
       mkdir -p "$FIXTURES/$tag/memory"
@@ -494,11 +508,11 @@ payload_for() {
 }
 
 # The string that attributes an entry to one hook in one scenario/mode. Default
-# is the tag, which rides in the cwd; the security hooks put it in the command.
+# is the tag, which rides in the cwd; the security hook puts it in the command.
 needle_for() {
   local hook="$1" tag="$2"
   case "$hook" in
-    pre-tool-use-security|pre-tool-use-git-scope) printf '%s-secblock' "$tag" ;;
+    pre-tool-use-security) printf '%s-secblock' "$tag" ;;
     *) printf '%s' "$tag" ;;
   esac
 }

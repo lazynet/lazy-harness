@@ -1017,6 +1017,34 @@ git add -A && git commit -m "refactor: sweep the global agent literals out of th
 
 ## Task 22: Re-run the isolation gate against the shipped binary
 
+> **Estado 2026-09-15 — bloqueada, y lo que sí se verificó.** El step 1 pide instalar
+> el tag shippeado, y no hay release nuevo: `#303` (0.67.2) sigue abierta acumulando
+> por decisión. Cortarla es llamada del operador —y arrastra `/coherence-audit` antes,
+> por el non-negotiable 6—, así que la task queda abierta en vez de correrse contra un
+> binario que no tiene ninguna de estas migraciones.
+>
+> Lo que **sí** se corrió, y hay que leerlo por lo que es: el gate contra el binario del
+> **worktree**, que no prueba nada sobre lo que shippeó y no reemplaza a los steps 1 y 2.
+> Prueba otra cosa, que era condición para que la corrida real signifique algo — que el
+> script sigue andando después de que las tasks 19/20 le sacaran `builtin_migrated()` de
+> abajo, y que su scope nuevo cierra. Resultado: `PASS`, exit 0, `18 = 11 aserteados + 7
+> skipped`, y los dos controles discriminan con exit code medido, no inferido del texto
+> —`fake-lh-fixed.sh` exit **0**, `fake-lh-security-only.sh` exit **1**.
+>
+> Esa corrida encontró un defecto **preexistente**, no una regresión: el gate aserteaba
+> un sink de `pre-tool-use-git-scope`, que no escribe nada. Entró al set aserteado con su
+> migración (#326) y compartía la fixture de payload con `pre-tool-use-security`, que sí
+> loguea sus refusals. Nadie había corrido el gate desde entonces. Falsificado corriéndolo
+> también contra el checkout de `main` en 571d0bb: **mismas cuatro aserciones fallando**.
+> Arreglado moviéndolo a `SKIPPED_HOOKS` con su razón medida, y sacando las dos filas de
+> fixture que quedaban muertas.
+>
+> **Lo que falta para cerrar la task, sin atajos:** merge, dejar que release-please corte,
+> `uv tool install --reinstall` con el tag resuelto de la release (nunca tipeado), grepear
+> site-packages por la **ausencia** de `PRE_RUNNER_AGENT` —que es el discriminador barato
+> de que este cambio shippeó, y un número de versión no lo es— y recién ahí correr el gate.
+
+
 The step 4 gate lived in `/tmp/f7-gate/`, outside the repo, where CI could not reproduce it. It is now versioned under `specs/gates/f7/`, which is what makes the rest of this task a set of paths rather than a ritual. Running it is not optional.
 
 - [ ] **Step 1: Merge, let release-please cut, and install the tag explicitly**
