@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.69.0](https://github.com/lazynet/lazy-harness/compare/v0.68.0...v0.69.0) (2026-09-16)
+
+
+### Features
+
+* launches event table — the multi-agent kill criteria's thermometer ([#346](https://github.com/lazynet/lazy-harness/issues/346)) ([611fa87](https://github.com/lazynet/lazy-harness/commit/611fa87cc91fe1f04ddb8255a33c845938b2cd75))
+* the credential boundary — ADR-045, F2 and the preflight false FAIL ([#351](https://github.com/lazynet/lazy-harness/issues/351)) ([2793090](https://github.com/lazynet/lazy-harness/commit/27930906ab6b16b52016438ba42d0ec414b32098))
+* the real CodexAdapter — Codex's native edit path, end to end ([#348](https://github.com/lazynet/lazy-harness/issues/348)) ([1de385c](https://github.com/lazynet/lazy-harness/commit/1de385c8858a1ee67f7d96549da51b4245c6d835))
+
+
+### Bug Fixes
+
+* close F1 — segment-scoped allow_patterns and git global-option matching ([#347](https://github.com/lazynet/lazy-harness/issues/347)) ([95190bd](https://github.com/lazynet/lazy-harness/commit/95190bd053572a575ce5361fe7a3929821fcec50))
+
+
+### Documentation
+
+* 0.69.0 release gate — coherence audit, F2 and preflight closed, ADR-045 cites ([#353](https://github.com/lazynet/lazy-harness/issues/353)) ([5ac5ab9](https://github.com/lazynet/lazy-harness/commit/5ac5ab93706addb572941d74e18f3519877328c4))
+* post-0.68.0 backlog and design follow-ups ([#346](https://github.com/lazynet/lazy-harness/issues/346)/[#347](https://github.com/lazynet/lazy-harness/issues/347)/[#348](https://github.com/lazynet/lazy-harness/issues/348)) ([#350](https://github.com/lazynet/lazy-harness/issues/350)) ([055a74f](https://github.com/lazynet/lazy-harness/commit/055a74f41b93c997980e13ac3050b65024efb25f))
+* record probes 5-8 in codex-evidence.md ([#352](https://github.com/lazynet/lazy-harness/issues/352)) ([830482e](https://github.com/lazynet/lazy-harness/commit/830482e55628236971320601a7e8046571092523))
+
 ## [0.68.0](https://github.com/lazynet/lazy-harness/compare/v0.67.3...v0.68.0) (2026-09-16)
 
 
