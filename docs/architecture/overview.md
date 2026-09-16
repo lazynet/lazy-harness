@@ -163,7 +163,7 @@ Design: [ADR-009 — Profile symlink deploy](https://github.com/lazynet/lazy-har
 
 Local SQLite store populated by parsing session JSONLs:
 
-- `db.py` — single-table schema (`session_stats`) with `UNIQUE(session, model)` for idempotent re-ingestion, plus an index on `date`.
+- `db.py` — the schema every reader and writer shares: `session_stats` with `UNIQUE(session, model)` for idempotent re-ingestion plus an index on `date`, `session_attribution` and `ingest_meta` keyed by session, `sink_outbox` for undelivered events, and two append-only event logs — `loop_events` (one row per graded session or fired hook) and `launches` (one row per agent launch `lh run` or `lh exec` actually started). Every table is created with `CREATE TABLE IF NOT EXISTS` on each open, so a store written by an older `lh` picks up a new table the first time a newer one touches it.
 - `collector.py` — walks `<CLAUDE_CONFIG_DIR>/projects/**/*.jsonl`, extracts per-session token counts (input, output, cache_read, cache_create), computes cost against `[monitoring.pricing]`, and does `INSERT OR IGNORE` into the DB.
 - `pricing.py` — cost calculation from the pricing dict.
 - `views/` — one file per viewing angle (`overview`, `projects`, `profiles`, `sessions`, `tokens`, `cron`, `hooks`, `memory`, `queue`). Each renders via a parametric SQL query.
