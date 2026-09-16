@@ -650,6 +650,15 @@ than refusing it.
 > concurrent with a running agent still silently wins the race. The abort is
 > scheduled at step 7 alongside the rest of multi-file planning. The paragraph
 > above states the intended design, not current behaviour.
+>
+> **Closed at step 7 (2026-09-16).** `_stamp`, `_read_targets` and
+> `_refuse_if_changed` are in `deploy/engine.py`, and `ConfigTargetChangedError`
+> refuses the whole plan between plan and apply rather than per op. The stamp is
+> `(st_mtime_ns, st_size)` and covers targets that do *not* exist as well, so
+> absent-then-present compares unequal — the one case where the engine would
+> otherwise have planned against no prior content at all. The reasoning above is
+> what shipped; [ADR-042](../adrs/042-multi-file-config-planning.md) records the
+> alternatives it was chosen over.
 
 `deploy/engine.py:deploy_hooks` hardcodes `settings.json` and merges with a
 function shaped like Claude Code's `matcher` / `hooks[]` block. Codex wants a
@@ -1547,7 +1556,8 @@ against a version that will not ship.
 > The steps below are the plan as written, not a record of what happened, and
 > nothing in them is edited as they land. One place where that distinction
 > already bit a reader is called out inline: the mtime/size abort in decision 4
-> reads as current behaviour and is step 7. The second such place — the two
+> read as current behaviour and was step 7 — it closed there on 2026-09-16 and
+> the decision's own note records it. The second such place — the two
 > displaced generators in the same decision — closed at step 4 and the
 > decision's own note records it. Where a step's prose and the code disagree,
 > the code is what shipped — `specs/backlog.md` §Done carries the per-step
