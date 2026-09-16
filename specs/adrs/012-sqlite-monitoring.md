@@ -77,6 +77,7 @@ Tables now created by `MetricsDB._create_tables`:
 | `sink_outbox` | Durable queue of metric events pending delivery to a remote sink, with attempt count, backoff and lease. | metrics sink plugin slice (#8) |
 | `loop_events` | Compound-loop events keyed by session and timestamp, written by `knowledge/compound_loop.py`. | loop instrumentation (#160) |
 | `session_attribution` | `workload` and `host`, written by `lh exec` before the agent starts and joined at ingest. | [ADR-037](037-metric-event-v2-host-and-workload.md) (#223) |
+| `launches` | Append-only log of every agent launch actually started — written by `lh run` and `lh exec` after validation and the dry-run diversion, never by `resolve_launch` itself. | multi-agent kill-criteria thermometer (#346) |
 
 `session_stats` also gained five columns beyond the ten above — `user_id`, `tenant_id`,
 `event_id`, `host`, `workload` — added to existing databases by

@@ -193,6 +193,26 @@ def test_every_inspected_tool_name_is_one_some_agent_emits() -> None:
     assert unreachable == {}, f"inspected names no adapter emits: {unreachable}"
 
 
+def test_apply_patch_joins_inspected_tools_without_widening_claude_codes_matcher() -> None:
+    """`FILE_TOOLS` gains Codex's native edit tool (backlog: "`FILE_TOOLS` no
+    incluye `apply_patch`").
+
+    Codex has no per-tool matcher to widen — `_hook_groups` omits one and the
+    hook already fires on every tool call regardless (see the test right below
+    this one) — so the only observable surface is `INSPECTED_TOOLS` itself.
+    `apply_patch` is never in `_emitted_by("claude_code")`, so the intersection
+    `test_deployed_matcher_covers_every_tool_each_builtin_inspects` checks
+    against is unaffected, and the Claude Code matcher this gate already pins
+    stays exactly what it was.
+    """
+    import lazy_harness.hooks.builtins.pre_tool_use_security as security
+
+    assert "apply_patch" in security.INSPECTED_TOOLS
+    assert _deployed_matcher("pre-tool-use-security", "pre_tool_use") == (
+        "Bash|Read|Edit|Write|NotebookEdit"
+    )
+
+
 def test_the_codex_side_reaches_its_edit_tool_without_a_matcher() -> None:
     """Codex's half of the same guarantee, which is not a matcher at all.
 

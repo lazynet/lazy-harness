@@ -28,6 +28,12 @@ from lazy_harness.core.paths import (
 )
 from lazy_harness.core.profiles import list_profiles
 from lazy_harness.core.secrets import secrets_dir_for
+from lazy_harness.hooks.event_surface import (
+    HookOperationGap,
+    UncarriedEventHook,
+    collect_hook_operation_gaps,
+    collect_uncarried_events,
+)
 from lazy_harness.hooks.runner import resolve_profile
 from lazy_harness.hooks.signal_gaps import HookSignalGap, collect_hook_signal_gaps
 from lazy_harness.llm import LLMBackendError, LLMBackendNotFoundError
@@ -459,6 +465,67 @@ def _render_hook_signals(console: Console, gaps: list[HookSignalGap]) -> None:
     )
 
 
+def _render_hook_operations(console: Console, gaps: list[HookOperationGap]) -> None:
+    """Name each deployed hook whose declared operations this agent's own tool
+    map cannot fully produce (design step 10).
+
+    Reporting, not failing — same rule as `_render_hook_signals`: the hook
+    installs and the rest of the profile is unaffected, this only says which
+    of its declared operations never arrives on a real tool call. Silent when
+    there is nothing to say.
+
+    Distinct from a missing signal: this hook never opens a transcript for the
+    operation in question, it is asked about a `ToolCall` that this agent's
+    own native-tool map never produces. Closed by the agent's tool map, not by
+    a `TranscriptReader` and not by this harness.
+    """
+    if not gaps:
+        return
+    console.print("\n[bold]Hook operations[/bold]")
+    for gap in gaps:
+        inert = ", ".join(escape(op.value) for op in gap.inert)
+        state = (
+            "the hook is inert on this profile"
+            if gap.fully_inert
+            else "the hook can't see those calls on this profile"
+        )
+        console.print(
+            f"  [yellow]![/yellow] {escape(gap.profile)}/{escape(gap.hook)} — "
+            f"{escape(gap.event)} is delivered, but {escape(gap.agent)} maps no native "
+            f"tool to {inert}: {state}"
+        )
+    console.print(
+        "      [dim]Operation declared, not one any native tool this agent emits carries: "
+        "the hook still installs and runs, it is just never asked about a call of that "
+        "kind. Closed by the agent's own tool map, not by this harness.[/dim]"
+    )
+
+
+def _render_uncarried_events(console: Console, gaps: list[UncarriedEventHook]) -> None:
+    """Name each deployed hook wired to an event this agent does not carry at
+    all (design step 10).
+
+    Distinct from a missing signal or a missing operation, both of which need
+    the event delivered in the first place. Reporting, not failing, and silent
+    when there is nothing to say — same rule as `_render_hook_operations`.
+    """
+    if not gaps:
+        return
+    console.print("\n[bold]Hook events[/bold]")
+    for gap in gaps:
+        console.print(
+            f"  [yellow]![/yellow] {escape(gap.profile)}/{escape(gap.hook)} — wired to "
+            f"{escape(gap.event)}, which {escape(gap.agent)} does not deliver at all: "
+            f"nothing installs and nothing runs"
+        )
+    console.print(
+        "      [dim]Event absent from hook_events(), not a missing signal: an absent key "
+        "means the agent does not deliver that event at all, which is a different "
+        "statement from delivering it and ignoring the verdict. Closed by widening the "
+        "agent's own event vocabulary, never a TranscriptReader.[/dim]"
+    )
+
+
 def _render_codex_trust(console: Console, reports: list[CodexHookTrust]) -> None:
     """What Codex will refuse to run, and how far that can be established.
 
@@ -684,6 +751,8 @@ def doctor() -> None:
     reports = collect_artifact_version_reports(cfg, config_dir() / "profiles")
     _render_artifact_versions(console, reports)
     _render_hook_signals(console, collect_hook_signal_gaps(cfg))
+    _render_hook_operations(console, collect_hook_operation_gaps(cfg))
+    _render_uncarried_events(console, collect_uncarried_events(cfg))
     _render_codex_trust(console, collect_codex_trust(cfg))
 
     console.print()
