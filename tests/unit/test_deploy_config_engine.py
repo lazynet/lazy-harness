@@ -496,3 +496,69 @@ def test_a_profile_without_a_config_dir_yet_gets_one(tmp_path: Path, servers: No
 
     assert (profile_dir / "settings.json").is_file()
     assert json.loads((profile_dir / "settings.json").read_text())["hooks"]
+
+
+# --- deletes, in both directions ------------------------------------------
+
+
+def test_one_plan_deletes_one_file_and_writes_another(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The delete gate, both directions in a single plan.
+
+    Asserting the removal alone would pass on an engine that unlinked every path
+    it was handed; asserting the write alone would pass on one that never
+    deleted at all. The file the plan does not name is the third direction: a
+    deploy that swept the config dir would take it too.
+    """
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+    from lazy_harness.deploy.engine import deploy_config
+
+    profile_dir = tmp_path / "profile"
+    profile_dir.mkdir()
+    (profile_dir / "settings.json").write_text('{"retired": true}\n')
+    (profile_dir / ".claude.json").write_text('{"stale": true}\n')
+    (profile_dir / "CLAUDE.md").write_text("# not a config target\n")
+
+    monkeypatch.setattr(
+        ClaudeCodeAdapter,
+        "plan_config",
+        lambda self, hooks, servers, existing, **kw: [
+            WriteOp(artifact=None, relative_path=Path("settings.json")),
+            WriteOp(
+                artifact=ConfigArtifact(
+                    relative_path=Path(".claude.json"), content='{"fresh": true}\n'
+                ),
+                relative_path=Path(".claude.json"),
+            ),
+        ],
+    )
+
+    deploy_config(_cfg(profile_dir))
+
+    assert not (profile_dir / "settings.json").exists(), "the retired file survived"
+    assert (profile_dir / ".claude.json").read_text() == '{"fresh": true}\n'
+    assert (profile_dir / "CLAUDE.md").read_text() == "# not a config target\n"
+
+
+def test_a_delete_is_reported_so_a_removal_is_never_silent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+    from lazy_harness.deploy.engine import deploy_config
+
+    profile_dir = tmp_path / "profile"
+    profile_dir.mkdir()
+    (profile_dir / "settings.json").write_text("{}\n")
+
+    monkeypatch.setattr(
+        ClaudeCodeAdapter,
+        "plan_config",
+        lambda self, hooks, servers, existing, **kw: [
+            WriteOp(artifact=None, relative_path=Path("settings.json"))
+        ],
+    )
+
+    deploy_config(_cfg(profile_dir))
+
+    assert "settings.json" in capsys.readouterr().out
