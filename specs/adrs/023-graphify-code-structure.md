@@ -25,11 +25,12 @@ Concretely:
 
 ### Evolution — 2026-09-12
 
-Three details above have moved. The decision — Graphify as an optional, gated, pinned structural layer — stands.
+Four details have moved, in the **Decision** bullets above and in **Consequences** below. The decision — Graphify as an optional, gated, pinned structural layer — stands.
 
-- **The pin is `0.9.41`, not `0.6.9`.** `knowledge/graphify.py:PINNED_VERSION` is the live value and `config.py` imports it as `GRAPHIFY_PIN` rather than restating it, so `[knowledge.structure].version` defaults to whatever the module declares.
+- **The pin is `0.9.41`, not `0.6.9`.** `knowledge/graphify.py:PINNED_VERSION` is the live value and `config.py` imports it as `GRAPHIFY_PIN` rather than restating it, so `[knowledge.structure].version` defaults to whatever the module declares. The `version = "0.6.9"` literal under **Consequences** below is the same stale value, kept as written and covered by this bullet.
 - **`auto_rebuild_on_commit` was removed, not wired.** The field never had a branch, and `_parse_structure` now drops it from configs that still carry it. The Fase 3 wiring it was reserved for never happened; scheduled rebuilds went to `lh knowledge graph update` over a `[knowledge.structure].repos` list instead.
 - **The MCP gate is `is_graphify_mcp_available()`, not `is_graphify_available()`.** Graphify shipped a CLI-only entry point before 0.9, so the MCP binary is probed separately — an install with the CLI alone keeps the skill surface and gets no MCP entry.
+- **The MCP command is `graphify-mcp`, not `graphify mcp`.** `mcp_server_config()` returns `{"command": "graphify-mcp", "args": []}` as of 2026-08-10 (PR #121). The **Alternatives** entry below weighed `graphify mcp` against `python -m graphify.serve` and reserved a config override for the case where "a future Graphify release breaks `graphify mcp`". That is what happened, in the mildest form: the release split the MCP server into its own console script, so the wrapper follows the new entry point directly and the override was never needed.
 
 ## Alternatives considered
 

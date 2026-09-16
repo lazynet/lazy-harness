@@ -105,6 +105,30 @@ when declared. Fixed alongside the default-set work.
 
 ## Evolution
 
+**2026-08-17 (PR #184): `DEFAULT_HOOKS` stopped being a literal.** The map named
+under **Decision** is now computed at import by `_derive_default_hooks()`
+(`deploy/defaults.py`), which walks `builtin_registry().capabilities(kind="hook")`,
+keeps each capability whose `enabled_by_default` is set, and reads the event from
+its `config_path`. [ADR-035](035-capability-registry.md) made the change so that a
+hook could no longer be registered and then forgotten in the defaults. The merge
+formula is untouched — only where its right-hand side comes from. The literal that
+the **Alternatives** section weighed against a TOML-embedded set is therefore gone
+as well; that rejection is kept as the record of what was decided, not as a
+description of the source today.
+
+**2026-08-18: the `post-compact` built-in was removed.** The adapter fix recorded
+under **Decision**, and the last entry under **Consequences**, are both kept as
+written and neither describes a hook that still exists.
+[ADR-036](036-compact-hooks-use-real-channels.md) deleted the module: Claude Code's
+`PostCompact` executor returns only a user-facing display message, so a hook on
+that event cannot reach the model at all — the event-map fix this ADR records
+wired up a hook whose output channel turned out to be a dead end.
+`sorted(_BUILTIN_HOOKS)` now returns eighteen names and none of them is
+`post-compact`. The `post_compact` → `PostCompact` mapping stays in
+`ClaudeCodeAdapter` deliberately, so an operator can still attach a hook of their
+own to the event; post-compaction continuity lives in `context-inject` on the
+`SessionStart` that follows.
+
 **2026-09-15 (0.67.0, PR #295): the effective set is no longer the merge.**
 The formula under **Decision** still describes the merge, but the merge is now
 the first of two stages, not the whole answer. `_hook_entries_for`
@@ -125,12 +149,25 @@ user who declares `stop-verify-guard` explicitly in
 supplies no `GOAL_STATUS`. "User declarations override per-event" now means
 they override the *defaults*, not the agent's capabilities.
 
-What keeps this from being a silent drop — the failure mode this ADR exists to
-prevent — is that the omission is printed, by name and with its reason:
+What keeps *this* narrowing from being a silent drop — the failure mode this ADR
+exists to prevent — is that the signal-gap omission is printed, by name and with
+its reason:
 
     · stop-verify-guard omitted in 'throwaway': agent 'codex' does not deliver goal_status
 
-That is the whole distinction from the 2026-04-17 incident. There the hooks
+That guarantee is scoped to this stage and does not cover the merge as a whole,
+which the sentence above was written as though it did. `merge_with_defaults` also
+drops the `_SYSTEM_DOC_HOOKS` entries when the agent has no file-based instruction
+document (`deploy/defaults.py`), and prints nothing at all:
+`merge_with_defaults({}, get_agent("null"))` gives
+`post_tool_use: ['post-tool-use-format']` against
+`['post-tool-use-format', 'post-tool-use-sync-claude']` for `claude-code`. That
+filter predates this section by months and has never been announced. It is a
+narrower hole than the 2026-04-17 one — it removes a hook the agent has no
+instruction file for, rather than one the user asked for — but it is the same
+shape, and closing it means printing the omission the way the gap stage does.
+
+Otherwise this is the whole distinction from the 2026-04-17 incident. There the hooks
 vanished from a deployed profile with no output at all; here the deploy names
 every hook it left out and why, on the run that leaves it out. The alternative
 was worse than either: `stop-verify-guard` deployed to an agent with no goal
