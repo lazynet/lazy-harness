@@ -156,6 +156,23 @@ def profile_name() -> str:
     Every profile records into a single metrics store, so a row that cannot
     name its profile cannot be told apart from another profile's after the
     fact. Degrades to '' on any failure — an unlabelled row beats a lost one.
+
+    Survives step 5 rather than being deleted with the builtins' other
+    pre-runner helpers. Step 5 of
+    `specs/designs/2026-09-13-multi-agent-harness-design.md` says "delete"; the
+    code says "remove from the builtins", and this is the difference. Four call
+    sites remain across three modules, none of them a builtin: one in
+    `cli/metrics_cmd.py`, two in `knowledge/compound_loop.py`, and one in
+    `hooks/runner.py:resolve_profile`.
+
+    That last is `resolve_profile`'s fallback, and it is live behaviour on the
+    ordinary path rather than compatibility for stale settings files. Both
+    entry points in `cli/hooks_cmd.py` declare `--profile` with `default=None`
+    and hand it straight through, so every flagless invocation lands here, and
+    `cli/doctor_cmd.py` calls `resolve_profile(None)` outright. Pinned by
+    `test_hook_invoke_falls_back_to_todays_profile_resolution`, which patches
+    this function and asserts `lh hook <name>` with no flag hands its answer to
+    the runner.
     """
     try:
         from lazy_harness.agents.registry import get_agent
