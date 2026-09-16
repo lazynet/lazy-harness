@@ -269,6 +269,20 @@ def _safe_search(pattern: str, text: str) -> bool:
         return False
 
 
+# `;`, `&&`, `||` and a newline chain independent commands; `|` does not, since
+# a pipe composes one command out of two, so it is deliberately left out. This
+# split is unquoted: a chain operator inside a quoted string or heredoc body
+# still splits here, which can over-segment. Rule anchoring (`_COMMAND_START`)
+# already tolerates that -- a mid-segment split lands the tail at what the
+# regex treats as a fresh line/command start -- so over-segmenting narrows the
+# allow_pattern rescue scope without changing which commands the rules match.
+_CHAIN_OPERATORS = re.compile(r"&&|\|\||;|\n")
+
+
+def _segments(command: str) -> list[str]:
+    return _CHAIN_OPERATORS.split(command)
+
+
 # Global git options this hook recognises between `git` and its subcommand.
 # Options that take a value are listed with the flag alone; both the `=`-joined
 # and space-separated spellings are matched. Anything not named here (e.g.
@@ -285,7 +299,7 @@ _GIT_GLOBAL_OPTION_AFTER_GIT = re.compile(
 )
 
 
-def _normalise_git_globals(command: str) -> str:
+def _normalise_git_globals(segment: str) -> str:
     """Collapse `git <global-opts> <subcommand>` to `git <subcommand>`.
 
     The git rules match `git\\s+<subcommand>` right after `git`; a global
@@ -294,7 +308,7 @@ def _normalise_git_globals(command: str) -> str:
     before `git` is never touched, so `_COMMAND_START`'s position check still
     applies to the same offset it would have without normalisation.
     """
-    normalised = command
+    normalised = segment
     while True:
         rewritten = _GIT_GLOBAL_OPTION_AFTER_GIT.sub("git", normalised, count=1)
         if rewritten == normalised:
@@ -303,21 +317,27 @@ def _normalise_git_globals(command: str) -> str:
 
 
 def should_block(command: str, allow_patterns: list[str]) -> BlockDecision | None:
-    """Return BlockDecision if command matches a rule and no allow_pattern rescues it.
+    """Return BlockDecision if a shell segment matches a rule and is not rescued.
 
-    First match wins; later rules are not evaluated even if more specific. Git
-    rules match against a normalised copy of `command` (see
+    Evaluated per segment (split on `;`, `&&`, `||`, newline -- see
+    `_segments`): an allow_pattern rescues a match only if it also matches
+    within that match's own segment, so a pattern meant for one operation
+    cannot rescue a different, destructive one chained after it. Within a
+    segment, first rule match wins; later rules are not evaluated even if more
+    specific. Segments are checked in order and the first unrescued block
+    returns. Git rules match against a normalised copy of the segment (see
     `_normalise_git_globals`) so a global option before the subcommand cannot
-    make them abstain; every other category matches the command as given.
+    make them abstain; every other category matches the segment as given.
     """
-    for rule in BLOCK_RULES:
-        subject = _normalise_git_globals(command) if rule.category == "git" else command
-        match = rule.pattern.search(subject)
-        if match is None:
-            continue
-        if any(_safe_search(ap, command) for ap in allow_patterns):
-            return None
-        return BlockDecision(rule=rule, matched_text=match.group(0))
+    for segment in _segments(command):
+        for rule in BLOCK_RULES:
+            subject = _normalise_git_globals(segment) if rule.category == "git" else segment
+            match = rule.pattern.search(subject)
+            if match is None:
+                continue
+            if any(_safe_search(ap, segment) for ap in allow_patterns):
+                break
+            return BlockDecision(rule=rule, matched_text=match.group(0))
     return None
 
 

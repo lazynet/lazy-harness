@@ -187,6 +187,45 @@ def test_should_block_allowlist_rescues_match() -> None:
     assert should_block("rm -rf .worktrees/foo", allow_patterns=[r"\.worktrees/"]) is None
 
 
+# An allow_pattern written to rescue one legitimate operation must not rescue a
+# different, destructive one chained onto it. Format: (chained_command, label)
+CHAINED_RESCUE_CASES: list[tuple[str, str]] = [
+    ("rm -rf /tmp/foo && git push --force origin main", "&& operator"),
+    ("rm -rf /tmp/foo; git push --force origin main", "; operator"),
+    ("rm -rf /tmp/foo || git push --force origin main", "|| operator"),
+    ("rm -rf /tmp/foo\ngit push --force origin main", "newline"),
+]
+
+
+@pytest.mark.parametrize(
+    "chained_command,label", CHAINED_RESCUE_CASES, ids=[c[1] for c in CHAINED_RESCUE_CASES]
+)
+def test_should_block_allow_pattern_does_not_rescue_a_chained_segment(
+    chained_command: str, label: str
+) -> None:
+    from lazy_harness.hooks.builtins.pre_tool_use_security import should_block
+
+    decision = should_block(chained_command, allow_patterns=[r"git push"])
+    assert decision is not None, f"allow_pattern rescued the wrong segment for {label}"
+    assert decision.rule.category == "filesystem"
+
+
+def test_should_block_allow_pattern_rescues_only_the_segment_it_matches() -> None:
+    """A pattern legitimately meant for one segment still works within it."""
+    from lazy_harness.hooks.builtins.pre_tool_use_security import should_block
+
+    assert should_block("rm -rf .worktrees/foo && ls -la", allow_patterns=[r"\.worktrees/"]) is None
+
+
+def test_should_block_allow_pattern_still_spans_a_pipe() -> None:
+    """A pipe composes one command; it is not a chaining operator to split on."""
+    from lazy_harness.hooks.builtins.pre_tool_use_security import should_block
+
+    assert (
+        should_block("echo .worktrees/foo | xargs rm -rf", allow_patterns=[r"\.worktrees/"]) is None
+    )
+
+
 def test_should_block_invalid_allow_pattern_is_ignored() -> None:
     from lazy_harness.hooks.builtins.pre_tool_use_security import should_block
 
