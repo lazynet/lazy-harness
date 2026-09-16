@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PostToolUse\", \"additionalContext\": \"ansible-lint on site.yml:\\nWARNING  Listing 1 violation(s) that are fatal\\nload-failure: couldnt parse\"}}\n"
+}

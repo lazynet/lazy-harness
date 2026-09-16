@@ -468,7 +468,7 @@ Inventario por **mecanismo**, no por grafía: diez builtins escriben `hooks.log`
 | `pre-tool-use-memory-size` | `:170` | literal |
 | `pre-tool-use-read-size` | `:69` | literal |
 | `post-tool-use-format` | `:67` | literal |
-| `post-tool-use-ansible-lint` | `:140` | literal |
+| ~~`post-tool-use-ansible-lint`~~ | cerrado — ver la actualización debajo de la tabla | — |
 
 **Actualización 2026-09-15 — quedan siete.** `compound-loop` sale del inventario con su migración (task 6 del step 5): `main(event)` resuelve `agent_dir_for(cfg, event.profile)` y carga config **antes** de la primera línea de log, así que las dos grafías desaparecen juntas. Cubierto por `tests/integration/test_hook_log_profile_isolation.py`, que afirma presencia en el dir del profile y **ausencia** fuera de él. La medición de 0.67.1 que sigue más abajo no se re-corrió: es el registro de lo que se midió entonces, no un conteo vivo.
 
@@ -481,6 +481,8 @@ Medido por el gate de aislamiento el 2026-09-15 contra 0.67.1: **siete** de los 
 **Actualización 2026-09-15 — `pre-compact` también sale del inventario** (task 8 del step 5). `main(event)` resuelve `agent_dir_for(cfg, event.profile)` y carga config antes de la primera línea de log, así que la grafía `cfg.agent.type if cfg is not None else "claude-code"` desaparece con las dos escrituras que dependían de ella. **Y el gate ahora sí lo invoca**: el párrafo de arriba decía que no, y era cierto hasta este commit — `tests/integration/test_hook_log_profile_isolation.py` ya tiene sus dos casos, presencia en el dir del profile y ausencia fuera. El conteo de 0.67.1 sigue siendo el registro de lo que se midió entonces.
 
 Lo que cerró junto con esto, y no estaba en este inventario: `pre-compact` escribía `pre-compact-summary.md` en el dir global mientras `context-inject` —migrado en el #300— lo leía en el del profile. Los dos procesos salían 0. Cubierto ahora por `tests/integration/test_pre_compact_context_inject_pair.py`, que invoca los dos lados.
+
+**Actualización 2026-09-15 — `post-tool-use-ansible-lint` también sale** (task 15 del step 5). `_write_hook_log` ahora carga config y resuelve `agent_dir_for(cfg, profile)` con el profile que el hook recibió, y `main(event)` se lo pasa. Medido contra la grafía vieja: bajo `--profile gate` la línea caía en `~/.claude/logs/hooks.log`. El gate de `specs/gates/f7` lo mueve solo de `KNOWN_GAP_HOOKS` a `ASSERTED_HOOKS` — deriva las dos listas de `builtin_migrated()`, no de una lista escrita a mano — y ya tenía su fixture de playbook. Cubierto además por los dos casos nuevos en `tests/integration/test_hook_log_profile_isolation.py`, presencia y ausencia, con `PATH` vaciado para que la rama binary-missing sea determinista en cualquier máquina.
 
 **Por qué no se arregló con los otros dos.** El dato existe y muere en el dispatch: `deploy/engine.py:136` emite `{binary} hook {name} --profile {profile}` para *todos* los builtins, pero `cli/hooks_cmd.py` llama `main_fn()` **sin argumentos** en la rama no-migrada. Ninguno de los ocho tiene `event` ni profile en scope — `pre-compact` incluido, que es unmigrated igual que los otros siete. Plumbearlo obliga a tocar esa rama transitoria, que el step 5 borra junto con `BuiltinHookSpec.migrated`.
 

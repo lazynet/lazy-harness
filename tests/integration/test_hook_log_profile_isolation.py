@@ -688,3 +688,73 @@ def test_sync_claude_writes_nothing_outside_the_profiles_tree_it_was_pointed_at(
         _files_under(gate) if gate.exists() else set(),
         _files_under(other) if other.exists() else set(),
     ) == before
+
+
+@pytest.fixture
+def ansible_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """An Ansible repo whose YAML edit reaches the log-writing branch.
+
+    `post-tool-use-ansible-lint` only touches `hooks.log` when the linter
+    cannot speak: a missing or unrunnable binary, a timeout, or a non-zero exit
+    with no output. So `PATH` is emptied rather than left ambient — that makes
+    `ansible-lint` absent by construction on every machine, which is both the
+    deterministic input and the honest one. Leaving the real `PATH` would make
+    this gate depend on whether the developer happens to have ansible-lint
+    installed, and pass vacuously on the machines that do.
+    """
+    empty_bin = tmp_path / "empty-bin"
+    empty_bin.mkdir()
+    monkeypatch.setenv("PATH", str(empty_bin))
+    repo = tmp_path / "ansible"
+    repo.mkdir()
+    (repo / "ansible.cfg").write_text("[defaults]\n")
+    (repo / "site.yaml").write_text("- hosts: all\n")
+    return repo
+
+
+def _ansible_lint_payload(repo: Path) -> dict[str, object]:
+    return {
+        "hook_event_name": "PostToolUse",
+        "session_id": "isolation-test",
+        "cwd": str(repo),
+        "tool_name": "Edit",
+        "tool_input": {"file_path": str(repo / "site.yaml")},
+    }
+
+
+def test_ansible_lint_logs_into_the_invoked_profile(
+    harness_config: Path, ansible_repo: Path
+) -> None:
+    """`_write_hook_log` resolved `get_agent("claude-code")` and no profile.
+
+    This hook is a PostToolUse one, so it was never in the step-4 leak counts —
+    those were taken over the session-lifecycle hooks. The mechanism is the same
+    one: `agent_runtime_dir(agent)` with no `profile_config_dir`, which under
+    `--profile gate` writes wherever the *global* agent points.
+    """
+    exit_code = _run_hook("post-tool-use-ansible-lint", "gate", _ansible_lint_payload(ansible_repo))
+
+    assert exit_code == 0
+    log = (harness_config / "logs" / "hooks.log").read_text()
+    assert "post-tool-use-ansible-lint" in log
+    assert "ansible-lint unavailable (FileNotFoundError)" in log
+
+
+def test_ansible_lint_writes_nothing_outside_the_invoked_profile(
+    harness_config: Path, ansible_repo: Path, home_dir: Path, tmp_path: Path
+) -> None:
+    """The half that fails before the migration: `~/.claude` took the line.
+
+    Presence alone passes either way — that directory is one the hook is
+    entitled to create, so the leak looks exactly like a first run.
+    """
+    other = tmp_path / "other-home"
+    before_home = _files_under(home_dir)
+    before_other = _files_under(other) if other.exists() else set()
+
+    exit_code = _run_hook("post-tool-use-ansible-lint", "gate", _ansible_lint_payload(ansible_repo))
+
+    assert exit_code == 0
+    assert "ansible-lint unavailable" in (harness_config / "logs" / "hooks.log").read_text()
+    assert _files_under(home_dir) == before_home
+    assert (_files_under(other) if other.exists() else set()) == before_other

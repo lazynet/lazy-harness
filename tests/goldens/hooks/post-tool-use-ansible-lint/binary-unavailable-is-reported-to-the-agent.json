@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PostToolUse\", \"additionalContext\": \"ansible-lint is unavailable (FileNotFoundError); site.yaml was left unchecked.\"}}\n"
+}

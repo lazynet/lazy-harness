@@ -429,11 +429,13 @@ a manual run from that root would.
 Findings are returned to the agent as additional context rather than written to a log, so
 a lint failure is visible in the session that caused it. Clean runs emit nothing.
 
-The hook is fail-soft: a missing or non-executable `ansible-lint` binary, a timeout, or
-malformed input all exit 0 and leave the file unchecked. When the binary is unavailable,
-that fact is surfaced to the agent as additional context — not just logged — because a
-hook whose entire premise is "the model shouldn't have to remember to lint" must not
-report its own absence somewhere the model won't see. A note is also written to
+The hook is fail-soft: a missing or non-executable `ansible-lint` binary and a timeout both
+exit 0 and leave the file unchecked. Malformed input never reaches the hook at all — the
+runner refuses a payload it cannot parse, still exiting 0 because this hook does not block,
+but naming the refusal on stderr instead of running the checks against nothing. When the
+binary is unavailable, that fact is surfaced to the agent as additional context — not just
+logged — because a hook whose entire premise is "the model shouldn't have to remember to
+lint" must not report its own absence somewhere the model won't see. A note is also written to
 `logs/hooks.log` for every unavailable run, so the rate of skipped lints is measurable
 over time.
 
@@ -809,6 +811,6 @@ Most built-in hooks append a line to `logs/hooks.log` with their name, the cwd, 
 
 Neither file sits at a fixed path. Both live in the agent runtime directory, which resolves in this order: the agent's own environment variable (`CLAUDE_CONFIG_DIR` and its equivalents), then the profile's `config_dir`, then the agent's global link (`~/.claude`), then `~/.<agent>`. On a single-profile Claude Code install that lands in `~/.claude/logs/`; with profiles declared, the launcher exports the environment variable, so it lands in the profile's own directory — see [profiles and deploy](profiles-and-deploy.md).
 
-The second step, the profile's `config_dir`, is what a hook falls back on when the environment variable is absent, and seven hooks read it today: `context-inject`, `session-export`, `session-end`, `compound-loop`, `pre-compact`, `post-tool-use-format` and the block log of `pre-tool-use-security` resolve the directory from the profile they were invoked with — and so does the compound-loop worker, which inherits the profile the producer spawns it with. The other three that write this file — `pre-tool-use-memory-size`, `pre-tool-use-read-size`, `post-tool-use-ansible-lint` — resolve it globally instead, so on a profile whose agent differs from the global `[agent].type` they write under the wrong agent. That is open work, tracked in the backlog against the hook migration.
+The second step, the profile's `config_dir`, is what a hook falls back on when the environment variable is absent, and eight hooks read it today: `context-inject`, `session-export`, `session-end`, `compound-loop`, `pre-compact`, `post-tool-use-format`, `post-tool-use-ansible-lint` and the block log of `pre-tool-use-security` resolve the directory from the profile they were invoked with — and so does the compound-loop worker, which inherits the profile the producer spawns it with. The other two that write this file — `pre-tool-use-memory-size`, `pre-tool-use-read-size` — resolve it globally instead, so on a profile whose agent differs from the global `[agent].type` they write under the wrong agent. That is open work, tracked in the backlog against the hook migration.
 
 `lh status hooks` surfaces a summary view over `hooks.log` so you do not have to tail it by hand.
