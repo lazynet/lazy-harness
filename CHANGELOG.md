@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.67.3](https://github.com/lazynet/lazy-harness/compare/v0.67.2...v0.67.3) (2026-09-16)
+
+
+### Bug Fixes
+
+* match security denylist rules in command position only ([#335](https://github.com/lazynet/lazy-harness/issues/335)) ([e1085e9](https://github.com/lazynet/lazy-harness/commit/e1085e96897ee8f0691f7dff5c1d168e96233692))
+* resolve the F7 gate binary to an absolute path before its children look it up ([cd8caa7](https://github.com/lazynet/lazy-harness/commit/cd8caa7a2eee8bd80a82a852323d5120cee0f286))
+
+
+### Documentation
+
+* reconcile nine drifted claims across five accepted ADRs ([#334](https://github.com/lazynet/lazy-harness/issues/334)) ([1da448b](https://github.com/lazynet/lazy-harness/commit/1da448b0f80d93d1fd93f99bd289080cd94faabd))
+* record the resolve_binary recursion guard as an ordering, not a filter ([#333](https://github.com/lazynet/lazy-harness/issues/333)) ([61f3c53](https://github.com/lazynet/lazy-harness/commit/61f3c533452259de2046b58d3791b8f8127c0e87))
+* **roadmap:** correct the F7 asserted count the migration moved ([4bc4744](https://github.com/lazynet/lazy-harness/commit/4bc47449ddb521689e37404519dc6a12de0c2839))
+
 ## [0.67.2](https://github.com/lazynet/lazy-harness/compare/v0.67.1...v0.67.2) (2026-09-16)
 
 
