@@ -133,10 +133,149 @@ def test_should_block_matrix(command: str, expected_category: str | None, label:
         assert decision.rule.category == expected_category
 
 
+# A git global option between `git` and its subcommand must not make the rule
+# abstain. Format: (command, expected_category_or_None, label)
+GIT_GLOBAL_OPTION_CASES: list[tuple[str, str | None, str]] = [
+    ("git -C /tmp/repo push --force origin main", "git", "force push after -C"),
+    ("git -c user.name=x push --force origin main", "git", "force push after -c"),
+    (
+        "git --git-dir=/tmp/repo/.git reset --hard HEAD~1",
+        "git",
+        "hard reset after --git-dir=",
+    ),
+    (
+        "git --work-tree=/tmp --git-dir=/tmp/.git reset --hard",
+        "git",
+        "hard reset after stacked --work-tree= and --git-dir=",
+    ),
+    ("git --no-pager push --force origin main", "git", "force push after --no-pager"),
+    (
+        "git -C /tmp -c user.email=a@b push --force origin main",
+        "git",
+        "force push after stacked -C and -c",
+    ),
+    (
+        "git -C /tmp/repo push --force-with-lease origin main",
+        None,
+        "lease still safe after -C",
+    ),
+    ("git -C /tmp/repo status", None, "uncovered subcommand after -C"),
+]
+
+
+@pytest.mark.parametrize(
+    "command,expected_category,label",
+    GIT_GLOBAL_OPTION_CASES,
+    ids=[c[2] for c in GIT_GLOBAL_OPTION_CASES],
+)
+def test_should_block_git_rules_survive_global_options(
+    command: str, expected_category: str | None, label: str
+) -> None:
+    from lazy_harness.hooks.builtins.pre_tool_use_security import should_block
+
+    decision = should_block(command, allow_patterns=[])
+    if expected_category is None:
+        assert decision is None, f"expected allow for {label}: {command!r}"
+    else:
+        assert decision is not None, f"expected block for {label}: {command!r}"
+        assert decision.rule.category == expected_category
+
+
 def test_should_block_allowlist_rescues_match() -> None:
     from lazy_harness.hooks.builtins.pre_tool_use_security import should_block
 
     assert should_block("rm -rf .worktrees/foo", allow_patterns=[r"\.worktrees/"]) is None
+
+
+# An allow_pattern written to rescue one legitimate operation must not rescue a
+# different, destructive one chained onto it. Format: (chained_command, label)
+CHAINED_RESCUE_CASES: list[tuple[str, str]] = [
+    ("rm -rf /tmp/foo && git push --force origin main", "&& operator"),
+    ("rm -rf /tmp/foo; git push --force origin main", "; operator"),
+    ("rm -rf /tmp/foo || git push --force origin main", "|| operator"),
+    ("rm -rf /tmp/foo\ngit push --force origin main", "newline"),
+    ("rm -rf /tmp/foo & git push --force origin main", "& operator"),
+    (
+        "rm -rf /tmp/foo 2>&1 & git push --force origin main",
+        "& operator after a redirection",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "chained_command,label", CHAINED_RESCUE_CASES, ids=[c[1] for c in CHAINED_RESCUE_CASES]
+)
+def test_should_block_allow_pattern_does_not_rescue_a_chained_segment(
+    chained_command: str, label: str
+) -> None:
+    from lazy_harness.hooks.builtins.pre_tool_use_security import should_block
+
+    decision = should_block(chained_command, allow_patterns=[r"git push"])
+    assert decision is not None, f"allow_pattern rescued the wrong segment for {label}"
+    assert decision.rule.category == "filesystem"
+
+
+def test_should_block_allow_pattern_rescues_only_the_segment_it_matches() -> None:
+    """A pattern legitimately meant for one segment still works within it."""
+    from lazy_harness.hooks.builtins.pre_tool_use_security import should_block
+
+    assert should_block("rm -rf .worktrees/foo && ls -la", allow_patterns=[r"\.worktrees/"]) is None
+
+
+def test_should_block_allow_pattern_still_spans_a_pipe() -> None:
+    """A pipe composes one command; it is not a chaining operator to split on."""
+    from lazy_harness.hooks.builtins.pre_tool_use_security import should_block
+
+    assert (
+        should_block("echo .worktrees/foo | xargs rm -rf", allow_patterns=[r"\.worktrees/"]) is None
+    )
+
+
+def test_should_block_allow_pattern_rescues_only_its_segment_across_bare_ampersand() -> None:
+    """A pattern legitimately meant for one segment still works when the chain is `&`."""
+    from lazy_harness.hooks.builtins.pre_tool_use_security import should_block
+
+    assert should_block("rm -rf .worktrees/foo & ls -la", allow_patterns=[r"\.worktrees/"]) is None
+
+
+@pytest.mark.parametrize(
+    "redirection_command",
+    [
+        "rm -rf /tmp/foo 2>&1",
+        "rm -rf /tmp/foo >&2",
+        "rm -rf /tmp/foo &>/tmp/log",
+        "rm -rf /tmp/foo <&3",
+    ],
+    ids=["stderr-to-stdout", "stdout-to-fd2", "combined-redirect", "dup-input-fd"],
+)
+def test_should_block_redirection_ampersand_does_not_split_a_matched_segment(
+    redirection_command: str,
+) -> None:
+    """`&` used for redirection is not a chain operator: the rule still matches whole."""
+    from lazy_harness.hooks.builtins.pre_tool_use_security import should_block
+
+    decision = should_block(redirection_command, allow_patterns=[])
+    assert decision is not None
+    assert decision.rule.category == "filesystem"
+
+
+@pytest.mark.parametrize(
+    "redirection_command",
+    [
+        "rm -rf .worktrees/foo 2>&1",
+        "rm -rf .worktrees/foo >&2",
+        "rm -rf .worktrees/foo &>/tmp/log",
+        "rm -rf .worktrees/foo <&3",
+    ],
+    ids=["stderr-to-stdout", "stdout-to-fd2", "combined-redirect", "dup-input-fd"],
+)
+def test_should_block_redirection_ampersand_still_rescued_by_allow_pattern(
+    redirection_command: str,
+) -> None:
+    """The allow_pattern still sees the whole segment: redirection did not fracture it."""
+    from lazy_harness.hooks.builtins.pre_tool_use_security import should_block
+
+    assert should_block(redirection_command, allow_patterns=[r"\.worktrees/"]) is None
 
 
 def test_should_block_invalid_allow_pattern_is_ignored() -> None:

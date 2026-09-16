@@ -269,18 +269,78 @@ def _safe_search(pattern: str, text: str) -> bool:
         return False
 
 
-def should_block(command: str, allow_patterns: list[str]) -> BlockDecision | None:
-    """Return BlockDecision if command matches a rule and no allow_pattern rescues it.
+# `;`, `&&`, `||`, a bare `&` (background) and a newline chain independent
+# commands; `|` does not, since a pipe composes one command out of two, so it
+# is deliberately left out. This split is unquoted: a chain operator inside a
+# quoted string or heredoc body still splits here, which can over-segment.
+# Rule anchoring (`_COMMAND_START`) already tolerates that -- a mid-segment
+# split lands the tail at what the regex treats as a fresh line/command start
+# -- so over-segmenting narrows the allow_pattern rescue scope without
+# changing which commands the rules match. A redirection spelling (`2>&1`,
+# `>&2`, `&>file`, `<&3`) is excluded by the lookaround rather than relied on
+# for that tolerance, since its `&` never starts a new command.
+_CHAIN_OPERATORS = re.compile(r"&&|\|\||;|\n|(?<![<>])&(?![&>])")
 
-    First match wins; later rules are not evaluated even if more specific.
+
+def _segments(command: str) -> list[str]:
+    return _CHAIN_OPERATORS.split(command)
+
+
+# Global git options this hook recognises between `git` and its subcommand.
+# Options that take a value are listed with the flag alone; both the `=`-joined
+# and space-separated spellings are matched. Anything not named here (e.g.
+# `--namespace=`, `--exec-path`) still makes the git rules abstain, same as
+# before this normalisation existed.
+_GIT_GLOBAL_OPTIONS_WITH_ARG = ("-C", "-c", "--git-dir", "--work-tree")
+_GIT_GLOBAL_OPTIONS_BARE = ("--no-pager",)
+_GIT_GLOBAL_OPTION_AFTER_GIT = re.compile(
+    r"\bgit\s+(?:"
+    + "|".join(re.escape(opt) + r"(?:=\S+|\s+\S+)" for opt in _GIT_GLOBAL_OPTIONS_WITH_ARG)
+    + "|"
+    + "|".join(re.escape(opt) for opt in _GIT_GLOBAL_OPTIONS_BARE)
+    + r")"
+)
+
+
+def _normalise_git_globals(segment: str) -> str:
+    """Collapse `git <global-opts> <subcommand>` to `git <subcommand>`.
+
+    The git rules match `git\\s+<subcommand>` right after `git`; a global
+    option in between (`-C <path>`, `-c k=v`, `--git-dir=...`) otherwise makes
+    them abstain. Repeated substitution handles several stacked options. Text
+    before `git` is never touched, so `_COMMAND_START`'s position check still
+    applies to the same offset it would have without normalisation.
     """
-    for rule in BLOCK_RULES:
-        match = rule.pattern.search(command)
-        if match is None:
-            continue
-        if any(_safe_search(ap, command) for ap in allow_patterns):
-            return None
-        return BlockDecision(rule=rule, matched_text=match.group(0))
+    normalised = segment
+    while True:
+        rewritten = _GIT_GLOBAL_OPTION_AFTER_GIT.sub("git", normalised, count=1)
+        if rewritten == normalised:
+            return normalised
+        normalised = rewritten
+
+
+def should_block(command: str, allow_patterns: list[str]) -> BlockDecision | None:
+    """Return BlockDecision if a shell segment matches a rule and is not rescued.
+
+    Evaluated per segment (split on `;`, `&&`, `||`, bare `&`, newline -- see
+    `_segments`): an allow_pattern rescues a match only if it also matches
+    within that match's own segment, so a pattern meant for one operation
+    cannot rescue a different, destructive one chained after it. Within a
+    segment, first rule match wins; later rules are not evaluated even if more
+    specific. Segments are checked in order and the first unrescued block
+    returns. Git rules match against a normalised copy of the segment (see
+    `_normalise_git_globals`) so a global option before the subcommand cannot
+    make them abstain; every other category matches the segment as given.
+    """
+    for segment in _segments(command):
+        for rule in BLOCK_RULES:
+            subject = _normalise_git_globals(segment) if rule.category == "git" else segment
+            match = rule.pattern.search(subject)
+            if match is None:
+                continue
+            if any(_safe_search(ap, segment) for ap in allow_patterns):
+                break
+            return BlockDecision(rule=rule, matched_text=match.group(0))
     return None
 
 
