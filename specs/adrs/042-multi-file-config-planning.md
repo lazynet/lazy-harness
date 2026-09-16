@@ -181,6 +181,17 @@ own deserialiser is built on — over the bytes the adapter produced, and over t
 successive plans rather than one, because a merge can be correct reading a
 hand-written file and lossy reading its own output.
 
+One assertion in the existing suite turned out to be a fact about the developer's
+`PATH` rather than about the code. `test_an_overridden_agent_keeps_snapshot_and_deploy_in_agreement`
+carved `.claude.json` out of its reverse direction in prose, on the stated
+grounds that the Codex profile had no MCP-dependent target of its own. Widening
+`config_targets()` gave it one, and the test passed locally — where `qmd` is
+installed, so the deploy did write `config.toml` — and failed on all four CI
+runners, where it does not. The probe is now pinned by a fixture, which makes
+the assertion mean the same thing everywhere instead of describing where it does
+not hold. The fix was verified in both directions: with every real probe forced
+to answer no, the test fails without the fixture and passes with it.
+
 Each guard was verified by removing it by hand and watching the named test fail:
 the unlink, the `artifact is None` condition, each half of the stat pair, and
 the widened `config_targets()`. All four were restored by hand rather than from

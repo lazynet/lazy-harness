@@ -237,6 +237,23 @@ def test_two_deploys_in_the_same_second_keep_separate_snapshots(home_dir: Path) 
 
 
 @pytest.fixture
+def detected_servers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin MCP discovery, which otherwise probes the machine running the test.
+
+    Both adapters plan their MCP document only when a server is detected, so
+    leaving the probe live makes "did the deploy write this target" a fact about
+    the developer's `PATH`. Pinned to one server rather than none, because the
+    interesting direction is the target being written: a blanked probe would
+    make every MCP assertion vacuously true.
+    """
+    from lazy_harness.deploy import engine
+
+    monkeypatch.setattr(
+        engine, "_collect_mcp_servers", lambda cfg: {"qmd": {"command": "qmd", "args": ["mcp"]}}
+    )
+
+
+@pytest.fixture
 def mixed_agents(home_dir: Path) -> Config:
     """The default profile overrides the agent; the second inherits the global.
 
@@ -302,7 +319,7 @@ def test_the_global_link_follows_the_default_profiles_agent(
 
 
 def test_an_overridden_agent_keeps_snapshot_and_deploy_in_agreement(
-    home_dir: Path, mixed_agents: Config
+    home_dir: Path, mixed_agents: Config, detected_servers: None
 ) -> None:
     """Both readers invoked for real, under the override, and compared.
 
@@ -310,13 +327,20 @@ def test_an_overridden_agent_keeps_snapshot_and_deploy_in_agreement(
     with and without per-profile resolution. This one does not.
 
     The reverse direction is asserted over the overriding profile's directory
-    alone. Elsewhere a target may be legitimately absent — the manifest records
-    `kind: "absent"` precisely so a rollback deletes what a first deploy created
-    — and whether `.claude.json` is written at all depends on which MCP binaries
-    the machine has, which would make the assertion pass on a developer's laptop
-    and fail on a runner. Under the override there is no such slack: the Codex
-    profile's hooks document is written on every deploy, and anything else the
-    snapshot claims for that directory came from the wrong adapter.
+    alone: elsewhere a target may be legitimately absent, and the manifest
+    records `kind: "absent"` precisely so a rollback deletes what a first deploy
+    created.
+
+    `detected_servers` is what makes that assertion mean the same thing on every
+    machine. Both adapters plan their MCP document only when a server is
+    detected, so on a developer's laptop with `qmd` installed the deploy writes
+    it and on a bare runner it does not — and a target claimed but unwritten is
+    indistinguishable from a target claimed by the wrong adapter, which is the
+    defect this test exists to catch. An earlier revision carved out
+    `.claude.json` in prose and relied on the Codex profile having no
+    MCP-dependent target of its own; it acquired one, and the carve-out failed
+    on CI while passing locally. Pinning the probe removes the divergence
+    instead of describing it.
     """
     overridden = home_dir / ".claude-lazy"
     before = _artifacts(home_dir)
