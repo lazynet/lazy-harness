@@ -156,6 +156,48 @@ def test_paths_spans_reads_and_edits() -> None:
     assert call.paths == (Path("a.py"), Path("b.py"), Path("c.py"))
 
 
+def test_paths_spans_the_deletes_too() -> None:
+    """ADR-046 D2. `deletes` lives beside `edits` rather than inside it, so the
+    union is the only place the two meet — and `pre_tool_use_security` gates on
+    the union. A `paths` that stopped at the edits would let a patch delete a
+    file the guard exists to protect."""
+    from lazy_harness.agents.base import FileEdit, Operation, ToolCall
+
+    call = ToolCall(
+        native_name="apply_patch",
+        operation=Operation.MODIFY_FILE,
+        reads=(Path("a.py"),),
+        edits=(FileEdit(path=Path("b.py")),),
+        deletes=(Path("c.py"),),
+    )
+    assert call.paths == (Path("a.py"), Path("b.py"), Path("c.py"))
+
+
+def test_a_deleted_path_is_not_an_edit() -> None:
+    """ADR-046 D1, the must-fail half. Three builtins iterate `tool.edits` and
+    run a subprocess or a size projection over every path they find. A delete
+    that leaked into that collection would format, lint or measure a file the
+    tool just removed, and every one of those failures is silent."""
+    from lazy_harness.agents.base import Operation, ToolCall
+
+    call = ToolCall(
+        native_name="apply_patch",
+        operation=Operation.MODIFY_FILE,
+        deletes=(Path("gone.txt"),),
+    )
+    assert call.edits == ()
+    assert call.deletes == (Path("gone.txt"),)
+
+
+def test_a_tool_call_deletes_nothing_by_default() -> None:
+    """Claude Code never sets the field — its removals go through `Bash`, which
+    carries no path to extract. The default is what keeps every pre-ADR-046
+    constructor correct rather than merely compiling."""
+    from lazy_harness.agents.base import ToolCall
+
+    assert ToolCall(native_name="Edit", operation=None).deletes == ()
+
+
 def test_a_tool_call_no_builtin_reasons_about_has_no_operation() -> None:
     from lazy_harness.agents.base import ToolCall
 

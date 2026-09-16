@@ -196,3 +196,13 @@ the reason is now the right one.
 Decision and Consequences are left as written; they described the evidence
 as it stood on 2026-09-16 before these four probes, and the corrections
 above are additive.
+
+**2026-09-16 — [ADR-046](./046-delete-is-not-an-edit.md) settled the delete
+this ADR left open.** The widening is not a widening of `FileEdit`: a delete
+becomes `ToolCall.deletes: tuple[Path, ...]`, beside `edits` rather than inside
+it, so the three builtins that would run a formatter, a linter or a size
+projection over a removed path cannot reach one by forgetting a check.
+`post-tool-use-sync-claude` is the single reader that opts in. This ADR's
+Consequences sentence — widening `FileEdit` "is not taken here" — stands as
+written: the type was not widened, and `_parse_patch` stopped dropping the
+section.

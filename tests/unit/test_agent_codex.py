@@ -648,10 +648,11 @@ def test_one_plan_retires_hooks_json_while_writing_config_toml() -> None:
 #
 # Every blob below is Codex's own, copied from
 # `specs/designs/codex-evidence.md` §1 (:335) — a single-file `*** Update
-# File:` section under `tool_input.command`, the *same* key `Bash` uses. The
-# multi-file, `*** Add File:` and `*** Delete File:` shapes are the format's,
-# never observed from the binary (evidence §2, "untested for `apply_patch`"),
-# and the tests over them say so where they assert.
+# File:` section under `tool_input.command`, the *same* key `Bash` uses. Probes
+# 5 and 6 closed two of the three shapes this header used to call unobserved:
+# multi-file is one blob with several sections, and a delete is the literal
+# `*** Delete File:` header with no diff body. `*** Add File:` is still the
+# format's alone, and the test over it says so where it asserts.
 
 _APPLY_PATCH_BLOB = (
     "*** Begin Patch\n"
@@ -779,17 +780,79 @@ def test_an_add_file_section_is_a_create_carrying_its_whole_content() -> None:
     assert tool.edits[0].content == "one\ntwo\n"
 
 
-def test_a_delete_section_yields_no_edit_because_file_edit_cannot_say_delete() -> None:
-    """The deliberate gap, not an oversight. `FileEdit` has `is_create` and no
-    counterpart, so a delete emitted as an edit would tell every reader the path
-    is still there: `post_tool_use_format.py:37` would format a file that is
-    gone. Widening `FileEdit` on a section shape no probe has seen would be the
-    guess this adapter exists to refuse — the header names it as a follow-up."""
+def test_a_delete_section_becomes_a_delete_and_not_an_edit() -> None:
+    """Probe 6's measured shape: one section, the literal `*** Delete File:`
+    header, **no diff body** under it. The file was removed from disk.
+
+    Both halves are asserted because only the pair carries the decision.
+    `deletes` says the adapter stopped dropping the section, which it did until
+    ADR-046; `edits == ()` says it did not solve that by making a delete look
+    like an edit, which is the shape `post_tool_use_format.py:41` would run
+    `ruff format` over a file that is gone for."""
     blob = "*** Begin Patch\n*** Delete File: /w/gone.txt\n*** End Patch"
     tool = _tool_for(blob)
     assert tool is not None
     assert tool.operation is Operation.MODIFY_FILE
     assert tool.edits == ()
+    assert tool.deletes == (Path("/w/gone.txt"),)
+
+
+def test_a_deleted_path_is_still_a_path_the_call_touches() -> None:
+    """ADR-046 D2. `pre_tool_use_security` gates `tool.paths`, and deleting a
+    protected file is worse than editing it — a delete absent from the union
+    would be a guard that watches the edit and waves the removal through."""
+    tool = _tool_for("*** Begin Patch\n*** Delete File: /w/gone.txt\n*** End Patch")
+    assert tool is not None
+    assert tool.paths == (Path("/w/gone.txt"),)
+
+
+def test_a_mixed_blob_keeps_its_updates_and_its_deletes_apart_in_order() -> None:
+    """Probe 5 measured a multi-section blob arriving as one call, so the mixed
+    shape is the format's *and* the binary's. The two collections are separate
+    and each keeps its own section order; the interleaving between them is not
+    preserved and nothing reads it — `apply_patch` applies every section in one
+    call, so which file came first carries no semantics."""
+    blob = (
+        "*** Begin Patch\n"
+        "*** Update File: /w/first.py\n"
+        "@@\n"
+        "-a\n"
+        "+b\n"
+        "*** Delete File: /w/second.txt\n"
+        "*** Update File: /w/third.py\n"
+        "@@\n"
+        "-c\n"
+        "+d\n"
+        "*** Delete File: /w/fourth.txt\n"
+        "*** End Patch"
+    )
+    tool = _tool_for(blob)
+    assert tool is not None
+    assert [str(e.path) for e in tool.edits] == ["/w/first.py", "/w/third.py"]
+    assert tool.deletes == (Path("/w/second.txt"), Path("/w/fourth.txt"))
+    assert tool.edits[0].replacements == (("a", "b"),)
+    assert tool.edits[1].replacements == (("c", "d"),)
+
+
+def test_a_delete_section_swallows_no_body_into_the_next_section() -> None:
+    """The delimiting reason `_SECTION_HEADERS` knew all three headers before it
+    could express any delete: a delete followed by an update must not leave the
+    update's hunk attached to the delete, nor the delete's (absent) body
+    attached to the update."""
+    blob = (
+        "*** Begin Patch\n"
+        "*** Delete File: /w/gone.txt\n"
+        "*** Update File: /w/kept.py\n"
+        "@@\n"
+        "-a\n"
+        "+b\n"
+        "*** End Patch"
+    )
+    tool = _tool_for(blob)
+    assert tool is not None
+    assert tool.deletes == (Path("/w/gone.txt"),)
+    assert [str(e.path) for e in tool.edits] == ["/w/kept.py"]
+    assert tool.edits[0].replacements == (("a", "b"),)
 
 
 def test_a_blob_with_no_file_section_abstains() -> None:

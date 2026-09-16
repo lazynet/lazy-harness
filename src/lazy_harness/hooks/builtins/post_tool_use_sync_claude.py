@@ -1,11 +1,17 @@
 """PostToolUse hook — regenerate a profile tree's system doc after segment edits.
 
-Triggers when an Edit/Write touches a segment file — `head.md`, `common.md`,
-`tail.md`, an `_common/<agent>.md`, or one of their legacy stem-keyed spellings
-— inside a `.../profiles/<dir>/` tree, and re-runs the segmented system-doc
-generator against that tree. The trigger set is derived from the generator's
-own segment roles (`segment_filenames()`), so a rename of the segments cannot
-leave this hook watching names nobody edits any more.
+Triggers when an edit tool touches **or removes** a segment file — `head.md`,
+`common.md`, `tail.md`, an `_common/<agent>.md`, or one of their legacy
+stem-keyed spellings — inside a `.../profiles/<dir>/` tree, and re-runs the
+segmented system-doc generator against that tree. The trigger set is derived
+from the generator's own segment roles (`segment_filenames()`), so a rename of
+the segments cannot leave this hook watching names nobody edits any more.
+
+A removal counts because the document is assembled from the segments: deleting
+`_common/<agent>.md` re-renders it without that section, and deleting a `head`
+or `tail` makes `sync_profiles` report the profile skipped rather than erase a
+document it can no longer regenerate. This is the one builtin that reads
+`ToolCall.deletes`; ADR-046 records why the other four must not.
 
 The destinations it writes are the invoked profile's agent's, not this hook's:
 the generator reads `system_docs()` off the adapter it is handed, so a profile
@@ -62,6 +68,11 @@ def _trees_touched(paths: tuple[Path, ...]) -> list[Path]:
     but reading only `edits[0]` would bake the singular assumption into the
     hook rather than into the adapter, which is the shape this migration exists
     to remove.
+
+    The caller passes the *deleted* paths alongside the edited ones. A removed
+    segment changes the assembled document exactly as an edited one does, and
+    this hook is the only reader of `ToolCall` for which that is true — which
+    is why ADR-046 put deletes in their own field and made each reader ask.
     """
     trees: list[Path] = []
     for path in paths:
@@ -84,7 +95,9 @@ def main(event: HookEvent) -> HookDecision:
     # channel it writes on would show it. `INSPECTED_TOOLS` stays the gate.
     if tool is None or tool.native_name not in INSPECTED_TOOLS:
         return HookDecision()
-    trees = _trees_touched(tuple(edit.path for edit in tool.edits))
+    # Deletes included, and `paths` deliberately not used: that property also
+    # carries `reads`, and a *read* of a segment must not regenerate anything.
+    trees = _trees_touched(tuple(edit.path for edit in tool.edits) + tool.deletes)
     if not trees:
         return HookDecision()
     try:

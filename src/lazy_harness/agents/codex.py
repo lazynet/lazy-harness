@@ -34,6 +34,7 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
+from typing import NamedTuple
 
 from lazy_harness.agents.base import (
     ConfigArtifact,
@@ -158,10 +159,12 @@ _HOOK_EVENTS: dict[str, HookSupport] = {
 #
 # `apply_patch`'s `tool_input` is `{"command": "<patch text>"}` — the *same* key
 # `Bash` uses, carrying something that is not a shell command at all (probe 4c,
-# 0.154.0). The three section headers are the format's; only `*** Update File:`
-# was ever observed. `_parse_patch` recognises all three because it has to
-# delimit sections correctly either way, and a header it did not know would
-# swallow the next file's body into the previous file's hunks.
+# 0.154.0). Two of the three section headers are now observed from the binary:
+# `*** Update File:` (probe 4c, and two of them in one blob at probe 5) and
+# `*** Delete File:` (probe 6, one section, no diff body, the file removed from
+# disk). `*** Add File:` remains the format's alone, and `_parse_patch`
+# recognises it for the same reason it always did — a header it did not know
+# would swallow the next file's body into the previous file's hunks.
 _APPLY_PATCH = "apply_patch"
 _PATCH_END = "*** End Patch"
 _SECTION_HEADERS: dict[str, str] = {
@@ -198,26 +201,42 @@ def _hunk_pair(lines: list[str]) -> tuple[str, str] | None:
     return None if before == after else (before, after)
 
 
-def _parse_patch(blob: str) -> tuple[FileEdit, ...]:
-    """The `*** Update File:` / `*** Add File:` sections of a blob, as `FileEdit`s.
+class _Patch(NamedTuple):
+    """What one `apply_patch` blob says, in the two shapes `ToolCall` keeps apart.
+
+    Named rather than a bare pair: the whole point of ADR-046 is that these two
+    must not be confused, and an unpacking order is a poor place to keep that.
+    """
+
+    edits: tuple[FileEdit, ...]
+    deletes: tuple[Path, ...]
+
+
+def _parse_patch(blob: str) -> _Patch:
+    """A blob's file sections, split into the edits and the deletions.
 
     The one piece without which mapping `apply_patch` to `MODIFY_FILE` revives
     nothing: five builtins gate on `operation` or on the tool name and then die
     iterating `tool.edits`, which stayed `()` for every tool this adapter parsed
     until this function existed.
 
-    **A `*** Delete File:` section produces no `FileEdit`, deliberately.**
-    `FileEdit` carries `is_create` and no counterpart, so a delete emitted as an
-    edit tells every reader the path is still there — `post_tool_use_format`
-    would run a formatter over a file that is gone. Widening `FileEdit` is the
-    honest fix and it is not this step's: the delete spelling is the format's,
-    not one any probe has seen Codex emit (evidence §2).
+    **A `*** Delete File:` section goes to `deletes`, never to `edits`.** Probe
+    6 measured the shape — one section, that literal header, no diff body, the
+    file removed from disk (`specs/designs/codex-evidence.md` §2) — and ADR-046
+    decided where it lands. Emitting it as a `FileEdit` would tell every reader
+    the path is still there, and `post_tool_use_format` would run a formatter
+    over a file that is gone.
 
-    Anything that is not patch text yields `()`. The blob is model-authored and
-    arrives on the same key a shell command does, so "unparseable" is an
-    ordinary input here, never an error.
+    Section order is preserved within each half and not across them: every
+    section of one blob is applied by one call, so which file came first carries
+    no semantics and no reader of either collection orders work by it.
+
+    Anything that is not patch text yields two empty tuples. The blob is
+    model-authored and arrives on the same key a shell command does, so
+    "unparseable" is an ordinary input here, never an error.
     """
     edits: list[FileEdit] = []
+    deletes: list[Path] = []
     kind: str | None = None
     path: Path | None = None
     hunks: list[list[str]] = []
@@ -233,6 +252,8 @@ def _parse_patch(blob: str) -> tuple[FileEdit, ...]:
                 line[1:] + "\n" for hunk in hunks for line in hunk if line.startswith("+")
             )
             edits.append(FileEdit(path=path, is_create=True, content=body))
+        elif kind == "delete":
+            deletes.append(path)
 
     for line in blob.splitlines():
         header = next(
@@ -262,7 +283,7 @@ def _parse_patch(blob: str) -> tuple[FileEdit, ...]:
             hunks.append([])
         hunks[-1].append(line)
     flush()
-    return tuple(edits)
+    return _Patch(tuple(edits), tuple(deletes))
 
 
 # Codex normalises its native tool name to Claude's on the hook wire: the model's
@@ -460,10 +481,12 @@ class CodexAdapter:
             # blob stays reachable through `raw_input` for an adapter; a builtin
             # reading it there is a normalisation that failed, which is what
             # that field's own docstring says.
+            patch = _parse_patch(command) if command else _Patch((), ())
             return ToolCall(
                 native_name=name,
                 operation=_TOOL_OPERATIONS.get(name),
-                edits=_parse_patch(command) if command else (),
+                edits=patch.edits,
+                deletes=patch.deletes,
                 raw_input=arguments,
             )
         return ToolCall(

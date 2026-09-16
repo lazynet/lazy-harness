@@ -312,10 +312,12 @@ for name in sorted(list_builtin_hooks()):
 # `fake-translate-operations-only.sh` is the proof that the first two without
 # the third revive nothing.
 #
-# `pre-tool-use-read-size` stays, and its verdict is the weakest one here: no
-# probe has caught Codex reading a file, so its leg is still fed Claude's
-# `Read` payload. It says the adapter maps no tool named `Read` — not that
-# Codex's real read path is ungated, which nobody has measured.
+# `pre-tool-use-read-size` stays, and after probe 7 (2026-09-16) its verdict is
+# no longer the weakest one here. Codex 0.154.0 has no native read tool to map:
+# its reads go through `Bash`, which carries no path to extract. Its leg is fed
+# Claude's `Read` payload for want of any other, and what it reports is the same
+# structural ceiling the `Bash` edit path sits under — a measured absence, not a
+# mapping this adapter is missing.
 EXPECTED_INERT=(
   pre-tool-use-read-size
 )
@@ -415,11 +417,21 @@ echo
 # Half of Codex's edits are structurally ungateable, which this gate cannot fix
 # and must not paper over.
 #
-# `read_file` under Codex is THE ONE SYNTHETIC LEG LEFT: no probe has caught
-# Codex reading a file, so there is no dialect to feed. It gets Claude's `Read`
-# payload, and `pre-tool-use-read-size`'s inert verdict is therefore weaker
-# evidence than the other six — it says the adapter maps no tool named `Read`,
-# not that Codex's real read path is ungated.
+# `read_file` under Codex is still the one SYNTHETIC leg, and probe 7 (2026-09-16)
+# changed what that means. It is not that nobody looked: Codex 0.154.0 has **no
+# native read tool at all** — asked for one it fired `PreToolUse` with
+# `tool_name: list_mcp_resources`, an empty `tool_input`, and then refused.
+# Reads go through `Bash`, the same way half its edits do. So there is no dialect
+# to feed because there is none to find, and this leg gets Claude's `Read`
+# payload for want of any other. `pre-tool-use-read-size`'s inert verdict rests
+# on a MEASURED ABSENCE and sits under the same structural ceiling as the `Bash`
+# edit path above — it is not weaker evidence than the other six.
+#
+# `modify_file` is fed an update section only. Probe 6 measured the delete
+# spelling and ADR-046 gave it `ToolCall.deletes`, deliberately outside `edits`:
+# a delete-only blob therefore yields `edits=0`, and the four edit builtins
+# abstaining on it is correct behaviour rather than a degradation. Feeding one
+# here would move this gate's INERT/LIVE verdicts on a question it does not ask.
 #
 # An `Operation` member with no payload here exits 2 rather than defaulting: a
 # new member silently skipped is a whole operation nobody measures.
