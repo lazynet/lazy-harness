@@ -2,9 +2,9 @@
 
 **This is a frozen measurement, not a description of the current gate.** It records what
 `isolation-gate.sh` asserted and found when three builtins were migrated and two were asserted.
-Eight are migrated now, the asserted and known-gap sets are derived from the registry rather
-than typed, and every count below is the 0.67.0 run's, not today's. Read the script's header for
-what the gate asserts now; read this for what was measured then.
+All eighteen are migrated now, so there is no known-gap set left to derive: the gate asserts
+coverage of the whole registry instead, and every count below is the 0.67.0 run's, not today's.
+Read the script's header for what the gate asserts now; read this for what was measured then.
 
 Artefacts, versioned under `specs/gates/f7/`:
 
