@@ -447,6 +447,54 @@ Cada una mezcla responsabilidades no relacionadas: recolección de contexto y re
 
 **Acción:** ninguna propuesta en esta entrada.
 
+### Falso positivo del hook de seguridad con backticks en el argumento de otro comando
+
+**Por qué:** el `pre_tool_use_security` desplegado interpreta cualquier backtick como operador de command substitution, sin distinguir el que abre shell real del que sólo aparece dentro de un argumento citado de otro comando. Bloqueó una llamada a `gh pr create --body` cuyo texto citaba, entre backticks de markdown, un comando destructivo mencionado como prosa — evaluó esa cita como si fuera una invocación de git real, no el contenido de un PR body.
+
+**Fuente:** surgido dos veces durante la lane de #347, al redactar el body de su propio PR. Mecanismo emparentado con *Falso positivo del PreToolUse de seguridad con backticks de markdown* (Prioridad BAJA), pero disparado dentro del argumento de otro comando, no de un heredoc.
+
+**Acción:** ninguna propuesta en esta entrada — mecanismo registrado, sin repro (regla de repo público).
+
+### `pre_tool_use_security.FILE_TOOLS` no incluye `apply_patch`
+
+**Por qué:** `INSPECTED_TOOLS` de `pre_tool_use_security.py:219` es `COMMAND_TOOLS | FILE_TOOLS`, y `FILE_TOOLS` no tiene `apply_patch` — su rama `modify_file` sobrevive la traducción de #348 (el gate F8 lo registra) pero el propio gate de nombre de tool del hook lo sigue perdiendo. El gate de cobertura de matchers ya es agent-aware, así que agregarlo no exige `apply_patch` en el matcher de Claude Code. `pre_tool_use_git_scope.py` no necesita nada — `INSPECTED_TOOLS = frozenset({"Bash"})` ya alcanza los `Bash` de Codex; se deja constancia para que la omisión se lea como decisión y no como olvido.
+
+**Fuente:** #348, follow-ups 1 y 2.
+
+**Acción:** ninguna propuesta en esta entrada — otra lane es dueña de `pre_tool_use_security.py`.
+
+### `FileEdit` no puede expresar un delete
+
+**Por qué:** `FileEdit` tiene `is_create` y ningún equivalente para un delete; un `*** Delete File:` de `apply_patch` no produce ningún `FileEdit`, así que todo lector ve el path como si siguiera ahí. `post-tool-use-sync-claude` es el lector concreto que pierde un segmento de system-doc borrado. Ensanchar el tipo es el fix honesto pero exige auditar cada path que lo nombra, y ningún probe vio a Codex emitir esa forma todavía.
+
+**Fuente:** #348, follow-up 3.
+
+**Acción:** correr la probe de delete-spelling primero (probe 2 del report de #348); ensanchar `FileEdit` recién si Codex confirma la forma.
+
+### `lh deploy` no imprime la instrucción de re-trust
+
+**Por qué:** el diseño (`specs/designs/2026-09-13-multi-agent-harness-design.md:831`) dice que `lh deploy` imprime la instrucción de re-trust cada vez que cambia una declaración de hook; hoy `lh doctor` reporta el estado (`untrusted`/`unknown`) pero `deploy` no imprime nada en el momento del cambio.
+
+**Fuente:** #348, follow-up 5.
+
+**Acción:** ninguna propuesta en esta entrada.
+
+### Trust de capa proyecto de Codex
+
+**Por qué:** el diseño (`:730-746`) deja alcanzable y silencioso el estado "deployed, hook-trusted, and still not running" en la capa de proyecto de `~/.codex/config.toml` (`[projects.*]`). Si el harness alguna vez escribe hooks de capa proyecto, `lh doctor` va a necesitar leer esa sección para no reportar un trust que no aplica.
+
+**Fuente:** #348, follow-up 6.
+
+**Acción:** ninguna propuesta en esta entrada — el harness no escribe `[projects.*]` hoy.
+
+### Nada muestra los contadores de `launches` a un humano
+
+**Por qué:** `MetricsDB.launch_counts` y `launch_to_session_ratio` (#346) no tienen ningún consumidor visible — ni CLI ni línea de `lh doctor`. `docs/reference/cli.md:572` documenta `lh metrics loops` sobre `loop_events`; `lh metrics launches` (o una línea de doctor) es la forma obvia, pero el diseño no nombra ningún subcomando y #346 no inventó uno.
+
+**Fuente:** #346, follow-up 1.
+
+**Acción:** ninguna propuesta en esta entrada.
+
 ---
 
 ## Open — Prioridad BAJA
@@ -537,6 +585,14 @@ Pasó con `pre-tool-use-git-scope` en 0.57.0 — registrado, default-on, testead
 **Segunda medición, 2026-09-11.** Auditados los seis eventos del `config.toml` del CT `agents` contra `DEFAULT_HOOKS`: faltaban `pre-tool-use-git-scope` y `session-start-preflight`. El primero estaba en el template de chezmoi desde antes — al CT le faltaba el `apply`, no el renglón. El segundo **falta en el template**, así que hoy no corre en ninguna de las dos máquinas. Nada avisó en ningún caso, que es exactamente el síntoma que este item describe.
 
 La auditoría es tres líneas contra `DEFAULT_HOOKS` y el `config.toml`, comparando por evento e ignorando los extra deliberados (`herdr-context-gauge`, `post-tool-use-ansible-lint`). Es la forma que debería tomar el check de `lh doctor`.
+
+### `pre-tool-use-read-size` sigue inerte bajo Codex
+
+**Por qué:** el hook gatea en `operation is Operation.READ_FILE` sobre `tool.reads`; el dialecto de lectura real de Codex no lo tocó ningún probe todavía — sólo el de edición (`Bash` y `apply_patch`) se midió contra el binario. Sigue en `EXPECTED_INERT` hasta que la probe 3 de #348 ("Read dialect") corra y diga qué `tool_name` usa Codex para leer.
+
+**Fuente:** #348, probe 3 pendiente.
+
+**Acción:** correr la probe 3 desde una terminal Aqua; recién ahí decidir si hay algo que ensanchar.
 
 ## Multi-agente — items declarados, deliberadamente no cableados
 
