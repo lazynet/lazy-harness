@@ -177,3 +177,37 @@ This is the sibling of the gate above it, not a copy: that one catches a test th
 Measured, that budget was 48% spent before the test did anything unusual — 0.48s of the 1.0s available on an idle machine. It held in isolation and tipped over under load, which is the signature that made it read as a clock-edge problem. It is not one. There is no rounding to an absolute second here, and no boundary to cross; the failure is simply the code under test taking longer than the assertion's undeclared budget, so the flake rate tracks machine speed rather than the position of the clock.
 
 Two things follow. A wall-clock reading is an input to the assertion even when the test never mentions time, and truncation hides how little slack that input has — the sibling assertions in the same file survive only because minutes and days buckets leave 60x and 86400x more of it. And freezing one end is not enough: pinning `created_ts` while the command still reads the real clock, or freezing the clock while the row keeps a wall-clock timestamp, each leaves the difference varying. Both ends of the subtraction have to be pinned to the same instant, and each half has to be unpinned on its own to prove it was load-bearing.
+
+## A test that kills a child is racing that child's setup
+
+Four tests across two files asserted on work a fake agent had to finish before `lh exec`
+killed it — `test_exec_timeout_kills_the_whole_process_group` read the pid of a grandchild
+the agent forks, and three more read a transcript the agent writes before it hangs. Each
+passed `--timeout 1` or `--timeout 2` and then read the artifact.
+
+Nothing in those assertions named a duration, and unlike the gate above there is no
+subtraction anywhere: `duration_ms` is only ever asserted `is None` on the timeout path. The
+budget is the deadline itself. It has to cover interpreter startup, the fork and the write,
+and on an idle machine that costs about 50ms of the 1000 available — which is why the suite
+is green locally and in CI, whose machines are idle. Measured under 8 concurrent copies of
+the file and 32 spinning processes, all three `test_exec_cmd.py` tests failed on 8 runs out
+of 8; the integration one, needing more load, failed 4 times in 60 at load average 62. What
+the reports said was `assert None == 2.0` and `FileNotFoundError: grandchild.pid`, neither of
+which points at a clock.
+
+The repair is the same idea as the gate above it one level up. There is no clock edge to
+freeze, so what gets pinned is the moment the deadline fires: the agent renames a marker into
+place when its setup is done, and the deadline waits for that marker instead of for seconds.
+`TimeoutExpired` is still raised from the real call site and the teardown, the billing and
+the envelope it drives are all still real; only *when* is supplied. That the deadline fires
+at all on a genuine wall clock stays covered by a test that asserts nothing about what the
+child got done first.
+
+Two things this turned up that are not obvious from the shape. The rename has to be atomic,
+because a waiter that polls for existence sees the file the instant `open` creates it and
+reads a pid back as an empty string — the wait introduces the torn read that the old code,
+which never looked, could not hit. And a `monkeypatch.setattr` inside a context manager is
+undone at *fixture teardown*, not at the end of the block: the replacement for
+`Popen.communicate` stayed live for the rest of the test and swallowed the ingest's call to
+`gh`, which surfaced as an agent that had "exited 4". A patch this broad is scoped with
+`pytest.MonkeyPatch.context()`.

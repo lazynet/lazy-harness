@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import subprocess
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +24,72 @@ class GitCheckout:
     repo: Path
     subdir: Path
     worktree: Path
+
+
+@contextlib.contextmanager
+def timeout_when_agent_is_ready(ready: Path, cap: float = 60.0) -> Iterator[None]:
+    """Fire `lh exec`'s timeout on the child's progress, not on a wall clock.
+
+    A test that kills the agent in order to inspect what the kill did first
+    needs the agent to have done something: forked a grandchild, written a
+    transcript. `--timeout 1` does not wait for that, it budgets for it — and
+    the budget covers interpreter startup too, so on a loaded machine the kill
+    lands mid-setup and the assertion fails naming a cost or a pid rather than
+    the race it actually lost. Four tests across two files failed this way,
+    6-100% of the time depending on load and never once on an idle machine.
+
+    Waiting for the marker the agent writes when its setup is done pins the
+    kill to a fixed point in the agent's life on any machine. Only the moment
+    the deadline fires is supplied here: `TimeoutExpired` is the real
+    exception from the real call site, and the teardown, the billing and the
+    envelope it drives all stay real. That the deadline fires at all on a
+    genuine wall clock is covered separately, by a test that asserts nothing
+    about what the child got done first.
+
+    The prompt is delivered by the real `communicate` on each pass rather than
+    written here, because an agent that reads stdin before its setup — the
+    integration one does — would otherwise never reach the setup being waited
+    for. `cap` is not a budget for anything: it stops a broken agent hanging
+    the suite, and is far longer than any setup here can legitimately take.
+
+    The patch is undone on the way out of the block rather than by the test's
+    own `monkeypatch`, which would hold it until fixture teardown: this
+    replaces `Popen.communicate` for the whole process, and the rest of the
+    test has unrelated subprocesses to run: the attribution integration test
+    called `gh` through the ingest and got this deadline instead.
+    """
+    real_communicate = subprocess.Popen.communicate
+
+    def fire_when_ready(
+        self: subprocess.Popen, input: str | None = None, timeout: float | None = None
+    ) -> tuple[str, str]:
+        # The second call is `lh exec` draining the pipes after the kill.
+        if timeout is None or getattr(self, "_lh_deadline_fired", False):
+            return real_communicate(self, input, timeout)
+        pending = input
+        deadline = time.monotonic() + cap
+        while True:
+            try:
+                real_communicate(self, pending, 0.05)
+            except subprocess.TimeoutExpired:
+                # Resumed, not restarted: `communicate` keeps the unwritten
+                # remainder, and re-passing `input` after the first pass is
+                # the one thing it refuses outright.
+                pending = None
+            else:
+                raise AssertionError(
+                    f"agent exited {self.returncode} before signalling ready at {ready}"
+                )
+            if ready.exists():
+                break
+            if time.monotonic() > deadline:
+                raise AssertionError(f"agent never wrote {ready} within {cap}s")
+        self._lh_deadline_fired = True
+        raise subprocess.TimeoutExpired(self.args, timeout)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(subprocess.Popen, "communicate", fire_when_ready)
+        yield
 
 
 @pytest.fixture(autouse=True)
