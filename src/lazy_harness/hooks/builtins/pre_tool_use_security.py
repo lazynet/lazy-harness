@@ -209,8 +209,12 @@ SECRET_PATH_EXCEPTIONS: tuple[str, ...] = (
 )
 
 # Tools that take a filesystem path instead of a command. NotebookEdit names its
-# path field differently, so both keys are read.
-FILE_TOOLS = frozenset({"Read", "Edit", "Write", "NotebookEdit"})
+# path field differently, so both keys are read. `apply_patch` is Codex's
+# native edit tool (`agents/codex.py:_APPLY_PATCH`) — its own matcher has
+# nothing to widen (Codex omits one and fires this hook on every tool call
+# regardless), but leaving it out of this set still understated what the hook
+# is supposed to be subscribed to.
+FILE_TOOLS = frozenset({"Read", "Edit", "Write", "NotebookEdit", "apply_patch"})
 COMMAND_TOOLS = frozenset({"Bash"})
 
 # The tool names this hook inspects. `tests/unit/test_hook_matcher_coverage.py`

@@ -85,6 +85,15 @@ UNUSABLE_PAYLOAD_CASES: list[Case] = [
 SHAPE_CASES: list[Case] = [
     Case(id="tool-not-inspected", stdin=_payload("WebFetch", url="https://example.com")),
     Case(id="tool-name-absent", stdin=json.dumps({"hook_event_name": "PreToolUse"})),
+    # `apply_patch` is in `FILE_TOOLS` (Codex's native edit tool), but this
+    # payload is Claude Code's shape and Claude Code's own `_TOOL_OPERATIONS`
+    # has no entry for it — so `tool.operation` comes back `None` and `main()`
+    # abstains for the same reason `tool-not-inspected` does, not because
+    # `apply_patch` is unrecognised by this hook.
+    Case(
+        id="apply-patch-abstains-under-claude-code-parsing",
+        stdin=_payload("apply_patch", command="*** Update File: notes.md\n@@\n-old\n+new\n"),
+    ),
 ]
 
 # --- one per BLOCK_RULE, in declaration order ----------------------------- #
