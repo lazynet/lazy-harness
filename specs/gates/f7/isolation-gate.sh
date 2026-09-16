@@ -244,9 +244,9 @@ derive_python() {
 GATE_PYTHON="$(derive_python)" || {
   echo "harness error: no interpreter able to import lazy_harness." >&2
   echo "  tried: \${F7_GATE_PYTHON} and $(dirname "$(command -v "$LH_BIN")")/python3" >&2
-  echo "  the asserted set, the known-gap set and the lane split are all DERIVED" >&2
-  echo "  from the registry; without it this gate would have to guess, so it" >&2
-  echo "  refuses instead." >&2
+  echo "  the asserted set and the lane split are both DERIVED from the" >&2
+  echo "  registry; without it this gate would have to guess, so it refuses" >&2
+  echo "  instead." >&2
   exit 2
 }
 
