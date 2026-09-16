@@ -679,10 +679,10 @@ load-bearing en los dos casos.
   `.credentials.json` (`session_start_preflight.py:220`) y contesta por stdout (`:242`). Un
   preflight que resuelve global reportaría un login sano para un profile que la sesión no corre —
   exactamente la falla que el check existe para agarrar.
-- `post-tool-use-sync-claude` toma la mitad *adapter* para `system_doc_name()`
-  (`post_tool_use_sync_claude.py:103`) y escribe en el árbol de segmentos,
-  `<profiles_dir>/<profile>/CLAUDE.md` (`core/sync_agent_md.py:79`). Resolverlo global escribiría
-  el archivo de contrato de un agente en un profile que corre otro.
+- `post-tool-use-sync-claude` toma la mitad *adapter* — resuelta per-profile en `agent_dir_for`
+  (`post_tool_use_sync_claude.py:114`) — y se la pasa a `sync_profiles`, que lee `system_docs()`
+  internamente y escribe cada destino que declara (`core/sync_agent_md.py:194`). Resolverlo
+  global escribiría el archivo de contrato de un agente en un profile que corre otro.
 
 **Fuente:** medido el 2026-09-15 leyendo los sinks, no de una corrida vacía: `grep -n "hooks.log"`
 devuelve cero en los dos módulos, y el docstring de sync-claude lo dice él mismo — *«The directory
@@ -690,7 +690,7 @@ half is unused: this hook writes nothing under the agent's runtime dir»*.
 
 **Acción:** dos aserciones en canales que F7 no mira — el stdout del preflight (dos profiles con
 un `.credentials.json` plantado en uno solo y verdicts opuestos) y el árbol de segmentos de
-sync-claude (dos profiles con `system_doc_name()` distinto). Ninguno pertenece a F7: meterlos ahí
+sync-claude (dos profiles con `system_docs()` distinto). Ninguno pertenece a F7: meterlos ahí
 volvería a ser el problema que la opción 2 acaba de resolver.
 
 ## ADR decisions pending
