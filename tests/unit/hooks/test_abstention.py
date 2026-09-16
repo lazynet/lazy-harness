@@ -93,6 +93,21 @@ _NO_OBJECTION: dict[str, dict[str, object]] = {
         "session_id": "s1",
         "cwd": "/tmp",
     },
+    # A write that stays under both ceilings: this hook's silent path. The
+    # branch that *does* speak carries a `systemMessage`, a channel Claude Code
+    # shows without it being a verdict, and
+    # `test_pre_tool_use_memory_size.py::test_a_warning_is_never_a_verdict`
+    # holds that one. The risk here is the reverse: a warning hook wired to an
+    # event that honours `DENY` turning its quiet branch into an approval.
+    "pre-tool-use-memory-size": {
+        "hook_event_name": "PreToolUse",
+        "session_id": "s1",
+        "tool_name": "Write",
+        "tool_input": {
+            "file_path": "/home/user/.claude/projects/foo/memory/MEMORY.md",
+            "content": "line\n" * 50,
+        },
+    },
     # Reached through the *placement*, not through `spec.event`, which this hook
     # leaves unset because it branches on four. It is deployed to `Stop` all the
     # same, so the gate has to see it -- see the derivation below.

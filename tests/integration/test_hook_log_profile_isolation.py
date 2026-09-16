@@ -820,3 +820,54 @@ def test_read_size_writes_nothing_outside_the_invoked_profile(
     )
     assert _files_under(home_dir) == before_home
     assert (_files_under(other) if other.exists() else set()) == before_other
+
+
+#: Absolute and synthetic. `pre-tool-use-memory-size` projects a `Write` from
+#: its `content` alone and never opens the file, so nothing has to exist here —
+#: and naming a path under `tmp_path` would put a directory the hook is entitled
+#: to create inside the trees the absence assertion sweeps.
+_OVERSIZED_MEMORY_PAYLOAD: dict[str, object] = {
+    "hook_event_name": "PreToolUse",
+    "session_id": "isolation-test",
+    "tool_name": "Write",
+    "tool_input": {
+        "file_path": "/home/user/.claude/projects/foo/memory/MEMORY.md",
+        "content": "line\n" * 250,
+    },
+}
+
+
+def test_memory_size_logs_into_the_invoked_profile(harness_config: Path) -> None:
+    """`_log_warning` resolved `get_agent("claude-code")` and no profile.
+
+    This is one of the two hooks `docs/how/hooks.md` named as still resolving
+    the directory globally. The warning itself reached the agent either way, so
+    the defect was invisible from the session: only the audit trail moved, into
+    whichever directory the *global* agent pointed at.
+    """
+    exit_code = _run_hook("pre-tool-use-memory-size", "gate", _OVERSIZED_MEMORY_PAYLOAD)
+
+    assert exit_code == 0
+    log = (harness_config / "logs" / "hooks.log").read_text()
+    assert "pre-tool-use-memory-size" in log
+    assert "over threshold" in log
+
+
+def test_memory_size_writes_nothing_outside_the_invoked_profile(
+    harness_config: Path, home_dir: Path, tmp_path: Path
+) -> None:
+    """The half that fails before the migration: `~/.claude` took the line.
+
+    Presence alone passes either way — that directory is one the hook is
+    entitled to create, so the leak looks exactly like a first run.
+    """
+    other = tmp_path / "other-home"
+    before_home = _files_under(home_dir)
+    before_other = _files_under(other) if other.exists() else set()
+
+    exit_code = _run_hook("pre-tool-use-memory-size", "gate", _OVERSIZED_MEMORY_PAYLOAD)
+
+    assert exit_code == 0
+    assert "over threshold" in (harness_config / "logs" / "hooks.log").read_text()
+    assert _files_under(home_dir) == before_home
+    assert (_files_under(other) if other.exists() else set()) == before_other
