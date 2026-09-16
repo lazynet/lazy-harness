@@ -567,6 +567,18 @@ The hook is fail-soft and a no-op outside Herdr: a missing `HERDR_ENV=1`, an abs
 exit 0. An unreadable transcript is not an error — it is the ordinary state at startup,
 and it clears the gauge.
 
+Because it branches on four events, it declares no default event of its own: which one
+arrives is decided by where you wire it, and a payload always names it. That has one
+consequence when invoking the hook by hand. A pane whose gauge is stranded — the session
+was killed outright, so `SessionEnd` never fired — is cleared by naming the event:
+
+```sh
+echo '{"hook_event_name": "SessionEnd"}' | lh hook herdr-context-gauge --profile <p>
+```
+
+Running `lh hook herdr-context-gauge` with empty stdin does **not** do this. With no event
+to resolve, the hook does not run; it writes a line to stderr and exits 0.
+
 ### `user-prompt-goal` — runs on `UserPromptSubmit`
 
 Source: `src/lazy_harness/hooks/builtins/user_prompt_goal.py`.

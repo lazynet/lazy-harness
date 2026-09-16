@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import io
 import json
 import subprocess
 from pathlib import Path
@@ -213,16 +212,34 @@ def _run_main(
     runner: object,
     now: float = 1_000.0,
 ) -> None:
+    """Drive `main()` the way the runner does, from a Claude Code payload.
+
+    The payload is translated through `ClaudeCodeAdapter.parse_hook_input` and
+    `runner._canonical_event` rather than by building a `HookEvent` here, so the
+    wire-name-to-canonical translation this hook branches on is exercised rather
+    than assumed. A test that constructed `HookEvent(event="SessionEnd", ...)`
+    by hand would keep passing against a hook comparing against wire names —
+    which is the one regression the migration of this hook had to rule out.
+    """
+    from lazy_harness.agents.base import HookDecision
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+    from lazy_harness.hooks.runner import _canonical_event
+
     monkeypatch.delenv("HERDR_ENV", raising=False)
     monkeypatch.delenv("HERDR_PANE_ID", raising=False)
     for key, value in env.items():
         monkeypatch.setenv(key, value)
-    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
     monkeypatch.setattr(gauge.subprocess, "run", runner)
     monkeypatch.setattr(gauge.time, "time", lambda: now)
-    with pytest.raises(SystemExit) as exc:
-        gauge.main()
-    assert exc.value.code == 0
+
+    adapter = ClaudeCodeAdapter()
+    # `spec.event` is `None` for this hook, so a payload naming no event has
+    # nothing to resolve to. `Stop` is what the pre-migration tests that omit
+    # `hook_event_name` were exercising: neither special-cased branch.
+    canonical = _canonical_event(adapter, payload, "session_stop")
+    event = adapter.parse_hook_input(canonical, payload, profile="")
+
+    assert gauge.main(event) == HookDecision()
 
 
 def _recorder() -> tuple[list[list[str]], object]:

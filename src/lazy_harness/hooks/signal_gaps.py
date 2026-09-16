@@ -71,7 +71,7 @@ def gaps_for_profile(cfg: Config, profile: str) -> list[HookSignalGap]:
         if event not in events:
             continue
         for name in script_names:
-            missing = builtin_signals(name) - delivered
+            missing = builtin_signals(name, event=event) - delivered
             if not missing:
                 continue
             gaps.append(

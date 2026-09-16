@@ -9,8 +9,11 @@ already reads at harvest time.
 
 Panes outlive the sessions inside them and pane metadata is persistent, so
 publishing alone leaves a dead session's window on display indefinitely. The
-hook therefore runs on three events: `Stop` publishes, `SessionEnd` retracts,
-and `SessionStart` retracts unless the session resumed a real window.
+hook therefore runs on four events: `Stop` publishes, `SessionEnd` retracts,
+`SessionStart` retracts unless the session resumed a real window, and
+`PostToolUse` samples mid-turn under a throttle, because a turn that spends
+half an hour on hundreds of tool calls crosses the rotate threshold long before
+`Stop` would report it.
 
 Fail-soft: every error path exits 0, because a gauge must never take down the
 turn it is measuring.
@@ -22,19 +25,26 @@ import json
 import os
 import re
 import subprocess
-import sys
 import tempfile
 import time
 from collections.abc import Mapping
 from pathlib import Path
 
-from lazy_harness.hooks.builtins._shared import _declared_transcript, existing_transcript
+from lazy_harness.agents.base import HookDecision, HookEvent
+from lazy_harness.hooks.builtins._shared import existing_transcript
 
 WARN_TOKENS = 200_000
 ROTATE_TOKENS = 400_000
 PUBLISH_TIMEOUT_SECS = 5
 METADATA_SOURCE = "lh:ctx"
 THROTTLE_SECS = 60.0
+
+#: Canonical event names, not Claude Code's wire names. `HookEvent.event` holds
+#: `post_tool_use`, never `PostToolUse`; comparing against the wire spelling
+#: leaves both branches below permanently false and nothing fails — the throttle
+#: stops firing and the retract silently becomes a publish.
+THROTTLED_EVENT = "post_tool_use"
+RETRACT_EVENT = "session_end"
 
 _USAGE_INPUT_KEYS = (
     "input_tokens",
@@ -136,43 +146,38 @@ def _record_publish(stamp: Path, now: float) -> None:
         pass
 
 
-def _read_stdin_json() -> dict[str, object]:
-    try:
-        data = sys.stdin.read()
-    except (OSError, ValueError):
-        return {}
-    if not data.strip():
-        return {}
-    try:
-        parsed = json.loads(data)
-    except json.JSONDecodeError:
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
-
-
-def _tokens_of(payload: dict[str, object]) -> int | None:
-    transcript = existing_transcript(_declared_transcript(payload))
+def _tokens_of(event: HookEvent) -> int | None:
+    transcript = existing_transcript(event.transcript_path)
     return None if transcript is None else context_tokens(transcript)
 
 
-def main() -> None:
+def main(event: HookEvent) -> HookDecision:
+    """Publish or retract this pane's gauge, and report no decision either way.
+
+    `HERDR_ENV` and `HERDR_PANE_ID` stay on `os.environ` rather than moving onto
+    `HookEvent`: the pane an agent runs in is ambient process state, not a
+    profile- or payload-scoped fact. The same profile runs in different panes
+    and in no pane at all, so there is no field on a normalised payload that
+    could honestly carry it.
+    """
     if os.environ.get("HERDR_ENV") != "1":
-        sys.exit(0)
+        return HookDecision()
     pane_id = os.environ.get("HERDR_PANE_ID")
     if not pane_id:
-        sys.exit(0)
+        return HookDecision()
 
-    payload = _read_stdin_json()
-    event = payload.get("hook_event_name")
     now = time.time()
+    # Keyed by pane, deliberately not by profile: the pane metadata this
+    # throttles is itself shared, so two profiles running in one pane must
+    # share one window rather than each bypassing the other's.
     stamp = stamp_path(pane_id)
 
     # Mid-turn samples are throttled; the lifecycle events are not. Bail before
     # reading the transcript — this path runs on every single tool call.
-    if event == "PostToolUse" and throttled(stamp, now):
-        sys.exit(0)
+    if event.event == THROTTLED_EVENT and throttled(stamp, now):
+        return HookDecision()
 
-    tokens = None if event == "SessionEnd" else _tokens_of(payload)
+    tokens = None if event.event == RETRACT_EVENT else _tokens_of(event)
     command = (
         clear_command(pane_id) if tokens is None else publish_command(pane_id, gauge_label(tokens))
     )
@@ -188,8 +193,4 @@ def main() -> None:
         )
     except (OSError, subprocess.TimeoutExpired):
         pass
-    sys.exit(0)
-
-
-if __name__ == "__main__":
-    main()
+    return HookDecision()
