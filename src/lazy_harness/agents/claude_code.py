@@ -580,8 +580,9 @@ class ClaudeCodeAdapter:
     def session_dirs(self) -> dict[str, str]:
         return {"sessions": "projects", "logs": "logs", "queue": "queue"}
 
-    def system_doc_name(self) -> str:
-        return "CLAUDE.md"
+    def system_docs(self) -> list[Path]:
+        """Claude Code reads `CLAUDE.md` and nothing else — one destination."""
+        return [Path("CLAUDE.md")]
 
     def process_name(self) -> str:
         return "claude"

@@ -54,10 +54,12 @@ def merge_with_defaults(
     - Events with an empty script list are kept so callers can distinguish
       "explicit opt-out" from "not configured"; the engine drops empty events
       before writing settings.
-    - Hooks in _SYSTEM_DOC_HOOKS are omitted when agent.system_doc_name() is
+    - Hooks in _SYSTEM_DOC_HOOKS are omitted when agent.system_docs() is
       empty (the agent does not use a file-based system instruction doc).
+      The gate is "loads a system doc at all", not "loads exactly one": an
+      adapter declaring two destinations keeps the hook (ADR-043).
     """
-    has_system_doc = bool(agent.system_doc_name())
+    has_system_doc = bool(agent.system_docs())
 
     effective: dict[str, list[str]] = {}
     for event, default_scripts in DEFAULT_HOOKS.items():

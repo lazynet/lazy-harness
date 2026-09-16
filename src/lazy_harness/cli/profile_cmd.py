@@ -288,12 +288,14 @@ def profile_envrc(dry_run: bool) -> None:
 
 @profile.command("sync-claude-md")
 def profile_sync_claude_md() -> None:
-    """Regenerate <profile>/CLAUDE.md from segmented sources.
+    """Regenerate each profile's system doc from its segmented sources.
 
-    Concatenates `<profile>/CLAUDE.head.md` + `_common/CLAUDE.common.md` +
-    `<profile>/CLAUDE.tail.md` for every profile dir under
-    `~/.config/lazy-harness/profiles/` that carries the three files. Profile
-    dirs without the segments (flat layout) are skipped, not erased.
+    Concatenates `<profile>/head.md` + `_common/common.md` +
+    `_common/<agent>.md` + `<profile>/tail.md` for every profile dir under
+    `~/.config/lazy-harness/profiles/` that carries them, and writes the result
+    to every destination the profile's agent loads. The legacy stem-keyed
+    spellings (`CLAUDE.head.md` and friends) still render, and the line says so.
+    Profile dirs without segments (flat layout) are skipped, not erased.
     """
     console = Console()
     profiles_dir = config_dir() / "profiles"
@@ -323,7 +325,10 @@ def profile_sync_claude_md() -> None:
     for r in results:
         style = {"written": "green", "unchanged": "dim", "skipped": "yellow"}.get(r.action, "")
         suffix = f" ({r.reason})" if r.reason else ""
-        console.print(f"[{style}]{r.action:9}[/{style}] {r.profile}{suffix}")
+        # The destination, not only the profile: one profile can now yield one
+        # line per file its agent loads, and the profile name alone repeated
+        # the same word without saying which file changed.
+        console.print(f"[{style}]{r.action:9}[/{style}] {r.profile} → {r.path.name}{suffix}")
 
 
 @profile.command("remove")

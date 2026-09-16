@@ -155,7 +155,7 @@ def _agent_has_system_doc(cfg: Config, profile: str = "") -> bool:
     from lazy_harness.agents.registry import AgentNotFoundError, agent_for_profile
 
     try:
-        return bool(agent_for_profile(cfg, profile).system_doc_name())
+        return bool(agent_for_profile(cfg, profile).system_docs())
     except AgentNotFoundError:
         # An unknown agent is `check_config`'s failure to report. Assuming it
         # has a system doc keeps this answer the same as the old default set.

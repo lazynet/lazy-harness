@@ -487,9 +487,9 @@ Mechanics:
 
 **Where it writes:** each profile's system doc under `<profiles_dir>/<name>/<doc>` (in place). The segment files themselves are not touched. Note the scope of step 3: the tree is chosen by the *edited path*, and every profile under it is regenerated — not only the one whose segment was touched.
 
-**Which agent's doc name it uses.** The one the hook was invoked under: the adapter is resolved from `--profile`, and `system_doc_name()` is read off it (`CLAUDE.md` for Claude Code, `AGENTS.md` for Codex). Before that it read the global `[agent].type`, so on a machine whose profiles run different agents a segment edit regenerated the wrong agent's contract file and left the right one stale.
+**Which destinations it writes.** Those of the agent the hook was invoked under: the adapter is resolved from `--profile`, and `system_docs()` is read off it (`CLAUDE.md` for Claude Code, `AGENTS.md` for Codex). An adapter may name more than one destination, and each receives the identical rendered bytes. Before that it read the global `[agent].type`, so on a machine whose profiles run different agents a segment edit regenerated the wrong agent's contract file and left the right one stale.
 
-The segment *filenames* it watches are still Claude Code's, which is why the hook's own name is. A profile running another agent has its doc regenerated under that agent's name, but only an edit to a `CLAUDE.*` segment triggers it.
+The segment *filenames* it watches are named by role — `head.md`, `_common/common.md`, `_common/<agent>.md`, `tail.md` — and the trigger set is derived from those roles rather than listed in the hook, so a rename cannot leave it watching names nobody edits. The legacy `CLAUDE.*` spellings still trigger it while a tree is mid-migration. Only the hook's own name is still Claude Code's.
 
 **Tool scope, deliberately narrower than the event.** `PostToolUse` delivers `NotebookEdit` as a file modification alongside `Edit` and `Write`, and this hook matches on the *filename* rather than an extension — so a notebook named `CLAUDE.head.md` would clear the second gate. The tool-name check is kept for that reason and is not a redundant restatement of the operation.
 

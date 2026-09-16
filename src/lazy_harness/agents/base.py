@@ -504,10 +504,23 @@ class AgentAdapter(Protocol):
         """
         ...
 
-    def system_doc_name(self) -> str:
-        """Primary system-instruction document filename (e.g. 'CLAUDE.md').
+    def system_docs(self) -> list[Path]:
+        """Paths, relative to the profile's config dir, this agent actually loads.
 
-        Return empty string for agents that use a different injection mechanism.
+        **Destinations, not recognised filenames.** Copilot recognises
+        `AGENTS.md` and `CLAUDE.md`, but only inside repositories; its
+        user-level destinations are `copilot-instructions.md` and
+        `instructions/**/*.instructions.md`. Writing `CLAUDE.md` into its
+        config dir installs nothing, so a method answering "what filenames does
+        this agent know" cannot be the input to a deployer that writes files.
+
+        The list is not a stacking promise either: each entry is a path the
+        harness writes and the agent loads, so an adapter returning two entries
+        is asserting the agent loads both. `sync_agent_md.render_agent_md`
+        composes one document and every entry receives the identical bytes.
+
+        Return an empty list for agents that use a different injection
+        mechanism; `bool(system_docs())` is the gate that `""` used to be.
         """
         ...
 

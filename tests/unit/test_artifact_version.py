@@ -63,7 +63,7 @@ def test_extract_from_text_reads_the_generated_header() -> None:
     from lazy_harness.core.artifact_version import extract_from_text
     from lazy_harness.core.sync_agent_md import render_agent_md
 
-    content = render_agent_md("CLAUDE", "head", "common", "tail")
+    content = render_agent_md("head", "common", "tail")
     assert extract_from_text(content) == __version__
 
 
@@ -168,8 +168,8 @@ def test_collect_reports_resolves_the_doc_name_per_profile_agent(
         def name(self) -> str:
             return "other"
 
-        def system_doc_name(self) -> str:
-            return "OTHER.md"
+        def system_docs(self) -> list[Path]:
+            return [Path("OTHER.md")]
 
     monkeypatch.setitem(registry._AGENTS, "other", _OtherAdapter)
 
@@ -199,3 +199,48 @@ def test_collect_reports_resolves_the_doc_name_per_profile_agent(
     assert by_profile["experiment"] == "OTHER.md", (
         f"experiment declares agent='other' but was probed for: {by_profile}"
     )
+
+
+def test_a_multi_destination_agent_is_reported_once_per_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ADR-043 — `system_docs()` returns every path the agent loads, and each
+    is a separately deployed artifact carrying its own version stamp.
+
+    With a single name, the second destination could not be probed at all: an
+    out-of-date `instructions/*.instructions.md` beside a current
+    `copilot-instructions.md` reported clean.
+    """
+    from lazy_harness.agents import registry
+    from lazy_harness.core.artifact_version import collect_artifact_version_reports
+    from lazy_harness.core.config import Config, ProfileEntry, ProfilesConfig
+
+    class _TwoDocs(registry.NullAdapter):
+        @property
+        def name(self) -> str:
+            return "two-docs"
+
+        def system_docs(self) -> list[Path]:
+            return [Path("copilot-instructions.md"), Path("instructions/lh.instructions.md")]
+
+    monkeypatch.setitem(registry._AGENTS, "two-docs", _TwoDocs)
+
+    cfg_dir = tmp_path / "multi"
+    cfg_dir.mkdir()
+    cfg = Config(
+        profiles=ProfilesConfig(
+            default="multi",
+            items={"multi": ProfileEntry(config_dir=str(cfg_dir), agent="two-docs")},
+        ),
+    )
+    profiles_dir = tmp_path / "profiles"
+    (profiles_dir / "multi" / "instructions").mkdir(parents=True)
+    (profiles_dir / "multi" / "copilot-instructions.md").write_text("one\n")
+    (profiles_dir / "multi" / "instructions" / "lh.instructions.md").write_text("two\n")
+
+    reports = collect_artifact_version_reports(cfg, profiles_dir)
+
+    assert {r.kind for r in reports} == {
+        "copilot-instructions.md",
+        "instructions/lh.instructions.md",
+    }

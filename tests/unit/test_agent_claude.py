@@ -295,10 +295,12 @@ def test_claude_adapter_session_dirs() -> None:
     assert dirs["queue"] == "queue"
 
 
-def test_claude_adapter_system_doc_name() -> None:
+def test_claude_adapter_system_docs() -> None:
+    from pathlib import Path
+
     from lazy_harness.agents.claude_code import ClaudeCodeAdapter
 
-    assert ClaudeCodeAdapter().system_doc_name() == "CLAUDE.md"
+    assert ClaudeCodeAdapter().system_docs() == [Path("CLAUDE.md")]
 
 
 def test_claude_adapter_process_name() -> None:
