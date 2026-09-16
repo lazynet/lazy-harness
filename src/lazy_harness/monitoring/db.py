@@ -6,6 +6,7 @@ import json
 import sqlite3
 import time
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -31,6 +32,10 @@ def resolve_db_path() -> Path:
     from lazy_harness.core.paths import data_dir
 
     return data_dir() / "metrics.db"
+
+
+LAUNCH_ENTRIES = ("run", "exec")
+"""The entry points that record a launch: `lh run` and `lh exec`."""
 
 
 class MetricsDB:
@@ -120,6 +125,20 @@ class MetricsDB:
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_loop_events_session ON loop_events(session, ts)"
         )
+        # One row per agent launch actually started — written by `lh run` and
+        # `lh exec` after every validation and after the dry-run diversion, not
+        # by `resolve_launch`, which both callers reach before honouring
+        # `--dry-run`. Append-only with no primary key: an event log, not state.
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS launches (
+                ts      REAL NOT NULL,
+                profile TEXT NOT NULL,
+                agent   TEXT NOT NULL,
+                host    TEXT NOT NULL DEFAULT '',
+                entry   TEXT NOT NULL
+            )
+        """)
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_launches_ts ON launches(ts)")
         self._migrate_identity_columns()
         self._conn.commit()
 
@@ -799,8 +818,99 @@ class MetricsDB:
             ).fetchall()
         return {row["kind"]: row["n"] for row in rows}
 
+    def record_launch(self, *, profile: str, agent: str, entry: str, host: str = "") -> None:
+        """Append one launch event.
+
+        `entry` is validated rather than stored as given: the column is the
+        dimension the adoption check groups by, and a third spelling reaching
+        it would split one entry point's count in two without any reader
+        noticing.
+        """
+        if entry not in LAUNCH_ENTRIES:
+            raise ValueError(f"unknown launch entry {entry!r}; expected one of {LAUNCH_ENTRIES}")
+        self._conn.execute(
+            "INSERT INTO launches (ts, profile, agent, host, entry) VALUES (?, ?, ?, ?, ?)",
+            (self._now(), profile, agent, host, entry),
+        )
+        self._conn.commit()
+
+    def launch_counts(self, since_ts: float | None = None) -> dict[tuple[str, str, str], int]:
+        """Launches per `(profile, agent, entry)`, optionally since `since_ts`.
+
+        The adoption check in the blast-radius design reads one cell of this:
+        launches on a non-Claude profile over a trailing window.
+        """
+        sql = "SELECT profile, agent, entry, COUNT(*) AS n FROM launches"
+        params: tuple[float, ...] = ()
+        if since_ts is not None:
+            sql += " WHERE ts >= ?"
+            params = (since_ts,)
+        sql += " GROUP BY profile, agent, entry"
+        rows = self._conn.execute(sql, params).fetchall()
+        return {(r["profile"], r["agent"], r["entry"]): r["n"] for r in rows}
+
+    def launch_to_session_ratio(self, *, days: int = 28) -> dict[str, LaunchRatio]:
+        """Launches per ingested session, per profile, over one trailing window.
+
+        The blast-radius design of 2026-09-13, at `:1035-1056`, records that
+        this could not be computed at all: `git log -S "CREATE TABLE launches"`
+        found the string only in that document's own SQL block, so there was
+        no numerator at any window. The table above supplies it, but the
+        *number* still needs an accumulated window, so an
+        empty result here means "not measured yet", never "zero".
+
+        The two halves are keyed differently — `launches.ts` is an epoch
+        instant, `session_stats.date` a local day — so both cutoffs come from
+        one `_now()` floored to the same local midnight. Bounding only the
+        numerator would divide a month of launches by every session ever
+        ingested: the same design rejects `session_stats` as an unwindowed
+        denominator precisely because its rows outlive their transcripts.
+
+        `ratio` is None when the window holds no sessions for a profile.
+        Launches with no denominator are uncalibrated, not infinite.
+        """
+        cutoff_day = date.fromtimestamp(self._now()) - timedelta(days=days)
+        cutoff_ts = datetime.combine(cutoff_day, datetime.min.time()).timestamp()
+
+        launches = {
+            r["profile"]: r["n"]
+            for r in self._conn.execute(
+                "SELECT profile, COUNT(*) AS n FROM launches WHERE ts >= ? GROUP BY profile",
+                (cutoff_ts,),
+            ).fetchall()
+        }
+        sessions = {
+            r["profile"]: r["n"]
+            for r in self._conn.execute(
+                "SELECT profile, COUNT(DISTINCT session) AS n FROM session_stats "
+                "WHERE date >= ? GROUP BY profile",
+                (cutoff_day.isoformat(),),
+            ).fetchall()
+        }
+        out: dict[str, LaunchRatio] = {}
+        for profile in sorted(set(launches) | set(sessions)):
+            seen = launches.get(profile, 0)
+            ingested = sessions.get(profile, 0)
+            out[profile] = LaunchRatio(
+                profile=profile,
+                launches=seen,
+                sessions=ingested,
+                ratio=None if ingested == 0 else seen / ingested,
+            )
+        return out
+
     def close(self) -> None:
         self._conn.close()
+
+
+@dataclass(frozen=True, slots=True)
+class LaunchRatio:
+    """One profile's launch-to-session ratio over a stated window."""
+
+    profile: str
+    launches: int
+    sessions: int
+    ratio: float | None
 
 
 @dataclass(frozen=True, slots=True)

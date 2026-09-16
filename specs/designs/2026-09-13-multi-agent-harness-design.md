@@ -1473,8 +1473,7 @@ against a version that will not ship.
 
 ## Implementation sequence
 
-> **Status, 2026-09-15 — steps 0 to 4 are shipped; step 4's gate has run and
-> passed, and the contract is frozen.**
+> **Status, 2026-09-16 — steps 0 to 8 are shipped; step 9 is next.**
 >
 > | Step | State | Released in |
 > |------|-------|-------------|
@@ -1483,7 +1482,11 @@ against a version that will not ship.
 > | 2 — `lh hook <name> --profile <p>` as the runner, three builtins (0.62.0); `TranscriptReader` (0.63.0) | done | 0.62.0–0.63.0 |
 > | 3 — `config_targets()` / `plan_config()` and the engine that drives them | done | 0.65.0 |
 > | 4 — **contract gate: a throwaway `CodexAdapter` runs those three hooks** | done | 0.66.0–0.67.1 |
-> | 5 to 12 | not started | — |
+> | 5 — migrate the remaining 15 builtins | done | 0.67.2 |
+> | 6 — `per_profile` on `Capability` and the `cfg.agent.type` readers | done | 0.68.0 |
+> | 7 — multi-file config planning (ADR-042) | done | 0.68.0 |
+> | 8 — `system_docs()` replaces `system_doc_name()` (ADR-043) | done | 0.68.0 |
+> | 9 to 12 | not started | — |
 >
 > Step 4 spans three releases. 0.66.0 carried the adapter, the Protocol cleanup
 > and the missing-signals line (#289, #290); 0.67.0 carries the three defects
@@ -1493,6 +1496,20 @@ against a version that will not ship.
 > plannerless-adapter rejection found while implementing the adapter (#294) and
 > a flaky test plus a formatting gate that both reproduce on `main` (#296);
 > 0.67.1 carries the two the second run surfaced (#300). `specs/backlog.md` §Done has the per-PR record.
+>
+> Step 5 closed as its own release, `v0.67.2`, cut from #303 — `specs/backlog.md`
+> §Done ("0.67.2 cortada — el step 5 entero en una release") has the full PR
+> list. Steps 6 to 8 landed 2026-09-16, after the `v0.67.3` cut, so none carries
+> a release tag of its own yet and all three are grouped into the pending
+> `0.68.0`: step 7 (multi-file config planning) in #341, step 6 (per-profile
+> agent resolution) in #342, step 8 (`system_docs()`) in #344 — none of the
+> three has a `specs/backlog.md` §Done entry yet, flagged separately by
+> `/coherence-audit`. Step 6's own PR left `per_profile` on `Capability` done
+> and turned every `cfg.agent.type` read this design flagged into a documented
+> "no profile resolved, fall back to the global agent" branch instead of
+> removing it outright; `docs/roadmap.md`'s own item names the five call sites
+> that branch still guards and leaves open whether that closes the item or is
+> the remaining scope.
 >
 > **The gate passed on 2026-09-15, on the third run.** Each run settled a
 > different half, so the pass is composite and is written that way rather than

@@ -103,8 +103,26 @@ Four properties matter more than the type list:
    the default profile's adapter for the link, and an integration test invokes
    both readers under an override and asserts they agree.
 
-   Step 6 still owns the sweep outside `deploy/`; what moved early is these two
-   readers and nothing else.
+   **#342 (0.68.0) closed the rest of the sweep outside `deploy/`.** `deploy/`'s
+   two readers, the launcher (`agents/launch.py:65`, now
+   `agent_for_profile(cfg, resolution.name)`), and the hook/worker/CLI readers
+   all resolve the agent per profile now; `Capability` gained a `per_profile`
+   field reported through `lh doctor`. What remains, measured 2026-09-16
+   (`grep -rn "get_agent(" src/ | grep -v hooks/builtins`): five call sites
+   still read `cfg.agent.type`. `cli/memory_cmd.py:250` and
+   `knowledge/compound_loop_worker.py:115` sit behind an explicit "no profile
+   resolved" branch (`resolve_profile(None)` returning empty) before falling
+   back to the global agent. `monitoring/statusline.py:44` shares the same
+   fallback shape (`cfg.agent.type if cfg is not None else "claude-code"`) but
+   its enclosing function takes no profile parameter at all, so there is no
+   "no profile" branch there to sit behind — the unconditional read is the
+   only path. `cli/profile_cmd.py:308` and `cli/doctor_cmd.py:474` read
+   `cfg.agent.type` directly, with neither a ternary nor a profile branch.
+   Whether the three-site fallback pattern closes step 6, or the two
+   unconditional reads (and `statusline.py`'s unconditional-in-effect one) are
+   the item's remaining scope, is left for human review — see
+   `docs/roadmap.md`'s "Make agent selection per profile throughout" item,
+   reconciled against this same measurement.
 4. **Permissions are not unified.** Each agent's permission model is expressed
    in its own terms. Attempting one cross-agent permission language would
    produce a translation that is wrong in exactly the cases that matter.

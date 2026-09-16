@@ -31,6 +31,7 @@ from lazy_harness.core.paths import config_file, process_exec_path
 from lazy_harness.llm.invoke import run_inference
 from lazy_harness.llm.registry import _DEFAULT_URLS
 from lazy_harness.llm.roles import RoleNotFoundError, resolve_role
+from lazy_harness.monitoring.launches import record_launch
 
 SCHEMA = "lh.exec/v1"
 
@@ -401,6 +402,10 @@ def exec_cmd(
     # writes nothing: the table must not grow a row on every unlabelled run.
     if workload:
         _record_attribution(session_id, workload)
+
+    # Same reason, and the last gate is behind us: the dry run returned above
+    # and the empty prompt was refused, so this invocation does start an agent.
+    record_launch(profile=plan.profile, agent=adapter.name, entry="exec")
 
     process_name = adapter.process_name()
     executable = process_exec_path(plan.binary, process_name) if process_name else plan.binary

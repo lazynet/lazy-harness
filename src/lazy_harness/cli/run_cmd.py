@@ -14,6 +14,7 @@ from lazy_harness.agents.launch import LaunchError, resolve_launch
 from lazy_harness.core.config import ConfigError, load_config
 from lazy_harness.core.paths import config_file, process_exec_path
 from lazy_harness.core.profiles import SOURCE_DEFAULT_FALLBACK, root_routing_is_configured
+from lazy_harness.monitoring.launches import record_launch
 
 
 @click.command(
@@ -98,4 +99,7 @@ def run(
             console.print(f"[dim]lh run: profile '{profile_name}'[/dim]")
 
     exec_file = process_exec_path(binary, process_name) if process_name else binary
+    # Last thing before the process image is replaced: `os.execvpe` never
+    # returns, so a row written after it is a row never written.
+    record_launch(profile=profile_name, agent=adapter.name, entry="run")
     os.execvpe(str(exec_file), exec_args, env)

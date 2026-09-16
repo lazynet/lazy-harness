@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.68.0](https://github.com/lazynet/lazy-harness/compare/v0.67.3...v0.68.0) (2026-09-16)
+
+
+### Features
+
+* multi-file config planning — several targets, explicit deletes, and the mtime/size abort ([#341](https://github.com/lazynet/lazy-harness/issues/341)) ([7585c7c](https://github.com/lazynet/lazy-harness/commit/7585c7cb08bd3647889dc3b94cef4421ed40bda8))
+* resolve the agent per profile across the tree ([#342](https://github.com/lazynet/lazy-harness/issues/342)) ([4f87d55](https://github.com/lazynet/lazy-harness/commit/4f87d55264209eba81d8541fe2c0e54bdb5a92c7))
+* system docs by role — system_docs() replaces system_doc_name() ([#344](https://github.com/lazynet/lazy-harness/issues/344)) ([7169ccc](https://github.com/lazynet/lazy-harness/commit/7169ccc144d6852bab230d20846d11afef4f2b7b))
+
+
+### Documentation
+
+* register the 2026-09-16 codebase audit's ten findings in the backlog ([#340](https://github.com/lazynet/lazy-harness/issues/340)) ([b16ffb5](https://github.com/lazynet/lazy-harness/commit/b16ffb530f9ac17cd688a9f84a60ed57175a076b))
+* release gate for 0.68.0 — roadmap ADR-042/043, status block, stale citations ([#345](https://github.com/lazynet/lazy-harness/issues/345)) ([7f76004](https://github.com/lazynet/lazy-harness/commit/7f76004aff7df3e61188db069135ee80413af433))
+* scaffold Codex edit-dialect evidence and probes ([#339](https://github.com/lazynet/lazy-harness/issues/339)) ([c9c0c7d](https://github.com/lazynet/lazy-harness/commit/c9c0c7d55baa0adeac78babeecc04f7611395060))
+
 ## [0.67.3](https://github.com/lazynet/lazy-harness/compare/v0.67.2...v0.67.3) (2026-09-16)
 
 

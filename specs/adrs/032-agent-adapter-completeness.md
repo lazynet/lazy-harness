@@ -226,3 +226,12 @@ a Claude-shaped `settings.json`. They survive as private serialisers inside
 `ClaudeCodeAdapter` (`_generate_hook_config`, `_generate_mcp_config`). The
 Protocol block quoted above is kept as written, because it records the decision
 as it was made; the live surface is `agents/base.py`.
+
+**2026-09-16 — the Context's claim is stale.** *Context* says "`deploy_hooks`,
+`deploy_mcp_servers`, and `lh run` all go through `get_agent(cfg.agent.type)`."
+Since #342 (0.68.0) they resolve per profile through
+`agents/registry.py:agent_for_profile` instead, named in
+[ADR-041](041-multi-agent-hook-contract.md) §3.
+`get_agent(cfg.agent.type)` survives as the global fallback for the five call
+sites that same section records — none of them the three functions this
+sentence names.
