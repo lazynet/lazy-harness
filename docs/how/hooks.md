@@ -611,16 +611,16 @@ Responsibility: say once, per session, that the context window has grown past th
 
 Mechanics:
 
-1. Read stdin JSON; exit 0 on malformed input, on a non-dict payload, or on a `transcript_path` that is missing or not a string.
+1. Take the transcript path from the normalised event (`HookEvent.transcript_path`) and use it only when a file is actually there — a payload that named none, or named something that was not a non-empty string, arrives as `None`.
 2. Compute the session's context with the gauge's `context_tokens()` — the same reader, so the same answer.
-3. Exit 0 when the total is below `ROTATE_TOKENS` (400k).
-4. Exit 0 when this session already published its notice, detected by a stamp file keyed on `session_id`. `Stop` fires every turn; without this the notice repeats for the rest of the session, which is how a warning gets tuned out.
-5. Otherwise print the `systemMessage` and write the stamp.
-6. Always exit 0. It never sets `decision`, so it cannot block a `Stop`.
+3. Return an empty `HookDecision` when the total is below `ROTATE_TOKENS` (400k).
+4. Return an empty `HookDecision` when this session already published its notice, detected by a stamp file keyed on `session_id`. `Stop` fires every turn; without this the notice repeats for the rest of the session, which is how a warning gets tuned out.
+5. Otherwise return `HookDecision(system_message=…)` and write the stamp.
+6. It never sets a verdict and never sets `stop`, so it cannot block a `Stop`, and the adapter's exit code is always 0.
 
 **Output:** `{"systemMessage": "<notice>"}` on the first qualifying `Stop` of a session; nothing on every other path.
 
-`systemMessage` goes at the top level, **not** inside `hookSpecificOutput`. Claude Code's hook schema (verified against the 2.1.269 binary) lists it among the common fields — "Display a message to the user (all hooks)" — while `hookSpecificOutput` accepts exactly four keys: `additionalContext`, `permissionDecision`, `permissionDecisionReason` and `updatedInput`. A nested `systemMessage` parses without error and is then discarded, producing a hook that runs, stamps, logs and displays nothing.
+`systemMessage` goes at the top level, **not** inside `hookSpecificOutput`. Claude Code's hook schema (verified against the 2.1.269 binary) lists it among the common fields — "Display a message to the user (all hooks)" — while `hookSpecificOutput` accepts exactly four keys: `additionalContext`, `permissionDecision`, `permissionDecisionReason` and `updatedInput`. A nested `systemMessage` parses without error and is then discarded, producing a hook that runs, stamps, logs and displays nothing. The placement is the adapter's since the migration; the hook returns a `system_message` and never serialises anything itself.
 
 **Kill criteria.** Declared before deployment, as behavioural automation requires:
 

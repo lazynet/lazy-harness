@@ -69,6 +69,16 @@ _NO_OBJECTION: dict[str, dict[str, object]] = {
         "session_id": "s1",
         "cwd": "/tmp",
     },
+    # No `transcript_path`, so the notice branch is never reached and this is
+    # the hook's silent path -- which is the one that matters here: the branch
+    # that *does* emit carries a `systemMessage`, a channel Claude Code shows
+    # without it being a verdict, and the risk is that the silent branch starts
+    # carrying one too.
+    "stop-context-rotate": {
+        "hook_event_name": "Stop",
+        "session_id": "s1",
+        "cwd": "/tmp",
+    },
 }
 
 
