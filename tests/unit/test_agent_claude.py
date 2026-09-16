@@ -124,6 +124,65 @@ def test_claude_resolve_binary_returns_none_when_missing(
     assert ClaudeCodeAdapter().resolve_binary() is None
 
 
+def _plant_recursive_shim(bin_dir: Path) -> Path:
+    """A real `claude` on PATH whose body re-enters `lh run`.
+
+    The thing the recursion warning is about, planted as a file rather than a
+    `shutil.which` stub: the guard under test is a path preference, so a stub
+    that answers before any path is compared would not exercise it.
+    """
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    shim = bin_dir / "claude"
+    shim.write_text('#!/bin/sh\nexec lh run "$@"\n')
+    shim.chmod(0o755)
+    return shim
+
+
+def test_a_recursive_claude_shim_on_path_loses_to_the_versioned_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The version-dir preference is the whole recursion guard, so pin it.
+
+    `resolve_binary` is exec'd by `lh run` (`cli/run_cmd.py:101`), so returning
+    a wrapper that calls `lh run` is a fork bomb. What prevents it is this
+    ordering and nothing else — there is no filter on the PATH candidate.
+    """
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    fake_home = tmp_path / "home"
+    versions = fake_home / ".local" / "share" / "claude" / "versions"
+    versions.mkdir(parents=True)
+    real_build = versions / "2.1.0"
+    real_build.write_text("#!/bin/sh\n")
+    real_build.chmod(0o755)
+
+    shim = _plant_recursive_shim(tmp_path / "bin")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+    monkeypatch.setenv("PATH", str(shim.parent))
+
+    assert ClaudeCodeAdapter().resolve_binary() == real_build
+
+
+def test_a_recursive_claude_shim_is_returned_when_no_versioned_build_exists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The accepted risk, pinned so it cannot change without the prose changing.
+
+    No filter rejects a PATH candidate that re-enters `lh run`, and adding one
+    keyed on the `lh` entrypoint directory would reject the genuine binary:
+    `uv tool install` puts `lh` and `claude` in the same `~/.local/bin`.
+    """
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    shim = _plant_recursive_shim(tmp_path / "bin")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+    monkeypatch.setenv("PATH", str(shim.parent))
+
+    assert ClaudeCodeAdapter().resolve_binary() == shim
+
+
 def test_generate_hook_config_uses_bash_matcher_for_pre_tool_use() -> None:
     from lazy_harness.agents.claude_code import ClaudeCodeAdapter
 

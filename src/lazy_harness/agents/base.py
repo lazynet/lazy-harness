@@ -468,8 +468,11 @@ class AgentAdapter(Protocol):
 
         Returns the absolute path, or None if not found. Implementations
         should prefer well-known install locations (e.g. version-managed
-        directories) over a generic PATH lookup, and must avoid resolving
-        to wrappers that would shell back into `lh run` (recursion).
+        directories) over a generic PATH lookup. That preference is also what
+        keeps a wrapper shelling back into `lh run` from being returned — it
+        is an ordering, not a filter, so an implementation whose preferred
+        location is absent may still return one. See the accepted risk on
+        `ClaudeCodeAdapter.resolve_binary`.
         """
         ...
 
