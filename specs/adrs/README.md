@@ -21,7 +21,7 @@ Decisions that define the `lazy-harness` project itself.
 | [009](./009-profile-symlink-deploy.md) | accepted | Profile symlink deploy | Per-file symlinks from source dotfiles into the agent target dir. |
 | [010](./010-pre-compact-preservation.md) | accepted | Pre-compact context preservation | Back up the transcript and distill a working-state summary before compaction. |
 | [011](./011-session-export-and-classification.md) | accepted | Session export with classification | JSONL → dated markdown with project/profile frontmatter, atomic writes. |
-| [012](./012-sqlite-monitoring.md) | accepted | SQLite monitoring | Idempotent SQLite store, one view module per angle. Five tables today — `session_stats`, `session_attribution`, `ingest_meta`, `sink_outbox`, `loop_events`; see the ADR's Evolution section. |
+| [012](./012-sqlite-monitoring.md) | accepted | SQLite monitoring | Idempotent SQLite store, one view module per angle. Six tables today — `session_stats`, `session_attribution`, `ingest_meta`, `sink_outbox`, `loop_events`, `launches`; see the ADR's Evolution section. |
 | [013](./013-scheduler-unified-backends.md) | accepted | Unified scheduler backends | launchd / systemd / cron behind one protocol, declared once in config. Complete as of 2026-08-17: the three backends install, uninstall and report state. |
 | [014](./014-migration-engine-rollback.md) | accepted | Migration engine with automatic rollback | Detect → plan → execute → auto-rollback on failure. Dry-run is a first-class mode. |
 | [015](./015-strict-tdd-workflow.md) | accepted | Strict TDD as a workflow rule | No production code without a failing test first. Non-negotiable. |
