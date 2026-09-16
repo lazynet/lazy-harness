@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"systemMessage\": \"WARN: CLAUDE.md at /repo/CLAUDE.md would be 250 lines (threshold 200). Consider whether each line is a fact the agent needs or a procedure it would already follow. `lh memory rightsize` shows every CLAUDE.md the harness can reach and which ceiling it breaches.\"}\n"
+}

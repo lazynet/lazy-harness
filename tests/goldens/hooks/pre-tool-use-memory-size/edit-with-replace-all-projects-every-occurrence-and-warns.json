@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "{\"systemMessage\": \"WARN: MEMORY.md at <tmp>/work/memory/MEMORY.md would be 300 lines (threshold 200). Consider running `lh memory consolidate` to distill recent JSONL entries, or move detail out of the index into the linked note, before adding more.\"}\n"
+}
