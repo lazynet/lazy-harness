@@ -10,6 +10,10 @@ PROTOCOL. One record per line on stdin, tab-separated:
 
     <hook>\t<operation>\t<agent>\t<payload json>
 
+`<agent>` is `claude-code`, `codex`, or `codex-blobless` — the last being the
+shipped Codex side fed a patch blob with no file section, which is the case the
+parser must abstain on.
+
 One record per line on stdout, tab-separated, in the order received:
 
     <hook>\t<operation>\t<agent>\t<native_name>\t<operation|NONE>\t<n edits>\t<n reads>
@@ -53,6 +57,11 @@ _FULL_MAP: dict[str, Operation] = {
     "Edit": Operation.MODIFY_FILE,
     "Write": Operation.MODIFY_FILE,
     "NotebookEdit": Operation.MODIFY_FILE,
+    # Codex's own edit tool, added when the gate started feeding Codex's real
+    # dialect. Without it the `operations` stub would fail at the *mapping*
+    # step and stop discriminating: the thing it exists to model is a fix that
+    # maps everything correctly and builds no structure.
+    "apply_patch": Operation.MODIFY_FILE,
 }
 _BASH_ONLY_MAP: dict[str, Operation] = {"Bash": Operation.RUN_COMMAND}
 
@@ -70,6 +79,9 @@ def _stub_codex_tool(payload: dict, *, mapping: dict[str, Operation], structures
     args = payload.get("tool_input")
     args = args if isinstance(args, dict) else {}
     operation = mapping.get(name)
+    # `file_path` only. The stub is deliberately blind to the patch blob: that
+    # blindness is what `--codex-map operations` models, and what the shipped
+    # adapter no longer has.
     path = args.get("file_path")
     edits: tuple[FileEdit, ...] = ()
     reads: tuple[Path, ...] = ()
@@ -126,7 +138,11 @@ def main(argv: list[str] | None = None) -> int:
             # fixture that moved both sides could not tell translation loss from
             # a fixture bug.
             tool = claude.parse_hook_input("pre_tool_use", payload, profile="f8").tool
-        elif agent != "codex":
+        elif agent not in ("codex", "codex-blobless"):
+            # `codex-blobless` is the same translator on a payload whose patch
+            # blob names no file. It is an agent LABEL rather than a fourth map
+            # so the control shims keep varying exactly one thing — the adapter
+            # — while the gate varies the payload.
             raise SystemExit(f"unknown agent {agent!r}")
         elif args.codex_map == "real":
             tool = codex.parse_hook_input("pre_tool_use", payload, profile="f8").tool
