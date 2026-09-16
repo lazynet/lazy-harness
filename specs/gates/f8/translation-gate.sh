@@ -82,12 +82,20 @@
 # to both translators. `specs/designs/codex-evidence.md` then measured what
 # Codex actually sends, and the payloads changed to match: `apply_patch`, with
 # the patch text under `tool_input.command`. Against that dialect the real
-# adapter's three fixes — the tool map, `_shared.EDIT_TOOLS`, and a parser for
-# the blob — take four builtins out of the inert set, and
+# adapter's three TRANSLATION fixes — the tool map, `_shared.EDIT_TOOLS`, and a
+# parser for the blob — take four builtins out of the inert set, and
 # `fake-translate-operations-only.sh` FLIPS TO EXIT 1. That flip is now the
 # gate's discrimination check: it is the same "map everything, build nothing"
 # change, and it is the measurement that says the parser is the load-bearing
 # third of the three rather than the tidy-up.
+#
+# THREE HERE, FOUR IN ADR-044, and the difference is this gate's scope rather
+# than a disagreement. A fourth fix was needed inside
+# `pre_tool_use_memory_size._projected_text`, which branches on the tool name and
+# went quiet on `apply_patch` with the three above in place. This gate measures
+# the TRANSLATION — what a `ToolCall` carries — so a gate downstream of it, in
+# one builtin's own body, is invisible here by construction. `LIVE` in the sets
+# below means "the structure survives", never "the hook acts".
 #
 # Neither correction reverses the other. A mapping fix alone still revives
 # nothing; what changed is that there is now something else in the tree for it

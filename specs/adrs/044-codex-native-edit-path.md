@@ -1,4 +1,4 @@
-# ADR-044: Codex's native edit path — three fixes, and the half that cannot be gated
+# ADR-044: Codex's native edit path — four fixes, and the half that cannot be gated
 
 **Status:** accepted
 **Date:** 2026-09-16
@@ -47,28 +47,33 @@ ADR exists in the shape it does.
 
 ## Decision
 
-### 1. Three fixes, and each is necessary
+### 1. Four fixes, and each is necessary
 
 The prevailing account — in `specs/backlog.md` and in the F8 gate's own control
 fixture `fake-translate-operations-only.sh` — was that widening
 `_TOOL_OPERATIONS` is a no-op. That fixture was written expecting the gate to
 fail it and the gate passed it, which is the stronger result: the mapping alone
-revives nothing. Three independent gaps stack, and the parser is the one the
-earlier account missed.
+revives nothing. Independent gaps stack, and the parser is the one the earlier
+account missed.
 
-| Fix | Without it |
-|---|---|
-| `_TOOL_OPERATIONS["apply_patch"] = MODIFY_FILE` | `post-tool-use-format` returns at `operation is not MODIFY_FILE`. |
-| `"apply_patch"` in the edit builtins' `INSPECTED_TOOLS` | Three builtins return at the tool-name gate. |
-| `_parse_patch` turning the blob into `FileEdit`s | All five return one line lower, iterating an empty `tool.edits`. |
+The count rose from three to four *while the three were being shipped*, which is
+the part worth keeping visible: the first three are what the evidence's
+reconciliation table predicts, and the fourth is what running them found.
 
-A fourth was found while shipping them, and it is in one builtin only:
-`pre_tool_use_memory_size._projected_text` branches on the *tool name* —
-`"Write"` takes `content`, `"Edit"` replays `replacements`, anything else
-returns `None` and the hook goes quiet. So that builtin stayed silent on
-`apply_patch` with all three fixes above in place. `apply_patch` carries both
-shapes in one blob, so it is the one tool whose branch is chosen by the
-`FileEdit` rather than by the name.
+| Fix | Without it | Named by the evidence? |
+|---|---|---|
+| `_TOOL_OPERATIONS["apply_patch"] = MODIFY_FILE` | `post-tool-use-format` returns at `operation is not MODIFY_FILE`. | yes |
+| `"apply_patch"` in the edit builtins' `INSPECTED_TOOLS` | Three builtins return at the tool-name gate. | yes |
+| `_parse_patch` turning the blob into `FileEdit`s | All five return one line lower, iterating an empty `tool.edits`. | yes |
+| `pre_tool_use_memory_size._projected_text` learning `apply_patch` | That one builtin stays silent with the other three in place. | **no** |
+
+The fourth is in one builtin only. `_projected_text` branches on the *tool name*
+— `"Write"` takes `content`, `"Edit"` replays `replacements`, anything else
+returns `None` and the hook goes quiet. `apply_patch` carries both shapes in one
+blob — an `*** Add File:` section is the `Write` shape, `*** Update File:` is the
+`Edit` shape — so it is the one tool whose branch is chosen by the `FileEdit`
+rather than by the name. `specs/designs/codex-evidence.md`'s builtin table
+(:378-395) does not have this row, and should gain it.
 
 ### 2. `INSPECTED_TOOLS` becomes one importable answer
 
