@@ -45,13 +45,33 @@ def _agent_runtime_dir() -> Path:
 
 
 def _profile_label() -> str:
-    """Derive the profile name from the agent's runtime config dir.
+    """The profile this session is running under.
+
+    Asked of `profile_name()` first, which matches each configured profile's
+    own agent env var against that profile's `config_dir`. Deriving it here
+    from `[agent].type`'s runtime dir could only ever name a profile running
+    the global agent: a `agent = "codex"` profile has `CODEX_HOME` set and
+    `CLAUDE_CONFIG_DIR` unset, so it fell through to the global link and got
+    labelled `default` — the label for no profile at all.
+
+    The directory surgery below stays as the fallback for a machine with no
+    config, or whose agent dir no profile declares.
 
     Examples (Claude Code):
       ~/.claude-lazy → 'lazy'
       ~/.claude-flex → 'flex'
       ~/.claude      → 'default'
     """
+    try:
+        from lazy_harness.hooks.builtins._shared import profile_name
+    except ImportError:
+        # Broken install: the surgery below needs no lazy_harness internals.
+        pass
+    else:
+        declared = profile_name()
+        if declared:
+            return declared
+
     config_dir = str(_agent_runtime_dir())
     base = os.path.basename(config_dir.rstrip("/"))
     if base.startswith(".claude-"):

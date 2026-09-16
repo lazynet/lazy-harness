@@ -160,3 +160,35 @@ def test_profile_label_broken_install_defaults_to_home_claude(
 
     out = format_statusline({})
     assert out.startswith("default ")
+
+
+def test_profile_label_names_a_profile_running_a_second_agent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """The defect (design step 6): the label came from `[agent].type`'s runtime
+    dir and nothing else.
+
+    A profile declaring `agent = "codex"` runs with `CODEX_HOME` set and
+    `CLAUDE_CONFIG_DIR` unset, so the lookup fell through to the global agent's
+    link and the statusline labelled that session `default` — the label for
+    "no profile at all" — while it was running under a declared one.
+    """
+    from lazy_harness.core import paths as paths_mod
+    from lazy_harness.monitoring.statusline import format_statusline
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-work"))
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        '[harness]\nversion = "1"\n\n[agent]\ntype = "claude-code"\n\n'
+        '[profiles]\ndefault = "work"\n\n'
+        f'[profiles.work]\nconfig_dir = "{tmp_path / "codex-work"}"\nagent = "codex"\n'
+    )
+    monkeypatch.setattr(paths_mod, "config_file", lambda: cfg_file)
+
+    out = format_statusline({})
+    assert out.startswith("work "), out
