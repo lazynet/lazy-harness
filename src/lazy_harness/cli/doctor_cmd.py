@@ -375,36 +375,6 @@ def _render_artifact_versions(
         )
 
 
-def _render_unhonoured_profile_agents(console: Console, cfg: Config) -> None:
-    """Report a `[profiles.<name>].agent` the deploy path does not honour yet.
-
-    `agent_for_profile` resolves the field for `.envrc` and for the artifact
-    version reader, but `deploy_hooks`, `deploy_mcp_servers` and
-    `deploy_claude_symlink` still resolve `cfg.agent.type` once for every
-    profile. A profile declaring a different agent therefore gets the global
-    agent's config shape written into its directory, and nothing says so.
-
-    Silent unless a profile actually diverges — declaring the same agent as the
-    global one is not a warning, it is a redundant but correct declaration.
-    """
-    divergent = [
-        (name, entry.agent)
-        for name, entry in cfg.profiles.items.items()
-        if entry.agent and entry.agent != cfg.agent.type
-    ]
-    if not divergent:
-        return
-    console.print("\n[bold]Profile agents[/bold]")
-    for name, agent_type in divergent:
-        console.print(
-            f"  [yellow]![/yellow] {name} declares agent '{agent_type}', but hook and MCP "
-            f"config are still generated for '{cfg.agent.type}' and written to every profile"
-        )
-    console.print(
-        "      [dim]`.envrc` honours the declaration; config generation does not yet.[/dim]"
-    )
-
-
 def _render_hook_signals(console: Console, gaps: list[HookSignalGap]) -> None:
     """Name each deployed hook's missing signals, per profile (design step 4).
 
@@ -445,15 +415,33 @@ def _render_hook_signals(console: Console, gaps: list[HookSignalGap]) -> None:
     )
 
 
-def _project_memory_dir(agent: AgentAdapter, cfg: Config | None) -> Path:
-    """Memory dir for the current project, canonicalised across worktrees."""
+def _project_memory_dir(agent: AgentAdapter, cfg: Config | None, profile: str) -> Path:
+    """Memory dir for the current project, canonicalised across worktrees.
+
+    Shaped exactly like `_engram_persist_metrics_path`, and for the same reason:
+    `session-end` names this directory with `agent_dir_for(cfg, event.profile)`,
+    so a `doctor` that named it from `[agent].type` reported on a directory
+    nothing writes to as soon as the profile ran a second agent.
+    `test_doctor_reads_the_memory_dir_the_hook_writes` asserts the two answers
+    against each other.
+
+    An empty profile is "nobody said" and keeps the global answer — the same
+    contract `agent_runtime_dir` applies to an absent `profile_config_dir`.
+    """
 
     from lazy_harness.hooks.builtins._shared import knowledge_root_for
     from lazy_harness.hooks.builtins._shared import memory_dir as shared_memory_dir
 
+    if profile:
+        from lazy_harness.hooks.builtins._shared import agent_dir_for
+
+        agent, base = agent_dir_for(cfg, profile)
+    else:
+        base = agent_runtime_dir(agent)
+
     return shared_memory_dir(
         None,
-        agent_dir=agent_runtime_dir(agent),
+        agent_dir=base,
         sessions_subdir=agent.session_dirs().get("sessions") or "projects",
         cwd=Path.cwd(),
         knowledge_root=knowledge_root_for(cfg),
@@ -555,21 +543,26 @@ def doctor() -> None:
     if not _render_llm_backend(console, cfg):
         ok = False
 
+    # Resolved once and handed to both: the two diagnostics report on
+    # directories the hooks name per profile, and answering "which profile" a
+    # second time is how one section can report on a different profile than the
+    # other in the same `lh doctor` run.
+    active_profile = resolve_profile(None)
+
     health = collect_engram_persist_health(
-        _engram_persist_metrics_path(agent, cfg, resolve_profile(None)),
+        _engram_persist_metrics_path(agent, cfg, active_profile),
         now=datetime.now(UTC),
     )
     if not _render_engram_persist(console, health):
         ok = False
 
-    if not _render_memory_hygiene(console, _project_memory_dir(agent, cfg)):
+    if not _render_memory_hygiene(console, _project_memory_dir(agent, cfg, active_profile)):
         ok = False
 
     from lazy_harness.core.artifact_version import collect_artifact_version_reports
 
     reports = collect_artifact_version_reports(cfg, config_dir() / "profiles")
     _render_artifact_versions(console, reports)
-    _render_unhonoured_profile_agents(console, cfg)
     _render_hook_signals(console, collect_hook_signal_gaps(cfg))
 
     console.print()

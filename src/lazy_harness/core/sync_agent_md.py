@@ -11,19 +11,28 @@ is split into three pieces:
 no-op for profiles that don't carry the three files — callers can run it across
 an entire `profiles/` tree without breaking flat profiles.
 
-The filename (<doc_name>) is determined by `adapter.system_doc_name()`:
+The filename (<doc_name>) is determined by `system_doc_name()` on the adapter
+that *that profile* runs, so one tree can hold profiles with different ones:
   Claude Code → CLAUDE.md   (stem: CLAUDE)
+  Codex       → AGENTS.md   (stem: AGENTS)
   Gemini CLI  → GEMINI.md   (stem: GEMINI)
-  Agents without a system doc return "" — `sync_profiles` becomes a no-op.
+  Agents without a system doc return "" — those profiles are skipped.
+
+`_common/<stem>.common.md` is therefore per stem: a mixed tree carries one
+shared segment per system-doc name.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from lazy_harness import __version__
 from lazy_harness.agents.base import AgentAdapter
+
+if TYPE_CHECKING:
+    from lazy_harness.core.config import Config
 
 # The version is embedded so a reader can tell a doc written by an older or
 # newer harness apart from one matching the running binary (decision 9,
@@ -54,25 +63,74 @@ def render_agent_md(stem: str, head: str, common: str, tail: str) -> str:
     return "\n".join(parts)
 
 
-def sync_profiles(profiles_dir: Path, adapter: AgentAdapter) -> list[SyncResult]:
+def sync_profiles(
+    profiles_dir: Path, adapter: AgentAdapter, *, cfg: Config | None = None
+) -> list[SyncResult]:
     """Regenerate the system doc for every profile under `profiles_dir`.
 
-    Skips the entire tree if `adapter.system_doc_name()` is empty (the adapter
-    does not use a file-based system instruction doc).
-    """
-    doc_name = adapter.system_doc_name()
-    if not doc_name:
-        return []
+    Skips a profile whose adapter has no system doc name (the adapter does not
+    use a file-based system instruction doc).
 
-    stem = doc_name.removesuffix(".md")
-    common_path = profiles_dir / "_common" / f"{stem}.common.md"
-    if not common_path.is_file():
-        raise SyncError(f"missing {common_path}")
-    common = common_path.read_text()
+    `cfg` resolves each directory's adapter through `agent_for_profile`, which
+    is what makes the doc name per profile. Without it every directory in the
+    tree got one agent's contract file — `adapter` was read once, above this
+    loop, so a profile running an agent that loads `AGENTS.md` was handed a
+    `CLAUDE.md` and the file it actually reads was never written. `adapter`
+    stays as the answer for a directory the config does not name: the tree can
+    hold profiles that were removed from `config.toml` but not from disk.
+
+    The `_common` segment is per stem for the same reason. A mixed tree needs
+    one shared file per system-doc name, and a profile carrying head and tail
+    without its own `_common` is still the loud failure it always was.
+    """
+    resolved: dict[str, tuple[str, str]] = {}
+
+    def _doc_for(profile: str) -> tuple[str, str]:
+        """(doc_name, stem) for one profile directory, resolved once."""
+        if profile not in resolved:
+            agent = adapter
+            # Only a directory the config actually declares resolves through
+            # `agent_for_profile`: that call falls back to `[agent].type` for an
+            # unknown name, which would hand a leftover directory the *global*
+            # agent rather than the caller's. The hook fires under one profile
+            # and walks a tree that may hold directories for profiles since
+            # removed from `config.toml`; those keep the caller's answer.
+            if cfg is not None and profile in cfg.profiles.items:
+                from lazy_harness.agents.registry import agent_for_profile
+
+                agent = agent_for_profile(cfg, profile)
+            doc_name = agent.system_doc_name()
+            resolved[profile] = (doc_name, doc_name.removesuffix(".md"))
+        return resolved[profile]
+
+    commons: dict[str, str] = {}
+
+    def _common_for(stem: str) -> str:
+        if stem not in commons:
+            common_path = profiles_dir / "_common" / f"{stem}.common.md"
+            if not common_path.is_file():
+                raise SyncError(f"missing {common_path}")
+            commons[stem] = common_path.read_text()
+        return commons[stem]
+
+    def _segmented(entry: Path) -> bool:
+        doc_name, stem = _doc_for(entry.name)
+        return bool(doc_name) and (entry / f"{stem}.head.md").is_file()
+
+    # Every shared segment this tree needs is loaded before the first write.
+    # The lookup is per stem, so a tree mixing system-doc names can reach a
+    # missing `_common` mid-loop, and a refusal that lands there leaves the
+    # profiles already visited rewritten.
+    for entry in sorted(profiles_dir.iterdir()):
+        if entry.is_dir() and not entry.name.startswith("_") and _segmented(entry):
+            _common_for(_doc_for(entry.name)[1])
 
     results: list[SyncResult] = []
     for entry in sorted(profiles_dir.iterdir()):
         if not entry.is_dir() or entry.name.startswith("_"):
+            continue
+        doc_name, stem = _doc_for(entry.name)
+        if not doc_name:
             continue
         head = entry / f"{stem}.head.md"
         tail = entry / f"{stem}.tail.md"
@@ -90,6 +148,7 @@ def sync_profiles(profiles_dir: Path, adapter: AgentAdapter) -> list[SyncResult]
             )
             continue
 
+        common = _common_for(stem)
         new_content = render_agent_md(stem, head.read_text(), common, tail.read_text())
         if out.is_file() and out.read_text() == new_content:
             results.append(SyncResult(profile=entry.name, action="unchanged", path=out))

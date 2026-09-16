@@ -838,3 +838,81 @@ def test_memory_dir_help_names_the_knowledge_store_not_the_runtime_dir() -> None
         help_text = " ".join(result.output.split())
         assert "knowledge store" in help_text, help_text
         assert "Defaults to the agent runtime dir for this cwd" not in help_text, help_text
+
+
+def _other_agent_profile_config(tmp_path: Path, monkeypatch) -> Path:
+    """A config whose only profile runs an agent that is not the global default."""
+    from lazy_harness.agents import registry
+
+    class _OtherAdapter(registry.NullAdapter):
+        @property
+        def name(self) -> str:
+            return "other"
+
+        def env_var(self) -> str:
+            return "OTHER_CONFIG_DIR"
+
+        def session_dirs(self) -> dict[str, str]:
+            return {"sessions": "threads", "logs": "journal", "queue": "outbox"}
+
+    monkeypatch.setitem(registry._AGENTS, "other", _OtherAdapter)
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    monkeypatch.setenv("OTHER_CONFIG_DIR", str(tmp_path / "alpha-home"))
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        '[harness]\nversion = "1"\n\n[agent]\ntype = "claude-code"\n\n'
+        '[profiles]\ndefault = "alpha"\n\n'
+        f'[profiles.alpha]\nconfig_dir = "{tmp_path / "alpha-home"}"\nagent = "other"\n'
+    )
+    monkeypatch.setattr("lazy_harness.cli.memory_cmd.config_file", lambda: cfg_file)
+    monkeypatch.setattr("lazy_harness.core.paths.config_file", lambda: cfg_file)
+    return cfg_file
+
+
+def test_memory_cmd_reads_the_memory_dir_the_hook_writes(tmp_path: Path, monkeypatch) -> None:
+    """The defect (design step 6): `lh memory` resolved the adapter from
+    `[agent].type` while the hooks resolve it from the profile.
+
+    `session-end` writes the project's distilled memory under the profile's own
+    agent directory and that agent's `sessions` subdirectory. The CLI that
+    reviews those proposals answered globally, so under a profile running a
+    second agent `lh memory` reported no pending proposals while the hook had
+    been writing them all along — the failure its own docstring names.
+    """
+    from lazy_harness.cli.memory_cmd import _project_memory_dir
+    from lazy_harness.core.config import load_config
+    from lazy_harness.hooks.builtins._shared import agent_dir_for, knowledge_root_for
+    from lazy_harness.hooks.builtins._shared import memory_dir as shared_memory_dir
+
+    cfg_file = _other_agent_profile_config(tmp_path, monkeypatch)
+    repo = tmp_path / "plain"
+    (repo / ".git").mkdir(parents=True)
+    monkeypatch.chdir(repo)
+
+    cfg = load_config(cfg_file)
+    writer_agent, writer_dir = agent_dir_for(cfg, "alpha")
+    written = shared_memory_dir(
+        None,
+        agent_dir=writer_dir,
+        sessions_subdir=writer_agent.session_dirs().get("sessions") or "projects",
+        cwd=repo,
+        knowledge_root=knowledge_root_for(cfg),
+    )
+
+    assert _project_memory_dir() == written
+
+
+def test_memory_cmd_legacy_dir_uses_the_profiles_own_agent(tmp_path: Path, monkeypatch) -> None:
+    """`lh memory migrate` drains the pre-store location, so it has to name the
+    same one the profile's agent wrote to — a global answer leaves the legacy
+    memory of every non-default-agent profile undrained and unreported."""
+    from lazy_harness.cli.memory_cmd import _legacy_memory_dir
+
+    _other_agent_profile_config(tmp_path, monkeypatch)
+    repo = tmp_path / "plain"
+    (repo / ".git").mkdir(parents=True)
+    monkeypatch.chdir(repo)
+
+    encoded = "-" + str(repo).replace("/", "-").lstrip("-")
+    assert _legacy_memory_dir() == tmp_path / "alpha-home" / "threads" / encoded / "memory"

@@ -26,8 +26,9 @@ def deploy_envrc_for_all_profiles(cfg: Config) -> list[EnvrcResult]:
     """Write a managed .envrc into every root of every profile.
 
     Returns the per-root results so callers (CLI, init, migrate) can render
-    them however they like. Raises AgentNotFoundError if cfg.agent.type is
-    not registered.
+    them however they like. Raises AgentNotFoundError if the agent
+    `agent_for_profile` resolves for any profile is not registered — the
+    profile's own `agent`, or `[agent].type` where it declares none.
     """
     results: list[EnvrcResult] = []
     for name, entry in cfg.profiles.items.items():
@@ -308,7 +309,9 @@ def profile_sync_claude_md() -> None:
         raise SystemExit(1)
 
     try:
-        results = sync_profiles(profiles_dir, agent)
+        # `cfg` makes the doc name per profile; `agent` stays the answer for a
+        # directory the config no longer names.
+        results = sync_profiles(profiles_dir, agent, cfg=cfg)
     except SyncError as e:
         console.print(f"[red]Error:[/red] {escape(str(e))}")
         raise SystemExit(1)

@@ -9,6 +9,7 @@ from pathlib import Path
 
 import click
 
+from lazy_harness.agents.base import AgentAdapter
 from lazy_harness.core.config import Config, ConfigError, load_config
 from lazy_harness.core.decay import apply_decay, find_decay_candidates
 from lazy_harness.core.paths import config_file
@@ -214,18 +215,24 @@ def _format_entry_block(proposal: PendingProposal, status_lines: list[str]) -> s
     return "\n".join(lines)
 
 
-def _project_memory_dir() -> Path:
-    """Where this project's distilled memory lives.
+def _agent_for_active_profile() -> tuple[Config | None, AgentAdapter, Path]:
+    """The config, the agent this invocation's profile runs, and its runtime dir.
 
-    The same resolver the hooks use. Answering this question twice is how one
-    side ends up reading a directory the other stopped writing to: the hooks
-    moved `MEMORY.md` into the knowledge store, and a CLI still resolving the
-    legacy path reports no pending proposals rather than failing.
+    `lh memory` reads directories the hooks write, and the hooks name them with
+    `agent_dir_for(cfg, event.profile)`. Resolving the adapter from
+    `[agent].type` here made the reader and the writer disagree the moment a
+    profile declared its own agent: the CLI reported no pending proposals from
+    the default agent's directory while `session-end` had been writing them
+    under the profile's, which is exactly the drift `_project_memory_dir`'s
+    docstring already warns about one level up.
+
+    An unresolved profile is "nobody said" and keeps the global answer, the same
+    contract `agent_runtime_dir` applies to an absent `profile_config_dir`.
     """
     from lazy_harness.agents.registry import get_agent
     from lazy_harness.core.paths import agent_runtime_dir
-    from lazy_harness.hooks.builtins._shared import knowledge_root_for
-    from lazy_harness.hooks.builtins._shared import memory_dir as shared_memory_dir
+    from lazy_harness.hooks.builtins._shared import agent_dir_for
+    from lazy_harness.hooks.runner import resolve_profile
 
     cfg = None
     cf = config_file()
@@ -234,10 +241,31 @@ def _project_memory_dir() -> Path:
             cfg = load_config(cf)
         except ConfigError:
             cfg = None
+
+    profile = resolve_profile(None)
+    if profile:
+        agent, agent_dir = agent_dir_for(cfg, profile)
+        return cfg, agent, agent_dir
+
     agent = get_agent(cfg.agent.type if cfg is not None else "claude-code")
+    return cfg, agent, agent_runtime_dir(agent)
+
+
+def _project_memory_dir() -> Path:
+    """Where this project's distilled memory lives.
+
+    The same resolver the hooks use. Answering this question twice is how one
+    side ends up reading a directory the other stopped writing to: the hooks
+    moved `MEMORY.md` into the knowledge store, and a CLI still resolving the
+    legacy path reports no pending proposals rather than failing.
+    """
+    from lazy_harness.hooks.builtins._shared import knowledge_root_for
+    from lazy_harness.hooks.builtins._shared import memory_dir as shared_memory_dir
+
+    cfg, agent, agent_dir = _agent_for_active_profile()
     return shared_memory_dir(
         None,
-        agent_dir=agent_runtime_dir(agent),
+        agent_dir=agent_dir,
         sessions_subdir=agent.session_dirs().get("sessions") or "projects",
         cwd=Path.cwd(),
         knowledge_root=knowledge_root_for(cfg),
@@ -250,22 +278,13 @@ def _legacy_memory_dir() -> Path:
     Resolved through the same helper the store path falls back to, so the two
     answers cannot drift apart.
     """
-    from lazy_harness.agents.registry import get_agent
-    from lazy_harness.core.paths import agent_runtime_dir
     from lazy_harness.hooks.builtins._shared import resolve_memory_dir
 
-    cfg = None
-    cf = config_file()
-    if cf.is_file():
-        try:
-            cfg = load_config(cf)
-        except ConfigError:
-            cfg = None
-    agent = get_agent(cfg.agent.type if cfg is not None else "claude-code")
+    _cfg, agent, agent_dir = _agent_for_active_profile()
     return (
         resolve_memory_dir(
             None,
-            agent_dir=agent_runtime_dir(agent),
+            agent_dir=agent_dir,
             sessions_subdir=agent.session_dirs().get("sessions") or "projects",
             cwd=Path.cwd(),
         )

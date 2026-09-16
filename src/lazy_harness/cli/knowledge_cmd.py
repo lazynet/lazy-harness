@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -207,20 +206,19 @@ def knowledge_handoff_now() -> None:
         console.print("[red]compound_loop is disabled in config.toml[/red]")
         raise SystemExit(1)
 
-    from lazy_harness.agents.registry import get_agent
-    from lazy_harness.core.paths import agent_runtime_dir
+    from lazy_harness.hooks.builtins._shared import agent_dir_for
+    from lazy_harness.hooks.runner import resolve_profile
 
-    agent = get_agent(cfg.agent.type)
-    env_val = os.environ.get(agent.env_var()) if agent.env_var() else None
-    if env_val:
-        agent_dir = Path(env_val)
-    else:
-        # Prefer the default profile's config dir; otherwise let the adapter
-        # resolve its runtime dir (ADR-032 L3 — no hardcoded ~/.claude).
-        default_entry = cfg.profiles.items.get(cfg.profiles.default)
-        agent_dir = (
-            expand_path(default_entry.config_dir) if default_entry else agent_runtime_dir(agent)
-        )
+    # This command declares the SessionEnd hook's semantics, so it resolves its
+    # directories the way the hook does — one call, per profile. Doing it by
+    # hand on top of `[agent].type` read the profile's directory with the
+    # global agent's subdirectory names and reported no session to hand off.
+    #
+    # An unresolved profile falls back to the default one rather than to the
+    # global runtime dir, which is the preference this command already had: it
+    # is run from a shell, not from a hook, and the default profile is the best
+    # available answer to "whose session".
+    agent, agent_dir = agent_dir_for(cfg, resolve_profile(None) or cfg.profiles.default)
     subdirs = agent.session_dirs()
     cwd = Path.cwd()
     encoded = "-" + str(cwd).replace("/", "-").lstrip("-")

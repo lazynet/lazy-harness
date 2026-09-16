@@ -515,3 +515,135 @@ def test_registry_and_run_inference_agree_on_the_active_backend(
 
 def test_llm_capability_reads_the_role_table() -> None:
     assert _backends_reported_on(_cfg_role_table_form()) == ["ollama"]
+
+
+# --- per-profile capabilities (design step 6) -------------------------------
+#
+# ADR-035 declares the agent `Cardinality.ONE` at `config_path="agent.type"`.
+# With `[profiles.<name>].agent` the true cardinality is one *per profile*,
+# which a single dotted path cannot express. `per_profile` is that declaration,
+# and `state()` takes the profile it is being asked about.
+
+
+def _two_agent_cfg() -> Config:
+    from lazy_harness.core.config import (
+        AgentConfig,
+        Config,
+        HarnessConfig,
+        ProfileEntry,
+        ProfilesConfig,
+    )
+
+    return Config(
+        harness=HarnessConfig(version="1"),
+        agent=AgentConfig(type="claude-code"),
+        profiles=ProfilesConfig(
+            default="lazy",
+            items={
+                "lazy": ProfileEntry(config_dir="~/.claude-lazy"),
+                "work": ProfileEntry(config_dir="~/.codex-work", agent="codex"),
+            },
+        ),
+    )
+
+
+def test_a_per_profile_agent_reports_per_profile() -> None:
+    """The defect: one answer for a config that has one answer per profile.
+
+    `state()` read `agent.type` and nothing else, so a machine whose `work`
+    profile runs Codex reported Claude Code enabled for the whole config —
+    including for the profile that does not run it.
+    """
+    from lazy_harness.plugins.builtins import builtin_registry
+    from lazy_harness.plugins.capabilities import CapabilityState
+
+    reg = builtin_registry()
+    cfg = _two_agent_cfg()
+    claude = reg.get("claude-code")
+    codex = reg.get("codex")
+
+    assert reg.state(claude, cfg, profile="lazy") is CapabilityState.ON
+    assert reg.state(codex, cfg, profile="lazy") is CapabilityState.OFF
+
+    assert reg.state(codex, cfg, profile="work") is CapabilityState.ON
+    assert reg.state(claude, cfg, profile="work") is CapabilityState.OFF
+
+
+def test_a_per_profile_capability_without_a_profile_reports_the_global_default() -> None:
+    """ "Nobody said" keeps the global answer rather than inventing a profile."""
+    from lazy_harness.plugins.builtins import builtin_registry
+    from lazy_harness.plugins.capabilities import CapabilityState
+
+    reg = builtin_registry()
+    cfg = _two_agent_cfg()
+
+    assert reg.state(reg.get("claude-code"), cfg) is CapabilityState.ON
+    assert reg.state(reg.get("codex"), cfg) is CapabilityState.OFF
+
+
+def test_toggling_a_per_profile_capability_is_refused_and_names_the_key() -> None:
+    """The decision: the registry REPORTS per-profile state and does not write it.
+
+    `toggle` sets a value by walking `config_path` with getattr/setattr, and
+    `[profiles.<name>].agent` is not on that path — the name is a runtime value
+    and `ProfilesConfig.items` is a plain dict. Silently writing `[agent].type`
+    instead is the failure this refusal exists to prevent: the user asks to
+    switch agent, the default moves, and every profile declaring its own is
+    unaffected with nothing saying so.
+    """
+    from lazy_harness.plugins.builtins import builtin_registry
+
+    reg = builtin_registry()
+    cfg = _two_agent_cfg()
+
+    with pytest.raises(ValueError, match=r"\[profiles\.<name>\]\.agent"):
+        reg.toggle(reg.get("codex"), cfg, enabled=True)
+
+
+def test_every_registered_agent_is_a_registered_capability() -> None:
+    """One answer in one importable place.
+
+    The capability list was written by hand beside the agent registry and had
+    drifted: `codex` resolves, deploys and runs, and no surface built on the
+    registry could report it at all — a per-profile report for a Codex profile
+    would have shown every agent off.
+    """
+    from lazy_harness.agents.registry import list_agents
+    from lazy_harness.plugins.builtins import builtin_registry
+
+    registered = {c.name for c in builtin_registry().capabilities(kind="agent")}
+    assert registered == set(list_agents())
+
+
+def test_a_system_doc_hook_is_reported_off_for_the_profile_that_cannot_load_it() -> None:
+    """`requires_system_doc` is answered per profile too.
+
+    The check read `[agent].type`, so a hook that only makes sense for an agent
+    with a file-based system doc was reported ON for a profile running one that
+    has none.
+    """
+    from lazy_harness.core.config import ProfileEntry
+    from lazy_harness.plugins.capabilities import (
+        Capability,
+        CapabilityRegistry,
+        CapabilityState,
+        Cardinality,
+    )
+
+    cap = Capability(
+        name="post-tool-use-sync-claude",
+        kind="hook",
+        cardinality=Cardinality.MANY,
+        config_path="context_inject.enabled",
+        summary="Regenerate the system doc",
+        requires_system_doc=True,
+    )
+    reg = CapabilityRegistry()
+    reg.register(cap)
+
+    cfg = _two_agent_cfg()
+    cfg.profiles.items["blank"] = ProfileEntry(config_dir="~/.blank", agent="null")
+    cfg.context_inject.enabled = True
+
+    assert reg.state(cap, cfg, profile="lazy") is CapabilityState.ON
+    assert reg.state(cap, cfg, profile="blank") is CapabilityState.OFF

@@ -173,3 +173,208 @@ def test_generated_header_names_a_registered_command() -> None:
     assert named, (
         f"header references no registered subcommand; available: {sorted(profile.commands)}"
     )
+
+
+def test_sync_profiles_writes_each_profiles_own_system_doc(tmp_path: Path) -> None:
+    """The defect (design step 6): `sync_profiles` resolved one adapter above
+    its own profile loop.
+
+    The doc name comes from `adapter.system_doc_name()`, so one adapter for the
+    whole tree wrote `CLAUDE.md` into a profile running an agent that reads
+    `AGENTS.md` — and left the file that agent actually loads unwritten. Its
+    caller already resolves per profile (`post_tool_use_sync_claude` takes the
+    firing profile's adapter), which only moved the defect: whichever profile
+    fired the hook imposed its contract file on every other one.
+    """
+    from lazy_harness.core.config import (
+        AgentConfig,
+        Config,
+        HarnessConfig,
+        ProfileEntry,
+        ProfilesConfig,
+    )
+    from lazy_harness.core.sync_agent_md import sync_profiles
+
+    profiles_dir = tmp_path / "profiles"
+    profiles_dir.mkdir()
+    _seed_common(profiles_dir)
+    (profiles_dir / "_common" / "AGENTS.common.md").write_text("# shared\n")
+
+    _seed_profile(profiles_dir, "lazy")
+    work = profiles_dir / "work"
+    work.mkdir()
+    (work / "AGENTS.head.md").write_text("# head\n")
+    (work / "AGENTS.tail.md").write_text("# tail\n")
+
+    cfg = Config(
+        harness=HarnessConfig(version="1"),
+        agent=AgentConfig(type="claude-code"),
+        profiles=ProfilesConfig(
+            default="lazy",
+            items={
+                "lazy": ProfileEntry(config_dir="~/.claude-lazy"),
+                "work": ProfileEntry(config_dir="~/.codex-work", agent="codex"),
+            },
+        ),
+    )
+
+    sync_profiles(profiles_dir, _adapter(), cfg=cfg)
+
+    assert (profiles_dir / "lazy" / "CLAUDE.md").is_file()
+    assert (work / "AGENTS.md").is_file(), (
+        f"profile 'work' runs codex; the tree got {sorted(p.name for p in work.iterdir())}"
+    )
+    assert not (work / "CLAUDE.md").exists()
+
+
+def test_sync_profiles_writes_nothing_when_one_profiles_common_is_missing(tmp_path: Path) -> None:
+    """The refusal stays ahead of the first write.
+
+    Making the `_common` lookup per stem made it reachable mid-loop, so a tree
+    whose second profile had no shared segment would leave the first one
+    rewritten and then raise — a half-synced tree from a command that reports
+    only the failure.
+    """
+    import pytest
+
+    from lazy_harness.core.config import (
+        AgentConfig,
+        Config,
+        HarnessConfig,
+        ProfileEntry,
+        ProfilesConfig,
+    )
+    from lazy_harness.core.sync_agent_md import SyncError, sync_profiles
+
+    profiles_dir = tmp_path / "profiles"
+    profiles_dir.mkdir()
+    _seed_common(profiles_dir)  # CLAUDE.common.md only — AGENTS.common.md is absent
+
+    _seed_profile(profiles_dir, "lazy")
+    work = profiles_dir / "work"
+    work.mkdir()
+    (work / "AGENTS.head.md").write_text("# head\n")
+    (work / "AGENTS.tail.md").write_text("# tail\n")
+
+    cfg = Config(
+        harness=HarnessConfig(version="1"),
+        agent=AgentConfig(type="claude-code"),
+        profiles=ProfilesConfig(
+            default="lazy",
+            items={
+                "lazy": ProfileEntry(config_dir="~/.claude-lazy"),
+                "work": ProfileEntry(config_dir="~/.codex-work", agent="codex"),
+            },
+        ),
+    )
+
+    with pytest.raises(SyncError, match="AGENTS.common.md"):
+        sync_profiles(profiles_dir, _adapter(), cfg=cfg)
+
+    assert not (profiles_dir / "lazy" / "CLAUDE.md").exists()
+
+
+def test_sync_profiles_does_not_demand_a_common_no_profile_uses(tmp_path: Path) -> None:
+    """A tree with nothing segmented needs no shared segment.
+
+    The check used to run once, unconditionally, against the single adapter's
+    stem — so a flat tree raised about `CLAUDE.common.md` even under a config
+    where no profile loads `CLAUDE.md`. Per stem, the file is demanded by the
+    profiles that carry segments and by nothing else.
+    """
+    from lazy_harness.core.sync_agent_md import sync_profiles
+
+    profiles_dir = tmp_path / "profiles"
+    profiles_dir.mkdir()
+    flat = profiles_dir / "flat"
+    flat.mkdir()
+    (flat / "CLAUDE.md").write_text("hand-written\n")
+
+    results = sync_profiles(profiles_dir, _adapter())
+
+    assert [r.action for r in results] == ["skipped"]
+    assert (flat / "CLAUDE.md").read_text() == "hand-written\n"
+
+
+def test_sync_claude_md_command_writes_each_profiles_own_system_doc(tmp_path: Path) -> None:
+    """The shipped surface, invoked end to end.
+
+    `sync_profiles` resolves the doc name per directory only when it is handed
+    the config. The test above covers that; this one covers the wiring, because
+    a command that kept passing one adapter would leave that test green and
+    still write `CLAUDE.md` into every profile on the machine.
+    """
+    import pytest
+    from click.testing import CliRunner
+
+    from lazy_harness.cli import profile_cmd
+
+    monkeypatch = pytest.MonkeyPatch()
+    profiles_dir = tmp_path / "profiles"
+    (profiles_dir / "_common").mkdir(parents=True)
+    (profiles_dir / "_common" / "CLAUDE.common.md").write_text("# shared\n")
+    (profiles_dir / "_common" / "AGENTS.common.md").write_text("# shared\n")
+
+    _seed_profile(profiles_dir, "lazy")
+    work = profiles_dir / "work"
+    work.mkdir()
+    (work / "AGENTS.head.md").write_text("# head\n")
+    (work / "AGENTS.tail.md").write_text("# tail\n")
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        '[harness]\nversion = "1"\n\n[agent]\ntype = "claude-code"\n\n'
+        '[profiles]\ndefault = "lazy"\n\n'
+        f'[profiles.lazy]\nconfig_dir = "{tmp_path / "claude-lazy"}"\n\n'
+        f'[profiles.work]\nconfig_dir = "{tmp_path / "codex-work"}"\nagent = "codex"\n'
+    )
+    with monkeypatch.context() as mp:
+        mp.setattr(profile_cmd, "config_file", lambda: cfg_file)
+        mp.setattr(profile_cmd, "config_dir", lambda: tmp_path)
+        result = CliRunner().invoke(profile_cmd.profile, ["sync-claude-md"])
+
+    assert result.exit_code == 0, result.output
+    assert (profiles_dir / "lazy" / "CLAUDE.md").is_file()
+    assert (work / "AGENTS.md").is_file(), (
+        f"profile 'work' runs codex; it got {sorted(p.name for p in work.iterdir())}"
+    )
+    assert not (work / "CLAUDE.md").exists()
+
+
+def test_sync_profiles_keeps_the_callers_adapter_for_an_undeclared_directory(
+    tmp_path: Path,
+) -> None:
+    """A leftover directory keeps the caller's answer, not the global default.
+
+    `agent_for_profile` resolves an unknown name to `[agent].type`, so routing
+    every directory through it would hand a profile since removed from
+    `config.toml` the global agent's doc — which is not what the caller passed
+    and not what the directory last held.
+    """
+    from lazy_harness.core.config import (
+        AgentConfig,
+        Config,
+        HarnessConfig,
+        ProfileEntry,
+        ProfilesConfig,
+    )
+    from lazy_harness.core.sync_agent_md import sync_profiles
+
+    profiles_dir = tmp_path / "profiles"
+    profiles_dir.mkdir()
+    _seed_common(profiles_dir)
+    _seed_profile(profiles_dir, "leftover")
+
+    cfg = Config(
+        harness=HarnessConfig(version="1"),
+        agent=AgentConfig(type="codex"),
+        profiles=ProfilesConfig(
+            default="work",
+            items={"work": ProfileEntry(config_dir="~/.codex-work")},
+        ),
+    )
+
+    sync_profiles(profiles_dir, _adapter(), cfg=cfg)
+
+    assert (profiles_dir / "leftover" / "CLAUDE.md").is_file()
+    assert not (profiles_dir / "leftover" / "AGENTS.md").exists()

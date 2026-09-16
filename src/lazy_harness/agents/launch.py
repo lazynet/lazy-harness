@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from lazy_harness.agents.base import AgentAdapter, HeadlessAgent
-from lazy_harness.agents.registry import AgentNotFoundError, get_agent
+from lazy_harness.agents.registry import AgentNotFoundError, agent_for_profile
 from lazy_harness.core.config import Config
 from lazy_harness.core.paths import expand_path
 from lazy_harness.core.profiles import ProfileError, resolve_profile_with_source
@@ -58,20 +58,23 @@ def resolve_launch(
 
     config_dir = expand_path(cfg.profiles.items[resolution.name].config_dir)
 
+    # Resolved from the profile just resolved above, not from `[agent].type`:
+    # `config_dir` on the line before is this profile's, so a global adapter
+    # would hand one agent's env var the directory of another agent's home.
     try:
-        adapter = get_agent(cfg.agent.type)
+        adapter = agent_for_profile(cfg, resolution.name)
     except AgentNotFoundError as e:
         raise LaunchError("unknown-agent", str(e)) from e
 
     if require_headless and not isinstance(adapter, HeadlessAgent):
         raise LaunchError(
             "agent-not-headless",
-            f"Agent '{cfg.agent.type}' does not support headless execution.",
+            f"Agent '{adapter.name}' does not support headless execution.",
         )
 
     binary = adapter.resolve_binary()
     if binary is None:
-        raise LaunchError("binary-not-found", f"Cannot locate {cfg.agent.type} binary.")
+        raise LaunchError("binary-not-found", f"Cannot locate {adapter.name} binary.")
 
     env = os.environ.copy()
     # The agent's credential is one global variable and its stored credentials

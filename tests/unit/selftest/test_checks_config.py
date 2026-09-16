@@ -173,3 +173,59 @@ def test_capability_paths_check_reports_a_missing_config_rather_than_crashing(
     results = check_capability_paths(config_path=tmp_path / "nope.toml")
 
     assert results[0].status == CheckStatus.WARNING
+
+
+def _agent_result(results):
+    return next(r for r in results if r.name == "agent-valid")
+
+
+def test_config_check_refuses_a_misspelled_profile_agent(tmp_path: Path) -> None:
+    """A config schema accepting user-supplied identifiers validates them and
+    names what it ignored.
+
+    `[profiles.<name>].agent` is such an identifier, and only `[agent].type` was
+    ever checked. A typo there is not inert: `agent_for_profile` raises
+    `AgentNotFoundError` at deploy and hook time, and `lh selftest` — the
+    command whose job is to find that before it fires — reported the config
+    valid.
+    """
+    from lazy_harness.selftest.checks.config_check import check_config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        '[harness]\nversion = "1"\n\n[agent]\ntype = "claude-code"\n\n'
+        '[profiles]\ndefault = "work"\n\n'
+        '[profiles.work]\nconfig_dir = "~/.codex-work"\nagent = "codx"\n'
+    )
+
+    result = _agent_result(check_config(config_path=cfg_path))
+
+    assert result.status == CheckStatus.FAILED
+    assert "codx" in result.message
+    assert "work" in result.message
+
+
+def test_config_check_accepts_a_registered_profile_agent(tmp_path: Path) -> None:
+    from lazy_harness.selftest.checks.config_check import check_config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        '[harness]\nversion = "1"\n\n[agent]\ntype = "claude-code"\n\n'
+        '[profiles]\ndefault = "work"\n\n'
+        '[profiles.work]\nconfig_dir = "~/.codex-work"\nagent = "codex"\n'
+    )
+
+    assert _agent_result(check_config(config_path=cfg_path)).status == CheckStatus.PASSED
+
+
+def test_the_supported_agent_set_is_the_registry(tmp_path: Path) -> None:
+    """One answer in one importable place.
+
+    A hand-maintained set beside the registry answers "is this agent usable"
+    twice. It had drifted: `codex` resolves, deploys and runs — the step 4
+    contract gate is built on it — and this check failed any config naming it.
+    """
+    from lazy_harness.agents.registry import list_agents
+    from lazy_harness.selftest.checks.config_check import SUPPORTED_AGENTS
+
+    assert SUPPORTED_AGENTS == set(list_agents())

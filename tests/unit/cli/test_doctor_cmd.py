@@ -301,7 +301,7 @@ def test_project_memory_dir_resolves_worktree_to_main_checkout(
 
     encoded = "-" + str(repo).replace("/", "-").lstrip("-")
     assert (
-        _project_memory_dir(get_agent("claude-code"), None)
+        _project_memory_dir(get_agent("claude-code"), None, "")
         == runtime / "projects" / encoded / "memory"
     )
 
@@ -320,7 +320,7 @@ def test_project_memory_dir_uses_cwd_outside_a_worktree(
 
     encoded = "-" + str(repo).replace("/", "-").lstrip("-")
     assert (
-        _project_memory_dir(get_agent("claude-code"), None)
+        _project_memory_dir(get_agent("claude-code"), None, "")
         == runtime / "projects" / encoded / "memory"
     )
 
@@ -524,67 +524,6 @@ def test_doctor_still_reports_the_deprecated_single_backend_form(
     assert "ollama" in out
 
 
-def _cfg_with_agents(global_agent: str, profile_agents: dict[str, str]):
-    from lazy_harness.core.config import (
-        AgentConfig,
-        Config,
-        HarnessConfig,
-        ProfileEntry,
-        ProfilesConfig,
-    )
-
-    return Config(
-        harness=HarnessConfig(version="1"),
-        agent=AgentConfig(type=global_agent),
-        profiles=ProfilesConfig(
-            default=next(iter(profile_agents)),
-            items={
-                name: ProfileEntry(config_dir=f"~/.cfg-{name}", agent=agent)
-                for name, agent in profile_agents.items()
-            },
-        ),
-    )
-
-
-def test_doctor_warns_a_profile_agent_the_deploy_path_does_not_honour_yet() -> None:
-    """`[profiles.<name>].agent` is honoured by `.envrc` but not by hook or MCP
-    config generation, which still resolves the global agent for every profile.
-
-    A profile declaring its own agent therefore receives the global agent's
-    settings.json shape, silently. Until the remaining `cfg.agent.type` readers
-    move, the gap has to be visible rather than found via a broken profile.
-    """
-    from rich.console import Console
-
-    from lazy_harness.cli.doctor_cmd import _render_unhonoured_profile_agents
-
-    cfg = _cfg_with_agents("claude-code", {"personal": "", "experiment": "null"})
-
-    console = Console(force_terminal=False, width=200)
-    with console.capture() as cap:
-        _render_unhonoured_profile_agents(console, cfg)
-    out = cap.get()
-
-    assert "experiment" in out, out
-    assert "null" in out, out
-    assert "personal" not in out, "a profile inheriting the global agent is not a warning"
-
-
-def test_doctor_is_silent_when_no_profile_declares_a_divergent_agent() -> None:
-    from rich.console import Console
-
-    from lazy_harness.cli.doctor_cmd import _render_unhonoured_profile_agents
-
-    # "work" declares an agent, but the same one: nothing diverges.
-    cfg = _cfg_with_agents("claude-code", {"personal": "", "work": "claude-code"})
-
-    console = Console(force_terminal=False, width=200)
-    with console.capture() as cap:
-        _render_unhonoured_profile_agents(console, cfg)
-
-    assert cap.get() == ""
-
-
 _SIGNAL_GAP_TOML = (
     '[harness]\nversion = "1"\n'
     '[agent]\ntype = "claude-code"\n'
@@ -733,3 +672,59 @@ config_dir = "{tmp_path / "alpha-home"}"
     written = writer_dir / logs / "engram_persist_metrics.jsonl"
 
     assert _engram_persist_metrics_path(get_agent("claude-code"), cfg, "alpha") == written
+
+
+def test_doctor_reads_the_memory_dir_the_hook_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The third pair of paths that answer one question, asserted to agree.
+
+    `session-end` names the memory dir with `agent_dir_for(cfg, event.profile)`
+    — the profile's agent, the profile's directory, that agent's `sessions`
+    subdirectory. `doctor` named it from `[agent].type` and had no way to be
+    told which profile it was diagnosing, so under a profile running a second
+    agent its memory-hygiene section reported on a directory nothing writes to.
+
+    `CLAUDE_CONFIG_DIR` is cleared: it outranks the profile's `config_dir`, so
+    pinning it would make both sides agree for the wrong reason.
+    """
+    from lazy_harness.agents import registry
+    from lazy_harness.agents.registry import get_agent
+    from lazy_harness.cli.doctor_cmd import _project_memory_dir
+    from lazy_harness.core.config import load_config
+    from lazy_harness.hooks.builtins._shared import agent_dir_for, knowledge_root_for
+    from lazy_harness.hooks.builtins._shared import memory_dir as shared_memory_dir
+
+    class _OtherAdapter(registry.NullAdapter):
+        @property
+        def name(self) -> str:
+            return "other"
+
+        def env_var(self) -> str:
+            return "OTHER_CONFIG_DIR"
+
+        def session_dirs(self) -> dict[str, str]:
+            return {"sessions": "threads", "logs": "journal", "queue": "outbox"}
+
+    monkeypatch.setitem(registry._AGENTS, "other", _OtherAdapter)
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("OTHER_CONFIG_DIR", raising=False)
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        '[harness]\nversion = "1"\n\n[agent]\ntype = "claude-code"\n\n'
+        '[profiles]\ndefault = "alpha"\n\n'
+        f'[profiles.alpha]\nconfig_dir = "{tmp_path / "alpha-home"}"\nagent = "other"\n'
+    )
+    cfg = load_config(cfg_file)
+
+    writer_agent, writer_dir = agent_dir_for(cfg, "alpha")
+    written = shared_memory_dir(
+        None,
+        agent_dir=writer_dir,
+        sessions_subdir=writer_agent.session_dirs().get("sessions") or "projects",
+        cwd=Path.cwd(),
+        knowledge_root=knowledge_root_for(cfg),
+    )
+
+    assert _project_memory_dir(get_agent("claude-code"), cfg, "alpha") == written

@@ -197,3 +197,35 @@ def test_the_deploy_and_the_runner_resolve_one_profile_to_the_same_agent(
     runner_side = _adapter_for(profile)
 
     assert runner_side.name == deploy_side.name
+
+
+def test_the_launcher_resolves_the_adapter_from_the_profile_it_just_resolved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The defect (design step 6, F8): `resolve_launch` resolves the profile and
+    its `config_dir`, then picks the adapter from the *global* `[agent].type`.
+
+    A Codex profile under a Claude Code default therefore launched the Claude
+    Code adapter and handed it `CLAUDE_CONFIG_DIR=<the Codex profile's dir>` —
+    the agent authenticating and writing into a directory shaped for another.
+    """
+    from lazy_harness.agents import codex
+    from lazy_harness.agents.launch import resolve_launch
+
+    monkeypatch.setattr(codex.CodexAdapter, "resolve_binary", lambda self: Path("/usr/bin/codex"))
+
+    codex_dir = tmp_path / ".codex-work"
+    cfg = _cfg(
+        "claude-code",
+        {
+            "work": ProfileEntry(config_dir=str(codex_dir), agent="codex"),
+        },
+    )
+
+    plan = resolve_launch(cfg, cwd=tmp_path, profile_override="work")
+
+    assert plan.adapter.name == "codex", (
+        f"profile 'work' declares agent='codex' but the launcher chose {plan.adapter.name!r}"
+    )
+    assert plan.env.get("CODEX_HOME") == str(codex_dir)
+    assert plan.env.get("CLAUDE_CONFIG_DIR") != str(codex_dir)

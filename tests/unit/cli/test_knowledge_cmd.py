@@ -192,3 +192,63 @@ def test_embed_passes_the_timeout_flag_through(monkeypatch) -> None:
     result = CliRunner().invoke(knowledge_cmd.knowledge, ["embed", "--timeout", "3600"])
     assert result.exit_code == 0
     assert seen["timeout"] == 3600
+
+
+def test_handoff_now_looks_where_the_session_end_hook_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The defect (design step 6): `lh knowledge handoff-now` declares the same
+    semantics as the SessionEnd hook, then resolved its adapter differently.
+
+    The hook names its directories with `agent_dir_for(cfg, event.profile)`.
+    This command resolved `[agent].type` and hand-rolled the directory order on
+    top of it — preferring the *default* profile's `config_dir` rather than the
+    active one. Under a profile running a second agent it read that agent's
+    directory with the default agent's subdirectory names, found no transcript,
+    and exited 1 claiming there was no session to hand off.
+    """
+    from lazy_harness.agents import registry
+    from lazy_harness.cli import knowledge_cmd
+
+    class _OtherAdapter(registry.NullAdapter):
+        @property
+        def name(self) -> str:
+            return "other"
+
+        def env_var(self) -> str:
+            return "OTHER_CONFIG_DIR"
+
+        def session_dirs(self) -> dict[str, str]:
+            return {"sessions": "threads", "logs": "journal", "queue": "outbox"}
+
+    profile_home = tmp_path / "alpha-home"
+    monkeypatch.setitem(registry._AGENTS, "other", _OtherAdapter)
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    monkeypatch.setenv("OTHER_CONFIG_DIR", str(profile_home))
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        '[harness]\nversion = "1"\n\n[agent]\ntype = "claude-code"\n\n'
+        "[compound_loop]\nenabled = true\n\n"
+        '[profiles]\ndefault = "alpha"\n\n'
+        f'[profiles.alpha]\nconfig_dir = "{profile_home}"\nagent = "other"\n'
+    )
+    monkeypatch.setattr(knowledge_cmd, "config_file", lambda: cfg_file)
+    monkeypatch.setattr("lazy_harness.core.paths.config_file", lambda: cfg_file)
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.chdir(repo)
+
+    result = CliRunner().invoke(knowledge_cmd.knowledge, ["handoff-now"])
+
+    # No transcript exists either way; what the diagnostic *names* is the whole
+    # question, and it is the one thing the command reports about the directory
+    # it resolved.
+    #
+    # Whitespace is stripped because rich wraps to the terminal width, which
+    # differs between a developer's terminal and CI: asserting on the rendered
+    # line asserts on the width it happened to render at, and `threads` came
+    # back split as `thread\ns` on a narrower one.
+    rendered = "".join(result.output.split())
+    assert f"{profile_home.name}/threads/" in rendered, result.output

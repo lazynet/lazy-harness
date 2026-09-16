@@ -100,9 +100,13 @@ def main(event: HookEvent) -> HookDecision:
         # `[agent].type` names globally. `system_doc_name()` is read off that
         # adapter, so resolving it globally wrote one agent's contract file
         # into a profile running another.
+        # The firing profile's adapter is the fallback for a directory the
+        # config does not name. `cfg` is what makes the rest per profile:
+        # handing one adapter to a walk over the whole tree only moved the
+        # defect, from the global agent to whichever profile fired the hook.
         agent = agent_dir_for(cfg, event.profile)[0]
         for tree in trees:
-            sync_profiles(tree, agent)
+            sync_profiles(tree, agent, cfg=cfg)
     except Exception:
         pass
     return HookDecision()
