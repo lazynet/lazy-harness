@@ -96,3 +96,12 @@ alias or function, which `shutil.which` cannot see. Both branches are pinned by
 `test_a_recursive_claude_shim_on_path_loses_to_the_versioned_build` and
 `test_a_recursive_claude_shim_is_returned_when_no_versioned_build_exists`, so
 closing the risk later means changing a test that asserts it is open.
+
+**2026-09-16 — deploy, hooks and `lh run` resolve the adapter per profile.**
+The *Decision* section above says "Deploy, hooks, and migration all go through
+`get_agent(cfg.agent.type)`." Since #342 (0.68.0) that is no longer the seam:
+each resolves through `agents/registry.py:agent_for_profile`, keyed on
+`(cfg, profile_name)`, rather than the single global `[agent].type`.
+`get_agent(cfg.agent.type)` survives only as the global fallback for the five
+call sites recorded in [ADR-041](041-multi-agent-hook-contract.md) §3, none of
+which sit on the deploy/hooks/run path this ADR's *Decision* names.
