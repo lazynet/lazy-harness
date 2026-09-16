@@ -871,3 +871,128 @@ def test_doctor_omits_the_section_entirely_without_a_codex_profile(
     from lazy_harness.cli.doctor_cmd import doctor
 
     assert "Codex hook trust" not in _unwrapped(CliRunner().invoke(doctor, []).output)
+
+
+# --- profile credentials (ADR-045 D3) --------------------------------------
+
+
+def _secrets_config(secrets_dir: Path, *, profiles: tuple[str, ...], default: str):
+    from lazy_harness.core.config import Config, ProfileEntry
+
+    cfg = Config()
+    cfg.secrets.dir = str(secrets_dir)
+    cfg.profiles.default = default
+    cfg.profiles.items = {n: ProfileEntry(config_dir=f"~/.claude-{n}") for n in profiles}
+    return cfg
+
+
+def test_render_profile_secrets_is_silent_when_only_the_default_exists(tmp_path: Path) -> None:
+    """One profile takes its credentials from the environment by definition.
+
+    The section exists to catch a *second* account quietly wearing the first
+    one's credential; with one profile there is no second account to confuse it
+    with, and a line saying so every run is how a section stops being read.
+    """
+    from lazy_harness.cli.doctor_cmd import _render_profile_secrets
+
+    console, buf = _recording_console()
+    _render_profile_secrets(console, _secrets_config(tmp_path, profiles=("p1",), default="p1"))
+
+    assert buf.getvalue() == ""
+
+
+def test_render_profile_secrets_names_a_profile_with_no_file_of_its_own(tmp_path: Path) -> None:
+    """The visible half of the F2 fix: the launch refuses an unreadable file,
+    and this reports the case the launch cannot refuse — no file at all, which
+    is legitimate for exactly one profile and silent inheritance for the rest."""
+    from lazy_harness.cli.doctor_cmd import _render_profile_secrets
+
+    cfg = _secrets_config(tmp_path, profiles=("p1", "flex"), default="p1")
+
+    console, buf = _recording_console()
+    _render_profile_secrets(console, cfg)
+    out = buf.getvalue()
+
+    assert "flex.env" in out
+    assert "inherits" in out
+
+
+def test_render_profile_secrets_leaves_the_default_profile_alone(tmp_path: Path) -> None:
+    """The default profile having no file is the documented normal case, not a
+    finding — `core/secrets.py` says so and the overlay's fail-open path is
+    built around it."""
+    from lazy_harness.cli.doctor_cmd import _render_profile_secrets
+
+    cfg = _secrets_config(tmp_path, profiles=("p1", "flex"), default="p1")
+    (tmp_path / "flex.env").write_text("TOKEN=placeholder-not-a-real-value\n")
+
+    console, buf = _recording_console()
+    _render_profile_secrets(console, cfg)
+
+    assert buf.getvalue() == ""
+
+
+def test_render_profile_secrets_never_prints_what_is_in_the_file(tmp_path: Path) -> None:
+    """`lh doctor` output is pasted into issues and scrollback."""
+    from lazy_harness.cli.doctor_cmd import _render_profile_secrets
+
+    cfg = _secrets_config(tmp_path, profiles=("p1", "flex", "other"), default="p1")
+    (tmp_path / "flex.env").write_text("TOKEN=PLACEHOLDER-SENTINEL-VALUE\n")
+
+    console, buf = _recording_console()
+    _render_profile_secrets(console, cfg)
+    out = buf.getvalue()
+
+    assert "PLACEHOLDER-SENTINEL-VALUE" not in out
+    assert "other.env" in out
+
+
+def test_render_profile_secrets_stays_quiet_when_the_directory_cannot_be_read(
+    tmp_path: Path,
+) -> None:
+    """A directory this cannot traverse is not a profile inheriting silently.
+
+    `resolve_launch` refuses that profile outright, which is a far louder signal
+    than a doctor line; reporting it here as "inherits the environment" would be
+    a guess, and the wrong one.
+    """
+    from lazy_harness.cli.doctor_cmd import _render_profile_secrets
+
+    secrets_dir = tmp_path / "secrets"
+    secrets_dir.mkdir()
+    (secrets_dir / "flex.env").write_text("TOKEN=placeholder-not-a-real-value\n")
+    secrets_dir.chmod(0o000)
+    cfg = _secrets_config(secrets_dir, profiles=("p1", "flex"), default="p1")
+
+    try:
+        console, buf = _recording_console()
+        _render_profile_secrets(console, cfg)
+    finally:
+        secrets_dir.chmod(0o700)
+
+    assert buf.getvalue() == ""
+
+
+def test_doctor_reports_a_profile_that_inherits_its_credentials(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Wired into the command, not only unit-tested next to it."""
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    secrets = tmp_path / "secrets"
+    secrets.mkdir()
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        '[harness]\nversion = "1"\n'
+        '[agent]\ntype = "claude-code"\n'
+        f'[secrets]\ndir = "{secrets}"\n'
+        '[profiles]\ndefault = "p1"\n\n'
+        '[profiles.p1]\nconfig_dir = "~/.claude-p1"\n\n'
+        '[profiles.flex]\nconfig_dir = "~/.claude-flex"\n'
+        '[knowledge]\nroot = ""\n'
+    )
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
+
+    result = CliRunner().invoke(doctor, [])
+
+    assert "flex.env" in result.output

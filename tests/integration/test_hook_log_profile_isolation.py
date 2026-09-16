@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -364,15 +365,21 @@ def test_session_start_preflight_reads_the_invoked_profiles_credentials(
 
     Every other case here is about placement of an audit line. This hook writes
     nothing at all, so presence and absence of a file cannot speak for it — the
-    probe is its output. `_credentials_path` resolved `CLAUDE_CONFIG_DIR` itself
-    and fell back to `~/.claude`, so under `--profile gate` it reported whatever
-    login the *global* directory held: a healthy verdict for a profile the
-    session was not running under, which is the one failure a preflight exists
-    to catch.
+    probe is its output. `_credentials_path` — the helper `auth_check` replaced —
+    resolved `CLAUDE_CONFIG_DIR` itself and fell back to `~/.claude`, so under
+    `--profile gate` it reported whatever login the *global* directory held: a
+    healthy verdict for a profile the session was not running under, which is
+    the one failure a preflight exists to catch.
 
     The two directories carry opposite verdicts on purpose. `gate` is expired
     and `~/.claude` is healthy, so a run that still resolved globally comes back
     all-clear and this fails.
+
+    The *wording* of the unhappy verdict is the platform's, not this test's:
+    where the credentials file is a mirror of the keychain (ADR-045 D6) an
+    expiry read off it degrades to `unknown`. Both spellings are unhappy and the
+    healthy directory still collapses to "All clear", so the pair keeps carrying
+    opposite answers either way.
     """
     expired = json.dumps(
         {"claudeAiOauth": {"accessToken": "x", "refreshTokenExpiresAt": 1_577_836_800_000}}
@@ -399,7 +406,12 @@ def test_session_start_preflight_reads_the_invoked_profiles_credentials(
 
     assert result.exit_code == 0, result.output
     body = json.loads(result.output)["hookSpecificOutput"]["additionalContext"]
-    assert "- **auth** [FAIL] — refresh token expired" in body
+    unhappy = (
+        "- **auth** [?] — credentials live in the keychain on macOS"
+        if sys.platform == "darwin"
+        else "- **auth** [FAIL] — refresh token expired"
+    )
+    assert unhappy in body
     assert "All clear" not in body
 
 

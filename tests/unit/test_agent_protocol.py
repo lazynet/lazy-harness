@@ -39,6 +39,48 @@ def test_null_adapter_satisfies_protocol() -> None:
     assert adapter.system_docs() == []
     assert adapter.session_dirs() == {"sessions": "", "logs": "", "queue": ""}
     assert adapter.process_name() == ""
+    assert adapter.credentials_file() is None
+
+
+@pytest.mark.parametrize("agent_type", REGISTERED_AGENT_TYPES)
+def test_every_adapter_answers_where_its_credentials_live(agent_type: str) -> None:
+    """ADR-045 D4 — `None` is an answer, not an omission.
+
+    Parametrised over the registry for the same reason the conformance sweep is:
+    a hand-written list is how a newly registered adapter ships unchecked. An
+    empty string is refused explicitly, because `mcp_config_file()` next door
+    uses `""` for "not available" and copying that convention here would make
+    "no readable file" indistinguishable from a filename somebody forgot.
+    """
+    from lazy_harness.agents.registry import get_agent
+
+    answer = get_agent(agent_type).credentials_file()
+
+    assert answer is None or (isinstance(answer, str) and answer), (
+        f"{agent_type!r} must name a credentials file or return None"
+    )
+
+
+def test_claude_code_names_its_credentials_file() -> None:
+    from lazy_harness.agents.registry import get_agent
+
+    assert get_agent("claude-code").credentials_file() == ".credentials.json"
+
+
+def test_codex_declines_to_name_a_credentials_file() -> None:
+    """The path is on record; the shape is not, and the shape is what gets parsed.
+
+    `specs/designs/codex-evidence.md` names `~/.codex/auth.json` — all six probes
+    copy it into their disposable `CODEX_HOME` — but nothing in that document
+    records what is inside it. The preflight's parser reads Claude Code's
+    `claudeAiOauth` envelope, so naming the file here would route Codex's
+    credentials at the wrong parser and report "unexpected shape" for a file that
+    is perfectly fine. ADR-045 A4: the name and the shape are equally
+    agent-specific, and only the name moved.
+    """
+    from lazy_harness.agents.registry import get_agent
+
+    assert get_agent("codex").credentials_file() is None
 
 
 def test_protocol_no_longer_declares_the_displaced_config_generators() -> None:
@@ -112,6 +154,9 @@ def test_an_adapter_without_the_generators_still_satisfies_the_protocol() -> Non
 
         def process_name(self) -> str:
             return ""
+
+        def credentials_file(self) -> str | None:
+            return None
 
     assert isinstance(Minimal(), AgentAdapter)
 

@@ -75,6 +75,9 @@ class NullAdapter:
     def system_docs(self) -> list[Path]:
         return []
 
+    def credentials_file(self) -> str | None:
+        return None
+
     def process_name(self) -> str:
         return ""
 
