@@ -43,7 +43,7 @@ scripts = ["pre-compact"]
 | `session_end` | `SessionEnd` | Exactly once at real session termination (`/exit`, `/clear`, logout) | `session-end` | Force final end-of-session work |
 | `pre_compact` | `PreCompact` | Immediately before Claude Code compacts conversation history | `pre-compact` | Preserve working state |
 | `post_compact` | `PostCompact` | Immediately after Claude Code compacts conversation history | — | Available for your own hooks. No built-in ships here: the event's executor returns only a user-facing message, so a hook on it cannot reach the model. |
-| `pre_tool_use` | `PreToolUse` | Before each tool call | `pre-tool-use-security`, `pre-tool-use-git-scope`, `pre-tool-use-memory-size`, `pre-tool-use-read-size` | Block destructive / exfiltration commands, block an unsafe `git stash` on a shared stash stack, warn before MEMORY.md exceeds the 200-line or 12KB ceiling, warn before an unbounded read of a large file |
+| `pre_tool_use` | `PreToolUse` | Before each tool call | `pre-tool-use-security`, `pre-tool-use-git-scope`, `pre-tool-use-memory-size`, `pre-tool-use-read-size` | Block destructive / exfiltration commands, block an unsafe `git stash` on a shared stash stack, warn before MEMORY.md or CLAUDE.md exceeds its own line/byte ceiling, warn before an unbounded read of a large file |
 | `post_tool_use` | `PostToolUse` | After each tool call | `post-tool-use-format`, `post-tool-use-sync-claude` | Auto-format edited files, regenerate segmented `CLAUDE.md` after profile edits |
 | `notification` | `Notification` | Ad-hoc agent notifications | — | Desktop notifications, integrations |
 | `user_prompt_submit` | `UserPromptSubmit` | When the user submits a prompt | `user-prompt-goal` (opt-in, not in the default set — see below) | Goal-declaration sensor, third-party integrations |
@@ -369,17 +369,34 @@ Every `git stash` in a compound command is judged, not only the first: `git stas
 
 Source: `src/lazy_harness/hooks/builtins/pre_tool_use_memory_size.py`.
 
-Responsibility: warn — never block — when an `Edit` or `Write` would push the per-project `MEMORY.md` past either of two ceilings ([ADR-030](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/030-memory-stack-glue-layer.md) G2): **200 lines** or **12KB**. Both are soft contracts for the curated semantic layer. The line ceiling exists because Claude Code truncates `MEMORY.md` if it overflows; the byte ceiling exists because the file is re-sent on every session start, so its size is a recurring cost regardless of how few lines carry it.
+Responsibility: warn — never block — when an `Edit` or `Write` would push an always-loaded context file past a line or a byte ceiling ([ADR-030](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/030-memory-stack-glue-layer.md) G2). Two kinds of file qualify, and each carries its **own** threshold pair:
+
+| File | Lines | Bytes | Where the numbers come from |
+|---|---|---|---|
+| per-project `MEMORY.md` | 200 | 12KB | `MAX_LINES` / `MAX_BYTES`, fixed in the module |
+| any `CLAUDE.md` | 200 | 12KB | `CLAUDE_MD_MAX_LINES` / `CLAUDE_MD_MAX_BYTES`, overridable in `config.toml` |
+
+The defaults coincide; the pairs do not. They are kept apart because the two files have different jobs — `MEMORY.md` is a curated index, `CLAUDE.md` is a contract that loads on every session in every profile — so the ceiling for one has to be movable without moving the other. Both are soft contracts. The line ceiling exists because Claude Code truncates `MEMORY.md` if it overflows; the byte ceiling exists because the file is re-sent on every session start, so its size is a recurring cost regardless of how few lines carry it.
 
 The byte ceiling is not redundant with the line one. An index written as one long line per note — the shape these files naturally take — stays far under 200 lines while dominating the prompt prefix: a real 67-line index measured 20KB and cost roughly 3.6k tokens on every session start, invisible to a line-count check.
 
 Mechanics:
 
-1. Scope check — the hook only acts on `Edit` / `Write` tool calls whose `file_path` ends in `/memory/MEMORY.md`. Every other tool / path: instant exit 0.
+1. Scope check — the hook only acts on `Edit` / `Write` tool calls, and only on two path shapes: a path ending in `/memory/MEMORY.md`, or one that is exactly `CLAUDE.md` or ends in `/CLAUDE.md`. A near miss such as `NOTCLAUDE.md` is out of scope. Every other tool / path: instant exit 0. The tool gate is the *native* tool name rather than the normalised modify-file operation, because that operation also covers `NotebookEdit` and the filename match would not narrow it back out.
 2. Project the post-operation content from the tool input: `Write` uses `content` directly; `Edit` reads the current file and applies `old_string` → `new_string` (honouring `replace_all`) in memory.
-3. Measure both the line count and the UTF-8 byte size of that projection.
-4. If either ceiling is breached, emit a top-level `systemMessage` naming the breach — both, when both apply — and suggesting `lh memory consolidate`, or moving detail out of the index into the linked note.
+3. Measure both the line count and the UTF-8 byte size of that projection against the pair belonging to that kind of file.
+4. If either ceiling is breached, emit a top-level `systemMessage` naming the breach — both, when both apply — with the remedy for that kind of file: for `MEMORY.md`, `lh memory consolidate` or moving detail out of the index into the linked note; for `CLAUDE.md`, a pass over whether each line is a fact the agent needs or a procedure it would already follow, with `lh memory rightsize` to show every `CLAUDE.md` the harness can reach and which ceiling it breaches. The `hooks.log` line is a second, shorter spelling of the same breach and deliberately carries no remedy.
 5. Always exit 0. This is a warning hook, not a guard.
+
+**Moving the `CLAUDE.md` pair.** `[hooks.pre_tool_use]` in the harness `config.toml` — the one `config_dir()` resolves, shared by every profile — takes `claude_md_max_lines` and `claude_md_max_bytes`:
+
+```toml
+[hooks.pre_tool_use]
+claude_md_max_lines = 250
+claude_md_max_bytes = 16000
+```
+
+The loader is fail-soft on the same contract as the security hook's allowlist: a missing config file, malformed TOML, a missing section, or a value that is not a positive integer falls back to 200 / 12KB rather than raising or blocking the write. `lh memory rightsize` reads the same loader, so the hook and the audit command cannot silently disagree about where the ceiling is. `MEMORY.md`'s pair has no such keys.
 
 Bypass for tooling that legitimately rewrites `MEMORY.md` (the consolidator pathway): set `LH_MEMORY_SIZE_BYPASS=1` in the subprocess environment.
 
@@ -660,7 +677,9 @@ Responsibility: soft-enforce verification before a session that declared a goal 
 
 **How "declared a goal" is detected.** Not via the compound-loop worker's `goal_declared`/`goal_absent` verdict — that is an LLM classification of the transcript made *after* the session ends and is structurally unavailable at `Stop` time. Instead, the hook asks the profile's agent adapter for a `TranscriptReader` and looks for a single `Signal.GOAL_STATUS` event in the session's transcript. What that marker looks like on disk is the reader's business, not the hook's: for Claude Code it is the entry its native `/goal <condition>` command writes synchronously, the moment the command runs. This is a narrower signal than the compound-loop verdict: it only catches sessions where the user ran `/goal`, not ones where the assistant stated a prose criterion without it.
 
-**Agents whose transcript cannot be read.** The reader is resolved per profile, from the `[profiles.<name>].agent` setting that decides whose wire format a session speaks. An adapter that does not implement `TranscriptReader` resolves to no reader at all, and the hook then reports no goal and never blocks. An adapter whose reader delivers messages and tokens but does not declare `GOAL_STATUS` lands in the same place by a different route — which is the point of naming the signal rather than carrying a "needs the transcript" boolean: such a reader must not silently re-enable a guard that would then pass every session. Today `ClaudeCodeAdapter` is the only adapter with a reader, and it declares all four signals. Refusing to *deploy* a hook whose signals an agent cannot supply is a separate mechanism that does not exist yet; at run time the guard can only decline to block.
+**Agents whose transcript cannot be read.** The reader is resolved per profile, from the `[profiles.<name>].agent` setting that decides whose wire format a session speaks. An adapter that does not implement `TranscriptReader` resolves to no reader at all, and the hook then reports no goal and never blocks. An adapter whose reader delivers messages and tokens but does not declare `GOAL_STATUS` lands in the same place by a different route — which is the point of naming the signal rather than carrying a "needs the transcript" boolean: such a reader must not silently re-enable a guard that would then pass every session. Today `ClaudeCodeAdapter` is the only adapter with a reader, and it declares all four signals. Keeping such a hook out of a profile in the first place is a separate mechanism, and it ships: `lh deploy` resolves `gaps_for_profile` before it writes a profile's config, leaves out every hook whose declared signals that profile's agent cannot deliver, and names each omission on stdout — `· stop-verify-guard omitted in 'throwaway': agent 'codex' does not deliver goal_status`. It is not a deploy failure; the exit code is unchanged and the other profiles are untouched — see [Hooks the deploy leaves out](../reference/cli.md#hooks-the-deploy-leaves-out-and-says-so). `lh doctor`'s **Hook signals** section reads the same resolver, so what doctor names is what deploy omits.
+
+The run-time path above is still the one that matters where the filter cannot reach. Only a built-in declares signals — `builtin_signals` answers the empty set for anything outside the registry — so a hook of your own that reads the transcript installs on every profile regardless, and there the guard can only decline to block.
 
 Mechanics:
 
