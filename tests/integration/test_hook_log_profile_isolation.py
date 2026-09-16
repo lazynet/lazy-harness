@@ -539,3 +539,152 @@ def test_post_tool_use_format_writes_nothing_outside_the_invoked_profile(
     )
     assert _files_under(home_dir) == before_home
     assert (_files_under(other) if other.exists() else set()) == before_other
+
+
+#: A second config whose `gate` profile runs a *different agent* from the global
+#: `[agent].type`. The default `harness_config` cannot show what
+#: `post-tool-use-sync-claude` resolves per profile, because both of its profiles
+#: run the same agent and every resolution agrees.
+#:
+#: The global side is `codex` and the profile side is `claude-code`, that way
+#: round rather than the other: the runner parses the payload with the *invoked
+#: profile's* adapter, and `CodexAdapter._parse_tool` (`agents/codex.py:177`)
+#: builds no `FileEdit` at all, so a `gate` running codex would deliver this hook
+#: an edit-less tool call and both resolutions would regenerate nothing.
+_CROSS_AGENT_CONFIG = """\
+[harness]
+version = "1"
+
+[agent]
+type = "codex"
+
+[profiles]
+default = "other"
+
+[profiles.other]
+config_dir = "{other}"
+
+[profiles.gate]
+config_dir = "{gate}"
+agent = "claude-code"
+"""
+
+#: What both generated docs hold before the hook runs, so "regenerated" is
+#: observable without re-deriving the generator's output at the assertion.
+_STALE_DOC = "STALE — written by the fixture, not by the hook\n"
+
+
+@pytest.fixture
+def cross_agent_config(tmp_path: Path, home_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A two-profile config whose `gate` runs `claude-code`; returns the profiles tree.
+
+    The tree carries both agents' segments. `post-tool-use-sync-claude` gates on
+    Claude Code's segment *filenames* — `SEGMENT_FILES`, a deliberately
+    agent-specific constant its module docstring owns — while the generator it
+    then calls reads the segments of whichever adapter it is handed. Both sets
+    have to exist for the two resolutions to be distinguishable by their effect
+    rather than by one of them failing for want of an input file.
+    """
+    lh_config = tmp_path / "lhconfig"
+    lh_config.mkdir()
+    gate = tmp_path / "gate-home"
+    other = tmp_path / "other-home"
+    (lh_config / "config.toml").write_text(_CROSS_AGENT_CONFIG.format(gate=gate, other=other))
+    monkeypatch.setenv("LH_CONFIG_DIR", str(lh_config))
+
+    profiles = tmp_path / "tree" / "profiles"
+    (profiles / "_common").mkdir(parents=True)
+    (profiles / "_common" / "CLAUDE.common.md").write_text("SHARED RULES\n")
+    (profiles / "_common" / "AGENTS.common.md").write_text("SHARED RULES\n")
+    (profiles / "alpha").mkdir()
+    for stem in ("CLAUDE", "AGENTS"):
+        (profiles / "alpha" / f"{stem}.head.md").write_text("alpha HEAD\n")
+        (profiles / "alpha" / f"{stem}.tail.md").write_text("alpha TAIL\n")
+        (profiles / "alpha" / f"{stem}.md").write_text(_STALE_DOC)
+    return profiles
+
+
+def _sync_claude_payload(segment: Path, cwd: Path) -> dict[str, object]:
+    return {
+        "hook_event_name": "PostToolUse",
+        "session_id": "isolation-test",
+        "cwd": str(cwd),
+        "tool_name": "Edit",
+        "tool_input": {"file_path": str(segment)},
+    }
+
+
+def test_sync_claude_regenerates_the_doc_of_the_agent_the_invoked_profile_runs(
+    cross_agent_config: Path, tmp_path: Path
+) -> None:
+    """This hook writes nothing under the agent's runtime dir, so the doc is the probe.
+
+    Every directory-placement case above is about where an audit line lands.
+    This hook appends no log line and keeps no cursor; what it resolves per
+    profile is the **adapter**, and the adapter decides `system_doc_name()` —
+    which file the profile's contract is written to. Before the migration it
+    read the global `[agent].type`, so a session running under a profile that
+    declares its own agent regenerated the *other* agent's contract file.
+
+    That is the blast radius the migration closes, and it is larger than a lost
+    log line: this hook writes the user's profile contracts. Measured against
+    the unmigrated hook, on exactly this fixture: `CLAUDE.md regenerated=False
+    AGENTS.md regenerated=True` — under `--profile gate`, whose declared agent
+    is `claude-code`, because the global `[agent].type` is what it read.
+
+    `CLAUDE_CONFIG_DIR` is cleared by the autouse fixture in `tests/conftest.py`,
+    as the module docstring above requires — but note it could not mask this one
+    anyway: that variable steers `agent_runtime_dir`, and nothing on this path
+    reads a runtime directory. The mask this test has to defeat is the *global*
+    `[agent].type`, which is why `gate` declares an agent of its own.
+    """
+    from lazy_harness.core.sync_agent_md import render_agent_md
+
+    exit_code = _run_hook(
+        "post-tool-use-sync-claude",
+        "gate",
+        _sync_claude_payload(cross_agent_config / "alpha" / "CLAUDE.head.md", tmp_path),
+    )
+
+    assert exit_code == 0
+    assert (cross_agent_config / "alpha" / "CLAUDE.md").read_text() == render_agent_md(
+        "CLAUDE", "alpha HEAD\n", "SHARED RULES\n", "alpha TAIL\n"
+    )
+    # The absence half: the global agent's contract is the file the pre-migration
+    # hook wrote, so asserting only on `CLAUDE.md` would pass against a hook that
+    # regenerated both.
+    assert (cross_agent_config / "alpha" / "AGENTS.md").read_text() == _STALE_DOC
+
+
+def test_sync_claude_writes_nothing_outside_the_profiles_tree_it_was_pointed_at(
+    cross_agent_config: Path, home_dir: Path, tmp_path: Path
+) -> None:
+    """A guard rather than a witness, and the difference is worth naming.
+
+    The test above fails against the unmigrated hook; this one does not, and
+    cannot — the tree this hook regenerates is derived from the *edited path*
+    (`_profiles_dir_for`), never from `event.profile`, so there is no directory
+    for the profile to misplace. It is here because the migration is what first
+    hands this hook a profile, and the cheapest way for a later change to spend
+    one is to start resolving the tree from it.
+    """
+    gate = tmp_path / "gate-home"
+    other = tmp_path / "other-home"
+    before = (
+        _files_under(home_dir),
+        _files_under(gate) if gate.exists() else set(),
+        _files_under(other) if other.exists() else set(),
+    )
+
+    exit_code = _run_hook(
+        "post-tool-use-sync-claude",
+        "gate",
+        _sync_claude_payload(cross_agent_config / "alpha" / "CLAUDE.head.md", tmp_path),
+    )
+
+    assert exit_code == 0
+    assert (
+        _files_under(home_dir),
+        _files_under(gate) if gate.exists() else set(),
+        _files_under(other) if other.exists() else set(),
+    ) == before

@@ -180,6 +180,11 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
         matcher="Edit|Write",
         event="post_tool_use",
         operations=frozenset({Operation.MODIFY_FILE}),
+        # No `signals`: this hook never opens the transcript. It reads the
+        # edited path out of the tool call and the segment files off disk.
+        # Declaring one would make `deploy` refuse to install it on an agent
+        # whose reader cannot supply a signal the hook never touches.
+        migrated=True,
     ),
     "pre-compact": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.pre_compact",
