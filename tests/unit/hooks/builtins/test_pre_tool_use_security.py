@@ -194,6 +194,11 @@ CHAINED_RESCUE_CASES: list[tuple[str, str]] = [
     ("rm -rf /tmp/foo; git push --force origin main", "; operator"),
     ("rm -rf /tmp/foo || git push --force origin main", "|| operator"),
     ("rm -rf /tmp/foo\ngit push --force origin main", "newline"),
+    ("rm -rf /tmp/foo & git push --force origin main", "& operator"),
+    (
+        "rm -rf /tmp/foo 2>&1 & git push --force origin main",
+        "& operator after a redirection",
+    ),
 ]
 
 
@@ -224,6 +229,53 @@ def test_should_block_allow_pattern_still_spans_a_pipe() -> None:
     assert (
         should_block("echo .worktrees/foo | xargs rm -rf", allow_patterns=[r"\.worktrees/"]) is None
     )
+
+
+def test_should_block_allow_pattern_rescues_only_its_segment_across_bare_ampersand() -> None:
+    """A pattern legitimately meant for one segment still works when the chain is `&`."""
+    from lazy_harness.hooks.builtins.pre_tool_use_security import should_block
+
+    assert should_block("rm -rf .worktrees/foo & ls -la", allow_patterns=[r"\.worktrees/"]) is None
+
+
+@pytest.mark.parametrize(
+    "redirection_command",
+    [
+        "rm -rf /tmp/foo 2>&1",
+        "rm -rf /tmp/foo >&2",
+        "rm -rf /tmp/foo &>/tmp/log",
+        "rm -rf /tmp/foo <&3",
+    ],
+    ids=["stderr-to-stdout", "stdout-to-fd2", "combined-redirect", "dup-input-fd"],
+)
+def test_should_block_redirection_ampersand_does_not_split_a_matched_segment(
+    redirection_command: str,
+) -> None:
+    """`&` used for redirection is not a chain operator: the rule still matches whole."""
+    from lazy_harness.hooks.builtins.pre_tool_use_security import should_block
+
+    decision = should_block(redirection_command, allow_patterns=[])
+    assert decision is not None
+    assert decision.rule.category == "filesystem"
+
+
+@pytest.mark.parametrize(
+    "redirection_command",
+    [
+        "rm -rf .worktrees/foo 2>&1",
+        "rm -rf .worktrees/foo >&2",
+        "rm -rf .worktrees/foo &>/tmp/log",
+        "rm -rf .worktrees/foo <&3",
+    ],
+    ids=["stderr-to-stdout", "stdout-to-fd2", "combined-redirect", "dup-input-fd"],
+)
+def test_should_block_redirection_ampersand_still_rescued_by_allow_pattern(
+    redirection_command: str,
+) -> None:
+    """The allow_pattern still sees the whole segment: redirection did not fracture it."""
+    from lazy_harness.hooks.builtins.pre_tool_use_security import should_block
+
+    assert should_block(redirection_command, allow_patterns=[r"\.worktrees/"]) is None
 
 
 def test_should_block_invalid_allow_pattern_is_ignored() -> None:

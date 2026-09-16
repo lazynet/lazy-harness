@@ -269,14 +269,17 @@ def _safe_search(pattern: str, text: str) -> bool:
         return False
 
 
-# `;`, `&&`, `||` and a newline chain independent commands; `|` does not, since
-# a pipe composes one command out of two, so it is deliberately left out. This
-# split is unquoted: a chain operator inside a quoted string or heredoc body
-# still splits here, which can over-segment. Rule anchoring (`_COMMAND_START`)
-# already tolerates that -- a mid-segment split lands the tail at what the
-# regex treats as a fresh line/command start -- so over-segmenting narrows the
-# allow_pattern rescue scope without changing which commands the rules match.
-_CHAIN_OPERATORS = re.compile(r"&&|\|\||;|\n")
+# `;`, `&&`, `||`, a bare `&` (background) and a newline chain independent
+# commands; `|` does not, since a pipe composes one command out of two, so it
+# is deliberately left out. This split is unquoted: a chain operator inside a
+# quoted string or heredoc body still splits here, which can over-segment.
+# Rule anchoring (`_COMMAND_START`) already tolerates that -- a mid-segment
+# split lands the tail at what the regex treats as a fresh line/command start
+# -- so over-segmenting narrows the allow_pattern rescue scope without
+# changing which commands the rules match. A redirection spelling (`2>&1`,
+# `>&2`, `&>file`, `<&3`) is excluded by the lookaround rather than relied on
+# for that tolerance, since its `&` never starts a new command.
+_CHAIN_OPERATORS = re.compile(r"&&|\|\||;|\n|(?<![<>])&(?![&>])")
 
 
 def _segments(command: str) -> list[str]:
@@ -319,7 +322,7 @@ def _normalise_git_globals(segment: str) -> str:
 def should_block(command: str, allow_patterns: list[str]) -> BlockDecision | None:
     """Return BlockDecision if a shell segment matches a rule and is not rescued.
 
-    Evaluated per segment (split on `;`, `&&`, `||`, newline -- see
+    Evaluated per segment (split on `;`, `&&`, `||`, bare `&`, newline -- see
     `_segments`): an allow_pattern rescues a match only if it also matches
     within that match's own segment, so a pattern meant for one operation
     cannot rescue a different, destructive one chained after it. Within a
