@@ -1,0 +1,5 @@
+{
+  "exit_code": 2,
+  "stderr": "Blocked by lazy-harness PreToolUse: unsafe git stash (scope).\nWhy: `git stash frobnicate` was not recognised as a safe, entry-naming form of stash.\nThe stash stack is shared across every worktree of this repository and across concurrent sessions.\nInstead: prefer a temporary WIP commit. If you must stash, use\n  git stash push -u -m \"<unique-tag>\"\nthen restore with `git stash apply <sha>` and drop that entry by ref.\nIf this is intentional, add a regex to [hooks.pre_tool_use_git_scope] allow_patterns in your profile config.toml.\n",
+  "stdout": ""
+}

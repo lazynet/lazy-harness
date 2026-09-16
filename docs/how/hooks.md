@@ -359,6 +359,10 @@ Every `git stash` in a compound command is judged, not only the first: `git stas
 
 **Escape hatch.** `[hooks.pre_tool_use_git_scope] allow_patterns` in the profile config takes regexes matched against the whole command. It is deliberately **not** the list `pre-tool-use-security` reads: that one carries `\.worktrees/` in the reference profile, which would rescue every command this hook exists to catch.
 
+**A payload it cannot parse is a refusal, not a pass.** This hook blocks, and exit 0 with no output is how a hook says "no objection" — so a guard that degraded a malformed payload into silence would report consent it never formed. The runner refuses before the hook is reached, with the reason on stderr and exit 2. Every non-blocking built-in takes the other branch and still exits 0, because refusing a tool call it was never meant to judge is the worse failure there.
+
+**Known limits, measured rather than assumed.** The rule recognises a stash in command position, and an invocation the shell only reaches indirectly is outside that: `sh -c "…"`, `eval "…"`, a command assembled in a variable, a backslash-escaped or absolutely-pathed `git`, a quoted subcommand, and a redirect written before the command all pass. None is closed on purpose — each is a deliberate act, this hook guards a scope mistake rather than an adversary, and widening the anchor would cost false positives on ordinary scripts. The full list, with what was attacked and what held, is on `_STASH_CALL` in the source.
+
 **Kill criteria.** This hook blocks, so its cost is false positives rather than non-adoption. If clearing them needs more than three `allow_patterns` entries in the first month of use, the rule is too broad and comes out rather than growing an allowlist.
 
 ### `pre-tool-use-memory-size` — runs on `PreToolUse`
