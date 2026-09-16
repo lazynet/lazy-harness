@@ -37,15 +37,36 @@ class BlockDecision:
 # A command word starts the line, follows a shell operator, or follows a wrapper
 # that execs its argument. Anchoring here keeps the rules from firing on command
 # names that merely *mention* a dangerous command inside a quoted argument.
+#
+# `(?m)` makes `^` mean start-of-line rather than start-of-string, which is what
+# keeps a command on the second line of a multi-line script -- or of a heredoc
+# body piped into a shell -- in command position. It has to stay at index 0:
+# Python accepts a global inline flag only at the start of the whole expression,
+# and every rule below is built by prefixing this constant.
 _COMMAND_START = (
-    r"(?:^|[;&|(`]\s*|\b(?:sudo|doas|xargs|time|env|nohup)\s+"
-    r"|\b(?:ba|z|k)?sh\s+-c\s+['\"]?)(?:\S*/)?"
+    r"(?m)"
+    # Start of a line, indentation included: a command nested in an `if` or a
+    # `for` block is still the command being run.
+    r"(?:^[ \t]*"
+    # After a shell operator. The optional quote is what reaches a command
+    # inside an interpreter's own string, as in `os.system("...")`.
+    r"|[;&|(`]\s*['\"]?"
+    # After a wrapper that execs its argument.
+    r"|\b(?:sudo|doas|xargs|time|env|nohup|eval)\s+['\"]?"
+    # After a shell asked to run a string. `-[a-z]*c` covers `-c`, `-lc`, `-ec`
+    # and the rest of the cluster spellings, not `-c` alone.
+    r"|\b(?:ba|z|k)?sh\s+-[a-z]*c\s+['\"]?"
+    r")(?:\S*/)?"
 )
 # Short flags cluster (-rf, -fr, -rfv) or the long spelling, never both letters
 # assumed from a single one: recursion and force are matched independently so
 # `rm -f file` and `rm -r dir` both stay allowed.
 _RM_RECURSIVE_FLAG = r"(?:-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)\b"
 _RM_FORCE_FLAG = r"(?:-[a-zA-Z]*f[a-zA-Z]*|--force)\b"
+# A command's arguments end at the line break. The classes below exclude the
+# shell separators *and* the newline: without it a `cat` opening a heredoc on
+# the first line reaches a secrets filename written in the body three lines
+# down, which is the second half of the same false positive the anchor fixes.
 _RM_OPTION = r"(?:-[a-zA-Z]+|--[a-z][a-z-]*)"
 
 BLOCK_RULES: tuple[BlockRule, ...] = (
@@ -61,27 +82,31 @@ BLOCK_RULES: tuple[BlockRule, ...] = (
     ),
     BlockRule(
         category="filesystem",
-        pattern=re.compile(r"\btruncate\s+(-s\s+\d+\s+)?[^\s-]"),
+        pattern=re.compile(_COMMAND_START + r"truncate\s+(-s\s+\d+\s+)?[^\s-]"),
         reason="File truncation",
     ),
     BlockRule(
         category="git",
-        pattern=re.compile(r"\bgit\s+push\s+(--force(?!-with-lease)\b|-f\b)"),
+        pattern=re.compile(_COMMAND_START + r"git\s+push\s+(--force(?!-with-lease)\b|-f\b)"),
         reason="Force-push without lease",
     ),
     BlockRule(
         category="git",
-        pattern=re.compile(r"\bgit\s+reset\s+--hard\b"),
+        pattern=re.compile(_COMMAND_START + r"git\s+reset\s+--hard\b"),
         reason="Hard reset discards work",
     ),
     BlockRule(
         category="git",
         pattern=re.compile(
-            r"\bgit\s+add\s+(-f\b|--force\b)[^|;&]*"
+            _COMMAND_START + r"git\s+add\s+(-f\b|--force\b)[^|;&\n]*"
             r"(\.env|\.pem|\.key|\.p12|credentials|id_rsa|id_ed25519)"
         ),
         reason="Forced add of secret",
     ),
+    # The one rule deliberately left unanchored: `DROP TABLE` is never the
+    # executable, it is the argument of one (`psql -c "DROP TABLE users"`), so
+    # anchoring it on command position would delete the rule rather than narrow
+    # it. The cost is that prose naming `DROP TABLE` still trips this rule.
     BlockRule(
         category="sql",
         pattern=re.compile(r"\b(drop|truncate)\s+(table|database)\b", re.IGNORECASE),
@@ -89,28 +114,28 @@ BLOCK_RULES: tuple[BlockRule, ...] = (
     ),
     BlockRule(
         category="terraform",
-        pattern=re.compile(r"\bterraform\s+destroy\b"),
+        pattern=re.compile(_COMMAND_START + r"terraform\s+destroy\b"),
         reason="Infra destruction",
     ),
     BlockRule(
         category="terraform",
-        pattern=re.compile(r"\bterraform\s+apply\s+[^|;&]*-auto-approve\b"),
+        pattern=re.compile(_COMMAND_START + r"terraform\s+apply\s+[^|;&\n]*-auto-approve\b"),
         reason="Skips plan review",
     ),
     BlockRule(
         category="terraform",
-        pattern=re.compile(r"\bterraform\s+apply\s+[^|;&]*-replace=\S+"),
+        pattern=re.compile(_COMMAND_START + r"terraform\s+apply\s+[^|;&\n]*-replace=\S+"),
         reason="Forces resource recreation",
     ),
     BlockRule(
         category="terraform",
-        pattern=re.compile(r"\bterraform\s+state\s+(rm|push)\b"),
+        pattern=re.compile(_COMMAND_START + r"terraform\s+state\s+(rm|push)\b"),
         reason="State mutation",
     ),
     BlockRule(
         category="credentials",
         pattern=re.compile(
-            r"\b(cat|bat|less|more|head|tail|grep|rg|awk|sed)\b[^|;&]*"
+            _COMMAND_START + r"(cat|bat|less|more|head|tail|grep|rg|awk|sed)\b[^|;&\n]*"
             # Keep the dotenv file distinct from an identifier ending in `.env`:
             # `process.env` and `import.meta.env` are APIs, and grepping for them
             # reads source, not credentials. The second lookbehind sees through a
@@ -122,19 +147,25 @@ BLOCK_RULES: tuple[BlockRule, ...] = (
     ),
     BlockRule(
         category="credentials",
-        pattern=re.compile(r"\b(cat|bat|less|more|head|tail)\b[^|;&]*\.ssh/id_(?!.*\.pub)\S+"),
+        pattern=re.compile(
+            _COMMAND_START + r"(cat|bat|less|more|head|tail)\b[^|;&\n]*\.ssh/id_(?!.*\.pub)\S+"
+        ),
         reason="Read of SSH private key",
     ),
     BlockRule(
         category="credentials",
         pattern=re.compile(
-            r"\b(cat|bat|less|more|head|tail|grep|rg|awk|sed)\b[^|;&]*\.aws/(credentials|config)\b"
+            _COMMAND_START
+            + r"(cat|bat|less|more|head|tail|grep|rg|awk|sed)\b"
+            + r"[^|;&\n]*\.aws/(credentials|config)\b"
         ),
         reason="Read of AWS credentials",
     ),
     BlockRule(
         category="credentials",
-        pattern=re.compile(r"\b(cat|bat|less|more|head|tail)\b[^|;&]*\.(pem|key|p12)\b"),
+        pattern=re.compile(
+            _COMMAND_START + r"(cat|bat|less|more|head|tail)\b[^|;&\n]*\.(pem|key|p12)\b"
+        ),
         reason="Read of cert/key file",
     ),
 )
