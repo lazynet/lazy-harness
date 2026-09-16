@@ -23,6 +23,8 @@ from lazy_harness.agents.base import (
 )
 
 HOOKS_JSON = Path("hooks.json")
+CONFIG_TOML = Path("config.toml")
+DESCRIPTION = "Managed by lazy-harness. Edits are overwritten on the next deploy."
 
 
 def _adapter():
@@ -259,11 +261,30 @@ def test_additional_context_travels_in_the_same_nested_envelope() -> None:
 # --- config: hooks.json, not config.toml ---------------------------------
 
 
-def test_the_only_config_target_is_hooks_json() -> None:
-    """Never `config.toml`: Codex writes `[hooks.state]` trust hashes and
-    `[projects.*]` into it, so a harness that owns that file can clobber the
-    user's trust decisions."""
-    assert _adapter().config_targets() == [HOOKS_JSON]
+def test_config_targets_names_hooks_json_and_config_toml() -> None:
+    """Two files, for two reasons that do not generalise to each other.
+
+    Hook *declarations* stay out of `config.toml` — Codex persists
+    `[hooks.state]` trust hashes next to `[projects.*]` in it, and the trust key
+    is scoped to the declaring file's absolute path, so moving a declaration
+    between the two re-prompts for every hook in the file. MCP servers have no
+    such home: `[mcp_servers.<id>]` in `config.toml` is the only place Codex
+    reads them, so the adapter merges into that file rather than owning it.
+    """
+    assert _adapter().config_targets() == [HOOKS_JSON, CONFIG_TOML]
+
+
+def test_no_hook_declaration_ever_reaches_config_toml() -> None:
+    """The half of the split that the widening must not erode."""
+    ops = _adapter().plan_config(
+        {"session_start": [HookEntry(command="lh hook ctx")]},
+        {"qmd": {"command": "qmd"}},
+        {},
+        binary="lh",
+    )
+    toml_ops = [op for op in ops if op.relative_path == CONFIG_TOML]
+    assert toml_ops and toml_ops[0].artifact is not None
+    assert "hook" not in toml_ops[0].artifact.content
 
 
 def test_the_adapter_is_a_config_planner() -> None:
@@ -359,9 +380,11 @@ def test_no_hooks_plans_no_write_at_all() -> None:
     assert _plan({}) == []
 
 
-def test_mcp_servers_are_out_of_scope_for_the_throwaway() -> None:
+def test_mcp_config_file_stays_empty_because_the_document_is_not_json() -> None:
+    """`mcp_config_file()` names a JSON document the engine could read as one.
+    Codex's MCP block is a TOML section inside a file it shares with the user, so
+    the adapter answers with no such file and plans `config.toml` instead."""
     assert _adapter().mcp_config_file() == ""
-    assert _adapter().plan_config({}, {"qmd": {"command": "qmd"}}, {}) == []
 
 
 def test_the_plan_replaces_an_existing_hooks_json_wholesale() -> None:
@@ -411,3 +434,211 @@ def test_codex_resolves_for_a_profile_that_declares_it() -> None:
     )
     assert agent_for_profile(cfg, "probe").name == "codex"
     assert agent_for_profile(cfg, "personal").name == "claude-code"
+
+
+# --- config.toml: merged, never owned ------------------------------------
+#
+# `config.toml` is the file decision 4 calls jointly owned. Codex writes into
+# it during a session — `[projects."<abs path>"].trust_level` as the user trusts
+# a directory, `[hooks.state.<key>].trusted_hash` as they approve a hook — so
+# every assertion below is made against `tomllib`, the parser Codex's own
+# deserialiser is built on, reading the bytes the adapter produced. Asserting on
+# the string the adapter built would be the test checking its own work.
+
+# The shape observed in a real `~/.codex/config.toml`: top-level scalars first,
+# then the tables Codex appends as the session goes on.
+_LIVE_CONFIG = """\
+model = "gpt-6-astra"
+model_reasoning_effort = "high"
+
+[projects."/Users/someone/repos/one"]
+trust_level = "trusted"
+
+[projects."/Users/someone/repos/two"]
+trust_level = "trusted"
+
+[hooks.state."/Users/someone/.codex/hooks.json:session_start:0:0"]
+trusted_hash = "sha256:904128e4"
+
+[tui.model_availability_nux]
+gpt-6-astra = 4
+"""
+
+
+def _toml_op(ops: list, relative: Path = CONFIG_TOML):
+    matched = [op for op in ops if op.relative_path == relative]
+    assert matched, f"no op for {relative}"
+    return matched[0]
+
+
+def _parsed(ops: list, relative: Path = CONFIG_TOML) -> dict:
+    """The op's bytes, through the parser Codex itself uses."""
+    import tomllib
+
+    op = _toml_op(ops, relative)
+    assert op.artifact is not None
+    return tomllib.loads(op.artifact.content)
+
+
+def test_detected_servers_land_under_mcp_servers() -> None:
+    ops = _adapter().plan_config({}, {"qmd": {"command": "qmd", "args": ["mcp"]}}, {}, binary="lh")
+    parsed = _parsed(ops)
+    assert parsed["mcp_servers"]["qmd"] == {"command": "qmd", "args": ["mcp"]}
+
+
+def test_an_env_table_survives_the_toml_round_trip() -> None:
+    """A nested dict is the one MCP field TOML could mangle into a sibling table."""
+    ops = _adapter().plan_config(
+        {},
+        {"engram": {"command": "engram", "args": ["mcp"], "env": {"ENGRAM_DB": "/tmp/e.db"}}},
+        {},
+        binary="lh",
+    )
+    assert _parsed(ops)["mcp_servers"]["engram"]["env"] == {"ENGRAM_DB": "/tmp/e.db"}
+
+
+def test_project_trust_survives_a_deploy() -> None:
+    ops = _adapter().plan_config(
+        {}, {"qmd": {"command": "qmd"}}, {CONFIG_TOML: _LIVE_CONFIG}, binary="lh"
+    )
+    parsed = _parsed(ops)
+    assert parsed["projects"]["/Users/someone/repos/one"]["trust_level"] == "trusted"
+    assert parsed["projects"]["/Users/someone/repos/two"]["trust_level"] == "trusted"
+
+
+def test_project_trust_survives_a_redeploy_of_what_the_first_deploy_wrote() -> None:
+    """The round trip, not the write: save, load, save, load.
+
+    A merge can be correct once and lossy the second time — the first pass reads
+    a hand-written file and the second reads its own output, which is where a
+    reserialisation that quietly restructures `[projects.*]` shows up.
+    """
+    adapter = _adapter()
+    first = _toml_op(
+        adapter.plan_config(
+            {}, {"qmd": {"command": "qmd"}}, {CONFIG_TOML: _LIVE_CONFIG}, binary="lh"
+        )
+    )
+    assert first.artifact is not None
+    second = _parsed(
+        adapter.plan_config(
+            {},
+            {"qmd": {"command": "qmd"}, "engram": {"command": "engram"}},
+            {CONFIG_TOML: first.artifact.content},
+            binary="lh",
+        )
+    )
+    assert second["projects"]["/Users/someone/repos/one"]["trust_level"] == "trusted"
+    assert second["projects"]["/Users/someone/repos/two"]["trust_level"] == "trusted"
+    assert set(second["mcp_servers"]) == {"qmd", "engram"}
+
+
+def test_hook_trust_state_survives_a_deploy() -> None:
+    """`[hooks.state]` is how Codex remembers the user approved a hook. A deploy
+    that dropped it would silently un-trust every hook it just deployed."""
+    ops = _adapter().plan_config(
+        {}, {"qmd": {"command": "qmd"}}, {CONFIG_TOML: _LIVE_CONFIG}, binary="lh"
+    )
+    state = _parsed(ops)["hooks"]["state"]
+    key = "/Users/someone/.codex/hooks.json:session_start:0:0"
+    assert state[key]["trusted_hash"] == "sha256:904128e4"
+
+
+def test_unmodelled_sections_and_scalars_survive() -> None:
+    """Everything the harness does not model is carried, not just the two
+    sections it was taught to name."""
+    parsed = _parsed(
+        _adapter().plan_config(
+            {}, {"qmd": {"command": "qmd"}}, {CONFIG_TOML: _LIVE_CONFIG}, binary="lh"
+        )
+    )
+    assert parsed["model"] == "gpt-6-astra"
+    assert parsed["model_reasoning_effort"] == "high"
+    assert parsed["tui"]["model_availability_nux"] == {"gpt-6-astra": 4}
+
+
+def test_a_server_the_user_declared_themselves_is_kept_and_named() -> None:
+    existing = '[mcp_servers.mine]\ncommand = "mine"\n'
+    ops = _adapter().plan_config(
+        {}, {"qmd": {"command": "qmd"}}, {CONFIG_TOML: existing}, binary="lh"
+    )
+    parsed = _parsed(ops)
+    assert parsed["mcp_servers"]["mine"] == {"command": "mine"}
+    assert "mcp_servers: mine" in _toml_op(ops).preserved
+
+
+def test_the_preserved_report_names_each_trusted_project() -> None:
+    """The deploy report is where the user sees their decisions came through."""
+    ops = _adapter().plan_config(
+        {}, {"qmd": {"command": "qmd"}}, {CONFIG_TOML: _LIVE_CONFIG}, binary="lh"
+    )
+    preserved = _toml_op(ops).preserved
+    assert "projects: /Users/someone/repos/one" in preserved
+    assert "projects: /Users/someone/repos/two" in preserved
+
+
+def test_no_servers_plans_no_config_toml_write() -> None:
+    """Blanking an input must not reserialise a file the harness does not own.
+
+    `lh deploy-hooks` runs the cycle with `servers` empty; a write here would
+    rewrite every trust decision in the file for no reason at all.
+    """
+    ops = _adapter().plan_config(
+        {"session_start": [HookEntry(command="lh hook ctx")]},
+        {},
+        {CONFIG_TOML: _LIVE_CONFIG},
+        binary="lh",
+    )
+    assert [op.relative_path for op in ops] == [HOOKS_JSON]
+
+
+def test_a_config_toml_that_does_not_parse_is_refused_rather_than_replaced() -> None:
+    """Overwriting an unparseable `config.toml` would destroy trust state the
+    user cannot get back. Losing the MCP block is recoverable; that is not."""
+    from lazy_harness.agents.codex import CodexConfigUnreadableError
+
+    with pytest.raises(CodexConfigUnreadableError):
+        _adapter().plan_config(
+            {}, {"qmd": {"command": "qmd"}}, {CONFIG_TOML: "model = \n[broken"}, binary="lh"
+        )
+
+
+# --- retiring hooks.json, in both directions ------------------------------
+
+
+def test_a_harness_written_hooks_json_is_retired_when_no_hooks_remain() -> None:
+    """The delete case. Without it, a profile that stops configuring hooks keeps
+    firing the ones the previous release deployed."""
+    ours = json.dumps({"description": DESCRIPTION, "hooks": {"SessionStart": []}})
+    ops = _adapter().plan_config({}, {}, {HOOKS_JSON: ours}, binary="lh")
+    assert [(op.relative_path, op.artifact) for op in ops] == [(HOOKS_JSON, None)]
+
+
+def test_a_hooks_json_the_user_wrote_is_left_alone() -> None:
+    """The other direction, and the reason the delete keys on the description
+    rather than on the file existing: `hooks.json` is where a user declares their
+    own hooks too, and a harness that deletes it on an empty plan eats them."""
+    theirs = json.dumps({"hooks": {"SessionStart": [{"hooks": [{"command": "theirs"}]}]}})
+    assert _adapter().plan_config({}, {}, {HOOKS_JSON: theirs}, binary="lh") == []
+
+
+def test_an_absent_hooks_json_plans_no_delete() -> None:
+    """Retiring a file that was never there would make every empty deploy print
+    a removal that removed nothing."""
+    assert _adapter().plan_config({}, {}, {}, binary="lh") == []
+
+
+def test_one_plan_retires_hooks_json_while_writing_config_toml() -> None:
+    """Both directions in a single plan: the file that must go and the file that
+    must be merged, so neither is asserted in isolation from the other."""
+    ours = json.dumps({"description": DESCRIPTION, "hooks": {}})
+    ops = _adapter().plan_config(
+        {},
+        {"qmd": {"command": "qmd"}},
+        {HOOKS_JSON: ours, CONFIG_TOML: _LIVE_CONFIG},
+        binary="lh",
+    )
+    by_path = {op.relative_path: op for op in ops}
+    assert by_path[HOOKS_JSON].artifact is None
+    assert by_path[CONFIG_TOML].artifact is not None
+    assert _parsed(ops)["projects"]["/Users/someone/repos/one"]["trust_level"] == "trusted"

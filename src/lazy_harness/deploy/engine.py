@@ -47,6 +47,34 @@ class ConfigPlannerRequiredError(TypeError):
         )
 
 
+class ConfigTargetChangedError(RuntimeError):
+    """A config target moved between the engine reading it and applying the plan.
+
+    Atomic replace is not concurrency control: a rename prevents a half-written
+    file, it does not prevent losing an approval the agent wrote *after* the read
+    (decision 4, 2026-09-13 multi-agent design). Both Codex and Copilot were
+    observed writing their own config mid-session — Codex persists
+    `[projects.*]` trust and `[hooks.state]` into `config.toml`, Copilot writes
+    `permissions-config.json` as the user approves things.
+
+    The conservative option is taken deliberately. A lock would have to be
+    honoured by the agents, which do not know the harness exists; winning the
+    race silently would destroy decisions the user made by hand, and there is no
+    test written against a fixture that would catch it. Deploying while an agent
+    is running is not a supported state, so it is refused rather than resolved.
+    """
+
+    def __init__(self, profile: str, changed: list[Path]) -> None:
+        self.profile = profile
+        self.changed = changed
+        listed = ", ".join(str(path) for path in changed)
+        super().__init__(
+            f"Config changed underneath this deploy in profile {profile!r}: {listed}. "
+            f"The agent writing them is most likely still running — close it and "
+            f"re-run. Nothing was written."
+        )
+
+
 class UnknownProfileError(ValueError):
     """`--profile` named a profile the config does not declare.
 
@@ -268,6 +296,58 @@ def _planner_for(cfg: Config, profile: str) -> ConfigPlanner:
     return agent
 
 
+def _stamp(path: Path) -> tuple[int, int] | None:
+    """A target's identity for the race check: `(mtime_ns, size)`, or `None`.
+
+    Both halves are compared because neither is sufficient alone. Size misses an
+    in-place edit of the same length — Codex flipping one `trust_level` value is
+    exactly that shape — and mtime misses a write that lands inside one
+    filesystem timestamp tick, which is a second on any filesystem with
+    one-second resolution.
+
+    `None` means "was not a file", and it is a value rather than an omission so
+    that absent-then-present compares unequal: the read pass skips a target that
+    does not exist, so a file the agent creates mid-deploy is the one case where
+    the engine plans against no prior content at all.
+    """
+    if not path.is_file():
+        return None
+    info = path.stat()
+    return (info.st_mtime_ns, info.st_size)
+
+
+def _read_targets(
+    planner: ConfigPlanner, target_dir: Path
+) -> tuple[dict[Path, str], dict[Path, tuple[int, int] | None]]:
+    """Step 2 of the cycle: read every target that exists, stamping all of them.
+
+    The stamp covers targets that do *not* exist as well as the ones read, which
+    is why it is taken here rather than derived from `existing`.
+    """
+    existing: dict[Path, str] = {}
+    stamps: dict[Path, tuple[int, int] | None] = {}
+    for target in planner.config_targets():
+        path = target_dir / target
+        stamps[target] = _stamp(path)
+        if path.is_file():
+            existing[target] = path.read_text()
+    return existing, stamps
+
+
+def _refuse_if_changed(
+    stamps: dict[Path, tuple[int, int] | None], target_dir: Path, profile: str
+) -> None:
+    """Abort the whole plan if any target moved since it was read.
+
+    Whole-plan, not per-op: `settings.json` and `.claude.json` come back from one
+    `plan_config` call, and a check inside `_apply` would write the first before
+    discovering that the second had been edited underneath it.
+    """
+    changed = [target for target, stamp in stamps.items() if _stamp(target_dir / target) != stamp]
+    if changed:
+        raise ConfigTargetChangedError(profile, sorted(changed))
+
+
 def _report_lines(label: str, items: list[str]) -> None:
     """Render one diagnostic group.
 
@@ -349,11 +429,7 @@ def deploy_config(cfg: Config, *, only: str | None = None) -> None:
         target_dir = expand_path(entry.config_dir)
         binary = binary_for_profile(cfg, name)
 
-        existing = {
-            target: (target_dir / target).read_text()
-            for target in planner.config_targets()
-            if (target_dir / target).is_file()
-        }
+        existing, stamps = _read_targets(planner, target_dir)
 
         ops = planner.plan_config(
             _hook_entries_for(cfg, name, binary), servers, existing, binary=binary
@@ -362,6 +438,7 @@ def deploy_config(cfg: Config, *, only: str | None = None) -> None:
             click.echo(f"  · {name}: nothing to deploy.")
             continue
 
+        _refuse_if_changed(stamps, target_dir, name)
         target_dir.mkdir(parents=True, exist_ok=True)
         for op in ops:
             _apply(op, target_dir, name)
@@ -421,17 +498,14 @@ def _deploy_config_subset(cfg: Config, *, only: str | None, hooks: bool, servers
         target_dir = expand_path(entry.config_dir)
         binary = binary_for_profile(cfg, name)
 
-        existing = {
-            target: (target_dir / target).read_text()
-            for target in planner.config_targets()
-            if (target_dir / target).is_file()
-        }
+        existing, stamps = _read_targets(planner, target_dir)
         entries = _hook_entries_for(cfg, name, binary) if hooks else {}
 
         ops = planner.plan_config(entries, detected, existing, binary=binary)
         if not ops:
             continue
 
+        _refuse_if_changed(stamps, target_dir, name)
         target_dir.mkdir(parents=True, exist_ok=True)
         for op in ops:
             _apply(op, target_dir, name)

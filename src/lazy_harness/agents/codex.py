@@ -31,6 +31,57 @@ from lazy_harness.agents.base import (
 )
 from lazy_harness.core.paths import expand_path
 
+
+def _is_harness_written(raw: str | None) -> bool:
+    """Whether this `hooks.json` is one the harness produced.
+
+    The `description` stamp is the whole test, because it is the only key
+    Codex's schema leaves free at the top level. A file that does not parse is
+    *not* ours: the harness only ever writes `json.dumps` output.
+    """
+    if raw is None:
+        return False
+    try:
+        document = json.loads(raw)
+    except json.JSONDecodeError:
+        return False
+    return isinstance(document, dict) and document.get("description") == _DESCRIPTION
+
+
+def _as_toml(value: object) -> object:
+    """A plain value as tomlkit items, so nested dicts land as tables.
+
+    An MCP entry's `env` is a dict inside a dict. Assigned raw, tomlkit renders
+    it as an inline table, which parses back identically but reads nothing like
+    the rest of the file — and the file is one the user opens by hand.
+    """
+    import tomlkit
+
+    if isinstance(value, dict):
+        table = tomlkit.table()
+        for key, item in value.items():
+            table[key] = _as_toml(item)
+        return table
+    return value
+
+
+class CodexConfigUnreadableError(RuntimeError):
+    """`config.toml` exists and does not parse, so the merge cannot be made safe.
+
+    Replacing it wholesale is the one option that is worse than doing nothing:
+    the file carries `[projects.*]` trust levels and `[hooks.state]` approval
+    hashes that Codex wrote as the user granted them, and neither can be
+    reconstructed. A missing `[mcp_servers]` block costs one redeploy.
+    """
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(
+            f"{_CONFIG_FILE} does not parse as TOML ({detail}). It carries project "
+            f"trust and hook approvals that cannot be reconstructed, so it is left "
+            f"untouched. Fix the file and re-run."
+        )
+
+
 # Every event name this Codex accepts, read off the binary's own string table.
 #
 # It is a named constant rather than an inline literal because of how Codex
@@ -108,6 +159,11 @@ _TOOL_OPERATIONS: dict[str, Operation] = {"Bash": Operation.RUN_COMMAND}
 # re-prompts for every hook even though nothing about the hook changed. Switching
 # representation costs a full re-trust; it is not a refactor.
 _HOOKS_FILE = "hooks.json"
+
+# The file Codex writes to *itself*, mid-session. The adapter merges into it
+# and never owns it — see `_plan_mcp` for what that costs and buys.
+_CONFIG_FILE = "config.toml"
+_MCP_SECTION = "mcp_servers"
 
 # The only free-text slot the document has: the top level accepts `description`
 # and `hooks` and nothing else — any other key is a parse error that drops every
@@ -229,7 +285,22 @@ class CodexAdapter:
     # --- config documents (ConfigPlanner) ---
 
     def config_targets(self) -> list[Path]:
-        return [Path(_HOOKS_FILE)]
+        """Two files, owned on two different terms.
+
+        `hooks.json` is the harness's outright — it carries declarations and
+        nothing else, which is what lets it be replaced wholesale and retired
+        when it is no longer generated. `config.toml` is the user's and Codex's,
+        and the adapter merges one section of it.
+
+        Hook declarations never cross that line. Codex persists `[hooks.state]`
+        trust hashes into `config.toml` next to `[projects.*]`, and the trust key
+        is `<declaring file>:<event>:<group>:<handler>` — path-scoped — so moving
+        a declaration between the two representations re-prompts for every hook
+        in the file even though the hash is unchanged (probe, 0.154.0). MCP has
+        no second home: `[mcp_servers.<id>]` is where Codex reads servers, so the
+        only choice there is to merge carefully or not to ship them at all.
+        """
+        return [Path(_HOOKS_FILE), Path(_CONFIG_FILE)]
 
     def plan_config(
         self,
@@ -248,23 +319,95 @@ class CodexAdapter:
         writing launcher has nowhere to live in a document whose top level
         accepts only `description` and `hooks`.
 
-        MCP is out of scope for the throwaway: `servers` is ignored, and an
-        empty `hooks` plans no write at all rather than a write of an empty
-        block, which would uninstall whatever the user declared themselves.
+        `binary` is ignored — the commands arrive already built, and the stamp
+        that would name the writing launcher has nowhere to live in a document
+        whose top level accepts only `description` and `hooks`.
+        """
+        ops: list[WriteOp] = []
+        hooks_op = self._plan_hooks(hooks, existing.get(Path(_HOOKS_FILE)))
+        if hooks_op is not None:
+            ops.append(hooks_op)
+        mcp_op = self._plan_mcp(servers, existing.get(Path(_CONFIG_FILE)))
+        if mcp_op is not None:
+            ops.append(mcp_op)
+        return ops
+
+    def _plan_hooks(
+        self, hooks: dict[str, list[HookEntry]], existing_raw: str | None
+    ) -> WriteOp | None:
+        """Write the declarations, or retire the file the harness used to write.
+
+        An empty `hooks` plans no write rather than a write of an empty block:
+        the latter would uninstall whatever the user declared themselves.
+
+        It does plan a *delete*, but only of a document this harness wrote —
+        recognised by the `description` stamp, which is the only marker the
+        format has room for. Keying the delete on the file merely existing would
+        eat a `hooks.json` the user wrote by hand the first time a profile
+        configured no harness hooks, and that file is exactly where a Codex user
+        declares their own.
         """
         groups = self._hook_groups(hooks)
         if not groups:
-            return []
+            if _is_harness_written(existing_raw):
+                return WriteOp(artifact=None, relative_path=Path(_HOOKS_FILE))
+            return None
         document = {"description": _DESCRIPTION, "hooks": groups}
-        return [
-            WriteOp(
-                artifact=ConfigArtifact(
-                    relative_path=Path(_HOOKS_FILE),
-                    content=json.dumps(document, indent=2) + "\n",
-                ),
+        return WriteOp(
+            artifact=ConfigArtifact(
                 relative_path=Path(_HOOKS_FILE),
-            )
-        ]
+                content=json.dumps(document, indent=2) + "\n",
+            ),
+            relative_path=Path(_HOOKS_FILE),
+        )
+
+    def _plan_mcp(self, servers: dict[str, dict], existing_raw: str | None) -> WriteOp | None:
+        """Merge `[mcp_servers.<id>]` into a file the harness does not own.
+
+        tomlkit rather than `tomli_w`, and a keyed update rather than a rebuild,
+        for the same reason: everything not named here has to come back out
+        byte-for-byte. `tomli_w.dumps` of a parsed document drops every comment
+        and reorders nothing it was not asked to, but it *does* rewrite the whole
+        file — and this file is where Codex records that the user trusted a
+        directory (`[projects."<abs path>"].trust_level`) and approved a hook
+        (`[hooks.state.<key>].trusted_hash`). Neither is reconstructible, and no
+        test written against a fixture of our own shape would notice them going.
+
+        No servers plans no write. `lh deploy-hooks` runs the cycle with
+        `servers` blanked, and reserialising this file on that path would churn
+        the user's document for nothing.
+        """
+        if not servers:
+            return None
+
+        import tomlkit
+
+        try:
+            document = tomlkit.parse(existing_raw or "")
+        except Exception as exc:  # tomlkit raises several distinct parse errors
+            raise CodexConfigUnreadableError(str(exc)) from exc
+
+        section = document.get(_MCP_SECTION)
+        if not isinstance(section, dict):
+            section = tomlkit.table(is_super_table=True)
+            document[_MCP_SECTION] = section
+
+        preserved = [f"{_MCP_SECTION}: {name}" for name in section if name not in servers]
+        projects = document.get("projects")
+        if isinstance(projects, dict):
+            preserved.extend(f"projects: {path}" for path in projects)
+
+        for name, entry in servers.items():
+            section[name] = _as_toml(entry)
+
+        return WriteOp(
+            artifact=ConfigArtifact(
+                relative_path=Path(_CONFIG_FILE),
+                content=tomlkit.dumps(document),
+            ),
+            relative_path=Path(_CONFIG_FILE),
+            preserved=preserved,
+        )
 
     @staticmethod
     def _hook_groups(hooks: dict[str, list[HookEntry]]) -> dict[str, list[dict]]:
