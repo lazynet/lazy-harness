@@ -400,6 +400,8 @@ def test_session_start_preflight_reads_the_invoked_profiles_credentials(
     body = json.loads(result.output)["hookSpecificOutput"]["additionalContext"]
     assert "- **auth** [FAIL] — refresh token expired" in body
     assert "All clear" not in body
+
+
 #: Long enough to clear `_MIN_CHARS` and carrying an action verb, so
 #: `is_non_trivial` admits it through the verb branch.
 _WORK_PROMPT = "implementá el hook y agregá el test"
