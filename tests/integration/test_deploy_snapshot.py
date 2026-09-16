@@ -363,3 +363,30 @@ def test_a_profile_whose_agent_cannot_plan_contributes_no_config_target(
     targets = snapshot_targets(cfg)
 
     assert targets == [home_dir / ".void" / "CLAUDE.md"]
+
+
+def test_a_codex_profile_snapshots_the_config_toml_it_merges_into(home_dir: Path) -> None:
+    """The widening audited where it matters most: rollback.
+
+    `CodexAdapter` gained `config.toml` as a target, and the snapshot derives its
+    manifest from `config_targets()` rather than listing paths of its own — so
+    the file the deploy now merges into is the file `--rollback` can restore. A
+    rollback that skipped it would leave a half-reverted deploy behind, and
+    `config.toml` is the one file here carrying state the user cannot retype.
+    """
+    profiles_src = config_dir() / "profiles"
+    (profiles_src / "cx").mkdir(parents=True)
+    (profiles_src / "cx" / "AGENTS.md").write_text("# cx\n")
+    cfg = Config(
+        harness=HarnessConfig(version="1"),
+        profiles=ProfilesConfig(
+            default="cx",
+            items={"cx": ProfileEntry(config_dir=str(home_dir / ".codex"), agent="codex")},
+        ),
+        hooks={},
+    )
+
+    targets = snapshot_targets(cfg)
+
+    assert home_dir / ".codex" / "config.toml" in targets
+    assert home_dir / ".codex" / "hooks.json" in targets
