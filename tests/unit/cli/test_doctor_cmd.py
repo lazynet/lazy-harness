@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC
 from pathlib import Path
 
@@ -1443,3 +1444,113 @@ def test_doctor_prints_the_transcripts_section(
     monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
     result = CliRunner().invoke(doctor, [])
     assert "Transcripts" in result.output
+
+
+# --- lh doctor --json --------------------------------------------------------
+
+_JSON_REQUIRED_KEYS = (
+    "profiles",
+    "codex_trust",
+    "transcripts",
+    "launches",
+    "hook_signals",
+    "hook_operations",
+    "uncarried_events",
+)
+
+
+def test_doctor_json_is_a_single_parseable_object_with_no_other_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    cfg = _write_config(tmp_path)
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
+
+    result = CliRunner().invoke(doctor, ["--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert isinstance(payload, dict)
+
+
+def test_doctor_json_has_every_required_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    cfg = _write_config(tmp_path)
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
+
+    payload = json.loads(CliRunner().invoke(doctor, ["--json"]).output)
+
+    for key in _JSON_REQUIRED_KEYS:
+        assert key in payload, f"missing key {key!r}: {sorted(payload)}"
+
+
+def test_doctor_json_names_a_profile_and_its_config_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    cfg = _write_config(tmp_path)
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
+
+    payload = json.loads(CliRunner().invoke(doctor, ["--json"]).output)
+
+    assert payload["profiles"][0]["name"] == "p1"
+
+
+def test_doctor_text_and_json_agree_on_codex_trust(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Repo gate: two paths answer one question, so a test invokes both and
+    asserts they agree. `codex-acceptance.sh` (F9) reads the JSON verdict;
+    a human reads the text one — a doctor that disagreed with itself would
+    pass a gate the text output already contradicts."""
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    cfg = _codex_profile(tmp_path)
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
+
+    text_output = _unwrapped(CliRunner().invoke(doctor, []).output)
+    payload = json.loads(CliRunner().invoke(doctor, ["--json"]).output)
+
+    trust = payload["codex_trust"]
+    assert len(trust) == 1
+    report = trust[0]
+    assert report["profile"] == "cx"
+    assert report["untrusted"], "expected the freshly-deployed hook to be untrusted"
+
+    for label in report["untrusted"]:
+        assert label in text_output
+    declared = len(report["untrusted"]) + len(report["unknown"]) + len(report["stale"])
+    assert f"{len(report['untrusted'])} of {declared}" in text_output
+
+
+def test_doctor_json_reports_no_codex_trust_without_a_codex_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    cfg = _write_config(tmp_path)
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
+
+    payload = json.loads(CliRunner().invoke(doctor, ["--json"]).output)
+
+    assert payload["codex_trust"] == []
+
+
+def test_doctor_json_does_not_change_a_single_text_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The refactor into collect_*() must be invisible in text mode."""
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    cfg = _write_config(tmp_path)
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
+
+    result = CliRunner().invoke(doctor, [])
+
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(result.output)
