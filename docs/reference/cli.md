@@ -589,6 +589,25 @@ lh metrics loops --db ~/.local/share/lazy-harness/metrics.db
 # declared rate: 33% (3/9)
 ```
 
+### `lh metrics launches`
+
+Reports the `launches` table — one row per agent launch actually started, written by `lh run` and `lh exec` — grouped by `profile`, `agent` and `entry` (`run` | `exec`), followed by the launch-to-session ratio per profile from `MetricsDB.launch_to_session_ratio`. This is the numerator and the calibration data the blast-radius kill criterion's adoption check reads — see [the multi-agent blast-radius design, decision 1](https://github.com/lazynet/lazy-harness/blob/main/specs/designs/2026-09-13-multi-agent-blast-radius-design.md).
+
+`--days N` sets the window both blocks share; it defaults to 28, matching `launch_to_session_ratio`'s own default. `--json` emits the same two blocks as a JSON object with `null` for a ratio the window cannot compute — a profile with no ingested sessions in it — instead of the `—` the table prints. `--db PATH` overrides the database outright, resolved the same way as `lh metrics loops` otherwise.
+
+```bash
+lh metrics launches
+lh metrics launches --days 7
+lh metrics launches --json
+# lazy            claude-code  run    12
+# flex            codex        exec   3
+#
+# lazy            launches=12 sessions=8 ratio=1.50
+# flex            launches=3 sessions=0 ratio=—
+```
+
+A profile's ratio is `—` (`null` under `--json`) when the window holds no ingested sessions for it — uncalibrated, never a fabricated zero.
+
 ## `lh profile`
 
 Manages agent profiles.
