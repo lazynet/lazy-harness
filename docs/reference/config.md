@@ -130,6 +130,7 @@ Each `[profiles.<name>]` sub-table:
 | `lazynorth_doc` | string          | `""`    | no       | Per-profile LazyNorth doc filename. Overrides `[lazynorth].universal_doc`.            |
 | `agent`         | string          | `""`    | no       | Agent adapter this profile runs. Empty inherits `[agent].type`. Registered values: `claude-code`, `codex` (a throwaway adapter for contract testing, not a daily driver), `copilot` (no edit guards and no context injection today — no tool has been observed editing a file, and `additionalContext` is unverified; see [ADR-047](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/047-copilot-adapter.md)), `null`. |
 | `harness_binary` | string         | `""`    | no       | Launcher this profile's generated hook commands name. Empty inherits `lh`. A bare name resolved from `PATH`, never a path. |
+| `billing_model` | string          | `"per_token"` | no | How this profile's usage is billed: `per_token` or `flat_rate`. Persisted on every `MetricEvent` this profile's ingest produces (ADR-050). A misspelled value is rejected at load with a diagnostic naming it. |
 
 \* `config_dir` has no parser-level requirement, but everything downstream (`lh run`, `lh deploy`, `lh profile envrc`) is meaningless without it.
 
