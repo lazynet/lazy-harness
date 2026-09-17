@@ -249,6 +249,16 @@ disagree — the harness pricing table is the only thing that notices when a
 provider's own accounting drifts — so a consumer summing costs across runs needs
 to be able to tell them apart.
 
+This `cost_source` is a different vocabulary from the one a metric row carries
+after `lh metrics ingest` (ADR-050: `pricing` / `subscription` / `null`). The
+two fields share a name across two unrelated schemas — this envelope, frozen
+field-for-field under `mode: "agent"`, and `MetricEvent` v3 — by coincidence,
+not because they answer the same question: this one names which subsystem
+produced `cost_usd` on one ad-hoc run, the ingest one names whether per-token
+pricing applied and succeeded for a stored row. See [Flat-rate agents and
+unknown models](../how/cost-reporting.md#flat-rate-agents-and-unknown-models)
+for the latter.
+
 A run killed by `--timeout` is billed from its transcript rather than reported as
 free: the session id is pinned before the spawn, so the turns the agent flushed
 before the kill are still on disk under a known name. `cost_usd`, `prompt_tokens`,

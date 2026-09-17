@@ -38,6 +38,20 @@ SCHEMA = "lh.exec/v1"
 EXIT_HARNESS_ERROR = 70
 EXIT_TIMEOUT = 124
 
+# `lh exec`'s own `cost_source` vocabulary: which subsystem produced
+# `cost_usd`, not whether per-token pricing applied — a different question
+# from the ADR-050 `cost_source` on a `MetricEvent`/`session_stats` row
+# (`monitoring.pricing.COST_SOURCES`). The two fields share a name across
+# two unrelated schemas (this envelope is `lh.exec/v1`, frozen field-for-field
+# under `mode: "agent"`; ADR-050's is `MetricEvent` v3) by coincidence, not
+# because renaming either one to disambiguate is free: this one predates
+# ADR-050 and a rename would break the field-for-field invariant every
+# existing consumer of `lh exec` relies on. `"agent"` is the provider's own
+# figure, passed through verbatim; `"transcript"` is one the harness
+# recomputed from the session's transcript, on the `--timeout` kill path.
+EXEC_COST_SOURCES: tuple[str, ...] = ("agent", "transcript")
+_COST_SOURCE_AGENT, _COST_SOURCE_TRANSCRIPT = EXEC_COST_SOURCES
+
 _GRACE_SECONDS = 5.0
 
 
@@ -146,7 +160,7 @@ def _bill_from_transcript(
             config_dir / "projects", session_id, load_pricing(pricing_overrides)
         )
         envelope["cost_usd"] = cost.cost_usd
-        envelope["cost_source"] = "transcript" if cost.cost_usd is not None else None
+        envelope["cost_source"] = _COST_SOURCE_TRANSCRIPT if cost.cost_usd is not None else None
         envelope["prompt_tokens"] = cost.prompt_tokens
         envelope["output_tokens"] = cost.output_tokens
         envelope["cache_creation_tokens"] = cost.cache_creation_tokens
@@ -455,7 +469,7 @@ def exec_cmd(
             "exit_code": result.exit_code,
             "output": result.output,
             "cost_usd": result.cost_usd,
-            "cost_source": "agent" if result.cost_usd is not None else None,
+            "cost_source": _COST_SOURCE_AGENT if result.cost_usd is not None else None,
             "duration_ms": result.duration_ms,
             "prompt_tokens": result.prompt_tokens,
             "output_tokens": result.output_tokens,
