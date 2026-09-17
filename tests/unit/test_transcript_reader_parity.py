@@ -1,14 +1,16 @@
 """Two paths parse Claude Code's transcript. This asserts exactly how far they agree.
 
 `ClaudeCodeAdapter.read()` serves hooks; `collector.iter_assistant_messages`
-serves metering. ADR-051 keeps both, on a measurement over 2,619 real
-transcripts and 102,464 usage records: the token buckets are identical and four
-dimensions are missing from the reader.
+serves metering. ADR-051 measured both over 2,619 real transcripts and 102,464
+usage records: the token buckets are identical and four dimensions were missing
+from the reader. ADR-053 closes three of them in the Protocol; the fourth, the
+`memory/` exclusion, stays a statement about what this harness writes under an
+agent's directory rather than about the agent, and is asserted as such.
 
 Both halves are asserted here. The equality stops the two parsers drifting into
-different numbers; the four inequalities stop the ADR going stale quietly — the
-day `TranscriptEvent` gains a model, a test fails and says so, rather than the
-decision staying on the page after its reason expired.
+different numbers; what remains of the inequality stops the decision going
+stale quietly — each gap is asserted at the exact width it currently has, so
+closing one fails a test that names it instead of passing unnoticed.
 """
 
 from __future__ import annotations
@@ -98,16 +100,20 @@ def test_both_paths_agree_on_every_token_bucket(tmp_path: Path) -> None:
     )
 
 
-# --- the four documented differences (ADR-051) ------------------------------
+# --- the three gaps, now that the Protocol can express them (ADR-053) -------
+#
+# ADR-051 asserted these as `not hasattr(...)`, a deliberate tripwire: the day
+# `TranscriptEvent` gained the fields, a test naming the ADR would fail rather
+# than the decision going stale quietly. It fired. What is asserted now is the
+# half of the widening that has landed — the Protocol carries the dimension,
+# the reader does not yet fill it — and the reader filling it is the next
+# commit, which flips each of these to an equality against the hand parser.
 
 
-def test_the_reader_does_not_name_the_model(tmp_path: Path) -> None:
-    """`session_stats` is `UNIQUE(session, model)`; the reader has no model.
-
-    Delete this test's reason — add `model` to `TranscriptEvent` — and this
-    fails, which is the signal to revisit ADR-051 rather than to widen the
-    assertion.
-    """
+def test_the_protocol_can_name_the_model_and_the_reader_does_not_yet(
+    tmp_path: Path,
+) -> None:
+    """`session_stats` is `UNIQUE(session, model)`; the dimension now crosses."""
     path = _transcript(tmp_path, "s.jsonl", [_MSG_A, _MSG_B])
 
     assert {m["model"] for m in _hand(path)} == {
@@ -116,23 +122,24 @@ def test_the_reader_does_not_name_the_model(tmp_path: Path) -> None:
     }
     events = [e for e in ClaudeCodeAdapter().read(path) if e.signal is Signal.TOKEN_USAGE]
     assert events, "the fixture must produce usage events for the negative to mean anything"
-    assert not any(hasattr(e, "model") for e in events)
-    assert not any(hasattr(u, "model") for u in _reader_usage(path))
+    assert all(e.model is None for e in events)
 
 
-def test_the_reader_does_not_carry_a_message_id(tmp_path: Path) -> None:
-    """Cross-file dedup needs one. `tool_use_id` is `None` on a usage event."""
+def test_the_protocol_can_carry_a_message_id_and_the_reader_does_not_yet(
+    tmp_path: Path,
+) -> None:
+    """Cross-file dedup needs one. `tool_use_id` stays `None` on a usage event."""
     path = _transcript(tmp_path, "s.jsonl", [_MSG_A, _MSG_B])
 
     assert [m["msg_id"] for m in _hand(path)] == ["msg_a", "msg_b"]
     events = [e for e in ClaudeCodeAdapter().read(path) if e.signal is Signal.TOKEN_USAGE]
     assert events
-    assert not any(hasattr(e, "message_id") for e in events)
+    assert all(e.message_id is None for e in events)
     assert all(e.tool_use_id is None for e in events)
 
 
-def test_the_reader_collapses_the_cache_ttl_split(tmp_path: Path) -> None:
-    """5-minute and 1-hour writes are priced differently; `TokenUsage` has one field."""
+def test_the_reader_still_collapses_the_cache_ttl_split(tmp_path: Path) -> None:
+    """5-minute and 1-hour writes are priced differently; the field now exists, unfilled."""
     path = _transcript(tmp_path, "s.jsonl", [_MSG_A])
 
     (hand,) = _hand(path)
@@ -140,7 +147,7 @@ def test_the_reader_collapses_the_cache_ttl_split(tmp_path: Path) -> None:
 
     (usage,) = _reader_usage(path)
     assert usage.cache_creation_tokens == 90
-    assert not hasattr(usage, "cache_creation_1h_tokens")
+    assert usage.cache_creation_1h_tokens is None
 
 
 def test_locate_sessions_yields_the_memory_logs_ingest_excludes(tmp_path: Path) -> None:

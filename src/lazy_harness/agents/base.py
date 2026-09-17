@@ -390,6 +390,12 @@ class TokenUsage:
     output_tokens: int | None = None
     cache_read_tokens: int | None = None
     cache_creation_tokens: int | None = None
+    cache_creation_1h_tokens: int | None = None
+    """The part of the cache write billed at the 1-hour TTL, where the provider
+    discloses the split. A provider that reports one undifferentiated write
+    leaves this `None` and puts the whole total in `cache_creation_tokens` —
+    which is why the two are siblings rather than a total and a share of it,
+    and why a reader must not assume the first includes this one."""
 
 
 @dataclass(frozen=True)
@@ -435,6 +441,15 @@ class TranscriptEvent:
     """tool_calls: the provider's own id, which pairs a call with its result."""
     usage: TokenUsage | None = None
     """token_usage."""
+    model: str | None = None
+    """token_usage / messages: the model that produced the turn, as the provider
+    names it. `None` where the transcript does not disclose it — which is a
+    different fact from a model named `unknown`, and metering keeps them
+    apart."""
+    message_id: str | None = None
+    """The provider's own stable id for the turn, where it has one. Distinct
+    from `tool_use_id`, which pairs a call with its result: a consumer deduping
+    a re-included conversation prefix keys on this one."""
     goal: GoalStatus | None = None
     """goal_status."""
     raw: dict | None = None
