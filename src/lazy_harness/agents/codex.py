@@ -455,11 +455,12 @@ def _rollout_text(content: object) -> str:
 # replace it wholesale instead of merging.
 #
 # **The choice is frozen at the first deploy.** The trust state key is
-# `<absolute path of the declaring file>:<snake_case event>:<group index>:<handler
-# index>` — path-scoped. The *hash* is stable across the two representations, but
-# the key is not, so moving a hook from `hooks.json` to `config.toml` (or back)
-# re-prompts for every hook even though nothing about the hook changed. Switching
-# representation costs a full re-trust; it is not a refactor.
+# `<absolute path of the declaring file>:<snake_case of Codex's own event
+# name>:<group index>:<handler index>` — path-scoped. The *hash* is stable across
+# the two representations, but the key is not, so moving a hook from `hooks.json`
+# to `config.toml` (or back) re-prompts for every hook even though nothing about
+# the hook changed. Switching representation costs a full re-trust; it is not a
+# refactor.
 #
 # Public because `agents/codex_trust.py` reads the same two documents back:
 # the trust key embeds the declaring file's path, so a second spelling of
@@ -479,6 +480,20 @@ _MCP_SECTION = "mcp_servers"
 # hashes was never measured. Nothing is gained by finding out: the harness owns
 # the whole file, so it needs no marker to recognise its own entries.
 _DESCRIPTION = "Managed by lazy-harness. Edits are overwritten on the next deploy."
+
+
+def _trust_event_segment(native: str) -> str:
+    """The event segment of a Codex trust key, from Codex's own name for it.
+
+    snake_case of the **native** name, never of the harness's canonical one.
+    The two agree for eight of the nine events and diverge for exactly one:
+    canonical `session_stop` is native `Stop`, which Codex keys as `stop`.
+    Deriving the segment from the canonical name made those six handlers read
+    untrusted after the user had approved them, and their stored entries read
+    orphaned — one mismatch counted twice, measured on `codex-cli 0.154.0`
+    (`specs/designs/codex-evidence.md` §6.4).
+    """
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", native).lower()
 
 
 def _canonical_event_names() -> dict[str, str]:
@@ -533,15 +548,20 @@ def _changed_hook_labels(existing_raw: str | None, groups: dict[str, list[dict]]
 def trust_keys(hooks_file: Path, raw: str) -> tuple[tuple[tuple[str, str], ...], tuple[str, ...]]:
     """Codex's trust-state key for every handler a `hooks.json` declares.
 
-    The formula is `<absolute path of the declaring file>:<snake_case event>:<group
-    index>:<handler index>`, **measured** on 0.154.0 by the probe that found a
-    byte-identical handler reading `Trusted` from `hooks.json` while the
-    `config.toml` declaration of the same thing read `new · review required`,
-    both carrying the same `trusted_hash`. Two details that probe settled and
-    this function depends on: the key uses the **snake_case** event name even
-    though the declaration must be PascalCase — both casings live in one file,
-    in different roles — and both indices are *positions*, which is why a
-    redeploy that reorders a group re-prompts for everything below it.
+    The formula is `<absolute path of the declaring file>:<snake_case of Codex's
+    own event name>:<group index>:<handler index>`, **measured** on 0.154.0 by
+    the probe that found a byte-identical handler reading `Trusted` from
+    `hooks.json` while the `config.toml` declaration of the same thing read
+    `new · review required`, both carrying the same `trusted_hash`. Two details
+    that probe settled and this function depends on: the key uses the
+    **snake_case** event name even though the declaration must be PascalCase —
+    both casings live in one file, in different roles — and both indices are
+    *positions*, which is why a redeploy that reorders a group re-prompts for
+    everything below it.
+
+    The segment is `_trust_event_segment(native)`, not the canonical name this
+    adapter maps that native one to: the label is the harness's vocabulary, the
+    key is Codex's, and `session_stop` is the event where the two differ.
 
     The path is resolved: a relative one keys every hook under a string Codex
     never wrote, and every hook would then read untrusted forever.
@@ -577,6 +597,7 @@ def trust_keys(hooks_file: Path, raw: str) -> tuple[tuple[tuple[str, str], ...],
             continue
         if not isinstance(groups, list):
             continue
+        segment = _trust_event_segment(str(native))
         for group_index, group in enumerate(groups):
             handlers = group.get("hooks") if isinstance(group, dict) else None
             if not isinstance(handlers, list):
@@ -584,7 +605,7 @@ def trust_keys(hooks_file: Path, raw: str) -> tuple[tuple[tuple[str, str], ...],
             for handler_index in range(len(handlers)):
                 declared.append(
                     (
-                        f"{declaring}:{event}:{group_index}:{handler_index}",
+                        f"{declaring}:{segment}:{group_index}:{handler_index}",
                         f"{event}[{group_index}]",
                     )
                 )

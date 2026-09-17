@@ -13,12 +13,13 @@ Nothing here asserts a hook is trusted. That is the point: establishing it needs
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
 
 from lazy_harness.agents.base import HookEntry
-from lazy_harness.agents.codex import CodexAdapter, trust_keys
+from lazy_harness.agents.codex import _HOOK_EVENTS, CodexAdapter, trust_keys
 from lazy_harness.agents.codex_trust import collect_codex_trust, trust_for_profile
 from lazy_harness.core.config import Config, ProfileEntry
 
@@ -80,6 +81,31 @@ def test_each_group_gets_its_own_index_in_declaration_order(tmp_path: Path) -> N
         f"{hooks_file}:pre_tool_use:0:0",
         f"{hooks_file}:pre_tool_use:1:0",
     ]
+
+
+def test_every_event_keys_on_the_name_codex_writes_not_the_canonical_one(
+    tmp_path: Path,
+) -> None:
+    """The event segment is snake_case of Codex's **own** name for the event,
+    not of the harness's canonical one. Measured 2026-09-17 on `codex-cli
+    0.154.0`: a profile whose `hooks.json` declares `Stop` carries
+    `[hooks.state."<path>:stop:0:0"]`, while the harness generated
+    `session_stop` and reported six approved hooks as untrusted plus six
+    orphaned entries.
+
+    The loop is the assertion. `session_stop` is today the only canonical name
+    that is not already snake_case of its native one, so a test naming it would
+    go green again the day a second divergence lands.
+    """
+    for canonical, support in _HOOK_EVENTS.items():
+        hooks_file = _deploy(tmp_path, {canonical: [HookEntry(command="a")]})
+        declared, ignored = trust_keys(hooks_file, hooks_file.read_text())
+
+        native_snake = re.sub(r"(?<!^)(?=[A-Z])", "_", support.native_name).lower()
+        assert ignored == ()
+        assert [key for key, _ in declared] == [f"{hooks_file}:{native_snake}:0:0"], (
+            f"{canonical} keys on its canonical name; codex writes {native_snake!r}"
+        )
 
 
 def test_the_path_is_absolute_because_the_key_is(tmp_path: Path) -> None:
@@ -151,6 +177,23 @@ def test_a_stored_hash_reads_unknown_and_never_trusted(tmp_path: Path) -> None:
     assert report.untrusted == ()
     assert len(report.unknown) == 2
     assert not hasattr(report, "trusted")
+
+
+def test_a_stop_hook_codex_approved_is_neither_untrusted_nor_orphaned(tmp_path: Path) -> None:
+    """The doctor-level shape of the same defect: one `Stop` handler, one
+    `[hooks.state]` entry spelled the way Codex spells it. Keying on the
+    canonical name made this one report say "untrusted" *and* "orphaned" about
+    the same approved handler — the two halves of one mismatch, counted twice.
+    """
+    hooks_file = _deploy(tmp_path, {"session_stop": [HookEntry(command="a")]})
+    _config_toml(tmp_path, {f"{hooks_file.resolve()}:stop:0:0": _HASH})
+
+    report = trust_for_profile(_profile(tmp_path), "probe")
+
+    assert report is not None
+    assert report.untrusted == ()
+    assert report.unknown == ("session_stop[0]",)
+    assert report.orphaned == ()
 
 
 def test_a_changed_declaration_since_the_last_snapshot_reads_stale(home_dir: Path) -> None:
