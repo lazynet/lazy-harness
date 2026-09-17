@@ -89,6 +89,12 @@ A **Sink freshness** section reports, for every `[metrics]` sink `plan_sinks()` 
 lh doctor
 ```
 
+`lh doctor --json` emits one JSON object instead of the Rich text above, for a script or CI gate to read by key rather than parse text: `profiles`, `shared_roots`, `codex_trust`, `transcripts`, `launches`, `hook_signals`, `hook_operations`, `uncarried_events`. It is a deliberate subset of the text report — sections that do network or filesystem probing (egress, sink freshness, LLM backend reachability, memory hygiene, artifact versions, features) are left out, so `--json` stays fast and side-effect-free. The `codex_trust` verdicts are the same `CodexHookTrust` records the text section renders, so the two never disagree. Exit code and any error output share the same paths as the text form; only the successful case's stdout differs.
+
+```bash
+lh doctor --json
+```
+
 ## `lh config`
 
 Interactive wizards that write a typed config block back into `~/.config/lazy-harness/config.toml` ([ADR-026](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/026-config-wizards.md)). The wizards are opt-in — invoked explicitly per feature, never run on upgrade.

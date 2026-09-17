@@ -200,6 +200,146 @@ def test_deploy_hooks_emits_declared_external_commands(tmp_path: Path) -> None:
     assert pinned[0]["hooks"][0]["command"] == "/bin/notifier hook"
 
 
+def test_deploy_hooks_expands_config_dir_placeholder_per_profile(tmp_path: Path) -> None:
+    """ADR-054: an external command naming `{config_dir}` resolves to each
+    profile's own directory, not one fixed string shared by every profile."""
+    from lazy_harness.deploy.engine import _hook_entries_for
+
+    cfg = Config(
+        harness=HarnessConfig(version="1"),
+        profiles=ProfilesConfig(
+            default="lazy",
+            items={
+                "lazy": ProfileEntry(config_dir="~/.claude-lazy"),
+                "flex": ProfileEntry(config_dir="~/.claude-flex"),
+            },
+        ),
+        hooks={
+            "session_start": HookEventConfig(
+                external=[
+                    ExternalHookConfig(
+                        command="bash {config_dir}/hooks/herdr-agent-state.sh session"
+                    )
+                ]
+            )
+        },
+    )
+
+    lazy_entries = _hook_entries_for(cfg, "lazy", "lh")
+    flex_entries = _hook_entries_for(cfg, "flex", "lh")
+
+    lazy_command = lazy_entries["session_start"][0].command
+    flex_command = flex_entries["session_start"][0].command
+    assert lazy_command == "bash ~/.claude-lazy/hooks/herdr-agent-state.sh session"
+    assert flex_command == "bash ~/.claude-flex/hooks/herdr-agent-state.sh session"
+
+
+def test_deploy_hooks_config_dir_placeholder_stays_unexpanded(tmp_path: Path) -> None:
+    """`{config_dir}` is the raw config field, tilde and all — never the
+    resolved absolute path, for the same chezmoi-portability reason
+    `hook_command` never embeds a home directory."""
+    from lazy_harness.deploy.engine import _hook_entries_for
+
+    cfg = _cfg_with_profile(
+        tmp_path / "profile",
+        hooks={
+            "session_start": HookEventConfig(
+                external=[ExternalHookConfig(command="cat {config_dir}/marker")]
+            )
+        },
+    )
+    cfg.profiles.items["personal"].config_dir = "~/.claude-personal"
+
+    entries = _hook_entries_for(cfg, "personal", "lh")
+
+    assert entries["session_start"][0].command == "cat ~/.claude-personal/marker"
+
+
+def test_deploy_hooks_expands_profile_placeholder(tmp_path: Path) -> None:
+    from lazy_harness.deploy.engine import _hook_entries_for
+
+    cfg = _cfg_with_profile(
+        tmp_path / "profile",
+        hooks={
+            "session_start": HookEventConfig(
+                external=[ExternalHookConfig(command="notify --profile {profile}")]
+            )
+        },
+    )
+
+    entries = _hook_entries_for(cfg, "personal", "lh")
+
+    assert entries["session_start"][0].command == "notify --profile personal"
+
+
+def test_deploy_hooks_plain_external_command_is_unchanged_by_expansion(tmp_path: Path) -> None:
+    """A command with no `{...}` in it is a no-op for `str.format` — every
+    `external` entry declared before ADR-054 keeps working with no migration."""
+    from lazy_harness.deploy.engine import _hook_entries_for
+
+    cfg = _cfg_with_profile(
+        tmp_path / "profile",
+        hooks={
+            "session_start": HookEventConfig(
+                external=[ExternalHookConfig(command="/bin/notifier hook")]
+            )
+        },
+    )
+
+    entries = _hook_entries_for(cfg, "personal", "lh")
+
+    assert entries["session_start"][0].command == "/bin/notifier hook"
+
+
+def test_deploy_hooks_unknown_placeholder_is_refused_naming_it(tmp_path: Path) -> None:
+    from lazy_harness.deploy.engine import ExternalHookPlaceholderError, _hook_entries_for
+
+    cfg = _cfg_with_profile(
+        tmp_path / "profile",
+        hooks={
+            "session_start": HookEventConfig(
+                external=[ExternalHookConfig(command="notify {nonexistent}")]
+            )
+        },
+    )
+
+    with pytest.raises(ExternalHookPlaceholderError, match="nonexistent") as excinfo:
+        _hook_entries_for(cfg, "personal", "lh")
+    assert "notify {nonexistent}" in str(excinfo.value)
+
+
+def test_deploy_hooks_two_profiles_each_get_their_own_config_dir_in_settings(
+    tmp_path: Path,
+) -> None:
+    """End to end through `deploy_hooks`, not only `_hook_entries_for`."""
+    lazy_dir = tmp_path / "claude-lazy"
+    flex_dir = tmp_path / "claude-flex"
+    cfg = Config(
+        harness=HarnessConfig(version="1"),
+        profiles=ProfilesConfig(
+            default="lazy",
+            items={
+                "lazy": ProfileEntry(config_dir=str(lazy_dir)),
+                "flex": ProfileEntry(config_dir=str(flex_dir)),
+            },
+        ),
+        hooks={
+            "session_start": HookEventConfig(
+                external=[ExternalHookConfig(command="bash {config_dir}/hooks/herdr.sh")]
+            )
+        },
+    )
+
+    deploy_hooks(cfg)
+
+    lazy_settings = json.dumps(json.loads((lazy_dir / "settings.json").read_text()))
+    flex_settings = json.dumps(json.loads((flex_dir / "settings.json").read_text()))
+    assert f"bash {lazy_dir}/hooks/herdr.sh" in lazy_settings
+    assert f"bash {flex_dir}/hooks/herdr.sh" in flex_settings
+    assert str(flex_dir) not in lazy_settings
+    assert str(lazy_dir) not in flex_settings
+
+
 def test_deploy_hooks_does_not_duplicate_a_declared_external_already_installed(
     tmp_path: Path,
 ) -> None:

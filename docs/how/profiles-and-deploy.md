@@ -61,27 +61,21 @@ lh profile remove experimental                            # cannot remove defaul
 
 ## Profile resolution — which profile am I in?
 
-`resolve_profile(cfg, cwd=None)` in `core/profiles.py`:
+`resolve_profile_with_source(cfg, cwd=None, override=None)` in `core/profiles.py` is the real resolver; `resolve_profile` is a thin wrapper that drops the `source` field. Longest-matching-root wins, and the rule matters when profiles overlap: if one profile says `roots = ["~/code"]` and another says `roots = ["~/code/work"]`, a session in `~/code/work/project` picks the second because its matching root is longer. This is what decides which `CLAUDE_CONFIG_DIR` (or the equivalent env var for another agent) a newly launched session points at — either via `lh run` or via a shell wrapper the user installs.
 
-```python
-def resolve_profile(cfg: Config, cwd: Path | None = None) -> str:
-    if cwd is None:
-        cwd = Path.cwd()
-    cwd_str = str(cwd.resolve())
-    best_match = ""
-    best_len = 0
-    for name, entry in cfg.profiles.items.items():
-        for root in entry.roots:
-            root_str = str(expand_path(root))
-            if cwd_str.startswith(root_str) and len(root_str) > best_len:
-                best_match = name
-                best_len = len(root_str)
-    return best_match if best_match else cfg.profiles.default
+**Two profiles claiming the exact same root** is a tie, not a longer/shorter comparison, and it is refused rather than broken by TOML document order: `lh run` exits, naming every profile that claims the root, and tells you to pass `--profile` or set `root_default = true` on one of them:
+
+```toml
+[profiles.personal]
+roots = ["~/repos/lazy"]
+root_default = true      # answers a bare `lh run` in this shared root
+
+[profiles.lazy-codex]
+agent = "codex"
+roots = ["~/repos/lazy"]
 ```
 
-Longest-matching-root wins. This is the rule that decides which `CLAUDE_CONFIG_DIR` a newly launched session points at — either via `lh run` (which wraps `claude` and sets the env var) or via a shell wrapper the user installs.
-
-The rule matters when profiles overlap: if one profile says `roots = ["~/code"]` and another says `roots = ["~/code/work"]`, a session in `~/code/work/project` picks the second because its matching root is longer.
+At most one profile per shared root may set `root_default`; a second is rejected at config load, naming both. `lh doctor` lists every shared root up front — `root <path>: shared by X (claude-code), Y (codex) — default: X`, or `— no default: lh run needs --profile here` — so the ambiguity is visible before a launch hits it.
 
 ## Deploy flow — what `lh deploy` actually does
 
@@ -279,7 +273,18 @@ lh run --profile work        # forces a specific profile
 CLAUDE_CONFIG_DIR=~/.claude-work claude
 ```
 
-Works without `lh run` at all. Useful if you want to wire profile selection into your own shell functions or direnv setup.
+Works without `lh run` at all. Useful if you want to wire profile selection into your own shell functions.
+
+### `.envrc` — the direnv shortcut
+
+```bash
+lh profile envrc              # write/update every profile root's .envrc
+lh profile envrc --dry-run    # preview without touching files
+```
+
+`deploy_envrc_for_all_profiles` groups profiles by root, then writes a managed block per root with **one `export` per distinct agent claiming it** (`core/envrc.py`) — `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, and so on, ordered deterministically by env var name. A second profile's write adds its export to the block rather than replacing it, so two profiles with different agents sharing a root both survive in the same `.envrc`. Two profiles with the *same* agent sharing a root collapse onto one `export`, since direnv cannot express two values for one variable — `lh doctor`'s shared-root line is where that ambiguity shows up, not a refusal here.
+
+User-authored content outside the `# >>> lazy-harness >>>` / `# <<< lazy-harness <<<` markers is always preserved.
 
 ### 3. Plain `claude`
 

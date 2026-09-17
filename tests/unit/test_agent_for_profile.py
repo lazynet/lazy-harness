@@ -116,6 +116,46 @@ def test_envrc_deploy_resolves_the_agent_per_profile_not_once_globally(
     assert "CLAUDE_CONFIG_DIR" not in other_envrc
 
 
+def test_envrc_deploy_keeps_both_agents_export_on_a_shared_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D7 (specs/backlog.md): two profiles with different agents sharing one
+    root must both land in that root's `.envrc`, not last-write-wins."""
+    from lazy_harness.agents import registry
+    from lazy_harness.cli.profile_cmd import deploy_envrc_for_all_profiles
+
+    class _OtherAdapter(registry.NullAdapter):
+        @property
+        def name(self) -> str:
+            return "other"
+
+        def env_var(self) -> str:
+            return "OTHER_CONFIG_DIR"
+
+    monkeypatch.setitem(registry._AGENTS, "other", _OtherAdapter)
+
+    shared_root = tmp_path / "shared-root"
+    cfg = _cfg(
+        "claude-code",
+        {
+            "personal": ProfileEntry(
+                config_dir=str(tmp_path / ".claude-x"), roots=[str(shared_root)]
+            ),
+            "experiment": ProfileEntry(
+                config_dir=str(tmp_path / ".other-x"),
+                roots=[str(shared_root)],
+                agent="other",
+            ),
+        },
+    )
+
+    deploy_envrc_for_all_profiles(cfg)
+
+    content = (shared_root / ".envrc").read_text()
+    assert "CLAUDE_CONFIG_DIR" in content
+    assert "OTHER_CONFIG_DIR" in content
+
+
 def test_envrc_dry_run_names_the_same_env_var_the_real_write_uses(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

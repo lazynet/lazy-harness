@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import click
 from rich.console import Console
 from rich.markup import escape
@@ -28,21 +30,33 @@ from lazy_harness.core.sync_agent_md import SyncError, sync_profiles
 
 
 def deploy_envrc_for_all_profiles(cfg: Config) -> list[EnvrcResult]:
-    """Write a managed .envrc into every root of every profile.
+    """Write a managed .envrc into every root shared by any profile.
 
-    Returns the per-root results so callers (CLI, init, migrate) can render
+    Returns the per-write results so callers (CLI, init, migrate) can render
     them however they like. Raises AgentNotFoundError if the agent
     `agent_for_profile` resolves for any profile is not registered — the
     profile's own `agent`, or `[agent].type` where it declares none.
+
+    Profiles are grouped by root first (D7, specs/backlog.md): two profiles
+    with different agents sharing a root must both land in that root's
+    `.envrc`, not just whichever profile's write happened last. Two profiles
+    with the *same* agent sharing a root collapse onto one `env_var`, which is
+    genuinely ambiguous — last one in `cfg.profiles.items` order wins here,
+    and `lh doctor` reports the ambiguity rather than this function refusing.
     """
-    results: list[EnvrcResult] = []
+    by_root: dict[Path, dict[str, Path]] = {}
     for name, entry in cfg.profiles.items.items():
         # Resolved per profile, not once above the loop: a profile declaring its
         # own agent otherwise had every root bound to the global agent's env var.
         env_var = agent_for_profile(cfg, name).env_var()
         config_dir = expand_path(entry.config_dir)
         for root in entry.roots:
-            results.append(write_envrc(expand_path(root), env_var, config_dir))
+            by_root.setdefault(expand_path(root), {})[env_var] = config_dir
+
+    results: list[EnvrcResult] = []
+    for root, exports in by_root.items():
+        for env_var, config_dir in sorted(exports.items()):
+            results.append(write_envrc(root, env_var, config_dir))
     return results
 
 

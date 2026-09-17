@@ -131,6 +131,7 @@ Each `[profiles.<name>]` sub-table:
 | `agent`         | string          | `""`    | no       | Agent adapter this profile runs. Empty inherits `[agent].type`. Registered values: `claude-code`, `codex` (the real adapter — hook trust reported by `lh doctor`, a native `apply_patch` edit path alongside its `Bash` heredoc path, see [ADR-044](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/044-codex-native-edit-path.md); metered through its `TranscriptReader` per [ADR-053](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/053-transcript-reader-carries-metering.md)), `copilot` (no edit guards and no context injection today — no tool has been observed editing a file, and `additionalContext` is unverified; see [ADR-047](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/047-copilot-adapter.md)), `null`. |
 | `harness_binary` | string         | `""`    | no       | Launcher this profile's generated hook commands name. Empty inherits `lh`. A bare name resolved from `PATH`, never a path. |
 | `billing_model` | string          | `"per_token"` | no | How this profile's usage is billed: `per_token` or `flat_rate`. Persisted on every `MetricEvent` this profile's ingest produces (ADR-050). A misspelled value is rejected at load with a diagnostic naming it. |
+| `root_default` | boolean | `false` | no | Answers a bare `lh run` when two or more profiles share a root and their agents differ (multi-agent blast-radius design, decision 7). At most one profile per shared root may set this; the loader rejects a second, naming both. |
 
 \* `config_dir` has no parser-level requirement, but everything downstream (`lh run`, `lh deploy`, `lh profile envrc`) is meaningless without it.
 
@@ -347,7 +348,7 @@ The `[hooks]` table is keyed by the `config.toml` event name (`session_start`, `
 | Field      | Type                     | Default | Required | Description                                                                                                                          |
 | ---------- | ------------------------ | ------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | `scripts`  | list of strings          | `[]`    | no       | Bare built-in hook names to run for this event, in order (e.g. `context-inject`, not `lh hook context-inject`). A name that does not resolve against the built-in registry or a user hook is silently skipped. |
-| `external` | list of strings / tables | `[]`    | no       | Commands owned by a third-party tool, emitted to **every** profile after the built-ins. A bare string inherits the event's default matcher; a table pins its own (`{ command = "...", matcher = "..." }`). |
+| `external` | list of strings / tables | `[]`    | no       | Commands owned by a third-party tool, emitted to **every** profile after the built-ins. A bare string inherits the event's default matcher; a table pins its own (`{ command = "...", matcher = "..." }`). The command may name `{profile}` and/or `{config_dir}` ([ADR-054](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/054-external-hook-placeholders.md)); any other `{...}` is rejected at deploy with a diagnostic naming it. |
 
 Example:
 
@@ -373,6 +374,17 @@ matcher = "AskUserQuestion"
 ```
 
 `lh deploy` also preserves hook entries it finds in a profile but does not manage, on every event — including events the harness has no concept of — and reports each one. If such an entry carries a field Claude Code's schema rejects (a `null` matcher, say), deploy repairs it and says so: the agent skips an invalid settings file **in its entirety**, so one bad field silently disables every hook in that profile. `lh selftest` checks the same schema, since a failure that stops hooks from running cannot be detected by a hook.
+
+**Per-profile commands via `{profile}` / `{config_dir}`.** A single `external` entry is emitted to every profile with the same command text — for a command that needs to know *which* profile it is running under, or that profile's own directory, `command` may name `{profile}` and/or `{config_dir}` and `lh deploy` expands them per profile before writing:
+
+```toml
+[hooks.session_start]
+external = [
+  { command = "bash {config_dir}/hooks/herdr-agent-state.sh session" },
+]
+```
+
+`{config_dir}` expands to the profile's `config_dir` field exactly as declared — `~/.claude-lazy`, not the resolved absolute path — so the command stays portable across machines with different home directories, the same reason the harness's own generated hook commands never embed one. A command with no `{...}` in it is unchanged. Naming any placeholder other than `profile` or `config_dir` is refused at deploy with a diagnostic naming it, rather than deploying a command that fails at hook-fire time.
 
 ### `[hooks.pre_tool_use]` — security hook overrides
 

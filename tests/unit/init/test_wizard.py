@@ -92,6 +92,139 @@ def test_run_wizard_writes_post_tool_use_hook_block(tmp_path: Path) -> None:
     assert block.get("scripts") == ["post-tool-use-format", "post-tool-use-sync-system-doc"]
 
 
+# --- agent-aware config_dir + agent/billing_model fields --------------------
+
+
+def test_run_wizard_uses_claude_config_dir_convention_by_default(tmp_path: Path) -> None:
+    from lazy_harness.core.config import load_config
+
+    cfg_path = tmp_path / "config.toml"
+    run_wizard(
+        WizardAnswers(
+            profile_name="personal",
+            agent="claude-code",
+            knowledge_path=tmp_path / "kb",
+            enable_qmd=False,
+        ),
+        config_path=cfg_path,
+    )
+
+    cfg = load_config(cfg_path)
+    assert cfg.profiles.items["personal"].config_dir == "~/.claude-personal"
+
+
+def test_run_wizard_uses_codex_config_dir_convention(tmp_path: Path) -> None:
+    from lazy_harness.core.config import load_config
+
+    cfg_path = tmp_path / "config.toml"
+    run_wizard(
+        WizardAnswers(
+            profile_name="work",
+            agent="codex",
+            knowledge_path=tmp_path / "kb",
+            enable_qmd=False,
+        ),
+        config_path=cfg_path,
+    )
+
+    cfg = load_config(cfg_path)
+    assert cfg.profiles.items["work"].config_dir == "~/.codex-work"
+
+
+def test_run_wizard_uses_copilot_config_dir_convention(tmp_path: Path) -> None:
+    from lazy_harness.core.config import load_config
+
+    cfg_path = tmp_path / "config.toml"
+    run_wizard(
+        WizardAnswers(
+            profile_name="cop",
+            agent="copilot",
+            knowledge_path=tmp_path / "kb",
+            enable_qmd=False,
+        ),
+        config_path=cfg_path,
+    )
+
+    cfg = load_config(cfg_path)
+    assert cfg.profiles.items["cop"].config_dir == "~/.copilot-cop"
+
+
+def test_run_wizard_leaves_profile_agent_empty_for_the_default_agent(tmp_path: Path) -> None:
+    """Empty means 'inherit [agent].type' — redundant to also stamp it here."""
+    from lazy_harness.core.config import load_config
+
+    cfg_path = tmp_path / "config.toml"
+    run_wizard(
+        WizardAnswers(
+            profile_name="personal",
+            agent="claude-code",
+            knowledge_path=tmp_path / "kb",
+            enable_qmd=False,
+        ),
+        config_path=cfg_path,
+    )
+
+    cfg = load_config(cfg_path)
+    assert cfg.profiles.items["personal"].agent == ""
+
+
+def test_run_wizard_stamps_profile_agent_when_it_differs_from_the_default(tmp_path: Path) -> None:
+    from lazy_harness.core.config import load_config
+
+    cfg_path = tmp_path / "config.toml"
+    run_wizard(
+        WizardAnswers(
+            profile_name="work",
+            agent="codex",
+            knowledge_path=tmp_path / "kb",
+            enable_qmd=False,
+        ),
+        config_path=cfg_path,
+    )
+
+    cfg = load_config(cfg_path)
+    assert cfg.profiles.items["work"].agent == "codex"
+
+
+def test_run_wizard_defaults_billing_model_to_per_token(tmp_path: Path) -> None:
+    from lazy_harness.core.config import load_config
+
+    cfg_path = tmp_path / "config.toml"
+    run_wizard(
+        WizardAnswers(
+            profile_name="personal",
+            agent="claude-code",
+            knowledge_path=tmp_path / "kb",
+            enable_qmd=False,
+        ),
+        config_path=cfg_path,
+    )
+
+    cfg = load_config(cfg_path)
+    assert cfg.profiles.items["personal"].billing_model == "per_token"
+
+
+def test_run_wizard_writes_billing_model_when_answered(tmp_path: Path) -> None:
+    """ADR-050 rejects a per-agent billing default — Codex is per_token too
+    unless the user answers flat_rate explicitly."""
+    from lazy_harness.core.config import load_config
+
+    cfg_path = tmp_path / "config.toml"
+    run_wizard(
+        WizardAnswers(
+            profile_name="work",
+            agent="codex",
+            knowledge_path=tmp_path / "kb",
+            enable_qmd=False,
+            billing_model="flat_rate",
+        ),
+        config_path=cfg_path,
+    )
+
+    cfg = load_config(cfg_path)
+    assert cfg.profiles.items["work"].billing_model == "flat_rate"
+
+
 def test_wizard_writes_a_config_that_loads_and_a_marked_store(tmp_path: Path) -> None:
     """`lh init` must produce a config the parser accepts and a store with a marker."""
     from lazy_harness.core.config import load_config

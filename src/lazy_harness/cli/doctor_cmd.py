@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -38,7 +40,7 @@ from lazy_harness.core.paths import (
     data_dir,
     expand_path,
 )
-from lazy_harness.core.profiles import list_profiles
+from lazy_harness.core.profiles import SharedRootInfo, collect_shared_roots, list_profiles
 from lazy_harness.core.secrets import secrets_dir_for
 from lazy_harness.hooks.event_surface import (
     HookOperationGap,
@@ -56,7 +58,12 @@ from lazy_harness.monitoring.engram_persist_health import (
     EngramPersistHealth,
     collect_engram_persist_health,
 )
-from lazy_harness.monitoring.launches import CLAUDE_AGENT, CODEX_ADAPTER_MERGED, adoption_check
+from lazy_harness.monitoring.launches import (
+    CLAUDE_AGENT,
+    CODEX_ADAPTER_MERGED,
+    AdoptionVerdict,
+    adoption_check,
+)
 from lazy_harness.monitoring.sink_freshness import SinkFreshness, collect_sinks_freshness
 from lazy_harness.monitoring.sink_setup import plan_sinks
 
@@ -269,6 +276,38 @@ _TRANSCRIPT_LINES = {
 }
 
 
+@dataclass(frozen=True)
+class TranscriptEntry:
+    """One profile's transcript verdict — the `collect_*` half of the
+    `Transcripts` section, factored out so `lh doctor --json` reads the same
+    verdict the text renderer prints, from one call rather than two."""
+
+    profile: str
+    agent: str
+    health: TranscriptHealth
+    path: str
+
+
+def collect_transcripts(cfg: Config) -> list[TranscriptEntry]:
+    """Every profile's transcript health, derived exactly as `_render_transcripts` prints it."""
+    from lazy_harness.agents.registry import agent_for_profile
+
+    entries: list[TranscriptEntry] = []
+    for p in list_profiles(cfg):
+        agent = agent_for_profile(cfg, p.name)
+        health = transcript_health(agent, p.config_dir)
+        sessions = session_path(agent, p.config_dir, "sessions")
+        entries.append(
+            TranscriptEntry(
+                profile=p.name,
+                agent=getattr(agent, "name", "unknown"),
+                health=health,
+                path=str(contract_path(sessions)) if sessions is not None else "",
+            )
+        )
+    return entries
+
+
 def _render_transcripts(console: Console, cfg: Config) -> None:
     """One line per profile: is anything writing transcripts nobody reads?
 
@@ -282,21 +321,39 @@ def _render_transcripts(console: Console, cfg: Config) -> None:
     misconfiguration of this machine; the section exists so that the day a
     Claude Code profile reads `unread`, the regression is visible.
     """
-    from lazy_harness.agents.registry import agent_for_profile
-
     console.print("\n[bold]Transcripts[/bold]")
-    for p in list_profiles(cfg):
-        agent = agent_for_profile(cfg, p.name)
-        health = transcript_health(agent, p.config_dir)
-        _verdict, icon, template = _TRANSCRIPT_LINES[health]
-        sessions = session_path(agent, p.config_dir, "sessions")
-        detail = template.format(
-            agent=getattr(agent, "name", "unknown"),
-            path=contract_path(sessions) if sessions is not None else "",
-        )
+    for entry in collect_transcripts(cfg):
+        _verdict, icon, template = _TRANSCRIPT_LINES[entry.health]
+        detail = template.format(agent=entry.agent, path=entry.path)
         # `icon` is the only markup on this line. A profile name or a path
         # holding `[...]` is markup to rich too, and it deletes it silently.
-        console.print(f"  {icon} {escape(p.name)} \u2014 {escape(detail)}")
+        console.print(f"  {icon} {escape(entry.profile)} \u2014 {escape(detail)}")
+
+
+def _render_shared_roots(console: Console, shared_roots: list[SharedRootInfo]) -> None:
+    """One line per root two or more profiles claim (design decision 7).
+
+    Silent when nothing is shared — same rule as the other `lh doctor`
+    sections. Never fails `lh doctor`: an undeclared default is a launch-time
+    refusal (`resolve_profile_with_source`), not a broken machine, and this
+    line exists so the refusal is visible before someone hits it.
+    """
+    for shared in shared_roots:
+        claimants = ", ".join(
+            f"{escape(name)} ({escape(shared.agents[name])})" for name in shared.profiles
+        )
+        if shared.default is not None:
+            console.print(
+                f"  [dim]root {escape(shared.root)}: shared by {claimants} — "
+                f"default: {escape(shared.default)}[/dim]",
+                soft_wrap=True,
+            )
+        else:
+            console.print(
+                f"  [yellow]![/yellow] root {escape(shared.root)}: shared by {claimants} — "
+                f"no default: lh run needs --profile here",
+                soft_wrap=True,
+            )
 
 
 def _render_one_role(console: Console, cfg: Config, role: str) -> bool:
@@ -667,18 +724,27 @@ def _render_codex_trust(console: Console, reports: list[CodexHookTrust]) -> None
     console.print(f"      [dim]{RETRUST_INSTRUCTION}[/dim]")
 
 
-def _render_launches(console: Console, db: MetricsDB, now: datetime) -> None:
-    """The `Launches` block — the first human-visible surface for the
-    blast-radius kill criterion's counters (specs/backlog.md, "Nada muestra
-    los contadores de `launches` a un humano").
+@dataclass(frozen=True)
+class LaunchesReport:
+    """The `Launches` block's data, ahead of the horizon check that decides
+    whether a verdict even applies yet."""
+
+    non_claude_totals: dict[str, int]
+    horizon_end: str
+    horizon_reached: bool
+    verdict: AdoptionVerdict | None
+
+
+def collect_launches(db: MetricsDB, now: datetime) -> LaunchesReport:
+    """The blast-radius kill criterion's counters (specs/backlog.md, "Nada
+    muestra los contadores de `launches` a un humano"), derived exactly as
+    `_render_launches` prints them.
 
     `db` may be a real, on-disk `MetricsDB` or an in-memory one standing in
     for "no DB file exists yet" — `doctor()` decides which, so this function
     never has to know or care, and never opens (so never creates) a DB file
     itself.
     """
-    console.print("\n[bold]Launches[/bold]")
-
     window_start = now.timestamp() - 28 * 86400
     windowed_counts = db.launch_counts(since_ts=window_start)
     claude_profiles = {
@@ -690,18 +756,36 @@ def _render_launches(console: Console, db: MetricsDB, now: datetime) -> None:
             continue
         non_claude_totals[profile] = non_claude_totals.get(profile, 0) + n
 
-    if non_claude_totals:
-        for profile in sorted(non_claude_totals):
-            console.print(f"  {profile}: {non_claude_totals[profile]} launches (28d)")
+    horizon_end = CODEX_ADAPTER_MERGED + timedelta(weeks=8)
+    horizon_reached = now.date() >= horizon_end
+    verdict = adoption_check(db, now=now) if horizon_reached else None
+
+    return LaunchesReport(
+        non_claude_totals=non_claude_totals,
+        horizon_end=horizon_end.isoformat(),
+        horizon_reached=horizon_reached,
+        verdict=verdict,
+    )
+
+
+def _render_launches(console: Console, db: MetricsDB, now: datetime) -> None:
+    """The `Launches` block — the first human-visible surface for the
+    blast-radius kill criterion's counters."""
+    console.print("\n[bold]Launches[/bold]")
+
+    report = collect_launches(db, now)
+
+    if report.non_claude_totals:
+        for profile in sorted(report.non_claude_totals):
+            console.print(f"  {profile}: {report.non_claude_totals[profile]} launches (28d)")
     else:
         console.print("  none")
 
-    horizon_end = CODEX_ADAPTER_MERGED + timedelta(weeks=8)
-    if now.date() < horizon_end:
-        console.print(f"  horizon opens {horizon_end.isoformat()}")
+    if not report.horizon_reached:
+        console.print(f"  horizon opens {report.horizon_end}")
         return
 
-    verdict = adoption_check(db, now=now)
+    verdict = report.verdict
     if verdict is None:
         console.print("  horizon not started: launch-to-session ratio unmeasured")
     elif verdict.below_threshold:
@@ -753,15 +837,62 @@ def _project_memory_dir(agent: AgentAdapter, cfg: Config | None, profile: str) -
     )
 
 
+def _open_launches_db(cfg: Config) -> MetricsDB:
+    """Never opens (and so never creates) a DB file that does not already
+    exist — `lh doctor` is read-only, same rule as `collect_sink_freshness`."""
+    launches_db_path = (
+        expand_path(cfg.monitoring.db) if cfg.monitoring.db else data_dir() / "metrics.db"
+    )
+    return (
+        MetricsDB(launches_db_path) if launches_db_path.is_file() else MetricsDB(Path(":memory:"))
+    )
+
+
+def _doctor_json(cfg: Config) -> dict:
+    """The structured half of `lh doctor`: the sections F9 (codex-acceptance.sh)
+    reads by key rather than by parsing the Rich-rendered text.
+
+    A deliberate subset of the text report, not a mirror of it — the sections
+    left out here (egress, sink freshness, LLM backend reachability, memory
+    hygiene, artifact versions, features) do network or filesystem probing a
+    machine-readable consumer of *this specific* structured data has no use
+    for, and `--json` staying fast and side-effect-free is worth more than
+    parity with the text output's coverage.
+    """
+    launches_db = _open_launches_db(cfg)
+    try:
+        launches = collect_launches(launches_db, _now())
+    finally:
+        launches_db.close()
+
+    return {
+        "profiles": [asdict(p) for p in list_profiles(cfg)],
+        "shared_roots": [asdict(s) for s in collect_shared_roots(cfg)],
+        "codex_trust": [asdict(r) for r in collect_codex_trust(cfg)],
+        "transcripts": [asdict(t) for t in collect_transcripts(cfg)],
+        "launches": asdict(launches),
+        "hook_signals": [asdict(g) for g in collect_hook_signal_gaps(cfg)],
+        "hook_operations": [asdict(g) for g in collect_hook_operation_gaps(cfg)],
+        "uncarried_events": [asdict(g) for g in collect_uncarried_events(cfg)],
+    }
+
+
 @click.command("doctor")
-def doctor() -> None:
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit a structured JSON report instead of the text output; see docs/reference/cli.md.",
+)
+def doctor(as_json: bool) -> None:
     """Check environment health."""
     console = Console()
     ok = True
 
     cf = config_file()
     if cf.is_file():
-        console.print(f"[green]✓[/green] Config file: {contract_path(cf)}")
+        if not as_json:
+            console.print(f"[green]✓[/green] Config file: {contract_path(cf)}")
     else:
         console.print(f"[red]✗[/red] Config file not found: {contract_path(cf)}")
         console.print("  Run: lh init")
@@ -772,6 +903,10 @@ def doctor() -> None:
     except ConfigError as e:
         console.print(f"[red]✗[/red] Config error: {escape(str(e))}")
         raise SystemExit(1)
+
+    if as_json:
+        click.echo(json.dumps(_doctor_json(cfg), default=str))
+        return
 
     console.print(f"[green]✓[/green] Config version: {cfg.harness.version}")
 
@@ -794,6 +929,8 @@ def doctor() -> None:
             cdir = contract_path(p.config_dir)
             console.print(f"  [red]✗[/red] {label} — {cdir} [red](missing)[/red]")
             ok = False
+
+    _render_shared_roots(console, collect_shared_roots(cfg))
 
     _render_transcripts(console, cfg)
     _render_profile_secrets(console, cfg)
@@ -876,14 +1013,7 @@ def doctor() -> None:
     _render_uncarried_events(console, collect_uncarried_events(cfg))
     _render_codex_trust(console, collect_codex_trust(cfg))
 
-    launches_db_path = (
-        expand_path(cfg.monitoring.db) if cfg.monitoring.db else data_dir() / "metrics.db"
-    )
-    # Never opens (and so never creates) a DB file that does not already
-    # exist — `lh doctor` is read-only, same rule as `collect_sink_freshness`.
-    launches_db = (
-        MetricsDB(launches_db_path) if launches_db_path.is_file() else MetricsDB(Path(":memory:"))
-    )
+    launches_db = _open_launches_db(cfg)
     try:
         _render_launches(console, launches_db, _now())
     finally:
