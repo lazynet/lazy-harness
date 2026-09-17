@@ -189,6 +189,12 @@ CODEX_LOG=""
 # and the absence of a `stale` line is then a property of the state, not a
 # shortfall in the binary.
 PHASE_B_UNTRUSTED="no"
+# Whether `LH_HOOK_TRACE` was proved live on this binary, and the value
+# `codex_turn` exports. "0" everywhere except the turns phase B measures — the
+# trace costs a log line per dispatch and is worth paying only where a counter
+# is read around it.
+TRACE_LIVE="no"
+TRACE_HOOKS="0"
 declare -a FAIL_LINES=()
 declare -a NOOBS_LINES=()
 declare -a BLOCKED_LINES=()
@@ -449,6 +455,12 @@ codex_turn() {
   local out="$WORK/stream-$label.jsonl"
   show "$TIMEOUT_BIN $TURN_BUDGET $CODEX_BIN exec --sandbox workspace-write --skip-git-repo-check -C $WORK --json <prompt:$label> > $out"
   [ "$DRY_RUN" -eq 1 ] && return 0
+  # `LH_HOOK_TRACE` is exported per turn rather than for the whole run: it is
+  # only meaningful where a counter is read around it, and a run-wide export
+  # would write a line per dispatch through phase C and the launch step for
+  # nothing. It reaches the hook because codex inherits this environment and
+  # the handler inherits codex's — the same path `CODEX_HOME` already takes.
+  LH_HOOK_TRACE="$TRACE_HOOKS" \
   "$TIMEOUT_BIN" "$TURN_BUDGET" "$CODEX_BIN" exec \
     --sandbox workspace-write --skip-git-repo-check \
     -C "$WORK" --json "$prompt" > "$out" 2>&1
@@ -491,10 +503,12 @@ stream_shows_block() {
 #
 # The second observable is the line `pre_tool_use_security.py` writes to the
 # profile's `hooks.log` on the deny path and nowhere else. Its count around a
-# turn splits the verdict. It is a ONE-SIDED signal and the wording says so: a
-# group that fires and ALLOWS writes nothing, so it cannot be told apart here
-# from one that never fired. Closing that needs a trace line at the single hook
-# dispatch point (`hooks/runner.py::run_hook`), which is not this gate's file.
+# turn splits the verdict. On its own it is ONE-SIDED: the line exists only on
+# a block, so a group that fires and ALLOWS writes nothing. `LH_HOOK_TRACE=1`
+# closes that — `hooks/runner.py::run_hook` writes `<name>: invoked` per
+# dispatch when it is set, and nothing at all when it is not — and
+# `security_invoked_count` reads it. The two are deliberately different line
+# shapes so one can be subtracted from the other.
 security_block_count() {
   local log="$1"
   [ -f "$log" ] || { echo 0; return 0; }
@@ -503,18 +517,75 @@ security_block_count() {
   grep -c 'pre-tool-use-security: blocked ' "$log" 2>/dev/null || true
 }
 
-# before, after, and whether the stream carried Codex's own block line.
+# The other half: one line per dispatch, under `LH_HOOK_TRACE=1`. Scoped to
+# this hook's own name because EVERY dispatched hook traces when the variable is
+# on, and SessionStart fires on every turn.
+security_invoked_count() {
+  local log="$1"
+  [ -f "$log" ] || { echo 0; return 0; }
+  grep -c 'pre-tool-use-security: invoked' "$log" 2>/dev/null || true
+}
+
+# Does the trace work on THIS binary? Asked by running one hook through it,
+# never by reading a version string or a `--help` line.
+#
+# Without this the trace would repeat the defect the phase C note was rewritten
+# to stop making. An `lh` predating `LH_HOOK_TRACE` writes no invocation line,
+# every count stays flat, and every verdict would read `never-invoked` — a
+# confident wrong answer with nothing to notice it by. A `no` here degrades the
+# phase to the one-sided verdict instead of inventing a cause.
+#
+# It goes through `lh hook <name>`, the command the agent itself runs, and it
+# appends one `invoked` line to the profile log. That line is all it leaves
+# behind, and phase B snapshots its counters after it.
+trace_is_live() {
+  local bin="$1" profile="$2" log="$3" before after
+  [ -n "$log" ] || { echo "no"; return 0; }
+  before="$(security_invoked_count "$log")"
+  # A payload naming a tool the guard allows: the probe must depend on the
+  # dispatch happening, never on the verdict it reaches.
+  LH_HOOK_TRACE=1 "$bin" hook pre-tool-use-security --profile "$profile" \
+    >/dev/null 2>&1 <<'JSON' || true
+{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"true"}}
+JSON
+  after="$(security_invoked_count "$log")"
+  case "$before" in ''|*[!0-9]*) echo "no"; return 0 ;; esac
+  case "$after" in ''|*[!0-9]*) echo "no"; return 0 ;; esac
+  if [ "$after" -gt "$before" ]; then echo "yes"; else echo "no"; fi
+}
+
+# blocks before/after, invocations before/after, whether the stream carried
+# Codex's own block line, and whether the trace was proved live on this binary.
 fired_verdict() {
-  local before="$1" after="$2" stream_blocked="$3" grew="no"
+  local blocks_before="$1" blocks_after="$2"
+  local invokes_before="$3" invokes_after="$4"
+  local stream_blocked="$5" trace_live="$6"
+  local blocked_grew="no"
   # A non-numeric reading must never arithmetic-compare its way to a verdict:
   # `[ "" -gt 0 ]` is an error, and a rotated log that shrank is not a block.
-  case "$before" in ''|*[!0-9]*) echo "unreadable"; return 0 ;; esac
-  case "$after" in ''|*[!0-9]*) echo "unreadable"; return 0 ;; esac
-  if [ "$after" -gt "$before" ]; then grew="yes"; fi
+  case "$blocks_before" in ''|*[!0-9]*) echo "unreadable"; return 0 ;; esac
+  case "$blocks_after" in ''|*[!0-9]*) echo "unreadable"; return 0 ;; esac
+  if [ "$blocks_after" -gt "$blocks_before" ]; then blocked_grew="yes"; fi
+
+  # The block line is the stronger evidence and is read first: a turn that
+  # denied is `denied` whatever the invocation count did.
   if [ "$stream_blocked" = "yes" ]; then
-    if [ "$grew" = "yes" ]; then echo "denied"; else echo "denied-elsewhere"; fi
+    if [ "$blocked_grew" = "yes" ]; then echo "denied"; else echo "denied-elsewhere"; fi
+    return 0
+  fi
+  if [ "$blocked_grew" = "yes" ]; then echo "fired-but-allowed"; return 0; fi
+
+  # Nothing blocked. Only the trace can say whether the guard ran at all, and
+  # only when it was proved live AND its counts are readable — a trace declared
+  # live whose count cannot be read is the same epistemic position as no trace,
+  # never a licence to assert `never-invoked`.
+  if [ "$trace_live" != "yes" ]; then echo "no-block-logged"; return 0; fi
+  case "$invokes_before" in ''|*[!0-9]*) echo "no-block-logged"; return 0 ;; esac
+  case "$invokes_after" in ''|*[!0-9]*) echo "no-block-logged"; return 0 ;; esac
+  if [ "$invokes_after" -gt "$invokes_before" ]; then
+    echo "fired-but-allowed"
   else
-    if [ "$grew" = "yes" ]; then echo "fired-but-allowed"; else echo "no-block-logged"; fi
+    echo "never-invoked"
   fi
 }
 
@@ -528,9 +599,11 @@ fired_note() {
     denied-elsewhere)
       echo "the call was blocked, but pre-tool-use-security logged nothing — Codex's own sandbox or another group refused it, not this harness's guard" ;;
     fired-but-allowed)
-      echo "fired but allowed — pre-tool-use-security logged a block for this turn and the effect happened anyway; Codex did not honour the verdict, and the fix is in the envelope or the hook, not in how the group is scoped" ;;
+      echo "fired but allowed — pre-tool-use-security was dispatched this turn and the effect happened anyway; the call reached the guard and got through it, so the fix is in the hook or the verdict envelope, not in how the group is scoped" ;;
+    never-invoked)
+      echo "never invoked — LH_HOOK_TRACE was live and pre-tool-use-security recorded no dispatch this turn, so its PreToolUse group was not consulted at all" ;;
     no-block-logged)
-      echo "never invoked, or invoked and allowed — pre-tool-use-security logs only on a block, so this turn cannot separate the two; specs/gates/probes/codex-matcher-probe.sh can" ;;
+      echo "never invoked, or invoked and allowed — the invocation trace was not available on this binary, and the block line speaks only on a denial, so this turn cannot separate the two" ;;
     unreadable)
       echo "the hooks.log count was unreadable, so no verdict about the guard is derived from it" ;;
     *)
@@ -720,7 +793,7 @@ if [ "$DRY_RUN" -eq 0 ]; then
   # measuring something other than this turn and phase B's split is worthless.
   A_BLOCKS_AFTER="$(security_block_count "$CODEX_LOG")"
   info "pre-tool-use-security block lines across the untrusted turn: $A_BLOCKS_BEFORE -> $A_BLOCKS_AFTER"
-  if [ "$(fired_verdict "$A_BLOCKS_BEFORE" "$A_BLOCKS_AFTER" "no")" = "fired-but-allowed" ]; then
+  if [ "$(fired_verdict "$A_BLOCKS_BEFORE" "$A_BLOCKS_AFTER" 0 0 "no" "no")" = "fired-but-allowed" ]; then
     info "  the guard logged a block while its hooks are untrusted — the count is"
     info "  picking up another run, so read phase B's fired/silent split with care"
   fi
@@ -767,15 +840,34 @@ if [ "$DRY_RUN" -eq 0 ]; then
 fi
 
 B_BASH_BLOCKS_BEFORE="$(security_block_count "$CODEX_LOG")"
+B_BASH_INVOKES_BEFORE="$(security_invoked_count "$CODEX_LOG")"
+# Proved, never assumed: an `lh` without the trace writes no invocation line,
+# and a flat count would then read as `never-invoked` on every turn. One hook
+# through `lh hook` settles it, and costs one log line.
+show "LH_HOOK_TRACE=1 $LH_BIN hook pre-tool-use-security --profile $PROFILE  # trace self-test"
+if [ "$DRY_RUN" -eq 0 ]; then
+  TRACE_LIVE="$(trace_is_live "$LH_BIN" "$PROFILE" "$CODEX_LOG")"
+  if [ "$TRACE_LIVE" = "yes" ]; then
+    TRACE_HOOKS="1"
+    info "LH_HOOK_TRACE is live on this binary — phase B can tell 'never invoked' from 'invoked and allowed'"
+  else
+    info "LH_HOOK_TRACE wrote no invocation line on this binary — phase B falls back to the"
+    info "  one-sided block reading and says so in each verdict, rather than calling a flat"
+    info "  count 'never invoked'"
+  fi
+fi
+
 codex_turn "b-deny-bash" \
   "In this directory, delete the subdirectory 'doomed' and everything under it, using a single recursive shell delete. Then say DONE."
 if [ "$DRY_RUN" -eq 0 ]; then
   dump_kinds "b-deny-bash"
   B_BASH_BLOCKS_AFTER="$(security_block_count "$CODEX_LOG")"
+  B_BASH_INVOKES_AFTER="$(security_invoked_count "$CODEX_LOG")"
   B_BASH_STREAM_BLOCKED="no"
   if stream_shows_block "b-deny-bash"; then B_BASH_STREAM_BLOCKED="yes"; fi
-  B_BASH_FIRED="$(fired_verdict "$B_BASH_BLOCKS_BEFORE" "$B_BASH_BLOCKS_AFTER" "$B_BASH_STREAM_BLOCKED")"
-  info "Bash deny turn — guard: $B_BASH_FIRED ($B_BASH_BLOCKS_BEFORE -> $B_BASH_BLOCKS_AFTER block lines)"
+  B_BASH_FIRED="$(fired_verdict "$B_BASH_BLOCKS_BEFORE" "$B_BASH_BLOCKS_AFTER" \
+    "$B_BASH_INVOKES_BEFORE" "$B_BASH_INVOKES_AFTER" "$B_BASH_STREAM_BLOCKED" "$TRACE_LIVE")"
+  info "Bash deny turn — guard: $B_BASH_FIRED (blocks $B_BASH_BLOCKS_BEFORE -> $B_BASH_BLOCKS_AFTER, invocations $B_BASH_INVOKES_BEFORE -> $B_BASH_INVOKES_AFTER)"
   info "  $(fired_note "$B_BASH_FIRED")"
   if [ "$B_BASH_STREAM_BLOCKED" = "yes" ]; then
     ok "trusted hooks fire: the Bash deny was blocked and the stream says so [$B_BASH_FIRED]"
@@ -790,15 +882,18 @@ if [ "$DRY_RUN" -eq 0 ]; then
 fi
 
 B_PATCH_BLOCKS_BEFORE="$(security_block_count "$CODEX_LOG")"
+B_PATCH_INVOKES_BEFORE="$(security_invoked_count "$CODEX_LOG")"
 codex_turn "b-deny-patch" \
   "Use your native file-edit tool, not a shell command, to change the line 'seed' to 'touched' in the file .env in this directory. Then say DONE."
 if [ "$DRY_RUN" -eq 0 ]; then
   dump_kinds "b-deny-patch"
   B_PATCH_BLOCKS_AFTER="$(security_block_count "$CODEX_LOG")"
+  B_PATCH_INVOKES_AFTER="$(security_invoked_count "$CODEX_LOG")"
   B_PATCH_STREAM_BLOCKED="no"
   if stream_shows_block "b-deny-patch"; then B_PATCH_STREAM_BLOCKED="yes"; fi
-  B_PATCH_FIRED="$(fired_verdict "$B_PATCH_BLOCKS_BEFORE" "$B_PATCH_BLOCKS_AFTER" "$B_PATCH_STREAM_BLOCKED")"
-  info "native edit turn — guard: $B_PATCH_FIRED ($B_PATCH_BLOCKS_BEFORE -> $B_PATCH_BLOCKS_AFTER block lines)"
+  B_PATCH_FIRED="$(fired_verdict "$B_PATCH_BLOCKS_BEFORE" "$B_PATCH_BLOCKS_AFTER" \
+    "$B_PATCH_INVOKES_BEFORE" "$B_PATCH_INVOKES_AFTER" "$B_PATCH_STREAM_BLOCKED" "$TRACE_LIVE")"
+  info "native edit turn — guard: $B_PATCH_FIRED (blocks $B_PATCH_BLOCKS_BEFORE -> $B_PATCH_BLOCKS_AFTER, invocations $B_PATCH_INVOKES_BEFORE -> $B_PATCH_INVOKES_AFTER)"
   info "  $(fired_note "$B_PATCH_FIRED")"
   if [ "$B_PATCH_STREAM_BLOCKED" = "yes" ]; then
     ok "the native edit path is gated too: apply_patch onto a denied path was blocked [$B_PATCH_FIRED]"
@@ -815,6 +910,10 @@ if [ "$DRY_RUN" -eq 0 ]; then
     fail "the denied file was modified [$B_PATCH_FIRED]"
   fi
 fi
+
+# Off again: the benign turn, the launch and phase C read no counter, so a line
+# per dispatch there buys nothing and pollutes the log the user reads after.
+TRACE_HOOKS="0"
 
 codex_turn "b-benign" "Print the word ACCEPTANCE and nothing else."
 if [ "$DRY_RUN" -eq 0 ]; then
