@@ -88,6 +88,43 @@ def test_parse_session_empty_file(tmp_path: Path) -> None:
     assert results == []
 
 
+def test_extract_session_date_skips_a_non_str_timestamp(tmp_path: Path) -> None:
+    """A foreign JSONL (e.g. a Copilot hook payload dump) carries an int epoch
+    under `timestamp`. `len(ts)` on an int raises `TypeError` today and aborts
+    the whole ingest run rather than just this file."""
+    from lazy_harness.monitoring.collector import extract_session_date
+
+    session_file = tmp_path / "foreign.jsonl"
+    _write_session_jsonl(
+        session_file,
+        [
+            {"timestamp": 1758000000, "cwd": "/w", "sessionId": "s1"},
+            {"timestamp": None},
+            {"timestamp": [1, 2, 3]},
+        ],
+    )
+
+    assert extract_session_date(session_file) == "unknown"
+
+
+def test_extract_session_date_keeps_scanning_past_a_non_str_timestamp(
+    tmp_path: Path,
+) -> None:
+    """A non-`str` timestamp on an early line must not hide a real one later."""
+    from lazy_harness.monitoring.collector import extract_session_date
+
+    session_file = tmp_path / "mixed.jsonl"
+    _write_session_jsonl(
+        session_file,
+        [
+            {"timestamp": 1758000000},
+            {"type": "user", "content": "hi", "timestamp": "2026-09-16T10:00:00"},
+        ],
+    )
+
+    assert extract_session_date(session_file) == "2026-09-16"
+
+
 def test_extract_project_name() -> None:
     from lazy_harness.monitoring.collector import extract_project_name
 

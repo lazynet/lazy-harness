@@ -25,7 +25,7 @@ def extract_session_date(filepath: Path) -> str:
             try:
                 obj = json.loads(line)
                 ts = obj.get("timestamp", "")
-                if ts and len(ts) >= 10:
+                if isinstance(ts, str) and len(ts) >= 10:
                     return ts[:10]
             except json.JSONDecodeError:
                 continue
