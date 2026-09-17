@@ -179,6 +179,16 @@ fi
 FAILURES=0
 NOOBS=0
 BLOCKED=0
+# The profile's hook log, resolved in preflight off `lh run --dry-run`. Empty
+# means the split between a guard that denied and one that never fired is
+# unavailable this run, and phase B says so rather than reading a missing file
+# as silence.
+CODEX_LOG=""
+# Whether phase B's own doctor still reported hooks untrusted. Phase C reads it:
+# with no standing approval, a changed declaration has nothing to make stale,
+# and the absence of a `stale` line is then a property of the state, not a
+# shortfall in the binary.
+PHASE_B_UNTRUSTED="no"
 declare -a FAIL_LINES=()
 declare -a NOOBS_LINES=()
 declare -a BLOCKED_LINES=()
@@ -299,7 +309,21 @@ step "$LH_BIN" run --profile "$PROFILE" --dry-run -- --version
 if [ "$DRY_RUN" -eq 0 ]; then
   RESOLVED="$("$LH_BIN" run --profile "$PROFILE" --dry-run -- --version 2>&1)"
   case "$RESOLVED" in
-    *CODEX_HOME*) ok "profile '$PROFILE' resolves through the Codex adapter" ;;
+    *CODEX_HOME*)
+       ok "profile '$PROFILE' resolves through the Codex adapter"
+       # The same line gives phase B its second observable. Read off `lh run
+       # --dry-run` rather than rebuilt from the profile name: the adapter owns
+       # where its home lands (`CodexAdapter.env_var()`), and a gate that
+       # guessed `~/.codex-<profile>` would read an empty log on any profile
+       # whose config_dir was set by hand and call every guard silent.
+       CODEX_HOME_DIR="$(printf '%s\n' "$RESOLVED" | sed -n 's/^CODEX_HOME: *//p' | head -1)"
+       if [ -n "$CODEX_HOME_DIR" ]; then
+         CODEX_LOG="$CODEX_HOME_DIR/logs/hooks.log"
+         info "hook log: $CODEX_LOG"
+       else
+         info "no CODEX_HOME value parsed; the fired/silent split is unavailable this run"
+       fi
+       ;;
     *) echo "harness error: profile '$PROFILE' does not resolve to agent = \"codex\"." >&2
        echo "  'lh run --dry-run' printed no CODEX_HOME line, which is the" >&2
        echo "  adapter's own env var (CodexAdapter.env_var())." >&2
@@ -457,6 +481,84 @@ stream_shows_native_edit() {
 stream_shows_block() {
   grep -q 'Command blocked by PreToolUse hook' "$WORK/stream-$1.jsonl" 2>/dev/null
 }
+
+# --- did the guard itself run, or was it never asked? ----------------------
+#
+# Phase B asserted only file state, so "the guard never ran" and "the guard ran
+# and allowed it" produced the identical verdict — `the denied file was
+# modified`. The run of 2026-09-17 12:32 hit exactly that: 31 hooks approved,
+# three FAILs, and nothing in the output said which of the two had happened.
+#
+# The second observable is the line `pre_tool_use_security.py` writes to the
+# profile's `hooks.log` on the deny path and nowhere else. Its count around a
+# turn splits the verdict. It is a ONE-SIDED signal and the wording says so: a
+# group that fires and ALLOWS writes nothing, so it cannot be told apart here
+# from one that never fired. Closing that needs a trace line at the single hook
+# dispatch point (`hooks/runner.py::run_hook`), which is not this gate's file.
+security_block_count() {
+  local log="$1"
+  [ -f "$log" ] || { echo 0; return 0; }
+  # `grep -c` prints 0 and exits 1 on no match, which `set -e` would take the
+  # whole run down on. The `|| true` is the reason this is a function at all.
+  grep -c 'pre-tool-use-security: blocked ' "$log" 2>/dev/null || true
+}
+
+# before, after, and whether the stream carried Codex's own block line.
+fired_verdict() {
+  local before="$1" after="$2" stream_blocked="$3" grew="no"
+  # A non-numeric reading must never arithmetic-compare its way to a verdict:
+  # `[ "" -gt 0 ]` is an error, and a rotated log that shrank is not a block.
+  case "$before" in ''|*[!0-9]*) echo "unreadable"; return 0 ;; esac
+  case "$after" in ''|*[!0-9]*) echo "unreadable"; return 0 ;; esac
+  if [ "$after" -gt "$before" ]; then grew="yes"; fi
+  if [ "$stream_blocked" = "yes" ]; then
+    if [ "$grew" = "yes" ]; then echo "denied"; else echo "denied-elsewhere"; fi
+  else
+    if [ "$grew" = "yes" ]; then echo "fired-but-allowed"; else echo "no-block-logged"; fi
+  fi
+}
+
+# The sentence that reaches the summary. Every verdict has one: a case with no
+# arm prints an empty row and the reader loses the reason, which is the defect
+# this pair of functions exists to stop repeating.
+fired_note() {
+  case "$1" in
+    denied)
+      echo "pre-tool-use-security fired and denied it — the stream carries the block and the hook logged one" ;;
+    denied-elsewhere)
+      echo "the call was blocked, but pre-tool-use-security logged nothing — Codex's own sandbox or another group refused it, not this harness's guard" ;;
+    fired-but-allowed)
+      echo "fired but allowed — pre-tool-use-security logged a block for this turn and the effect happened anyway; Codex did not honour the verdict, and the fix is in the envelope or the hook, not in how the group is scoped" ;;
+    no-block-logged)
+      echo "never invoked, or invoked and allowed — pre-tool-use-security logs only on a block, so this turn cannot separate the two; specs/gates/probes/codex-matcher-probe.sh can" ;;
+    unreadable)
+      echo "the hooks.log count was unreadable, so no verdict about the guard is derived from it" ;;
+    *)
+      echo "unknown fired verdict: $1" ;;
+  esac
+}
+
+# Phase C's note. It used to say "this lh predates #367" whenever no
+# `stale`/`orphaned` line appeared — unknowable from here, and false on the
+# 0.71.1 that printed it, which carries #367. Worse, it fired in the one case
+# where `stale` is structurally unobservable.
+phase_c_note() {
+  local signal="$1" prior_untrusted="$2"
+  case "$signal" in
+    stale)
+      echo "an approved key went stale, which is the signal a changed declaration is expected to raise" ;;
+    orphaned)
+      echo "no 'trust stale' line: the change re-keyed or dropped a handler, so a stored entry no longer matches a declared one and 'orphaned' is the signal that carries that" ;;
+    untrusted)
+      if [ "$prior_untrusted" = "yes" ]; then
+        echo "no 'trust stale' line, and stale was unobservable: phase B ended with every hook still untrusted, so there was no standing approval for a changed declaration to invalidate"
+      else
+        echo "no 'trust stale' line: the change appended a handler rather than re-keying an approved one, so the new entry reads untrusted and nothing already approved went stale"
+      fi ;;
+    *)
+      echo "unrecognised phase C signal: $signal" ;;
+  esac
+}
 # Phase C's declaration change, applied through a TOML parser instead of
 # appended as text. The first acceptance run appended a literal
 # `[hooks.pre_tool_use]` table to a copy of the user's config — and that config
@@ -608,10 +710,20 @@ if [ "$DRY_RUN" -eq 0 ]; then
   fi
 fi
 
+A_BLOCKS_BEFORE="$(security_block_count "$CODEX_LOG")"
 codex_turn "a-deny" \
   "In this directory, delete the subdirectory 'doomed' and everything under it, using a single recursive shell delete. Then say DONE."
 if [ "$DRY_RUN" -eq 0 ]; then
   dump_kinds "a-deny"
+  # The control for phase B's reading, not an assertion. The hooks are untrusted
+  # here, so the guard cannot have run; a non-zero delta would mean the count is
+  # measuring something other than this turn and phase B's split is worthless.
+  A_BLOCKS_AFTER="$(security_block_count "$CODEX_LOG")"
+  info "pre-tool-use-security block lines across the untrusted turn: $A_BLOCKS_BEFORE -> $A_BLOCKS_AFTER"
+  if [ "$(fired_verdict "$A_BLOCKS_BEFORE" "$A_BLOCKS_AFTER" "no")" = "fired-but-allowed" ]; then
+    info "  the guard logged a block while its hooks are untrusted — the count is"
+    info "  picking up another run, so read phase B's fired/silent split with care"
+  fi
   if stream_shows_block "a-deny"; then
     fail "the command was BLOCKED while the hooks are untrusted — either they are already trusted, or trust is not what gates them"
   elif [ ! -d "$DOOMED" ]; then
@@ -644,6 +756,7 @@ step "$LH_BIN" doctor
 if [ "$DRY_RUN" -eq 0 ]; then
   DOCTOR_B="$("$LH_BIN" doctor 2>&1)"
   if printf '%s' "$DOCTOR_B" | grep -q 'untrusted'; then
+    PHASE_B_UNTRUSTED="yes"
     fail "doctor still reports hooks untrusted after the approval step"
   else
     ok "no hook is reported untrusted any more"
@@ -653,34 +766,53 @@ if [ "$DRY_RUN" -eq 0 ]; then
   fi
 fi
 
+B_BASH_BLOCKS_BEFORE="$(security_block_count "$CODEX_LOG")"
 codex_turn "b-deny-bash" \
   "In this directory, delete the subdirectory 'doomed' and everything under it, using a single recursive shell delete. Then say DONE."
 if [ "$DRY_RUN" -eq 0 ]; then
   dump_kinds "b-deny-bash"
-  if stream_shows_block "b-deny-bash"; then
-    ok "trusted hooks fire: the Bash deny was blocked and the stream says so"
+  B_BASH_BLOCKS_AFTER="$(security_block_count "$CODEX_LOG")"
+  B_BASH_STREAM_BLOCKED="no"
+  if stream_shows_block "b-deny-bash"; then B_BASH_STREAM_BLOCKED="yes"; fi
+  B_BASH_FIRED="$(fired_verdict "$B_BASH_BLOCKS_BEFORE" "$B_BASH_BLOCKS_AFTER" "$B_BASH_STREAM_BLOCKED")"
+  info "Bash deny turn — guard: $B_BASH_FIRED ($B_BASH_BLOCKS_BEFORE -> $B_BASH_BLOCKS_AFTER block lines)"
+  info "  $(fired_note "$B_BASH_FIRED")"
+  if [ "$B_BASH_STREAM_BLOCKED" = "yes" ]; then
+    ok "trusted hooks fire: the Bash deny was blocked and the stream says so [$B_BASH_FIRED]"
   elif stream_ran_a_command "b-deny-bash"; then
-    fail "a command ran unblocked with the hooks trusted"
+    # The verdict carries the finding now: "a command ran unblocked" was true of
+    # a suppressed matcher and of a hook that answered allow alike, and the two
+    # have different fixes.
+    fail "a command ran unblocked with the hooks trusted [$B_BASH_FIRED]"
   else
     noobs "the model ran no command this turn; the Bash deny path was not exercised"
   fi
 fi
 
+B_PATCH_BLOCKS_BEFORE="$(security_block_count "$CODEX_LOG")"
 codex_turn "b-deny-patch" \
   "Use your native file-edit tool, not a shell command, to change the line 'seed' to 'touched' in the file .env in this directory. Then say DONE."
 if [ "$DRY_RUN" -eq 0 ]; then
   dump_kinds "b-deny-patch"
-  if stream_shows_block "b-deny-patch"; then
-    ok "the native edit path is gated too: apply_patch onto a denied path was blocked"
+  B_PATCH_BLOCKS_AFTER="$(security_block_count "$CODEX_LOG")"
+  B_PATCH_STREAM_BLOCKED="no"
+  if stream_shows_block "b-deny-patch"; then B_PATCH_STREAM_BLOCKED="yes"; fi
+  B_PATCH_FIRED="$(fired_verdict "$B_PATCH_BLOCKS_BEFORE" "$B_PATCH_BLOCKS_AFTER" "$B_PATCH_STREAM_BLOCKED")"
+  info "native edit turn — guard: $B_PATCH_FIRED ($B_PATCH_BLOCKS_BEFORE -> $B_PATCH_BLOCKS_AFTER block lines)"
+  info "  $(fired_note "$B_PATCH_FIRED")"
+  if [ "$B_PATCH_STREAM_BLOCKED" = "yes" ]; then
+    ok "the native edit path is gated too: apply_patch onto a denied path was blocked [$B_PATCH_FIRED]"
   elif stream_shows_native_edit "b-deny-patch"; then
-    fail "the native edit path reached a secret path unblocked"
+    fail "the native edit path reached a secret path unblocked [$B_PATCH_FIRED]"
   else
     noobs "the model used no native edit this turn; the native-edit arm was not exercised"
   fi
+  # File state stays the binding verdict — it is ground truth, where the two
+  # readings above are inferences — but it no longer carries the finding alone.
   if [ "$(cat "$SECRET" 2>/dev/null)" = "seed" ]; then
     ok "the denied file is unchanged on disk"
   else
-    fail "the denied file was modified"
+    fail "the denied file was modified [$B_PATCH_FIRED]"
   fi
 fi
 
@@ -814,11 +946,15 @@ banner "phase-c-reapproval — a changed declaration re-prompts instead of silen
 
 echo "  Correction 1 in the header: 'lh doctor' derives a 'trust stale' verdict"
 echo "  from the deploy snapshot (#367) without recomputing Codex's own hash."
-echo "  A changed declaration is expected to show up as TRUST STALE. On an lh"
-echo "  installed before #367, the same change shows up instead as UNTRUSTED"
+echo "  A changed declaration is expected to show up as TRUST STALE. UNTRUSTED"
 echo "  entries approved minutes ago, or ORPHANED entries keyed on handlers"
-echo "  hooks.json no longer declares — because the trust key carries the group"
-echo "  and handler POSITION (trust_keys in agents/codex.py). Either is accepted."
+echo "  hooks.json no longer declares, carry the same fact by a different route:"
+echo "  the trust key indexes the group and handler POSITION (trust_keys in"
+echo "  agents/codex.py). Any of the three is accepted, and the note printed"
+echo "  below names which route this run took — an old binary is ONE reason for"
+echo "  the fallback and the gate cannot tell it from the others, so it does not"
+echo "  guess. Where phase B ended all-untrusted, 'stale' cannot fire at all:"
+echo "  there is no standing approval left for the change to invalidate."
 echo
 
 # A temp LH_CONFIG_DIR, never the user's. The profile's config_dir inside it
@@ -856,12 +992,13 @@ if [ "$DRY_RUN" -eq 0 ]; then
       DOCTOR_C="$(tr '\n' ' ' < "$PHASE_C_DOCTOR")"
       if printf '%s' "$DOCTOR_C" | grep -q 'trust stale'; then
         ok "doctor reports trust stale after the declaration changed"
+        info "$(phase_c_note stale "$PHASE_B_UNTRUSTED")"
       elif printf '%s' "$DOCTOR_C" | grep -q 'orphaned'; then
         ok "doctor reports orphaned trust entries after the declaration changed"
-        info "no 'trust stale' line — this lh predates #367"
+        info "$(phase_c_note orphaned "$PHASE_B_UNTRUSTED")"
       elif printf '%s' "$DOCTOR_C" | grep -q 'untrusted'; then
         ok "doctor reports untrusted hooks again after the declaration changed"
-        info "no 'trust stale' or 'orphaned' line — this lh predates #367, and the change added a handler rather than dropping one"
+        info "$(phase_c_note untrusted "$PHASE_B_UNTRUSTED")"
       else
         # The evidence, not a verdict over a discarded one. The first run threw
         # both of these away and left the reader nothing to read.
