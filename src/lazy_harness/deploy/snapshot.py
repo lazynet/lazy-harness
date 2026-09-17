@@ -81,7 +81,9 @@ def snapshot_targets(cfg: Config, *, only: str | None = None) -> list[Path]:
     """Every path a deploy owns, derived once so the rollback cannot miss one.
 
     Mirrors what `deploy/engine.py` writes: the per-profile symlinks named by
-    the profile source tree, each profile's native config documents, and the
+    `deploy.segments.resolve_segments` (the same call the deploy makes, so the
+    two cannot disagree about which segment reaches which agent), the ownership
+    ledger that records them, each profile's native config documents, and the
     agent's global config link. An integration test invokes this and a real
     deploy and asserts they agree — two readers of one config-derived answer.
 
@@ -101,9 +103,11 @@ def snapshot_targets(cfg: Config, *, only: str | None = None) -> list[Path]:
     the two readers stay one answer under narrowing too.
     """
     from lazy_harness.agents.base import ConfigPlanner
-    from lazy_harness.agents.registry import agent_for_profile
+    from lazy_harness.agents.registry import agent_for_profile, list_agents
     from lazy_harness.core.paths import config_dir, expand_path
     from lazy_harness.deploy.engine import deploys_global_link, selected_profiles
+    from lazy_harness.deploy.ledger import LEDGER_RELATIVE
+    from lazy_harness.deploy.segments import resolve_segments
 
     profiles_src = config_dir() / "profiles"
 
@@ -111,9 +115,15 @@ def snapshot_targets(cfg: Config, *, only: str | None = None) -> list[Path]:
     for name, entry in selected_profiles(cfg, only).items():
         target_dir = expand_path(entry.config_dir)
         src_dir = profiles_src / name
-        if src_dir.is_dir():
-            targets.extend(target_dir / item.name for item in sorted(src_dir.iterdir()))
         agent = agent_for_profile(cfg, name)
+        if src_dir.is_dir():
+            # Resolved through the same function the deploy uses, not by listing
+            # the source again: a mirror that lists root names targets `shared`
+            # and `codex` — directories the deploy never links — while missing
+            # every file link it does write inside them.
+            plan = resolve_segments(src_dir, agent.name, agent_names=list_agents())
+            targets.extend(target_dir / link.relative for link in plan.links)
+            targets.append(target_dir / LEDGER_RELATIVE)
         # An adapter that cannot plan writes no config document, so it owns
         # none. The deploy refuses such a profile outright; the snapshot only
         # has to not invent targets for it.

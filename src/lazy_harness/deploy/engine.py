@@ -15,9 +15,12 @@ from lazy_harness.agents.registry import (
     DEFAULT_HARNESS_BINARY,
     agent_for_profile,
     binary_for_profile,
+    list_agents,
 )
 from lazy_harness.core.config import Config, ProfileEntry
 from lazy_harness.core.paths import config_dir, expand_path
+from lazy_harness.deploy.ledger import owned_links, prune_unowned, write_ledger
+from lazy_harness.deploy.segments import resolve_segments
 from lazy_harness.deploy.symlinks import ensure_symlink
 from lazy_harness.hooks.loader import HookInfo
 from lazy_harness.hooks.signal_gaps import HookSignalGap
@@ -166,11 +169,45 @@ def hook_command(hook: HookInfo, *, profile: str, binary: str = DEFAULT_HARNESS_
     return f"{sys.executable} {hook.path}"
 
 
+def _segment_label(source: Path, src_dir: Path) -> str:
+    """A collision source named relative to the profile dir.
+
+    `shared/skills/dup.md` says which segment lost; the absolute path says only
+    where the tree happens to live.
+    """
+    try:
+        return str(source.relative_to(src_dir))
+    except ValueError:  # pragma: no cover - a source is always under src_dir
+        return str(source)
+
+
+def _clear_linked_parents(target_dir: Path, relative: Path) -> None:
+    """Make every ancestor of `relative` a real directory before writing into it.
+
+    A profile deployed flat carries a whole-directory *symlink* at a name that
+    segments now split across files. `ensure_symlink` calls `mkdir(exist_ok=True)`
+    on the parent, which **succeeds on a symlink to a directory** — so the new
+    link would be created through it, inside `profiles/<p>/`, and the deploy
+    would start writing into its own source.
+    """
+    current = target_dir
+    for part in relative.parts[:-1]:
+        current = current / part
+        if current.is_symlink():
+            current.unlink()
+        current.mkdir(parents=True, exist_ok=True)
+
+
 def deploy_profiles(cfg: Config, *, only: str | None = None) -> None:
     """Deploy profile content as symlinks to agent config dirs.
 
     `only` narrows the loop to one profile; `None` is every profile, which is
     what `lh deploy` without `--profile` still does.
+
+    What gets linked is resolved per agent (`deploy.segments`, ADR-052):
+    `shared/` and the profile agent's own directory, plus the root entries of a
+    profile that never migrated. A profile with neither segment deploys exactly
+    as it did before segments existed.
     """
     profiles_src = config_dir() / "profiles"
     if not profiles_src.is_dir():
@@ -186,13 +223,39 @@ def deploy_profiles(cfg: Config, *, only: str | None = None) -> None:
         target_dir = expand_path(entry.config_dir)
         target_dir.mkdir(parents=True, exist_ok=True)
 
-        for item in src_dir.iterdir():
-            target = target_dir / item.name
-            status = ensure_symlink(item, target)
+        agent = agent_for_profile(cfg, name)
+        plan = resolve_segments(src_dir, agent.name, agent_names=list_agents())
+        generated = {link.relative for link in plan.links}
+
+        owned, adopted = owned_links(target_dir, src_dir)
+        if adopted and owned:
+            count = len(owned)
+            click.echo(
+                f"  · {name}: adopted {count} existing "
+                f"{_plural(count, 'link', 'links')} into {src_dir.name} as harness-owned"
+            )
+
+        # Before the new links, not after: a name that was a whole-directory
+        # link and is now split across files has to stop being a link first.
+        for stale in prune_unowned(target_dir, src_dir, owned=owned, keep=generated):
+            click.echo(f"  ✗ {name}/{stale} (no longer generated)")
+
+        for collision in plan.collisions:
+            click.echo(
+                f"  · {name}/{collision.relative}: "
+                f"{_segment_label(collision.winner, src_dir)} wins over "
+                f"{_segment_label(collision.shadowed, src_dir)}"
+            )
+
+        for link in plan.links:
+            _clear_linked_parents(target_dir, link.relative)
+            status = ensure_symlink(link.source, target_dir / link.relative)
             if status == "exists":
-                click.echo(f"  · {name}/{item.name} (already linked)")
+                click.echo(f"  · {name}/{link.relative} (already linked)")
             else:
-                click.echo(f"  ✓ {name}/{item.name}")
+                click.echo(f"  ✓ {name}/{link.relative}")
+
+        write_ledger(target_dir, generated)
 
 
 def _plural(count: int, singular: str, plural: str) -> str:
