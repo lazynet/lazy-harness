@@ -241,6 +241,100 @@ def test_cache_row_reports_read_and_write_per_profile(tmp_path: Path) -> None:
     assert "G" not in tokens_line
 
 
+def test_flat_rate_profile_renders_a_dash_not_zero_dollars(tmp_path: Path) -> None:
+    """ADR-050: a flat-rate profile's cost is unknowable, not zero — the usage
+    is real, so it must not read as a free session."""
+    from datetime import datetime
+
+    month_str = datetime.now().strftime("%Y-%m")
+    cfg = _cfg_two(tmp_path)
+    db = MetricsDB(tmp_path / "metrics.db")
+    db.upsert_stats(
+        [
+            {
+                "session": "lazy-s1",
+                "date": f"{month_str}-01",
+                "model": "claude-opus-4-6",
+                "profile": "lazy",
+                "project": "p",
+                "input": 100,
+                "output": 50,
+                "cache_read": 0,
+                "cache_create": 0,
+                "cost": 1.00,
+                "billing_model": "per_token",
+            },
+            {
+                "session": "flex-s1",
+                "date": f"{month_str}-01",
+                "model": "claude-opus-4-6",
+                "profile": "flex",
+                "project": "p",
+                "input": 300,
+                "output": 120,
+                "cache_read": 0,
+                "cache_create": 0,
+                "cost": 0.0,
+                "billing_model": "flat_rate",
+            },
+        ]
+    )
+
+    out = _render(db, cfg)
+    db.close()
+    lines = out.splitlines()
+
+    tok_flex = next(line for line in lines if "flex" in line and " in ·" in line)
+    assert "—" in tok_flex
+    assert "$0.0" not in tok_flex
+
+    tok_all = next(line for line in lines if "all" in line and " in ·" in line)
+    assert "priced only" in tok_all
+    assert "$1.0" in tok_all  # flat-rate's 0.0 contributes nothing to the sum
+
+
+def test_all_line_stays_unlabeled_when_every_profile_is_per_token(tmp_path: Path) -> None:
+    """Regression: 'priced only' must not appear when nothing is flat-rate."""
+    from datetime import datetime
+
+    month_str = datetime.now().strftime("%Y-%m")
+    cfg = _cfg_two(tmp_path)
+    db = MetricsDB(tmp_path / "metrics.db")
+    db.upsert_stats(
+        [
+            {
+                "session": "lazy-s1",
+                "date": f"{month_str}-01",
+                "model": "claude-opus-4-6",
+                "profile": "lazy",
+                "project": "p",
+                "input": 100,
+                "output": 50,
+                "cache_read": 0,
+                "cache_create": 0,
+                "cost": 1.00,
+            },
+            {
+                "session": "flex-s1",
+                "date": f"{month_str}-01",
+                "model": "claude-opus-4-6",
+                "profile": "flex",
+                "project": "p",
+                "input": 300,
+                "output": 120,
+                "cache_read": 0,
+                "cache_create": 0,
+                "cost": 3.00,
+            },
+        ]
+    )
+
+    out = _render(db, cfg)
+    db.close()
+    tok_all = next(line for line in out.splitlines() if "all" in line and " in ·" in line)
+    assert "priced only" not in tok_all
+
+
 def test_cache_row_absent_when_no_cache_recorded(tmp_path: Path) -> None:
     """A profile that never used prompt caching renders zeros, not a crash."""
     from datetime import datetime
