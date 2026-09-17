@@ -394,41 +394,93 @@ resolve_gate_python() {
 if [ "$DRY_RUN" -eq 0 ]; then
   GATE_PYTHON="$(resolve_gate_python "$LH_BIN")" || exit 2
 
-  DENY_RULES="$("$GATE_PYTHON" - "$FIXTURE_BASH" "$FIXTURE_PATCH_PATH" <<'PY' 2>/dev/null
+  # Both fixtures go through the SHIPPED RUNNER, in the payload shape this
+  # profile's own agent sends, and the verdict is read off the bytes Codex
+  # would receive on stdout.
+  #
+  # It used to import `pre_tool_use_security` and call `rule.pattern.search()`
+  # and `should_block_path()` directly -- the denylist primitives. No payload
+  # was built, `parse_hook_input` never ran, `main(event)` was never called and
+  # `format_hook_output` emitted nothing, so the check proved two strings match
+  # two regexes and the gate then asserted that a *Codex tool call* would be
+  # blocked. Everything between the regex and the wire was unverified by the
+  # check that licensed the assertion: the adapter's operation mapping, the
+  # patch-blob parser, and the envelope Codex honours.
+  #
+  # `tests/integration/test_codex_guard_end_to_end.py` asserts the same path in
+  # CI, where this script cannot run.
+  DENY_RULES="$("$GATE_PYTHON" - "$PROFILE" "$FIXTURE_BASH" "$FIXTURE_PATCH_PATH" <<'PY' 2>/dev/null
+import json
 import sys
-from lazy_harness.hooks.builtins import pre_tool_use_security as sec
 
-command, path = sys.argv[1], sys.argv[2]
-for rule in sec.BLOCK_RULES:
-    if rule.pattern.search(command):
-        print("bash", rule.reason)
-        break
+from lazy_harness.hooks.runner import run_hook
+
+profile, command, path = sys.argv[1], sys.argv[2], sys.argv[3]
+
+
+def decide(tool_name: str, tool_input: dict) -> tuple[str, str]:
+    """The decision and its reason, for one payload, through the real runner."""
+    output = run_hook(
+        "pre-tool-use-security",
+        profile=profile,
+        stdin_text=json.dumps(
+            {
+                "hook_event_name": "PreToolUse",
+                "session_id": "f9-preflight",
+                "cwd": "/tmp",
+                "tool_name": tool_name,
+                "tool_input": tool_input,
+            }
+        ),
+    )
+    # Parsed, never substring-matched: what Codex reads is a JSON document, and
+    # a substring check passes on one Codex cannot load -- which is how probe
+    # 4's hand-escaped envelope arrived invalid and let the edit through.
+    if not output.stdout:
+        return "", ""
+    spec = json.loads(output.stdout).get("hookSpecificOutput", {})
+    return spec.get("permissionDecision", ""), spec.get("permissionDecisionReason", "")
+
+
+decision, reason = decide("Bash", {"command": command})
+if decision == "deny":
+    first = reason.splitlines()[0] if reason else "deny"
+    print("bash", first.replace("Blocked by lazy-harness PreToolUse: ", "").rstrip("."))
 else:
     print("bash", "NONE")
-print("patch", "MATCH" if sec.should_block_path(path) is not None else "NONE")
+
+blob = "*** Begin Patch\n*** Update File: " + path + "\n@@\n-seed\n+touched\n*** End Patch"
+decision, _ = decide("apply_patch", {"command": blob})
+print("patch", "MATCH" if decision == "deny" else "NONE")
 PY
 )"
   [ -n "$DENY_RULES" ] || {
-    echo "harness error: could not read the denylist out of the build." >&2
-    echo "  pre_tool_use_security no longer exposes BLOCK_RULES /" >&2
-    echo "  should_block_path under those names. Re-derive before trusting" >&2
-    echo "  any verdict below." >&2
+    echo "harness error: the shipped runner returned no verdict for either fixture." >&2
+    echo "  'pre-tool-use-security' could not be driven in-process for profile" >&2
+    echo "  '$PROFILE' -- a moved entry point, an unresolvable profile, or an" >&2
+    echo "  import failure. Re-derive before trusting any verdict below." >&2
     exit 2
   }
   BASH_RULE="$(printf '%s\n' "$DENY_RULES" | awk '$1=="bash"{$1=""; sub(/^ /,""); print}')"
   PATCH_RULE="$(printf '%s\n' "$DENY_RULES" | awk '$1=="patch"{print $2}')"
   [ "$BASH_RULE" != "NONE" ] || {
-    echo "harness error: the shipped denylist does not match the Bash fixture." >&2
+    echo "harness error: the shipped guard does not deny the Bash fixture when" >&2
+    echo "  driven through the adapter profile '$PROFILE' runs." >&2
     echo "  fixture: $FIXTURE_BASH" >&2
-    echo "  Phase B would assert a block that nothing in the build produces." >&2
+    echo "  Phase B would assert a block this build does not produce -- and this" >&2
+    echo "  is now a statement about the whole path, not just the denylist: the" >&2
+    echo "  adapter, the hook and the envelope are all inside it." >&2
     exit 2
   }
   [ "$PATCH_RULE" = "MATCH" ] || {
-    echo "harness error: the shipped secret-path globs do not match $FIXTURE_PATCH_PATH." >&2
+    echo "harness error: an apply_patch blob touching $FIXTURE_PATCH_PATH is not" >&2
+    echo "  denied through the adapter profile '$PROFILE' runs. The blob parser," >&2
+    echo "  the glob or the operation mapping -- the preflight cannot say which," >&2
+    echo "  but phase B would assert the block regardless." >&2
     exit 2
   }
-  ok "Bash fixture is denied by the shipped rule: $BASH_RULE"
-  ok "patch fixture path is denied by the shipped secret-path globs"
+  ok "Bash fixture is denied end to end through the '$PROFILE' adapter: $BASH_RULE"
+  ok "an apply_patch blob touching the fixture path is denied end to end too"
 else
   info "the two deny fixtures are fed through the shipped matcher here and the"
   info "  gate exits 2 unless the build itself says it would deny them"
