@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.71.0](https://github.com/lazynet/lazy-harness/compare/v0.70.0...v0.71.0) (2026-09-17)
+
+
+### Features
+
+* ingest resolves sessions through the adapter; Codex stays unmetered by measurement (ADR-051) ([#361](https://github.com/lazynet/lazy-harness/issues/361)) ([8e58510](https://github.com/lazynet/lazy-harness/commit/8e58510541e194da862c55367ba083cedcc05ebc))
+* lh deploy prints the re-trust instruction when a Codex hook declaration changes; trust stale in doctor ([#367](https://github.com/lazynet/lazy-harness/issues/367)) ([5f088b3](https://github.com/lazynet/lazy-harness/commit/5f088b37bb17c872516445e896baa1f5ccebec27))
+* lh metrics launches, doctor adoption line, and the fixed-horizon kill check (blast-radius decision 1) ([#360](https://github.com/lazynet/lazy-harness/issues/360)) ([037047e](https://github.com/lazynet/lazy-harness/commit/037047ec5d9614a00c9cc28de91163ee91342ed5))
+* MetricEvent v3 — agent dimension and a billing model that admits flat rates (ADR-050) ([#364](https://github.com/lazynet/lazy-harness/issues/364)) ([0ae230a](https://github.com/lazynet/lazy-harness/commit/0ae230ac672f73f8d1b1f125342164ce3919a044))
+* permission bypass as a declared intent — Bypass levels per adapter, lh run --bypass (ADR-049) ([#363](https://github.com/lazynet/lazy-harness/issues/363)) ([ce86cb3](https://github.com/lazynet/lazy-harness/commit/ce86cb3b3943e7b2d3f34635fae8cf64ed4c4f79))
+* profile assets deploy per agent — shared and agent segments, file-level links, ownership ledger, lh profile migrate (ADR-052) ([#369](https://github.com/lazynet/lazy-harness/issues/369)) ([164b0f0](https://github.com/lazynet/lazy-harness/commit/164b0f062938f33d52e6bca3296a02b718891add))
+* the sync hook is post-tool-use-sync-system-doc — operation-gated, matcher derived per agent, alias kept (blast-radius decision 5) ([#366](https://github.com/lazynet/lazy-harness/issues/366)) ([4309633](https://github.com/lazynet/lazy-harness/commit/4309633a335f5410a861d96466522c39e0e96596))
+* TranscriptReader carries model, message id and the cache TTL split; ingest meters Codex through its reader (ADR-053, supersedes ADR-051) ([#368](https://github.com/lazynet/lazy-harness/issues/368)) ([8b70b06](https://github.com/lazynet/lazy-harness/commit/8b70b06e4e47fab0127324d9e87502e81e7eb037))
+
+
+### Documentation
+
+* 0.71.0 release gate — coherence audit, Codex end-to-end follow-ups ([#360](https://github.com/lazynet/lazy-harness/issues/360)–[#368](https://github.com/lazynet/lazy-harness/issues/368) + B2) ([#370](https://github.com/lazynet/lazy-harness/issues/370)) ([6978747](https://github.com/lazynet/lazy-harness/commit/69787471f1bf17eff537601f287a3b5f2ab5cdd3))
+
 ## [0.70.0](https://github.com/lazynet/lazy-harness/compare/v0.69.0...v0.70.0) (2026-09-16)
 
 
