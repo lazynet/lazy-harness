@@ -49,6 +49,8 @@ EXPECTED = (
     ("live-bare", "live-bare", "probe-bare"),
 )
 
+WITNESS_VAR = "EXEC_PROBE_WITNESS"
+
 _SHIM = """#!/bin/sh
 printf '%s %s\\n' "$(basename "$0")" "$*" >> "$EXEC_PROBE_WITNESS"
 exit 97
@@ -112,10 +114,13 @@ def test_dry_run_spawns_nothing(tmp_path: Path) -> None:
 def test_a_real_run_reaches_for_the_binary(tmp_path: Path) -> None:
     """The half that makes the absence above evidence of the `--dry-run` guard
     rather than of a script that never looked for a binary at all."""
-    _run(tmp_path)
+    result = _run(tmp_path)
 
     witness = tmp_path / "witness"
-    assert witness.exists(), "the probe never invoked anything without --dry-run"
+    assert witness.exists(), (
+        f"the probe never invoked anything without --dry-run.\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
 
 
 def test_every_variant_is_rendered_in_order(tmp_path: Path) -> None:
@@ -244,3 +249,48 @@ def test_the_probe_declares_only_pre_tool_use(tmp_path: Path) -> None:
     document = _rendered(_run(tmp_path, "--dry-run"))
 
     assert list(document["hooks"]) == ["PreToolUse"]
+
+
+def _run_with_failing_git(tmp_path: Path) -> subprocess.CompletedProcess[str]:
+    """A real run on a machine where every `git` invocation fails.
+
+    The property, not one machine's cause: the probes seed a workspace with
+    `git`, `--skip-git-repo-check` means codex needs no repo, and under `set -e`
+    a failing seed aborted the whole script before anything was invoked — which
+    reads as "the binary was never reached" rather than as the git failure it
+    was. Shimming git to fail outright covers a missing binary, a missing
+    committer identity and a read-only parent alike.
+    """
+    bin_dir, witness = _shims(tmp_path)
+    # Writes no witness line, so it cannot satisfy the assertion by itself.
+    failing_git = bin_dir / "git"
+    failing_git.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    failing_git.chmod(0o755)
+
+    auth = tmp_path / "auth.json"
+    auth.write_text('{"tokens": {}}', encoding="utf-8")
+
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
+    env[WITNESS_VAR] = str(witness)
+    env["CODEX_AUTH"] = str(auth)
+    env["PROBE_OUT"] = str(tmp_path / "out")
+
+    return subprocess.run(
+        ["bash", str(PROBE_SH)],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(tmp_path),
+        timeout=120,
+    )
+
+
+def test_a_real_run_survives_a_machine_where_git_fails(tmp_path: Path) -> None:
+    """The workspace seed is a convenience and must never end the run."""
+    result = _run_with_failing_git(tmp_path)
+
+    assert (tmp_path / "witness").exists(), (
+        f"the probe died before invoking anything.\nstdout:\n{result.stdout}\n"
+        f"stderr:\n{result.stderr}"
+    )

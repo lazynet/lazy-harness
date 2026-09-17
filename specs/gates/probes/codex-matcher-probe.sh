@@ -288,9 +288,12 @@ drive_turn() {
 
   work="$(mktemp -d)"
   SCRATCH_DIRS+=("$work")
-  ( cd "$work" && git init -q )
   printf 'first line\nsecond line\n' > "$work/target.txt"
-  ( cd "$work" && git add -A && git commit -q -m seed )
+  # Non-fatal, and no commit. `--skip-git-repo-check` below means codex needs no
+  # repo, so this is a convenience — and `git commit` needs a committer identity
+  # that a fresh machine may not have. Under `set -e` that failure would abort
+  # the probe mid-run, after the first turn and before the second.
+  ( cd "$work" && git init -q ) >/dev/null 2>&1 || true
 
   echo "-- turn: $turn"
   run_with_timeout "$BIN" exec \

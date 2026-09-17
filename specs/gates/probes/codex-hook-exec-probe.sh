@@ -316,7 +316,12 @@ WORK="$(mktemp -d)"
 SCRATCH_DIRS+=("$WORK")
 mkdir -p "$WORK/doomed"
 printf 'seed\n' > "$WORK/doomed/keep.txt"
-( cd "$WORK" && git init -q && git add -A && git commit -q -m seed ) >/dev/null 2>&1
+# `git init` only, and non-fatal. `--skip-git-repo-check` below means codex
+# needs no repo at all, so the seed is a convenience — and `git commit` needs a
+# committer identity, which a CI runner and a fresh machine both lack. Under
+# `set -e` that failure aborted the probe before it invoked anything, which read
+# as "the binary was never reached".
+( cd "$WORK" && git init -q ) >/dev/null 2>&1 || true
 
 echo "probe output: $OUT"
 echo "binary:       $("$BIN" --version 2>&1 | head -1)"

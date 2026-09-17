@@ -45,6 +45,8 @@ EXPECTED_GROUPS: tuple[tuple[str, str | None], ...] = (
     ("none", None),
 )
 
+WITNESS_VAR = "MATCHER_PROBE_WITNESS"
+
 _SHIM = """#!/bin/sh
 printf '%s %s\\n' "$(basename "$0")" "$*" >> "$MATCHER_PROBE_WITNESS"
 exit 97
@@ -111,10 +113,13 @@ def test_a_real_run_reaches_for_the_binary(tmp_path: Path) -> None:
     """The half that makes the absence above load-bearing: the shims are on
     this PATH, executable and observed, so an empty witness is `--dry-run`
     suppressing execution rather than the script failing to look."""
-    _run(tmp_path)
+    result = _run(tmp_path)
 
     witness = tmp_path / "witness"
-    assert witness.exists(), "the probe never invoked codex without --dry-run"
+    assert witness.exists(), (
+        f"the probe never invoked codex without --dry-run.\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
     assert "codex" in witness.read_text(encoding="utf-8")
 
 
@@ -177,3 +182,48 @@ def test_the_handler_is_written_beside_the_rendered_document(tmp_path: Path) -> 
     handler = groups[0]["hooks"][0]["command"].split()[1]
     assert Path(handler).is_file(), f"handler not written: {handler}"
     assert Path(handler).read_text(encoding="utf-8").startswith("#!")
+
+
+def _run_with_failing_git(tmp_path: Path) -> subprocess.CompletedProcess[str]:
+    """A real run on a machine where every `git` invocation fails.
+
+    The property, not one machine's cause: the probes seed a workspace with
+    `git`, `--skip-git-repo-check` means codex needs no repo, and under `set -e`
+    a failing seed aborted the whole script before anything was invoked — which
+    reads as "the binary was never reached" rather than as the git failure it
+    was. Shimming git to fail outright covers a missing binary, a missing
+    committer identity and a read-only parent alike.
+    """
+    bin_dir, witness = _shims(tmp_path)
+    # Writes no witness line, so it cannot satisfy the assertion by itself.
+    failing_git = bin_dir / "git"
+    failing_git.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    failing_git.chmod(0o755)
+
+    auth = tmp_path / "auth.json"
+    auth.write_text('{"tokens": {}}', encoding="utf-8")
+
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
+    env[WITNESS_VAR] = str(witness)
+    env["CODEX_AUTH"] = str(auth)
+    env["PROBE_OUT"] = str(tmp_path / "out")
+
+    return subprocess.run(
+        ["bash", str(PROBE_SH)],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(tmp_path),
+        timeout=120,
+    )
+
+
+def test_a_real_run_survives_a_machine_where_git_fails(tmp_path: Path) -> None:
+    """The workspace seed is a convenience and must never end the run."""
+    result = _run_with_failing_git(tmp_path)
+
+    assert (tmp_path / "witness").exists(), (
+        f"the probe died before invoking anything.\nstdout:\n{result.stdout}\n"
+        f"stderr:\n{result.stderr}"
+    )
