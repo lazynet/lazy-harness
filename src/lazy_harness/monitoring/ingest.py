@@ -185,47 +185,56 @@ def ingest_profile(
 
     for session_file in files:
         report.sessions_scanned += 1
-        identity = _identify(agent, session_file)
-        session_date = extract_session_date(session_file)
-        novel_for_this_file = 0
-        for event in agent.read(session_file):
-            if event.signal is not Signal.TOKEN_USAGE or event.usage is None:
-                continue
-            report.messages_total += 1
-            # A provider with no stable id for the turn gets counted every
-            # time: there is nothing to match on, and dropping an unidentified
-            # turn loses real tokens where double-counting one only inflates a
-            # resume's shared prefix.
-            if event.message_id is not None:
-                if event.message_id in seen_msg_ids:
-                    report.messages_deduped += 1
+        try:
+            identity = _identify(agent, session_file)
+            session_date = extract_session_date(session_file)
+            novel_for_this_file = 0
+            for event in agent.read(session_file):
+                if event.signal is not Signal.TOKEN_USAGE or event.usage is None:
                     continue
-                seen_msg_ids.add(event.message_id)
-            novel_for_this_file += 1
-            # `UNIQUE(session, model)` needs a model, and an event that names
-            # none still spent tokens. "unknown" is the spelling the pricing
-            # table already treats as unpriced, which is the honest outcome.
-            key = (identity.session_id, event.model or "unknown")
-            agg = aggregated.get(key)
-            if agg is None:
-                agg = {
-                    "input": 0,
-                    "output": 0,
-                    "cache_read": 0,
-                    "cache_create": 0,
-                    "cache_create_1h": 0,
-                    "date": session_date,
-                    "project": identity.project or "",
-                }
-                aggregated[key] = agg
-            usage = event.usage
-            agg["input"] += usage.input_tokens or 0
-            agg["output"] += usage.output_tokens or 0
-            agg["cache_read"] += usage.cache_read_tokens or 0
-            agg["cache_create"] += usage.cache_creation_tokens or 0
-            agg["cache_create_1h"] += usage.cache_creation_1h_tokens or 0
-        if novel_for_this_file == 0:
-            report.sessions_skipped += 1
+                report.messages_total += 1
+                # A provider with no stable id for the turn gets counted every
+                # time: there is nothing to match on, and dropping an unidentified
+                # turn loses real tokens where double-counting one only inflates a
+                # resume's shared prefix.
+                if event.message_id is not None:
+                    if event.message_id in seen_msg_ids:
+                        report.messages_deduped += 1
+                        continue
+                    seen_msg_ids.add(event.message_id)
+                novel_for_this_file += 1
+                # `UNIQUE(session, model)` needs a model, and an event that names
+                # none still spent tokens. "unknown" is the spelling the pricing
+                # table already treats as unpriced, which is the honest outcome.
+                key = (identity.session_id, event.model or "unknown")
+                agg = aggregated.get(key)
+                if agg is None:
+                    agg = {
+                        "input": 0,
+                        "output": 0,
+                        "cache_read": 0,
+                        "cache_create": 0,
+                        "cache_create_1h": 0,
+                        "date": session_date,
+                        "project": identity.project or "",
+                    }
+                    aggregated[key] = agg
+                usage = event.usage
+                agg["input"] += usage.input_tokens or 0
+                agg["output"] += usage.output_tokens or 0
+                agg["cache_read"] += usage.cache_read_tokens or 0
+                agg["cache_create"] += usage.cache_creation_tokens or 0
+                agg["cache_create_1h"] += usage.cache_creation_1h_tokens or 0
+            if novel_for_this_file == 0:
+                report.sessions_skipped += 1
+        except Exception as e:
+            # One file's defect must not cost every other session in the
+            # profile. A foreign or corrupt JSONL is data this harness did not
+            # write and cannot fully anticipate the shape of; the honest
+            # response is to name it and keep walking, not to guess at every
+            # way a transcript could be malformed ahead of time.
+            report.errors.append(f"{session_file}: {e}")
+            continue
 
     entries: list[dict] = []
     events: list[MetricEvent] = []

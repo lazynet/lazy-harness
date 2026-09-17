@@ -23,6 +23,8 @@ Two pieces are needed on either side of the pipeline:
 
 The whole pass is summarized as an `IngestReport` with the following counters: `sessions_scanned`, `sessions_updated`, `sessions_skipped`, `messages_total`, `messages_deduped`, and any per-file `errors`. `lh metrics ingest` prints the headline counters as the last line of output.
 
+**Ingest is fail-soft per file.** A file that raises while being dated, identified, read or parsed — a foreign JSONL dropped under a profile's sessions tree by something other than the agent, a half-written transcript, a permissions error — is recorded as `"<path>: <exc>"` in `errors` and the walk moves on to the next file; it never aborts the profile or the run. The headline line always shows an `errors N` count when `N > 0` so a fail-soft run is never mistaken for a clean one; the individual paths only print under `--verbose`.
+
 ```mermaid
 flowchart LR
   A[lh metrics ingest] --> B[load config.toml]

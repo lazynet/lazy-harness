@@ -1044,3 +1044,125 @@ def test_ingest_skips_the_memory_logs_the_reader_yields(tmp_path: Path) -> None:
     assert [r["session"] for r in rows] == ["sess-1"]
     assert sum(r["input"] for r in rows) == 100
     db.close()
+
+
+# --- one bad file must not abort the whole profile (fail-soft) --------------
+
+
+def _reader_that_raises_reading(uuid_to_break: str):
+    """A real reader whose `.read()` blows up on one specific transcript.
+
+    Subclassed rather than a bare fake: the claim under test is that
+    `ingest_profile`'s own loop survives an exception from *any* stage
+    (`read`, `session_identity`, `extract_session_date`) for one file while
+    still processing the rest — a fake with a trivial `read()` would prove
+    only that the fake didn't raise.
+    """
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    class _Flaky(ClaudeCodeAdapter):
+        def read(self, path):
+            if uuid_to_break in path.name:
+                raise ValueError(f"boom on {path.name}")
+            yield from super().read(path)
+
+    return _Flaky()
+
+
+def test_ingest_profile_survives_one_bad_file_and_keeps_the_rest(tmp_path: Path) -> None:
+    """A single file's exception is recorded in `report.errors`; the run does
+    not abort and every other session is still ingested."""
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.ingest import ingest_profile
+    from lazy_harness.monitoring.pricing import load_pricing
+
+    prof = _profile(tmp_path, "lazy")
+    good_uuid = "11111111-1111-1111-1111-111111111111"
+    bad_uuid = "22222222-2222-2222-2222-222222222222"
+    _write_session(
+        prof.config_dir / "projects",
+        "-Users-foo-repos-demo",
+        good_uuid,
+        [_assistant_msg(inp=100, out=50, msg_id="good")],
+    )
+    _write_session(
+        prof.config_dir / "projects",
+        "-Users-foo-repos-demo",
+        bad_uuid,
+        [_assistant_msg(inp=200, out=80, msg_id="bad")],
+    )
+
+    db = MetricsDB(tmp_path / "metrics.db")
+    report = ingest_profile(prof, db, load_pricing(), agent=_reader_that_raises_reading(bad_uuid))
+
+    assert report.sessions_updated == 1
+    assert len(report.errors) == 1
+    assert bad_uuid in report.errors[0]
+    assert "boom" in report.errors[0]
+
+    rows = db.query_stats(period="all")
+    assert [r["session"] for r in rows] == [good_uuid]
+    assert rows[0]["input"] == 100
+    db.close()
+
+
+def test_ingest_profile_ingests_the_valid_session_past_a_foreign_jsonl(
+    tmp_path: Path,
+) -> None:
+    """The measured defect: a Copilot hook payload dump nested under
+    `projects/<slug>/reports/.../*.jsonl` (first line `{"cwd", "sessionId",
+    "timestamp": <int>, "toolArgs", "toolName"}`, no `type`) must not abort
+    ingest for the whole profile.
+
+    With `extract_session_date` guarding non-`str` timestamps (fix 1),
+    `ClaudeCodeAdapter.read()` already yields nothing for a line with no
+    recognised `type`, so this file produces zero events and is counted via
+    the ordinary `sessions_skipped` path — it does NOT raise, and so does NOT
+    appear in `report.errors`. That is the correct outcome (the same as any
+    other transcript with no assistant turns yet), not a gap fix 2 needs to
+    close; fix 2's own coverage is
+    `test_ingest_profile_survives_one_bad_file_and_keeps_the_rest`, which
+    forces an actual exception.
+    """
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.ingest import ingest_profile
+    from lazy_harness.monitoring.pricing import load_pricing
+
+    prof = _profile(tmp_path, "lazy")
+    good_uuid = "33333333-3333-3333-3333-333333333333"
+    _write_session(
+        prof.config_dir / "projects",
+        "-Users-foo-repos-demo",
+        good_uuid,
+        [_assistant_msg(inp=100, out=50, msg_id="good")],
+    )
+    foreign_dir = (
+        prof.config_dir
+        / "projects"
+        / "-Users-foo-repos-demo"
+        / "reports"
+        / "copilot-probe1-artifacts"
+        / "x"
+    )
+    foreign_dir.mkdir(parents=True)
+    (foreign_dir / "y.jsonl").write_text(
+        json.dumps(
+            {
+                "cwd": "/w",
+                "sessionId": "s1",
+                "timestamp": 1758000000,
+                "toolArgs": {},
+                "toolName": "Bash",
+            }
+        )
+        + "\n"
+    )
+
+    db = MetricsDB(tmp_path / "metrics.db")
+    report = ingest_profile(prof, db, load_pricing())
+
+    assert report.sessions_updated == 1
+    rows = db.query_stats(period="all")
+    assert [r["session"] for r in rows] == [good_uuid]
+    assert rows[0]["input"] == 100
+    db.close()
