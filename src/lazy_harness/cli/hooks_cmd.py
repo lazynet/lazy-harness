@@ -12,8 +12,8 @@ from rich.table import Table
 from lazy_harness.core.config import ConfigError, load_config
 from lazy_harness.core.paths import config_file
 from lazy_harness.hooks.loader import (
-    _BUILTIN_HOOKS,
     list_builtin_hooks,
+    resolve_builtin_spec,
     resolve_hooks_for_event,
 )
 from lazy_harness.hooks.runner import resolve_profile, run_hook
@@ -92,7 +92,7 @@ def hook_invoke(name: str, profile: str | None) -> None:
     where a non-zero exit is a verdict on the operation rather than a report on
     the harness: a typo in a settings file would otherwise block tool calls.
     """
-    spec = _BUILTIN_HOOKS.get(name)
+    spec = resolve_builtin_spec(name)
     if spec is None:
         click.echo(f"Unknown hook: {name}", err=True)
         sys.exit(0)

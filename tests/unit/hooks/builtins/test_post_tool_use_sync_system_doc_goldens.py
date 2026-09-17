@@ -1,4 +1,4 @@
-"""Byte goldens for `post-tool-use-sync-claude`, one per branch, captured pre-migration.
+"""Byte goldens for `post-tool-use-sync-system-doc`, one per branch, captured pre-migration.
 
 This hook has no output channel. Every branch ends at `sys.exit(0)` having
 written nothing to stdout or stderr, so the three frozen channels collapse to
@@ -42,7 +42,7 @@ from tests.unit.hooks.builtins._goldens import (
     run_through_runner,
 )
 
-HOOK = "post-tool-use-sync-claude"
+HOOK = "post-tool-use-sync-system-doc"
 
 SESSION = "0193b0de-5555-6666-7777-888899990000"
 
@@ -327,14 +327,14 @@ def test_the_trigger_set_is_derived_from_the_segment_roles() -> None:
     file quietly goes stale.
     """
     from lazy_harness.core.sync_agent_md import segment_filenames
-    from lazy_harness.hooks.builtins.post_tool_use_sync_claude import SEGMENT_FILES
+    from lazy_harness.hooks.builtins.post_tool_use_sync_system_doc import SEGMENT_FILES
 
     assert SEGMENT_FILES == segment_filenames()
 
 
 def test_an_edit_to_a_role_named_segment_regenerates_the_tree(tmp_path: Path) -> None:
     """The hook fires on the role names, not only on the legacy ones."""
-    from lazy_harness.hooks.builtins.post_tool_use_sync_claude import _trees_touched
+    from lazy_harness.hooks.builtins.post_tool_use_sync_system_doc import _trees_touched
 
     tree = tmp_path / "profiles"
     assert _trees_touched((tree / "lazy" / "head.md",)) == [tree]

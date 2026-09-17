@@ -44,7 +44,7 @@ scripts = ["pre-compact"]
 | `pre_compact` | `PreCompact` | Immediately before Claude Code compacts conversation history | `pre-compact` | Preserve working state |
 | `post_compact` | `PostCompact` | Immediately after Claude Code compacts conversation history | — | Available for your own hooks. No built-in ships here: the event's executor returns only a user-facing message, so a hook on it cannot reach the model. |
 | `pre_tool_use` | `PreToolUse` | Before each tool call | `pre-tool-use-security`, `pre-tool-use-git-scope`, `pre-tool-use-memory-size`, `pre-tool-use-read-size` | Block destructive / exfiltration commands, block an unsafe `git stash` on a shared stash stack, warn before MEMORY.md or CLAUDE.md exceeds its own line/byte ceiling, warn before an unbounded read of a large file |
-| `post_tool_use` | `PostToolUse` | After each tool call | `post-tool-use-format`, `post-tool-use-sync-claude` | Auto-format edited files, regenerate segmented `CLAUDE.md` after profile edits |
+| `post_tool_use` | `PostToolUse` | After each tool call | `post-tool-use-format`, `post-tool-use-sync-system-doc` | Auto-format edited files, regenerate segmented `CLAUDE.md` after profile edits |
 | `notification` | `Notification` | Ad-hoc agent notifications | — | Desktop notifications, integrations |
 | `user_prompt_submit` | `UserPromptSubmit` | When the user submits a prompt | `user-prompt-goal` (opt-in, not in the default set — see below) | Goal-declaration sensor, third-party integrations |
 | `permission_request` | `PermissionRequest` | When the agent asks for a permission decision | — | Third-party integrations, approval routing |
@@ -63,7 +63,7 @@ The mapping lives in each adapter's `hook_events()` — other agents expose diff
 | `pre_compact` | `pre-compact` |
 | `post_compact` | — |
 | `pre_tool_use` | `pre-tool-use-security`, `pre-tool-use-git-scope`, `pre-tool-use-memory-size`, `pre-tool-use-read-size` |
-| `post_tool_use` | `post-tool-use-format`, `post-tool-use-sync-claude` |
+| `post_tool_use` | `post-tool-use-format`, `post-tool-use-sync-system-doc` |
 
 **Overriding.** Declaring `[hooks.<event>]` with `scripts = [...]` in `config.toml` replaces the default for that event. The smallest override unit is one event — there is no per-script disable. To opt out of a single event entirely, declare it with `scripts = []`. Events declared in `config.toml` that the framework does not know about (e.g. `notification`) pass through verbatim.
 
@@ -474,9 +474,9 @@ lint" must not report its own absence somewhere the model won't see. A note is a
 `logs/hooks.log` for every unavailable run, so the rate of skipped lints is measurable
 over time.
 
-### `post-tool-use-sync-claude` — runs on `PostToolUse`
+### `post-tool-use-sync-system-doc` — runs on `PostToolUse`
 
-Source: `src/lazy_harness/hooks/builtins/post_tool_use_sync_claude.py`.
+Source: `src/lazy_harness/hooks/builtins/post_tool_use_sync_system_doc.py`.
 
 Responsibility: keep a profile's composed `CLAUDE.md` in sync with its segmented sources. The framework lets a profile split its agent-facing memory across `CLAUDE.head.md`, `CLAUDE.tail.md`, and `CLAUDE.common.md` (shared via `_common/`); on every edit to one of those segments the composed `CLAUDE.md` would drift unless something re-stitched it.
 

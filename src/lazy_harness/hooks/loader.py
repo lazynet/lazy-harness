@@ -158,8 +158,8 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
         event="post_tool_use",
         operations=frozenset({Operation.MODIFY_FILE}),
     ),
-    "post-tool-use-sync-claude": BuiltinHookSpec(
-        module="lazy_harness.hooks.builtins.post_tool_use_sync_claude",
+    "post-tool-use-sync-system-doc": BuiltinHookSpec(
+        module="lazy_harness.hooks.builtins.post_tool_use_sync_system_doc",
         matcher="Edit|Write",
         event="post_tool_use",
         operations=frozenset({Operation.MODIFY_FILE}),
@@ -264,17 +264,48 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
 }
 
 
+# Renamed builtins, old key -> canonical key. The old key is deliberately not
+# a second entry in `_BUILTIN_HOOKS`: one spec, one implementation, and this is
+# the only place that says the two names mean the same thing. A `config.toml`
+# naming the old key must keep deploying the same module — it may be synced
+# across machines the operator cannot rename in lockstep — so the alias stays
+# until the operator renames it, which `alias_target` lets deploy notice and
+# say out loud (`deploy/engine.py:_hook_entries_for`).
+_HOOK_ALIASES: dict[str, str] = {
+    "post-tool-use-sync-claude": "post-tool-use-sync-system-doc",
+}
+
+
+def alias_target(name: str) -> str | None:
+    """The canonical key `name` now resolves to, or `None` if it is not an alias."""
+    return _HOOK_ALIASES.get(name)
+
+
+def resolve_builtin_spec(name: str) -> BuiltinHookSpec | None:
+    """The spec `name` names, alias-resolved. The one place that reads
+    `_BUILTIN_HOOKS` by a name that might be a renamed hook's old key —
+    `run_hook` and `hook_invoke` need this exactly as much as `_find_builtin`
+    does, since a deployed `lh hook post-tool-use-sync-claude --profile ...`
+    command reaches them directly, never through `resolve_hook`.
+    """
+    return _BUILTIN_HOOKS.get(_HOOK_ALIASES.get(name, name))
+
+
 def list_builtin_hooks() -> list[str]:
     return list(_BUILTIN_HOOKS.keys())
 
 
 def _find_builtin(name: str, event: str | None = None) -> HookInfo | None:
-    spec = _BUILTIN_HOOKS.get(name)
+    spec = resolve_builtin_spec(name)
     if spec is None:
         return None
     parts = spec.module.split(".")
     base = Path(__file__).parent / "builtins" / f"{parts[-1]}.py"
     return HookInfo(
+        # The name it was asked by, not the canonical one: `deploy/engine.py`
+        # writes this into the generated `lh hook <name> --profile ...`
+        # command, and that command must keep invoking the name the operator's
+        # config already has.
         name=name,
         path=base,
         is_builtin=True,
@@ -328,7 +359,7 @@ def builtin_operations(name: str) -> frozenset[Operation]:
     A user hook resolves to the empty set, matching `builtin_signals`: nothing
     outside the registry declares operations.
     """
-    spec = _BUILTIN_HOOKS.get(name)
+    spec = resolve_builtin_spec(name)
     return spec.operations if spec is not None else frozenset()
 
 
@@ -345,5 +376,5 @@ def builtin_signals(name: str, event: str | None = None) -> frozenset[Signal]:
     caller that cannot say which placement it means is not owed a set that
     would omit a hook from a deploy.
     """
-    spec = _BUILTIN_HOOKS.get(name)
+    spec = resolve_builtin_spec(name)
     return spec.signals_for(event) if spec is not None else frozenset()

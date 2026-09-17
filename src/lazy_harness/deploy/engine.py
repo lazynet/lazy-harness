@@ -229,6 +229,22 @@ def _report_omitted(
     return kept
 
 
+def _report_renamed(script_names: list[str]) -> None:
+    """Name the rename, once per alias found in a profile's config.
+
+    The alias itself keeps deploying (`resolve_script_names` resolves it same
+    as the canonical key), so this is a nudge rather than a gate: the operator
+    can move at their own pace, but not without being told there is a move to
+    make.
+    """
+    from lazy_harness.hooks.loader import alias_target
+
+    for name in script_names:
+        canonical = alias_target(name)
+        if canonical is not None:
+            click.echo(f"  · hook '{name}' is now '{canonical}'; rename it in config.toml")
+
+
 def _hook_entries_for(cfg: Config, profile: str, binary: str) -> dict[str, list[HookEntry]]:
     """The hook entries one profile's config gets, as agent-neutral records.
 
@@ -261,6 +277,7 @@ def _hook_entries_for(cfg: Config, profile: str, binary: str) -> dict[str, list[
     entries: dict[str, list[HookEntry]] = {}
     for event_name, script_names in effective.items():
         script_names = _report_omitted(script_names, event_name, profile, undeliverable)
+        _report_renamed(script_names)
         if not script_names:
             continue
         hooks = resolve_script_names(script_names, event=event_name)

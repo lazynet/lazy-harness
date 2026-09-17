@@ -1,4 +1,4 @@
-"""Unit tests for post_tool_use_sync_claude hook."""
+"""Unit tests for post_tool_use_sync_system_doc hook."""
 
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ def _no_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_triggers_on_head_edit_under_profiles(monkeypatch: pytest.MonkeyPatch) -> None:
-    from lazy_harness.hooks.builtins import post_tool_use_sync_claude as mod
+    from lazy_harness.hooks.builtins import post_tool_use_sync_system_doc as mod
 
     fake_sync = MagicMock(return_value=[])
     monkeypatch.setattr(mod, "sync_profiles", fake_sync)
@@ -66,7 +66,7 @@ def test_triggers_on_head_edit_under_profiles(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_triggers_on_tail_write_under_profiles(monkeypatch: pytest.MonkeyPatch) -> None:
-    from lazy_harness.hooks.builtins import post_tool_use_sync_claude as mod
+    from lazy_harness.hooks.builtins import post_tool_use_sync_system_doc as mod
 
     fake_sync = MagicMock(return_value=[])
     monkeypatch.setattr(mod, "sync_profiles", fake_sync)
@@ -77,7 +77,7 @@ def test_triggers_on_tail_write_under_profiles(monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_triggers_on_common_edit(monkeypatch: pytest.MonkeyPatch) -> None:
-    from lazy_harness.hooks.builtins import post_tool_use_sync_claude as mod
+    from lazy_harness.hooks.builtins import post_tool_use_sync_system_doc as mod
 
     fake_sync = MagicMock(return_value=[])
     monkeypatch.setattr(mod, "sync_profiles", fake_sync)
@@ -88,7 +88,7 @@ def test_triggers_on_common_edit(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_skips_unrelated_file(monkeypatch: pytest.MonkeyPatch) -> None:
-    from lazy_harness.hooks.builtins import post_tool_use_sync_claude as mod
+    from lazy_harness.hooks.builtins import post_tool_use_sync_system_doc as mod
 
     fake_sync = MagicMock()
     monkeypatch.setattr(mod, "sync_profiles", fake_sync)
@@ -100,7 +100,7 @@ def test_skips_unrelated_file(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_skips_non_edit_tool(monkeypatch: pytest.MonkeyPatch) -> None:
-    from lazy_harness.hooks.builtins import post_tool_use_sync_claude as mod
+    from lazy_harness.hooks.builtins import post_tool_use_sync_system_doc as mod
 
     fake_sync = MagicMock()
     monkeypatch.setattr(mod, "sync_profiles", fake_sync)
@@ -120,7 +120,7 @@ def test_skips_a_notebook_edit_even_when_it_is_named_like_a_segment(
     whose normalised path is named `CLAUDE.head.md` clears it. This fails the
     moment the tool-name gate is replaced by `event.tool.operation`.
     """
-    from lazy_harness.hooks.builtins import post_tool_use_sync_claude as mod
+    from lazy_harness.hooks.builtins import post_tool_use_sync_system_doc as mod
 
     fake_sync = MagicMock()
     monkeypatch.setattr(mod, "sync_profiles", fake_sync)
@@ -136,7 +136,7 @@ def test_skips_a_notebook_edit_even_when_it_is_named_like_a_segment(
 
 def test_skips_segment_outside_profiles_tree(monkeypatch: pytest.MonkeyPatch) -> None:
     """A `CLAUDE.head.md` outside a `profiles/<name>/` tree must not trigger."""
-    from lazy_harness.hooks.builtins import post_tool_use_sync_claude as mod
+    from lazy_harness.hooks.builtins import post_tool_use_sync_system_doc as mod
 
     fake_sync = MagicMock()
     monkeypatch.setattr(mod, "sync_profiles", fake_sync)
@@ -148,7 +148,7 @@ def test_skips_segment_outside_profiles_tree(monkeypatch: pytest.MonkeyPatch) ->
 
 
 def test_skips_an_edit_carrying_no_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    from lazy_harness.hooks.builtins import post_tool_use_sync_claude as mod
+    from lazy_harness.hooks.builtins import post_tool_use_sync_system_doc as mod
 
     fake_sync = MagicMock()
     monkeypatch.setattr(mod, "sync_profiles", fake_sync)
@@ -160,7 +160,7 @@ def test_skips_an_edit_carrying_no_path(monkeypatch: pytest.MonkeyPatch) -> None
 
 def test_skips_an_event_carrying_no_tool_call(monkeypatch: pytest.MonkeyPatch) -> None:
     """`ToolCall` is optional on `HookEvent`, so the gate has to survive `None`."""
-    from lazy_harness.hooks.builtins import post_tool_use_sync_claude as mod
+    from lazy_harness.hooks.builtins import post_tool_use_sync_system_doc as mod
 
     fake_sync = MagicMock()
     monkeypatch.setattr(mod, "sync_profiles", fake_sync)
@@ -180,7 +180,7 @@ def test_syncs_every_distinct_tree_a_multi_file_edit_touched(
     against today's adapter — which is the point: the singular assumption
     belongs in the adapter that knows it holds, not in the hook.
     """
-    from lazy_harness.hooks.builtins import post_tool_use_sync_claude as mod
+    from lazy_harness.hooks.builtins import post_tool_use_sync_system_doc as mod
 
     fake_sync = MagicMock(return_value=[])
     monkeypatch.setattr(mod, "sync_profiles", fake_sync)
@@ -222,7 +222,7 @@ def test_a_deleted_segment_regenerates_its_tree(monkeypatch: pytest.MonkeyPatch)
     removal produced no `FileEdit` at all, so the deployed contract file went
     stale with nothing on any channel saying so.
     """
-    from lazy_harness.hooks.builtins import post_tool_use_sync_claude as mod
+    from lazy_harness.hooks.builtins import post_tool_use_sync_system_doc as mod
 
     fake_sync = MagicMock(return_value=[])
     monkeypatch.setattr(mod, "sync_profiles", fake_sync)
@@ -252,7 +252,7 @@ def test_a_deleted_file_that_is_no_segment_still_syncs_nothing(
     """The must-fail half of the test above. Reading `deletes` must not widen
     the *filename* gate: a tree is regenerated because a segment moved, and a
     delete of anything else under `profiles/` is not that."""
-    from lazy_harness.hooks.builtins import post_tool_use_sync_claude as mod
+    from lazy_harness.hooks.builtins import post_tool_use_sync_system_doc as mod
 
     fake_sync = MagicMock(return_value=[])
     monkeypatch.setattr(mod, "sync_profiles", fake_sync)
@@ -281,7 +281,7 @@ def test_one_call_editing_and_deleting_syncs_both_trees(
 ) -> None:
     """The mixed blob probe 5 measured, with a delete in it. The two collections
     are read in order — edits then deletes — and neither shadows the other."""
-    from lazy_harness.hooks.builtins import post_tool_use_sync_claude as mod
+    from lazy_harness.hooks.builtins import post_tool_use_sync_system_doc as mod
 
     fake_sync = MagicMock(return_value=[])
     monkeypatch.setattr(mod, "sync_profiles", fake_sync)
@@ -311,7 +311,7 @@ def test_one_call_editing_and_deleting_syncs_both_trees(
 
 def test_swallows_sync_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     """If sync_profiles raises, the hook still abstains — never block the agent."""
-    from lazy_harness.hooks.builtins import post_tool_use_sync_claude as mod
+    from lazy_harness.hooks.builtins import post_tool_use_sync_system_doc as mod
 
     def boom(*_: object, **__: object) -> object:
         raise RuntimeError("kaboom")
@@ -334,7 +334,7 @@ def test_resolves_the_adapter_of_the_invoked_profile(
     that gets regenerated; this one names the adapter directly, so a change
     that kept writing the right file for the wrong reason still fails here.
     """
-    from lazy_harness.hooks.builtins import post_tool_use_sync_claude as mod
+    from lazy_harness.hooks.builtins import post_tool_use_sync_system_doc as mod
 
     config_dir = tmp_path / "config"
     config_dir.mkdir()

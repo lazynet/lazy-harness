@@ -1,7 +1,7 @@
 {
   "post_tool_use": [
     "post-tool-use-format",
-    "post-tool-use-sync-claude"
+    "post-tool-use-sync-system-doc"
   ],
   "pre_compact": [
     "pre-compact"

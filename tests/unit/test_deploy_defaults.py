@@ -70,15 +70,15 @@ def test_merge_preserves_user_custom_event() -> None:
     assert result["session_start"] == ["context-inject", "session-start-preflight"]
 
 
-def test_sync_claude_hook_excluded_for_null_agent() -> None:
+def test_sync_system_doc_hook_excluded_for_null_agent() -> None:
     result = merge_with_defaults({}, _null_agent())
 
     all_scripts = [s for scripts in result.values() for s in scripts]
-    assert "post-tool-use-sync-claude" not in all_scripts
+    assert "post-tool-use-sync-system-doc" not in all_scripts
 
 
-def test_sync_claude_hook_included_for_claude_agent() -> None:
+def test_sync_system_doc_hook_included_for_claude_agent() -> None:
     result = merge_with_defaults({}, _claude_agent())
 
     all_scripts = [s for scripts in result.values() for s in scripts]
-    assert "post-tool-use-sync-claude" in all_scripts
+    assert "post-tool-use-sync-system-doc" in all_scripts

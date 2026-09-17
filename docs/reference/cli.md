@@ -621,7 +621,7 @@ Manages agent profiles.
 
 `lh profile move --from <a> --to <b>` relocates per-project conversation history (`<config_dir>/projects/<encoded-cwd>/`) between profiles without losing JSONL history. Useful when reclassifying a project from one profile to another. Supports `--projects a,b,c`, `--all`, `--overwrite`, and `--yes`.
 
-`lh profile sync-claude-md` recomposes every profile's `CLAUDE.md` from its segments, concatenating `<profile>/CLAUDE.head.md` + `_common/CLAUDE.common.md` + `<profile>/CLAUDE.tail.md` in that order. Only profile dirs carrying all three segments are touched; a profile with a flat, hand-written `CLAUDE.md` is skipped, never erased. The `post-tool-use-sync-claude` hook runs the same code on every edit to a segment, so this is the manual path — after a bulk edit, after pulling the profiles dir on another machine, or where that hook is not deployed.
+`lh profile sync-claude-md` recomposes every profile's `CLAUDE.md` from its segments, concatenating `<profile>/CLAUDE.head.md` + `_common/CLAUDE.common.md` + `<profile>/CLAUDE.tail.md` in that order. Only profile dirs carrying all three segments are touched; a profile with a flat, hand-written `CLAUDE.md` is skipped, never erased. The `post-tool-use-sync-system-doc` hook runs the same code on every edit to a segment, so this is the manual path — after a bulk edit, after pulling the profiles dir on another machine, or where that hook is not deployed.
 
 ```bash
 lh profile list

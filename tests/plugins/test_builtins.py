@@ -128,7 +128,7 @@ def test_hook_state_agrees_with_the_deployed_hook_set(agent_type: str) -> None:
     """Two answers to "is this hook on" that disagree is how one stops running
     with nothing reporting it.
 
-    `merge_with_defaults` drops `post-tool-use-sync-claude` when the selected
+    `merge_with_defaults` drops `post-tool-use-sync-system-doc` when the selected
     agent has no file-based system doc. The registry knew nothing about that,
     so it reported ON for an agent that would never deploy it — invisible
     today, because `state()` is only called for tools, and waiting for the

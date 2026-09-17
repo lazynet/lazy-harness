@@ -112,22 +112,76 @@ def test_post_tool_use_format_resolves_to_concrete_file() -> None:
     assert info.path.is_file()
 
 
-def test_post_tool_use_sync_claude_is_registered_as_builtin() -> None:
+def test_post_tool_use_sync_system_doc_is_registered_as_builtin() -> None:
     from lazy_harness.hooks.loader import _BUILTIN_HOOKS
 
-    assert "post-tool-use-sync-claude" in _BUILTIN_HOOKS
-    spec = _BUILTIN_HOOKS["post-tool-use-sync-claude"]
-    assert spec.module == "lazy_harness.hooks.builtins.post_tool_use_sync_claude"
+    assert "post-tool-use-sync-system-doc" in _BUILTIN_HOOKS
+    spec = _BUILTIN_HOOKS["post-tool-use-sync-system-doc"]
+    assert spec.module == "lazy_harness.hooks.builtins.post_tool_use_sync_system_doc"
 
 
-def test_post_tool_use_sync_claude_resolves_to_concrete_file() -> None:
+def test_post_tool_use_sync_system_doc_resolves_to_concrete_file() -> None:
+    from lazy_harness.hooks.loader import resolve_hook
+
+    info = resolve_hook("post-tool-use-sync-system-doc")
+    assert info is not None
+    assert info.is_builtin is True
+    assert info.path.name == "post_tool_use_sync_system_doc.py"
+    assert info.path.is_file()
+
+
+def test_post_tool_use_sync_claude_is_the_old_key_not_a_registry_entry() -> None:
+    """Renamed by decision 5 (blast-radius design). The old key must not linger
+    as a second registry entry beside the new one — one spec, one alias."""
+    from lazy_harness.hooks.loader import _BUILTIN_HOOKS
+
+    assert "post-tool-use-sync-claude" not in _BUILTIN_HOOKS
+
+
+def test_post_tool_use_sync_claude_still_resolves_via_the_alias() -> None:
+    """A shared `config.toml` naming the old key must keep deploying the same
+    module until the operator renames it — the alias is the compatibility
+    contract, not a second implementation."""
     from lazy_harness.hooks.loader import resolve_hook
 
     info = resolve_hook("post-tool-use-sync-claude")
     assert info is not None
     assert info.is_builtin is True
-    assert info.path.name == "post_tool_use_sync_claude.py"
-    assert info.path.is_file()
+    assert info.path.name == "post_tool_use_sync_system_doc.py"
+    # The name it was asked by, not the canonical one — `hook.name` is what
+    # `deploy/engine.py:hook_command` writes into the generated command, and
+    # that command must keep invoking the name the operator's config already has.
+    assert info.name == "post-tool-use-sync-claude"
+
+
+def test_a_misspelled_old_key_does_not_resolve() -> None:
+    from lazy_harness.hooks.loader import resolve_hook
+
+    assert resolve_hook("post-tool-use-sync-clod") is None
+
+
+def test_builtin_operations_resolves_the_old_key_too() -> None:
+    """`run_hook` and `hook_invoke` read a spec by name outside `resolve_hook`
+    entirely — `operations`/`signals` must not go blind on the alias just
+    because they are a second reader."""
+    from lazy_harness.hooks.loader import builtin_operations
+
+    assert builtin_operations("post-tool-use-sync-claude") == builtin_operations(
+        "post-tool-use-sync-system-doc"
+    )
+    assert builtin_operations("post-tool-use-sync-claude") != frozenset()
+
+
+def test_resolve_builtin_spec_is_what_run_hook_and_hook_invoke_use() -> None:
+    """The direct `_BUILTIN_HOOKS` readers outside this module go through this,
+    not the dict — `_find_builtin` is not the only caller with an alias to honour."""
+    from lazy_harness.hooks.loader import resolve_builtin_spec
+
+    old = resolve_builtin_spec("post-tool-use-sync-claude")
+    new = resolve_builtin_spec("post-tool-use-sync-system-doc")
+    assert old is not None
+    assert old is new
+    assert resolve_builtin_spec("post-tool-use-sync-clod") is None
 
 
 def test_post_compact_is_not_a_builtin_because_the_event_cannot_inject_context() -> None:

@@ -16,8 +16,11 @@ document it can no longer regenerate. This is the one builtin that reads
 The destinations it writes are the invoked profile's agent's, not this hook's:
 the generator reads `system_docs()` off the adapter it is handed, so a profile
 running Codex gets `AGENTS.md` regenerated from the same segments. Nothing in
-the trigger is Claude Code-specific any more; the hook's *name* still is, and
-decision 5 renames it in its own change.
+the trigger is Claude Code-specific any more, and decision 5 renames the hook
+itself to match: `post_tool_use_sync_claude` is now
+`post_tool_use_sync_system_doc`, and the registry key
+`post-tool-use-sync-claude` stays as an alias so a `config.toml` naming it
+keeps deploying this module until the operator renames it.
 
 Fail-soft: any error is swallowed and the hook abstains, because a sync
 failure must never block the agent's progress.

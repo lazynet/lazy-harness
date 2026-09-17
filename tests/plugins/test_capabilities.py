@@ -631,7 +631,7 @@ def test_a_system_doc_hook_is_reported_off_for_the_profile_that_cannot_load_it()
     )
 
     cap = Capability(
-        name="post-tool-use-sync-claude",
+        name="post-tool-use-sync-system-doc",
         kind="hook",
         cardinality=Cardinality.MANY,
         config_path="context_inject.enabled",
@@ -678,7 +678,7 @@ def test_a_multi_destination_agent_reports_its_system_doc_hook_on() -> None:
     registry._AGENTS["two-docs"] = _TwoDocs
     try:
         cap = Capability(
-            name="post-tool-use-sync-claude",
+            name="post-tool-use-sync-system-doc",
             kind="hook",
             cardinality=Cardinality.MANY,
             config_path="context_inject.enabled",

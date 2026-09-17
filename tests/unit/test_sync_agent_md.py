@@ -182,7 +182,7 @@ def test_sync_profiles_writes_each_profiles_own_system_doc(tmp_path: Path) -> No
     The destinations come from `adapter.system_docs()`, so one adapter for the
     whole tree wrote `CLAUDE.md` into a profile running an agent that reads
     `AGENTS.md` — and left the file that agent actually loads unwritten. Its
-    caller already resolves per profile (`post_tool_use_sync_claude` takes the
+    caller already resolves per profile (`post_tool_use_sync_system_doc` takes the
     firing profile's adapter), which only moved the defect: whichever profile
     fired the hook imposed its contract file on every other one.
     """
