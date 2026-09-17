@@ -143,3 +143,78 @@ def test_a_segment_dir_does_not_become_a_trigger_path(home_dir: Path) -> None:
     trees = _trees_touched((profiles / "gate" / "shared" / "head.md",))
 
     assert trees == [profiles]
+
+
+def _legacy_tree(home: Path) -> tuple[Config, Path]:
+    """The deployed shape before ADR-055: stem-keyed segments, flat assets."""
+    profiles = config_dir() / "profiles"
+    (profiles / "_common").mkdir(parents=True)
+    (profiles / "_common" / "CLAUDE.common.md").write_text("shared rules\n")
+    (profiles / "_common" / "claude-code.md").write_text("claude rules\n")
+
+    src = profiles / "gate"
+    (src / "skills").mkdir(parents=True)
+    (src / "skills" / "a.md").write_text("a")
+    (src / "CLAUDE.head.md").write_text("identity\n")
+    (src / "CLAUDE.tail.md").write_text("context\n")
+    (src / "settings.json").write_text("{}")
+
+    cfg = Config(
+        harness=HarnessConfig(version="1"),
+        profiles=ProfilesConfig(
+            default="gate",
+            items={"gate": ProfileEntry(config_dir=str(home / "claude-home"))},
+        ),
+        hooks={},
+    )
+    save_config(cfg, config_file())
+    return cfg, src
+
+
+def _claude_adapter():
+    from lazy_harness.agents.registry import get_agent
+
+    return get_agent("claude-code")
+
+
+def test_the_assembler_stops_reporting_a_legacy_layout_once_migrate_has_run(
+    home_dir: Path,
+) -> None:
+    """The two halves of ADR-043's migration window, closing together.
+
+    `sync_profiles` reports `legacy segment layout` so the pending rename is
+    visible; `migrate` performs it. If the names the rename writes were not the
+    names the assembler reads, the report would survive the migration — which
+    is the drift that would leave the fallback permanent.
+    """
+    cfg, src = _legacy_tree(home_dir)
+    profiles = config_dir() / "profiles"
+
+    before = sync_profiles(profiles, _claude_adapter(), cfg=cfg)
+    apply_migration(plan_migration(src))
+    after = sync_profiles(profiles, _claude_adapter(), cfg=cfg)
+
+    assert [r.reason for r in before] == [
+        "legacy segment layout — rename to head.md / common.md / tail.md"
+    ]
+    assert [r.reason for r in after] == [""], (
+        f"the rename left the assembler on the fallback: {after}"
+    )
+    assembled = (src / "CLAUDE.md").read_text()
+    assert "identity" in assembled
+    assert "shared rules" in assembled
+    assert "claude rules" in assembled
+
+
+def test_the_renamed_header_names_the_files_that_now_exist(home_dir: Path) -> None:
+    """The header tells the reader which files to edit. After the rename it
+    must name the role-named ones — a header still pointing at
+    `CLAUDE.head.md` sends them to a file that is not there."""
+    cfg, src = _legacy_tree(home_dir)
+    apply_migration(plan_migration(src))
+
+    sync_profiles(config_dir() / "profiles", _claude_adapter(), cfg=cfg)
+
+    header = (src / "CLAUDE.md").read_text().splitlines()[0]
+    assert "head.md / _common/common.md" in header, header
+    assert "CLAUDE.head.md" not in header
