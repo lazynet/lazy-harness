@@ -510,7 +510,7 @@ def test_an_agent_with_no_segment_renders_without_one(tmp_path: Path) -> None:
 def test_the_legacy_stem_keyed_layout_is_named_in_the_result(tmp_path: Path) -> None:
     """A deployed tree predates the rename, and the chezmoi source rename is a
     separate change in another repository. The fallback keeps that tree syncing
-    and says which layout it used, so `lh profile sync-claude-md` reports the
+    and says which layout it used, so `lh profile sync-system-doc` reports the
     migration instead of silently doing nothing."""
     from lazy_harness.core.sync_agent_md import sync_profiles
 
