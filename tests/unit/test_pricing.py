@@ -495,3 +495,54 @@ def test_an_override_without_a_1h_rate_falls_back_to_twice_input() -> None:
         pricing,
     )
     assert cost == pytest.approx(14.0)
+
+
+# --- billing model (ADR-050) -------------------------------------------------
+
+
+def test_flat_rate_short_circuits_pricing() -> None:
+    """A flat_rate row costs 0.0 with cost_source='subscription', regardless
+    of whether the model even has a rate — pricing is never consulted."""
+    from lazy_harness.monitoring.pricing import cost_for_billing_model, default_pricing
+
+    tokens = {"input": 1000, "output": 500, "cache_read": 0, "cache_create": 0}
+    cost, cost_source = cost_for_billing_model(
+        "claude-opus-4-6", tokens, default_pricing(), billing_model="flat_rate"
+    )
+    assert cost == 0.0
+    assert cost_source == "subscription"
+
+
+def test_flat_rate_short_circuits_even_for_an_unpriced_model() -> None:
+    from lazy_harness.monitoring.pricing import cost_for_billing_model, default_pricing
+
+    tokens = {"input": 1000, "output": 500, "cache_read": 0, "cache_create": 0}
+    cost, cost_source = cost_for_billing_model(
+        "some-model-with-no-rate", tokens, default_pricing(), billing_model="flat_rate"
+    )
+    assert cost == 0.0
+    assert cost_source == "subscription"
+
+
+def test_per_token_priced_row_carries_pricing_cost_source() -> None:
+    from lazy_harness.monitoring.pricing import cost_for_billing_model, default_pricing
+
+    tokens = {"input": 1000, "output": 500, "cache_read": 0, "cache_create": 0}
+    cost, cost_source = cost_for_billing_model(
+        "claude-opus-4-6", tokens, default_pricing(), billing_model="per_token"
+    )
+    assert cost > 0.0
+    assert cost_source == "pricing"
+
+
+def test_per_token_unpriced_row_carries_no_cost_source() -> None:
+    """A per_token row with no rate still costs 0.0, but cost_source stays
+    None — the unpriced gap this dimension exists to surface."""
+    from lazy_harness.monitoring.pricing import cost_for_billing_model, default_pricing
+
+    tokens = {"input": 1000, "output": 500, "cache_read": 0, "cache_create": 0}
+    cost, cost_source = cost_for_billing_model(
+        "unknown-model", tokens, default_pricing(), billing_model="per_token"
+    )
+    assert cost == 0.0
+    assert cost_source is None

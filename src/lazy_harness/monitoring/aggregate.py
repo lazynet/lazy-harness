@@ -11,7 +11,17 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
-DIMENSIONS = ("profile", "project", "model", "host", "workload", "day", "week", "month")
+DIMENSIONS = (
+    "profile",
+    "project",
+    "model",
+    "host",
+    "workload",
+    "agent",
+    "day",
+    "week",
+    "month",
+)
 
 _N_DAYS = re.compile(r"^(\d+)d$")
 
@@ -69,6 +79,7 @@ class Bucket:
     cache_create: int = 0
     cost: float = 0.0
     sessions: set[str] = field(default_factory=set)
+    billing_models: set[str] = field(default_factory=set)
 
     def add(self, row: dict[str, Any]) -> None:
         self.input += int(row.get("input", 0) or 0)
@@ -79,6 +90,17 @@ class Bucket:
         session = str(row.get("session") or "")
         if session:
             self.sessions.add(session)
+        self.billing_models.add(str(row.get("billing_model") or "per_token"))
+
+    @property
+    def all_flat_rate(self) -> bool:
+        """True when every row this bucket has seen bills at a flat rate.
+
+        An empty bucket is not "all flat rate" — it has seen no rows to make
+        that claim about, and a renderer must not read `—` into a group with
+        no data.
+        """
+        return self.billing_models == {"flat_rate"}
 
     @property
     def total_input(self) -> int:
@@ -107,7 +129,7 @@ class Aggregation:
 # `workload` reads "unknown" when unset rather than blank: an empty cell in the
 # table renders as a rendering bug, and an unlabelled run is genuinely one whose
 # caller we cannot name.
-_STRING_DIMENSIONS = ("profile", "project", "model", "host", "workload")
+_STRING_DIMENSIONS = ("profile", "project", "model", "host", "workload", "agent")
 
 
 def _dimension_value(row: dict[str, Any], dimension: str) -> str:

@@ -197,3 +197,29 @@ def calculate_cost(
         + tokens.get("cache_create_1h", 0) * one_hour
     ) / 1_000_000
     return round(cost, 6)
+
+
+def cost_for_billing_model(
+    model: str,
+    tokens: dict[str, int],
+    pricing: dict[str, dict[str, float]],
+    *,
+    billing_model: str,
+    on: str | None = None,
+) -> tuple[float, str | None]:
+    """Price one row according to its profile's billing model (ADR-050).
+
+    A `flat_rate` row short-circuits pricing entirely: the subscription
+    already paid for the usage, so consulting the per-token table would
+    either double-count it or — for a model with no rate — misreport real
+    spend as an unpriced gap. `cost_source` is the caller's cue for
+    rendering and for `unknown_models`: `"subscription"` never fires it,
+    `"pricing"` means the per-token table had a rate, and `None` is the one
+    case that should — pricing was attempted and failed.
+    """
+    if billing_model == "flat_rate":
+        return 0.0, "subscription"
+
+    cost = calculate_cost(model, tokens, pricing, on=on)
+    cost_source = "pricing" if (model in pricing or is_pseudo_model(model)) else None
+    return cost, cost_source
