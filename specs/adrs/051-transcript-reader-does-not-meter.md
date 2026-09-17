@@ -1,9 +1,9 @@
 # ADR-051: The `TranscriptReader` Protocol does not carry what metering needs
 
-**Status:** accepted
+**Status:** superseded-by: 053
 **Date:** 2026-09-16
 **Supersedes:** —
-**Superseded by:** —
+**Superseded by:** ADR-053
 **Related:** ADR-012 (SQLite monitoring), ADR-032 (agent adapter completeness), ADR-037 (metric event v2), ADR-048 (Codex rollout streams)
 
 ## Context
