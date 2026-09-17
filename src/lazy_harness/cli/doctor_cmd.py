@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -24,6 +24,7 @@ from lazy_harness.core.paths import (
     config_dir,
     config_file,
     contract_path,
+    data_dir,
     expand_path,
 )
 from lazy_harness.core.profiles import list_profiles
@@ -39,10 +40,12 @@ from lazy_harness.hooks.signal_gaps import HookSignalGap, collect_hook_signal_ga
 from lazy_harness.llm import LLMBackendError, LLMBackendNotFoundError
 from lazy_harness.llm.openai_compat import OpenAICompatibleBackend
 from lazy_harness.llm.registry import build_backend
+from lazy_harness.monitoring.db import MetricsDB
 from lazy_harness.monitoring.engram_persist_health import (
     EngramPersistHealth,
     collect_engram_persist_health,
 )
+from lazy_harness.monitoring.launches import CLAUDE_AGENT, CODEX_ADAPTER_MERGED, adoption_check
 from lazy_harness.monitoring.sink_freshness import SinkFreshness, collect_sinks_freshness
 from lazy_harness.monitoring.sink_setup import plan_sinks
 
@@ -592,6 +595,51 @@ def _render_codex_trust(console: Console, reports: list[CodexHookTrust]) -> None
     )
 
 
+def _render_launches(console: Console, db: MetricsDB, now: datetime) -> None:
+    """The `Launches` block — the first human-visible surface for the
+    blast-radius kill criterion's counters (specs/backlog.md, "Nada muestra
+    los contadores de `launches` a un humano").
+
+    `db` may be a real, on-disk `MetricsDB` or an in-memory one standing in
+    for "no DB file exists yet" — `doctor()` decides which, so this function
+    never has to know or care, and never opens (so never creates) a DB file
+    itself.
+    """
+    console.print("\n[bold]Launches[/bold]")
+
+    window_start = now.timestamp() - 28 * 86400
+    windowed_counts = db.launch_counts(since_ts=window_start)
+    claude_profiles = {
+        profile for (profile, agent, _entry) in db.launch_counts() if agent == CLAUDE_AGENT
+    }
+    non_claude_totals: dict[str, int] = {}
+    for (profile, _agent, _entry), n in windowed_counts.items():
+        if profile in claude_profiles:
+            continue
+        non_claude_totals[profile] = non_claude_totals.get(profile, 0) + n
+
+    if non_claude_totals:
+        for profile in sorted(non_claude_totals):
+            console.print(f"  {profile}: {non_claude_totals[profile]} launches (28d)")
+    else:
+        console.print("  none")
+
+    horizon_end = CODEX_ADAPTER_MERGED + timedelta(weeks=8)
+    if now.date() < horizon_end:
+        console.print(f"  horizon opens {horizon_end.isoformat()}")
+        return
+
+    verdict = adoption_check(db, now=now)
+    if verdict is None:
+        console.print("  horizon not started: launch-to-session ratio unmeasured")
+    elif verdict.below_threshold:
+        console.print(
+            f"  below threshold ({verdict.threshold:.2f}): {', '.join(verdict.below_threshold)}"
+        )
+    else:
+        console.print(f"  above threshold ({verdict.threshold:.2f})")
+
+
 def _hooks(n: int) -> str:
     return "hook" if n == 1 else "hooks"
 
@@ -754,6 +802,19 @@ def doctor() -> None:
     _render_hook_operations(console, collect_hook_operation_gaps(cfg))
     _render_uncarried_events(console, collect_uncarried_events(cfg))
     _render_codex_trust(console, collect_codex_trust(cfg))
+
+    launches_db_path = (
+        expand_path(cfg.monitoring.db) if cfg.monitoring.db else data_dir() / "metrics.db"
+    )
+    # Never opens (and so never creates) a DB file that does not already
+    # exist — `lh doctor` is read-only, same rule as `collect_sink_freshness`.
+    launches_db = (
+        MetricsDB(launches_db_path) if launches_db_path.is_file() else MetricsDB(Path(":memory:"))
+    )
+    try:
+        _render_launches(console, launches_db, _now())
+    finally:
+        launches_db.close()
 
     console.print()
     if ok:
