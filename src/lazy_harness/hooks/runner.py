@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
 from typing import TYPE_CHECKING
 
 from lazy_harness.agents.base import HookOutput
@@ -30,6 +31,51 @@ if TYPE_CHECKING:  # pragma: no cover - imported for typing only
 
 class RunnerError(Exception):
     """A failure the runner resolves against its policy rather than raising."""
+
+
+TRACE_ENV = "LH_HOOK_TRACE"
+"""Set to exactly `"1"` to record one line per dispatch under the profile's log.
+
+Every `pre_tool_use` builtin logs only when it has something to say —
+`pre-tool-use-security` on a block, `-memory-size` and `-read-size` on a
+warning, `-git-scope` never — so a hook that ran and *allowed* leaves nothing
+behind. The F9 acceptance gate could not tell that from a hook whose matcher
+group the agent suppressed, and the two have opposite fixes: one is the
+matcher, the other is the hook. This is the observable that splits them.
+
+Off by default, and only the exact string `"1"` turns it on: a line per tool
+call on every profile, permanently, to serve a gate that runs a few times a
+year is not a trade worth making, and a truthiness test would make
+`LH_HOOK_TRACE=0` mean tracing on.
+"""
+
+
+def _trace_invocation(name: str, profile: str) -> None:
+    """Record that `name` was dispatched, before anything it does can fail.
+
+    `blocked …` and `invoked` are deliberately different line shapes: the gate
+    counts them separately and subtracts one reading from the other, so a trace
+    matching the block grep would report every dispatch as a denial.
+
+    Wrapped whole, like `pre_tool_use_security.py::_audit`: a hook is a
+    guardrail first and an audit trail second, and an import or a full config
+    load failing here must never change what the hook returns.
+    """
+    if os.environ.get(TRACE_ENV) != "1":
+        return
+    try:
+        from lazy_harness.core.config import ConfigError, load_config
+        from lazy_harness.core.paths import config_file
+        from lazy_harness.hooks.builtins import _shared
+
+        try:
+            cfg = load_config(config_file())
+        except ConfigError:
+            cfg = None
+        _, agent_dir = _shared.agent_dir_for(cfg, profile)
+        _shared.make_log(name)(agent_dir / "logs" / "hooks.log", "invoked")
+    except Exception:  # noqa: BLE001 — tracing must never break the dispatch
+        pass
 
 
 def _adapter_for(profile: str) -> AgentAdapter:
@@ -163,8 +209,15 @@ def run_hook(name: str, *, profile: str, stdin_text: str) -> HookOutput:
     if spec is None:
         # Nothing is known about an unregistered name, including whether it
         # blocks; refusing on a guess would block tool calls a typo in
-        # settings.json should merely make noisy.
+        # settings.json should merely make noisy. No trace either: nothing was
+        # invoked, and recording a hook that does not exist as having run is a
+        # worse answer than silence.
         return HookOutput(stdout=None, stderr=f"Unknown hook: {name}", exit_code=0)
+
+    # Before the try, not inside it: a hook that ran and raised is a hook that
+    # ran, and a trace written after the decision would file it as never
+    # invoked — the same conflation this exists to remove, one layer down.
+    _trace_invocation(name, profile)
 
     try:
         adapter = _adapter_for(profile)
