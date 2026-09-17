@@ -246,6 +246,7 @@ def test_run_refuses_a_shared_root_with_no_default(
 def test_run_uses_the_root_default_among_a_shared_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _write_agent()
     lh_config = tmp_path / "lh"
     lh_config.mkdir()
     shared = tmp_path / "shared"

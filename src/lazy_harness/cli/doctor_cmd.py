@@ -345,12 +345,14 @@ def _render_shared_roots(console: Console, shared_roots: list[SharedRootInfo]) -
         if shared.default is not None:
             console.print(
                 f"  [dim]root {escape(shared.root)}: shared by {claimants} — "
-                f"default: {escape(shared.default)}[/dim]"
+                f"default: {escape(shared.default)}[/dim]",
+                soft_wrap=True,
             )
         else:
             console.print(
                 f"  [yellow]![/yellow] root {escape(shared.root)}: shared by {claimants} — "
-                f"no default: lh run needs --profile here"
+                f"no default: lh run needs --profile here",
+                soft_wrap=True,
             )
 
 
