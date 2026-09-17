@@ -25,8 +25,8 @@ def render(ctx: StatusContext) -> RenderableType:
 
     any_rows = False
     for p in ctx.profiles:
-        projects_dir = p.config_dir / "projects"
-        if not projects_dir.is_dir():
+        projects_dir = ctx.sessions_dir(p)
+        if projects_dir is None or not projects_dir.is_dir():
             continue
         for pdir in sorted(projects_dir.iterdir()):
             if not pdir.is_dir():

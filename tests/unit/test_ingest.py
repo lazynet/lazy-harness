@@ -603,3 +603,193 @@ def test_ingest_bills_a_legacy_transcript_at_the_five_minute_rate(tmp_path: Path
     assert row["cache_create"] == 1_000_000
     assert row["cost"] == pytest.approx(6.25, abs=0.00005)
     db.close()
+
+
+# --- the sessions directory comes from the adapter, never from a literal -----
+
+
+class _FakeAgent:
+    """An adapter that only answers the question ingest asks it.
+
+    Deliberately not an `AgentAdapter`: `session_dirs` is duck-typed at this
+    call site, and a fake carrying the whole surface would hide the case where
+    it is absent.
+    """
+
+    def __init__(self, name: str, dirs: dict[str, str] | None = None) -> None:
+        self.name = name
+        self._dirs = dirs
+
+    def session_dirs(self) -> dict[str, str]:
+        assert self._dirs is not None
+        return self._dirs
+
+
+class _AgentWithoutSessionDirs:
+    name = "claude-code"
+
+
+def test_ingest_reads_the_directory_the_adapter_declares(tmp_path: Path) -> None:
+    """Not `projects/`: the literal is gone and the adapter is asked."""
+    from lazy_harness.core.profiles import ProfileInfo
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.ingest import ingest_profile
+    from lazy_harness.monitoring.pricing import load_pricing
+
+    config_dir = tmp_path / "declared"
+    prof = ProfileInfo(
+        name="declared", config_dir=config_dir, roots=[], is_default=True, exists=True
+    )
+    _write_session(
+        config_dir / "transcripts",
+        "-Users-foo-repos-demo",
+        "33333333-3333-3333-3333-333333333333",
+        [_assistant_msg(inp=7, out=3)],
+    )
+
+    db = MetricsDB(tmp_path / "m.db")
+    report = ingest_profile(
+        prof, db, load_pricing(), agent=_FakeAgent("claude-code", {"sessions": "transcripts"})
+    )
+    assert report.sessions_updated == 1
+    assert db.query_stats(period="all")[0]["input"] == 7
+    db.close()
+
+
+def test_ingest_skips_a_profile_whose_agent_declares_no_sessions_directory(
+    tmp_path: Path,
+) -> None:
+    """The `Path(x) / ""` trap, at the site that would walk the whole config dir.
+
+    The transcript sits at the config root, which is exactly where the removed
+    fallback would have found it.
+    """
+    from lazy_harness.core.profiles import ProfileInfo
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.ingest import ingest_profile
+    from lazy_harness.monitoring.pricing import load_pricing
+
+    config_dir = tmp_path / "nowhere"
+    prof = ProfileInfo(
+        name="nowhere", config_dir=config_dir, roots=[], is_default=True, exists=True
+    )
+    _write_session(
+        config_dir,
+        "-Users-foo-repos-demo",
+        "44444444-4444-4444-4444-444444444444",
+        [_assistant_msg(inp=100, out=50)],
+    )
+
+    db = MetricsDB(tmp_path / "m.db")
+    report = ingest_profile(prof, db, load_pricing(), agent=_FakeAgent("opencode", {}))
+    assert report.sessions_scanned == 0
+    assert report.sessions_updated == 0
+    assert db.query_stats(period="all") == []
+    db.close()
+
+
+def test_ingest_skips_an_agent_that_does_not_answer_where_its_sessions_live(
+    tmp_path: Path,
+) -> None:
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.ingest import ingest_profile
+    from lazy_harness.monitoring.pricing import load_pricing
+
+    prof = _profile(tmp_path, "mute")
+    _write_session(
+        prof.config_dir / "projects",
+        "-Users-foo-repos-demo",
+        "55555555-5555-5555-5555-555555555555",
+        [_assistant_msg(inp=100, out=50)],
+    )
+    db = MetricsDB(tmp_path / "m.db")
+    report = ingest_profile(prof, db, load_pricing(), agent=_AgentWithoutSessionDirs())
+    assert report.sessions_scanned == 0
+    assert db.query_stats(period="all") == []
+    db.close()
+
+
+def test_ingest_refuses_a_transcript_dialect_its_parser_was_not_written_for(
+    tmp_path: Path,
+) -> None:
+    """A Codex rollout is JSONL and is not Claude Code's JSONL.
+
+    Walking it with `iter_assistant_messages` yields nothing, which reads as an
+    empty profile. The design's rule is that it be reported unreadable instead,
+    so ingest does not scan it at all and `lh doctor` carries the verdict.
+    """
+    from lazy_harness.core.profiles import ProfileInfo
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.ingest import ingest_profile
+    from lazy_harness.monitoring.pricing import load_pricing
+
+    config_dir = tmp_path / "cx"
+    rollouts = config_dir / "sessions" / "2026" / "09" / "16"
+    rollouts.mkdir(parents=True)
+    (rollouts / "rollout-2026-09-16T09-02-04-abc.jsonl").write_text(
+        json.dumps(
+            {
+                "timestamp": "2026-09-16T12:02:13.926Z",
+                "type": "token_usage_record",
+                "payload": {"usage": {"input_tokens": 11, "output_tokens": 5}},
+                "ordinal": 1,
+            }
+        )
+        + "\n"
+    )
+    prof = ProfileInfo(name="cx", config_dir=config_dir, roots=[], is_default=False, exists=True)
+
+    db = MetricsDB(tmp_path / "m.db")
+    report = ingest_profile(
+        prof, db, load_pricing(), agent=_FakeAgent("codex", {"sessions": "sessions"})
+    )
+    assert report.sessions_scanned == 0
+    assert db.query_stats(period="all") == []
+    db.close()
+
+
+def test_ingest_all_resolves_the_agent_for_each_profile(tmp_path: Path) -> None:
+    """Two profiles, two agents, one run.
+
+    The integration half of the unit tests above: `ingest_all` is the only
+    caller that knows the config, so it is the only place the per-profile
+    adapter can be resolved. A test that passed `agent=` by hand would never
+    catch it resolving the global `[agent].type` for every profile.
+    """
+    from lazy_harness.core.config import Config, ProfileEntry
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.ingest import ingest_all
+    from lazy_harness.monitoring.pricing import load_pricing
+
+    cfg = Config()
+    cfg.agent.type = "claude-code"
+    cfg.profiles.default = "lazy"
+    cfg.profiles.items = {
+        "lazy": ProfileEntry(config_dir=str(tmp_path / "lazy"), agent="claude-code"),
+        "cx": ProfileEntry(config_dir=str(tmp_path / "cx"), agent="codex"),
+    }
+
+    _write_session(
+        tmp_path / "lazy" / "projects",
+        "-Users-foo-repos-demo",
+        "66666666-6666-6666-6666-666666666666",
+        [_assistant_msg(inp=9, out=4)],
+    )
+    # `projects/`, under the Codex profile, holding Claude-shaped bytes. This
+    # is what makes the test discriminating: resolving the global
+    # `[agent].type` for every profile — the behaviour being replaced — walks
+    # this directory and bills it. Only a per-profile resolution skips it.
+    _write_session(
+        tmp_path / "cx" / "projects",
+        "-Users-foo-repos-demo",
+        "77777777-7777-7777-7777-777777777777",
+        [_assistant_msg(inp=1000, out=1000)],
+    )
+
+    db = MetricsDB(tmp_path / "m.db")
+    report = ingest_all(cfg, db, load_pricing())
+    rows = db.query_stats(period="all")
+    assert report.sessions_updated == 1
+    assert [r["profile"] for r in rows] == ["lazy"]
+    assert rows[0]["input"] == 9
+    db.close()

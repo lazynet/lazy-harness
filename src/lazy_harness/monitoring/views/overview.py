@@ -38,9 +38,9 @@ def render(ctx: StatusContext, db: MetricsDB | None) -> RenderableType:
     for p in ctx.profiles:
         marker = "*" if p.is_default else ""
         profile_parts.append(f"{p.name}{marker}")
-        projects_dir = p.config_dir / "projects"
+        projects_dir = ctx.sessions_dir(p)
         count = 0
-        if projects_dir.is_dir():
+        if projects_dir is not None and projects_dir.is_dir():
             count = sum(1 for d in projects_dir.iterdir() if d.is_dir())
         project_parts.append(f"{p.name}: {count}")
 
@@ -142,7 +142,10 @@ def render(ctx: StatusContext, db: MetricsDB | None) -> RenderableType:
     for profile in ctx.profiles:
         if not profile.exists:
             continue
-        hooks_log = ctx.logs_dir(profile) / "hooks.log"
+        logs_dir = ctx.logs_dir(profile)
+        if logs_dir is None:
+            continue
+        hooks_log = logs_dir / "hooks.log"
         for hook_name in HOOK_NAMES_DEFAULT:
             ts = last_hook_ts(hooks_log, hook_name)
             if ts and ts[:10] == today_str:
@@ -179,6 +182,8 @@ def render(ctx: StatusContext, db: MetricsDB | None) -> RenderableType:
         if not profile.exists:
             continue
         queue_dir = ctx.queue_dir(profile)
+        if queue_dir is None:
+            continue
         if queue_dir.is_dir():
             pending += sum(1 for _ in queue_dir.glob("*.task"))
         done_dir = queue_dir / "done"

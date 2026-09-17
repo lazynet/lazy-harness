@@ -259,6 +259,7 @@ def _project_memory_dir() -> Path:
     moved `MEMORY.md` into the knowledge store, and a CLI still resolving the
     legacy path reports no pending proposals rather than failing.
     """
+    from lazy_harness.agents.session_paths import session_subdir
     from lazy_harness.hooks.builtins._shared import knowledge_root_for
     from lazy_harness.hooks.builtins._shared import memory_dir as shared_memory_dir
 
@@ -266,7 +267,7 @@ def _project_memory_dir() -> Path:
     return shared_memory_dir(
         None,
         agent_dir=agent_dir,
-        sessions_subdir=agent.session_dirs().get("sessions") or "projects",
+        sessions_subdir=session_subdir(agent, "sessions"),
         cwd=Path.cwd(),
         knowledge_root=knowledge_root_for(cfg),
     )
@@ -278,6 +279,7 @@ def _legacy_memory_dir() -> Path:
     Resolved through the same helper the store path falls back to, so the two
     answers cannot drift apart.
     """
+    from lazy_harness.agents.session_paths import session_subdir
     from lazy_harness.hooks.builtins._shared import resolve_memory_dir
 
     _cfg, agent, agent_dir = _agent_for_active_profile()
@@ -285,7 +287,7 @@ def _legacy_memory_dir() -> Path:
         resolve_memory_dir(
             None,
             agent_dir=agent_dir,
-            sessions_subdir=agent.session_dirs().get("sessions") or "projects",
+            sessions_subdir=session_subdir(agent, "sessions"),
             cwd=Path.cwd(),
         )
         / "memory"

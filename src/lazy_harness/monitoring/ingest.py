@@ -1,8 +1,15 @@
 """Metrics ingest pipeline.
 
-Walks each profile's `<config_dir>/projects/` tree recursively, parses token
-usage from every session JSONL (including nested subagent files), and upserts
-one `session_stats` row per `(session, model)` on every run.
+Walks the sessions tree **the profile's own agent declares** — never a literal
+`projects/` — parses token usage from every session JSONL (including nested
+subagent files), and upserts one `session_stats` row per `(session, model)` on
+every run.
+
+A profile whose agent declares no sessions directory, or whose transcripts are
+in a dialect this parser was not written for, is **skipped** rather than walked
+as though it were Claude Code. Walking it would find nothing and report the
+profile empty, which is indistinguishable from a profile that did no work;
+`lh doctor`'s transcript line carries the verdict instead.
 
 Two precision properties the pipeline guarantees:
 
@@ -33,6 +40,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from lazy_harness.agents.session_paths import session_path
 from lazy_harness.core.config import Config
 from lazy_harness.core.identity import resolve_host, resolve_identity
 from lazy_harness.core.paths import expand_path
@@ -49,6 +57,13 @@ from lazy_harness.plugins.contracts import (
     METRIC_EVENT_SCHEMA_VERSION,
     MetricEvent,
 )
+
+# The registry key of the agent whose transcript dialect `iter_assistant_messages`
+# parses. A name, and not a capability query, because nothing in `AgentAdapter`
+# answers "what dialect is your transcript" — `TranscriptReader` says a reader
+# exists, not that its events carry what metering needs. ADR-051 measures the
+# gap and proposes the fields that would delete this constant.
+_PARSED_DIALECT = "claude-code"
 
 
 @dataclass
@@ -111,6 +126,7 @@ def ingest_profile(
     db: MetricsDB,
     pricing: dict[str, dict[str, float]],
     *,
+    agent: Any | None = None,
     sinks: list[Any] | None = None,
     user_id: str = "local",
     tenant_id: str = "local",
@@ -118,11 +134,20 @@ def ingest_profile(
     workload_by_session: dict[str, str] | None = None,
 ) -> IngestReport:
     report = IngestReport()
-    projects_dir = profile.config_dir / "projects"
-    if not projects_dir.is_dir():
+    if agent is None:
+        from lazy_harness.agents.registry import get_agent
+
+        agent = get_agent(_PARSED_DIALECT)
+    # Both refusals are silent here and named by `lh doctor`: an ingest run
+    # prints per-profile errors, and a profile it was never going to read is
+    # not an error of this run.
+    if getattr(agent, "name", "") != _PARSED_DIALECT:
+        return report
+    sessions_dir = session_path(agent, profile.config_dir, "sessions")
+    if sessions_dir is None or not sessions_dir.is_dir():
         return report
 
-    files = _find_session_files(projects_dir, report.errors)
+    files = _find_session_files(sessions_dir, report.errors)
 
     seen_msg_ids: set[str] = set()
     aggregated: dict[tuple[str, str], dict] = {}
@@ -247,6 +272,8 @@ def ingest_all(
     *,
     sinks: list[Any] | None = None,
 ) -> IngestReport:
+    from lazy_harness.agents.registry import agent_for_profile
+
     total = IngestReport()
     identity = resolve_identity(explicit=cfg.metrics.user_id or None)
     # Resolved once: the process that ingests a profile's transcripts is
@@ -269,6 +296,10 @@ def ingest_all(
                 resolved,
                 db,
                 pricing,
+                # Per profile, never `cfg.agent.type`: a machine whose profiles
+                # run different agents has one profile's transcripts billed
+                # under another's dialect if the global key answers for both.
+                agent=agent_for_profile(cfg, prof.name),
                 sinks=sinks,
                 user_id=identity.user_id,
                 tenant_id=cfg.metrics.tenant_id,

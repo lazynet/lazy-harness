@@ -17,6 +17,12 @@ from lazy_harness import __version__
 from lazy_harness.agents.base import AgentAdapter
 from lazy_harness.agents.codex_trust import CodexHookTrust, collect_codex_trust
 from lazy_harness.agents.registry import AgentNotFoundError, get_agent
+from lazy_harness.agents.session_paths import (
+    TranscriptHealth,
+    session_path,
+    session_subdir,
+    transcript_health,
+)
 from lazy_harness.core.artifact_version import ArtifactVersionReport, is_newer
 from lazy_harness.core.config import Config, ConfigError, load_config
 from lazy_harness.core.paths import (
@@ -187,8 +193,13 @@ def _engram_persist_metrics_path(agent: AgentAdapter, cfg: Config | None, profil
         agent, base = agent_dir_for(cfg, profile)
     else:
         base = agent_runtime_dir(agent)
-    logs_subdir = agent.session_dirs().get("logs") or "logs"
-    return base / logs_subdir / "engram_persist_metrics.jsonl"
+    # The fallback stays, and stays visible, because the *writer* has it:
+    # `hooks/builtins/session_export.py` names the same `or "logs"`. Deleting
+    # it on the reading side alone is how doctor starts looking where the hook
+    # does not write. `session_path` is here so the resolution has one
+    # spelling; ADR-051 records why the sessions half loses its fallback and
+    # this one does not.
+    return (session_path(agent, base, "logs") or base / "logs") / "engram_persist_metrics.jsonl"
 
 
 def _render_engram_persist(console: Console, health: EngramPersistHealth) -> bool:
@@ -224,6 +235,61 @@ def _render_engram_persist(console: Console, health: EngramPersistHealth) -> boo
     console.print(f"  {icons[lag_state]} Cursor lag {_fmt_bytes(lag)}")
 
     return health.state != "fail"
+
+
+_TRANSCRIPT_LINES = {
+    # "has a reader for", never "reads": the verdict is about the adapter
+    # implementing `TranscriptReader`, and a consumer can still decline the
+    # events it yields. `lh metrics ingest` does exactly that for Codex today
+    # (ADR-051), so a line promising the transcripts are being read would be
+    # this section contradicting the pipeline it exists to diagnose.
+    TranscriptHealth.OK: ("ok", "[green]\u2713[/green]", "{agent} has a reader for {path}"),
+    TranscriptHealth.DEGRADED: (
+        "unread",
+        "[yellow]![/yellow]",
+        "{agent} leaves transcripts unread in {path} \u2014 no reader for this agent",
+    ),
+    TranscriptHealth.NO_DATA: (
+        "quiet",
+        "[grey50]\u00b7[/grey50]",
+        "{agent}: no transcripts in {path}",
+    ),
+    TranscriptHealth.NO_LOCATION: (
+        "none",
+        "[grey50]\u00b7[/grey50]",
+        "{agent} declares no sessions directory",
+    ),
+}
+
+
+def _render_transcripts(console: Console, cfg: Config) -> None:
+    """One line per profile: is anything writing transcripts nobody reads?
+
+    Derived from the adapter and the disk, never declared. "Should this agent
+    have a reader?" has no configured answer and needs none —
+    `TranscriptReader` is `runtime_checkable`, so `isinstance` is the whole
+    test and the verdict tracks the code rather than a list someone maintains.
+
+    Nothing here fails `lh doctor`. A Copilot profile with unread transcripts
+    is an accurate report of a reader that has not been written yet, not a
+    misconfiguration of this machine; the section exists so that the day a
+    Claude Code profile reads `unread`, the regression is visible.
+    """
+    from lazy_harness.agents.registry import agent_for_profile
+
+    console.print("\n[bold]Transcripts[/bold]")
+    for p in list_profiles(cfg):
+        agent = agent_for_profile(cfg, p.name)
+        health = transcript_health(agent, p.config_dir)
+        _verdict, icon, template = _TRANSCRIPT_LINES[health]
+        sessions = session_path(agent, p.config_dir, "sessions")
+        detail = template.format(
+            agent=getattr(agent, "name", "unknown"),
+            path=contract_path(sessions) if sessions is not None else "",
+        )
+        # `icon` is the only markup on this line. A profile name or a path
+        # holding `[...]` is markup to rich too, and it deletes it silently.
+        console.print(f"  {icon} {escape(p.name)} \u2014 {escape(detail)}")
 
 
 def _render_one_role(console: Console, cfg: Config, role: str) -> bool:
@@ -627,7 +693,7 @@ def _project_memory_dir(agent: AgentAdapter, cfg: Config | None, profile: str) -
     return shared_memory_dir(
         None,
         agent_dir=base,
-        sessions_subdir=agent.session_dirs().get("sessions") or "projects",
+        sessions_subdir=session_subdir(agent, "sessions"),
         cwd=Path.cwd(),
         knowledge_root=knowledge_root_for(cfg),
     )
@@ -675,6 +741,7 @@ def doctor() -> None:
             console.print(f"  [red]✗[/red] {label} — {cdir} [red](missing)[/red]")
             ok = False
 
+    _render_transcripts(console, cfg)
     _render_profile_secrets(console, cfg)
 
     if cfg.knowledge.root:
