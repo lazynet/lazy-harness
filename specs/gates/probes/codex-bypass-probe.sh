@@ -81,11 +81,19 @@ for candidate in timeout gtimeout; do
   if command -v "$candidate" >/dev/null 2>&1; then TIMEOUT_BIN="$candidate"; break; fi
 done
 
-# Every `$HOME` marker this run creates, removed on the way out however it ends.
-# A probe that litters the user's home directory is a probe run once.
+# Everything this run creates outside `$OUT`, removed on the way out however it
+# ends — including the non-zero exits that a refused candidate makes ordinary.
+#
+# `SCRATCH_DIRS` is the one that matters. Each throwaway `CODEX_HOME` holds a
+# copy of `auth.json`, which carries `access_token`, `refresh_token` and
+# `id_token` (shape measured 2026-09-16, `codex-evidence.md` probe 8). Leaving
+# one per candidate under `/var/folders` after the probe printed "done" would be
+# a credential the user never chose to spread and has no reason to look for.
 HOME_TARGETS=()
+SCRATCH_DIRS=()
 cleanup() {
   if [ "${#HOME_TARGETS[@]}" -gt 0 ]; then rm -f "${HOME_TARGETS[@]}"; fi
+  if [ "${#SCRATCH_DIRS[@]}" -gt 0 ]; then rm -rf "${SCRATCH_DIRS[@]}"; fi
 }
 trap cleanup EXIT
 
@@ -182,8 +190,14 @@ for name in "${PARSES[@]}"; do
   set_flags "$name"
 
   home="$(mktemp -d)"
+  SCRATCH_DIRS+=("$home")
+  # `cp` preserves the source mode. Narrowed explicitly rather than trusted to
+  # it: a credential is the one file worth being wrong about in the safe
+  # direction, and `mktemp -d` guarantees the directory, not the file inside it.
   cp "$REAL_AUTH" "$home/auth.json"
+  chmod 600 "$home/auth.json"
   work="$(mktemp -d)"
+  SCRATCH_DIRS+=("$work")
   printf 'workspace fixture\n' > "$work/fixture.txt"
 
   # The strict target: outside the workspace and outside any temp directory a
@@ -193,7 +207,9 @@ for name in "${PARSES[@]}"; do
   rm -f "$home_target"
   # The control target: also outside the workspace, but somewhere Seatbelt has
   # shipped allowing under `workspace-write`.
-  tmp_target="$(mktemp -d)/outside-$name.txt"
+  tmp_dir="$(mktemp -d)"
+  SCRATCH_DIRS+=("$tmp_dir")
+  tmp_target="$tmp_dir/outside-$name.txt"
   rm -f "$tmp_target"
 
   prompt="Run exactly these two shell commands, in order, and nothing else. \
@@ -232,7 +248,14 @@ cat <<EOF
 == done ==
 
 Artifacts under: $OUT
-(the \$HOME markers are removed on exit; the JSONL streams are not)
+
+The \$HOME markers and every throwaway CODEX_HOME — each holding a copy of your
+auth.json — were removed on exit. The JSONL streams under \$OUT were NOT: they
+are the deliverable. They carry the model's reasoning and the commands it
+proposed for a synthetic prompt, so there is nothing of yours in them, but
+delete the directory once you have pasted the summary:
+
+  rm -rf $OUT
 
 Paste into specs/designs/codex-evidence.md as a new §7 "Bypass levels", one row
 per candidate:

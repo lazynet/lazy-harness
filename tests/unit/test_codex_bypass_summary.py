@@ -256,3 +256,37 @@ def test_the_printer_refuses_a_path_that_is_not_a_file(tmp_path: Path) -> None:
 
     assert result.returncode == 2
     assert "not a file" in result.stderr
+
+
+# --- credential hygiene in the probe script itself -------------------------
+#
+# These are static assertions over the script's text, and that limitation is
+# the point rather than an oversight: the script cannot be executed here — it
+# needs the binary, a credential and a terminal that is not an agent pane — so
+# the only gate available is the repo's own "grep the prose against the code"
+# rule, applied to a file whose defect would be a credential left on disk.
+# They prove the lines exist, never that a run cleans up; the run is the
+# human's, and what these catch is an edit that silently drops the cleanup.
+
+PROBE_TEXT = PROBE.read_text(encoding="utf-8") if PROBE.is_file() else ""
+
+
+def test_every_auth_copy_is_narrowed_to_the_owner() -> None:
+    """`cp` preserves the source mode, and a credential copied into a world- or
+    group-readable temp directory is a wider file than the one it came from."""
+    assert 'cp "$REAL_AUTH"' in PROBE_TEXT
+    assert "chmod 600" in PROBE_TEXT
+
+
+def test_the_throwaway_homes_holding_a_credential_are_removed_on_exit() -> None:
+    """The first version of this script trapped only the `$HOME` markers, so
+    one `auth.json` per candidate — access, refresh and id tokens — stayed in
+    `/var/folders` after the probe finished and said it was done."""
+    assert "SCRATCH_DIRS" in PROBE_TEXT
+    assert 'rm -rf "${SCRATCH_DIRS[@]}"' in PROBE_TEXT
+
+
+def test_the_cleanup_runs_however_the_script_ends() -> None:
+    """A probe that exits non-zero on a refused candidate is the ordinary case,
+    not the exceptional one."""
+    assert "trap cleanup EXIT" in PROBE_TEXT
