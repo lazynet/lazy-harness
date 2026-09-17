@@ -412,9 +412,21 @@ only, no values):
 {'auth_mode': 'str', 'OPENAI_API_KEY': 'NoneType', 'tokens': 'dict', 'last_refresh': 'str'}
 ```
 
-No expiry field at the top level. The `tokens` sub-shape is unprobed — it's
-what `CodexAdapter.credentials_file()` (ADR-045 D4/A4) needs before it can
-return anything but `None`.
+La sub-forma de `tokens`, medida el 2026-09-16 desde una terminal Aqua
+(`[run]`, claves y tipos, sin valores):
+
+```
+{'id_token': 'str', 'access_token': 'str', 'refresh_token': 'str', 'account_id': 'str'}
+```
+
+Con eso el archivo entero está en registro, y **no tiene campo de expiry en
+ningún nivel**: el único marcador temporal es `last_refresh`. Eso cierra la
+pregunta de `CodexAdapter.credentials_file()` (ADR-045 D4/A4) en negativo — el
+`check_auth` del preflight deriva su veredicto de un expiry, así que apuntarle
+el parser a este archivo sólo podría dar "unexpected shape". Derivar un
+veredicto de la antigüedad de `last_refresh` es una heurística con su propio
+umbral: decisión separada, con su propia probe (cuán viejo puede ser
+`last_refresh` con el login todavía vivo).
 
 **Probe 9 (keychain entry) was not run.**
 
@@ -680,6 +692,83 @@ el comando realmente ejecutado: `command` es una lista de 3 elementos, siempre
   `apply_patch`, el mapeo a `{"command": input}` es una línea y un test.
 - **Un segundo `cli_version`.** 15/15 archivos dicen `0.154.0`.
 - **`GOAL_STATUS`**, por 5.2.
+
+## 7. Bypass levels
+
+Medido el 2026-09-16 con `specs/gates/probes/codex-bypass-probe.sh` contra
+`codex-cli 0.154.0`, desde una terminal Aqua. Fixture: un prompt que pide
+escribir un marker en **dos** destinos fuera del workspace — uno bajo `$HOME`
+(el estricto) y otro bajo un temp dir (el control, porque Seatbelt permite
+escrituras ahí bajo `workspace-write`). Un solo destino habría leído
+`--approve-for-me` como bypass completo.
+
+`baseline` es control, no fila: escribió en ninguno de los dos, así que había
+sandbox que evadir y el resto de las filas significa algo.
+
+### 7.1 Phase 0 — qué acepta el parser de `codex exec`
+
+| flags | resultado | evidencia |
+|---|---|---|
+| *(ninguno)* | aceptado | `[run]` |
+| `-a never` | **RECHAZADO** — `error: unexpected argument '-a' found` | `[run]` |
+| `-c approval_policy="never"` | aceptado | `[run]` |
+| `--approve-for-me` | aceptado | `[run]` |
+| `-s danger-full-access` | aceptado | `[run]` |
+| `-c approval_policy="never" -s danger-full-access` | aceptado | `[run]` |
+| `--dangerously-bypass-approvals-and-sandbox` | aceptado | `[run]` |
+
+`-a/--ask-for-approval` existe **solo en el comando top-level**; `codex exec` lo
+rechaza. `--full-auto` no existe en esta versión en ningún nivel (`[help]`).
+
+### 7.2 Phase 1 — qué permite cada nivel
+
+`exit` fue `0` en las seis corridas. Ninguna emitió señales de `approval` ni de
+`sandbox`: el stream de 0.154.0 no tiene un kind para ninguna de las dos cosas,
+de modo que **el sistema de archivos es la única verdad de terreno** acá — un
+hallazgo sobre el stream, no sobre el bypass.
+
+| candidato | flags | corrió comando | `$HOME` | temp | evidencia |
+|---|---|---|---|---|---|
+| `baseline` | *(ninguno)* | no | no | no | `[run]` |
+| `approval-never-config` | `-c approval_policy="never"` | no | no | no | `[run]` |
+| `approve-for-me` | `--approve-for-me` | **sí** | no | **sí** | `[run]` |
+| `sandbox-danger` | `-s danger-full-access` | sí | **sí** | sí | `[run]` |
+| `never-plus-danger` | `-c approval_policy="never" -s danger-full-access` | sí | **sí** | sí | `[run]` |
+| `bypass-all` | `--dangerously-bypass-approvals-and-sandbox` | sí | **sí** | sí | `[run]` |
+
+"corrió comando" se lee del stream: las corridas sin comando sólo traen
+`item.completed` con `text`; las que corrieron traen `item.started` /
+`item.completed` con `command`, `exit_code` y `status`.
+
+### 7.3 Inventario de kinds observado
+
+Envelope **plano** (`{"type": ...}`), no el anidado `{"id", "msg"}`. Kinds:
+`thread.started` (`thread_id`), `turn.started`, `item.started`, `item.completed`
+(`item.{id, type, text?, command?, aggregated_output?, exit_code?, status?}`),
+`turn.completed` (`usage.{input_tokens, cached_input_tokens,
+cache_write_input_tokens, output_tokens, reasoning_output_tokens}`).
+
+### 7.4 Lo que esto decide
+
+- **ENABLE → `None`.** Ningún candidato deja el bypass *disponible pero
+  apagado*. `baseline` y `approval_policy="never"` son indistinguibles entre sí
+  — ninguno corrió comando — y `--approve-for-me` ya corrió uno. No hay
+  equivalente del `--allow-dangerously-skip-permissions` de Claude Code.
+- **ACTIVATE → `--approve-for-me`.** Corrió el comando y el sandbox siguió
+  rechazando la escritura fuera del workspace. Es "contestado sin vos", no
+  "concedido siempre": rutea los approvals por revisión automática.
+- **NO_SANDBOX → `--dangerously-bypass-approvals-and-sandbox`.** Las dos
+  mitades en un flag. `-s danger-full-access` solo también llegó a `$HOME`, y
+  **no** es el mapeo: saca el sandbox dejando la approval policy en su default,
+  así que en el lanzamiento interactivo que `lh run` hace sacaría el sandbox y
+  seguiría preguntando.
+- **Los tres niveles no colapsan.** ACTIVATE y NO_SANDBOX son flags distintos y
+  observablemente distintos, así que ninguno es alias del otro.
+
+**Límite de la evidencia:** la probe maneja `codex exec` porque es lo medible
+sin interacción, mientras que `lh run` ejecuta el `codex` top-level. Los dos
+flags del mapeo están en ambos comandos, así que la transferencia es `[help]`
+aunque la conducta sea `[run]`.
 
 ## Pendiente
 

@@ -56,6 +56,60 @@ class Signal(StrEnum):
     GOAL_STATUS = "goal_status"
 
 
+class Bypass(StrEnum):
+    """How far a launch is allowed to step outside the permission prompts.
+
+    Three positions rather than one, because they are three different requests
+    and the direction a collapsed version would collapse them in is *more*
+    permissive. `lh run` was an argv passthrough before this existed, which
+    meant the `lcca` alias shipped a Claude Code flag to whatever binary the
+    profile happened to resolve.
+
+    Declared as an intent rather than a flag so the adapter answers it. This is
+    deliberately one axis and not a general argv translation layer: it is the
+    only forwarded flag whose misreading is a safety property rather than a
+    usability one.
+    """
+
+    ENABLE = "enable"
+    """Make bypass available; do not turn it on. What `lcca` means today."""
+    ACTIVATE = "activate"
+    """Turn it on. Prompts stop; whatever sandbox exists stays."""
+    NO_SANDBOX = "no_sandbox"
+    """Also remove the sandbox, where one exists. Spelled `no-sandbox` on the CLI."""
+
+
+class BypassUnsupportedError(RuntimeError):
+    """This agent has no such position, and that is a state rather than a gap.
+
+    Carries `agent` and `level` as attributes because the CLI renders the
+    message and a caller that had to parse the prose to learn which level was
+    refused would re-derive what the raiser already knew.
+    """
+
+    def __init__(self, agent: str, level: Bypass) -> None:
+        self.agent = agent
+        self.level = level
+        super().__init__(
+            f"{agent} has no '{level.value.replace('_', '-')}' bypass level. "
+            f"Nothing was forwarded — a flag that means something adjacent on "
+            f"this agent would be a more permissive launch than was asked for."
+        )
+
+
+def bypass_argv_or_raise(adapter: AgentAdapter, level: Bypass) -> list[str]:
+    """The flags for one level, or `BypassUnsupportedError` naming both.
+
+    The single place `None` becomes an error, so every caller refuses
+    identically. An adapter never raises for an unsupported level: it declares
+    `None` and this decides what that means.
+    """
+    argv = adapter.bypass_argv(level)
+    if argv is None:
+        raise BypassUnsupportedError(adapter.name, level)
+    return argv
+
+
 @dataclass(frozen=True)
 class FileEdit:
     """One file a tool call modifies, with whatever the tool disclosed about how.
@@ -462,6 +516,20 @@ class AgentAdapter(Protocol):
         An absent key means the agent does not deliver that event at all,
         which is a different statement from delivering it and ignoring the
         verdict — `HookSupport.verdicts` carries the second.
+        """
+        ...
+
+    def bypass_argv(self, level: Bypass) -> list[str] | None:
+        """Flags for this level, or `None` if this agent has no such level.
+
+        `None` is a declaration and the caller turns it into an error naming the
+        agent and the level (`bypass_argv_or_raise`). An adapter must never
+        answer a level it lacks with the flags of a neighbouring one: the levels
+        are ordered by how much they give away, so every available substitution
+        is a more permissive launch than the one that was asked for.
+
+        The flags target the argv `lh run` builds — the agent's own top-level
+        command, not a subcommand of it.
         """
         ...
 

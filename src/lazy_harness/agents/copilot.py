@@ -38,6 +38,7 @@ import shutil
 from pathlib import Path
 
 from lazy_harness.agents.base import (
+    Bypass,
     ConfigArtifact,
     HookDecision,
     HookEntry,
@@ -429,6 +430,23 @@ class CopilotAdapter:
         claim about stacking that nothing has measured; probe 6 settles it.
         """
         return [Path("copilot-instructions.md")]
+
+    def bypass_argv(self, level: Bypass) -> list[str] | None:
+        """`None` for all three, and that is the measured answer, not a stub.
+
+        ADR-047 ships only the rows of this adapter that a `run` or a `log`
+        backed — the rule that kept eleven event names honest when the vendor
+        docs listed sixteen. No probe has measured a permission-bypass flag on
+        Copilot CLI, so there is no row to encode, and inventing one from a help
+        page would put an unmeasured flag in front of a binary whose argument
+        parsing this repo has never exercised.
+
+        The probe rows that would change this are in
+        `specs/designs/copilot-evidence.md`; until one of them runs, `lh run
+        --bypass` on a copilot profile is an error naming the agent and the
+        level, which is the correct thing for it to be.
+        """
+        return None
 
     def process_name(self) -> str:
         return "copilot"
