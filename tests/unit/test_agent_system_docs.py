@@ -15,6 +15,7 @@ import pytest
 
 from lazy_harness.agents.base import (
     AgentAdapter,
+    Bypass,
     HookDecision,
     HookEvent,
     HookOutput,
@@ -64,6 +65,9 @@ class _TwoDestinations:
         return [Path("copilot-instructions.md"), Path("instructions/harness.instructions.md")]
 
     def credentials_file(self) -> str | None:
+        return None
+
+    def bypass_argv(self, level: Bypass) -> list[str] | None:
         return None
 
     def process_name(self) -> str:

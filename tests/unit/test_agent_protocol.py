@@ -108,6 +108,7 @@ def test_an_adapter_without_the_generators_still_satisfies_the_protocol() -> Non
 
     from lazy_harness.agents.base import (
         AgentAdapter,
+        Bypass,
         HookDecision,
         HookEvent,
         HookOutput,
@@ -156,6 +157,9 @@ def test_an_adapter_without_the_generators_still_satisfies_the_protocol() -> Non
             return ""
 
         def credentials_file(self) -> str | None:
+            return None
+
+        def bypass_argv(self, level: Bypass) -> list[str] | None:
             return None
 
     assert isinstance(Minimal(), AgentAdapter)

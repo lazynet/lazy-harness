@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 from lazy_harness.agents.base import (
+    Bypass,
     ConfigArtifact,
     FileEdit,
     HookDecision,
@@ -844,6 +845,44 @@ class CodexAdapter:
     def system_docs(self) -> list[Path]:
         """`AGENTS.md`, the format Codex helped standardise — one destination."""
         return [Path("AGENTS.md")]
+
+    def bypass_argv(self, level: Bypass) -> list[str] | None:
+        """PROVISIONAL — read from `codex --help` on 0.154.0, evidence `[help]`.
+
+        Help text proves a flag exists and never what it does, so every row here
+        is waiting on `specs/gates/probes/codex-bypass-probe.sh`. The run either
+        confirms this mapping or corrects it, and `codex-evidence.md` §7 records
+        the result per level; until then no row should be cited as measured.
+
+        Two things the help text does settle, and one it does not:
+
+        *   `--full-auto` does not exist on this version, at either level. Any
+            design text naming it describes an older CLI.
+        *   `-a/--ask-for-approval` is on the **top-level** command, which is the
+            one `lh run` execs, so ACTIVATE can use it. It is absent from `codex
+            exec`, which is what the probe drives — the probe reaches the same
+            setting through `-c approval_policy="never"` and the two spellings
+            are only assumed equivalent until it runs.
+        *   ENABLE has no candidate. 0.154.0 offers nothing meaning "available
+            but off": the approval-policy settings turn approvals off, they do
+            not make an off switch reachable. `None` is the conservative answer
+            — an error the user reads, rather than a silent promotion to
+            ACTIVATE. Whether `--approve-for-me` belongs here instead is the one
+            open question ADR-049 leaves for the probe.
+
+        `--dangerously-bypass-hook-trust` is deliberately absent from every row.
+        It sits on the same help page and is a different axis: whether hooks run
+        without persisted trust, not whether the model needs approval. Emitting
+        it from `--bypass` would disable this harness's own guardrails as a side
+        effect of a request about the agent's.
+        """
+        if level is Bypass.ACTIVATE:
+            return ["--ask-for-approval", "never"]
+        if level is Bypass.NO_SANDBOX:
+            # One flag for both halves: 0.154.0 documents it as "Skip all
+            # confirmation prompts and execute commands without sandboxing".
+            return ["--dangerously-bypass-approvals-and-sandbox"]
+        return None
 
     def process_name(self) -> str:
         return "codex"

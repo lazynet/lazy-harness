@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath
 
 from lazy_harness import __version__
 from lazy_harness.agents.base import (
+    Bypass,
     ConfigArtifact,
     FileEdit,
     GoalStatus,
@@ -595,6 +596,27 @@ class ClaudeCodeAdapter:
     def system_docs(self) -> list[Path]:
         """Claude Code reads `CLAUDE.md` and nothing else — one destination."""
         return [Path("CLAUDE.md")]
+
+    def bypass_argv(self, level: Bypass) -> list[str] | None:
+        """Two of the three, verified against `claude --help` on 1.x.
+
+        ENABLE is the flag `lcca` ships today, and its help text is the reason
+        it is ENABLE rather than ACTIVATE: "Enable bypassing all permission
+        checks **as an option, without it being enabled by default**". The
+        migration to `lh run --bypass=enable` therefore preserves the alias's
+        semantics exactly, which is the whole point of preserving it.
+
+        NO_SANDBOX is `None`. Claude Code exposes no OS-sandbox switch on its
+        argv at all — the sandboxing it does is a property of where it is run,
+        not a flag — so there is nothing to return that would not be a lie.
+        Answering with the ACTIVATE flag would turn "remove the sandbox" into
+        "remove the prompts", which is a different and unrequested launch.
+        """
+        if level is Bypass.ENABLE:
+            return ["--allow-dangerously-skip-permissions"]
+        if level is Bypass.ACTIVATE:
+            return ["--dangerously-skip-permissions"]
+        return None
 
     def process_name(self) -> str:
         return "claude"

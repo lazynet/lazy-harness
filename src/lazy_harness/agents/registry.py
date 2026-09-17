@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from lazy_harness.agents.base import (
     AgentAdapter,
+    Bypass,
     HookDecision,
     HookEvent,
     HookOutput,
@@ -46,6 +47,12 @@ class NullAdapter:
 
     def hook_events(self) -> dict[str, HookSupport]:
         return {}
+
+    def bypass_argv(self, level: Bypass) -> list[str] | None:
+        """Launches nothing, so it has no argv and no level on it — the same
+        shape as `format_hook_output` above: the sentinel states the absence
+        rather than returning something empty that a caller would forward."""
+        return None
 
     def parse_hook_input(self, event: str, payload: dict, *, profile: str) -> HookEvent:
         return HookEvent(
