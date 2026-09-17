@@ -10,6 +10,7 @@ from pathlib import Path
 import click
 
 from lazy_harness.agents.base import ConfigPlanner, HookEntry, WriteOp
+from lazy_harness.agents.codex_trust import RETRUST_INSTRUCTION, TRUST_STALE_VERDICT
 from lazy_harness.agents.registry import (
     DEFAULT_HARNESS_BINARY,
     agent_for_profile,
@@ -413,6 +414,7 @@ def _apply(op: WriteOp, target_dir: Path, profile: str) -> None:
         if path.exists():
             path.unlink()
             click.echo(f"  ✓ {label} (removed — no longer generated)")
+        _print_retrust_instruction(op, label)
         return
 
     # Written verbatim. Producing the text is the adapter's half of decision 4;
@@ -420,6 +422,27 @@ def _apply(op: WriteOp, target_dir: Path, profile: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(op.artifact.content)
     click.echo(f"  ✓ {label}")
+    _print_retrust_instruction(op, label)
+
+
+def _print_retrust_instruction(op: WriteOp, label: str) -> None:
+    """The design's re-trust instruction (specs/designs/2026-09-13-multi-agent-
+    harness-design.md:825-846): `lh deploy` prints it whenever it changes a hook
+    declaration.
+
+    `op.changed` is empty for every write except a Codex `hooks.json` whose
+    declaration differs from what was on disk, which is what makes this silent
+    for every other profile and every unchanged redeploy without checking
+    either condition directly here.
+    """
+    if not op.changed:
+        return
+    click.echo(
+        f"  !  {label}: re-trust required for {len(op.changed)} "
+        f"{_plural(len(op.changed), 'hook', 'hooks')}: {', '.join(op.changed)}"
+    )
+    click.echo(f"      {RETRUST_INSTRUCTION}")
+    click.echo(f"      trust stale: {TRUST_STALE_VERDICT}")
 
 
 def deploy_config(cfg: Config, *, only: str | None = None) -> None:

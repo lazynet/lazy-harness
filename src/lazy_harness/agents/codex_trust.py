@@ -58,6 +58,16 @@ imported by both, so the two callers cannot drift onto different wording for
 the same instruction.
 """
 
+TRUST_STALE_VERDICT = (
+    "the harness changed this hook's declaration since it last deployed, so "
+    "any stored hash is known to be out of date."
+)
+"""The design table's `trust stale` row (specs/designs/2026-09-13-multi-agent-
+harness-design.md:825-846), verbatim. `lh deploy` prints it the moment it
+changes a declaration; `lh doctor` prints the same wording once it can derive
+`stale` from the deploy snapshot — one verdict, one sentence, both callers.
+"""
+
 
 @dataclass(frozen=True)
 class CodexHookTrust:
