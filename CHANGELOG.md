@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.71.1](https://github.com/lazynet/lazy-harness/compare/v0.71.0...v0.71.1) (2026-09-17)
+
+
+### Bug Fixes
+
+* a stray executable in the version dir no longer hijacks the Claude launcher ([#374](https://github.com/lazynet/lazy-harness/issues/374)) ([b0bde54](https://github.com/lazynet/lazy-harness/commit/b0bde54de2002282e18a2c4b77dfc8b380276d54))
+* F9 preflight follows the installed lh symlink to find the interpreter that imports lazy_harness ([#371](https://github.com/lazynet/lazy-harness/issues/371)) ([871504a](https://github.com/lazynet/lazy-harness/commit/871504a7a5885c36a3cfb8a328ca062cf205c00a))
+* lh metrics ingest survives a foreign JSONL under a profile's sessions tree ([#373](https://github.com/lazynet/lazy-harness/issues/373)) ([02897cb](https://github.com/lazynet/lazy-harness/commit/02897cb3f295ffc9583675e74d168ee05e998e65))
+
 ## [0.71.0](https://github.com/lazynet/lazy-harness/compare/v0.70.0...v0.71.0) (2026-09-17)
 
 
