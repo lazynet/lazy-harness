@@ -565,3 +565,103 @@ def test_segment_filenames_is_derived_from_the_registry(tmp_path: Path) -> None:
         assert f"{agent_type}.md" in names, f"{agent_type} has no agent segment name"
         stem = docs[0].name.removesuffix(".md")
         assert f"{stem}.head.md" in names, f"legacy {stem}.head.md dropped from the trigger set"
+
+
+def test_one_agents_segment_never_reaches_another_agents_document(tmp_path: Path) -> None:
+    """`_common/<agent>.md` is keyed by the agent the *profile* runs.
+
+    A shared `_common/` directory holds one segment per agent, so the isolation
+    is the whole point of the name: a Codex worker that read Claude Code's
+    segment would be told to call `TaskCreate`, which its harness does not
+    deliver. The tree is the deployed shape — one `_common/`, profiles running
+    different agents beside each other.
+    """
+    from lazy_harness.core.config import (
+        AgentConfig,
+        Config,
+        HarnessConfig,
+        ProfileEntry,
+        ProfilesConfig,
+    )
+    from lazy_harness.core.sync_agent_md import sync_profiles
+
+    profiles_dir = tmp_path / "profiles"
+    (profiles_dir / "_common").mkdir(parents=True)
+    (profiles_dir / "_common" / "common.md").write_text("# shared rules\n")
+    (profiles_dir / "_common" / "claude-code.md").write_text("# claude-code only\n")
+    (profiles_dir / "_common" / "codex.md").write_text("# codex only\n")
+    _seed_role_profile(profiles_dir, "lazy", head="# lazy id\n", tail="# lazy ctx\n")
+    _seed_role_profile(profiles_dir, "lazy-codex", head="# codex id\n", tail="# codex ctx\n")
+
+    cfg = Config(
+        harness=HarnessConfig(version="1"),
+        agent=AgentConfig(type="claude-code"),
+        profiles=ProfilesConfig(
+            default="lazy",
+            items={
+                "lazy": ProfileEntry(config_dir="~/.claude-lazy"),
+                "lazy-codex": ProfileEntry(config_dir="~/.codex-lazy", agent="codex"),
+            },
+        ),
+    )
+
+    sync_profiles(profiles_dir, _adapter(), cfg=cfg)
+
+    codex_doc = (profiles_dir / "lazy-codex" / "AGENTS.md").read_text()
+    assert "# codex only" in codex_doc
+    assert "# claude-code only" not in codex_doc, (
+        "Claude Code's agent segment reached a Codex document"
+    )
+
+    claude_doc = (profiles_dir / "lazy" / "CLAUDE.md").read_text()
+    assert "# claude-code only" in claude_doc
+    assert "# codex only" not in claude_doc, "Codex's agent segment reached a Claude Code document"
+
+
+def test_the_codex_document_is_composed_head_common_codex_tail(tmp_path: Path) -> None:
+    """The order ADR-043 §2 names, asserted for the agent this wave wires up.
+
+    The existing order test runs against Claude Code. Codex is the first agent
+    whose destination is not `CLAUDE.md`, so its document is assembled through
+    the per-profile destination resolution as well as the composition — one
+    test that both halves agree.
+    """
+    from lazy_harness.core.config import (
+        AgentConfig,
+        Config,
+        HarnessConfig,
+        ProfileEntry,
+        ProfilesConfig,
+    )
+    from lazy_harness.core.sync_agent_md import sync_profiles
+
+    profiles_dir = tmp_path / "profiles"
+    (profiles_dir / "_common").mkdir(parents=True)
+    (profiles_dir / "_common" / "common.md").write_text("# shared rules\n")
+    (profiles_dir / "_common" / "codex.md").write_text("# codex rules\n")
+    _seed_role_profile(profiles_dir, "lazy-codex", head="# codex id\n", tail="# codex ctx\n")
+
+    cfg = Config(
+        harness=HarnessConfig(version="1"),
+        agent=AgentConfig(type="claude-code"),
+        profiles=ProfilesConfig(
+            default="lazy-codex",
+            items={"lazy-codex": ProfileEntry(config_dir="~/.codex-lazy", agent="codex")},
+        ),
+    )
+
+    results = sync_profiles(profiles_dir, _adapter(), cfg=cfg)
+
+    assert [r.action for r in results] == ["written"]
+    assert not (profiles_dir / "lazy-codex" / "CLAUDE.md").exists()
+    out = (profiles_dir / "lazy-codex" / "AGENTS.md").read_text()
+    assert (
+        out.index("# codex id")
+        < out.index("# shared rules")
+        < out.index("# codex rules")
+        < out.index("# codex ctx")
+    ), f"composed as: {out!r}"
+    header = out.splitlines()[0]
+    assert "_common/codex.md" in header, (
+        f"the header must name the agent segment a reader should edit: {header!r}"
+    )
