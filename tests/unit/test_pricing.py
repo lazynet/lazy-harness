@@ -546,3 +546,84 @@ def test_per_token_unpriced_row_carries_no_cost_source() -> None:
     )
     assert cost == 0.0
     assert cost_source is None
+
+
+# --- flat-rate agents and the Codex model name (ADR-050 x ADR-053) ---------
+#
+# `gpt-5-codex` is the model string the Codex reader's `turn_context` line
+# declares (measured 2026-09-17 in tests/unit/test_agent_codex_transcript.py
+# and tests/unit/test_ingest.py:951, on live Codex CLI rollouts). It carries
+# no DEFAULT_PRICING entry, deliberately: the current authoritative source
+# (https://developers.openai.com/api/docs/pricing, checked 2026-09-17) lists
+# only `gpt-5.3-codex` in its "Specialized models" table — a different,
+# newer model id — so there is nothing to cite `gpt-5-codex`'s own rate
+# against. Mapping one id's price onto the other would be a guess wearing a
+# citation, exactly what this table's own convention (a public source URL
+# and date beside every rate) exists to rule out. The two rows below are the
+# registered expected behaviour in its place: a flat-rate Codex session
+# never turns this gap into a false "unpriced" alarm, and a per-token one
+# still surfaces it by name.
+
+
+def test_gpt_5_codex_has_no_default_rate() -> None:
+    """No entry exists for the model the Codex reader actually emits.
+
+    Documented absence, not an oversight: see the module comment above this
+    test for why no rate is citable yet.
+    """
+    from lazy_harness.monitoring.pricing import default_pricing
+
+    assert "gpt-5-codex" not in default_pricing()
+
+
+def test_a_flat_rate_codex_session_never_becomes_an_unpriced_gap() -> None:
+    """billing_model='flat_rate' short-circuits pricing regardless of the
+    model — a ChatGPT-plan Codex profile's real usage must not read as a
+    pricing hole just because its model has no per-token rate."""
+    from lazy_harness.monitoring.pricing import cost_for_billing_model, default_pricing
+
+    tokens = {"input": 29_400, "output": 7, "cache_read": 0, "cache_create": 0}
+    cost, cost_source = cost_for_billing_model(
+        "gpt-5-codex", tokens, default_pricing(), billing_model="flat_rate"
+    )
+    assert cost == 0.0
+    assert cost_source == "subscription"
+
+
+@pytest.mark.parametrize(
+    ("model", "billing_model"),
+    [
+        ("claude-opus-4-6", "per_token"),
+        ("gpt-5-codex", "flat_rate"),
+    ],
+)
+def test_a_named_cost_source_is_always_a_cost_sources_member(
+    model: str, billing_model: str
+) -> None:
+    """Whenever `cost_for_billing_model` names a source at all, it is one of
+    the two ADR-050 enum members — never a third spelling drifting in."""
+    from lazy_harness.monitoring.pricing import (
+        COST_SOURCES,
+        cost_for_billing_model,
+        default_pricing,
+    )
+
+    tokens = {"input": 1000, "output": 500, "cache_read": 0, "cache_create": 0}
+    _cost, cost_source = cost_for_billing_model(
+        model, tokens, default_pricing(), billing_model=billing_model
+    )
+    assert cost_source in COST_SOURCES
+
+
+def test_a_per_token_codex_session_with_an_unrated_model_is_an_unpriced_gap() -> None:
+    """billing_model='per_token' against the same unrated model is the one
+    case cost_source exists to name: an API-key Codex profile with no rate
+    for gpt-5-codex must surface in `unknown_models`, not render as $0.00."""
+    from lazy_harness.monitoring.pricing import cost_for_billing_model, default_pricing
+
+    tokens = {"input": 29_400, "output": 7, "cache_read": 0, "cache_create": 0}
+    cost, cost_source = cost_for_billing_model(
+        "gpt-5-codex", tokens, default_pricing(), billing_model="per_token"
+    )
+    assert cost == 0.0
+    assert cost_source is None
