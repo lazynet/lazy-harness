@@ -145,6 +145,53 @@ lh status tokens --by day --period 30d --json \
   | jq -r '.groups[] | select(.cost > 50) | "\(.key.day) $\(.cost)"'
 ```
 
+## Flat-rate agents and unknown models
+
+Not every profile is billed per token. `[profiles.<name>] billing_model =
+"flat_rate"` (ADR-050) marks a profile whose usage runs against a
+subscription — a ChatGPT-plan Codex login, for example — where the
+per-token table has nothing to say about cost. `lh status` renders that
+distinction rather than guessing past it:
+
+| `billing_model` | Model has a rate | Renders as | `cost_source` |
+| --- | --- | --- | --- |
+| `per_token` | yes | the dollar amount | `pricing` |
+| `per_token` | no | `unknown_models` warning on `lh metrics ingest`, model named | `null` |
+| `flat_rate` | yes or no | `—` (never `$0.00`) | `subscription` |
+
+A `flat_rate` row short-circuits pricing entirely, so a model with no entry
+in `DEFAULT_PRICING` never falls into the `per_token` / no-rate row above —
+the subscription already paid for the usage, and reporting `$0.00` would
+read as free rather than unmetered. A group or total mixing both billing
+models is relabelled `Total (priced only)` rather than silently summing a
+subscription profile's real tokens into a number that looks like total
+spend.
+
+**Codex today**: the reader's `turn_context` line declares `gpt-5-codex`
+(measured 2026-09-17), which carries no `DEFAULT_PRICING` entry. The
+authoritative source (developers.openai.com/api/docs/pricing, checked
+2026-09-17) lists only `gpt-5.3-codex` under "Specialized models" — a
+different, newer model id — so there is no rate to cite for `gpt-5-codex`
+itself yet. Concretely, today: a `codex` profile with `billing_model =
+"flat_rate"` renders `—`; the same profile under `billing_model =
+"per_token"` (an API-key login) renders `unknown_models: gpt-5-codex` on
+`lh metrics ingest` and `—` is never confused with "priced at zero."
+
+```
+lh status tokens --by profile
+lazy-codex: 29.4K in, 7 out, 41% cache — Cost —
+Total (priced only)
+```
+
+*Measured 2026-09-17*, from a real `lazy-codex` (Codex, flat-rate) profile
+after `lh metrics ingest` — the flat-rate render above is real data, not a
+placeholder. The rest of this worked example (a full `lh status overview`
+panel, `lh status sessions`, and `lazy-codex`'s `launch_to_session_ratio`
+from `lh metrics launches`) is still *synthetic — replaced by measured
+once the `## For the user` commands in the billing-pass report come back*:
+those three commands were not yet run against the real profile as of this
+writing, only `lh status tokens --by profile`.
+
 ## Reconciling the numbers
 
 The total printed by `lh status tokens` is computed at full precision and

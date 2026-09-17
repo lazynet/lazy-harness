@@ -403,6 +403,85 @@ def test_launch_to_session_ratio_reports_no_ratio_without_a_denominator(
     assert ratios["flex"].ratio is None
 
 
+# --- insert_stats widened for agent / billing_model (ADR-050) --------------
+
+
+def test_insert_stats_records_agent_and_billing_model(tmp_path: Path) -> None:
+    """`insert_stats` predates ADR-050 and only ever wrote the pre-v3 columns
+    — an `agent`/`billing_model` passed in the entry dict was silently
+    dropped, even though the column already existed (via `upsert_stats`).
+    """
+    from lazy_harness.monitoring.db import MetricsDB
+
+    db = MetricsDB(tmp_path / "metrics.db")
+    db.insert_stats(
+        [
+            {
+                **_stat("s1", "2026-09-17", "lazy-codex"),
+                "agent": "codex",
+                "billing_model": "flat_rate",
+            }
+        ]
+    )
+    rows = db.query_stats(period="all")
+    db.close()
+
+    assert len(rows) == 1
+    assert rows[0]["agent"] == "codex"
+    assert rows[0]["billing_model"] == "flat_rate"
+
+
+def test_insert_stats_defaults_agent_and_billing_model_when_omitted(tmp_path: Path) -> None:
+    """A caller that never heard of ADR-050 still gets the documented
+    defaults, not an empty write — matching `upsert_stats`'s behaviour."""
+    from lazy_harness.monitoring.db import MetricsDB
+
+    db = MetricsDB(tmp_path / "metrics.db")
+    db.insert_stats([_stat("s1", "2026-09-17", "lazy")])
+    rows = db.query_stats(period="all")
+    db.close()
+
+    assert rows[0]["agent"] == ""
+    assert rows[0]["billing_model"] == "per_token"
+
+
+def test_a_flat_rate_codex_row_inserted_and_read_back_renders_a_dash(tmp_path: Path) -> None:
+    """End to end through the same path `lh status tokens` uses: a flat-rate
+    Codex row written by `insert_stats`, read back by `query_stats`, and fed
+    to the token view must render `—`, never `$0.00` — the ADR-050 D7 render
+    rule, pinned against the real write path rather than a synthetic row
+    handed straight to `aggregate()`.
+    """
+    from lazy_harness.monitoring.aggregate import aggregate, resolve_period
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.views import tokens as tokens_view
+
+    db = MetricsDB(tmp_path / "metrics.db")
+    db.insert_stats(
+        [
+            {
+                **_stat("codex-session", "2026-09-17", "lazy-codex"),
+                "model": "gpt-5-codex",
+                "input": 29_400,
+                "output": 7,
+                "cost": 0.0,
+                "agent": "codex",
+                "billing_model": "flat_rate",
+            }
+        ]
+    )
+    rows = db.query_stats(period="all")
+    db.close()
+
+    from tests.unit.monitoring.views._render import render_to_text
+
+    agg = aggregate(rows, ["profile"], {"profile": "", "model": "", "project": ""})
+    rendered = tokens_view.render_table(agg, resolve_period("all"))
+    text = render_to_text(rendered)
+    assert "—" in text
+    assert "$0.0" not in text
+
+
 def test_launch_to_session_ratio_cuts_both_halves_at_the_same_instant(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

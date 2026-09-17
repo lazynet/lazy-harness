@@ -132,6 +132,17 @@ class IntroductoryRate:
 # mechanism stays for the next launch discount.
 INTRODUCTORY_PRICING: dict[str, IntroductoryRate] = {}
 
+# The ADR-050 `cost_source` vocabulary for a `MetricEvent`/`session_stats`
+# row: what `cost_for_billing_model` below returns whenever it names a
+# source at all (`None` is not a member — it is the absence of one, the
+# unpriced-gap case `unknown_models` watches for). This is a different
+# vocabulary from `lh exec`'s own `cost_source` field (see `cli/exec_cmd.py`
+# `EXEC_COST_SOURCES`): the two happen to share a field name across two
+# unrelated schemas, `MetricEvent` v3 and `lh.exec/v1`, but answer different
+# questions — this one says whether per-token pricing applied and succeeded,
+# exec's says which subsystem produced the number.
+COST_SOURCES: tuple[str, ...] = ("pricing", "subscription")
+
 
 def is_pseudo_model(model: str) -> bool:
     """True for placeholders that stand in for a model without being one.

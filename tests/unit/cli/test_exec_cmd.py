@@ -772,6 +772,24 @@ def test_exec_leaves_cost_source_null_when_the_agent_reported_no_cost(
     assert envelope["cost_source"] is None
 
 
+def test_exec_cost_source_is_always_an_exec_vocabulary_member(harness_config: Path) -> None:
+    """A schema test, not a behaviour one: whatever `cost_source` carries when
+    `cost_usd` is set must be one of exec's own two spellings — never a third
+    one, and never the ADR-050 ingest-side vocabulary (`pricing`/
+    `subscription`), which is a different concept behind the same field name.
+    """
+    from lazy_harness.cli.exec_cmd import EXEC_COST_SOURCES
+    from lazy_harness.monitoring.pricing import COST_SOURCES
+
+    assert set(EXEC_COST_SOURCES).isdisjoint(COST_SOURCES)
+
+    _write_agent(ECHO_AGENT)
+    _, envelope = _invoke([])
+
+    assert envelope["cost_usd"] is not None
+    assert envelope["cost_source"] in EXEC_COST_SOURCES
+
+
 # Writes a real transcript at the pinned stem, then hangs so `--timeout` kills
 # it. 200_000 input and 40_000 output tokens at claude-opus-4-6's rates are
 # exactly $1.00 each, so a lost bucket shows as 1.0 rather than as a plausible
