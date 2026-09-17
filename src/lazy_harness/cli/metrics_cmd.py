@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from pathlib import Path
@@ -290,3 +291,68 @@ def metrics_loops(days: int | None, db_override: Path | None) -> None:
         console.print(f"declared rate: {rate}% ({declared}/{considered})")
     finally:
         db.close()
+
+
+@metrics.command("launches")
+@click.option("--days", type=int, default=28, help="Window size in days, shared by both blocks.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+@click.option("--db", "db_override", type=click.Path(path_type=Path), default=None)
+def metrics_launches(days: int, as_json: bool, db_override: Path | None) -> None:
+    """Report launches per profile/agent/entry, and the launch-to-session ratio.
+
+    The kill criterion for blast-radius decision 1 reads both counters
+    (`specs/designs/2026-09-13-multi-agent-blast-radius-design.md:275-373`);
+    this is their first human-visible surface.
+    """
+    console = Console()
+
+    if db_override is not None:
+        db_path = db_override
+    else:
+        try:
+            cfg = load_config(config_file())
+        except ConfigError:
+            cfg = None
+        configured = cfg.monitoring.db if cfg and cfg.monitoring.db else None
+        db_path = expand_path(configured) if configured else data_dir() / "metrics.db"
+
+    since = time.time() - days * 86400
+    db = MetricsDB(db_path)
+    try:
+        counts = db.launch_counts(since_ts=since)
+        ratios = db.launch_to_session_ratio(days=days)
+    finally:
+        db.close()
+
+    if as_json:
+        payload = {
+            "launches": [
+                {"profile": profile, "agent": agent, "entry": entry, "count": n}
+                for (profile, agent, entry), n in sorted(counts.items())
+            ],
+            "ratios": [
+                {
+                    "profile": r.profile,
+                    "launches": r.launches,
+                    "sessions": r.sessions,
+                    "ratio": r.ratio,
+                }
+                for r in sorted(ratios.values(), key=lambda r: r.profile)
+            ],
+        }
+        console.print(json.dumps(payload))
+        return
+
+    if counts:
+        for (profile, agent, entry), n in sorted(counts.items()):
+            console.print(f"{profile:<15} {agent:<12} {entry:<6} {n}")
+    else:
+        console.print("no launches recorded")
+    console.print()
+
+    for profile in sorted(ratios):
+        r = ratios[profile]
+        ratio_display = "—" if r.ratio is None else f"{r.ratio:.2f}"
+        console.print(
+            f"{profile:<15} launches={r.launches} sessions={r.sessions} ratio={ratio_display}"
+        )

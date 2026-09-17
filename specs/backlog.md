@@ -118,6 +118,7 @@ desde `:367-369` cuando el step 3 insertó los helpers de merge arriba de la cla
 - [x] **F2 cerrado — un archivo de secrets ausente sigue fail-open, uno presente e ilegible ahora rechaza el launch** — cerrado por ADR-045 D1/D2/D3. La decisión: un archivo dentro del directorio de secrets es la declaración de que el profile lleva su propia cuenta. Archivo ausente sigue fail-open —es el profile default, el caso normal en toda máquina— y lo reporta `lh doctor` en la sección Profile credentials, nombrando el profile y el path, sin nombrar ninguna variable ni imprimir nada del archivo. Archivo presente e ilegible (o no decodificable) ahora levanta `SecretsError`, que `resolve_launch` convierte en `LaunchError` con kind `secrets-unreadable`. Se rechazó explícitamente scrubear las variables de credencial que nombre el adapter (A2): la enumeración no es verificable desde el código, y un denylist incompleto borra la que conocía y hereda la que no — el mismo defecto, con un guard que lo hace parecer resuelto. **Defecto adicional encontrado al escribir el test:** `Path.is_file()` no traga `EACCES`, así que el gate de existencia viejo levantaba `PermissionError` desde afuera del `except OSError` que envolvía sólo la lectura; un directorio de secrets sin permiso de traverse llegaba a `lh run` como traceback — la rama por errno cierra los dos casos. El test que fijaba el comportamiento viejo (`test_an_unreadable_file_is_reported_and_the_launch_continues`) fue reescrito, no borrado. PR #351, mergeado el 2026-09-16; entra en 0.69.0.
 - [x] **El preflight de auth ya no lee un nombre de archivo de Claude Code a mano** — cerrado por ADR-045 D4/D5/D6/D7. `AgentAdapter` declara `credentials_file() -> str | None` al lado de `mcp_config_file()` / `session_dirs()` / `system_docs()`. `ClaudeCodeAdapter` devuelve su nombre de archivo; `CodexAdapter` devuelve `None` porque `codex-evidence.md` registra el path de su auth file y nada de su shape, y el parser del preflight es el envelope de Claude Code — devolver el nombre rutearía el archivo de Codex a un parser que no lo entiende y reportaría "unexpected shape" sobre un archivo sano. `NullAdapter` devuelve `None`. `None` tiene status propio, `n/a`, con el agente nombrado — colapsarlo en `unknown` era el defecto que esta entrada nombraba. El falso FAIL de macOS: donde el archivo es espejo del keychain (`claude-code` en darwin) un fail o warn derivado del archivo degrada a `unknown` nombrando el keychain; `pass` sobrevive, porque el espejo se escribe desde el store y nunca adelantado — no se lee el keychain desde el hook. Los goldens del hook quedan keyeados por plataforma para los tres casos cuyo verdict sale del archivo. PR #351, mergeado el 2026-09-16; entra en 0.69.0.
 - [x] **Probes 5–8 contra `codex-cli 0.154.0` cierran las preguntas abiertas por las probes 1–4c** — multi-file `apply_patch` (probe 5: dos secciones `*** Update File:` en un solo blob), la grafía de delete (probe 6: `*** Delete File: <path>` literal, sin diff body) y la forma de nivel superior de `~/.codex/auth.json` (probe 8). El dialecto de lectura (probe 7) ya tiene su propia entrada arriba. `FileEdit` sin poder expresar un delete quedó **desbloqueado, no hecho**: la grafía está confirmada, pero el ensanche del tipo va en ADR-046, en curso en otra lane — esta entrada no lo da por cerrado. ADR-044 ganó una nota Evolution con estos hallazgos, sin tocar su Decision ni sus Consequences. PR #352, mergeado el 2026-09-16; entra en 0.69.0.
+- [x] **`lh metrics launches`, la línea `Launches` de `lh doctor` y el kill-check de horizonte fijo — decisión 1 del diseño blast-radius consumida** — `MetricsDB.launch_counts` y `launch_to_session_ratio` (#346) tenían tabla sin lector. `lh metrics launches [--days N] [--json]` (`cli/metrics_cmd.py`, shape de `lh metrics loops`) es el primer consumidor: dos bloques, launches por `(profile, agent, entry)` y el ratio launch-to-session por perfil, con `—`/`null` cuando falta el denominador. `monitoring/launches.py:adoption_check` implementa el check de horizonte fijo del diseño (`:275-373`): devuelve `None` — no un veredicto — en dos casos que el propio diseño trata igual: el horizonte no se cumplió (ocho semanas desde el merge del `CodexAdapter` real, `1de385c`/#348, 2026-09-16) o ningún perfil Claude tiene un ratio medible en la ventana, o sea la calibración es imposible. Calibrado, el umbral es `5 × min(ratio)` sobre los perfiles Claude — el mínimo, no el promedio, porque el sesgo del diseño es hacia falsos negativos: un adapter en uso no debe matarse por un umbral inflado por un perfil Claude más pesado en otro lado. `lh doctor` gana una sección `Launches` (`_render_launches`, llamada al final de `doctor()`, nunca abre un archivo de DB que no existe — mismo contrato que `Sink freshness`): una línea por perfil no-Claude con lanzamientos en 28 días (o `none`), y una segunda línea con el veredicto, `horizon opens <date>` mientras el horizonte no se cumplió, o `horizon not started: launch-to-session ratio unmeasured` cuando la calibración es imposible. Cierra este mismo archivo, `:496`. PR #360; entra en 0.71.0.
 
 ---
 
@@ -493,13 +494,52 @@ Cada una mezcla responsabilidades no relacionadas: recolección de contexto y re
 
 **Acción:** ninguna propuesta en esta entrada — el harness no escribe `[projects.*]` hoy.
 
-### Nada muestra los contadores de `launches` a un humano
+### D7 — `write_envrc` sólo carga un export por root; dos perfiles con distinto agente sobre el mismo root se pisan
 
-**Por qué:** `MetricsDB.launch_counts` y `launch_to_session_ratio` (#346) no tienen ningún consumidor visible — ni CLI ni línea de `lh doctor`. `docs/reference/cli.md:572` documenta `lh metrics loops` sobre `loop_events`; `lh metrics launches` (o una línea de doctor) es la forma obvia, pero el diseño no nombra ningún subcomando y #346 no inventó uno.
+**Por qué:** el diseño (`:610-646`) quiere un export por agente distinto que reclame un root, más `root_default`. Medido con un script descartable (`write_envrc` llamado dos veces sobre el mismo root, una vez por perfil): el segundo perfil no agrega un segundo export al bloque managed, **reemplaza** el bloque entero — `render_envrc` hace un único `re.sub` entre `BEGIN_MARKER`/`END_MARKER`, sin noción de "un export por agente". Bloque observado (sintético, home redactado a `~`):
 
-**Fuente:** #346, follow-up 1.
+```
+# >>> lazy-harness >>>
+# Managed by `lh profile envrc` (lazy-harness 0.70.0) — do not edit this block by hand.
+export CLAUDE_CONFIG_DIR="~/.claude-work"
+# <<< lazy-harness <<<
+```
 
-**Acción:** ninguna propuesta en esta entrada.
+pasa a, tras el segundo `write_envrc` sobre el mismo root con otro agente:
+
+```
+# >>> lazy-harness >>>
+# Managed by `lh profile envrc` (lazy-harness 0.70.0) — do not edit this block by hand.
+export CODEX_HOME="~/.codex-sandbox"
+# <<< lazy-harness <<<
+```
+
+El export de `claude-code` desaparece sin aviso. `cli/profile_cmd.py:deploy_envrc_for_all_profiles` itera perfil por perfil y llama `write_envrc` una vez por root, así que dos perfiles con distinto agente sobre el mismo root en `config.toml` hoy producen exactamente esto — el último perfil de la iteración gana el `.envrc`, y ningún camino de código lo nombra.
+
+**Fuente:** lane `launches-consumer`, brief parte 4 (D7), verificación con script descartable, 2026-09-16.
+
+**Acción:** ninguna propuesta en esta entrada — D7 no se implementa en esta lane.
+
+### Probe 9 — shape de `security find-generic-password` contra el keychain de Claude Code; A5 deja de estar rechazada por secuencia
+
+**Por qué:** [ADR-045](adrs/045-credential-boundary.md) rechazó A5 ("Read the keychain") **por secuencia, no por principio**: "no probe de `security find-generic-password`'s output shape has been run", y el propio D7 de esa ADR dice que el lugar donde nunca debe correrse es un agent pane o un contexto Background de launchd — es lo que destruyó `credentials.enc` dos veces. El usuario corrió el probe el 2026-09-16 desde una terminal **Aqua** — nunca desde un pane de agente —, contra el perfil cuyo config dir hashea al sufijo del label, sin `-w`, así que no se imprimió ningún secreto:
+
+```
+security find-generic-password -l "Claude Code-credentials-<8 hex de sha256(config_dir)>"
+→ exit 0, un item:
+  class: "genp"
+  label / "svce": "Claude Code-credentials-<8 hex>"
+  "acct": <redactado — nombre de cuenta local>
+  "cdat": 20260502205443Z      (creado 2026-05-02)
+  "mdat": 20260916220007Z      (modificado 2026-09-16, el día de un login exitoso)
+  el resto de los atributos NULL
+```
+
+Los dos campos usables son `cdat` y `mdat`. `mdat` es una señal de liveness legible sin imprimir nunca el secreto, y es exactamente lo que distingue el caso de D6 de esa misma ADR (2026-09-16: `.credentials.json` con `mtime` 2026-09-08 y un `refreshTokenExpiresAt` vencido, mientras la entrada del keychain estaba fresca). **A5 pasa de rechazada-por-secuencia a pendiente-de-ADR**: implementarla sigue siendo un ADR propio (la misma D7 lo dice) — necesita el guard de ejecución Aqua-only, un umbral de staleness sobre `mdat`, y un test de que el hook sigue saliendo 0 cuando `security` está ausente o el keychain está bloqueado.
+
+**Fuente:** addendum a la lane `launches-consumer`, probe 9, 2026-09-16.
+
+**Acción:** ninguna propuesta en esta entrada — implementar A5 es un ADR aparte.
 
 ---
 
