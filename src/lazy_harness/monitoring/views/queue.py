@@ -18,6 +18,8 @@ def render(ctx: StatusContext) -> RenderableType:
         if not profile.exists:
             continue
         queue_dir = ctx.queue_dir(profile)
+        if queue_dir is None:
+            continue
         done_dir = queue_dir / "done"
         pending = sum(1 for _ in queue_dir.glob("*.task")) if queue_dir.is_dir() else 0
         done_total = sum(1 for _ in done_dir.glob("*.task")) if done_dir.is_dir() else 0
@@ -36,7 +38,10 @@ def render(ctx: StatusContext) -> RenderableType:
         out.append(f"  Done today: {done_today}")
         out.append(f"  Done total: {done_total}")
 
-        cl_log = ctx.logs_dir(profile) / "compound-loop.log"
+        logs_dir = ctx.logs_dir(profile)
+        if logs_dir is None:
+            continue
+        cl_log = logs_dir / "compound-loop.log"
         if cl_log.is_file():
             out.append("  [bold]Recent worker activity:[/bold]")
             try:

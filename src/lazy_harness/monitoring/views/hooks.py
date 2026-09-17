@@ -37,7 +37,10 @@ def render(ctx: StatusContext) -> RenderableType:
     for profile in ctx.profiles:
         if not profile.exists:
             continue
-        hooks_log = ctx.logs_dir(profile) / "hooks.log"
+        logs_dir = ctx.logs_dir(profile)
+        if logs_dir is None:
+            continue
+        hooks_log = logs_dir / "hooks.log"
         for hook_name in HOOK_NAMES:
             line = last_hook_line(hooks_log, hook_name)
             if not line:
@@ -66,6 +69,8 @@ def render(ctx: StatusContext) -> RenderableType:
         if not profile.exists:
             continue
         logs_dir = ctx.logs_dir(profile)
+        if logs_dir is None:
+            continue
         for log_name in ("hooks.log", "compound-loop.log"):
             log_path = logs_dir / log_name
             label = f"{profile.name}:{log_name}"
@@ -82,7 +87,10 @@ def render(ctx: StatusContext) -> RenderableType:
     for profile in ctx.profiles:
         if not profile.exists:
             continue
-        lock_file = ctx.queue_dir(profile) / ".worker.lock"
+        queue_dir = ctx.queue_dir(profile)
+        if queue_dir is None:
+            continue
+        lock_file = queue_dir / ".worker.lock"
         if not lock_file.is_file():
             continue
         state, detail = lock_state(lock_file)
