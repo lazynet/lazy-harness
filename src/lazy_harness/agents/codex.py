@@ -32,6 +32,7 @@ nobody has fed. It waits on a run, not on a design decision.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -47,6 +48,7 @@ from lazy_harness.agents.base import (
     HookOutput,
     HookSupport,
     Operation,
+    SessionIdentity,
     Signal,
     TokenUsage,
     ToolCall,
@@ -327,6 +329,10 @@ _TOOL_OPERATIONS: dict[str, Operation] = {
 # guess this adapter exists to avoid.
 
 _ROLLOUT_GLOB = "rollout-*.jsonl"
+# The uuid v7 that closes a rollout's file name. Measured: it equals
+# `session_meta.id` in 15/15 rollouts, so the session is identifiable without
+# opening the file — which matters on a tree of thousands.
+_ROLLOUT_SESSION = re.compile(r"^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-(?P<session>.+)$")
 
 # `developer` is the third role in the stream and is deliberately not here. It
 # is Codex's instruction channel — the composed `AGENTS.md` and config text,
@@ -351,6 +357,26 @@ def _as_int(value: object) -> int | None:
     if isinstance(value, bool):
         return None
     return value if isinstance(value, int) else None
+
+
+def _turn_context_model(entry: dict) -> str | None:
+    """The model a `turn_context` line declares, or None if it declares none.
+
+    `turn_context` is the only kind in a 0.154.0 rollout that names the model:
+    measured over 15 sessions, 23 of these lines carried `payload.model` as a
+    non-empty string every time, and one model per file. It is read for this
+    field alone — the rest of the payload (cwd, sandbox, approvals) duplicates
+    nothing a signal is defined over, so reading it does not violate ADR-048's
+    one-stream-per-signal rule.
+
+    Never raises and never guesses: a release that renames the key, or writes
+    it as a number, leaves the model unknown rather than stringified.
+    """
+    payload = entry.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    model = payload.get("model")
+    return model if isinstance(model, str) and model else None
 
 
 def _rollout_timestamp(value: object) -> datetime | None:
@@ -1012,6 +1038,54 @@ class CodexAdapter:
         except OSError:
             return
 
+    def session_identity(self, path: Path) -> SessionIdentity:
+        """The session from the file name, the project from `session_meta.cwd`.
+
+        A rollout path encodes a **date**, never a project — the tree is
+        `sessions/YYYY/MM/DD/` — so the project has to come out of the file.
+        `session_meta` is the first record written, and this stops at it rather
+        than reading a log that can run to hundreds of megabytes to learn one
+        string.
+
+        The session id comes off the file name instead, which is measurably the
+        same answer: the name's trailing uuid v7 equalled `session_meta.id` in
+        15/15 rollouts. That keeps a session identifiable when the record is
+        missing, half-written, or the file has since been removed — this must
+        not raise, and a session named by its file beats a session lost.
+
+        The project is `cwd` resolved the way every other subsystem resolves
+        one, so a worktree bills to its repository rather than to a row per
+        branch. A `cwd` that no longer exists still names its own directory,
+        which is the right answer for a checkout that has been cleaned up.
+        """
+        from lazy_harness.core.project_identity import repo_name
+
+        match = _ROLLOUT_SESSION.match(path.stem)
+        session_id = match.group("session") if match else path.stem
+
+        project: str | None = None
+        try:
+            with path.open("r", encoding="utf-8", errors="replace") as handle:
+                for raw_line in handle:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(entry, dict) or entry.get("type") != "session_meta":
+                        continue
+                    payload = entry.get("payload")
+                    if isinstance(payload, dict):
+                        cwd = payload.get("cwd")
+                        if isinstance(cwd, str) and cwd:
+                            project = repo_name(Path(cwd))
+                    break
+        except OSError:
+            pass
+        return SessionIdentity(session_id=session_id, project=project)
+
     def read(self, path: Path) -> Iterator[TranscriptEvent]:
         """One rollout, line by line, yielding only what a signal is defined over.
 
@@ -1023,11 +1097,24 @@ class CodexAdapter:
         `errors="replace"` rather than a strict decode: one byte Codex failed to
         write cleanly would otherwise raise mid-iteration and cost every line
         after it.
+
+        **One event here depends on a line already passed.** No usage record
+        names the model; `turn_context` does, on its own line, earlier. So the
+        last model declared is carried forward onto everything that follows it
+        — the only backward reference in either reader, and the reason this
+        loop and not `_events_from` owns the state.
+
+        That state is a local of this generator and never an attribute of the
+        adapter. `registry.py` builds a bare `cls()`, so one instance serves
+        every profile and two reads can be open at once; held on `self`, the
+        second would inherit the first's model and bill one session's tokens
+        under another session's name.
         """
         try:
             handle = path.open("r", encoding="utf-8", errors="replace")
         except OSError:
             return
+        carried_model: str | None = None
         with handle:
             for raw_line in handle:
                 line = raw_line.strip()
@@ -1039,11 +1126,24 @@ class CodexAdapter:
                     # A corrupt line, or the half-written last one of a live
                     # session. Both are ordinary; neither ends the read.
                     continue
-                if isinstance(entry, dict):
-                    yield from self._events_from(entry)
+                if not isinstance(entry, dict):
+                    continue
+                if entry.get("type") == "turn_context":
+                    # Read for one field and delivered as nothing: no signal is
+                    # defined over it. A context naming no usable model leaves
+                    # the previous one standing rather than blanking it — the
+                    # turns it introduces did run on something.
+                    declared = _turn_context_model(entry)
+                    if declared is not None:
+                        carried_model = declared
+                    continue
+                yield from self._events_from(entry, carried_model)
 
-    def _events_from(self, entry: dict) -> Iterator[TranscriptEvent]:
+    def _events_from(self, entry: dict, model: str | None = None) -> Iterator[TranscriptEvent]:
         """Every event one rollout line carries — at most one, in this format.
+
+        `model` is what the last `turn_context` declared, carried forward by
+        `read()`; `None` until one has been seen.
 
         A rollout is two interleaved streams, and **the same fact appears in
         both**: the model's own `response_item` items and the UI's `event_msg`
@@ -1065,12 +1165,12 @@ class CodexAdapter:
         # raise out of this generator and end the read.
         kind = entry.get("type")
         if kind == "response_item":
-            yield from self._response_item_events(entry, payload, when)
+            yield from self._response_item_events(entry, payload, when, model)
         elif kind == "token_usage_record":
-            yield from self._usage_events(entry, payload, when)
+            yield from self._usage_events(entry, payload, when, model)
 
     def _response_item_events(
-        self, entry: dict, payload: dict, when: datetime | None
+        self, entry: dict, payload: dict, when: datetime | None, model: str | None = None
     ) -> Iterator[TranscriptEvent]:
         """A message or a tool call. Every other item kind is skipped.
 
@@ -1087,7 +1187,12 @@ class CodexAdapter:
             text = _rollout_text(payload.get("content"))
             if text:
                 yield TranscriptEvent(
-                    signal=Signal.MESSAGES, timestamp=when, role=role, text=text, raw=entry
+                    signal=Signal.MESSAGES,
+                    timestamp=when,
+                    role=role,
+                    text=text,
+                    model=model,
+                    raw=entry,
                 )
             return
 
@@ -1105,11 +1210,12 @@ class CodexAdapter:
             # are one concept, and two mappings would drift.
             tool=self._parse_tool({"tool_name": name, "tool_input": _tool_input(kind, payload)}),
             tool_use_id=use_id if isinstance(use_id, str) else None,
+            model=model,
             raw=entry,
         )
 
     def _usage_events(
-        self, entry: dict, payload: dict, when: datetime | None
+        self, entry: dict, payload: dict, when: datetime | None, model: str | None = None
     ) -> Iterator[TranscriptEvent]:
         """`usage` — this turn's accounting — and not the two running totals.
 
@@ -1124,10 +1230,22 @@ class CodexAdapter:
         read and creation halves `TokenUsage` names; `reasoning_output_tokens`
         and `total_tokens` have no field and are not folded into one, since a
         sum that silently includes reasoning is worse than an absent counter.
+
+        `response_id` is the dedup key and `turn_id` is not: measured over 176
+        records, `response_id` was a string on every one and unique across all
+        15 rollouts, while those same 176 shared 21 `turn_id`s — deduping on the
+        turn would drop every usage record in a turn but the first. Nothing in
+        the `response_item` stream carries it either (0 of 176 matched an item's
+        `id`), so the record is not joined to that stream and stands alone.
+
+        Codex reports one undifferentiated cache write, so
+        `cache_creation_1h_tokens` stays `None`: a TTL split this provider does
+        not disclose is not the same fact as a turn that wrote no 1-hour cache.
         """
         usage = payload.get("usage")
         if not isinstance(usage, dict):
             return
+        response_id = payload.get("response_id")
         yield TranscriptEvent(
             signal=Signal.TOKEN_USAGE,
             timestamp=when,
@@ -1137,5 +1255,7 @@ class CodexAdapter:
                 cache_read_tokens=_as_int(usage.get("cached_input_tokens")),
                 cache_creation_tokens=_as_int(usage.get("cache_write_input_tokens")),
             ),
+            model=model,
+            message_id=response_id if isinstance(response_id, str) and response_id else None,
             raw=entry,
         )

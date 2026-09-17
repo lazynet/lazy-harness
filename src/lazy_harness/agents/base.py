@@ -390,6 +390,12 @@ class TokenUsage:
     output_tokens: int | None = None
     cache_read_tokens: int | None = None
     cache_creation_tokens: int | None = None
+    cache_creation_1h_tokens: int | None = None
+    """The part of the cache write billed at the 1-hour TTL, where the provider
+    discloses the split. A provider that reports one undifferentiated write
+    leaves this `None` and puts the whole total in `cache_creation_tokens` —
+    which is why the two are siblings rather than a total and a share of it,
+    and why a reader must not assume the first includes this one."""
 
 
 @dataclass(frozen=True)
@@ -435,6 +441,15 @@ class TranscriptEvent:
     """tool_calls: the provider's own id, which pairs a call with its result."""
     usage: TokenUsage | None = None
     """token_usage."""
+    model: str | None = None
+    """token_usage / messages: the model that produced the turn, as the provider
+    names it. `None` where the transcript does not disclose it — which is a
+    different fact from a model named `unknown`, and metering keeps them
+    apart."""
+    message_id: str | None = None
+    """The provider's own stable id for the turn, where it has one. Distinct
+    from `tool_use_id`, which pairs a call with its result: a consumer deduping
+    a re-included conversation prefix keys on this one."""
     goal: GoalStatus | None = None
     """goal_status."""
     raw: dict | None = None
@@ -480,6 +495,46 @@ class TranscriptReader(Protocol):
         transcript dependence a *declared* capability — and a declaration that
         lives only in the hook cannot be checked against the reader that is
         supposed to satisfy it.
+        """
+        ...
+
+
+@dataclass(frozen=True)
+class SessionIdentity:
+    """Which session a transcript belongs to, and where its work happened.
+
+    Metering keys a row on `(session, model)` and reports it under a project,
+    and neither question is answerable from a transcript's *contents*: one
+    agent encodes both in the path, another names the session in its file name
+    and the project in a record no signal is defined over. So the agent
+    answers, and the consumer stops guessing per dialect.
+
+    `project` is `None` when the transcript discloses none — a different fact
+    from a project literally named "unknown", which is what a fallback invents.
+    """
+
+    session_id: str
+    project: str | None = None
+
+
+@runtime_checkable
+class TranscriptIdentity(Protocol):
+    """Optional capability: a reader that can say which session a transcript is.
+
+    Separate from `TranscriptReader` for the reason `HeadlessAgent` is separate
+    from `AgentAdapter`, and the separation is load-bearing here: `isinstance`
+    against `TranscriptReader` is what `transcript_health` and
+    `stop_verify_guard` gate on, so folding this method in would make every
+    reader that cannot identify a session — including every test fake — report
+    `DEGRADED` on the strength of a capability neither of them needs.
+    """
+
+    def session_identity(self, path: Path) -> SessionIdentity:
+        """Identify the session this transcript bills to.
+
+        Must not raise. A transcript that vanished between the walk and the
+        read, or one whose identifying record is half-written, still has a file
+        name; answering from it beats losing the session.
         """
         ...
 

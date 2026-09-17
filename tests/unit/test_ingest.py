@@ -694,6 +694,22 @@ class _AgentWithoutSessionDirs:
     name = "claude-code"
 
 
+def _reader_declaring(subdir: str):
+    """A real reader whose sessions directory is not `projects/`.
+
+    Subclassed rather than hand-rolled: the claim under test is that the
+    *declared* directory is the one walked, and a fake with its own
+    `locate_sessions` would prove only that the fake read its own argument.
+    """
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    class _Declared(ClaudeCodeAdapter):
+        def session_dirs(self) -> dict[str, str]:
+            return {"sessions": subdir, "logs": "", "queue": ""}
+
+    return _Declared()
+
+
 def test_ingest_reads_the_directory_the_adapter_declares(tmp_path: Path) -> None:
     """Not `projects/`: the literal is gone and the adapter is asked."""
     from lazy_harness.core.profiles import ProfileInfo
@@ -713,9 +729,7 @@ def test_ingest_reads_the_directory_the_adapter_declares(tmp_path: Path) -> None
     )
 
     db = MetricsDB(tmp_path / "m.db")
-    report = ingest_profile(
-        prof, db, load_pricing(), agent=_FakeAgent("claude-code", {"sessions": "transcripts"})
-    )
+    report = ingest_profile(prof, db, load_pricing(), agent=_reader_declaring("transcripts"))
     assert report.sessions_updated == 1
     assert db.query_stats(period="all")[0]["input"] == 7
     db.close()
@@ -774,14 +788,17 @@ def test_ingest_skips_an_agent_that_does_not_answer_where_its_sessions_live(
     db.close()
 
 
-def test_ingest_refuses_a_transcript_dialect_its_parser_was_not_written_for(
+def test_ingest_skips_a_profile_whose_agent_has_no_reader(
     tmp_path: Path,
 ) -> None:
-    """A Codex rollout is JSONL and is not Claude Code's JSONL.
+    """ADR-053 replaces the dialect name with the capability.
 
-    Walking it with `iter_assistant_messages` yields nothing, which reads as an
-    empty profile. The design's rule is that it be reported unreadable instead,
-    so ingest does not scan it at all and `lh doctor` carries the verdict.
+    ADR-051 refused anything that was not `claude-code` by name, because the
+    hand parser only spoke that dialect. Ingest now reads through
+    `TranscriptReader`, so the question is whether the adapter has one — a
+    profile whose agent cannot be read is skipped and `lh doctor` carries the
+    verdict, exactly as before, but an agent that *can* be read is metered
+    whatever it is called.
     """
     from lazy_harness.core.profiles import ProfileInfo
     from lazy_harness.monitoring.db import MetricsDB
@@ -857,4 +874,173 @@ def test_ingest_all_resolves_the_agent_for_each_profile(tmp_path: Path) -> None:
     assert report.sessions_updated == 1
     assert [r["profile"] for r in rows] == ["lazy"]
     assert rows[0]["input"] == 9
+    db.close()
+
+
+# --- reading every agent through its own reader (ADR-053) -------------------
+
+
+def _codex_profile(tmp_path: Path, name: str = "cx"):
+    from lazy_harness.core.profiles import ProfileInfo
+
+    config_dir = tmp_path / name
+    (config_dir / "sessions" / "2026" / "09" / "16").mkdir(parents=True)
+    return ProfileInfo(name=name, config_dir=config_dir, roots=[], is_default=False, exists=True)
+
+
+def _write_rollout(prof, uuid: str, *entries: dict, cwd: str = "/w/demo") -> Path:
+    day = prof.config_dir / "sessions" / "2026" / "09" / "16"
+    path = day / f"rollout-2026-09-16T09-02-04-{uuid}.jsonl"
+    meta = {
+        "timestamp": "2026-09-16T12:02:13.926Z",
+        "type": "session_meta",
+        "payload": {"id": uuid, "session_id": uuid, "cwd": cwd, "cli_version": "0.154.0"},
+        "ordinal": 0,
+    }
+    path.write_text("".join(json.dumps(e) + "\n" for e in (meta, *entries)))
+    return path
+
+
+def _codex_turn(model: str = "gpt-5-codex") -> dict:
+    return {
+        "timestamp": "2026-09-16T12:02:13.926Z",
+        "type": "turn_context",
+        "payload": {"cwd": "/w/demo", "model": model, "turn_id": "t1"},
+        "ordinal": 1,
+    }
+
+
+def _codex_usage(response_id: str, inp: int, out: int) -> dict:
+    return {
+        "timestamp": "2026-09-16T12:02:14.926Z",
+        "type": "token_usage_record",
+        "payload": {
+            "session_id": "s",
+            "turn_id": "t1",
+            "response_id": response_id,
+            "usage": {
+                "input_tokens": inp,
+                "output_tokens": out,
+                "cached_input_tokens": 0,
+                "cache_write_input_tokens": 0,
+            },
+        },
+        "ordinal": 2,
+    }
+
+
+def test_ingest_meters_a_codex_rollout_through_its_reader(tmp_path: Path) -> None:
+    """The iteration's success criterion: a row with `agent="codex"`."""
+    from lazy_harness.agents.codex import CodexAdapter
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.ingest import ingest_profile
+    from lazy_harness.monitoring.pricing import load_pricing
+
+    prof = _codex_profile(tmp_path)
+    uuid = "01a0aa69-fce1-7930-a795-dc39a8c1ebb4"
+    _write_rollout(prof, uuid, _codex_turn(), _codex_usage("r1", 100, 50))
+
+    db = MetricsDB(tmp_path / "m.db")
+    report = ingest_profile(prof, db, load_pricing(), agent=CodexAdapter())
+
+    rows = db.query_stats(period="all")
+    assert report.sessions_scanned == 1
+    assert len(rows) == 1
+    assert rows[0]["session"] == uuid
+    assert rows[0]["agent"] == "codex"
+    assert rows[0]["model"] == "gpt-5-codex"
+    assert rows[0]["input"] == 100
+    assert rows[0]["output"] == 50
+    db.close()
+
+
+def test_a_codex_row_reports_the_project_its_session_ran_in(tmp_path: Path) -> None:
+    from lazy_harness.agents.codex import CodexAdapter
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.ingest import ingest_profile
+    from lazy_harness.monitoring.pricing import load_pricing
+
+    prof = _codex_profile(tmp_path)
+    _write_rollout(prof, "aaa", _codex_turn(), _codex_usage("r1", 10, 5), cwd="/w/demo")
+
+    db = MetricsDB(tmp_path / "m.db")
+    ingest_profile(prof, db, load_pricing(), agent=CodexAdapter())
+
+    assert db.query_stats(period="all")[0]["project"] == "demo"
+    db.close()
+
+
+def test_a_codex_session_with_two_models_becomes_two_rows(tmp_path: Path) -> None:
+    """`session_stats` is `UNIQUE(session, model)`; the model must reach it."""
+    from lazy_harness.agents.codex import CodexAdapter
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.ingest import ingest_profile
+    from lazy_harness.monitoring.pricing import load_pricing
+
+    prof = _codex_profile(tmp_path)
+    _write_rollout(
+        prof,
+        "bbb",
+        _codex_turn("gpt-5-codex"),
+        _codex_usage("r1", 10, 5),
+        _codex_turn("gpt-5-codex-mini"),
+        _codex_usage("r2", 20, 7),
+    )
+
+    db = MetricsDB(tmp_path / "m.db")
+    ingest_profile(prof, db, load_pricing(), agent=CodexAdapter())
+
+    rows = sorted(db.query_stats(period="all"), key=lambda r: r["model"])
+    assert [(r["model"], r["input"]) for r in rows] == [
+        ("gpt-5-codex", 10),
+        ("gpt-5-codex-mini", 20),
+    ]
+    db.close()
+
+
+def test_a_codex_response_id_is_counted_once_across_two_rollouts(tmp_path: Path) -> None:
+    """The same cross-file dedup Claude Code gets, on the id Codex provides."""
+    from lazy_harness.agents.codex import CodexAdapter
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.ingest import ingest_profile
+    from lazy_harness.monitoring.pricing import load_pricing
+
+    prof = _codex_profile(tmp_path)
+    _write_rollout(prof, "ccc", _codex_turn(), _codex_usage("shared", 100, 50))
+    _write_rollout(prof, "ddd", _codex_turn(), _codex_usage("shared", 100, 50))
+
+    db = MetricsDB(tmp_path / "m.db")
+    report = ingest_profile(prof, db, load_pricing(), agent=CodexAdapter())
+
+    assert report.messages_deduped == 1
+    assert sum(r["input"] for r in db.query_stats(period="all")) == 100
+    db.close()
+
+
+def test_ingest_skips_the_memory_logs_the_reader_yields(tmp_path: Path) -> None:
+    """The one gap ADR-053 left open, asserted on the consumer that owns it.
+
+    `locate_sessions` yields them because they are `*.jsonl` under the sessions
+    tree; they are this harness's own episodic logs, and metering them would
+    bill a decisions file as a session.
+    """
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.ingest import ingest_profile
+    from lazy_harness.monitoring.pricing import load_pricing
+
+    prof = _profile(tmp_path, "lazy")
+    projects = prof.config_dir / "projects"
+    _write_session(projects, "-Users-foo-repos-demo", "sess-1", [_assistant_msg(inp=100, out=50)])
+    memory = projects / "-Users-foo-repos-demo" / "memory"
+    memory.mkdir(parents=True)
+    (memory / "decisions.jsonl").write_text(
+        json.dumps(_assistant_msg(inp=999, out=999, msg_id="mem")) + "\n"
+    )
+
+    db = MetricsDB(tmp_path / "m.db")
+    ingest_profile(prof, db, load_pricing())
+
+    rows = db.query_stats(period="all")
+    assert [r["session"] for r in rows] == ["sess-1"]
+    assert sum(r["input"] for r in rows) == 100
     db.close()

@@ -23,6 +23,7 @@ from lazy_harness.agents.base import (
     HookOutput,
     HookSupport,
     Operation,
+    SessionIdentity,
     Signal,
     TokenUsage,
     ToolCall,
@@ -61,6 +62,33 @@ def _as_int(*candidates: object) -> int | None:
         if isinstance(candidate, int) and not isinstance(candidate, bool):
             return candidate
     return None
+
+
+def _cache_creation_split(usage: dict) -> tuple[int | None, int | None]:
+    """A usage block's cache writes as (5-minute, 1-hour) tokens.
+
+    **The breakdown wins where the two disagree.** Claude Code reports the
+    total under `cache_creation_input_tokens` and the split under
+    `cache_creation`, and across 102,464 measured usage records four of them
+    disagree, by +2,640 tokens. `collector.split_cache_creation` resolves that
+    in favour of the breakdown; this makes the same choice, because the two
+    paths price the same turn and a second rule would bill it twice over.
+    `tests/unit/test_transcript_reader_parity.py` asserts they agree, which is
+    what keeps one answer in two places from becoming two answers.
+
+    A transcript written before the breakdown existed carries only the total.
+    Nothing records its TTL, so it goes to the 5-minute bucket and the 1-hour
+    one stays `None` — absent, not zero, for the reason `TokenUsage`'s own
+    docstring gives. The hand parser answers 0 there because it is summing
+    ints on the way to a price; the arithmetic agrees, the claim does not.
+    """
+    breakdown = usage.get("cache_creation")
+    if isinstance(breakdown, dict):
+        return (
+            _as_int(breakdown.get("ephemeral_5m_input_tokens")),
+            _as_int(breakdown.get("ephemeral_1h_input_tokens")),
+        )
+    return _as_int(usage.get("cache_creation_input_tokens")), None
 
 
 # Canonical event name -> how Claude Code delivers it. The single place the
@@ -732,13 +760,28 @@ class ClaudeCodeAdapter:
             role = str(kind)
         content = message.get("content")
 
+        # Both belong to the line, not to one signal on it: the model that
+        # produced a turn also produced the tool calls in it, and a consumer
+        # attributing either has the same answer. Read once, carried on every
+        # event this line yields.
+        model = message.get("model")
+        model = model if isinstance(model, str) and model else None
+        message_id = message.get("id")
+        message_id = message_id if isinstance(message_id, str) and message_id else None
+
         text = _message_text(content)
         if text:
             # A turn built entirely of tool_use blocks is not a message: it
             # yields its tool calls below and nothing here, so a consumer
             # counting turns does not count empty ones.
             yield TranscriptEvent(
-                signal=Signal.MESSAGES, timestamp=when, role=role, text=text, raw=entry
+                signal=Signal.MESSAGES,
+                timestamp=when,
+                role=role,
+                text=text,
+                model=model,
+                message_id=message_id,
+                raw=entry,
             )
 
         if isinstance(content, list):
@@ -758,11 +801,14 @@ class ClaudeCodeAdapter:
                     # tool call are one concept, and two mappings would drift.
                     tool=self._parse_tool({"tool_name": name, "tool_input": block.get("input")}),
                     tool_use_id=use_id if isinstance(use_id, str) else None,
+                    model=model,
+                    message_id=message_id,
                     raw=entry,
                 )
 
         usage = message.get("usage")
         if isinstance(usage, dict):
+            cache_5m, cache_1h = _cache_creation_split(usage)
             yield TranscriptEvent(
                 signal=Signal.TOKEN_USAGE,
                 timestamp=when,
@@ -771,10 +817,51 @@ class ClaudeCodeAdapter:
                     input_tokens=_as_int(usage.get("input_tokens")),
                     output_tokens=_as_int(usage.get("output_tokens")),
                     cache_read_tokens=_as_int(usage.get("cache_read_input_tokens")),
-                    cache_creation_tokens=_as_int(usage.get("cache_creation_input_tokens")),
+                    # Siblings, not a total and a share of it: the two are
+                    # priced at different rates, and a consumer that wants the
+                    # whole write adds them.
+                    cache_creation_tokens=cache_5m,
+                    cache_creation_1h_tokens=cache_1h,
                 ),
+                model=model,
+                message_id=message_id,
                 raw=entry,
             )
+
+    # --- session identity (TranscriptIdentity) ---
+
+    def session_identity(self, path: Path) -> SessionIdentity:
+        """Read off the path: Claude Code encodes both facts in it.
+
+        A transcript lives at `<sessions>/<encoded project>/<session>.jsonl`,
+        and a subagent's at `<encoded project>/<session>/subagents/**.jsonl`.
+        Subagent turns bill to the session that spawned them — attributing them
+        to their own file would turn every spawn into a session row of its own
+        and understate exactly the runs that did the most work.
+
+        The project directory is found by its *parent* being the sessions
+        directory this adapter declares, not by counting components: a
+        subagent transcript sits two levels deeper than a plain one, and a
+        fixed index would read the session id as the project on one of them.
+        """
+        # Local import: `monitoring` imports this package, so naming it at
+        # module scope would close an import cycle.
+        from lazy_harness.monitoring.collector import extract_project_name
+
+        parts = path.parts
+        session_id = path.stem
+        if "subagents" in parts[:-1]:
+            index = parts.index("subagents")
+            if index >= 1:
+                session_id = parts[index - 1]
+
+        project: str | None = None
+        sessions_dir = self.session_dirs().get("sessions") or "projects"
+        for ancestor in path.parents:
+            if ancestor.parent.name == sessions_dir:
+                project = extract_project_name(ancestor.name)
+                break
+        return SessionIdentity(session_id=session_id, project=project)
 
     # --- headless invocation (HeadlessAgent) ---
 

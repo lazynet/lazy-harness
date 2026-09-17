@@ -1,14 +1,17 @@
 """Two paths parse Claude Code's transcript. This asserts exactly how far they agree.
 
 `ClaudeCodeAdapter.read()` serves hooks; `collector.iter_assistant_messages`
-serves metering. ADR-051 keeps both, on a measurement over 2,619 real
-transcripts and 102,464 usage records: the token buckets are identical and four
-dimensions are missing from the reader.
+serves metering. ADR-051 measured both over 2,619 real transcripts and 102,464
+usage records: the token buckets are identical and four dimensions were missing
+from the reader. ADR-053 closes three of them — model, message id, cache TTL —
+and this file is where they are asserted closed: what were inequalities are now
+equalities over the same corpus.
 
-Both halves are asserted here. The equality stops the two parsers drifting into
-different numbers; the four inequalities stop the ADR going stale quietly — the
-day `TranscriptEvent` gains a model, a test fails and says so, rather than the
-decision staying on the page after its reason expired.
+The fourth stays open and stays asserted. The `memory/` exclusion is a
+statement about what *this harness* writes under an agent's directory, not
+about the agent, so the reader yields those files and ingest skips them; both
+halves are asserted, because a reader that silently learned to skip them would
+be answering a question that is not its own.
 """
 
 from __future__ import annotations
@@ -91,60 +94,121 @@ def test_both_paths_agree_on_every_token_bucket(tmp_path: Path) -> None:
     assert sum(m["input"] for m in hand) == sum(u.input_tokens or 0 for u in read)
     assert sum(m["output"] for m in hand) == sum(u.output_tokens or 0 for u in read)
     assert sum(m["cache_read"] for m in hand) == sum(u.cache_read_tokens or 0 for u in read)
-    # The hand parser splits the write by TTL; the reader carries one total.
-    # They agree on the *sum*, which is the only thing both can express.
-    assert sum(m["cache_create"] + m["cache_create_1h"] for m in hand) == sum(
-        u.cache_creation_tokens or 0 for u in read
+    # Bucket by bucket now, not just on the sum: both paths split the write by
+    # TTL, so agreeing on the total while disagreeing on the halves would be a
+    # pricing bug this assertion would have let through.
+    assert sum(m["cache_create"] for m in hand) == sum(u.cache_creation_tokens or 0 for u in read)
+    assert sum(m["cache_create_1h"] for m in hand) == sum(
+        u.cache_creation_1h_tokens or 0 for u in read
     )
 
 
-# --- the four documented differences (ADR-051) ------------------------------
+# --- the three gaps ADR-053 closed -----------------------------------------
+#
+# ADR-051 asserted each of these as an inequality, with a `not hasattr(...)`
+# tripwire so that widening the Protocol would fail a test naming the ADR
+# rather than let the decision go stale quietly. It fired, twice: once when the
+# fields landed and once when the reader began filling them. Each is now the
+# equality it was always going to become.
 
 
-def test_the_reader_does_not_name_the_model(tmp_path: Path) -> None:
-    """`session_stats` is `UNIQUE(session, model)`; the reader has no model.
-
-    Delete this test's reason — add `model` to `TranscriptEvent` — and this
-    fails, which is the signal to revisit ADR-051 rather than to widen the
-    assertion.
-    """
+def test_both_paths_name_the_same_model_for_the_same_turn(tmp_path: Path) -> None:
+    """`session_stats` is `UNIQUE(session, model)` — the dimension must survive the crossing."""
     path = _transcript(tmp_path, "s.jsonl", [_MSG_A, _MSG_B])
 
-    assert {m["model"] for m in _hand(path)} == {
-        "claude-opus-4-6",
-        "claude-haiku-4-5-20251001",
-    }
     events = [e for e in ClaudeCodeAdapter().read(path) if e.signal is Signal.TOKEN_USAGE]
-    assert events, "the fixture must produce usage events for the negative to mean anything"
-    assert not any(hasattr(e, "model") for e in events)
-    assert not any(hasattr(u, "model") for u in _reader_usage(path))
+
+    assert [m["model"] for m in _hand(path)] == [e.model for e in events]
+    assert [e.model for e in events] == ["claude-opus-4-6", "claude-haiku-4-5-20251001"]
 
 
-def test_the_reader_does_not_carry_a_message_id(tmp_path: Path) -> None:
-    """Cross-file dedup needs one. `tool_use_id` is `None` on a usage event."""
+def test_both_paths_carry_the_same_message_id_for_the_same_turn(tmp_path: Path) -> None:
+    """Cross-file dedup keys on it. `tool_use_id` stays `None`: it is a different id."""
     path = _transcript(tmp_path, "s.jsonl", [_MSG_A, _MSG_B])
 
-    assert [m["msg_id"] for m in _hand(path)] == ["msg_a", "msg_b"]
     events = [e for e in ClaudeCodeAdapter().read(path) if e.signal is Signal.TOKEN_USAGE]
-    assert events
-    assert not any(hasattr(e, "message_id") for e in events)
+
+    assert [m["msg_id"] for m in _hand(path)] == [e.message_id for e in events]
+    assert [e.message_id for e in events] == ["msg_a", "msg_b"]
     assert all(e.tool_use_id is None for e in events)
 
 
-def test_the_reader_collapses_the_cache_ttl_split(tmp_path: Path) -> None:
-    """5-minute and 1-hour writes are priced differently; `TokenUsage` has one field."""
+def test_both_paths_split_the_cache_write_by_ttl_the_same_way(tmp_path: Path) -> None:
+    """5-minute and 1-hour writes are priced differently; one field cannot say both."""
     path = _transcript(tmp_path, "s.jsonl", [_MSG_A])
 
     (hand,) = _hand(path)
-    assert (hand["cache_create"], hand["cache_create_1h"]) == (60, 30)
-
     (usage,) = _reader_usage(path)
-    assert usage.cache_creation_tokens == 90
-    assert not hasattr(usage, "cache_creation_1h_tokens")
+
+    assert (hand["cache_create"], hand["cache_create_1h"]) == (60, 30)
+    assert (usage.cache_creation_tokens, usage.cache_creation_1h_tokens) == (60, 30)
+
+
+def test_a_transcript_predating_the_breakdown_reports_no_one_hour_write(
+    tmp_path: Path,
+) -> None:
+    """`None`, not `0`: nothing recorded that turn's TTL, and 0 would be a claim.
+
+    The hand parser answers 0 because it sums ints on the way to a price. The
+    reader crosses a Protocol whose own docstring refuses that merge, so the
+    two agree on the arithmetic (`or 0`) without agreeing on the spelling.
+    """
+    path = _transcript(tmp_path, "s.jsonl", [_MSG_B])
+
+    (hand,) = _hand(path)
+    (usage,) = _reader_usage(path)
+
+    assert (hand["cache_create"], hand["cache_create_1h"]) == (0, 0)
+    assert usage.cache_creation_1h_tokens is None
+
+
+def test_both_paths_trust_the_breakdown_over_the_total_when_they_disagree(
+    tmp_path: Path,
+) -> None:
+    """Measured: 4 messages in 1 file of 102,464 disagree, by +2,640 tokens.
+
+    The hand parser's documented choice is to trust the breakdown. The reader
+    has to make the same one or the two paths price the same turn differently
+    on exactly the records where it matters — which is the drift this whole
+    file exists to prevent.
+    """
+    disagreeing = {
+        "type": "assistant",
+        "message": {
+            "id": "msg_c",
+            "model": "claude-opus-4-6",
+            "usage": {
+                "input_tokens": 1,
+                "output_tokens": 1,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 100,
+                "cache_creation": {
+                    "ephemeral_5m_input_tokens": 60,
+                    "ephemeral_1h_input_tokens": 80,
+                },
+            },
+        },
+        "timestamp": "2026-09-16T12:04:13.926Z",
+    }
+    path = _transcript(tmp_path, "s.jsonl", [disagreeing])
+
+    (hand,) = _hand(path)
+    (usage,) = _reader_usage(path)
+
+    assert (hand["cache_create"], hand["cache_create_1h"]) == (60, 80)
+    assert (usage.cache_creation_tokens, usage.cache_creation_1h_tokens) == (60, 80)
+    # The total the breakdown contradicts is not what either path bills.
+    assert usage.cache_creation_tokens + (usage.cache_creation_1h_tokens or 0) == 140
 
 
 def test_locate_sessions_yields_the_memory_logs_ingest_excludes(tmp_path: Path) -> None:
-    """17 of them on the measured host. They are this harness's logs, not transcripts."""
+    """17 of them on the measured host. They are this harness's logs, not transcripts.
+
+    The gap ADR-053 left open on purpose, asserted from both ends: the reader
+    yields them, because they are transcripts by every test it can apply, and
+    ingest drops them, because what lives under `memory/` is a fact about this
+    harness rather than about the agent.
+    """
     from lazy_harness.monitoring.ingest import _find_session_files
 
     projects = tmp_path / "projects"
@@ -152,10 +216,56 @@ def test_locate_sessions_yields_the_memory_logs_ingest_excludes(tmp_path: Path) 
     _transcript(projects / "-repo" / "memory", "decisions.jsonl", [_MSG_B])
 
     located = set(ClaudeCodeAdapter().locate_sessions(tmp_path, None))
-    walked = {p for _mtime, p, _project, _session in _find_session_files(projects, [])}
+    walked = set(_find_session_files(ClaudeCodeAdapter(), tmp_path, []))
 
     assert located - walked == {projects / "-repo" / "memory" / "decisions.jsonl"}
     assert walked - located == set()
+
+
+def test_ingest_through_the_reader_bills_what_the_hand_parser_counted(
+    tmp_path: Path,
+) -> None:
+    """The gate for replacing a parser: invoke both paths, assert they agree.
+
+    `ingest` used to call `iter_assistant_messages` directly and now reads
+    through `ClaudeCodeAdapter.read()`. The hand parser stays — `lh exec`
+    prices a session with it through `session_cost_from_disk` — so this is not
+    a deletion but a second path over one question, and the repo's rule for
+    that is an integration test that runs both and compares.
+
+    Compared at the *stored row*, not at the parser's output: that is where a
+    disagreement would actually cost money.
+    """
+    from lazy_harness.core.profiles import ProfileInfo
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.ingest import ingest_profile
+    from lazy_harness.monitoring.pricing import load_pricing
+
+    config_dir = tmp_path / "lazy"
+    project = config_dir / "projects" / "-repo"
+    _transcript(project, "sess-1.jsonl", [_MSG_A, _MSG_B])
+    prof = ProfileInfo(name="lazy", config_dir=config_dir, roots=[], is_default=True, exists=True)
+
+    db = MetricsDB(tmp_path / "m.db")
+    ingest_profile(prof, db, load_pricing())
+    rows = {r["model"]: r for r in db.query_stats(period="all")}
+    db.close()
+
+    by_model: dict[str, dict[str, int]] = {}
+    for m in _hand(project / "sess-1.jsonl"):
+        agg = by_model.setdefault(
+            m["model"], {"input": 0, "output": 0, "cache_read": 0, "cache_create": 0}
+        )
+        agg["input"] += m["input"]
+        agg["output"] += m["output"]
+        agg["cache_read"] += m["cache_read"]
+        # One stored column for both TTLs, which is what the row carries.
+        agg["cache_create"] += m["cache_create"] + m["cache_create_1h"]
+
+    assert set(rows) == set(by_model)
+    for model, agg in by_model.items():
+        for bucket, expected in agg.items():
+            assert rows[model][bucket] == expected, f"{model}.{bucket}"
 
 
 def test_the_cache_breakdown_is_authoritative_when_it_disagrees_with_the_total(

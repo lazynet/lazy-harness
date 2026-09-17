@@ -98,6 +98,25 @@ def main_repo_root(cwd: Path) -> Path | None:
     return None
 
 
+def repo_name(resolved: Path) -> str:
+    """The name a real path should be reported under.
+
+    A linked worktree is a checkout of a repository, not a project of its own:
+    reporting it by its own basename splits one repository across as many rows
+    as it has branches and understates the cost of every one of them.
+    `main_repo_root` is the same rule memory keys on, so the two subsystems
+    agree about what a project is.
+
+    Lives here rather than beside either caller: metering reaches it from a
+    Claude Code project directory and from a Codex `cwd`, and `agents/` cannot
+    import `monitoring/` without a cycle. One answer, one importable place.
+    """
+    root = main_repo_root(resolved)
+    if root is not None and root.name:
+        return root.name
+    return resolved.name
+
+
 def _is_ip_literal(value: str) -> bool:
     try:
         ipaddress.ip_address(value)

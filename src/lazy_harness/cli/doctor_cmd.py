@@ -246,12 +246,11 @@ def _render_engram_persist(console: Console, health: EngramPersistHealth) -> boo
 
 
 _TRANSCRIPT_LINES = {
-    # "has a reader for", never "reads": the verdict is about the adapter
-    # implementing `TranscriptReader`, and a consumer can still decline the
-    # events it yields. `lh metrics ingest` does exactly that for Codex today
-    # (ADR-051), so a line promising the transcripts are being read would be
-    # this section contradicting the pipeline it exists to diagnose.
-    TranscriptHealth.OK: ("ok", "[green]\u2713[/green]", "{agent} has a reader for {path}"),
+    # "reads", not "has a reader for". The softer wording was accurate while
+    # `lh metrics ingest` declined the events a reader yielded (ADR-051); since
+    # ADR-053 ingest reads every agent through its own reader, so the verdict
+    # and the pipeline agree again and the line says what happens.
+    TranscriptHealth.OK: ("ok", "[green]\u2713[/green]", "{agent} reads {path}"),
     TranscriptHealth.DEGRADED: (
         "unread",
         "[yellow]![/yellow]",
