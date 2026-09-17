@@ -59,15 +59,21 @@ esac
   exit 2
 }
 
-# A fixed name in a world-writable $OUT_DIR (the /tmp default) is plantable:
-# another local user could pre-create it as a symlink and have the gate's
-# output land wherever that symlink points. mktemp's O_EXCL create refuses to
-# follow an existing path, so an unpredictable name is the file that actually
-# receives untrusted-directory writes; only the final per-shape copies below
-# keep the stable names this script's callers rely on.
-RAW_OUT="$(mktemp "$OUT_DIR/f7-installed-raw.XXXXXX")"
+# A loose file dropped directly into a world-writable $OUT_DIR (the /tmp
+# default) is a resource with no boundary of its own: anything else with
+# access to that directory can read or replace it. SCRATCH is a private,
+# mode-0700 directory (mktemp -d's default), so only this user can see what
+# lands inside it. Nested under $OUT_DIR rather than the system tmp default so
+# the final `mv` below is a same-filesystem rename, not a cross-filesystem
+# copy.
+SCRATCH="$(mktemp -d "$OUT_DIR/.f7-scratch.XXXXXX")" || {
+  echo "run-installed: could not create a scratch directory under $OUT_DIR" >&2
+  exit 2
+}
+trap 'rm -rf -- "$SCRATCH"' EXIT
+
 set +e
-"$GATE_SH" "$LH_BIN_ARG" >"$RAW_OUT" 2>&1
+GATE_OUTPUT="$("$GATE_SH" "$LH_BIN_ARG" 2>&1)"
 GATE_EXIT=$?
 set -e
 
@@ -78,9 +84,9 @@ else
 fi
 
 echo "F7 run-installed: one isolation-gate.sh execution, mapped onto three shapes"
-echo "binary:     $LH_BIN_ARG"
-echo "gate:       $GATE_SH"
-echo "raw output: $RAW_OUT (gate exit $GATE_EXIT)"
+echo "binary:    $LH_BIN_ARG"
+echo "gate:      $GATE_SH"
+echo "gate exit: $GATE_EXIT"
 echo
 
 # lazy/flex share the claude-code adapter and therefore the gate's single
@@ -88,17 +94,20 @@ echo
 # lanes already ran together above; this loop documents the mapping and fans
 # the one execution's evidence out to per-shape files, it does not re-derive
 # a lane-specific verdict the gate itself does not expose.
+#
+# The f7-<shape>.txt names ARE stable (callers look for them) in a directory
+# other users can write to, so a symlink could already be sitting at one of
+# them. Checking for that first and then writing would still race — the
+# symlink could appear in the gap between the check and the write. Writing
+# inside SCRATCH and `mv`-ing into place instead has no such gap: `mv` (a
+# rename(2)) replaces whatever directory entry is at the destination — file,
+# symlink, or nothing — without ever opening or following it.
 declare -A SHAPE_LANE=([lazy]=claude [flex]=claude [lazy-codex]=codex)
 for shape in lazy flex lazy-codex; do
   dest="$OUT_DIR/f7-$shape.txt"
-  # These names ARE stable (callers look for them), which is exactly what
-  # makes a pre-planted symlink at one of them dangerous: refuse rather than
-  # let `cp` follow it and overwrite whatever it points at.
-  if [ -L "$dest" ]; then
-    echo "run-installed: refusing to write through a symlink at $dest" >&2
-    exit 2
-  fi
-  cp "$RAW_OUT" "$dest"
+  tmp_dest="$SCRATCH/f7-$shape.txt"
+  printf '%s\n' "$GATE_OUTPUT" >"$tmp_dest"
+  mv -f -- "$tmp_dest" "$dest"
   echo "$shape (${SHAPE_LANE[$shape]} lane): $VERDICT -> $dest"
 done
 

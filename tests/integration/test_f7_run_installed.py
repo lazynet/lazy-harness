@@ -127,22 +127,27 @@ def test_a_failing_gate_fails_every_shape_and_still_writes_evidence(tmp_path: Pa
         assert "FAIL:" in f.read_text(encoding="utf-8")
 
 
-def test_a_symlink_planted_at_a_shape_output_path_is_refused(tmp_path: Path) -> None:
-    """A pre-planted symlink at `f7-<shape>.txt` must not be followed and
-    overwritten — these are stable, predictable names in a directory that
-    defaults to the shared, world-writable `/tmp`."""
+def test_a_symlink_planted_at_a_shape_output_path_is_replaced_not_followed(
+    tmp_path: Path,
+) -> None:
+    """A pre-planted symlink at `f7-<shape>.txt` must be atomically replaced,
+    never written through — these are stable, predictable names in a
+    directory that defaults to the shared, world-writable `/tmp`."""
     lh = _stub_lh(tmp_path)
     gate = _stub_gate(tmp_path, _PASS_GATE)
     out_dir = tmp_path / "out"
     out_dir.mkdir()
     target = tmp_path / "do-not-touch.txt"
     target.write_text("precious", encoding="utf-8")
-    (out_dir / "f7-lazy.txt").symlink_to(target)
+    dest = out_dir / "f7-lazy.txt"
+    dest.symlink_to(target)
 
     result = _run(str(lh), tmp_path, gate, out_dir)
 
-    assert result.returncode != 0
+    assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     assert target.read_text(encoding="utf-8") == "precious", "the symlink target was overwritten"
+    assert not dest.is_symlink(), "the symlink was written through instead of replaced"
+    assert "fake gate ran" in dest.read_text(encoding="utf-8")
 
 
 def test_the_script_is_syntactically_valid_bash() -> None:
