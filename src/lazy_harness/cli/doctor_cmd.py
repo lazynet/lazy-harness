@@ -17,6 +17,7 @@ from lazy_harness import __version__
 from lazy_harness.agents.base import AgentAdapter
 from lazy_harness.agents.codex_trust import (
     RETRUST_INSTRUCTION,
+    TRUST_STALE_VERDICT,
     CodexHookTrust,
     collect_codex_trust,
 )
@@ -643,6 +644,12 @@ def _render_codex_trust(console: Console, reports: list[CodexHookTrust]) -> None
                 f"{_hooks(len(report.unknown))} {_carry(len(report.unknown))} a stored hash; "
                 f"whether it still matches is not determinable without Codex's own "
                 f"normalisation"
+            )
+        if report.stale:
+            console.print(
+                f"  [yellow]![/yellow] {name} — {len(report.stale)} "
+                f"{_hooks(len(report.stale))} trust stale: {escape(', '.join(report.stale))} — "
+                f"{TRUST_STALE_VERDICT}"
             )
         if report.orphaned:
             console.print(

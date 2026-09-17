@@ -103,6 +103,35 @@ def test_changing_one_matcher_and_redeploying_names_that_hook(home_dir: Path) ->
     assert "re-trust" in result.output
 
 
+def test_a_changed_redeploy_makes_lh_doctor_report_trust_stale(home_dir: Path) -> None:
+    """The design's own acceptance criterion, observed rather than inferred:
+    change one matcher, redeploy, confirm `lh doctor` reports it stale before
+    the next Codex session would silently drop it (design.md:840-843)."""
+    from lazy_harness.cli.main import cli
+
+    _write_codex_config(home_dir, matcher="Bash")
+    runner = CliRunner()
+    runner.invoke(cli, ["deploy", "--profile", "cx"])
+
+    # The user approved the pre_tool_use[0] hook in Codex's own TUI, between
+    # the two deploys — the key is positional, so it survives the redeploy.
+    hooks_file = home_dir / ".codex" / "hooks.json"
+    key = f"{hooks_file.resolve()}:pre_tool_use:0:0"
+    (home_dir / ".codex" / "config.toml").write_text(
+        f'[hooks.state."{key}"]\ntrusted_hash = "sha256:deadbeef"\n'
+    )
+
+    _write_codex_config(home_dir, matcher="Edit")
+    deploy_result = runner.invoke(cli, ["deploy", "--profile", "cx"])
+    assert deploy_result.exit_code == 0, deploy_result.output
+
+    doctor_result = runner.invoke(cli, ["doctor"])
+
+    assert doctor_result.exception is None, doctor_result.output
+    assert "pre_tool_use[0]" in doctor_result.output
+    assert "trust stale" in doctor_result.output
+
+
 def test_a_claude_profile_stays_silent(home_dir: Path) -> None:
     from lazy_harness.cli.main import cli
 

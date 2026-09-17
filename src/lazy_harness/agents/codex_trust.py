@@ -33,6 +33,7 @@ declaration since the user last approved it.
 
 from __future__ import annotations
 
+import json
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -82,6 +83,11 @@ class CodexHookTrust:
     `config.toml` missing or unparseable — and then every other field is empty.
     Reporting "0 untrusted" over a file that could not be read would be the
     worst of the three outcomes: it looks like the good one.
+
+    `stale` is a subset of what a stored-hash reading alone would call
+    `unknown`: the design's third row, established from the harness's own
+    deploy snapshot rather than from anything Codex reports (see
+    `_stale_labels`). A key never appears in both.
     """
 
     profile: str
@@ -89,13 +95,14 @@ class CodexHookTrust:
     config_file: Path
     untrusted: tuple[str, ...] = ()
     unknown: tuple[str, ...] = ()
+    stale: tuple[str, ...] = ()
     orphaned: tuple[str, ...] = ()
     ignored_events: tuple[str, ...] = ()
     unreadable: str = ""
 
     @property
     def declared(self) -> int:
-        return len(self.untrusted) + len(self.unknown)
+        return len(self.untrusted) + len(self.unknown) + len(self.stale)
 
 
 def _stored_hashes(config_raw: str) -> dict[str, str]:
@@ -143,9 +150,10 @@ def trust_for_profile(cfg: Config, profile: str) -> CodexHookTrust | None:
         return None
 
     try:
-        declared, ignored = trust_keys(hooks_file, hooks_file.read_text())
+        raw = hooks_file.read_text()
     except OSError as exc:
         return CodexHookTrust(profile, hooks_file, config_file, unreadable=f"{hooks_file}: {exc}")
+    declared, ignored = trust_keys(hooks_file, raw)
 
     try:
         stored = _stored_hashes(config_file.read_text())
@@ -158,17 +166,80 @@ def trust_for_profile(cfg: Config, profile: str) -> CodexHookTrust | None:
         return CodexHookTrust(profile, hooks_file, config_file, unreadable=f"{config_file}: {exc}")
 
     keys = {key for key, _ in declared}
+    stale_labels = _stale_labels(hooks_file, raw)
     return CodexHookTrust(
         profile=profile,
         hooks_file=hooks_file,
         config_file=config_file,
         untrusted=tuple(label for key, label in declared if key not in stored),
-        unknown=tuple(label for key, label in declared if key in stored),
+        unknown=tuple(
+            label for key, label in declared if key in stored and label not in stale_labels
+        ),
+        stale=tuple(label for key, label in declared if key in stored and label in stale_labels),
         orphaned=tuple(
             sorted(k for k in stored if k.startswith(f"{hooks_file}:") and k not in keys)
         ),
         ignored_events=ignored,
     )
+
+
+def _previous_declaration(hooks_file: Path) -> str | None:
+    """`hooks_file`'s content as of the most recent `lh deploy` snapshot.
+
+    `deploy/snapshot.py` records pre-deploy state before every deploy — this is
+    therefore the declaration `lh deploy` last overwrote, which is exactly the
+    "existing" side `_changed_hook_labels` needs to tell a stale stored hash
+    from a merely unknown one, without recomputing anything Codex itself
+    computes. `None` when there is nothing to compare against — no deploy has
+    ever snapshotted, or this file was absent at every one that has.
+    """
+    from lazy_harness.core.backups import DEPLOY_NAMESPACE, backups_root, latest_backup_dir
+    from lazy_harness.deploy.snapshot import ROLLBACK_LOG_NAME
+
+    snapshot_dir = latest_backup_dir(backups_root(), DEPLOY_NAMESPACE)
+    if snapshot_dir is None:
+        return None
+    try:
+        manifest = json.loads((snapshot_dir / ROLLBACK_LOG_NAME).read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    entries = manifest.get("entries") if isinstance(manifest, dict) else None
+    if not isinstance(entries, list):
+        return None
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("path") != str(hooks_file) or entry.get("kind") != "file":
+            continue
+        content = entry.get("content")
+        if not isinstance(content, str):
+            return None
+        try:
+            return (snapshot_dir / content).read_text()
+        except OSError:
+            return None
+    return None
+
+
+def _stale_labels(hooks_file: Path, raw: str) -> frozenset[str]:
+    """Declared labels whose group differs from the last deploy snapshot's copy
+    of this file — the design's `trust stale` row, established as the harness's
+    own evidence rather than Codex's. Absent a prior snapshot to compare
+    against, nothing can be called stale; that remains `unknown`'s job.
+    """
+    from lazy_harness.agents.codex import _changed_hook_labels
+
+    previous = _previous_declaration(hooks_file)
+    if previous is None:
+        return frozenset()
+    try:
+        document = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return frozenset()
+    current_hooks = document.get("hooks") if isinstance(document, dict) else None
+    if not isinstance(current_hooks, dict):
+        return frozenset()
+    return frozenset(_changed_hook_labels(previous, current_hooks))
 
 
 def collect_codex_trust(cfg: Config) -> list[CodexHookTrust]:

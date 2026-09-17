@@ -468,6 +468,36 @@ def test_render_codex_trust_prints_the_retrust_instruction_footer() -> None:
     ) in out
 
 
+def test_render_codex_trust_reports_stale_separately_from_unknown() -> None:
+    """The design's fourth-row wording, on the label the snapshot proved changed
+    — and not on the merely-unknown one sitting next to it."""
+    import io
+
+    from rich.console import Console
+
+    from lazy_harness.agents.codex_trust import CodexHookTrust
+    from lazy_harness.cli.doctor_cmd import _render_codex_trust
+
+    report = CodexHookTrust(
+        profile="probe",
+        hooks_file=Path("/tmp/probe/hooks.json"),
+        config_file=Path("/tmp/probe/config.toml"),
+        unknown=("session_start[0]",),
+        stale=("pre_tool_use[0]",),
+    )
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=False, width=200)
+    _render_codex_trust(console, [report])
+    out = " ".join(buf.getvalue().split())
+
+    assert "pre_tool_use[0]" in out
+    assert "trust stale" in out
+    assert "the harness changed this hook's declaration since it last deployed" in out
+    # The unknown hook's own count line still says 1 — the stale one was not
+    # folded into it.
+    assert "1 hook carries a stored hash" in out
+
+
 # --- role table validation (ADR-039) -----------------------------------------
 
 
