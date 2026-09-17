@@ -64,11 +64,27 @@ class StatusContext:
             ),
         )
 
-    def logs_dir(self, profile: ProfileInfo) -> Path:
-        return profile.config_dir / "logs"
+    def _subdir(self, profile: ProfileInfo, key: str) -> Path | None:
+        """Where this profile's agent keeps `key`, or None if it keeps none.
 
-    def queue_dir(self, profile: ProfileInfo) -> Path:
-        return profile.config_dir / "queue"
+        Resolved per profile through `agent_for_profile`, not once from
+        `[agent].type`: `config_dir` is per profile and so is the agent, and
+        answering with the global one renders a Codex profile's artefacts under
+        Claude Code's directory names — which is to say, as absent.
+        """
+        from lazy_harness.agents.registry import agent_for_profile
+        from lazy_harness.agents.session_paths import session_path
+
+        return session_path(agent_for_profile(self.cfg, profile.name), profile.config_dir, key)
+
+    def sessions_dir(self, profile: ProfileInfo) -> Path | None:
+        return self._subdir(profile, "sessions")
+
+    def logs_dir(self, profile: ProfileInfo) -> Path | None:
+        return self._subdir(profile, "logs")
+
+    def queue_dir(self, profile: ProfileInfo) -> Path | None:
+        return self._subdir(profile, "queue")
 
 
 def format_tokens(n: int | float) -> str:

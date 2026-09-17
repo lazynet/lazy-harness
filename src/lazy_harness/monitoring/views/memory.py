@@ -107,8 +107,8 @@ def _recent(ctx: StatusContext, filename: str, title: str) -> list[RenderableTyp
     out: list[RenderableType] = [f"\n[bold]{title}:[/bold]"]
     entries: list[tuple[str, str]] = []
     for p in ctx.profiles:
-        projects_dir = p.config_dir / "projects"
-        if not projects_dir.is_dir():
+        projects_dir = ctx.sessions_dir(p)
+        if projects_dir is None or not projects_dir.is_dir():
             continue
         for jsonl_file in projects_dir.rglob(f"memory/{filename}"):
             try:

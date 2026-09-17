@@ -15,8 +15,8 @@ Two pieces are needed on either side of the pipeline:
 
 `ingest_all(cfg, db, pricing)` iterates every configured profile via `list_profiles(cfg)`. For each profile it calls `ingest_profile(profile, db, pricing)` which:
 
-1. Resolves the profile's own `<config_dir>/projects/` — the agent's transcript directory, unrelated to the metrics database's location — and skips profiles whose dir doesn't exist.
-2. Collects every `*.jsonl` under `projects/` **recursively** (`rglob`), including nested subagent files at `<session-uuid>/subagents/agent-*.jsonl`. Paths that sit under a `memory/` ancestor are excluded — those are user-owned episodic logs (`decisions.jsonl`, `failures.jsonl`), not agent transcripts.
+1. Resolves the transcript directory **the profile's own agent declares** — `<config_dir>/<agent.session_dirs()["sessions"]>`, which is `projects/` for Claude Code and `sessions/` for Codex, and is unrelated to the metrics database's location. Three cases are skipped rather than walked: a profile whose directory doesn't exist, one whose agent declares no sessions directory at all, and one whose agent writes a transcript dialect this parser was not written for. The last is the reason the skip is not silent elsewhere — walking a Codex rollout with Claude Code's parser finds nothing and reports the profile *empty*, which is indistinguishable from a profile that did no work. `lh doctor`'s **Transcripts** section carries the verdict instead.
+2. Collects every `*.jsonl` under that directory **recursively** (`rglob`), including nested subagent files at `<session-uuid>/subagents/agent-*.jsonl`. Paths that sit under a `memory/` ancestor are excluded — those are user-owned episodic logs (`decisions.jsonl`, `failures.jsonl`), not agent transcripts.
 3. Sorts the collected files by `st_mtime_ns` ascending. Older files attribute their messages first, so the canonical ownership is stable across runs.
 4. Iterates the files in order, maintaining a `seen_msg_ids: set[str]` across the whole profile. Each assistant message's id is checked against the set; novel messages bump an in-memory aggregator keyed by `(session_id, model)`; already-seen messages are counted as deduped and dropped.
 5. After the walk, the in-memory aggregator is priced via `calculate_cost()` (per model × per token bucket, rates from `DEFAULT_PRICING` plus any `[monitoring.pricing]` override) and handed to `upsert_stats(entries)`. Each `(session, model)` row is inserted or overwritten with its freshly-computed total. Sessions whose transcripts no longer exist on disk are **not** re-scanned, so their rows are left in place rather than deleted — the table accumulates beyond Claude Code's transcript retention window.
@@ -28,7 +28,9 @@ flowchart LR
   A[lh metrics ingest] --> B[load config.toml]
   B --> C[open MetricsDB]
   C --> D{for each profile}
-  D --> E[rglob projects/**/*.jsonl]
+  D --> D2{agent declares a\nsessions dir we parse?}
+  D2 -- no --> D3[skip - doctor reports it]
+  D2 -- yes --> E[rglob sessions dir/**/*.jsonl]
   E --> F[skip memory/*]
   F --> G[sort by mtime asc]
   G --> H[iter_assistant_messages]

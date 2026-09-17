@@ -1159,3 +1159,131 @@ def test_doctor_reports_a_profile_that_inherits_its_credentials(
     result = CliRunner().invoke(doctor, [])
 
     assert "flex.env" in result.output
+
+
+# --- Transcripts section ----------------------------------------------------
+
+
+def _transcript_output(tmp_path: Path, agents: dict[str, str]) -> str:
+    """Render the transcripts section for one config with `agents` profiles."""
+    import io
+
+    from rich.console import Console
+
+    from lazy_harness.cli.doctor_cmd import _render_transcripts
+    from lazy_harness.core.config import Config, HarnessConfig, ProfileEntry
+
+    cfg = Config(harness=HarnessConfig(version="1"))
+    cfg.profiles.default = next(iter(agents))
+    cfg.profiles.items = {
+        name: ProfileEntry(config_dir=str(tmp_path / name), agent=agent)
+        for name, agent in agents.items()
+    }
+    buf = io.StringIO()
+    _render_transcripts(Console(file=buf, width=140, force_terminal=False, no_color=True), cfg)
+    return buf.getvalue()
+
+
+def test_doctor_reports_ok_when_a_reader_has_transcripts(tmp_path: Path) -> None:
+    d = tmp_path / "lazy" / "projects" / "-repo"
+    d.mkdir(parents=True)
+    (d / "s.jsonl").write_text("{}\n")
+
+    out = _transcript_output(tmp_path, {"lazy": "claude-code"})
+    assert "lazy" in out
+    assert "has a reader for" in out
+    # Never "reads": a reader existing is not a consumer reading it.
+    assert "claude-code reads" not in out
+
+
+def test_doctor_reports_degraded_when_transcripts_have_no_reader(tmp_path: Path) -> None:
+    """Copilot's `session-state/events.jsonl`: present, and nothing opens it."""
+    d = tmp_path / "cop" / "session-state" / "abc"
+    d.mkdir(parents=True)
+    (d / "events.jsonl").write_text("{}\n")
+
+    out = _transcript_output(tmp_path, {"cop": "copilot"})
+    assert "unread" in out
+    assert "copilot" in out
+
+
+def test_doctor_reports_no_transcript_as_normal_not_degraded(tmp_path: Path) -> None:
+    (tmp_path / "cx" / "sessions").mkdir(parents=True)
+
+    out = _transcript_output(tmp_path, {"cx": "codex"})
+    assert "unread" not in out
+    assert "no transcripts" in out
+
+
+def test_doctor_names_an_agent_that_declares_no_sessions_directory(tmp_path: Path) -> None:
+    """The `Path(x) / ""` trap, at the site the design wrote the snippet for.
+
+    `settings.json` is the file the rejected one-liner finds when it globs the
+    config directory itself, which is what makes `null` read as degraded.
+    """
+    (tmp_path / "np").mkdir(parents=True)
+    (tmp_path / "np" / "settings.json").write_text("{}")
+
+    out = _transcript_output(tmp_path, {"np": "null"})
+    assert "declares no sessions directory" in out
+    assert "unread" not in out
+
+
+def test_doctor_reports_one_line_per_profile(tmp_path: Path) -> None:
+    """Four profiles, four agents, four verdicts, one run."""
+    (tmp_path / "lazy" / "projects" / "-r").mkdir(parents=True)
+    (tmp_path / "lazy" / "projects" / "-r" / "s.jsonl").write_text("{}\n")
+    (tmp_path / "cop" / "session-state" / "a").mkdir(parents=True)
+    (tmp_path / "cop" / "session-state" / "a" / "events.jsonl").write_text("{}\n")
+    (tmp_path / "cx" / "sessions").mkdir(parents=True)
+    (tmp_path / "np").mkdir(parents=True)
+
+    out = _transcript_output(
+        tmp_path,
+        {"lazy": "claude-code", "cop": "copilot", "cx": "codex", "np": "null"},
+    )
+    body = [ln for ln in out.splitlines() if ln.startswith("  ")]
+    assert len(body) == 4
+    assert [ln.split()[1] for ln in body] == ["lazy", "cop", "cx", "np"]
+
+
+def test_doctor_transcript_verdict_survives_an_adapter_without_session_dirs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A duck-typed attribute, exercised with the attribute absent."""
+    import io
+
+    from rich.console import Console
+
+    from lazy_harness.cli.doctor_cmd import _render_transcripts
+    from lazy_harness.core.config import Config, HarnessConfig, ProfileEntry
+
+    class _NoSessionDirs:
+        name = "improvised"
+
+    monkeypatch.setattr(
+        "lazy_harness.agents.registry.agent_for_profile", lambda _cfg, _name: _NoSessionDirs()
+    )
+    cfg = Config(harness=HarnessConfig(version="1"))
+    cfg.profiles.default = "x"
+    cfg.profiles.items = {"x": ProfileEntry(config_dir=str(tmp_path / "x"), agent="claude-code")}
+    (tmp_path / "x").mkdir()
+
+    buf = io.StringIO()
+    _render_transcripts(Console(file=buf, width=140, force_terminal=False, no_color=True), cfg)
+    assert "declares no sessions directory" in buf.getvalue()
+
+
+def test_doctor_prints_the_transcripts_section(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The render is wired into `doctor()`, not merely defined.
+
+    A function nothing calls passes every unit test it has.
+    """
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    cfg = _write_config(tmp_path)
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
+    result = CliRunner().invoke(doctor, [])
+    assert "Transcripts" in result.output
