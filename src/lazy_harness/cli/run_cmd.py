@@ -10,6 +10,7 @@ import click
 from rich.console import Console
 from rich.markup import escape
 
+from lazy_harness.agents.base import Bypass, BypassUnsupportedError, bypass_argv_or_raise
 from lazy_harness.agents.launch import LaunchError, resolve_launch
 from lazy_harness.core.config import ConfigError, load_config
 from lazy_harness.core.paths import config_file, process_exec_path
@@ -27,11 +28,23 @@ from lazy_harness.monitoring.launches import record_launch
 @click.option("--profile", "profile_override", default=None, help="Force a specific profile")
 @click.option("--list", "list_profiles_flag", is_flag=True, help="List profiles and exit")
 @click.option("--dry-run", is_flag=True, help="Print the resolved exec invocation without running")
+@click.option(
+    "--bypass",
+    "bypass_level",
+    default=None,
+    # Hyphenated on the CLI, underscored on the enum. `Bypass` is the single
+    # declaration of what positions exist, so a fourth cannot be typed here
+    # without being declared there first — which is what keeps this one axis
+    # rather than the start of an argv translation layer.
+    type=click.Choice([level.value.replace("_", "-") for level in Bypass]),
+    help="Declare how far this launch may step outside the permission prompts",
+)
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def run(
     profile_override: str | None,
     list_profiles_flag: bool,
     dry_run: bool,
+    bypass_level: str | None,
     args: tuple[str, ...],
 ) -> None:
     """Launch the configured agent for the current profile.
@@ -83,7 +96,19 @@ def run(
 
     process_name = adapter.process_name()
     argv0 = process_name or str(binary)
-    exec_args = [argv0, *args]
+
+    # Ahead of the passthrough and behind argv0, in that order. argv0 is what
+    # herdr reads to identify the agent, and everything after the expansion is
+    # forwarded untouched — `--bypass` interprets one argument and no others.
+    bypass_args: list[str] = []
+    if bypass_level is not None:
+        try:
+            bypass_args = bypass_argv_or_raise(adapter, Bypass(bypass_level.replace("-", "_")))
+        except BypassUnsupportedError as e:
+            console.print(f"[red]Error:[/red] {escape(str(e))}")
+            raise SystemExit(1)
+
+    exec_args = [argv0, *bypass_args, *args]
 
     if dry_run:
         console.print(f"profile: [bold]{escape(profile_name)}[/bold]")
