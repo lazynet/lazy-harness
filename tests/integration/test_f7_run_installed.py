@@ -150,6 +150,40 @@ def test_a_symlink_planted_at_a_shape_output_path_is_replaced_not_followed(
     assert "fake gate ran" in dest.read_text(encoding="utf-8")
 
 
+@pytest.mark.skipif(not Path("/bin/bash").exists(), reason="no /bin/bash on this machine")
+def test_the_script_runs_under_bin_bash_specifically(tmp_path: Path) -> None:
+    """`env bash` picks up whatever `bash` is first on PATH — on a developer
+    machine that is usually a modern Homebrew build, but CI's macos-latest
+    runner resolves it to Apple's stock `/bin/bash` (3.2, predating
+    associative arrays). A suite that only ever invokes `"bash"` inherits
+    whatever the test runner's PATH happens to put first and cannot catch a
+    3.2-only regression on a machine where that happens to be a newer build —
+    exactly how a `declare -A` broke `main`'s CI without failing here. Pinning
+    one smoke test to `/bin/bash` explicitly closes that gap regardless of
+    PATH order.
+    """
+    lh = _stub_lh(tmp_path)
+    gate = _stub_gate(tmp_path, _PASS_GATE)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+
+    env = dict(os.environ)
+    env["F7_RUN_INSTALLED_GATE"] = str(gate)
+    env["F7_RUN_INSTALLED_OUT_DIR"] = str(out_dir)
+    result = subprocess.run(
+        ["/bin/bash", str(WRAPPER_SH), str(lh)],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(tmp_path),
+        timeout=60,
+    )
+
+    assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    for shape in SHAPES:
+        assert (out_dir / f"f7-{shape}.txt").exists()
+
+
 def test_the_script_is_syntactically_valid_bash() -> None:
     result = subprocess.run(
         ["bash", "-n", str(WRAPPER_SH)], capture_output=True, text=True, timeout=30
