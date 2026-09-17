@@ -70,8 +70,82 @@ round's mistake named, since it changed what the F8 section below concludes.
 
 | | Spec / design says | `CodexAdapter` assumes | Observado |
 |---|---|---|---|
-| Trust key shape | Design doc line 763-779: `<absolute path of declaring file>:<snake_case event>:<group index>:<handler index>` — path-scoped, **measured** on 0.154.0 with a `PreToolUse`/`Bash` hook (the byte-identical-handler probe that found `hooks.json` trusted while the identical `config.toml` declaration read `new · review required`). | `codex.py:104-109` states the choice ("hooks.json") is "frozen at the first deploy" on the strength of that same measurement — the key is derived from *event name and position in the file*, not from the tool the hook happens to guard. | **Probe 5 (lower priority — likely a non-finding).** The trust key formula names no tool at all, so an edit-triggering hook trusted the same way should behave identically. Worth one confirmation run only if Probe 1-4 raise something unexpected about how Codex treats a `PreToolUse` group whose matcher targets the edit tool specifically (e.g. a `matcher` naming `apply_patch` rather than firing unconditionally) — `_hook_groups` (`codex.py:269-295`) says an *empty* matcher was the only form observed to fire on every call; a matcher naming a specific edit tool has never been tried. |
-| Matcher on a named tool | `_hook_groups`'s own docstring (`codex.py:276-281`): "An empty string was never observed, and the observed form that fires on every tool call is the one with no key at all." | The harness currently emits no per-tool matchers for Codex at all — every builtin gets an unconditional group. | **Probe 5.** If a matcher naming the edit tool's native name (from Probe 2) is tried, confirm whether Codex's matcher syntax accepts a bare tool name the way an empty matcher fires on everything, or whether it needs a different syntax (regex, glob) — this only matters once a Codex-specific hook wants to scope itself to edits alone, which nothing in the harness does yet. |
+| Trust key shape | Design doc line 763-779: `<absolute path of declaring file>:<snake_case event>:<group index>:<handler index>` — path-scoped, **measured** on 0.154.0 with a `PreToolUse`/`Bash` hook (the byte-identical-handler probe that found `hooks.json` trusted while the identical `config.toml` declaration read `new · review required`). | `codex.py:104-109` states the choice ("hooks.json") is "frozen at the first deploy" on the strength of that same measurement — the key is derived from *event name and position in the file*, not from the tool the hook happens to guard. | **Resolved 2026-09-17 (matcher probe 13:22 + hook-exec probe 14:34, `codex-cli 0.154.0`, model `gpt-6-astra`). The non-finding was a finding: the key is tool-independent, and a matcher naming a tool is honoured.** Five `PreToolUse` groups differing only in their `matcher` were declared in one `hooks.json`, trusted in one pass, and each fired or stayed silent according to its own literal on the same call — so trust is keyed by `<file>:<event>:<group index>:<handler index>` as the design doc says, with nothing tool-derived in it, and a group's matcher decides *whether* it is consulted without changing *how* it is trusted. The hook-exec probe then trusted five groups via `--dangerously-bypass-hook-trust` and got identical behaviour, so the bypass flag and a TUI approval produce the same dispatch. **Still open, and now the only trust question left:** whether 31 real `hooks.state.` entries approved through the TUI behave like five bypassed ones — that is probe 6's second delta, not this row's. |
+| Matcher on a named tool | `_hook_groups`'s own docstring (`codex.py:276-281`): "An empty string was never observed, and the observed form that fires on every tool call is the one with no key at all." | The harness currently emits no per-tool matchers for Codex at all — every builtin gets an unconditional group. | **Resolved 2026-09-17 13:22 (matcher probe, `codex-cli 0.154.0`, model `gpt-6-astra`). It is a regex, it is matched against the Claude-compatible alias as well as the native name, and every group is evaluated.** Two turns — a shell call reporting `tool_name: Bash` and a native edit reporting `tool_name: apply_patch` — against four spellings in one file, matcher-less control rendered last so that a run in which nothing else fired could still tell first-match-wins from every-other-matcher-failing:<br><br>`Bash\|Read\|Edit\|Write\|NotebookEdit` fired on **both**. `^Bash$` fired on `Bash` and **not** on `apply_patch`, so the anchors work and it is not substring or literal equality. `Edit\|Write` fired on **`apply_patch`**, so Codex evaluates the matcher against a tool's Claude-compatible alias as well as against the native name the payload carries. The matcher-less control fired on both turns *alongside* the matching literals, so evaluation does not stop at the first match.<br><br>**Consequence for the harness, and it is the opposite of what this row assumed:** the deployed literal `Bash\|Read\|Edit\|Write\|NotebookEdit` — written for Claude Code's vocabulary and declared once per builtin in `hooks/loader.py` — already covers both of Codex's tool paths. The eight groups the harness deploys are not suppressed, and no Codex-specific matcher is needed. ADR-056 records the decision to keep them agent-agnostic. `_hook_groups`'s docstring remains correct about the *empty* form; what it could not say is that a non-empty Claude-shaped one also fires. |
+
+### 4.1 Probe 5 — the hook-exec table, corrected
+
+Ran 2026-09-17 14:34 from an Aqua terminal, `codex-cli 0.154.0`, model
+`gpt-6-astra`, one turn (the `rm -rf` fixture F9 phase B uses), five `PreToolUse`
+groups all carrying the deployed matcher: three that capture and swallow stdout,
+two that answer Codex, one bare-`lh` and one absolute-path each.
+`--dangerously-bypass-hook-trust`, throwaway `CODEX_HOME`, throwaway
+`LH_CONFIG_DIR`.
+
+**The summary the probe printed at 14:34 is not reproduced here, because three of
+its four readings were wrong.** The records on disk were right every time; the
+reader was pointed at the wrong config, the wrong stream and the wrong directory.
+The bugs and their fixes are in the commit that adds ADR-056; the table below is
+what the records say.
+
+| Variant | `lh` spelling | stdout to Codex | exit | stdout | `command -v lh` in the hook |
+|---|---|---|---|---|---|
+| `diag` | — | no | n/a (records env only) | — | `/…/.local/bin/lh` |
+| `capture-abs` | absolute | no | 0 | valid envelope, `permissionDecision: "deny"`, reason present | `/…/.local/bin/lh` |
+| `capture-bare` | bare `lh` | no | 0 | valid envelope, `permissionDecision: "deny"`, reason present | `/…/.local/bin/lh` |
+| `live-abs` | absolute | yes | 0 | valid envelope, `permissionDecision: "deny"`, reason present | `/…/.local/bin/lh` |
+| `live-bare` | bare `lh` | yes | 0 | valid envelope, `permissionDecision: "deny"`, reason present | `/…/.local/bin/lh` |
+
+Outcome: **the fixture directory survived.** Codex's own refusal is on
+`stream.stderr`, line 1:
+
+```
+ERROR codex_core::tools::router: error=Command blocked by PreToolUse hook: Blocked by lazy-harness PreToolUse: Recursive delete (filesystem).
+Matched: rm -rf -- doomed
+```
+
+The `--json` stream carries no such line. It carries the model's account of it,
+as `item_3`:
+
+```
+Automatic approval review blocked `rm -rf -- doomed` because recursive
+filesystem deletion is disallowed. The directory was not deleted.
+```
+
+**Reading the table.** The four candidates the probe was built to separate are
+each falsified by a cell in it:
+
+* **(a) the bare name does not resolve.** `capture-bare` and `live-bare` both
+  exit 0 with a valid envelope, and `command_v_lh` in every `env.txt` is the
+  installed binary. A bare `lh` resolves in the environment Codex spawns a hook
+  into, which no earlier probe had ever exercised.
+* **(b) the hook runs, crashes and exits 0.** Exit 0 *with* a valid deny
+  envelope on every variant. The failure mode this repo gates on — a blocking
+  hook exiting 0 with nothing on stdout — did not occur.
+* **(c) the payload differs.** `records/*/stdin.json` carries
+  `hook_event_name: PreToolUse`, `tool_name: Bash`, `tool_input.command`,
+  `session_id`, `turn_id`, `transcript_path`, `cwd`, `model: gpt-6-astra`,
+  `permission_mode: bypassPermissions`, `tool_use_id` — the shape §1 records.
+* **(d) Codex ignores the verdict.** It does not: the directory survived and the
+  router logged the refusal. **Where** it surfaces is the new fact — Codex
+  consumes a `PreToolUse` deny in its **approval-review stage**, reporting the
+  harness's own reason on stderr while the JSON stream carries only the model's
+  prose about it. A consumer looking for the mechanism must read stderr.
+
+**One `CODEX_HOME` means one hook log.** The probe declared three throwaway
+profiles so their log counts would attribute per group, and `agent_runtime_dir`
+(ADR-032 L3) resolves the adapter's env var before the profile's `config_dir` —
+so all three wrote to `$CODEX_HOME/logs/hooks.log` and the per-profile split did
+not survive. Per-group attribution is `records/<label>/`, which is per-label by
+construction.
+
+**What this leaves.** Probe 5 blocked; the F9 live run of 12:32 did not. Three
+deltas remain between them — the deployed `hooks.json` (8 real groups, including
+`moshi` and `graphify hook-guard`, against 5 hand-rendered), the trust store (31
+TUI-approved `hooks.state.` entries against `--dangerously-bypass-hook-trust`),
+and the driver (the F9 live path against `codex exec`).
+`specs/gates/probes/codex-hook-probe6.sh` separates them and has not been run.
+
 
 ## Probes a correr
 
