@@ -160,9 +160,18 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
     ),
     "post-tool-use-sync-system-doc": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.post_tool_use_sync_system_doc",
-        matcher="Edit|Write",
         event="post_tool_use",
         operations=frozenset({Operation.MODIFY_FILE}),
+        # No hand-authored `matcher`: the one that used to sit here,
+        # `"Edit|Write"`, is spelled in Claude Code's own tool names and is why
+        # this hook was inert on Codex -- `apply_patch` never matches it, and
+        # Codex's own `_hook_groups` writes whatever matcher it is given
+        # verbatim. Each adapter's own default now decides: Claude Code's
+        # `post_tool_use` default is already `Edit|Write` (no observable
+        # change), and Codex omits the key entirely on a falsy matcher, which
+        # is the only form its hooks are seen firing on every tool call under
+        # (decision 5, blast-radius design; `test_sync_doc_hook_matcher.py`).
+        #
         # No `signals`: this hook never opens the transcript. It reads the
         # edited path out of the tool call and the segment files off disk.
         # Declaring one would make `deploy` refuse to install it on an agent

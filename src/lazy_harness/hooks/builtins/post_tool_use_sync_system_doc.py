@@ -34,14 +34,15 @@ from pathlib import Path
 # `test_every_builtin_main_takes_an_event_and_returns_a_decision` resolves this
 # module's annotations with `typing.get_type_hints`, which evaluates the
 # forward reference `from __future__ import annotations` leaves behind.
-from lazy_harness.agents.base import HookDecision, HookEvent
+from lazy_harness.agents.base import HookDecision, HookEvent, Operation
 from lazy_harness.core.sync_agent_md import segment_filenames, sync_profiles
 from lazy_harness.hooks.builtins._shared import EDIT_TOOLS
 
-# The tool names this hook inspects — `_shared.EDIT_TOOLS`, not a copy of it.
-# `tests/unit/test_hook_matcher_coverage.py` asserts the matcher the registry
-# deploys covers every one of them, so the gate below and the subscription
-# declared outside cannot drift apart.
+# Declared for the cross-file coverage gate
+# (`tests/unit/test_hook_matcher_coverage.py`), which asserts the deployed
+# matcher reaches every tool name a builtin declares here -- not read by this
+# module's own gate below, which now reads `tool.operation` instead. Kept as
+# `_shared.EDIT_TOOLS`, not a copy of it, so the two cannot drift apart.
 INSPECTED_TOOLS = EDIT_TOOLS
 
 # Derived from the segment roles the generator declares, not listed here
@@ -90,13 +91,19 @@ def _trees_touched(paths: tuple[Path, ...]) -> list[Path]:
 def main(event: HookEvent) -> HookDecision:
     """Regenerate the system doc of every profile tree a segment edit touched."""
     tool = event.tool
-    # Narrowed on the native tool name rather than on `Operation.MODIFY_FILE`,
-    # which also covers `NotebookEdit` (`agents/claude_code.py:97`). The second
-    # gate below is a *filename* match, not an extension, so a notebook whose
-    # normalised path is named `CLAUDE.head.md` would clear it: switching to the
-    # operation would widen this hook onto notebooks for the first time, and no
-    # channel it writes on would show it. `INSPECTED_TOOLS` stays the gate.
-    if tool is None or tool.native_name not in INSPECTED_TOOLS:
+    # Gated on the operation, not the native tool name: a native-name gate
+    # spelled in Claude Code's own tools (`INSPECTED_TOOLS`, above) is what left
+    # this hook inert on Codex, whose edit tool is `apply_patch`. The gate this
+    # widens onto is `Operation.MODIFY_FILE`, which also covers `NotebookEdit`
+    # (`agents/claude_code.py:97`) -- but the second gate below is a *filename*
+    # match against real segment names (`head.md`, `common.md`, `tail.md`, an
+    # `_common/<agent>.md`, or a legacy stem-keyed spelling), and Claude Code's
+    # `NotebookEdit` only ever carries a `.ipynb` path, which never collides
+    # with one. A notebook whose path is *constructed* to spell a segment name
+    # exactly does clear both gates and regenerates -- an accepted, documented
+    # cost of the widening (`test_a_notebook_edit_named_like_a_segment_now_regenerates`),
+    # not a real path any agent produces.
+    if tool is None or tool.operation is not Operation.MODIFY_FILE:
         return HookDecision()
     # Deletes included, and `paths` deliberately not used: that property also
     # carries `reads`, and a *read* of a segment must not regenerate anything.

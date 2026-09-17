@@ -107,6 +107,26 @@ def test_sync_claude_regenerates_the_tree_a_patched_segment_belongs_to(
     fake_sync.assert_called_once()
 
 
+def test_sync_claude_regenerates_the_tree_a_patched_role_named_segment_belongs_to(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The other half of decision 5: the gate is the operation now, so
+    `apply_patch` reaches a role-named segment (`_common/common.md`) exactly as
+    it already reached the legacy-named one above -- previously untested
+    through the shipped `CodexAdapter`, not previously broken."""
+    from lazy_harness.hooks.builtins import post_tool_use_sync_system_doc as mod
+
+    segment = tmp_path / "profiles" / "_common" / "common.md"
+    segment.parent.mkdir(parents=True)
+    segment.write_text("shared\n")
+    fake_sync = MagicMock()
+    monkeypatch.setattr(mod, "sync_profiles", fake_sync)
+
+    mod.main(_event(_blob(_update(str(segment), "shared", "SHARED"))))
+
+    fake_sync.assert_called_once()
+
+
 def test_memory_size_projects_a_patched_file(tmp_path: Path) -> None:
     """The third guard the evidence's two-fix account does not name.
 

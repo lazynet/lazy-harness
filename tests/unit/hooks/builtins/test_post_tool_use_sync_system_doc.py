@@ -110,24 +110,47 @@ def test_skips_non_edit_tool(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_sync.assert_not_called()
 
 
-def test_skips_a_notebook_edit_even_when_it_is_named_like_a_segment(
+def test_a_notebook_edit_named_like_a_segment_now_regenerates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Trap 3: `MODIFY_FILE` is wider than `INSPECTED_TOOLS` by `NotebookEdit`.
+    """Trap 3, resolved by accepting it rather than avoiding it.
 
-    The second gate is a filename match, not an extension, so the `.ipynb`
-    assumption that made the widening look inert does not hold here: a notebook
-    whose normalised path is named `CLAUDE.head.md` clears it. This fails the
-    moment the tool-name gate is replaced by `event.tool.operation`.
+    The gate is `event.tool.operation is Operation.MODIFY_FILE` now, not a tool
+    name, so a `NotebookEdit` whose declared path is literally named
+    `CLAUDE.head.md` clears both gates and regenerates. That is a synthetic
+    adversarial fixture, not a real one: Claude Code's `NotebookEdit` only ever
+    carries a `.ipynb` path (`test_skips_a_notebook_edit_on_a_realistic_ipynb_path`
+    below is the case that actually occurs), so this is the accepted, documented
+    cost of the widening rather than a gap the second gate was expected to close.
     """
     from lazy_harness.hooks.builtins import post_tool_use_sync_system_doc as mod
 
-    fake_sync = MagicMock()
+    fake_sync = MagicMock(return_value=[])
     monkeypatch.setattr(mod, "sync_profiles", fake_sync)
 
     event = _event("NotebookEdit", "/x/.config/lazy-harness/profiles/lazy/CLAUDE.head.md")
     assert event.tool is not None
     assert event.tool.operation is Operation.MODIFY_FILE, "fixture must reach the widened gate"
+
+    mod.main(event)
+
+    fake_sync.assert_called_once()
+
+
+def test_skips_a_notebook_edit_on_a_realistic_ipynb_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """What actually happens: `NotebookEdit` only ever carries a `.ipynb` path,
+    which never collides with a segment name — the second gate does answer
+    this case, just not the synthetic one above."""
+    from lazy_harness.hooks.builtins import post_tool_use_sync_system_doc as mod
+
+    fake_sync = MagicMock()
+    monkeypatch.setattr(mod, "sync_profiles", fake_sync)
+
+    event = _event("NotebookEdit", "/x/.config/lazy-harness/profiles/lazy/notes.ipynb")
+    assert event.tool is not None
+    assert event.tool.operation is Operation.MODIFY_FILE
 
     mod.main(event)
 
