@@ -157,7 +157,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "lh hook post-tool-use-sync-claude --profile personal"
+            "command": "lh hook post-tool-use-sync-system-doc --profile personal"
           }
         ]
       }

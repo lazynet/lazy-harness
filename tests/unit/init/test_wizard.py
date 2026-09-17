@@ -89,7 +89,7 @@ def test_run_wizard_writes_post_tool_use_hook_block(tmp_path: Path) -> None:
     run_wizard(answers, config_path=cfg)
     parsed = tomllib.loads(cfg.read_text())
     block = parsed.get("hooks", {}).get("post_tool_use", {})
-    assert block.get("scripts") == ["post-tool-use-format", "post-tool-use-sync-claude"]
+    assert block.get("scripts") == ["post-tool-use-format", "post-tool-use-sync-system-doc"]
 
 
 def test_wizard_writes_a_config_that_loads_and_a_marked_store(tmp_path: Path) -> None:

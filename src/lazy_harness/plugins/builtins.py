@@ -104,7 +104,7 @@ _DEFAULT_ON_HOOKS: dict[str, list[str]] = {
         "pre-tool-use-memory-size",
         "pre-tool-use-read-size",
     ],
-    "post_tool_use": ["post-tool-use-format", "post-tool-use-sync-claude"],
+    "post_tool_use": ["post-tool-use-format", "post-tool-use-sync-system-doc"],
 }
 
 # Hooks that only make sense for an agent keeping a file-based system
@@ -112,7 +112,7 @@ _DEFAULT_ON_HOOKS: dict[str, list[str]] = {
 # and `state()` reports them OFF for the same reason. One home: the set lived
 # in `deploy/defaults.py` and was mirrored here, which is how two copies of a
 # rule stop agreeing.
-_SYSTEM_DOC_HOOKS = {"post-tool-use-sync-claude"}
+_SYSTEM_DOC_HOOKS = {"post-tool-use-sync-system-doc"}
 
 _HOOKS = [
     Capability(

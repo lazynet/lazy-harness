@@ -1,4 +1,4 @@
-"""Byte goldens for `post-tool-use-sync-claude`, one per branch, captured pre-migration.
+"""Byte goldens for `post-tool-use-sync-system-doc`, one per branch, captured pre-migration.
 
 This hook has no output channel. Every branch ends at `sys.exit(0)` having
 written nothing to stdout or stderr, so the three frozen channels collapse to
@@ -13,14 +13,16 @@ assertion and the goldens are the smaller half.
 
 Two branches carry the traps this wave was warned about:
 
-* `a-notebook-edit-named-as-a-segment-regenerates-nothing` is **trap 3**.
-  `_TOOL_OPERATIONS` maps `NotebookEdit` to `Operation.MODIFY_FILE` alongside
-  `Edit` and `Write` (`claude_code.py:97`), and `_FILE_PATH_KEYS` folds
-  `notebook_path` into the same `FileEdit.path`. This hook's second gate is a
-  *filename* match, not an extension, so a `NotebookEdit` whose path is named
-  `CLAUDE.head.md` clears it. Replacing the tool-name gate with the operation
-  would therefore make this hook act on notebooks for the first time, and no
-  wire channel would show it. This case is what turns that red.
+* `a-notebook-edit-named-as-a-segment-regenerates-the-tree` is **trap 3**,
+  resolved by accepting it. `_TOOL_OPERATIONS` maps `NotebookEdit` to
+  `Operation.MODIFY_FILE` alongside `Edit` and `Write` (`claude_code.py:97`),
+  and `_FILE_PATH_KEYS` folds `notebook_path` into the same `FileEdit.path`.
+  This hook's second gate is a *filename* match, not an extension, so a
+  `NotebookEdit` whose path is named `CLAUDE.head.md` clears it once the
+  tool-name gate becomes the operation — an accepted, documented cost of the
+  widening, not a real path any agent produces: Claude Code's `NotebookEdit`
+  only ever carries a `.ipynb` path, which is
+  `a-notebook-edit-on-a-realistic-ipynb-path-regenerates-nothing` below.
 * `a-head-edit-regenerates-every-profile-in-the-tree` records what
   `sync_profiles` actually does: it walks the whole `profiles/` tree
   (`sync_agent_md.py:73`) rather than the one profile whose segment was
@@ -42,7 +44,7 @@ from tests.unit.hooks.builtins._goldens import (
     run_through_runner,
 )
 
-HOOK = "post-tool-use-sync-claude"
+HOOK = "post-tool-use-sync-system-doc"
 
 SESSION = "0193b0de-5555-6666-7777-888899990000"
 
@@ -125,11 +127,21 @@ CASES: list[Case] = [
     ),
     # --- the tool gate ------------------------------------------------------ #
     Case(id="a-read-regenerates-nothing", tool="Read"),
-    # Trap 3. `NotebookEdit` is `MODIFY_FILE` too, and this path is named like a
-    # segment, so the filename re-check does not save the operation gate here.
+    # Trap 3, accepted. `NotebookEdit` is `MODIFY_FILE` too, and this path is
+    # named like a segment, so the filename re-check does not save the
+    # operation gate here -- a synthetic case, not a real one.
     Case(
-        id="a-notebook-edit-named-as-a-segment-regenerates-nothing",
+        id="a-notebook-edit-named-as-a-segment-regenerates-the-tree",
         tool="NotebookEdit",
+        path_key="notebook_path",
+        regenerates=PROFILES,
+    ),
+    # What actually happens: `NotebookEdit` only ever carries a `.ipynb` path,
+    # which never collides with a segment name.
+    Case(
+        id="a-notebook-edit-on-a-realistic-ipynb-path-regenerates-nothing",
+        tool="NotebookEdit",
+        path="profiles/alpha/notes.ipynb",
         path_key="notebook_path",
     ),
     Case(id="a-payload-naming-no-tool-regenerates-nothing", tool=None, path=None),
@@ -327,14 +339,14 @@ def test_the_trigger_set_is_derived_from_the_segment_roles() -> None:
     file quietly goes stale.
     """
     from lazy_harness.core.sync_agent_md import segment_filenames
-    from lazy_harness.hooks.builtins.post_tool_use_sync_claude import SEGMENT_FILES
+    from lazy_harness.hooks.builtins.post_tool_use_sync_system_doc import SEGMENT_FILES
 
     assert SEGMENT_FILES == segment_filenames()
 
 
 def test_an_edit_to_a_role_named_segment_regenerates_the_tree(tmp_path: Path) -> None:
     """The hook fires on the role names, not only on the legacy ones."""
-    from lazy_harness.hooks.builtins.post_tool_use_sync_claude import _trees_touched
+    from lazy_harness.hooks.builtins.post_tool_use_sync_system_doc import _trees_touched
 
     tree = tmp_path / "profiles"
     assert _trees_touched((tree / "lazy" / "head.md",)) == [tree]

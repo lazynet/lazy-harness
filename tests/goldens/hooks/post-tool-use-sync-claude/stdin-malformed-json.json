@@ -1,5 +1,0 @@
-{
-  "exit_code": 0,
-  "stderr": "post-tool-use-sync-claude: unparseable payload: Expecting value: line 1 column 1 (char 0)",
-  "stdout": ""
-}

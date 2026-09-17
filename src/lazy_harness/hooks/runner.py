@@ -20,7 +20,7 @@ import json
 from typing import TYPE_CHECKING
 
 from lazy_harness.agents.base import HookOutput
-from lazy_harness.hooks.loader import _BUILTIN_HOOKS
+from lazy_harness.hooks.loader import resolve_builtin_spec
 
 if TYPE_CHECKING:  # pragma: no cover - imported for typing only
     from collections.abc import Callable
@@ -159,7 +159,7 @@ def run_hook(name: str, *, profile: str, stdin_text: str) -> HookOutput:
     Returns rather than exits so both entry points — the deployed `lh hook` and
     `lh hooks run` — share one execution mechanism instead of two.
     """
-    spec = _BUILTIN_HOOKS.get(name)
+    spec = resolve_builtin_spec(name)
     if spec is None:
         # Nothing is known about an unregistered name, including whether it
         # blocks; refusing on a guess would block tool calls a typo in

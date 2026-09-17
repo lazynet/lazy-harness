@@ -182,7 +182,7 @@ def test_sync_profiles_writes_each_profiles_own_system_doc(tmp_path: Path) -> No
     The destinations come from `adapter.system_docs()`, so one adapter for the
     whole tree wrote `CLAUDE.md` into a profile running an agent that reads
     `AGENTS.md` — and left the file that agent actually loads unwritten. Its
-    caller already resolves per profile (`post_tool_use_sync_claude` takes the
+    caller already resolves per profile (`post_tool_use_sync_system_doc` takes the
     firing profile's adapter), which only moved the defect: whichever profile
     fired the hook imposed its contract file on every other one.
     """
@@ -510,7 +510,7 @@ def test_an_agent_with_no_segment_renders_without_one(tmp_path: Path) -> None:
 def test_the_legacy_stem_keyed_layout_is_named_in_the_result(tmp_path: Path) -> None:
     """A deployed tree predates the rename, and the chezmoi source rename is a
     separate change in another repository. The fallback keeps that tree syncing
-    and says which layout it used, so `lh profile sync-claude-md` reports the
+    and says which layout it used, so `lh profile sync-system-doc` reports the
     migration instead of silently doing nothing."""
     from lazy_harness.core.sync_agent_md import sync_profiles
 

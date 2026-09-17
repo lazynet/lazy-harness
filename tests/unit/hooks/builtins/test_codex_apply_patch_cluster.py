@@ -94,7 +94,7 @@ def test_ansible_lint_reaches_a_patched_playbook(monkeypatch: pytest.MonkeyPatch
 def test_sync_claude_regenerates_the_tree_a_patched_segment_belongs_to(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from lazy_harness.hooks.builtins import post_tool_use_sync_claude as mod
+    from lazy_harness.hooks.builtins import post_tool_use_sync_system_doc as mod
 
     segment = tmp_path / "profiles" / "lazy" / "CLAUDE.head.md"
     segment.parent.mkdir(parents=True)
@@ -103,6 +103,26 @@ def test_sync_claude_regenerates_the_tree_a_patched_segment_belongs_to(
     monkeypatch.setattr(mod, "sync_profiles", fake_sync)
 
     mod.main(_event(_blob(_update(str(segment), "head", "HEAD"))))
+
+    fake_sync.assert_called_once()
+
+
+def test_sync_claude_regenerates_the_tree_a_patched_role_named_segment_belongs_to(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The other half of decision 5: the gate is the operation now, so
+    `apply_patch` reaches a role-named segment (`_common/common.md`) exactly as
+    it already reached the legacy-named one above -- previously untested
+    through the shipped `CodexAdapter`, not previously broken."""
+    from lazy_harness.hooks.builtins import post_tool_use_sync_system_doc as mod
+
+    segment = tmp_path / "profiles" / "_common" / "common.md"
+    segment.parent.mkdir(parents=True)
+    segment.write_text("shared\n")
+    fake_sync = MagicMock()
+    monkeypatch.setattr(mod, "sync_profiles", fake_sync)
+
+    mod.main(_event(_blob(_update(str(segment), "shared", "SHARED"))))
 
     fake_sync.assert_called_once()
 
@@ -159,7 +179,7 @@ def test_a_blob_with_no_file_section_leaves_every_builtin_abstaining(
     """
     from lazy_harness.hooks.builtins import post_tool_use_ansible_lint as lint
     from lazy_harness.hooks.builtins import post_tool_use_format as fmt
-    from lazy_harness.hooks.builtins import post_tool_use_sync_claude as sync
+    from lazy_harness.hooks.builtins import post_tool_use_sync_system_doc as sync
     from lazy_harness.hooks.builtins import pre_tool_use_memory_size as mem
 
     fake_run, fake_sync = MagicMock(), MagicMock()
@@ -248,7 +268,7 @@ def test_sync_claude_regenerates_the_tree_a_deleted_segment_belonged_to(
     """The one reader that gains. The segment is gone from disk by the time the
     PostToolUse fires, which is exactly the state `sync_profiles` must be handed
     — it degrades to a reported skip or a re-render without that section."""
-    from lazy_harness.hooks.builtins import post_tool_use_sync_claude as mod
+    from lazy_harness.hooks.builtins import post_tool_use_sync_system_doc as mod
 
     segment = tmp_path / "profiles" / "_common" / "codex.md"
     segment.parent.mkdir(parents=True)
@@ -307,7 +327,7 @@ def _edit_builtins() -> dict[str, frozenset[str]]:
         name: importlib.import_module(f"lazy_harness.hooks.builtins.{name}").INSPECTED_TOOLS
         for name in (
             "post_tool_use_format",
-            "post_tool_use_sync_claude",
+            "post_tool_use_sync_system_doc",
             "post_tool_use_ansible_lint",
             "pre_tool_use_memory_size",
         )

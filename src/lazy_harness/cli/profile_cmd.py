@@ -286,8 +286,7 @@ def profile_envrc(dry_run: bool) -> None:
             console.print(f"  cd {contract_path(r.path.parent)} && direnv allow")
 
 
-@profile.command("sync-claude-md")
-def profile_sync_claude_md() -> None:
+def _profile_sync_system_doc() -> None:
     """Regenerate each profile's system doc from its segmented sources.
 
     Concatenates `<profile>/head.md` + `_common/common.md` +
@@ -329,6 +328,16 @@ def profile_sync_claude_md() -> None:
         # line per file its agent loads, and the profile name alone repeated
         # the same word without saying which file changed.
         console.print(f"[{style}]{r.action:9}[/{style}] {r.profile} → {r.path.name}{suffix}")
+
+
+# Renamed from `sync-claude-md` (decision 5, blast-radius design): the
+# destinations are no longer Claude Code-specific, so the command name should
+# not be either. Registered under both names against the same callback --
+# the old name kept as a hidden alias rather than a second implementation, so
+# a script or muscle memory typing it keeps working with nothing to drift out
+# of sync.
+profile_sync_system_doc = profile.command("sync-system-doc")(_profile_sync_system_doc)
+profile_sync_claude_md = profile.command("sync-claude-md", hidden=True)(_profile_sync_system_doc)
 
 
 @profile.command("remove")

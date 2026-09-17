@@ -53,7 +53,7 @@ def test_an_agent_without_a_system_doc_drops_the_doc_hook() -> None:
 
     effective = merge_with_defaults(Config().hooks, NoDoc())
 
-    assert "post-tool-use-sync-claude" not in effective["post_tool_use"]
+    assert "post-tool-use-sync-system-doc" not in effective["post_tool_use"]
     assert "post-tool-use-format" in effective["post_tool_use"]
 
 
@@ -70,7 +70,7 @@ def test_the_doc_hook_gate_reads_system_docs_not_a_single_name() -> None:
 
     effective = merge_with_defaults(Config().hooks, NoDocs())
 
-    assert "post-tool-use-sync-claude" not in effective["post_tool_use"]
+    assert "post-tool-use-sync-system-doc" not in effective["post_tool_use"]
     assert "post-tool-use-format" in effective["post_tool_use"]
 
 
@@ -85,4 +85,4 @@ def test_an_agent_with_two_destinations_keeps_the_doc_hook() -> None:
 
     effective = merge_with_defaults(Config().hooks, TwoDocs())
 
-    assert "post-tool-use-sync-claude" in effective["post_tool_use"]
+    assert "post-tool-use-sync-system-doc" in effective["post_tool_use"]

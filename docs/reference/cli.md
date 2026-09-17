@@ -621,14 +621,14 @@ Manages agent profiles.
 
 `lh profile move --from <a> --to <b>` relocates per-project conversation history (`<config_dir>/projects/<encoded-cwd>/`) between profiles without losing JSONL history. Useful when reclassifying a project from one profile to another. Supports `--projects a,b,c`, `--all`, `--overwrite`, and `--yes`.
 
-`lh profile sync-claude-md` recomposes every profile's `CLAUDE.md` from its segments, concatenating `<profile>/CLAUDE.head.md` + `_common/CLAUDE.common.md` + `<profile>/CLAUDE.tail.md` in that order. Only profile dirs carrying all three segments are touched; a profile with a flat, hand-written `CLAUDE.md` is skipped, never erased. The `post-tool-use-sync-claude` hook runs the same code on every edit to a segment, so this is the manual path — after a bulk edit, after pulling the profiles dir on another machine, or where that hook is not deployed.
+`lh profile sync-system-doc` recomposes every profile's system doc from its segments, concatenating `<profile>/head.md` + `_common/common.md` + `_common/<agent>.md` + `<profile>/tail.md` in that order (the legacy stem-keyed spellings, e.g. `CLAUDE.head.md`, still render). Only profile dirs carrying the segments are touched; a profile with a flat, hand-written system doc is skipped, never erased. The `post-tool-use-sync-system-doc` hook runs the same code on every edit to a segment, so this is the manual path — after a bulk edit, after pulling the profiles dir on another machine, or where that hook is not deployed. Renamed from `lh profile sync-claude-md` (decision 5, blast-radius design); the old name still works as a hidden alias.
 
 ```bash
 lh profile list
 lh profile add work --config-dir ~/.claude-work --roots ~/repos/work
 lh profile envrc
 lh profile move --from personal --to work --projects my-repo --yes
-lh profile sync-claude-md
+lh profile sync-system-doc
 ```
 
 ## `lh run`

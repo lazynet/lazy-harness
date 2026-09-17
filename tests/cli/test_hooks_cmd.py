@@ -17,6 +17,7 @@ from click.testing import CliRunner
 
 from lazy_harness.agents.base import HookDecision, HookEvent, Verdict
 from lazy_harness.cli.hooks_cmd import hook_invoke
+from lazy_harness.hooks import loader
 from lazy_harness.hooks.loader import BuiltinHookSpec
 
 #: A PreToolUse payload the runner can parse. `lh hook` reads stdin through the
@@ -44,7 +45,7 @@ def _register_fake_hook(
     module.main = main  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, module_name, module)
     monkeypatch.setitem(
-        __import__("lazy_harness.cli.hooks_cmd", fromlist=["_BUILTIN_HOOKS"])._BUILTIN_HOOKS,
+        loader._BUILTIN_HOOKS,
         name,
         BuiltinHookSpec(module=module_name, event="pre_tool_use", blocking=blocking),
     )
