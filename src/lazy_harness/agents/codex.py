@@ -455,6 +455,55 @@ _MCP_SECTION = "mcp_servers"
 _DESCRIPTION = "Managed by lazy-harness. Edits are overwritten on the next deploy."
 
 
+def _canonical_event_names() -> dict[str, str]:
+    """Codex's native (PascalCase) hook name -> the harness's canonical one.
+
+    One mapping, shared by `trust_keys` and `_changed_hook_labels` — both read
+    a `hooks.json` `hooks` block keyed on the native name and need to label
+    entries the way a reader recognises them, and a second copy of this dict
+    is exactly the kind of drift the repo's "one answer, one place" rule
+    exists to stop.
+    """
+    return {support.native_name: name for name, support in _HOOK_EVENTS.items()}
+
+
+def _changed_hook_labels(existing_raw: str | None, groups: dict[str, list[dict]]) -> list[str]:
+    """Which declared matcher groups differ from what `existing_raw` has on disk.
+
+    Per hook, not per file: `_hook_groups` already produces one dict per
+    matcher group, keyed and ordered exactly as `hooks.json` stores them, so
+    comparing group-by-group is exact and free — no reason to fall back to a
+    whole-file diff. `existing_raw is None` (no file yet) makes every declared
+    group changed, matching the "first deploy" row of the design's table.
+    Labelled the same way `trust_keys` labels its own keys, so a `lh deploy`
+    line and `lh doctor`'s naming of the same hook read as one vocabulary.
+    """
+    canonical = _canonical_event_names()
+    existing_groups: dict[str, list] = {}
+    if existing_raw is not None:
+        try:
+            document = json.loads(existing_raw)
+        except (json.JSONDecodeError, ValueError):
+            document = None
+        if isinstance(document, dict):
+            hooks = document.get("hooks")
+            if isinstance(hooks, dict):
+                existing_groups = hooks
+
+    changed: list[str] = []
+    for native in sorted(set(groups) | set(existing_groups)):
+        event = canonical.get(native, native)
+        new_list = groups.get(native, [])
+        old_list = existing_groups.get(native)
+        old_list = old_list if isinstance(old_list, list) else []
+        for index in range(max(len(new_list), len(old_list))):
+            new_group = new_list[index] if index < len(new_list) else None
+            old_group = old_list[index] if index < len(old_list) else None
+            if new_group != old_group:
+                changed.append(f"{event}[{index}]")
+    return changed
+
+
 def trust_keys(hooks_file: Path, raw: str) -> tuple[tuple[tuple[str, str], ...], tuple[str, ...]]:
     """Codex's trust-state key for every handler a `hooks.json` declares.
 
@@ -491,7 +540,7 @@ def trust_keys(hooks_file: Path, raw: str) -> tuple[tuple[tuple[str, str], ...],
     if not isinstance(hooks, dict):
         return (), ()
 
-    canonical = {support.native_name: name for name, support in _HOOK_EVENTS.items()}
+    canonical = _canonical_event_names()
     declaring = hooks_file.resolve()
     declared: list[tuple[str, str]] = []
     ignored: list[str] = []
@@ -710,7 +759,11 @@ class CodexAdapter:
         groups = self._hook_groups(hooks)
         if not groups:
             if _is_harness_written(existing_raw):
-                return WriteOp(artifact=None, relative_path=Path(HOOKS_FILE))
+                return WriteOp(
+                    artifact=None,
+                    relative_path=Path(HOOKS_FILE),
+                    changed=_changed_hook_labels(existing_raw, groups),
+                )
             return None
         document = {"description": _DESCRIPTION, "hooks": groups}
         return WriteOp(
@@ -719,6 +772,7 @@ class CodexAdapter:
                 content=json.dumps(document, indent=2) + "\n",
             ),
             relative_path=Path(HOOKS_FILE),
+            changed=_changed_hook_labels(existing_raw, groups),
         )
 
     def _plan_mcp(self, servers: dict[str, dict], existing_raw: str | None) -> WriteOp | None:

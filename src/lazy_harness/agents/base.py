@@ -284,6 +284,14 @@ class WriteOp:
     """Harness entries no longer generated."""
     repaired: list[str] = field(default_factory=list)
     """Entries the agent would have rejected."""
+    changed: list[str] = field(default_factory=list)
+    """Declared entries that differ from what is already on disk.
+
+    Codex-specific for now — the design's re-trust instruction (`lh deploy`
+    prints it whenever it changes a hook declaration) needs to know exactly
+    this, and the planner is where "differs from existing" is already cheap
+    to answer. Empty for every adapter that does not populate it.
+    """
 
 
 HEADLESS_TIERS: tuple[str, ...] = ("fast", "balanced", "deep")
