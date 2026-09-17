@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any, ClassVar, Protocol, runtime_checkable
 
-METRIC_EVENT_SCHEMA_VERSION: int = 2
+METRIC_EVENT_SCHEMA_VERSION: int = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +40,16 @@ class MetricEvent:
     # whoever invoked the agent and is never interpreted here.
     host: str = ""
     workload: str = ""
+    # v3 (ADR-050): appended the same way, so a v1 or v2 payload — neither
+    # carries any of the three — still loads through `from_dict` unchanged.
+    # `agent` and `billing_model` are persisted rather than resolved at read
+    # time because the execution context that decided them (which adapter,
+    # which auth mode) is mutable and the row is permanent. `cost_source`
+    # gains `"subscription"`; `None` means exactly one thing: pricing was
+    # attempted and failed.
+    agent: str = ""
+    billing_model: str = "per_token"
+    cost_source: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
