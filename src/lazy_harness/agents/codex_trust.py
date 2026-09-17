@@ -43,6 +43,21 @@ _STATE_SECTION = "hooks"
 _STATE_TABLE = "state"
 _TRUSTED_HASH = "trusted_hash"
 
+RETRUST_INSTRUCTION = (
+    "Codex will not run a hook it has not approved, and says nothing when it "
+    "skips one. Approve them in Codex's own review screen — `lh deploy` cannot: "
+    "the User config layer it writes to is never Managed."
+)
+"""The one sentence both `lh doctor` and `lh deploy` print about hook trust.
+
+`lh doctor` prints it once, as a standing footer under the Codex hook trust
+section. `lh deploy` prints it whenever it changes a hook declaration — the
+moment described in the design (`specs/designs/2026-09-13-multi-agent-harness-
+design.md:825-846`) as the point a stored hash becomes known-stale. One string,
+imported by both, so the two callers cannot drift onto different wording for
+the same instruction.
+"""
+
 
 @dataclass(frozen=True)
 class CodexHookTrust:
