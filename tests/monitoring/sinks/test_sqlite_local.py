@@ -74,3 +74,36 @@ def test_drain_is_noop(tmp_path: Path) -> None:
 
 def test_sink_name_is_sqlite_local(tmp_path: Path) -> None:
     assert SqliteLocalSink.name == "sqlite_local"
+
+
+def test_write_persists_a_v3_events_agent_and_billing_model(tmp_path: Path) -> None:
+    """ADR-050: db.upsert_event (Part 3) already carries these; this pins the
+    sink itself passes a v3 event through without dropping anything."""
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        event = MetricEvent(
+            event_id="eid-v3",
+            schema_version=METRIC_EVENT_SCHEMA_VERSION,
+            user_id="martin",
+            tenant_id="local",
+            profile="personal",
+            session="s1",
+            model="sonnet",
+            project="lazy-harness",
+            date="2026-04-14",
+            input_tokens=100,
+            output_tokens=50,
+            cache_read=0,
+            cache_create=0,
+            cost=0.0,
+            agent="claude-code",
+            billing_model="flat_rate",
+            cost_source="subscription",
+        )
+        result = SqliteLocalSink(db=db).write(event)
+        assert result.success is True
+        rows = db.query_stats()
+        assert rows[0]["agent"] == "claude-code"
+        assert rows[0]["billing_model"] == "flat_rate"
+    finally:
+        db.close()
