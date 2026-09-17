@@ -85,7 +85,7 @@ def _expand_external_command(command: str, *, profile: str, config_dir: str) -> 
 ```
 
 `{config_dir}` expands to the profile's **raw, undexpanded** `config_dir`
-field (`"~/.claude-lazy"`, not `/Users/<home>/.claude-lazy`) — the same string
+field (`"~/.claude-lazy"`, not `$HOME/.claude-lazy`) — the same string
 `config.toml` declares. Two reasons: it reproduces the backlog's own
 motivating example (`bash ~/.claude-<profile>/hooks/herdr-agent-state.sh`)
 exactly, tilde and all, and it keeps a chezmoi-managed `settings.json`
