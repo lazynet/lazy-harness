@@ -77,7 +77,7 @@ def test_a_relative_lh_path_is_refused_before_the_gate_runs(tmp_path: Path) -> N
     result = _run("./lh", tmp_path, gate, out_dir)
 
     assert result.returncode == 2
-    assert not (out_dir / "f7-installed-raw.txt").exists(), "the gate ran despite a relative path"
+    assert not any(out_dir.iterdir()), "the gate ran despite a relative path"
 
 
 def test_a_missing_lh_binary_is_refused(tmp_path: Path) -> None:
@@ -88,7 +88,7 @@ def test_a_missing_lh_binary_is_refused(tmp_path: Path) -> None:
     result = _run(str(tmp_path / "nope"), tmp_path, gate, out_dir)
 
     assert result.returncode == 2
-    assert not (out_dir / "f7-installed-raw.txt").exists()
+    assert not any(out_dir.iterdir())
 
 
 def test_all_three_shapes_pass_and_get_their_own_output_file(tmp_path: Path) -> None:
@@ -125,6 +125,24 @@ def test_a_failing_gate_fails_every_shape_and_still_writes_evidence(tmp_path: Pa
             f"evidence for {shape} missing even though the runner must report failure"
         )
         assert "FAIL:" in f.read_text(encoding="utf-8")
+
+
+def test_a_symlink_planted_at_a_shape_output_path_is_refused(tmp_path: Path) -> None:
+    """A pre-planted symlink at `f7-<shape>.txt` must not be followed and
+    overwritten — these are stable, predictable names in a directory that
+    defaults to the shared, world-writable `/tmp`."""
+    lh = _stub_lh(tmp_path)
+    gate = _stub_gate(tmp_path, _PASS_GATE)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    target = tmp_path / "do-not-touch.txt"
+    target.write_text("precious", encoding="utf-8")
+    (out_dir / "f7-lazy.txt").symlink_to(target)
+
+    result = _run(str(lh), tmp_path, gate, out_dir)
+
+    assert result.returncode != 0
+    assert target.read_text(encoding="utf-8") == "precious", "the symlink target was overwritten"
 
 
 def test_the_script_is_syntactically_valid_bash() -> None:

@@ -59,7 +59,13 @@ esac
   exit 2
 }
 
-RAW_OUT="$OUT_DIR/f7-installed-raw.txt"
+# A fixed name in a world-writable $OUT_DIR (the /tmp default) is plantable:
+# another local user could pre-create it as a symlink and have the gate's
+# output land wherever that symlink points. mktemp's O_EXCL create refuses to
+# follow an existing path, so an unpredictable name is the file that actually
+# receives untrusted-directory writes; only the final per-shape copies below
+# keep the stable names this script's callers rely on.
+RAW_OUT="$(mktemp "$OUT_DIR/f7-installed-raw.XXXXXX")"
 set +e
 "$GATE_SH" "$LH_BIN_ARG" >"$RAW_OUT" 2>&1
 GATE_EXIT=$?
@@ -85,6 +91,13 @@ echo
 declare -A SHAPE_LANE=([lazy]=claude [flex]=claude [lazy-codex]=codex)
 for shape in lazy flex lazy-codex; do
   dest="$OUT_DIR/f7-$shape.txt"
+  # These names ARE stable (callers look for them), which is exactly what
+  # makes a pre-planted symlink at one of them dangerous: refuse rather than
+  # let `cp` follow it and overwrite whatever it points at.
+  if [ -L "$dest" ]; then
+    echo "run-installed: refusing to write through a symlink at $dest" >&2
+    exit 2
+  fi
   cp "$RAW_OUT" "$dest"
   echo "$shape (${SHAPE_LANE[$shape]} lane): $VERDICT -> $dest"
 done
