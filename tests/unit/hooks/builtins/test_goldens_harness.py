@@ -10,6 +10,8 @@ comparing is a failure here rather than a green run everywhere.
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -98,6 +100,39 @@ def test_pinned_env_fixes_timezone_and_excludes_the_ambient_path(tmp_path: Path)
     # An inherited PATH lets an optional binary on the developer's machine
     # (qmd, say) change a golden that CI would capture differently.
     assert env["PATH"] != __import__("os").environ.get("PATH", "")
+
+
+def test_pinned_env_path_hides_a_binary_installed_next_to_git(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Homebrew installs `git` and `qmd` into the same `bin/` directory, so
+    pinning `PATH` to git's own parent directory — as this used to do — hands
+    the child every neighbour in that directory too, `qmd` included.
+    Reproduced without relying on the real machine's layout: a throwaway
+    directory holding both a `git` shim and a `qmd` shim, put first on the
+    ambient `PATH` so `shutil.which("git")` resolves *this* one.
+    """
+    fake_dir = tmp_path / "fake-homebrew-bin"
+    fake_dir.mkdir()
+    fake_git = fake_dir / "git"
+    fake_git.write_text('#!/bin/sh\nexec /usr/bin/git "$@"\n')
+    fake_git.chmod(0o755)
+    fake_qmd = fake_dir / "qmd"
+    fake_qmd.write_text("#!/bin/sh\nexit 0\n")
+    fake_qmd.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+
+    env = pinned_env(
+        home=tmp_path / "home",
+        config_dir=tmp_path / "cfg",
+        data_dir=tmp_path / "data",
+        agent_config_dir=tmp_path / "claude",
+    )
+
+    assert shutil.which("git", path=env["PATH"]) is not None
+    assert shutil.which("qmd", path=env["PATH"]) is None, (
+        f"the golden child's PATH ({env['PATH']!r}) still resolves a qmd shim living next to git"
+    )
 
 
 def test_normalise_run_replaces_every_channel() -> None:
