@@ -496,12 +496,12 @@ Cada una mezcla responsabilidades no relacionadas: recolección de contexto y re
 
 ### D7 — `write_envrc` sólo carga un export por root; dos perfiles con distinto agente sobre el mismo root se pisan
 
-**Por qué:** el diseño (`:610-646`) quiere un export por agente distinto que reclame un root, más `root_default`. Medido con un script descartable (`write_envrc` llamado dos veces sobre el mismo root, una vez por perfil): el segundo perfil no agrega un segundo export al bloque managed, **reemplaza** el bloque entero — `render_envrc` hace un único `re.sub` entre `BEGIN_MARKER`/`END_MARKER`, sin noción de "un export por agente". Bloque observado (sintético, sin redactar):
+**Por qué:** el diseño (`:610-646`) quiere un export por agente distinto que reclame un root, más `root_default`. Medido con un script descartable (`write_envrc` llamado dos veces sobre el mismo root, una vez por perfil): el segundo perfil no agrega un segundo export al bloque managed, **reemplaza** el bloque entero — `render_envrc` hace un único `re.sub` entre `BEGIN_MARKER`/`END_MARKER`, sin noción de "un export por agente". Bloque observado (sintético, home redactado a `~`):
 
 ```
 # >>> lazy-harness >>>
 # Managed by `lh profile envrc` (lazy-harness 0.70.0) — do not edit this block by hand.
-export CLAUDE_CONFIG_DIR="/Users/lazynet/.claude-work"
+export CLAUDE_CONFIG_DIR="~/.claude-work"
 # <<< lazy-harness <<<
 ```
 
@@ -510,7 +510,7 @@ pasa a, tras el segundo `write_envrc` sobre el mismo root con otro agente:
 ```
 # >>> lazy-harness >>>
 # Managed by `lh profile envrc` (lazy-harness 0.70.0) — do not edit this block by hand.
-export CODEX_HOME="/Users/lazynet/.codex-sandbox"
+export CODEX_HOME="~/.codex-sandbox"
 # <<< lazy-harness <<<
 ```
 
@@ -519,6 +519,27 @@ El export de `claude-code` desaparece sin aviso. `cli/profile_cmd.py:deploy_envr
 **Fuente:** lane `launches-consumer`, brief parte 4 (D7), verificación con script descartable, 2026-09-16.
 
 **Acción:** ninguna propuesta en esta entrada — D7 no se implementa en esta lane.
+
+### Probe 9 — shape de `security find-generic-password` contra el keychain de Claude Code; A5 deja de estar rechazada por secuencia
+
+**Por qué:** [ADR-045](adrs/045-credential-boundary.md) rechazó A5 ("Read the keychain") **por secuencia, no por principio**: "no probe de `security find-generic-password`'s output shape has been run", y el propio D7 de esa ADR dice que el lugar donde nunca debe correrse es un agent pane o un contexto Background de launchd — es lo que destruyó `credentials.enc` dos veces. El usuario corrió el probe el 2026-09-16 desde una terminal **Aqua** — nunca desde un pane de agente —, contra el perfil cuyo config dir hashea al sufijo del label, sin `-w`, así que no se imprimió ningún secreto:
+
+```
+security find-generic-password -l "Claude Code-credentials-<8 hex de sha256(config_dir)>"
+→ exit 0, un item:
+  class: "genp"
+  label / "svce": "Claude Code-credentials-<8 hex>"
+  "acct": <redactado — nombre de cuenta local>
+  "cdat": 20260502205443Z      (creado 2026-05-02)
+  "mdat": 20260916220007Z      (modificado 2026-09-16, el día de un login exitoso)
+  el resto de los atributos NULL
+```
+
+Los dos campos usables son `cdat` y `mdat`. `mdat` es una señal de liveness legible sin imprimir nunca el secreto, y es exactamente lo que distingue el caso de D6 de esa misma ADR (2026-09-16: `.credentials.json` con `mtime` 2026-09-08 y un `refreshTokenExpiresAt` vencido, mientras la entrada del keychain estaba fresca). **A5 pasa de rechazada-por-secuencia a pendiente-de-ADR**: implementarla sigue siendo un ADR propio (la misma D7 lo dice) — necesita el guard de ejecución Aqua-only, un umbral de staleness sobre `mdat`, y un test de que el hook sigue saliendo 0 cuando `security` está ausente o el keychain está bloqueado.
+
+**Fuente:** addendum a la lane `launches-consumer`, probe 9, 2026-09-16.
+
+**Acción:** ninguna propuesta en esta entrada — implementar A5 es un ADR aparte.
 
 ---
 
