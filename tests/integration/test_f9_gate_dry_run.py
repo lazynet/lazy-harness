@@ -189,6 +189,28 @@ def test_the_gate_refuses_without_a_profile(tmp_path: Path) -> None:
     assert "profile" in (result.stdout + result.stderr).lower()
 
 
+def test_a_blocked_assertion_cannot_exit_zero() -> None:
+    """B5 blocked by ADR-053 must not be filed as a pass.
+
+    The verdict logic only runs in a real gate run, so this reads the script's
+    own summary block rather than driving it: the three things that make BLOCKED
+    a distinct outcome are that it has its own tally, that it is checked before
+    either PASS branch, and that it exits non-zero. A `blocked()` that fell
+    through to `PASS WITH GAPS` would exit 0, and a caller reading only the exit
+    code would record the iteration's criterion as met on a run that never
+    reached it.
+    """
+    script = GATE_SH.read_text(encoding="utf-8")
+
+    assert "blocked()" in script, "no blocked() helper"
+    assert "exit 3" in script, "BLOCKED does not have its own exit code"
+
+    summary = script[script.index("--- summary ---") :]
+    blocked_at = summary.index('if [ "$BLOCKED" -gt 0 ]')
+    pass_at = summary.index('echo "PASS — ')
+    assert blocked_at < pass_at, "the BLOCKED branch must be checked before PASS"
+
+
 def test_the_script_is_syntactically_valid_bash() -> None:
     result = subprocess.run(
         ["bash", "-n", str(GATE_SH)], capture_output=True, text=True, timeout=60

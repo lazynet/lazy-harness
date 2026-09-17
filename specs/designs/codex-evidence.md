@@ -712,8 +712,11 @@ ninguno; es el único modo que corre en CI y en un pane de agente, y es lo que
 cubre `tests/integration/test_f9_gate_dry_run.py`.
 
 Códigos de salida: `0` PASS, `1` FAIL (el gate corrió y el sistema no lo
-satisfizo), `2` HARNESS ERROR (el gate no pudo correr y no midió nada). La
-distinción es el punto: un `2` nunca es evidencia sobre el sistema.
+satisfizo), `2` HARNESS ERROR (el gate no pudo correr y no midió nada), `3`
+BLOCKED (el gate corrió y algo de lo que depende todavía no está embarcado, así
+que la aserción nunca se alcanzó). La distinción es el punto: un `2` nunca es
+evidencia sobre el sistema, y un `3` no puede archivarse como criterio cumplido
+—por eso no sale 0—.
 
 ### 6.1 Fases y observaciones esperadas
 
@@ -725,7 +728,7 @@ distinción es el punto: un `2` nunca es evidencia sobre el sistema.
 | B2 | trusted | mismo fixture `Bash` | **bloqueado**; el stream trae `Command blocked by PreToolUse hook` | *(no corrió)* |
 | B3 | trusted | `apply_patch` sobre `.env` | **bloqueado**; el archivo queda intacto en disco | *(no corrió)* |
 | B4 | trusted | turno benigno completo | corre `session_stop`, queda rollout | *(no corrió)* |
-| B5 | trusted | `lh metrics ingest` | **cero** filas `session_stats` para el profile (ADR-051) | *(no corrió)* |
+| B5 | trusted | `lh metrics ingest` | **al menos una** fila `session_stats` con `agent = "codex"` para el profile (ADR-053) | *(no corrió)* |
 | B6 | trusted | `lh run --bypass=enable` | **error** — ADR-049 no mapea `enable` en Codex | *(no corrió)* |
 | B7 | trusted | `lh run --bypass=activate --dry-run` | el argv trae `--approve-for-me` | *(no corrió)* |
 | B8 | trusted | `lh run … -- exec …` real | `launches` suma una fila `agent=codex`, `entry=run` | *(no corrió)* |
@@ -747,18 +750,25 @@ gate; el repo gana.
    que el diseño sí construyó: la trust key lleva la **posición** del grupo y
    del handler (`agents/codex.py:458-472`), así que una declaración cambiada
    reaparece como `untrusted` recién aprobados más entradas `orphaned`.
-2. **Codex no se mide, y por eso el PASS de B5 es una ausencia.** ADR-051 está
-   **accepted**: `ingest_profile` devuelve un reporte vacío para todo agente que
-   no sea `claude-code` (`monitoring/ingest.py:145-146`). La **ausencia** de
-   filas es el PASS de B5, no un gap ni un bloqueo.
-   *(Esta corrección tenía una segunda mitad — "`session_stats` no tiene columna
-   `agent`" — que ADR-050 (#364) invalidó al agregarla, `monitoring/db.py:74`.
-   Se retira esa mitad; la de arriba no depende de ella: la columna existe para
-   que la llene el path de Claude Code, e `ingest` sigue rechazando Codex antes
-   de llegar a escribirla.)*
-3. **`lh exec` no cuenta un launch.** `record_launch` tiene un solo call site,
-   `cli/run_cmd.py:129`, con `entry="run"`. Un `--dry-run` retorna antes y no
-   registra nada, por diseño. Por eso B8 usa un `lh run` real con passthrough.
+2. **Medir Codex es el punto de B5, y ADR-051 está siendo superseded.** ADR-051
+   se negó a medir Codex porque `TranscriptEvent` no lleva modelo, ni message id,
+   ni el split de cache de 1 hora, y `session_stats` es `UNIQUE(session, model)`.
+   Su propia sección "What would change the decision" nombra el arreglo —un
+   cambio de Protocol en `agents/base.py`— y se abstiene de hacerlo ahí.
+   **ADR-053 hace exactamente ese cambio** y supersede a ADR-051. Así que el
+   criterio es el que el diseño siempre dijo: `lh metrics ingest` registra filas
+   con `agent = "codex"`.
+   B5 pasa con **al menos una** fila; cero filas es `BLOCKED BY ADR-053` —el `lh`
+   instalado es anterior a la lane que lo implementa— y cuenta como gap, **nunca**
+   como PASS. La columna `agent` ya existe desde ADR-050 (#364),
+   `monitoring/db.py:74`, así que lo único que falta son las filas.
+3. **`lh run` y `lh exec` cuentan launch los dos.** `record_launch` tiene dos
+   call sites: `cli/run_cmd.py:129` con `entry="run"` y `cli/exec_cmd.py:408`
+   con `entry="exec"`. Un borrador anterior de esta sección decía que `lh exec`
+   no tenía ninguno; salió de un grep truncado y se retira. B8 sigue usando
+   `lh run` porque es el passthrough bajo prueba y el launch que cuenta es
+   `entry="run"`. Un `--dry-run` retorna antes de los dos call sites y no
+   registra nada, por diseño.
 
 ### 6.3 Dependencias
 
@@ -766,10 +776,13 @@ gate; el repo gana.
   sección `Codex hook trust` de `lh doctor` existen, así que A1, B1 y C1 tienen
   contra qué correr. Lo único que el gate no asume es la línea de re-trust en la
   salida de `lh deploy`: la afirma si está y la reporta si no.
-- **B4 no bloquea nada.** La lectura de que `ingest` "todavía rechaza Codex" y
-  que eso sería un `BLOCKED BY B4` es incorrecta: el rechazo es la decisión
-  de ADR-051. Lo que cambiaría B5 es un cambio de Protocol en `agents/base.py`
-  que ADR-051 explícitamente **no** hace.
+- **B4 bloquea B5.** La lane B4 está implementando ADR-053, que supersede a
+  ADR-051 haciendo el cambio de Protocol que 051 declinó —modelo, message id y
+  split de 1 hora sobre `TranscriptEvent` / `TokenUsage`—. Hasta que eso llegue
+  al `lh` instalado, `ingest_profile` sigue devolviendo un reporte vacío para
+  todo agente que no sea `claude-code` (`monitoring/ingest.py:145-146`) y B5
+  reporta `BLOCKED BY ADR-053`. El gate sale **3** en ese caso: no es PASS, no
+  es FAIL, y no puede archivarse como criterio cumplido.
 - **Afordancia de CLI que falta:** `lh doctor` no acepta `--json`
   (`cli/doctor_cmd.py:750-751` no declara opciones), así que A1, B1 y C1 se
   resuelven con `grep` sobre texto renderizado. Un `--json` de la sección de

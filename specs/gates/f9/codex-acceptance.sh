@@ -56,28 +56,39 @@
 #    That is strictly better evidence than a recomputed hash, because the
 #    harness owns both halves of it.
 #
-# 2. CODEX IS UNMETERED ON PURPOSE, SO THE PASS CONDITION IS AN ABSENCE.
-#    ADR-051 is **accepted**: *"Codex is not metered through
-#    `CodexAdapter.read()` either"*, because `TranscriptEvent` carries no model
-#    and `session_stats` is `UNIQUE(session, model)`. `ingest_profile` returns an
-#    empty report for any agent whose name is not `claude-code`
-#    (`monitoring/ingest.py:145-146`). So "no `session_stats` row for the Codex
-#    profile" is this gate's PASS condition, not a gap and not a blocker — a row
-#    appearing there would mean ADR-051 was reversed without its ADR.
+# 2. METERING CODEX IS THE POINT OF B5, AND ADR-051 IS BEING SUPERSEDED.
+#    ADR-051 declined to meter Codex: `TranscriptEvent` carries no model, no
+#    message id and no 1-hour cache split, and `session_stats` is
+#    `UNIQUE(session, model)`. Its own "What would change the decision" section
+#    names the fix — a Protocol change in `agents/base.py` — and declines to make
+#    it there. **ADR-053 makes exactly that change**, and supersedes ADR-051.
+#    So the success criterion is the one the design always stated: `lh metrics
+#    ingest` records rows with `agent = "codex"`.
 #
-#    NOTE, added on the rebase onto `0ae230a`: this correction used to have a
-#    second half — *"`session_stats` has no `agent` column"* — and ADR-050
-#    (#364) has since added one (`monitoring/db.py:74`). That half is withdrawn.
-#    The half above is untouched by it: a column exists to be filled by the
-#    Claude Code path, and ingest still refuses Codex before reaching it, so the
-#    row count for this profile is still zero and B5 still asserts an absence.
+#    B5 therefore PASSES on **at least one** `session_stats` row with
+#    `agent = "codex"` for the profile. Zero rows is `BLOCKED BY ADR-053` — the
+#    installed `lh` predates the lane implementing it — and is counted as a GAP,
+#    never as a pass. `ingest_profile` still returns an empty report for any
+#    agent that is not `claude-code` (`monitoring/ingest.py:145-146`) until that
+#    lane lands, which is precisely the state BLOCKED names.
 #
-# 3. `lh exec` DOES NOT COUNT A LAUNCH. `record_launch` has exactly one call
-#    site, `cli/run_cmd.py:129`, with `entry="run"`, placed last before
-#    `os.execvpe` because *"a row written after it is a row never written"*. A
-#    `--dry-run` returns above it and records nothing, by design. So `lh run` is
-#    the only entry that can satisfy the launch assertion, and the gate uses a
-#    real `lh run … -- exec …` passthrough for it.
+#    Two smaller things moved under this correction while the lane was open, and
+#    both are recorded rather than silently absorbed: `session_stats` HAS carried
+#    an `agent` column since ADR-050 / #364 (`monitoring/db.py:74`), so the
+#    column B5 reads exists today and only its rows are missing.
+#
+# 3. BOTH `lh run` AND `lh exec` COUNT A LAUNCH. `record_launch` has two call
+#    sites — `cli/run_cmd.py:129` with `entry="run"`, last before `os.execvpe`
+#    because *"a row written after it is a row never written"*, and
+#    `cli/exec_cmd.py:408` with `entry="exec"`, likewise placed after the last
+#    gate so a dry run or a refused prompt records nothing. An earlier draft of
+#    this header claimed `lh exec` had no call site; that was read off a
+#    truncated grep and is withdrawn.
+#    B8 still uses `lh run` — it is the passthrough under test, and the launch
+#    it counts is `entry="run"` — but nothing here rests on `lh exec` being
+#    uncounted, and a launch assertion that reads the `run` entry specifically
+#    is the narrower and better one either way. A `--dry-run` returns above both
+#    call sites and records nothing, by design.
 #
 # ---------------------------------------------------------------------------
 # SCOPE IS DERIVED, NOT TYPED — the property inherited from F7 and F8.
@@ -111,7 +122,10 @@
 # system under test did not satisfy it. 2 = HARNESS ERROR, the gate could not be
 # run at all and has measured nothing — a missing binary, an unreadable config,
 # a profile that is not Codex. The distinction is the point: a 2 is never
-# evidence about the system.
+# evidence about the system. 3 = BLOCKED, the gate ran and something it depends
+# on has not shipped yet: the assertion was never reached, so it is neither a
+# pass nor a failure. A blocked run must not exit 0, because a caller reading
+# only the exit code would record the iteration's criterion as met.
 #
 # NEVER PRINTED: prompt bodies, model output, transcript contents, `$HOME`-
 # relative paths, or anything read out of the user's `auth.json`. The summary
@@ -151,8 +165,10 @@ fi
 
 FAILURES=0
 NOOBS=0
+BLOCKED=0
 declare -a FAIL_LINES=()
 declare -a NOOBS_LINES=()
+declare -a BLOCKED_LINES=()
 declare -a SUMMARY=()
 
 fail() { FAILURES=$((FAILURES + 1)); FAIL_LINES+=("$1"); SUMMARY+=("FAIL|$1"); echo "  FAIL: $1"; }
@@ -161,6 +177,10 @@ info() { echo "  --    $1"; }
 # A steer the model ignored. Not a failure: the guard was never reached, so the
 # run says nothing about it either way, and calling that green would be worse.
 noobs() { NOOBS=$((NOOBS + 1)); NOOBS_LINES+=("$1"); SUMMARY+=("NO-OBS|$1"); echo "  n/a:  $1"; }
+# A dependency that has not shipped. Distinct from `noobs` because the cause is
+# known and nameable, and distinct from `fail` because nothing is broken — but
+# it forces a non-zero exit, so a blocked run can never be filed as a pass.
+blocked() { BLOCKED=$((BLOCKED + 1)); BLOCKED_LINES+=("$1"); SUMMARY+=("BLOCKED|$1"); echo "  blk:  $1"; }
 
 # `show` prints a command; `step` prints it and, outside --dry-run, runs it.
 # Everything that touches the user's machine goes through `step`, which is what
@@ -530,8 +550,11 @@ if [ "$DRY_RUN" -eq 0 ]; then
   ok "a benign turn ran to completion, so session_stop fired and a rollout exists"
 fi
 
-# Metering. Correction 2 in the header: the PASS condition is the ABSENCE of a
-# row, because ADR-051 is accepted and ingest refuses Codex on purpose.
+# Metering — the iteration's criterion, not a formality. Correction 2 in the
+# header: PASS is at least one `session_stats` row carrying `agent = "codex"`
+# for this profile. Zero rows means the installed `lh` predates ADR-053 and is
+# still refusing Codex at `monitoring/ingest.py:145-146`; that is BLOCKED, and
+# a blocked run exits 3 so it can never be filed as a pass.
 step "$LH_BIN" metrics ingest
 if [ "$DRY_RUN" -eq 0 ]; then
   ROWS="$("$GATE_PYTHON" - "$PROFILE" <<'PY' 2>/dev/null
@@ -541,20 +564,38 @@ from lazy_harness.monitoring.db import MetricsDB, resolve_db_path
 # `query_stats` is the public read side of `session_stats`. Going through it
 # rather than the connection keeps this working against a shipped binary whose
 # internals have moved on — the property F7 keeps by using `list_builtin_hooks`.
+#
+# `agent` arrived with ADR-050 (#364) and `query_stats` is a `SELECT *`, so a
+# row from an older build has no such key and indexing it raises. Reported as
+# NO-COLUMN rather than as zero rows: "this build cannot answer the question"
+# and "the answer is none" are different facts, and collapsing them would blame
+# ADR-053 for a schema that predates it.
 db = MetricsDB(resolve_db_path())
 try:
-    print(sum(1 for row in db.query_stats() if row["profile"] == sys.argv[1]))
+    rows = [r for r in db.query_stats() if r["profile"] == sys.argv[1]]
+except Exception:
+    print("ERROR")
+else:
+    try:
+        print(sum(1 for r in rows if r["agent"] == "codex"))
+    except (IndexError, KeyError):
+        print("NO-COLUMN")
 finally:
     db.close()
 PY
 )"
-  if [ "${ROWS:-unknown}" = "0" ]; then
-    ok "no session_stats row for '$PROFILE' — ADR-051 holds, Codex is unmetered by decision"
-  elif [ -z "$ROWS" ]; then
-    noobs "could not read session_stats; metering verdict withheld"
-  else
-    fail "session_stats carries $ROWS row(s) for '$PROFILE' — ADR-051 says there should be none, and reversing it needs an ADR, not a row"
-  fi
+  case "${ROWS:-}" in
+    ""|ERROR)
+      noobs "could not read session_stats; metering verdict withheld" ;;
+    NO-COLUMN)
+      blocked "session_stats has no 'agent' column in this build — it arrived with ADR-050 (#364); upgrade lh before reading this phase" ;;
+    0)
+      blocked "BLOCKED BY ADR-053 — zero session_stats rows with agent=codex for '$PROFILE'. The installed lh still refuses Codex at ingest (monitoring/ingest.py:145-146); ADR-053 supersedes ADR-051 and makes the Protocol change that closes this. NOT a pass." ;;
+    *[!0-9]*)
+      noobs "unreadable row count from session_stats; metering verdict withheld" ;;
+    *)
+      ok "lh metrics ingest recorded $ROWS session_stats row(s) with agent=codex for '$PROFILE' — the iteration's metering criterion is met" ;;
+  esac
 fi
 
 # Launch counting. ADR-049: `enable` is an ERROR on Codex (no candidate leaves
@@ -692,7 +733,7 @@ done
 echo
 echo "  profile:   $PROFILE"
 echo "  workspace: $WORK"
-echo "  assertions: $(( ${#SUMMARY[@]} )) — $FAILURES failed, $NOOBS not observed"
+echo "  assertions: $(( ${#SUMMARY[@]} )) — $FAILURES failed, $BLOCKED blocked, $NOOBS not observed"
 echo
 echo "  PASTE INTO specs/designs/codex-evidence.md SS 6 'Acceptance run':"
 echo "    - the verdict table above, into the 'observed' column"
@@ -707,19 +748,35 @@ if [ "$DRY_RUN" -eq 1 ]; then
   exit 0
 fi
 
-if [ "$FAILURES" -eq 0 ] && [ "$NOOBS" -eq 0 ]; then
+# FAIL first: a run with both a failure and a block is a failing run, and
+# reporting the block would bury the thing that is actually broken.
+if [ "$FAILURES" -gt 0 ]; then
+  echo
+  echo "FAIL — $FAILURES assertion(s) failed"
+  printf '%s\n' "${FAIL_LINES[@]}" | sed 's/^/  * /'
+  [ "$BLOCKED" -gt 0 ] && printf '%s\n' "${BLOCKED_LINES[@]}" | sed 's/^/  (blocked) /'
+  exit 1
+fi
+
+# BLOCKED outranks both PASS forms and exits non-zero. The criterion was never
+# reached, so calling it met would be the one error this gate exists to prevent.
+if [ "$BLOCKED" -gt 0 ]; then
+  echo
+  echo "BLOCKED — $BLOCKED assertion(s) could not be reached; nothing failed:"
+  printf '%s\n' "${BLOCKED_LINES[@]}" | sed 's/^/  * /'
+  echo
+  echo "  This is NOT a pass. Re-run once the named dependency has shipped and"
+  echo "  the installed lh carries it."
+  exit 3
+fi
+
+if [ "$NOOBS" -eq 0 ]; then
   echo
   echo "PASS — the Codex path holds end to end on profile '$PROFILE'"
   exit 0
 fi
-if [ "$FAILURES" -eq 0 ]; then
-  echo
-  echo "PASS WITH GAPS — no assertion failed, $NOOBS were never exercised:"
-  printf '%s\n' "${NOOBS_LINES[@]}" | sed 's/^/  * /'
-  echo "  Re-run; the model chose a different tool, which is not a verdict."
-  exit 0
-fi
 echo
-echo "FAIL — $FAILURES assertion(s) failed"
-printf '%s\n' "${FAIL_LINES[@]}" | sed 's/^/  * /'
-exit 1
+echo "PASS WITH GAPS — no assertion failed, $NOOBS were never exercised:"
+printf '%s\n' "${NOOBS_LINES[@]}" | sed 's/^/  * /'
+echo "  Re-run; the model chose a different tool, which is not a verdict."
+exit 0
