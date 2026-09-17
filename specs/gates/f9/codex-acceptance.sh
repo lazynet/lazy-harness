@@ -53,9 +53,12 @@
 #    harness changed this hook's declaration since it last deployed" without
 #    asking Codex anything (`TRUST_STALE_VERDICT`, `agents/codex_trust.py`).
 #    Trust keys still carry `<path>:<snake_case event>:<group index>:<handler
-#    index>`, and both indices are still positions, which is why a redeploy that
+#    index>` — snake_case of the name **Codex** uses, which is `stop` and not
+#    the harness's canonical `session_stop`; the adapter derived it from the
+#    canonical name until this run measured otherwise — and both indices are
+#    still positions, which is why a redeploy that
 #    reorders a group also re-prompts for everything below it
-#    (`agents/codex.py:458-472`) — that positional signal is what `orphaned` and
+#    (`trust_keys`, `agents/codex.py`) — that positional signal is what `orphaned` and
 #    `untrusted` below are built from, and it is kept as the fallback for an `lh`
 #    installed before #367. So phase C now asserts `trust stale` as the primary
 #    signal a changed declaration produced, and treats `orphaned`/`untrusted`
@@ -71,21 +74,26 @@
 #    ingest` records rows with `agent = "codex"`.
 #
 #    B5 therefore PASSES on **at least one** `session_stats` row with
-#    `agent = "codex"` for the profile. Zero rows is `BLOCKED BY ADR-053` — the
-#    installed `lh` predates the lane implementing it — and is counted as a GAP,
-#    never as a pass. `ingest_profile` still returns an empty report for any
-#    agent that is not `claude-code` (`monitoring/ingest.py:145-146`) until that
-#    lane lands, which is precisely the state BLOCKED names.
+#    `agent = "codex"` for the profile. Zero rows is still BLOCKED and still a
+#    GAP, never a pass — but the phase no longer names a cause. **ADR-053 has
+#    shipped** (0.71.0): `ingest_profile` gates on `isinstance(agent,
+#    TranscriptReader)`, a capability test, not on the name `claude-code`, so
+#    "the installed lh refuses Codex at ingest" stopped being true and the
+#    script kept saying it. The 2026-09-17 run reported exactly that over a
+#    `TypeError` in `extract_session_date`, raised by a foreign JSONL under the
+#    profile's sessions tree and fixed in #373. A verdict that names a cause the
+#    run did not measure sends the reader to the wrong file, so the phase now
+#    captures ingest's output and exit code and reports both.
 #
-#    Two smaller things moved under this correction while the lane was open, and
-#    both are recorded rather than silently absorbed: `session_stats` HAS carried
-#    an `agent` column since ADR-050 / #364 (`monitoring/db.py:74`), so the
-#    column B5 reads exists today and only its rows are missing.
+#    One smaller thing moved under this correction while the lane was open and
+#    is recorded rather than silently absorbed: `session_stats` HAS carried an
+#    `agent` column since ADR-050 / #364 (`_SCHEMA` in `monitoring/db.py`), so
+#    the column B5 reads exists today.
 #
 # 3. BOTH `lh run` AND `lh exec` COUNT A LAUNCH. `record_launch` has two call
-#    sites — `cli/run_cmd.py:129` with `entry="run"`, last before `os.execvpe`
-#    because *"a row written after it is a row never written"*, and
-#    `cli/exec_cmd.py:408` with `entry="exec"`, likewise placed after the last
+#    sites — `record_launch` in `cli/run_cmd.py` with `entry="run"`, last before
+#    `os.execvpe` because *"a row written after it is a row never written"*, and
+#    the one in `cli/exec_cmd.py` with `entry="exec"`, likewise after the last
 #    gate so a dry run or a refused prompt records nothing. An earlier draft of
 #    this header claimed `lh exec` had no call site; that was read off a
 #    truncated grep and is withdrawn.
@@ -285,8 +293,8 @@ fi
 
 # The profile must resolve to the Codex adapter. `lh run --dry-run` is the read
 # used because it is the one command that resolves a profile through the
-# registry and prints what it resolved without touching anything —
-# `cli/run_cmd.py:113-118` returns before `record_launch`.
+# registry and prints what it resolved without touching anything — the
+# `if dry_run:` block in `cli/run_cmd.py` returns before `record_launch`.
 step "$LH_BIN" run --profile "$PROFILE" --dry-run -- --version
 if [ "$DRY_RUN" -eq 0 ]; then
   RESOLVED="$("$LH_BIN" run --profile "$PROFILE" --dry-run -- --version 2>&1)"
@@ -314,7 +322,7 @@ SECRET="$WORK/.env"
 FIXTURE_BASH="rm -rf $DOOMED"
 # Fixture 2 — a native edit. `apply_patch` is in FILE_TOOLS and `**/.env` is in
 # SECRET_PATH_GLOBS, so the MODIFY_FILE arm denies it. The Codex adapter maps
-# `apply_patch -> Operation.MODIFY_FILE` (`agents/codex.py:314-317`), so the arm
+# `apply_patch -> Operation.MODIFY_FILE` (`_TOOL_OPERATIONS`, `agents/codex.py`), so the arm
 # is reachable — F8's header used to say the map had one entry; corrected to
 # two (`Bash`, `apply_patch`) in the same PR that fixed this comment.
 FIXTURE_PATCH_PATH="$SECRET"
@@ -430,11 +438,110 @@ codex_turn() {
 # and it is NOT the on-disk rollout of §5, which is nested; the brief conflated
 # the two and only §7 describes what this script reads.
 stream_ran_a_command() { grep -q '"command"' "$WORK/stream-$1.jsonl" 2>/dev/null; }
+# Did the stream show the model reach for its NATIVE edit tool? Two spellings,
+# because 0.154.0 uses the second and this script only knew the first: the
+# `--json` stream reports a native edit as `item.started` / `item.completed`
+# carrying `"type":"file_change"` and a `changes` list, and never names
+# `apply_patch` anywhere in it (measured 2026-09-17 on the acceptance run's
+# `stream-b-deny-patch.jsonl`). Grepping only for the tool name reported NO-OBS
+# — "the arm was not exercised" — over a turn that had just modified the denied
+# file, which the next assertion then failed on. `apply_patch` stays in the
+# pattern: it is the name the adapter maps (`agents/codex.py`) and the name a
+# rollout carries, so a future stream that does emit it still matches.
+stream_shows_native_edit() {
+  grep -qE '"apply_patch"|"type"[[:space:]]*:[[:space:]]*"file_change"' \
+    "$WORK/stream-$1.jsonl" 2>/dev/null
+}
 # Probes 4b and 4c both measured this exact string on a denied Bash AND on a
 # denied apply_patch (`codex-evidence.md:254-350`).
 stream_shows_block() {
   grep -q 'Command blocked by PreToolUse hook' "$WORK/stream-$1.jsonl" 2>/dev/null
 }
+# Phase C's declaration change, applied through a TOML parser instead of
+# appended as text. The first acceptance run appended a literal
+# `[hooks.pre_tool_use]` table to a copy of the user's config — and that config
+# already declares the table, so the copy became
+# `Cannot declare ('hooks', 'pre_tool_use') twice`. An unparseable config takes
+# the deploy AND the doctor down with it; both outputs were discarded, and the
+# phase reported "a changed declaration produced no trust signal" over a run
+# that never deployed a declaration at all.
+#
+# `external` is the only matcher the config surface owns — builtin matchers come
+# from the registry (the `external` row of `docs/reference/config.md`) — and it
+# is also the only edit that is safe on a config already declaring the section:
+# writing `scripts` would *replace* the event's builtins wholesale
+# (`deploy/defaults.py` merges by replacement, not union), which would deploy a
+# profile carrying no `pre-tool-use-security` and quietly change what every
+# later assertion measures. Verified 2026-09-17: a `[hooks.pre_tool_use]` whose
+# only key was `external` took PreToolUse from 4 groups to 1.
+#
+# Silent on success; on failure it prints why and returns non-zero.
+seed_phase_c_config() {
+  local src="$1" dest="$2" python_bin="$3"
+  "$python_bin" - "$src" "$dest" <<'PYSEED'
+import sys
+import tomllib
+
+import tomlkit
+
+source, dest = sys.argv[1], sys.argv[2]
+with open(source, encoding="utf-8") as handle:
+    document = tomlkit.load(handle)
+
+hooks = document.get("hooks")
+if hooks is None:
+    hooks = tomlkit.table()
+    document["hooks"] = hooks
+section = hooks.get("pre_tool_use")
+if section is None:
+    section = tomlkit.table()
+    hooks["pre_tool_use"] = section
+
+probe = tomlkit.inline_table()
+probe["command"] = "true"
+probe["matcher"] = "F9AcceptanceProbe"
+external = section.get("external")
+if external is None:
+    section["external"] = [probe]
+else:
+    external.append(probe)
+
+rendered = tomlkit.dumps(document)
+# The round trip is the check: a document this writes and cannot read back is
+# precisely the failure it exists to remove.
+tomllib.loads(rendered)
+if "F9AcceptanceProbe" not in rendered:
+    raise SystemExit("the probe matcher is not in the rendered config")
+with open(dest, "w", encoding="utf-8") as handle:
+    handle.write(rendered)
+PYSEED
+}
+
+# The metering verdict, from two measurements and nothing else: ingest's exit
+# code and the row count. BLOCKED is kept for "ingest succeeded and there are
+# still no rows" — a known-nameable gap that must not be filed as a pass — and
+# a failed ingest is a FAIL, because a row count read off a crashed ingest
+# measures the previous run, not this one.
+metering_verdict() {
+  local status="$1" rows="$2" profile="$3"
+  if [ "$status" -ne 0 ]; then
+    fail "lh metrics ingest exited $status; rows for agent=codex: ${rows:-unreadable} — a count read off a failed ingest measures nothing"
+    return 0
+  fi
+  case "$rows" in
+    ""|ERROR)
+      noobs "could not read session_stats; metering verdict withheld" ;;
+    NO-COLUMN)
+      blocked "session_stats has no 'agent' column in this build — it arrived with ADR-050 (#364); upgrade lh before reading this phase" ;;
+    0)
+      blocked "ingest exit 0; session_stats rows for agent=codex on '$profile': 0" ;;
+    *[!0-9]*)
+      noobs "unreadable row count from session_stats; metering verdict withheld" ;;
+    *)
+      ok "ingest exit 0; session_stats rows for agent=codex on '$profile': $rows — the iteration's metering criterion is met" ;;
+  esac
+}
+
 # The printer the brief asked for: keys and types of the item kinds, so a run on
 # a codex version this was not measured against corrects the script instead of
 # failing silently against it. Values are never printed.
@@ -489,10 +596,11 @@ fi
 step "$LH_BIN" doctor
 if [ "$DRY_RUN" -eq 0 ]; then
   DOCTOR_A="$("$LH_BIN" doctor 2>&1)"
-  # `lh doctor` takes no --json (`cli/doctor_cmd.py:750-751` declares no
-  # options), so this is a text grep against the wording in
-  # `_render_codex_trust`. Recorded in the lane report as a CLI affordance the
-  # gate would rather have than parse.
+  # A text grep against the wording in `_render_codex_trust`, because the
+  # `doctor` command this was written for declared no options to ask with.
+  # Recorded in the lane report as a CLI affordance the gate would rather have
+  # than parse; if `lh doctor` grows a machine-readable mode, this grep and the
+  # two in phase C are what should move onto it first.
   if printf '%s' "$DOCTOR_A" | grep -q 'untrusted'; then
     ok "doctor reports the deployed Codex hooks untrusted"
   else
@@ -564,10 +672,10 @@ if [ "$DRY_RUN" -eq 0 ]; then
   dump_kinds "b-deny-patch"
   if stream_shows_block "b-deny-patch"; then
     ok "the native edit path is gated too: apply_patch onto a denied path was blocked"
-  elif grep -q 'apply_patch' "$WORK/stream-b-deny-patch.jsonl" 2>/dev/null; then
-    fail "apply_patch reached a secret path unblocked"
+  elif stream_shows_native_edit "b-deny-patch"; then
+    fail "the native edit path reached a secret path unblocked"
   else
-    noobs "the model used no native edit this turn; the apply_patch arm was not exercised"
+    noobs "the model used no native edit this turn; the native-edit arm was not exercised"
   fi
   if [ "$(cat "$SECRET" 2>/dev/null)" = "seed" ]; then
     ok "the denied file is unchanged on disk"
@@ -583,11 +691,22 @@ fi
 
 # Metering — the iteration's criterion, not a formality. Correction 2 in the
 # header: PASS is at least one `session_stats` row carrying `agent = "codex"`
-# for this profile. Zero rows means the installed `lh` predates ADR-053 and is
-# still refusing Codex at `monitoring/ingest.py:145-146`; that is BLOCKED, and
-# a blocked run exits 3 so it can never be filed as a pass.
-step "$LH_BIN" metrics ingest
+# for this profile.
+#
+# What this phase does NOT do is name a cause. The first acceptance run reported
+# "BLOCKED BY ADR-053 — the installed lh still refuses Codex at ingest", and
+# every word of that was wrong: ADR-053 had shipped in 0.71.0, and `lh metrics
+# ingest` was crashing on a foreign JSONL under the profile's sessions tree
+# (fixed in #373). The story was in the script, not in the run, so the run could
+# not contradict it. Ingest's own output and exit code are captured and printed
+# instead, and the verdict says what was observed.
+INGEST_LOG="$WORK/ingest.txt"
+INGEST_STATUS=0
+show "$LH_BIN metrics ingest > $INGEST_LOG 2>&1"
 if [ "$DRY_RUN" -eq 0 ]; then
+  "$LH_BIN" metrics ingest > "$INGEST_LOG" 2>&1 || INGEST_STATUS=$?
+  info "ingest exit $INGEST_STATUS; last 5 lines of $INGEST_LOG:"
+  tail -n 5 "$INGEST_LOG" | sed 's/^/        /'
   ROWS="$("$GATE_PYTHON" - "$PROFILE" <<'PY' 2>/dev/null
 import sys
 from lazy_harness.monitoring.db import MetricsDB, resolve_db_path
@@ -615,18 +734,7 @@ finally:
     db.close()
 PY
 )"
-  case "${ROWS:-}" in
-    ""|ERROR)
-      noobs "could not read session_stats; metering verdict withheld" ;;
-    NO-COLUMN)
-      blocked "session_stats has no 'agent' column in this build — it arrived with ADR-050 (#364); upgrade lh before reading this phase" ;;
-    0)
-      blocked "BLOCKED BY ADR-053 — zero session_stats rows with agent=codex for '$PROFILE'. The installed lh still refuses Codex at ingest (monitoring/ingest.py:145-146); ADR-053 supersedes ADR-051 and makes the Protocol change that closes this. NOT a pass." ;;
-    *[!0-9]*)
-      noobs "unreadable row count from session_stats; metering verdict withheld" ;;
-    *)
-      ok "lh metrics ingest recorded $ROWS session_stats row(s) with agent=codex for '$PROFILE' — the iteration's metering criterion is met" ;;
-  esac
+  metering_verdict "$INGEST_STATUS" "${ROWS:-}" "$PROFILE"
 fi
 
 # Launch counting. ADR-049: `enable` is an ERROR on Codex (no candidate leaves
@@ -705,7 +813,7 @@ echo "  A changed declaration is expected to show up as TRUST STALE. On an lh"
 echo "  installed before #367, the same change shows up instead as UNTRUSTED"
 echo "  entries approved minutes ago, or ORPHANED entries keyed on handlers"
 echo "  hooks.json no longer declares — because the trust key carries the group"
-echo "  and handler POSITION (agents/codex.py:458-472). Either is accepted."
+echo "  and handler POSITION (trust_keys in agents/codex.py). Either is accepted."
 echo
 
 # A temp LH_CONFIG_DIR, never the user's. The profile's config_dir inside it
@@ -715,36 +823,49 @@ TMP_CFG="$WORK/lh-config"
 # Resolved, not printed as a placeholder: a dry run whose output still says
 # `$(lh config path)` documents a command the reader has to finish themselves.
 REAL_CFG="${LH_CONFIG_DIR:-$HOME/.config/lazy-harness}/config.toml"
+PHASE_C_DEPLOY="$WORK/phase-c-deploy.txt"
+PHASE_C_DOCTOR="$WORK/phase-c-doctor.txt"
 show "mkdir -p $TMP_CFG && cp $REAL_CFG $TMP_CFG/config.toml"
-show "# append one external hook with a pinned matcher, which shifts every"
-show "# handler index below it and re-keys their trust entries"
+show "# add one external hook with a pinned matcher, through a TOML parser, which"
+show "# re-keys the trust entry of every handler at or below its position"
+show "LH_CONFIG_DIR=$TMP_CFG $LH_BIN deploy --profile $PROFILE > $PHASE_C_DEPLOY 2>&1"
+show "LH_CONFIG_DIR=$TMP_CFG $LH_BIN doctor > $PHASE_C_DOCTOR 2>&1"
 if [ "$DRY_RUN" -eq 0 ]; then
   if [ ! -f "$REAL_CFG" ]; then
     noobs "could not locate config.toml at $REAL_CFG; phase C not run"
   else
     mkdir -p "$TMP_CFG"
-    cp "$REAL_CFG" "$TMP_CFG/config.toml"
-    # `external` is the only matcher the config surface owns — builtin matchers
-    # come from the registry (`docs/reference/config.md:349`). Inserting one
-    # entry is enough: the indices are positions.
-    {
-      echo ""
-      echo "[hooks.pre_tool_use]"
-      echo 'external = [{ command = "true", matcher = "F9AcceptanceProbe" }]'
-    } >> "$TMP_CFG/config.toml"
-
-    LH_CONFIG_DIR="$TMP_CFG" "$LH_BIN" deploy --profile "$PROFILE" >/dev/null 2>&1
-    DOCTOR_C="$(LH_CONFIG_DIR="$TMP_CFG" "$LH_BIN" doctor 2>&1)"
-    if printf '%s' "$DOCTOR_C" | grep -q 'trust stale'; then
-      ok "doctor reports trust stale after the declaration changed"
-    elif printf '%s' "$DOCTOR_C" | grep -q 'orphaned'; then
-      ok "doctor reports orphaned trust entries after the declaration changed"
-      info "no 'trust stale' line — this lh predates #367"
-    elif printf '%s' "$DOCTOR_C" | grep -q 'untrusted'; then
-      ok "doctor reports untrusted hooks again after the declaration changed"
-      info "no 'trust stale' or 'orphaned' line — this lh predates #367, and the change added a handler rather than dropping one"
+    if ! seed_phase_c_config "$REAL_CFG" "$TMP_CFG/config.toml" "$GATE_PYTHON"; then
+      fail "could not write the phase C config; the declaration was never changed, so this phase measured nothing"
     else
-      fail "a changed declaration produced no trust signal; the next session would silently not fire it"
+      DEPLOY_C_STATUS=0
+      LH_CONFIG_DIR="$TMP_CFG" "$LH_BIN" deploy --profile "$PROFILE" \
+        > "$PHASE_C_DEPLOY" 2>&1 || DEPLOY_C_STATUS=$?
+      DOCTOR_C_STATUS=0
+      LH_CONFIG_DIR="$TMP_CFG" "$LH_BIN" doctor \
+        > "$PHASE_C_DOCTOR" 2>&1 || DOCTOR_C_STATUS=$?
+      info "phase C deploy exit $DEPLOY_C_STATUS, doctor exit $DOCTOR_C_STATUS"
+      # `tr` first: rich wraps `lh doctor` to the terminal width, so `trust
+      # stale` can arrive with a newline between its two words and a grep for
+      # the phrase misses a line that is on the screen.
+      DOCTOR_C="$(tr '\n' ' ' < "$PHASE_C_DOCTOR")"
+      if printf '%s' "$DOCTOR_C" | grep -q 'trust stale'; then
+        ok "doctor reports trust stale after the declaration changed"
+      elif printf '%s' "$DOCTOR_C" | grep -q 'orphaned'; then
+        ok "doctor reports orphaned trust entries after the declaration changed"
+        info "no 'trust stale' line — this lh predates #367"
+      elif printf '%s' "$DOCTOR_C" | grep -q 'untrusted'; then
+        ok "doctor reports untrusted hooks again after the declaration changed"
+        info "no 'trust stale' or 'orphaned' line — this lh predates #367, and the change added a handler rather than dropping one"
+      else
+        # The evidence, not a verdict over a discarded one. The first run threw
+        # both of these away and left the reader nothing to read.
+        info "phase C deploy output ($PHASE_C_DEPLOY):"
+        sed 's/^/        /' "$PHASE_C_DEPLOY"
+        info "phase C doctor output ($PHASE_C_DOCTOR):"
+        sed 's/^/        /' "$PHASE_C_DOCTOR"
+        fail "a changed declaration produced no trust signal; the next session would silently not fire it"
+      fi
     fi
   fi
 fi
