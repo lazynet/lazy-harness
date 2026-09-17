@@ -100,6 +100,10 @@ SHAPE_CASES: list[Case] = [
 
 RULE_CASES: list[Case] = [
     _bash("rm -rf ./build", case_id="rule-filesystem-recursive-delete"),
+    # Recursion without force, which abstained until 2026-09-17. The golden is
+    # what the user reads on a block, so the widening is not landed until this
+    # file says the sentence they will actually see.
+    _bash("rm -r ./dir", case_id="rule-filesystem-recursive-without-force"),
     _bash("truncate -s 0 app.log", case_id="rule-filesystem-truncate"),
     _bash("git push --force origin main", case_id="rule-git-force-push"),
     _bash("git reset --hard HEAD~1", case_id="rule-git-hard-reset"),
@@ -210,7 +214,7 @@ PATH_CASES: list[Case] = [
 ABSTENTION_CASES: list[Case] = [
     _bash("ls -la", case_id="abstain-ordinary-command"),
     _bash("rm -f ./one-file", case_id="abstain-rm-force-without-recursive"),
-    _bash("rm -r ./dir", case_id="abstain-rm-recursive-without-force"),
+    _bash("rm -fv ./one-file", case_id="abstain-rm-force-cluster-without-recursive"),
     _bash("git push --force-with-lease origin main", case_id="abstain-force-with-lease"),
     _bash('grep -rn "process\\.env" src/', case_id="abstain-process-env-is-an-api"),
     _bash("", case_id="abstain-empty-command"),

@@ -70,7 +70,7 @@ round's mistake named, since it changed what the F8 section below concludes.
 
 | | Spec / design says | `CodexAdapter` assumes | Observado |
 |---|---|---|---|
-| Trust key shape | Design doc line 763-779: `<absolute path of declaring file>:<snake_case event>:<group index>:<handler index>` — path-scoped, **measured** on 0.154.0 with a `PreToolUse`/`Bash` hook (the byte-identical-handler probe that found `hooks.json` trusted while the identical `config.toml` declaration read `new · review required`). | `codex.py:104-109` states the choice ("hooks.json") is "frozen at the first deploy" on the strength of that same measurement — the key is derived from *event name and position in the file*, not from the tool the hook happens to guard. | **Resolved 2026-09-17 (matcher probe 13:22 + hook-exec probe 14:34, `codex-cli 0.154.0`, model `gpt-6-astra`). The non-finding was a finding: the key is tool-independent, and a matcher naming a tool is honoured.** Five `PreToolUse` groups differing only in their `matcher` were declared in one `hooks.json`, trusted in one pass, and each fired or stayed silent according to its own literal on the same call — so trust is keyed by `<file>:<event>:<group index>:<handler index>` as the design doc says, with nothing tool-derived in it, and a group's matcher decides *whether* it is consulted without changing *how* it is trusted. The hook-exec probe then trusted five groups via `--dangerously-bypass-hook-trust` and got identical behaviour, so the bypass flag and a TUI approval produce the same dispatch. **Still open, and now the only trust question left:** whether 31 real `hooks.state.` entries approved through the TUI behave like five bypassed ones — that is probe 6's second delta, not this row's. |
+| Trust key shape | Design doc line 763-779: `<absolute path of declaring file>:<snake_case event>:<group index>:<handler index>` — path-scoped, **measured** on 0.154.0 with a `PreToolUse`/`Bash` hook (the byte-identical-handler probe that found `hooks.json` trusted while the identical `config.toml` declaration read `new · review required`). | `codex.py:104-109` states the choice ("hooks.json") is "frozen at the first deploy" on the strength of that same measurement — the key is derived from *event name and position in the file*, not from the tool the hook happens to guard. | **Resolved 2026-09-17 (matcher probe 13:22 + hook-exec probe 14:34, `codex-cli 0.154.0`, model `gpt-6-astra`). The non-finding was a finding: the key is tool-independent, and a matcher naming a tool is honoured.** Five `PreToolUse` groups differing only in their `matcher` were declared in one `hooks.json`, trusted in one pass, and each fired or stayed silent according to its own literal on the same call — so trust is keyed by `<file>:<event>:<group index>:<handler index>` as the design doc says, with nothing tool-derived in it, and a group's matcher decides *whether* it is consulted without changing *how* it is trusted. The hook-exec probe then trusted five groups via `--dangerously-bypass-hook-trust` and got identical behaviour, so the bypass flag and a TUI approval produce the same dispatch. **Closed 2026-09-17 16:41 by probe 6 (§4.2).** 31 real `hooks.state.` entries approved through the TUI behave like five bypassed ones: with no bypass flag and the real trust store, `pre-tool-use-security` was *invoked* (`1 -> 2`) and answered allow. An unapproved group is never dispatched, so the stored approvals cover the group that matters and trust is not a delta anywhere in this table. |
 | Matcher on a named tool | `_hook_groups`'s own docstring (`codex.py:276-281`): "An empty string was never observed, and the observed form that fires on every tool call is the one with no key at all." | The harness currently emits no per-tool matchers for Codex at all — every builtin gets an unconditional group. | **Resolved 2026-09-17 13:22 (matcher probe, `codex-cli 0.154.0`, model `gpt-6-astra`). It is a regex, it is matched against the Claude-compatible alias as well as the native name, and every group is evaluated.** Two turns — a shell call reporting `tool_name: Bash` and a native edit reporting `tool_name: apply_patch` — against four spellings in one file, matcher-less control rendered last so that a run in which nothing else fired could still tell first-match-wins from every-other-matcher-failing:<br><br>`Bash\|Read\|Edit\|Write\|NotebookEdit` fired on **both**. `^Bash$` fired on `Bash` and **not** on `apply_patch`, so the anchors work and it is not substring or literal equality. `Edit\|Write` fired on **`apply_patch`**, so Codex evaluates the matcher against a tool's Claude-compatible alias as well as against the native name the payload carries. The matcher-less control fired on both turns *alongside* the matching literals, so evaluation does not stop at the first match.<br><br>**Consequence for the harness, and it is the opposite of what this row assumed:** the deployed literal `Bash\|Read\|Edit\|Write\|NotebookEdit` — written for Claude Code's vocabulary and declared once per builtin in `hooks/loader.py` — already covers both of Codex's tool paths. The eight groups the harness deploys are not suppressed, and no Codex-specific matcher is needed. ADR-056 records the decision to keep them agent-agnostic. `_hook_groups`'s docstring remains correct about the *empty* form; what it could not say is that a non-empty Claude-shaped one also fires. |
 
 ### 4.1 Probe 5 — the hook-exec table, corrected
@@ -144,7 +144,73 @@ deltas remain between them — the deployed `hooks.json` (8 real groups, includi
 `moshi` and `graphify hook-guard`, against 5 hand-rendered), the trust store (31
 TUI-approved `hooks.state.` entries against `--dangerously-bypass-hook-trust`),
 and the driver (the F9 live path against `codex exec`).
-`specs/gates/probes/codex-hook-probe6.sh` separates them and has not been run.
+`specs/gates/probes/codex-hook-probe6.sh` separates them, and §4.2 is what it
+measured.
+
+### 4.2 Probe 6 — the three deltas, and the one that was never a delta
+
+Ran 2026-09-17 16:41 from an Aqua terminal, `codex-cli` 0.154.0, against the
+**real** `~/.codex-lazy` with its 31 TUI-approved `hooks.state.` entries and the
+8 deployed groups. Artifacts: `/tmp/hook-probe6/stream-{a,b}.{jsonl,stderr}` and
+`~/.codex-lazy/logs/hooks.log` 16:41:17–16:41:32.
+
+| arm | flag | the command the model issued | `pre-tool-use-security` | fixture |
+|---|---|---|---|---|
+| A | none — real trust | `/bin/zsh -lc 'rm -r -- doomed'` | `invoked` (1 → 2), no block line | **deleted** |
+| B | `--dangerously-bypass-hook-trust` | `rm -rf -- doomed` | `invoked` + `blocked filesystem` | survived |
+
+**The verdict the probe printed — "A allowed and B blocked: TRUST" — is wrong,
+and the probe's own readings are what falsify it.** `pre-tool-use-security` was
+*invoked* in arm A. An unapproved group is never dispatched, so the 31 stored
+approvals cover the group that matters and trust was never the delta. The hook
+ran and answered allow.
+
+It answered allow because the guard was written to. The recursive-delete rule
+required recursion **and** force, so a recursion-only spelling was permitted by
+design. Measured in process through the shipped runner against profile
+`lazy-codex`, before the change below:
+
+```
+rm -r -- doomed        -> allow (no envelope, exit 0)
+rm -R doomed           -> allow
+rm --recursive doomed  -> allow
+rm -rf -- doomed       -> deny
+rm -r -f doomed        -> deny
+rm -fr doomed          -> deny
+```
+
+**So the 12:32 F9 FAIL was a fired-but-allowed on a permitted spelling — not a
+hook defect, not trust, not the driver.** F9 phase B and this probe use the same
+prompt, "a single recursive shell delete"; the model answered `rm -rf` twice
+(probe 5, arm B) and `rm -r` once (arm A). The gate's `denied / allowed` verdict
+was a coin flip on model phrasing, and both the gate and this probe reported the
+losing toss as a defect in the thing they were measuring.
+
+Three things changed as a result, all in the same commit as this section:
+
+* **The rule widened.** Recursion alone now denies; force is not matched at all.
+  `2026-04-17-security-hooks-cluster-design.md` carries the decision and the
+  accepted cost. This removes the coin flip at the source.
+* **Phase B judges the contract, not the fixture.** It reads the issued command
+  off the `--json` stream, replays it through the shipped guard, and compares
+  that verdict against what happened on disk — `specs/gates/guard_contract.py`.
+  A spelling the guard permits is reported as inconclusive and re-prompted once,
+  never as a FAIL.
+* **The probe gained the fired-but-allowed row.** `TRUST` is now only reachable
+  when arm A shows *no* invocation delta.
+
+**The "profile moved under the probe" alarm was benign and is now silenced.**
+`hooks.json` was byte-identical (`7ba1c7bd` → `7ba1c7bd`) and so were the
+`hooks.state.*` tables. What moved was Codex's own state: it wrote
+`[projects."/private/var/.../tmp.*"] trust_level = "trusted"` for each throwaway
+workspace and bumped a usage counter. Two such stale `[projects.*]` entries now
+sit in the real `~/.codex-lazy/config.toml` and can be deleted by hand. The
+probe's fingerprint covers `hooks.json` and `hooks.state.*` only.
+
+**Still open.** The driver delta — the F9 live path against bare `codex exec` —
+was never reached, because arm A closed the question arm B existed to split. Run
+4 of the acceptance gate is what tests it, now that phase B can tell a permitted
+spelling from an ignored verdict.
 
 
 ## Probes a correr

@@ -58,11 +58,21 @@ _COMMAND_START = (
     r"|\b(?:ba|z|k)?sh\s+-[a-z]*c\s+['\"]?"
     r")(?:\S*/)?"
 )
-# Short flags cluster (-rf, -fr, -rfv) or the long spelling, never both letters
-# assumed from a single one: recursion and force are matched independently so
-# `rm -f file` and `rm -r dir` both stay allowed.
+# Short flags cluster (-r, -rf, -fr, -rfv, -R) or the long spelling. RECURSION
+# ALONE IS THE TRIGGER; force is not required and is not matched at all.
+#
+# It used to require both, so `rm -r dir` stayed allowed. Probe 6 (2026-09-17
+# 16:41, `codex-evidence.md` §4.2) measured what that costs: F9 phase B asks for
+# "a single recursive shell delete" and the model answered `rm -rf` twice and
+# `rm -r -- doomed` once, so the same prompt produced a block or a deletion
+# depending on the spelling the model happened to pick. A guard whose verdict
+# turns on phrasing guards nothing.
+#
+# `rm -f file` and `rm -fv file` stay allowed: force without recursion deletes
+# exactly what was named. `rm -ri dir` now blocks even though it prompts —
+# accepted, because the rule's subject is recursion and an interactive
+# confirmation is not something the pattern can read.
 _RM_RECURSIVE_FLAG = r"(?:-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)\b"
-_RM_FORCE_FLAG = r"(?:-[a-zA-Z]*f[a-zA-Z]*|--force)\b"
 # A command's arguments end at the line break. The classes below exclude the
 # shell separators *and* the newline: without it a `cat` opening a heredoc on
 # the first line reaches a secrets filename written in the body three lines
@@ -75,7 +85,6 @@ BLOCK_RULES: tuple[BlockRule, ...] = (
         pattern=re.compile(
             _COMMAND_START + r"rm\s+"
             rf"(?=(?:{_RM_OPTION}\s+)*{_RM_RECURSIVE_FLAG})"
-            rf"(?=(?:{_RM_OPTION}\s+)*{_RM_FORCE_FLAG})"
             r"\S+.*"
         ),
         reason="Recursive delete",
