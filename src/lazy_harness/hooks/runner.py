@@ -34,7 +34,18 @@ class RunnerError(Exception):
 
 
 TRACE_ENV = "LH_HOOK_TRACE"
-"""Set to exactly `"1"` to record one line per dispatch under the profile's log.
+"""Set to exactly `"1"` to record one line per dispatch in the runtime dir's log.
+
+That dir is `agent_dir_for`'s answer, NOT the profile's `config_dir`:
+`agent_runtime_dir` (`core/paths.py`, ADR-032 L3) reads the adapter's own env
+var first and falls back to the `config_dir` only when it is unset. Every hook
+Codex spawns inherits `CODEX_HOME`, so under Codex the line lands in
+`$CODEX_HOME/logs/hooks.log` and the profile's `config_dir` stays empty. That is
+intended — the env var is the agent's own statement of where its home is — but
+this docstring used to say "the profile's log", and a reader who believed it
+looked in a file the line is never written to. Probe 5 (2026-09-17) lost its
+entire hook-log reading that way, reporting "no hook ever ran" for a hook that
+had just blocked.
 
 Every `pre_tool_use` builtin logs only when it has something to say —
 `pre-tool-use-security` on a block, `-memory-size` and `-read-size` on a

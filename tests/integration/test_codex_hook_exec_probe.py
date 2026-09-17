@@ -294,3 +294,214 @@ def test_a_real_run_survives_a_machine_where_git_fails(tmp_path: Path) -> None:
         f"the probe died before invoking anything.\nstdout:\n{result.stdout}\n"
         f"stderr:\n{result.stderr}"
     )
+
+
+# --- the summary reads what the run actually wrote --------------------------
+# Probe 5 ran on 2026-09-17 14:34 and its summary contradicted its own records:
+# it called the in-process control a failure, said the stream carried no block
+# line, and reported "no hook ever ran" for a hook that had just blocked. The
+# records were right every time and the reader was wrong every time, which is
+# this repo's own gate — an artifact is verified by the system that consumes
+# it, and a gate script is exercised in both directions.
+#
+# So these run the probe against a `codex` that really dispatches the rendered
+# groups. A shim that only records being called cannot catch a summary bug: the
+# summary needs records to read before it can read them wrongly.
+
+_LH_SHIM = """#!/usr/bin/env python3
+import os, sys
+
+with open(os.environ["EXEC_PROBE_WITNESS"], "a") as fh:
+    fh.write("lh %s\\n" % " ".join(sys.argv[1:]))
+if "--version" in sys.argv:
+    print("lh 0.0.0-shim")
+    raise SystemExit(0)
+
+# Every env the control and the wrapper hand the guard, recorded per call so a
+# missing LH_CONFIG_DIR is observable rather than inferred from an exit code.
+with open(os.environ["EXEC_PROBE_LH_ENV"], "a") as fh:
+    fh.write("LH_CONFIG_DIR=%s\\n" % os.environ.get("LH_CONFIG_DIR", "<unset>"))
+
+sys.stdin.read()
+if os.environ.get("EXEC_PROBE_LH_MODE", "deny") == "deny":
+    print('{"hookSpecificOutput": {"hookEventName": "PreToolUse", '
+          '"permissionDecision": "deny", "permissionDecisionReason": "shim"}}')
+    # The guard's own log line, under the directory CODEX_HOME names -- which
+    # is where `agent_runtime_dir` puts it whenever that variable is set, and
+    # is NOT the profile's config_dir. Bug 3 is that the summary read the
+    # other one.
+    home = os.environ.get("CODEX_HOME")
+    if home:
+        logs = os.path.join(home, "logs")
+        os.makedirs(logs, exist_ok=True)
+        with open(os.path.join(logs, "hooks.log"), "a") as fh:
+            fh.write("pre-tool-use-security: invoked\\n")
+            fh.write("pre-tool-use-security: blocked filesystem: <command>\\n")
+    raise SystemExit(0)
+print('{"hookSpecificOutput": {"hookEventName": "PreToolUse", '
+      '"permissionDecision": "allow"}}')
+"""
+
+# Dispatches every rendered PreToolUse group the way Codex does, then writes
+# its own block line to STDERR -- the stream Codex 0.154.0 actually puts it on,
+# and the one the probe did not read.
+_CODEX_SHIM = """#!/usr/bin/env python3
+import json, os, subprocess, sys
+
+with open(os.environ["EXEC_PROBE_WITNESS"], "a") as fh:
+    fh.write("codex %s\\n" % " ".join(sys.argv[1:]))
+if "--version" in sys.argv:
+    print("codex-cli 0.0.0-shim")
+    raise SystemExit(0)
+
+document = json.load(open(os.path.join(os.environ["CODEX_HOME"], "hooks.json")))
+payload = json.dumps({
+    "hook_event_name": "PreToolUse",
+    "session_id": "shim",
+    "tool_name": "Bash",
+    "tool_input": {"command": "rm -rf doomed"},
+})
+for group in document["hooks"]["PreToolUse"]:
+    subprocess.run(
+        group["hooks"][0]["command"].split(),
+        input=payload, text=True, capture_output=True, check=False,
+    )
+
+if os.environ.get("EXEC_PROBE_CODEX_BLOCK") == "1":
+    print("ERROR codex_core::tools::router: error=Command blocked by "
+          "PreToolUse hook: Blocked by lazy-harness PreToolUse", file=sys.stderr)
+"""
+
+# Swallows the duration and runs the command, so the turn is reached. A shim
+# that exited instead would make every reading below a study of the shim.
+_TIMEOUT_SHIM = '#!/bin/sh\nshift\nexec "$@"\n'
+
+
+def _dispatching_run(
+    tmp_path: Path, *, lh_mode: str = "deny", codex_blocks: bool = True
+) -> subprocess.CompletedProcess[str]:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    for name, body in (
+        ("lh", _LH_SHIM),
+        ("codex", _CODEX_SHIM),
+        ("timeout", _TIMEOUT_SHIM),
+        ("gtimeout", _TIMEOUT_SHIM),
+    ):
+        shim = bin_dir / name
+        shim.write_text(body, encoding="utf-8")
+        shim.chmod(0o755)
+
+    auth = tmp_path / "auth.json"
+    auth.write_text('{"tokens": {}}', encoding="utf-8")
+
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
+    env[WITNESS_VAR] = str(tmp_path / "witness")
+    env["EXEC_PROBE_LH_ENV"] = str(tmp_path / "lh-env")
+    env["EXEC_PROBE_LH_MODE"] = lh_mode
+    env["EXEC_PROBE_CODEX_BLOCK"] = "1" if codex_blocks else "0"
+    env["CODEX_AUTH"] = str(auth)
+    env["PROBE_OUT"] = str(tmp_path / "out")
+    # The probe must resolve its own throwaway home, never inherit one.
+    env.pop("CODEX_HOME", None)
+
+    return subprocess.run(
+        ["bash", str(PROBE_SH)],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(tmp_path),
+        timeout=180,
+    )
+
+
+def test_the_control_runs_under_the_probes_own_config(tmp_path: Path) -> None:
+    """Bug 1. The control invoked the guard with `--profile probe-capture` and
+    no `LH_CONFIG_DIR`, so the real config was asked about a profile only the
+    throwaway one declares: exit 2, `unknown profile 'probe-capture'`, empty
+    stdout, and a banner telling the reader to discard a correct run."""
+    _dispatching_run(tmp_path)
+
+    seen = (tmp_path / "lh-env").read_text(encoding="utf-8").splitlines()
+    assert seen, "the guard was never invoked at all"
+    assert seen[0] == f"LH_CONFIG_DIR={tmp_path / 'out' / 'lh-config'}", seen[0]
+
+
+def test_the_control_aborts_the_run_when_the_guard_does_not_deny(
+    tmp_path: Path,
+) -> None:
+    """One direction. The old control printed `Every reading below is
+    meaningless` and then spent a model call producing exactly those readings."""
+    result = _dispatching_run(tmp_path, lh_mode="allow")
+
+    assert result.returncode != 0, result.stdout
+    assert "control" in (result.stdout + result.stderr).lower()
+    assert "stream.jsonl" not in result.stdout, "the turn ran anyway"
+
+
+def test_the_control_lets_a_denying_guard_through(tmp_path: Path) -> None:
+    """The other direction — without it the abort above is satisfied by a
+    script that aborts unconditionally."""
+    result = _dispatching_run(tmp_path, lh_mode="deny")
+
+    assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    assert "== outcome ==" in result.stdout
+
+
+def test_the_block_line_is_sought_on_the_stream_codex_writes_it_to(
+    tmp_path: Path,
+) -> None:
+    """Bug 2. Codex 0.154.0 writes `Command blocked by PreToolUse hook` to
+    stderr; the probe grepped `stream.jsonl` alone and reported `the stream
+    carries NO block line` for the run that blocked."""
+    result = _dispatching_run(tmp_path, codex_blocks=True)
+
+    # The affirmative phrasing, not the bare filename: the "neither stream…"
+    # line names both files too, so `"stream.stderr" in stdout` was satisfied by
+    # the message reporting that nothing was found. Caught by mutating the
+    # search back to jsonl-only and watching this test keep passing.
+    assert "block line is on: stream.stderr" in result.stdout, result.stdout
+
+
+def test_no_block_line_is_reported_when_neither_stream_carries_one(
+    tmp_path: Path,
+) -> None:
+    """The other direction: a probe that named stderr unconditionally would
+    pass the test above while measuring nothing."""
+    result = _dispatching_run(tmp_path, codex_blocks=False)
+
+    assert "NO block line" in result.stdout, result.stdout
+
+
+def test_the_hook_log_survives_the_throwaway_codex_home(tmp_path: Path) -> None:
+    """Bug 3, the half the probe controls. `CODEX_HOME` is the Codex adapter's
+    env var, so `agent_runtime_dir` resolves the runtime dir to it before it
+    ever looks at the profile's `config_dir` — the log went to the throwaway
+    home, and the probe removed that home on exit."""
+    result = _dispatching_run(tmp_path)
+
+    preserved = tmp_path / "out" / "codex-home" / "logs" / "hooks.log"
+    assert preserved.is_file(), f"the hook log was not preserved.\nstdout:\n{result.stdout}"
+    assert "invoked" in preserved.read_text(encoding="utf-8")
+
+
+def test_the_summary_counts_the_log_it_preserved(tmp_path: Path) -> None:
+    """The summary read `$CFG/<profile>/logs/hooks.log` and printed `no log —
+    no hook ever ran under it` for a hook that had just blocked."""
+    result = _dispatching_run(tmp_path)
+
+    assert "no hook ever ran" not in result.stdout, result.stdout
+    assert "invoked" in result.stdout
+
+
+def test_diag_is_not_reported_as_a_wrapper_that_died(tmp_path: Path) -> None:
+    """Bug 4. `diag` exits before the command by design — it records the
+    environment and nothing else — so `exit=<none: the wrapper ran but never
+    reached the command>` was a false alarm about the one group that behaved."""
+    result = _dispatching_run(tmp_path)
+
+    diag = result.stdout[result.stdout.index("-- diag") :]
+    diag = diag[: diag.index("-- capture-abs")]
+    assert "never reached the command" not in diag, diag
+    assert "env only" in diag, diag

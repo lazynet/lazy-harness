@@ -684,6 +684,31 @@ def test_agent_dir_for_a_profile_inheriting_the_global_agent(tmp_path: Path) -> 
     assert agent_dir == tmp_path / "claude-daily"
 
 
+def test_the_adapters_env_var_outranks_the_profiles_config_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Step 1 of `agent_runtime_dir` before step 2, and the pair above is the
+    other direction: without the variable the same profile resolves to its own
+    `config_dir`.
+
+    Not a corner. Every hook Codex spawns inherits `CODEX_HOME`, so this IS the
+    deployed path, and it is what `LH_HOOK_TRACE` lands under — which
+    `runner.py` described as "the profile's log" and sent a reader to the file
+    the line is never in. Probe 5 lost its whole hook-log reading to it:
+    `CODEX_HOME=$T … lh hook pre-tool-use-security --profile probe-abs` wrote
+    `$T/logs/hooks.log` and left `<config_dir>/probe-abs/` absent.
+    """
+    from lazy_harness.core.config import load_config
+    from lazy_harness.hooks.builtins._shared import agent_dir_for
+
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "ambient-home"))
+    cfg = load_config(_two_agent_config(tmp_path))
+
+    _agent, agent_dir = agent_dir_for(cfg, "gate")
+
+    assert agent_dir == tmp_path / "ambient-home"
+
+
 def test_agent_dir_for_without_a_config_falls_back_to_claude_code(home_dir: Path) -> None:
     """A machine that has not run `lh init` still has an agent whose dirs its
     hooks write under — the same degradation `transcript_reader` applies."""

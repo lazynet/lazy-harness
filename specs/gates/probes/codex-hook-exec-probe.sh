@@ -333,16 +333,36 @@ echo
 
 # The in-process control. If the guard does not deny here, nothing downstream
 # is worth reading — and this costs no model call.
+#
+# `LH_CONFIG_DIR="$CFG"` is the whole point of running it at all. Without it the
+# guard resolves `--profile probe-capture` against the machine's REAL config,
+# which has never heard of a throwaway profile: `unknown profile
+# 'probe-capture'`, exit 2, empty stdout. The 14:34 run printed its "every
+# reading below is meaningless" banner from that, over a turn whose records all
+# carried valid denials — a guaranteed false negative advising the reader to
+# discard a correct result.
+#
+# And it ABORTS. A control whose failure the script then ignores is not a
+# control; the old one spent a model call producing exactly the readings it had
+# just declared meaningless.
 echo "== control: the same guard, in process, outside Codex =="
-CONTROL="$("$LH_ABS" hook pre-tool-use-security --profile probe-capture <<JSON 2>/dev/null || true
+CONTROL_EXIT=0
+CONTROL="$(LH_CONFIG_DIR="$CFG" "$LH_ABS" hook pre-tool-use-security \
+  --profile probe-capture <<JSON 2>"$OUT/control.stderr"
 {"hook_event_name":"PreToolUse","session_id":"probe","cwd":"$WORK","tool_name":"Bash","tool_input":{"command":"rm -rf $WORK/doomed"}}
 JSON
-)"
+)" || CONTROL_EXIT=$?
 if printf '%s' "$CONTROL" | grep -q '"permissionDecision": *"deny"'; then
   echo "  ok: the guard denies this fixture in process, so a silent group below is Codex-side"
 else
-  echo "  !! the guard did NOT deny in process. Every reading below is meaningless"
-  echo "     until this passes — check LH_BIN and the probe config before spending a turn."
+  echo "  !! CONTROL FAILED: the guard did not deny this fixture in process." >&2
+  echo "     exit=$CONTROL_EXIT, config=$CFG/config.toml, lh=$LH_ABS" >&2
+  if [ -s "$OUT/control.stderr" ]; then
+    echo "     stderr: $(head -1 "$OUT/control.stderr")" >&2
+  fi
+  echo "     Aborting before the turn: every reading a turn produced would be" >&2
+  echo "     unattributable between the environment and this." >&2
+  exit 3
 fi
 echo
 
@@ -359,6 +379,21 @@ exit_code=0
     --json \
     "$PROMPT" ) > "$OUT/stream.jsonl" 2> "$OUT/stream.stderr" || exit_code=$?
 
+# The hook log lands under CODEX_HOME, and CODEX_HOME is a throwaway this script
+# removes on exit. `agent_runtime_dir` (`core/paths.py`, ADR-032 L3) resolves the
+# adapter's own env var FIRST and the profile's `config_dir` only second, so a
+# hook running with `CODEX_HOME` set writes its log there and never under
+# `$CFG/<profile>/logs/`. The 14:34 run wrote the log, deleted it with the home,
+# and then reported "no hook ever ran under it" for a hook that had just blocked.
+#
+# Copied out here rather than in the trap: the trap's ordering is one more thing
+# to be wrong about, and the log is the deliverable.
+PRESERVED_HOME="$OUT/codex-home"
+if [ -d "$SCRATCH_HOME/logs" ]; then
+  mkdir -p "$PRESERVED_HOME"
+  cp -R "$SCRATCH_HOME/logs" "$PRESERVED_HOME/logs"
+fi
+
 echo "== outcome =="
 echo "  codex exit=$exit_code"
 if [ -d "$WORK/doomed" ]; then
@@ -366,10 +401,21 @@ if [ -d "$WORK/doomed" ]; then
 else
   echo "  the fixture directory was DELETED — nothing blocked it"
 fi
-if grep -q 'Command blocked by PreToolUse hook' "$OUT/stream.jsonl" 2>/dev/null; then
-  echo "  the stream carries Codex's own block line"
+# Both streams, and WHICH one carried it. Codex 0.154.0 writes this line to
+# stderr — `ERROR codex_core::tools::router: error=Command blocked by PreToolUse
+# hook: …` — and the `--json` stream carries only the model's prose about it.
+# Grepping `stream.jsonl` alone reported `the stream carries NO block line` for
+# the 14:34 run, whose stderr line 1 was exactly that line.
+BLOCK_LINE_STREAMS=""
+for stream in stream.stderr stream.jsonl; do
+  if grep -q 'Command blocked by PreToolUse hook' "$OUT/$stream" 2>/dev/null; then
+    BLOCK_LINE_STREAMS="${BLOCK_LINE_STREAMS:+$BLOCK_LINE_STREAMS, }$stream"
+  fi
+done
+if [ -n "$BLOCK_LINE_STREAMS" ]; then
+  echo "  Codex's own block line is on: $BLOCK_LINE_STREAMS"
 else
-  echo "  the stream carries NO block line"
+  echo "  neither stream.stderr nor stream.jsonl carries a block line — NO block line"
 fi
 echo
 
@@ -383,6 +429,10 @@ for label in "${LABELS[@]}"; do
   echo "-- $label"
   if [ -f "$dir/exit" ]; then
     echo "   exit=$(cat "$dir/exit")"
+  elif [ "$(mode_for "$label")" = "diag" ]; then
+    # `diag` exits before the command on purpose — it records the environment
+    # and nothing else — so the missing exit file is the design, not a death.
+    echo "   exit=<n/a: diag mode records env only and never invokes lh>"
   else
     echo "   exit=<none: the wrapper ran but never reached the command>"
   fi
@@ -418,15 +468,23 @@ PY
 done
 echo
 
-echo "== hook logs written under each throwaway profile =="
-for profile in probe-capture probe-abs probe-bare; do
-  log="$CFG/$profile/logs/hooks.log"
-  if [ -f "$log" ]; then
-    echo "  $profile: $(grep -c ': invoked' "$log" 2>/dev/null || true) invoked, $(grep -c ': blocked ' "$log" 2>/dev/null || true) blocked"
-  else
-    echo "  $profile: no log — no hook ever ran under it"
-  fi
-done
+# One log for all three profiles, not one each. `CODEX_HOME` is set for the
+# whole turn and it outranks every profile's `config_dir`, so the per-profile
+# split this probe was designed around does not survive contact with it — the
+# lines merge. Said here rather than quietly reported as a per-profile table:
+# per-group attribution lives in `records/<label>/`, which is per-label by
+# construction, and the log is a secondary reading.
+echo "== hook log, under the CODEX_HOME the turn ran with =="
+HOOK_LOG="$PRESERVED_HOME/logs/hooks.log"
+if [ -f "$HOOK_LOG" ]; then
+  echo "  $HOOK_LOG"
+  echo "  $(grep -c ': invoked' "$HOOK_LOG" 2>/dev/null || true) invoked, $(grep -c ': blocked ' "$HOOK_LOG" 2>/dev/null || true) blocked"
+  echo "  all three probe profiles share this file — CODEX_HOME outranks each"
+  echo "  profile's config_dir, so these counts do NOT attribute per group."
+  echo "  Per-group attribution: records/<label>/exit and records/<label>/stdout."
+else
+  echo "  no log at $HOOK_LOG — no hook ever ran under this CODEX_HOME"
+fi
 
 cat <<EOF
 

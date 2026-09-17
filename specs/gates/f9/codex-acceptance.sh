@@ -184,6 +184,10 @@ BLOCKED=0
 # unavailable this run, and phase B says so rather than reading a missing file
 # as silence.
 CODEX_LOG=""
+# The directory that log lives under, and the one every turn is pinned to. Read
+# off `lh run --dry-run` below, empty until then, and declared here because the
+# script runs under `set -u` and a dry run expands it without ever assigning it.
+CODEX_HOME_DIR=""
 # Whether phase B's own doctor still reported hooks untrusted. Phase C reads it:
 # with no standing approval, a changed declaration has nothing to make stale,
 # and the absence of a `stale` line is then a property of the state, not a
@@ -516,10 +520,23 @@ codex_turn() {
   # would write a line per dispatch through phase C and the launch step for
   # nothing. It reaches the hook because codex inherits this environment and
   # the handler inherits codex's — the same path `CODEX_HOME` already takes.
-  LH_HOOK_TRACE="$TRACE_HOOKS" \
-  "$TIMEOUT_BIN" "$TURN_BUDGET" "$CODEX_BIN" exec \
-    --sandbox workspace-write --skip-git-repo-check \
-    -C "$WORK" --json "$prompt" > "$out" 2>&1
+  #
+  # And `CODEX_HOME` is PINNED to the value this gate resolved, rather than
+  # inherited. `$CODEX_LOG` is derived from it, and `agent_runtime_dir` resolves
+  # the adapter's env var before the profile's `config_dir` (`core/paths.py`,
+  # ADR-032 L3), so an ambient `CODEX_HOME` naming a different directory would
+  # drive a different Codex install — different `hooks.json`, different trust
+  # store — while every count was taken on a log that install never wrote to.
+  # It agreed before only because the machine that ran it had the variable
+  # unset. Empty is left alone: exporting `CODEX_HOME=` names the empty string
+  # and is strictly worse than not pinning.
+  (
+    if [ -n "$CODEX_HOME_DIR" ]; then export CODEX_HOME="$CODEX_HOME_DIR"; fi
+    export LH_HOOK_TRACE="$TRACE_HOOKS"
+    exec "$TIMEOUT_BIN" "$TURN_BUDGET" "$CODEX_BIN" exec \
+      --sandbox workspace-write --skip-git-repo-check \
+      -C "$WORK" --json "$prompt"
+  ) > "$out" 2>&1
   return 0
 }
 
@@ -600,10 +617,19 @@ trace_is_live() {
   before="$(security_invoked_count "$log")"
   # A payload naming a tool the guard allows: the probe must depend on the
   # dispatch happening, never on the verdict it reaches.
-  LH_HOOK_TRACE=1 "$bin" hook pre-tool-use-security --profile "$profile" \
-    >/dev/null 2>&1 <<'JSON' || true
+  #
+  # Pinned to the same home as the turns, for the same reason and one more: this
+  # function subtracts a count taken on `$log` around one dispatch. Unpinned,
+  # the line lands under whatever `CODEX_HOME` this shell carries, the
+  # difference is always zero, and the gate concludes the binary has no trace at
+  # all — degrading every phase B verdict on a binary whose trace works.
+  (
+    if [ -n "$CODEX_HOME_DIR" ]; then export CODEX_HOME="$CODEX_HOME_DIR"; fi
+    export LH_HOOK_TRACE=1
+    "$bin" hook pre-tool-use-security --profile "$profile" <<'JSON'
 {"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"true"}}
 JSON
+  ) >/dev/null 2>&1 || true
   after="$(security_invoked_count "$log")"
   case "$before" in ''|*[!0-9]*) echo "no"; return 0 ;; esac
   case "$after" in ''|*[!0-9]*) echo "no"; return 0 ;; esac
