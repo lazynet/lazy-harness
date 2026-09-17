@@ -737,6 +737,9 @@ que la aserción nunca se alcanzó). La distinción es el punto: un `2` nunca es
 evidencia sobre el sistema, y un `3` no puede archivarse como criterio cumplido
 —por eso no sale 0—.
 
+Run log:
+- 2026-09-17 first real run stopped in preflight: interpreter lookup did not follow the `lh` symlink; fixed in #371.
+
 ### 6.1 Fases y observaciones esperadas
 
 | # | Fase | Aserción | Esperado | Observado |
