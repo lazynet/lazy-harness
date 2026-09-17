@@ -296,7 +296,7 @@ SKIPPED_HOOKS=(
   herdr-context-gauge
   stop-context-rotate
   session-start-preflight
-  post-tool-use-sync-claude
+  post-tool-use-sync-system-doc
   pre-tool-use-git-scope
 )
 is_skipped() { case " ${SKIPPED_HOOKS[*]} " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
@@ -538,7 +538,7 @@ payload_for() {
       printf -- "- hosts: all\n" > "$FIXTURES/$tag/playbooks/site.yml"
       printf '{"tool_name":"Edit","tool_input":{"file_path":"%s"}}' \
         "$FIXTURES/$tag/playbooks/site.yml" ;;
-    post-tool-use-sync-claude)
+    post-tool-use-sync-system-doc)
       mkdir -p "$FIXTURES/$tag"; : > "$FIXTURES/$tag/CLAUDE.md"
       printf '{"tool_name":"Edit","tool_input":{"file_path":"%s"}}' "$FIXTURES/$tag/CLAUDE.md" ;;
     *)

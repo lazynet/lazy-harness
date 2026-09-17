@@ -66,18 +66,28 @@ def pinned_env(
 
     `PATH` holds git and nothing else: `context_inject` shells out to git, and
     also to `qmd` when the section is enabled. Inheriting the ambient PATH would
-    make the golden depend on whether the machine capturing it had `qmd`.
+    make the golden depend on whether the machine capturing it had `qmd` — and
+    so would git's own directory: Homebrew installs `git` and `qmd` side by
+    side in the same `bin/`, so pointing PATH at `Path(git).parent` leaks every
+    neighbour git happens to have there. A directory holding nothing but a
+    symlink to git is the only way to give the child git without also giving
+    it whatever else shares git's directory.
     """
     git = shutil.which("git")
     if git is None:  # pragma: no cover - git is a hard dependency of the suite
         raise RuntimeError("git is required to capture hook goldens")
+    git_only_bin = home / ".git-only-bin"
+    git_only_bin.mkdir(parents=True, exist_ok=True)
+    git_link = git_only_bin / "git"
+    if not git_link.exists():
+        git_link.symlink_to(git)
     env = {
         "HOME": str(home),
         "USERPROFILE": str(home),
         "LH_CONFIG_DIR": str(config_dir),
         "LH_DATA_DIR": str(data_dir),
         "CLAUDE_CONFIG_DIR": str(agent_config_dir),
-        "PATH": str(Path(git).parent),
+        "PATH": str(git_only_bin),
         # A hook that renders a date renders it in the local zone.
         "TZ": "UTC",
         "PYTHONIOENCODING": "utf-8",
