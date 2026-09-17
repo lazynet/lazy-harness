@@ -102,13 +102,24 @@ echo
 # inside SCRATCH and `mv`-ing into place instead has no such gap: `mv` (a
 # rename(2)) replaces whatever directory entry is at the destination — file,
 # symlink, or nothing — without ever opening or following it.
-declare -A SHAPE_LANE=([lazy]=claude [flex]=claude [lazy-codex]=codex)
+# A case statement, not an associative array: macOS still ships bash 3.2 as
+# the first `bash` on PATH in CI, which predates associative arrays entirely
+# (added in bash 4.0) and fails with a cryptic "$shape: unbound variable"
+# instead of a clear "declare: -A: invalid option" — measured on the
+# macos-latest CI runner.
+shape_lane() {
+  case "$1" in
+    lazy | flex) printf 'claude' ;;
+    lazy-codex) printf 'codex' ;;
+  esac
+}
+
 for shape in lazy flex lazy-codex; do
   dest="$OUT_DIR/f7-$shape.txt"
   tmp_dest="$SCRATCH/f7-$shape.txt"
   printf '%s\n' "$GATE_OUTPUT" >"$tmp_dest"
   mv -f -- "$tmp_dest" "$dest"
-  echo "$shape (${SHAPE_LANE[$shape]} lane): $VERDICT -> $dest"
+  echo "$shape ($(shape_lane "$shape") lane): $VERDICT -> $dest"
 done
 
 [ "$GATE_EXIT" -eq 0 ] || exit 1
