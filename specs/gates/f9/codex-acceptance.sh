@@ -433,9 +433,13 @@ def decide(tool_name: str, tool_input: dict) -> tuple[str, str]:
             }
         ),
     )
-    # Parsed, never substring-matched: what Codex reads is a JSON document, and
-    # a substring check passes on one Codex cannot load -- which is how probe
-    # 4's hand-escaped envelope arrived invalid and let the edit through.
+    # Parsed, never substring-matched: what Codex reads is a JSON document,
+    # and a substring check passes on one Codex cannot load -- the way the
+    # hand-escaped envelope of probe 4 arrived invalid and let the edit
+    # through. No apostrophe anywhere in this heredoc: bash 3.2, which is
+    # /bin/bash on macOS, scans a heredoc body inside $(...) for the closing
+    # paren and honours quoting while it does, so one apostrophe here makes
+    # the whole script unparseable there and nowhere else.
     if not output.stdout:
         return "", ""
     spec = json.loads(output.stdout).get("hookSpecificOutput", {})
