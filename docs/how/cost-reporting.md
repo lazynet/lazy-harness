@@ -177,22 +177,118 @@ itself yet. Concretely, today: a `codex` profile with `billing_model =
 "per_token"` (an API-key login) renders `unknown_models: gpt-5-codex` on
 `lh metrics ingest` and `—` is never confused with "priced at zero."
 
-```
+```bash
 lh status tokens --by profile
-lazy-codex: 29.4K in, 7 out, 41% cache — Cost —
-Total (priced only)
 ```
 
-*Measured 2026-09-17*, from a real `lazy-codex` (Codex, flat-rate) profile
-after `lh metrics ingest` — the flat-rate render above is real data, not a
-placeholder. The rest of this worked example (a full `lh status overview`
-panel, `lh status sessions`, and `lazy-codex`'s `launch_to_session_ratio`
-from `lh metrics launches`) is still *synthetic — replaced by measured
-once the `## For the user` commands in the billing-pass report come back*:
-those three commands were not yet run against the real profile as of this
-writing, only `lh status tokens --by profile`.
+```
+By: profile | Period: September 2026 | 2488 sessions
+
+┏━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━━━┓
+┃Profile             ┃     In ┃   Out ┃ Cache% ┃     Cost┃
+┡━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━━━┩
+│work                │   5.1G │ 22.6M │    97% │  $3212.9│
+│personal            │   5.4G │ 26.2M │    97% │ $3716.73│
+│lazy-codex          │ 222.9K │   153 │    43% │        —│
+├────────────────────┼────────┼───────┼────────┼─────────┤
+│Total (priced only) │  10.4G │ 48.9M │    97% │ $6929.63│
+└────────────────────┴────────┴───────┴────────┴─────────┘
+```
+
+*Measured 2026-09-17 16:55*, `lh 0.71.1`, one month of real data across all
+three profiles — `lazy-codex` renders `—`, never `$0.00`, exactly as
+described above, now shown next to two real per-token profiles instead of
+standing alone.
+
+`lh status overview` and `lh metrics launches` were the two other pieces of
+this worked example still marked synthetic; both are measured too, from the
+same `lh metrics ingest` run:
+
+```bash
+lh status overview
+```
+
+```
+Profiles  personal* · work · lazy-codex
+Projects  personal: 129 · work: 77 · lazy-codex: 1
+Sessions  personal: 4 today · 1315 this month · 4013 total
+          work: 181 today · 1168 this month · 3907 total
+          lazy-codex: 5 today · 5 this month · 5 total
+          all:  190 today · 2488 this month · 7925 total
+Tokens    personal: 79.0K in · 26.2M out · $3716.73 (Sep)
+          work: 68.4K in · 22.6M out · $3212.9 (Sep)
+          lazy-codex: 126.6K in · 153 out · — (Sep)
+          all:  274.0K in · 48.9M out · $6929.63 (Sep, priced only)
+Cache     personal: 5.2G read · 116.9M write
+          work: 4.9G read · 112.8M write
+          lazy-codex: 96.4K read · 0 write
+          all:  10.2G read · 229.6M write
+Hooks     ✓ personal:session-context  ✓ personal:session-export  ✓ personal:compound-loop  ✓ work:session-context  ✓ work:session-export  ✓ work:compound-loop
+Cron      ✓ graphify-update  ✓ knowledge-push  ✓ metrics-ingest  ✓ qmd-context-gen  ✓ qmd-embed  ✓ qmd-sync
+Queue     1 pending · 232 done today
+```
+
+The panel's `Tokens` row reports raw input only, with both cache buckets
+broken out on its own `Cache` row instead — see "Reconciling the numbers"
+below for why that makes `personal`'s `79.0K in` look nothing like the `5.4G`
+in the table above, and why that is not a bug.
+
+Notice, too, that `Sessions` breaks down by profile here but `lh status
+sessions` cannot: that command only takes `--period today|week|month|all`
+(measured: `lh status sessions --help`), with no `--profile` filter. `lh
+status tokens --profile <name> --by day` is the closest existing substitute
+for a per-profile daily view — narrower in period granularity than the
+panel's month-to-date line, but the only command that actually accepts a
+profile filter. Recorded as an open gap, not fixed here.
+
+```bash
+lh metrics launches
+```
+
+```
+work            claude-code  run    28
+personal        claude-code  exec   8
+personal        claude-code  run    3
+lazy-codex      codex        run    7
+
+work            launches=28 sessions=1404 ratio=0.02
+personal        launches=11 sessions=2011 ratio=0.01
+lazy-codex      launches=7 sessions=5 ratio=1.40
+```
+
+`lazy-codex`'s ratio is `1.40` — above 1, because the ratio is launches over
+*ingested sessions* in the window, not a fraction clamped to a session's
+lifetime. Several of that day's launches were probes against a throwaway
+`CODEX_HOME` that never produced a transcript, so `lh metrics ingest` never
+saw a session for them: a launch with no matching session still counts in
+the numerator.
 
 ## Reconciling the numbers
+
+`lh status tokens`'s `In` column and `lh status overview`'s `Tokens` line
+both claim to report input tokens for the same profile and month, and they
+disagree on purpose. From the worked examples above, `personal` for
+September 2026: the table's `In` is `5.4G`; the panel's `Tokens` line is
+`79.0K in`, with `5.2G read · 116.9M write` on its own `Cache` line. The
+table's `In` is `input + cache_read + cache_create` (`Bucket.total_input` in
+`monitoring/aggregate.py`) — "the sum of prompt tokens and both cache
+buckets" from the first worked example above. The panel's `Tokens` row is
+raw `input` alone, by design (see the comment above it in
+`monitoring/views/overview.py`): it matches how ccusage and Anthropic's own
+billing report input, and reporting cache there too would bury the number
+that dominates a long session by four or five orders of magnitude. Its
+`Cache` row exists precisely so that number is not lost, just kept off the
+`Tokens` line.
+
+Adding the panel's three numbers back up: `79.0K + 5.2G + 116.9M ≈ 5.32G` —
+visibly short of the table's `5.4G`, and that gap is expected, not a defect:
+each of the three figures is independently rounded to one decimal at its own
+magnitude (K, M, or G) before display, so summing three already-rounded
+numbers does not reproduce a total that was rounded once, from the unrounded
+per-token sum, on the table's side. `Out` and `Cost` do not have this split —
+both views agree on them exactly (`26.2M` and `$3716.73`) — which is the
+evidence that the `In` gap is a definition difference, not the two commands
+reading different data.
 
 The total printed by `lh status tokens` is computed at full precision and
 rounded once, at the end. It reconciles exactly with the database's own sum, so
