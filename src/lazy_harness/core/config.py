@@ -42,9 +42,27 @@ class ProfileEntry:
     # reads one to infer it). Stamped onto every MetricEvent this profile's
     # ingest produces, since the row is permanent and the auth mode is not.
     billing_model: str = "per_token"
+    # Design decision 7 (2026-09-13 multi-agent blast radius design): answers a
+    # bare `lh run` when two or more profiles claim the same root and their
+    # agents differ, so the resolver would otherwise pick silently by TOML
+    # document order. At most one profile per shared root may set this — the
+    # loader refuses a second, naming both (`_validate_root_defaults`).
+    root_default: bool = False
 
 
 BILLING_MODELS: tuple[str, ...] = ("per_token", "flat_rate")
+
+_PROFILE_ENTRY_KEYS: frozenset[str] = frozenset(
+    {
+        "config_dir",
+        "roots",
+        "lazynorth_doc",
+        "agent",
+        "harness_binary",
+        "billing_model",
+        "root_default",
+    }
+)
 
 
 @dataclass
@@ -399,12 +417,20 @@ def _parse_profiles(raw: dict[str, Any]) -> ProfilesConfig:
         if key == "default":
             continue
         if isinstance(value, dict):
+            unknown = set(value) - _PROFILE_ENTRY_KEYS
+            if unknown:
+                raise ConfigError(
+                    f"[profiles.{key}] has unknown field(s): {', '.join(sorted(unknown))}"
+                )
             billing_model = value.get("billing_model", "per_token")
             if billing_model not in BILLING_MODELS:
                 raise ConfigError(
                     f"[profiles.{key}].billing_model={billing_model!r} is not one of "
                     f"{', '.join(BILLING_MODELS)}"
                 )
+            root_default = value.get("root_default", False)
+            if not isinstance(root_default, bool):
+                raise ConfigError(f"[profiles.{key}].root_default must be a boolean")
             items[key] = ProfileEntry(
                 config_dir=value.get("config_dir", ""),
                 roots=value.get("roots", []),
@@ -412,8 +438,37 @@ def _parse_profiles(raw: dict[str, Any]) -> ProfilesConfig:
                 agent=value.get("agent", ""),
                 harness_binary=value.get("harness_binary", ""),
                 billing_model=billing_model,
+                root_default=root_default,
             )
+    _validate_root_defaults(items)
     return ProfilesConfig(default=default, items=items)
+
+
+def _validate_root_defaults(items: dict[str, ProfileEntry]) -> None:
+    """At most one `root_default` per root shared by two or more profiles.
+
+    A root claimed by only one profile has nothing to disambiguate, so
+    `root_default` there is accepted but irrelevant. Import is local to avoid
+    a module-level cycle: `core.paths` has no reason to import `core.config`,
+    but keeping the import here matches how `core.profiles` already resolves
+    roots against this same expansion.
+    """
+    from lazy_harness.core.paths import expand_path
+
+    roots_to_profiles: dict[str, list[str]] = {}
+    for name, entry in items.items():
+        for root in entry.roots:
+            roots_to_profiles.setdefault(str(expand_path(root)), []).append(name)
+
+    for root_str, names in roots_to_profiles.items():
+        if len(names) < 2:
+            continue
+        defaulters = [name for name in names if items[name].root_default]
+        if len(defaulters) > 1:
+            raise ConfigError(
+                f"root {root_str!r} is shared by {', '.join(names)}, and more than one "
+                f"declares root_default=true: {', '.join(defaulters)} — at most one may"
+            )
 
 
 def _validate_url_source(name: str, block: dict[str, Any]) -> None:
@@ -749,6 +804,7 @@ def _config_to_dict(cfg: Config) -> dict[str, Any]:
             "agent": entry.agent,
             "harness_binary": entry.harness_binary,
             "billing_model": entry.billing_model,
+            "root_default": entry.root_default,
         }
 
     result: dict[str, Any] = {

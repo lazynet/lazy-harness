@@ -32,33 +32,62 @@ class EnvrcResult:
     action: str  # "created", "updated", "unchanged"
 
 
-def _build_block(env_var: str, config_dir: Path) -> str:
-    return "\n".join(
-        [
-            BEGIN_MARKER,
-            NOTICE.format(version=__version__),
-            f'export {env_var}="{config_dir}"',
-            END_MARKER,
-        ]
-    )
+_EXPORT_LINE = re.compile(r'^export (\w+)="(.*)"$')
+
+
+def _parse_exports(block: str) -> dict[str, str]:
+    """Every `export ENV_VAR="value"` line inside a managed block, as a dict.
+
+    Tolerant of a block written by an older harness that only ever held one
+    export (decision 7, 2026-09-13 multi-agent blast radius design) — there is
+    nothing version-specific about the line shape itself, only about how many
+    of them a block used to carry.
+    """
+    exports: dict[str, str] = {}
+    for line in block.splitlines():
+        match = _EXPORT_LINE.match(line.strip())
+        if match:
+            exports[match.group(1)] = match.group(2)
+    return exports
+
+
+def _build_block(exports: dict[str, str]) -> str:
+    """One export per distinct agent claiming the root, ordered by env var name
+    so the block is deterministic regardless of which profile wrote last."""
+    lines = [BEGIN_MARKER, NOTICE.format(version=__version__)]
+    lines.extend(f'export {env_var}="{exports[env_var]}"' for env_var in sorted(exports))
+    lines.append(END_MARKER)
+    return "\n".join(lines)
 
 
 def render_envrc(env_var: str, config_dir: Path, existing: str | None = None) -> str:
-    """Return the new .envrc content with the managed block inserted/updated.
+    """Return the new .envrc content with `env_var` set in the managed block.
 
     If `existing` is None the file is created from scratch (block + trailing
-    newline). If it already contains the markers, only the block is replaced
-    in place. Otherwise the block is appended after a blank line.
+    newline). If it already contains the markers, the block's other exports
+    (one per agent already claiming this root) are preserved and `env_var` is
+    added or updated among them — a second profile's write must not erase the
+    first's export (D7, specs/backlog.md). Otherwise the block is appended
+    after a blank line.
     """
-    block = _build_block(env_var, config_dir)
-    if existing is None:
-        return block + "\n"
-    if BEGIN_MARKER in existing and END_MARKER in existing:
+    exports: dict[str, str] = {}
+    existing_block = None
+    if existing is not None and BEGIN_MARKER in existing and END_MARKER in existing:
         pattern = re.compile(
             re.escape(BEGIN_MARKER) + r".*?" + re.escape(END_MARKER),
             re.DOTALL,
         )
-        return pattern.sub(block, existing)
+        existing_block = pattern.search(existing)
+        if existing_block is not None:
+            exports = _parse_exports(existing_block.group(0))
+
+    exports[env_var] = str(config_dir)
+    block = _build_block(exports)
+
+    if existing is None:
+        return block + "\n"
+    if existing_block is not None:
+        return existing[: existing_block.start()] + block + existing[existing_block.end() :]
     sep = "" if existing.endswith("\n\n") else ("\n" if existing.endswith("\n") else "\n\n")
     return existing + sep + block + "\n"
 

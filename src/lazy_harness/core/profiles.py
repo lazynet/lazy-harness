@@ -92,24 +92,88 @@ def resolve_profile_with_source(
         cwd = Path.cwd()
 
     cwd_str = str(cwd.resolve())
-    best_match = ""
     best_len = 0
+    best_matches: list[str] = []
 
     for name, entry in cfg.profiles.items.items():
         for root in entry.roots:
             root_str = str(expand_path(root))
-            if cwd_str.startswith(root_str) and len(root_str) > best_len:
-                best_match = name
+            if not cwd_str.startswith(root_str):
+                continue
+            if len(root_str) > best_len:
                 best_len = len(root_str)
+                best_matches = [name]
+            elif len(root_str) == best_len and name not in best_matches:
+                best_matches.append(name)
 
-    if best_match:
-        return ProfileResolution(name=best_match, source=SOURCE_ROOT_MATCH)
-    return ProfileResolution(name=cfg.profiles.default, source=SOURCE_DEFAULT_FALLBACK)
+    if not best_matches:
+        return ProfileResolution(name=cfg.profiles.default, source=SOURCE_DEFAULT_FALLBACK)
+
+    if len(best_matches) == 1:
+        return ProfileResolution(name=best_matches[0], source=SOURCE_ROOT_MATCH)
+
+    # Design decision 7 (2026-09-13 multi-agent blast radius design): two or
+    # more profiles claim the same root, and `len(root_str) > best_len` above
+    # is strictly-greater, so picking one here would be picking by TOML
+    # document order — invisible in the output and silent in the launch. The
+    # tie is refused instead, unless exactly one claimant declares
+    # `root_default` (the loader guarantees at most one, see
+    # `_validate_root_defaults`).
+    defaulters = [name for name in best_matches if cfg.profiles.items[name].root_default]
+    if len(defaulters) == 1:
+        return ProfileResolution(name=defaulters[0], source=SOURCE_ROOT_MATCH)
+
+    raise ProfileError(
+        f"root claimed by {', '.join(best_matches)} has no default profile; "
+        f"pass --profile, or set root_default = true on one of them"
+    )
 
 
 def resolve_profile(cfg: Config, cwd: Path | None = None) -> str:
     """Resolve which profile to use based on cwd. Longest matching root wins."""
     return resolve_profile_with_source(cfg, cwd).name
+
+
+@dataclass(frozen=True)
+class SharedRootInfo:
+    """One root claimed by two or more profiles — `lh doctor`'s evidence for
+    the ambiguity `resolve_profile_with_source` refuses at launch time."""
+
+    root: str
+    profiles: list[str]
+    agents: dict[str, str]
+    default: str | None
+
+
+def collect_shared_roots(cfg: Config) -> list[SharedRootInfo]:
+    """Every root two or more profiles claim, each with its agent and default.
+
+    A root claimed by exactly one profile has nothing to disambiguate and is
+    omitted — the same "silent when there is nothing to say" rule the other
+    `lh doctor` sections follow.
+    """
+    from lazy_harness.agents.registry import agent_for_profile
+
+    by_root: dict[str, list[str]] = {}
+    for name, entry in cfg.profiles.items.items():
+        for root in entry.roots:
+            by_root.setdefault(str(expand_path(root)), []).append(name)
+
+    result: list[SharedRootInfo] = []
+    for root, names in by_root.items():
+        if len(names) < 2:
+            continue
+        agents = {name: agent_for_profile(cfg, name).name for name in names}
+        defaulters = [name for name in names if cfg.profiles.items[name].root_default]
+        result.append(
+            SharedRootInfo(
+                root=root,
+                profiles=names,
+                agents=agents,
+                default=defaulters[0] if len(defaulters) == 1 else None,
+            )
+        )
+    return result
 
 
 def root_routing_is_configured(cfg: Config) -> bool:

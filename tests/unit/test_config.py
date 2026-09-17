@@ -226,6 +226,161 @@ config_dir = "~/.claude-beta"
     assert cfg3.profiles.items["beta"].billing_model == "per_token"
 
 
+def test_profile_root_default_defaults_to_false(config_dir: Path) -> None:
+    config_file = config_dir / "config.toml"
+    config_file.write_text("""
+[harness]
+version = "1"
+
+[profiles]
+default = "personal"
+
+[profiles.personal]
+config_dir = "~/.claude-personal"
+""")
+    from lazy_harness.core.config import load_config
+
+    cfg = load_config(config_file)
+    assert cfg.profiles.items["personal"].root_default is False
+
+
+def test_profile_root_default_true(config_dir: Path) -> None:
+    config_file = config_dir / "config.toml"
+    config_file.write_text("""
+[harness]
+version = "1"
+
+[profiles]
+default = "beta"
+
+[profiles.beta]
+config_dir = "~/.claude-beta"
+root_default = true
+""")
+    from lazy_harness.core.config import load_config
+
+    cfg = load_config(config_file)
+    assert cfg.profiles.items["beta"].root_default is True
+
+
+def test_profile_root_default_misspelled_names_it_in_the_diagnostic(config_dir: Path) -> None:
+    """Repo gate: a schema accepting user-supplied identifiers validates them
+    explicitly and names what it rejected — here an unknown field entirely."""
+    config_file = config_dir / "config.toml"
+    config_file.write_text("""
+[harness]
+version = "1"
+
+[profiles]
+default = "beta"
+
+[profiles.beta]
+config_dir = "~/.claude-beta"
+root_defualt = true
+""")
+    from lazy_harness.core.config import ConfigError, load_config
+
+    with pytest.raises(ConfigError, match="root_defualt") as excinfo:
+        load_config(config_file)
+    assert "root_defualt" in str(excinfo.value)
+
+
+def test_at_most_one_root_default_per_shared_root(config_dir: Path) -> None:
+    """Design decision 7: exactly one profile per shared root may claim it."""
+    config_file = config_dir / "config.toml"
+    config_file.write_text(f"""
+[harness]
+version = "1"
+
+[profiles]
+default = "alpha"
+
+[profiles.alpha]
+config_dir = "~/.claude-alpha"
+roots = ["{config_dir}/shared"]
+root_default = true
+
+[profiles.beta]
+config_dir = "~/.claude-beta"
+roots = ["{config_dir}/shared"]
+root_default = true
+""")
+    from lazy_harness.core.config import ConfigError, load_config
+
+    with pytest.raises(ConfigError) as excinfo:
+        load_config(config_file)
+    assert "alpha" in str(excinfo.value)
+    assert "beta" in str(excinfo.value)
+
+
+def test_root_default_is_fine_when_only_one_profile_claims_the_root(config_dir: Path) -> None:
+    config_file = config_dir / "config.toml"
+    config_file.write_text(f"""
+[harness]
+version = "1"
+
+[profiles]
+default = "alpha"
+
+[profiles.alpha]
+config_dir = "~/.claude-alpha"
+roots = ["{config_dir}/shared"]
+root_default = true
+
+[profiles.beta]
+config_dir = "~/.claude-beta"
+roots = ["{config_dir}/other"]
+""")
+    from lazy_harness.core.config import load_config
+
+    cfg = load_config(config_file)
+    assert cfg.profiles.items["alpha"].root_default is True
+
+
+def test_save_config_new_document_round_trips_root_default(tmp_path: Path) -> None:
+    """Full load cycle against a file that does not exist yet."""
+    from lazy_harness.core.config import Config, ProfileEntry, load_config, save_config
+
+    config_file = tmp_path / "config.toml"
+    cfg = Config()
+    cfg.profiles.default = "beta"
+    cfg.profiles.items["beta"] = ProfileEntry(config_dir="~/.claude-beta", root_default=True)
+    save_config(cfg, config_file)
+
+    reloaded = load_config(config_file)
+    assert reloaded.profiles.items["beta"].root_default is True
+
+    reloaded.profiles.items["beta"].root_default = False
+    save_config(reloaded, config_file)
+    reloaded_again = load_config(config_file)
+    assert reloaded_again.profiles.items["beta"].root_default is False
+
+
+def test_save_config_merge_on_existing_preserves_root_default(config_dir: Path) -> None:
+    """Full load cycle against a file that already exists (read-modify-write)."""
+    config_file = config_dir / "config.toml"
+    config_file.write_text("""
+[harness]
+version = "1"
+
+[profiles]
+default = "beta"
+
+[profiles.beta]
+config_dir = "~/.claude-beta"
+""")
+    from lazy_harness.core.config import load_config, save_config
+
+    cfg = load_config(config_file)
+    assert cfg.profiles.items["beta"].root_default is False
+
+    cfg.profiles.items["beta"].root_default = True
+    save_config(cfg, config_file)
+
+    cfg2 = load_config(config_file)
+    assert cfg2.profiles.items["beta"].root_default is True
+
+
 def test_load_config_with_hooks(config_dir: Path) -> None:
     config_file = config_dir / "config.toml"
     config_file.write_text("""

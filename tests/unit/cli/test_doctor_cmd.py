@@ -1292,6 +1292,99 @@ def test_doctor_names_an_agent_that_declares_no_sessions_directory(tmp_path: Pat
     assert "unread" not in out
 
 
+# --- Shared-root default line (D7) ------------------------------------------
+
+
+def _shared_roots_output(cfg) -> str:  # noqa: ANN001
+    import io
+
+    from rich.console import Console
+
+    from lazy_harness.cli.doctor_cmd import _render_shared_roots
+    from lazy_harness.core.profiles import collect_shared_roots
+
+    buf = io.StringIO()
+    _render_shared_roots(
+        Console(file=buf, width=140, force_terminal=False, no_color=True),
+        collect_shared_roots(cfg),
+    )
+    return buf.getvalue()
+
+
+def test_render_shared_roots_silent_when_nothing_shared(tmp_path: Path) -> None:
+    from lazy_harness.core.config import Config, HarnessConfig, ProfileEntry
+
+    cfg = Config(harness=HarnessConfig(version="1"))
+    cfg.profiles.items = {
+        "p1": ProfileEntry(config_dir=str(tmp_path / "p1"), roots=[str(tmp_path / "r1")]),
+    }
+
+    assert _shared_roots_output(cfg) == ""
+
+
+def test_render_shared_roots_names_both_claimants_with_no_default(tmp_path: Path) -> None:
+    from lazy_harness.core.config import Config, HarnessConfig, ProfileEntry
+
+    shared = tmp_path / "shared"
+    cfg = Config(harness=HarnessConfig(version="1"))
+    cfg.profiles.items = {
+        "personal": ProfileEntry(config_dir=str(tmp_path / "p"), roots=[str(shared)]),
+        "experiment": ProfileEntry(
+            config_dir=str(tmp_path / "e"), roots=[str(shared)], agent="null"
+        ),
+    }
+
+    out = _shared_roots_output(cfg)
+
+    assert "personal (claude-code)" in out
+    assert "experiment (null)" in out
+    assert "no default" in out
+    assert "--profile" in out
+
+
+def test_render_shared_roots_names_the_default(tmp_path: Path) -> None:
+    from lazy_harness.core.config import Config, HarnessConfig, ProfileEntry
+
+    shared = tmp_path / "shared"
+    cfg = Config(harness=HarnessConfig(version="1"))
+    cfg.profiles.items = {
+        "personal": ProfileEntry(
+            config_dir=str(tmp_path / "p"), roots=[str(shared)], root_default=True
+        ),
+        "experiment": ProfileEntry(
+            config_dir=str(tmp_path / "e"), roots=[str(shared)], agent="null"
+        ),
+    }
+
+    out = _shared_roots_output(cfg)
+
+    assert "default: personal" in out
+
+
+def test_doctor_reports_the_shared_root_line(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Wired into the command, not only unit-tested next to it."""
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    shared = tmp_path / "shared"
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        '[harness]\nversion = "1"\n'
+        '[agent]\ntype = "claude-code"\n'
+        '[profiles]\ndefault = "p1"\n\n'
+        f'[profiles.p1]\nconfig_dir = "~/.claude-p1"\nroots = ["{shared}"]\n\n'
+        f'[profiles.p2]\nconfig_dir = "~/.claude-p2"\nroots = ["{shared}"]\nagent = "null"\n'
+        '[knowledge]\nroot = ""\n'
+    )
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
+
+    result = CliRunner().invoke(doctor, [])
+
+    assert "shared by" in result.output
+    assert "no default" in result.output
+
+
 def test_doctor_reports_one_line_per_profile(tmp_path: Path) -> None:
     """Four profiles, four agents, four verdicts, one run."""
     (tmp_path / "lazy" / "projects" / "-r").mkdir(parents=True)

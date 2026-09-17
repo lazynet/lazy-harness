@@ -38,7 +38,7 @@ from lazy_harness.core.paths import (
     data_dir,
     expand_path,
 )
-from lazy_harness.core.profiles import list_profiles
+from lazy_harness.core.profiles import SharedRootInfo, collect_shared_roots, list_profiles
 from lazy_harness.core.secrets import secrets_dir_for
 from lazy_harness.hooks.event_surface import (
     HookOperationGap,
@@ -297,6 +297,30 @@ def _render_transcripts(console: Console, cfg: Config) -> None:
         # `icon` is the only markup on this line. A profile name or a path
         # holding `[...]` is markup to rich too, and it deletes it silently.
         console.print(f"  {icon} {escape(p.name)} \u2014 {escape(detail)}")
+
+
+def _render_shared_roots(console: Console, shared_roots: list[SharedRootInfo]) -> None:
+    """One line per root two or more profiles claim (design decision 7).
+
+    Silent when nothing is shared — same rule as the other `lh doctor`
+    sections. Never fails `lh doctor`: an undeclared default is a launch-time
+    refusal (`resolve_profile_with_source`), not a broken machine, and this
+    line exists so the refusal is visible before someone hits it.
+    """
+    for shared in shared_roots:
+        claimants = ", ".join(
+            f"{escape(name)} ({escape(shared.agents[name])})" for name in shared.profiles
+        )
+        if shared.default is not None:
+            console.print(
+                f"  [dim]root {escape(shared.root)}: shared by {claimants} — "
+                f"default: {escape(shared.default)}[/dim]"
+            )
+        else:
+            console.print(
+                f"  [yellow]![/yellow] root {escape(shared.root)}: shared by {claimants} — "
+                f"no default: lh run needs --profile here"
+            )
 
 
 def _render_one_role(console: Console, cfg: Config, role: str) -> bool:
@@ -794,6 +818,8 @@ def doctor() -> None:
             cdir = contract_path(p.config_dir)
             console.print(f"  [red]✗[/red] {label} — {cdir} [red](missing)[/red]")
             ok = False
+
+    _render_shared_roots(console, collect_shared_roots(cfg))
 
     _render_transcripts(console, cfg)
     _render_profile_secrets(console, cfg)
