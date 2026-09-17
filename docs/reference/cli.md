@@ -749,7 +749,7 @@ lh status tokens --by model --period month
 
 | Flag | Values | Default | Notes |
 | --- | --- | --- | --- |
-| `--by` | `profile` `project` `model` `host` `workload` `day` `week` `month` | `project` + `model` | Repeatable. Flag order is column order. |
+| `--by` | `profile` `project` `model` `host` `workload` `agent` `day` `week` `month` | `project` + `model` | Repeatable. Flag order is column order. |
 | `--period` | `today` `week` `month` `all`, `<N>d`, `YYYY-MM`, `YYYY-MM-DD` | `month` | `week` and `<N>d` are rolling windows ending today. |
 | `--profile` | any string | — | Case-insensitive substring filter. |
 | `--model` | any string | — | Case-insensitive substring filter. |
