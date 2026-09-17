@@ -177,6 +177,21 @@ itself yet. Concretely, today: a `codex` profile with `billing_model =
 "per_token"` (an API-key login) renders `unknown_models: gpt-5-codex` on
 `lh metrics ingest` and `—` is never confused with "priced at zero."
 
+```
+lh status tokens --by profile
+lazy-codex: 29.4K in, 7 out, 41% cache — Cost —
+Total (priced only)
+```
+
+*Measured 2026-09-17*, from a real `lazy-codex` (Codex, flat-rate) profile
+after `lh metrics ingest` — the flat-rate render above is real data, not a
+placeholder. The rest of this worked example (a full `lh status overview`
+panel, `lh status sessions`, and `lazy-codex`'s `launch_to_session_ratio`
+from `lh metrics launches`) is still *synthetic — replaced by measured
+once the `## For the user` commands in the billing-pass report come back*:
+those three commands were not yet run against the real profile as of this
+writing, only `lh status tokens --by profile`.
+
 ## Reconciling the numbers
 
 The total printed by `lh status tokens` is computed at full precision and
