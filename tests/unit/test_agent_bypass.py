@@ -58,22 +58,56 @@ def test_claude_has_no_no_sandbox_level() -> None:
     assert adapter.bypass_argv(Bypass.NO_SANDBOX) is None
 
 
-# --- Codex: provisional, from help text alone ------------------------------
+# --- Codex: measured, `codex-evidence.md` section 7, codex-cli 0.154.0 ------
 
 
 def test_codex_has_no_enable_position() -> None:
-    """0.154.0 has no flag meaning "available but off": the approval-policy
-    settings turn approvals off, they do not make an off switch reachable."""
+    """Measured: no candidate leaves bypass reachable-but-off.
+
+    `baseline` and `-c approval_policy="never"` both ran no command at all, and
+    `--approve-for-me` ran one — so nothing on 0.154.0 does what Claude Code's
+    `--allow-dangerously-skip-permissions` does, which is to change nothing
+    about the current turn while making the toggle available inside it.
+    """
     adapter = get_agent("codex")
     assert adapter.bypass_argv(Bypass.ENABLE) is None
 
 
-def test_codex_activate_drops_approvals_and_keeps_the_sandbox() -> None:
+def test_codex_activate_is_the_flag_that_ran_without_removing_the_sandbox() -> None:
+    """The row the two write targets exist to separate.
+
+    `--approve-for-me` ran the command (`wrote_outside_tmp=yes`) while the
+    sandbox still refused the write outside the workspace
+    (`wrote_outside_home=no`). That is ACTIVATE exactly: the prompt stops
+    reaching the human, whatever sandbox exists stays. A probe scored on the
+    temp target alone would have called this a full bypass.
+    """
     adapter = get_agent("codex")
-    assert adapter.bypass_argv(Bypass.ACTIVATE) == ["--ask-for-approval", "never"]
+    assert adapter.bypass_argv(Bypass.ACTIVATE) == ["--approve-for-me"]
+
+
+def test_codex_activate_is_not_the_approval_policy_override() -> None:
+    """`-c approval_policy="never"` was measured indistinguishable from the
+    baseline: no command ran, nothing was written. Shipping it as ACTIVATE
+    would be a level that reads as supported and does nothing."""
+    adapter = get_agent("codex")
+    assert 'approval_policy="never"' not in (adapter.bypass_argv(Bypass.ACTIVATE) or [])
+
+
+def test_codex_activate_and_no_sandbox_are_different_flags() -> None:
+    """They collapse on an agent where the only way to stop the prompts is to
+    remove the sandbox too. The probe showed Codex is not such an agent, so
+    neither position returns `None` and neither is an alias for the other."""
+    adapter = get_agent("codex")
+    assert adapter.bypass_argv(Bypass.ACTIVATE) != adapter.bypass_argv(Bypass.NO_SANDBOX)
 
 
 def test_codex_no_sandbox_is_the_single_combined_flag() -> None:
+    """`-s danger-full-access` alone also reached `wrote_outside_home=yes`, and
+    is deliberately NOT the mapping: it removes the sandbox while leaving the
+    approval policy at its default, so on the interactive launch `lh run`
+    actually performs it would strip the sandbox and still prompt — which is
+    not what "also remove the sandbox" means."""
     adapter = get_agent("codex")
     assert adapter.bypass_argv(Bypass.NO_SANDBOX) == ["--dangerously-bypass-approvals-and-sandbox"]
 

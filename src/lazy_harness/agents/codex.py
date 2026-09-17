@@ -830,15 +830,22 @@ class CodexAdapter:
         return {"sessions": "sessions", "logs": "", "queue": ""}
 
     def credentials_file(self) -> str | None:
-        """None — the path is on record, the shape is not.
+        """None — and now because the shape IS on record, not because it is not.
 
-        `specs/designs/codex-evidence.md` names `~/.codex/auth.json`; all six
-        probes copy it into their disposable `CODEX_HOME`. None of them opened
-        it. The preflight parses Claude Code's `claudeAiOauth` envelope, so
-        answering `"auth.json"` here would route this file at a parser that
-        cannot read it and report "unexpected shape" — the same conflation
-        `None` exists to remove. The probe that would change this answer is
-        listed with the change that added the member (ADR-045 A4).
+        `~/.codex/auth.json` is fully measured (`codex-evidence.md` probe 8):
+        `auth_mode: str`, `OPENAI_API_KEY: None`, `last_refresh: str`, and
+        `tokens: {id_token, access_token, refresh_token, account_id}`, all
+        strings. What the file does not carry, at any level, is an **expiry**.
+
+        That is what keeps the answer at `None`. The preflight's `check_auth`
+        derives its verdict from one — `refreshTokenExpiresAt` in Claude Code's
+        envelope — so pointing it at this file could only ever produce
+        "unexpected shape", which is the conflation `None` exists to remove.
+
+        Deriving a verdict from the age of `last_refresh` would work, but it is
+        a heuristic with a threshold nobody has measured: how stale can
+        `last_refresh` be while the login is still alive? That needs its own
+        probe and its own ADR, not this one.
         """
         return None
 
@@ -847,28 +854,42 @@ class CodexAdapter:
         return [Path("AGENTS.md")]
 
     def bypass_argv(self, level: Bypass) -> list[str] | None:
-        """PROVISIONAL — read from `codex --help` on 0.154.0, evidence `[help]`.
+        """Measured on codex-cli 0.154.0 — `codex-evidence.md` section 7, `[run]`.
 
-        Help text proves a flag exists and never what it does, so every row here
-        is waiting on `specs/gates/probes/codex-bypass-probe.sh`. The run either
-        confirms this mapping or corrects it, and `codex-evidence.md` §7 records
-        the result per level; until then no row should be cited as measured.
+        Seven candidates were driven against a fixture that writes outside the
+        workspace to two targets: one under `$HOME`, one under a temp directory.
+        Two targets rather than one because the Seatbelt policy permits temp
+        writes under `workspace-write`, and a level scored on that alone reads
+        as bypassed when the sandbox is still holding.
 
-        Two things the help text does settle, and one it does not:
+        ENABLE is `None`, and that is a measurement rather than a gap. Nothing
+        on this version does what `--allow-dangerously-skip-permissions` does on
+        Claude Code — change nothing about the turn while making the toggle
+        reachable inside it. `baseline` and `-c approval_policy="never"` were
+        indistinguishable: no command ran under either. `--approve-for-me` ran
+        one, so it is already on.
 
-        *   `--full-auto` does not exist on this version, at either level. Any
-            design text naming it describes an older CLI.
-        *   `-a/--ask-for-approval` is on the **top-level** command, which is the
-            one `lh run` execs, so ACTIVATE can use it. It is absent from `codex
-            exec`, which is what the probe drives — the probe reaches the same
-            setting through `-c approval_policy="never"` and the two spellings
-            are only assumed equivalent until it runs.
-        *   ENABLE has no candidate. 0.154.0 offers nothing meaning "available
-            but off": the approval-policy settings turn approvals off, they do
-            not make an off switch reachable. `None` is the conservative answer
-            — an error the user reads, rather than a silent promotion to
-            ACTIVATE. Whether `--approve-for-me` belongs here instead is the one
-            open question ADR-049 leaves for the probe.
+        ACTIVATE is `--approve-for-me`: the command ran unattended, and the
+        write outside the workspace was still refused. That is the definition —
+        the prompt stops reaching the human, whatever sandbox exists stays.
+        Worth naming precisely: this routes approvals through an automatic
+        review, so it means "answered without you", not "always granted".
+
+        NO_SANDBOX is the single combined flag, documented as "Skip all
+        confirmation prompts and execute commands without sandboxing" — both
+        halves, which is what "also remove the sandbox" asks for.
+        `-s danger-full-access` alone also reached the `$HOME` target and is
+        deliberately not the mapping: it strips the sandbox while leaving the
+        approval policy at its default, so on the interactive launch `lh run`
+        performs it would remove the sandbox and still prompt.
+
+        Two limits on the evidence, both narrow. The probe drives `codex exec`
+        because that is what can be measured non-interactively, while `lh run`
+        execs the top-level `codex`; both flags above are on both commands, so
+        the transfer is help-backed even though the behaviour is run-backed.
+        And `-a/--ask-for-approval` is top-level only — `codex exec` refuses it
+        with "unexpected argument '-a' found" (`[run]`), which is why it appears
+        in no row here.
 
         `--dangerously-bypass-hook-trust` is deliberately absent from every row.
         It sits on the same help page and is a different axis: whether hooks run
@@ -877,10 +898,8 @@ class CodexAdapter:
         effect of a request about the agent's.
         """
         if level is Bypass.ACTIVATE:
-            return ["--ask-for-approval", "never"]
+            return ["--approve-for-me"]
         if level is Bypass.NO_SANDBOX:
-            # One flag for both halves: 0.154.0 documents it as "Skip all
-            # confirmation prompts and execute commands without sandboxing".
             return ["--dangerously-bypass-approvals-and-sandbox"]
         return None
 
