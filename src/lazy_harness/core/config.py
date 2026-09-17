@@ -37,6 +37,14 @@ class ProfileEntry:
     # same rule applies: resolve it through `agents.registry.binary_for_profile`.
     # A bare name, never a path — `deploy.engine.hook_command` explains why.
     harness_binary: str = ""
+    # ADR-050: how this profile's usage is billed, resolved per profile from
+    # its execution context (never from a credential file — the harness never
+    # reads one to infer it). Stamped onto every MetricEvent this profile's
+    # ingest produces, since the row is permanent and the auth mode is not.
+    billing_model: str = "per_token"
+
+
+BILLING_MODELS: tuple[str, ...] = ("per_token", "flat_rate")
 
 
 @dataclass
@@ -391,12 +399,19 @@ def _parse_profiles(raw: dict[str, Any]) -> ProfilesConfig:
         if key == "default":
             continue
         if isinstance(value, dict):
+            billing_model = value.get("billing_model", "per_token")
+            if billing_model not in BILLING_MODELS:
+                raise ConfigError(
+                    f"[profiles.{key}].billing_model={billing_model!r} is not one of "
+                    f"{', '.join(BILLING_MODELS)}"
+                )
             items[key] = ProfileEntry(
                 config_dir=value.get("config_dir", ""),
                 roots=value.get("roots", []),
                 lazynorth_doc=value.get("lazynorth_doc", ""),
                 agent=value.get("agent", ""),
                 harness_binary=value.get("harness_binary", ""),
+                billing_model=billing_model,
             )
     return ProfilesConfig(default=default, items=items)
 
@@ -733,6 +748,7 @@ def _config_to_dict(cfg: Config) -> dict[str, Any]:
             "lazynorth_doc": entry.lazynorth_doc,
             "agent": entry.agent,
             "harness_binary": entry.harness_binary,
+            "billing_model": entry.billing_model,
         }
 
     result: dict[str, Any] = {

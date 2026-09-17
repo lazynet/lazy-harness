@@ -29,7 +29,14 @@ def render(db: MetricsDB, period: str) -> RenderableType:
         return Group(header, "[dim]No data. Run a session first.[/dim]")
 
     by_date: dict[str, dict[str, Any]] = defaultdict(
-        lambda: {"sessions": set(), "projects": set(), "input": 0, "output": 0, "cost": 0.0}
+        lambda: {
+            "sessions": set(),
+            "projects": set(),
+            "input": 0,
+            "output": 0,
+            "cost": 0.0,
+            "billing_models": set(),
+        }
     )
     for r in rows:
         date = r["date"]
@@ -39,6 +46,7 @@ def render(db: MetricsDB, period: str) -> RenderableType:
         g["input"] += r["input"] + r["cache_read"] + r["cache_create"]
         g["output"] += r["output"]
         g["cost"] += r["cost"]
+        g["billing_models"].add(r.get("billing_model") or "per_token")
 
     table = Table(show_header=True, pad_edge=False)
     table.add_column("Date")
@@ -52,6 +60,7 @@ def render(db: MetricsDB, period: str) -> RenderableType:
     total_in = 0
     total_out = 0
     total_cost = 0.0
+    total_billing_models: set[str] = set()
     for date in sorted(by_date, reverse=True):
         g = by_date[date]
         projects = ", ".join(sorted(p for p in g["projects"] if p))
@@ -63,23 +72,27 @@ def render(db: MetricsDB, period: str) -> RenderableType:
         total_in += g["input"]
         total_out += g["output"]
         total_cost += cost
+        total_billing_models |= g["billing_models"]
+        cost_cell = "—" if g["billing_models"] == {"flat_rate"} else f"${cost}"
         table.add_row(
             date,
             str(sess_count),
             projects,
             format_tokens(g["input"]),
             format_tokens(g["output"]),
-            f"${cost}",
+            cost_cell,
         )
 
     table.add_section()
+    priced_only = "flat_rate" in total_billing_models and "per_token" in total_billing_models
+    total_cost_cell = "—" if total_billing_models == {"flat_rate"} else f"${round(total_cost, 2)}"
     table.add_row(
-        "Total",
+        "Total (priced only)" if priced_only else "Total",
         str(total_sessions),
         "",
         format_tokens(total_in),
         format_tokens(total_out),
-        f"${round(total_cost, 2)}",
+        total_cost_cell,
         style="bold",
     )
     return Group(header, table)

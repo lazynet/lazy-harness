@@ -116,6 +116,116 @@ version = "1"
     assert cfg2.agent.type == "ollama"
 
 
+def test_profile_billing_model_defaults_to_per_token(config_dir: Path) -> None:
+    config_file = config_dir / "config.toml"
+    config_file.write_text("""
+[harness]
+version = "1"
+
+[profiles]
+default = "personal"
+
+[profiles.personal]
+config_dir = "~/.claude-personal"
+""")
+    from lazy_harness.core.config import load_config
+
+    cfg = load_config(config_file)
+    assert cfg.profiles.items["personal"].billing_model == "per_token"
+
+
+def test_profile_billing_model_flat_rate(config_dir: Path) -> None:
+    config_file = config_dir / "config.toml"
+    config_file.write_text("""
+[harness]
+version = "1"
+
+[profiles]
+default = "beta"
+
+[profiles.beta]
+config_dir = "~/.claude-beta"
+billing_model = "flat_rate"
+""")
+    from lazy_harness.core.config import load_config
+
+    cfg = load_config(config_file)
+    assert cfg.profiles.items["beta"].billing_model == "flat_rate"
+
+
+def test_profile_billing_model_misspelled_names_it_in_the_diagnostic(config_dir: Path) -> None:
+    """Repo gate: a schema accepting user-supplied identifiers validates them
+    explicitly and names what it rejected."""
+    config_file = config_dir / "config.toml"
+    config_file.write_text("""
+[harness]
+version = "1"
+
+[profiles]
+default = "beta"
+
+[profiles.beta]
+config_dir = "~/.claude-beta"
+billing_model = "flatrate"
+""")
+    from lazy_harness.core.config import ConfigError, load_config
+
+    with pytest.raises(ConfigError, match="billing_model") as excinfo:
+        load_config(config_file)
+    assert "flatrate" in str(excinfo.value)
+
+
+def test_save_config_new_document_round_trips_billing_model(tmp_path: Path) -> None:
+    """Full load cycle against a file that does not exist yet."""
+    from lazy_harness.core.config import Config, ProfileEntry, load_config, save_config
+
+    config_file = tmp_path / "config.toml"
+    cfg = Config()
+    cfg.profiles.default = "beta"
+    cfg.profiles.items["beta"] = ProfileEntry(
+        config_dir="~/.claude-beta", billing_model="flat_rate"
+    )
+    save_config(cfg, config_file)
+
+    reloaded = load_config(config_file)
+    assert reloaded.profiles.items["beta"].billing_model == "flat_rate"
+
+    reloaded.profiles.items["beta"].billing_model = "per_token"
+    save_config(reloaded, config_file)
+    reloaded_again = load_config(config_file)
+    assert reloaded_again.profiles.items["beta"].billing_model == "per_token"
+
+
+def test_save_config_merge_on_existing_preserves_billing_model(config_dir: Path) -> None:
+    """Full load cycle against a file that already exists (read-modify-write)."""
+    config_file = config_dir / "config.toml"
+    config_file.write_text("""
+[harness]
+version = "1"
+
+[profiles]
+default = "beta"
+
+[profiles.beta]
+config_dir = "~/.claude-beta"
+""")
+    from lazy_harness.core.config import load_config, save_config
+
+    cfg = load_config(config_file)
+    assert cfg.profiles.items["beta"].billing_model == "per_token"
+
+    cfg.profiles.items["beta"].billing_model = "flat_rate"
+    save_config(cfg, config_file)
+
+    cfg2 = load_config(config_file)
+    assert cfg2.profiles.items["beta"].billing_model == "flat_rate"
+
+    cfg2.profiles.items["beta"].billing_model = "per_token"
+    save_config(cfg2, config_file)
+    cfg3 = load_config(config_file)
+    assert cfg3.profiles.items["beta"].billing_model == "per_token"
+
+
 def test_load_config_with_hooks(config_dir: Path) -> None:
     config_file = config_dir / "config.toml"
     config_file.write_text("""

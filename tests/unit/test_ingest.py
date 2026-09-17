@@ -252,6 +252,71 @@ def test_ingest_all_walks_every_profile(tmp_path: Path) -> None:
     db.close()
 
 
+def test_ingest_profile_stamps_agent_and_billing_model(tmp_path: Path) -> None:
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.ingest import ingest_profile
+    from lazy_harness.monitoring.pricing import load_pricing
+
+    prof = _profile(tmp_path, "lazy")
+    _write_session(
+        prof.config_dir / "projects",
+        "-Users-foo-repos-demo",
+        "11111111-1111-1111-1111-111111111111",
+        [_assistant_msg(inp=100, out=50)],
+    )
+
+    db = MetricsDB(tmp_path / "metrics.db")
+    ingest_profile(prof, db, load_pricing(), billing_model="flat_rate")
+    rows = db.query_stats(period="all")
+    assert rows[0]["agent"] == "claude-code"
+    assert rows[0]["billing_model"] == "flat_rate"
+    assert rows[0]["cost"] == 0.0, "a flat_rate row must never bill per-token"
+    db.close()
+
+
+def test_ingest_profile_defaults_to_claude_code_agent_and_per_token_billing_model(
+    tmp_path: Path,
+) -> None:
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.ingest import ingest_profile
+    from lazy_harness.monitoring.pricing import load_pricing
+
+    prof = _profile(tmp_path, "lazy")
+    _write_session(
+        prof.config_dir / "projects",
+        "-Users-foo-repos-demo",
+        "22222222-3333-4444-5555-666666666666",
+        [_assistant_msg(inp=100, out=50)],
+    )
+
+    db = MetricsDB(tmp_path / "metrics.db")
+    ingest_profile(prof, db, load_pricing())
+    rows = db.query_stats(period="all")
+    assert rows[0]["agent"] == "claude-code"
+    assert rows[0]["billing_model"] == "per_token"
+    db.close()
+
+
+def test_ingest_profile_flat_rate_does_not_flag_unknown_models(tmp_path: Path) -> None:
+    """A flat-rate row's model was never going to be priced, so an unrecognised
+    one is not the gap `unknown_models` exists to surface."""
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.ingest import ingest_profile
+
+    prof = _profile(tmp_path, "lazy")
+    _write_session(
+        prof.config_dir / "projects",
+        "-Users-foo-repos-demo",
+        "33333333-4444-5555-6666-777777777777",
+        [_assistant_msg(model="claude-future-model-99", inp=100, out=50)],
+    )
+
+    db = MetricsDB(tmp_path / "metrics.db")
+    report = ingest_profile(prof, db, {}, billing_model="flat_rate")
+    assert report.unknown_models == set()
+    db.close()
+
+
 def test_ingest_dedups_messages_shared_across_resumed_sessions(tmp_path: Path) -> None:
     """Resumed session JSONLs re-include prior messages. Each message.id must count once."""
     from lazy_harness.monitoring.db import MetricsDB

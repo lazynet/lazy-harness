@@ -60,8 +60,8 @@ def test_metric_event_json_roundtrip() -> None:
     assert restored == event
 
 
-def test_schema_version_is_int_two() -> None:
-    assert METRIC_EVENT_SCHEMA_VERSION == 2
+def test_schema_version_is_int_three() -> None:
+    assert METRIC_EVENT_SCHEMA_VERSION == 3
     assert isinstance(METRIC_EVENT_SCHEMA_VERSION, int)
 
 
@@ -137,6 +137,115 @@ def test_from_dict_accepts_a_v1_payload() -> None:
     assert restored.schema_version == 1
     assert restored.host == ""
     assert restored.workload == ""
+    assert restored.agent == ""
+    assert restored.billing_model == "per_token"
+    assert restored.cost_source is None
+
+
+def test_from_dict_accepts_a_v2_payload() -> None:
+    """ADR-050: a v2 payload has host/workload but none of the three v3 keys."""
+    v2_payload = {
+        "event_id": "01HABCDE",
+        "schema_version": 2,
+        "user_id": "martin",
+        "tenant_id": "local",
+        "profile": "personal",
+        "session": "abc123",
+        "model": "claude-sonnet-4-5",
+        "project": "lazy-harness",
+        "date": "2026-04-14",
+        "input_tokens": 100,
+        "output_tokens": 50,
+        "cache_read": 0,
+        "cache_create": 0,
+        "cost": 0.0012,
+        "host": "LazyMBP",
+        "workload": "nightly-pass",
+    }
+    restored = MetricEvent.from_dict(v2_payload)
+    assert restored.schema_version == 2
+    assert restored.host == "LazyMBP"
+    assert restored.workload == "nightly-pass"
+    assert restored.agent == ""
+    assert restored.billing_model == "per_token"
+    assert restored.cost_source is None
+
+
+def test_metric_event_carries_agent_and_billing_model() -> None:
+    """ADR-050: agent and billing_model/cost_source are v3 dimensions."""
+    event = MetricEvent(
+        event_id="01HABCDE",
+        schema_version=METRIC_EVENT_SCHEMA_VERSION,
+        user_id="martin",
+        tenant_id="local",
+        profile="personal",
+        session="abc123",
+        model="claude-sonnet-4-5",
+        project="lazy-harness",
+        date="2026-04-14",
+        input_tokens=100,
+        output_tokens=50,
+        cache_read=0,
+        cache_create=0,
+        cost=0.0012,
+        host="LazyMBP",
+        workload="nightly-pass",
+        agent="claude-code",
+        billing_model="flat_rate",
+        cost_source="subscription",
+    )
+    assert event.agent == "claude-code"
+    assert event.billing_model == "flat_rate"
+    assert event.cost_source == "subscription"
+
+
+def test_agent_and_billing_model_default() -> None:
+    event = MetricEvent(
+        event_id="01HABCDE",
+        schema_version=METRIC_EVENT_SCHEMA_VERSION,
+        user_id="martin",
+        tenant_id="local",
+        profile="personal",
+        session="abc123",
+        model="claude-sonnet-4-5",
+        project="lazy-harness",
+        date="2026-04-14",
+        input_tokens=100,
+        output_tokens=50,
+        cache_read=0,
+        cache_create=0,
+        cost=0.0012,
+    )
+    assert event.agent == ""
+    assert event.billing_model == "per_token"
+    assert event.cost_source is None
+
+
+def test_metric_event_v3_json_roundtrip() -> None:
+    event = MetricEvent(
+        event_id="01HABCDE",
+        schema_version=METRIC_EVENT_SCHEMA_VERSION,
+        user_id="martin",
+        tenant_id="local",
+        profile="personal",
+        session="abc123",
+        model="claude-sonnet-4-5",
+        project="lazy-harness",
+        date="2026-04-14",
+        input_tokens=100,
+        output_tokens=50,
+        cache_read=0,
+        cache_create=0,
+        cost=0.0,
+        host="LazyMBP",
+        workload="nightly-pass",
+        agent="claude-code",
+        billing_model="flat_rate",
+        cost_source="subscription",
+    )
+    payload = json.dumps(event.to_dict(), sort_keys=True)
+    restored = MetricEvent.from_dict(json.loads(payload))
+    assert restored == event
 
 
 def test_to_dict_names_match_the_receiver_columns() -> None:

@@ -52,7 +52,7 @@ from lazy_harness.monitoring.collector import (
 )
 from lazy_harness.monitoring.db import MetricsDB
 from lazy_harness.monitoring.event_id import derive_event_id
-from lazy_harness.monitoring.pricing import calculate_cost, is_pseudo_model
+from lazy_harness.monitoring.pricing import cost_for_billing_model
 from lazy_harness.plugins.contracts import (
     METRIC_EVENT_SCHEMA_VERSION,
     MetricEvent,
@@ -132,6 +132,7 @@ def ingest_profile(
     tenant_id: str = "local",
     host: str = "",
     workload_by_session: dict[str, str] | None = None,
+    billing_model: str = "per_token",
 ) -> IngestReport:
     report = IngestReport()
     if agent is None:
@@ -141,7 +142,8 @@ def ingest_profile(
     # Both refusals are silent here and named by `lh doctor`: an ingest run
     # prints per-profile errors, and a profile it was never going to read is
     # not an error of this run.
-    if getattr(agent, "name", "") != _PARSED_DIALECT:
+    agent_name = getattr(agent, "name", "")
+    if agent_name != _PARSED_DIALECT:
         return report
     sessions_dir = session_path(agent, profile.config_dir, "sessions")
     if sessions_dir is None or not sessions_dir.is_dir():
@@ -194,9 +196,7 @@ def ingest_profile(
     entries: list[dict] = []
     events: list[MetricEvent] = []
     for (session_id, model), agg in aggregated.items():
-        if model not in pricing and not is_pseudo_model(model):
-            report.unknown_models.add(model)
-        cost = calculate_cost(
+        cost, cost_source = cost_for_billing_model(
             model,
             {
                 "input": agg["input"],
@@ -206,8 +206,15 @@ def ingest_profile(
                 "cache_create_1h": agg["cache_create_1h"],
             },
             pricing,
+            billing_model=billing_model,
             on=agg["date"],
         )
+        # cost_source is None for exactly the gap this report exists to
+        # surface: a per_token row whose model has no rate. A flat_rate row
+        # never reaches this branch — its usage is real but not per-token
+        # metered, so an unpriced model is not a pricing gap.
+        if cost_source is None:
+            report.unknown_models.add(model)
         # The TTL split only has to survive as far as the price. Stored rows
         # and the sink payload keep one cache-write token total: splitting
         # the column would cost a schema migration and a wire-format bump
@@ -225,6 +232,8 @@ def ingest_profile(
                 "cache_read": agg["cache_read"],
                 "cache_create": cache_create_total,
                 "cost": cost,
+                "agent": agent_name,
+                "billing_model": billing_model,
             }
         )
         events.append(
@@ -248,6 +257,9 @@ def ingest_profile(
                 # spawning. A session nobody labelled joins nothing and stays
                 # empty, which is the right answer for interactive work.
                 workload=(workload_by_session or {}).get(session_id, ""),
+                agent=agent_name,
+                billing_model=billing_model,
+                cost_source=cost_source,
             )
         )
 
@@ -291,6 +303,7 @@ def ingest_all(
         )
         if not resolved.exists:
             continue
+        entry = cfg.profiles.items.get(prof.name)
         total.merge(
             ingest_profile(
                 resolved,
@@ -305,6 +318,7 @@ def ingest_all(
                 tenant_id=cfg.metrics.tenant_id,
                 host=host,
                 workload_by_session=workload_by_session,
+                billing_model=entry.billing_model if entry is not None else "per_token",
             )
         )
     return total

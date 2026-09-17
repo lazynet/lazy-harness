@@ -58,6 +58,7 @@ def render(ctx: StatusContext, db: MetricsDB | None) -> RenderableType:
             "cache_read": 0,
             "cache_create": 0,
             "cost": 0.0,
+            "billing_models": set(),
         }
         for name in profile_order
     }
@@ -77,14 +78,25 @@ def render(ctx: StatusContext, db: MetricsDB | None) -> RenderableType:
                 bucket["cache_read"] = int(bucket["cache_read"]) + (r["cache_read"] or 0)
                 bucket["cache_create"] = int(bucket["cache_create"]) + (r["cache_create"] or 0)
                 bucket["cost"] = float(bucket["cost"]) + r["cost"]
+                bucket["billing_models"].add(r.get("billing_model") or "per_token")  # type: ignore[union-attr]
 
     month_label = datetime.now().strftime("%b")
 
     def _sess_line(label: str, today: int, month: int, total: int) -> str:
         return f"{label:<5} {today} today · {month} this month · {total} total"
 
-    def _tok_line(label: str, tin: int, tout: int, cost: float) -> str:
-        return f"{label:<5} {_fmt(tin)} in · {_fmt(tout)} out · ${round(cost, 2)} ({month_label})"
+    def _tok_line(
+        label: str,
+        tin: int,
+        tout: int,
+        cost: float,
+        *,
+        all_flat: bool = False,
+        priced_only: bool = False,
+    ) -> str:
+        cost_cell = "—" if all_flat else f"${round(cost, 2)}"
+        suffix = f"{month_label}, priced only" if priced_only else month_label
+        return f"{label:<5} {_fmt(tin)} in · {_fmt(tout)} out · {cost_cell} ({suffix})"
 
     # Kept off the Tokens row on purpose. That row reports raw input alone, to
     # match how ccusage and Anthropic's billing bucket them, which leaves the
@@ -106,6 +118,7 @@ def render(ctx: StatusContext, db: MetricsDB | None) -> RenderableType:
     all_cache_read = 0
     all_cache_create = 0
     all_cost = 0.0
+    all_billing_models: set[str] = set()
     for name in profile_order:
         b = per_profile[name]
         today_set = b["today"]  # type: ignore[assignment]
@@ -114,7 +127,16 @@ def render(ctx: StatusContext, db: MetricsDB | None) -> RenderableType:
         session_rows.append(
             _sess_line(f"{name}:", len(today_set), len(month_set), len(total_set))  # type: ignore[arg-type]
         )
-        token_rows.append(_tok_line(f"{name}:", int(b["in"]), int(b["out"]), float(b["cost"])))
+        billing_models = b["billing_models"]  # type: ignore[assignment]
+        token_rows.append(
+            _tok_line(
+                f"{name}:",
+                int(b["in"]),
+                int(b["out"]),
+                float(b["cost"]),
+                all_flat=billing_models == {"flat_rate"},  # type: ignore[comparison-overlap]
+            )
+        )
         cache_rows.append(_cache_line(f"{name}:", int(b["cache_read"]), int(b["cache_create"])))
         all_today |= today_set  # type: ignore[arg-type]
         all_month |= month_set  # type: ignore[arg-type]
@@ -124,10 +146,20 @@ def render(ctx: StatusContext, db: MetricsDB | None) -> RenderableType:
         all_cache_read += int(b["cache_read"])
         all_cache_create += int(b["cache_create"])
         all_cost += float(b["cost"])
+        all_billing_models |= billing_models  # type: ignore[arg-type]
 
     if len(profile_order) > 1:
         session_rows.append(_sess_line("all:", len(all_today), len(all_month), len(all_total)))
-        token_rows.append(_tok_line("all:", all_in, all_out, all_cost))
+        token_rows.append(
+            _tok_line(
+                "all:",
+                all_in,
+                all_out,
+                all_cost,
+                all_flat=all_billing_models == {"flat_rate"},
+                priced_only="flat_rate" in all_billing_models and "per_token" in all_billing_models,
+            )
+        )
         cache_rows.append(_cache_line("all:", all_cache_read, all_cache_create))
     elif not profile_order:
         session_rows.append(_sess_line("", 0, 0, 0))

@@ -93,6 +93,7 @@ def test_every_documented_dimension_is_supported() -> None:
         "month",
         "host",
         "workload",
+        "agent",
     }
 
 
@@ -319,8 +320,8 @@ def test_aggregate_groups_by_workload() -> None:
     assert by_workload == {"vault-pass": 3.0, "unknown": 4.0}
 
 
-def test_host_and_workload_are_filterable() -> None:
-    assert set(FILTERABLE) == {"profile", "project", "model", "host", "workload"}
+def test_host_workload_and_agent_are_filterable() -> None:
+    assert set(FILTERABLE) == {"profile", "project", "model", "host", "workload", "agent"}
 
 
 def test_aggregate_filters_by_workload() -> None:
@@ -341,3 +342,49 @@ def test_aggregate_crosses_host_with_workload() -> None:
     result = aggregate(rows, ["host", "workload"])
     keys = {(g.key["host"], g.key["workload"]): g.cost for g in result.groups}
     assert keys == {("agents", "vault-pass"): 3.0, ("LazyMBP", "vault-pass"): 4.0}
+
+
+def test_aggregate_groups_by_agent() -> None:
+    rows = [
+        _row(session="s1", agent="claude-code", cost=1.0),
+        _row(session="s2", agent="codex", cost=2.0),
+        _row(session="s3", agent="codex", cost=4.0),
+    ]
+    result = aggregate(rows, ["agent"])
+    by_agent = {g.key["agent"]: g.cost for g in result.groups}
+    assert by_agent == {"claude-code": 1.0, "codex": 6.0}
+
+
+# --- billing model (ADR-050) -------------------------------------------------
+
+
+def test_bucket_all_flat_rate_when_every_row_bills_flat_rate() -> None:
+    result = aggregate(
+        [
+            _row(session="s1", billing_model="flat_rate", cost=0.0),
+            _row(session="s2", billing_model="flat_rate", cost=0.0),
+        ],
+        ["profile"],
+    )
+    assert result.total.all_flat_rate is True
+
+
+def test_bucket_not_all_flat_rate_when_mixed() -> None:
+    result = aggregate(
+        [
+            _row(session="s1", billing_model="flat_rate", cost=0.0),
+            _row(session="s2", billing_model="per_token", cost=1.0),
+        ],
+        ["profile"],
+    )
+    assert result.total.all_flat_rate is False
+
+
+def test_bucket_not_all_flat_rate_when_every_row_is_per_token() -> None:
+    result = aggregate([_row(billing_model="per_token", cost=1.0)], ["profile"])
+    assert result.total.all_flat_rate is False
+
+
+def test_bucket_not_all_flat_rate_when_empty() -> None:
+    result = aggregate([_row(project="p")], ["project"], {"project": "nope"})
+    assert result.total.all_flat_rate is False

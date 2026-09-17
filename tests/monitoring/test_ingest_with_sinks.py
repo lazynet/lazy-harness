@@ -167,6 +167,80 @@ def test_ingest_does_not_fold_host_into_user_id(tmp_path: Path) -> None:
     assert counting.events[0].host != "martin"
 
 
+def test_ingest_all_stamps_the_default_agent_from_agent_type(tmp_path: Path) -> None:
+    """No per-profile override: the agent comes from `[agent].type`."""
+    profile_dir = tmp_path / "claude-personal"
+    _write_fake_jsonl(profile_dir / "projects", "sess1")
+
+    db = MetricsDB(tmp_path / "m.db")
+    counting = _CountingSink()
+    try:
+        ingest_all(_one_profile_config(profile_dir), db, pricing={}, sinks=[counting])
+    finally:
+        db.close()
+
+    assert counting.events[0].agent == "claude-code"
+
+
+def test_ingest_all_stamps_a_profiles_own_agent_override(tmp_path: Path) -> None:
+    """A profile's own `[profiles.<name>].agent` wins over the global
+    `[agent].type` — proven by setting the global default to an agent whose
+    transcripts the ingest cannot parse (ADR-051's dialect gate) and
+    confirming the override still resolves and stamps `claude-code`."""
+    profile_dir = tmp_path / "claude-personal"
+    _write_fake_jsonl(profile_dir / "projects", "sess1")
+
+    cfg = _one_profile_config(profile_dir)
+    cfg.agent.type = "codex"
+    cfg.profiles.items["personal"].agent = "claude-code"
+
+    db = MetricsDB(tmp_path / "m.db")
+    counting = _CountingSink()
+    try:
+        ingest_all(cfg, db, pricing={}, sinks=[counting])
+    finally:
+        db.close()
+
+    assert counting.events[0].agent == "claude-code"
+
+
+def test_ingest_all_stamps_the_profiles_billing_model(tmp_path: Path) -> None:
+    """ADR-050: a flat_rate profile's row costs 0.0 with cost_source='subscription'."""
+    profile_dir = tmp_path / "claude-personal"
+    _write_fake_jsonl(profile_dir / "projects", "sess1")
+
+    cfg = _one_profile_config(profile_dir)
+    cfg.profiles.items["personal"].billing_model = "flat_rate"
+
+    db = MetricsDB(tmp_path / "m.db")
+    counting = _CountingSink()
+    try:
+        ingest_all(cfg, db, pricing={}, sinks=[counting])
+    finally:
+        db.close()
+
+    ev = counting.events[0]
+    assert ev.billing_model == "flat_rate"
+    assert ev.cost == 0.0
+    assert ev.cost_source == "subscription"
+
+
+def test_ingest_all_per_token_profile_still_flags_unknown_models(tmp_path: Path) -> None:
+    """Regression: the billing-model branch must not swallow the per_token gap."""
+    profile_dir = tmp_path / "claude-personal"
+    _write_fake_jsonl(profile_dir / "projects", "sess1")
+
+    db = MetricsDB(tmp_path / "m.db")
+    counting = _CountingSink()
+    try:
+        report = ingest_all(_one_profile_config(profile_dir), db, pricing={}, sinks=[counting])
+    finally:
+        db.close()
+
+    assert "claude-sonnet-4-5" in report.unknown_models
+    assert counting.events[0].cost_source is None
+
+
 def test_ingest_event_id_is_unchanged_by_the_new_dimensions(tmp_path: Path) -> None:
     """ADR-037 D6: the remote upserts by event_id; new inputs would re-land
     every historical event as a new row and double the recorded cost."""

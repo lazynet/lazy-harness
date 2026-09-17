@@ -122,6 +122,56 @@ def test_a_rewritten_event_is_resent_under_the_same_event_id(
     assert [r["output_tokens"] for r in received] == [50, 80]
 
 
+def test_drain_posts_a_v3_events_new_fields_intact(tmp_path: Path, httpserver: HTTPServer) -> None:
+    """The artifact is verified by the system that consumes it: the real POST
+    body, not the outbox row that produced it."""
+    received: list[dict] = []
+
+    def _handler(req):  # type: ignore[no-untyped-def]
+        received.append(json.loads(req.get_data(as_text=True)))
+        from werkzeug.wrappers import Response
+
+        return Response('{"ok":true}', 200, content_type="application/json")
+
+    httpserver.expect_request("/ingest", method="POST").respond_with_handler(_handler)
+
+    db = MetricsDB(tmp_path / "m.db")
+    sink = HttpRemoteSink(
+        db=db, url=httpserver.url_for("/ingest"), timeout_seconds=2, batch_size=10
+    )
+    try:
+        sink.write(
+            MetricEvent(
+                event_id="eid-v3",
+                schema_version=METRIC_EVENT_SCHEMA_VERSION,
+                user_id="martin",
+                tenant_id="local",
+                profile="personal",
+                session="s1",
+                model="sonnet",
+                project="lazy-harness",
+                date="2026-04-14",
+                input_tokens=100,
+                output_tokens=50,
+                cache_read=0,
+                cache_create=0,
+                cost=0.0,
+                agent="claude-code",
+                billing_model="flat_rate",
+                cost_source="subscription",
+            )
+        )
+        drain_http_remote(
+            db=db, url=httpserver.url_for("/ingest"), timeout_seconds=2, batch_size=10
+        )
+    finally:
+        db.close()
+
+    assert received[0]["agent"] == "claude-code"
+    assert received[0]["billing_model"] == "flat_rate"
+    assert received[0]["cost_source"] == "subscription"
+
+
 def test_drain_does_not_resend_an_unchanged_event(tmp_path: Path, httpserver: HTTPServer) -> None:
     """The treadmill, at the level that actually POSTs.
 

@@ -18,12 +18,16 @@ from lazy_harness.monitoring.views._helpers import format_tokens
 SUBTOTAL_LABEL = "subtotal"
 
 
+def _cost_cell(bucket: Bucket) -> str:
+    return "—" if bucket.all_flat_rate else f"${round(bucket.cost, 2)}"
+
+
 def _measures(bucket: Bucket) -> list[str]:
     return [
         format_tokens(bucket.total_input),
         format_tokens(bucket.output),
         f"{bucket.cache_pct}%",
-        f"${round(bucket.cost, 2)}",
+        _cost_cell(bucket),
     ]
 
 
@@ -60,8 +64,15 @@ def render_table(agg: Aggregation, period: Period) -> RenderableType:
         _add_subtotal(table, agg, subtotals[previous])
 
     table.add_section()
+    # A total spanning both billing models still sums to the right number —
+    # a flat_rate row's cost is 0.0 — but the label must say the total is not
+    # every profile's real spend, only the metered part of it.
+    priced_only = (
+        "flat_rate" in agg.total.billing_models and "per_token" in agg.total.billing_models
+    )
+    total_label = "Total (priced only)" if priced_only else "Total"
     table.add_row(
-        "Total",
+        total_label,
         *[""] * (len(agg.dimensions) - 1),
         *_measures(agg.total),
         style="bold",
@@ -78,13 +89,16 @@ def _add_subtotal(table: Table, agg: Aggregation, bucket: Bucket) -> None:
 
 
 def _bucket_json(bucket: Bucket, *, with_key: bool = True) -> dict[str, Any]:
+    # A machine consumer distinguishes "no rows" from "subscription usage"
+    # without parsing the render: null cost plus cost_source, never $0.00.
     payload: dict[str, Any] = {
         "input": bucket.total_input,
         "output": bucket.output,
         "cache_read": bucket.cache_read,
         "cache_create": bucket.cache_create,
         "cache_pct": bucket.cache_pct,
-        "cost": round(bucket.cost, 2),
+        "cost": None if bucket.all_flat_rate else round(bucket.cost, 2),
+        "cost_source": "subscription" if bucket.all_flat_rate else None,
         "sessions": bucket.session_count,
     }
     if with_key:
