@@ -153,6 +153,58 @@ def test_a_stored_hash_reads_unknown_and_never_trusted(tmp_path: Path) -> None:
     assert not hasattr(report, "trusted")
 
 
+def test_a_changed_declaration_since_the_last_snapshot_reads_stale(home_dir: Path) -> None:
+    """The fourth state, established without recomputing anything Codex does:
+    the harness's own deploy snapshot proves this hook's declaration is not
+    what it was the last time a hash could have been approved."""
+    from lazy_harness.core.backups import DEPLOY_NAMESPACE, backups_root, namespace_dir
+    from lazy_harness.deploy.snapshot import take_snapshot
+
+    profile_dir = home_dir / ".codex"
+    profile_dir.mkdir()
+    old_hooks = {"pre_tool_use": [HookEntry(command="lh hook sec", matcher="Bash")]}
+    hooks_file = _deploy(profile_dir, old_hooks)
+    declared, _ = trust_keys(hooks_file, hooks_file.read_text())
+    _config_toml(profile_dir, {key: _HASH for key, _ in declared})
+
+    snapshot_dir = namespace_dir(backups_root(), DEPLOY_NAMESPACE) / "20260101-000000.000000"
+    take_snapshot([hooks_file], snapshot_dir)
+
+    new_hooks = {"pre_tool_use": [HookEntry(command="lh hook sec", matcher="Edit")]}
+    _deploy(profile_dir, new_hooks)
+
+    report = trust_for_profile(_profile(profile_dir), "probe")
+
+    assert report is not None
+    assert report.stale == ("pre_tool_use[0]",)
+    assert report.unknown == ()
+
+
+def test_an_unchanged_redeploy_after_a_snapshot_still_reads_unknown(home_dir: Path) -> None:
+    """A snapshot existing is not itself a reason to call anything stale — only
+    a declaration that actually differs from it is."""
+    from lazy_harness.core.backups import DEPLOY_NAMESPACE, backups_root, namespace_dir
+    from lazy_harness.deploy.snapshot import take_snapshot
+
+    profile_dir = home_dir / ".codex"
+    profile_dir.mkdir()
+    hooks = {"pre_tool_use": [HookEntry(command="lh hook sec", matcher="Bash")]}
+    hooks_file = _deploy(profile_dir, hooks)
+    declared, _ = trust_keys(hooks_file, hooks_file.read_text())
+    _config_toml(profile_dir, {key: _HASH for key, _ in declared})
+
+    snapshot_dir = namespace_dir(backups_root(), DEPLOY_NAMESPACE) / "20260101-000000.000000"
+    take_snapshot([hooks_file], snapshot_dir)
+
+    _deploy(profile_dir, hooks)  # redeploy of the identical declaration
+
+    report = trust_for_profile(_profile(profile_dir), "probe")
+
+    assert report is not None
+    assert report.stale == ()
+    assert len(report.unknown) == 1
+
+
 def test_a_state_entry_the_file_no_longer_declares_is_orphaned(tmp_path: Path) -> None:
     """The one state the harness can establish on its own. The key indexes the
     group's *position*, so a redeploy that drops a group leaves the approval

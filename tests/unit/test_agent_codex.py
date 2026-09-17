@@ -408,6 +408,52 @@ def test_the_document_is_stable_across_redeploys_of_the_same_input() -> None:
     assert __version__ not in ops[0].artifact.content
 
 
+# --- changed-declaration detection (lane B3, deploy-retrust) -------------
+
+
+def test_first_deploy_marks_every_declared_hook_as_changed() -> None:
+    """No existing `hooks.json`: every declared hook is new, hence changed."""
+    ops = _plan({"session_start": [HookEntry(command="lh hook ctx")]})
+    assert ops[0].changed == ["session_start[0]"]
+
+
+def test_redeploy_of_the_same_declaration_reports_nothing_changed() -> None:
+    hooks = {"session_start": [HookEntry(command="lh hook ctx")]}
+    first = _plan(hooks)
+    assert first[0].artifact is not None
+    existing = {HOOKS_JSON: first[0].artifact.content}
+    redeployed = _plan(hooks, existing)
+    assert redeployed[0].changed == []
+
+
+def test_changing_one_matcher_names_only_that_hook_as_changed() -> None:
+    hooks = {
+        "session_start": [HookEntry(command="lh hook ctx")],
+        "pre_tool_use": [HookEntry(command="lh hook sec")],
+    }
+    first = _plan(hooks)
+    assert first[0].artifact is not None
+    existing = {HOOKS_JSON: first[0].artifact.content}
+
+    changed_hooks = dict(hooks)
+    changed_hooks["pre_tool_use"] = [HookEntry(command="lh hook sec", matcher="Bash")]
+    redeployed = _plan(changed_hooks, existing)
+    assert redeployed[0].changed == ["pre_tool_use[0]"]
+
+
+def test_dropping_a_declared_hook_names_it_as_changed() -> None:
+    """The delete branch (empty declarations, harness-written file) still
+    reports what it is retiring — that is a changed declaration too."""
+    hooks = {"session_start": [HookEntry(command="lh hook ctx")]}
+    first = _plan(hooks)
+    assert first[0].artifact is not None
+    existing = {HOOKS_JSON: first[0].artifact.content}
+
+    ops = _plan({}, existing)
+    assert ops[0].artifact is None
+    assert ops[0].changed == ["session_start[0]"]
+
+
 # --- registration --------------------------------------------------------
 
 

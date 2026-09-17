@@ -15,7 +15,12 @@ from rich.markup import escape
 
 from lazy_harness import __version__
 from lazy_harness.agents.base import AgentAdapter
-from lazy_harness.agents.codex_trust import CodexHookTrust, collect_codex_trust
+from lazy_harness.agents.codex_trust import (
+    RETRUST_INSTRUCTION,
+    TRUST_STALE_VERDICT,
+    CodexHookTrust,
+    collect_codex_trust,
+)
 from lazy_harness.agents.registry import AgentNotFoundError, get_agent
 from lazy_harness.agents.session_paths import (
     TranscriptHealth,
@@ -640,6 +645,12 @@ def _render_codex_trust(console: Console, reports: list[CodexHookTrust]) -> None
                 f"whether it still matches is not determinable without Codex's own "
                 f"normalisation"
             )
+        if report.stale:
+            console.print(
+                f"  [yellow]![/yellow] {name} — {len(report.stale)} "
+                f"{_hooks(len(report.stale))} trust stale: {escape(', '.join(report.stale))} — "
+                f"{TRUST_STALE_VERDICT}"
+            )
         if report.orphaned:
             console.print(
                 f"  [yellow]![/yellow] {name} — {len(report.orphaned)} orphaned trust "
@@ -654,11 +665,7 @@ def _render_codex_trust(console: Console, reports: list[CodexHookTrust]) -> None
                 f"{'is an event' if len(report.ignored_events) == 1 else 'are events'} "
                 f"this Codex does not deliver; nothing is installed for it and nothing warns"
             )
-    console.print(
-        "      [dim]Codex will not run a hook it has not approved, and says nothing when it "
-        "skips one. Approve them in Codex's own review screen — `lh deploy` cannot: the "
-        "User config layer it writes to is never Managed.[/dim]"
-    )
+    console.print(f"      [dim]{RETRUST_INSTRUCTION}[/dim]")
 
 
 def _render_launches(console: Console, db: MetricsDB, now: datetime) -> None:
