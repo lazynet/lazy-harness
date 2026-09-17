@@ -73,15 +73,30 @@ def _exec_call(program: str, *, call_id: str = "call_1") -> dict:
     )
 
 
-def _usage_record(**counters: object) -> dict:
+def _usage_record(*, response_id: str = "resp_1", **counters: object) -> dict:
     return _entry(
         "token_usage_record",
         {
             "session_id": "sess",
             "turn_id": "turn",
+            "response_id": response_id,
             "usage": dict(counters),
             "turn_token_usage": dict(counters),
             "thread_token_usage": dict(counters),
+        },
+    )
+
+
+def _turn_context(model: str = "gpt-5-codex") -> dict:
+    """The shape evidence §5.3 records, reduced to the keys the reader names."""
+    return _entry(
+        "turn_context",
+        {
+            "cwd": "/w",
+            "model": model,
+            "approval_policy": "on-request",
+            "sandbox_policy": {"mode": "workspace-write"},
+            "turn_id": "turn",
         },
     )
 
@@ -430,6 +445,174 @@ def test_the_ui_token_count_event_is_not_a_second_usage_record(tmp_path: Path) -
     )
 
     assert len(_by_signal(path, Signal.TOKEN_USAGE)) == 1
+
+
+# --- the model, which no usage record carries ------------------------------
+#
+# `turn_context` is the only kind in the rollout that names the model, and it
+# is a different line from the one that reports the tokens. This is the single
+# place a Codex event depends on a line the reader has already passed.
+
+
+def test_the_model_comes_from_the_preceding_turn_context(tmp_path: Path) -> None:
+    from lazy_harness.agents.base import Signal
+
+    path = _write(tmp_path, _turn_context("gpt-5-codex"), _usage_record(input_tokens=11))
+
+    (event,) = _by_signal(path, Signal.TOKEN_USAGE)
+    assert event.model == "gpt-5-codex"
+
+
+def test_one_turn_context_names_the_model_for_every_record_after_it(
+    tmp_path: Path,
+) -> None:
+    """Measured: 23 `turn_context` lines to 176 usage records, 1 model per file."""
+    from lazy_harness.agents.base import Signal
+
+    path = _write(
+        tmp_path,
+        _turn_context("gpt-5-codex"),
+        _usage_record(response_id="r1", input_tokens=1),
+        _usage_record(response_id="r2", input_tokens=2),
+        _usage_record(response_id="r3", input_tokens=3),
+    )
+
+    assert [e.model for e in _by_signal(path, Signal.TOKEN_USAGE)] == ["gpt-5-codex"] * 3
+
+
+def test_a_later_turn_context_replaces_the_model_for_what_follows_it(
+    tmp_path: Path,
+) -> None:
+    from lazy_harness.agents.base import Signal
+
+    path = _write(
+        tmp_path,
+        _turn_context("gpt-5-codex"),
+        _usage_record(response_id="r1", input_tokens=1),
+        _turn_context("gpt-5-codex-mini"),
+        _usage_record(response_id="r2", input_tokens=2),
+    )
+
+    assert [e.model for e in _by_signal(path, Signal.TOKEN_USAGE)] == [
+        "gpt-5-codex",
+        "gpt-5-codex-mini",
+    ]
+
+
+def test_a_usage_record_before_any_turn_context_names_no_model(tmp_path: Path) -> None:
+    """`None`, never a placeholder. Measured at 0 occurrences in 15 rollouts, but
+    a truncated or rotated file is exactly where it would appear, and metering
+    keeps "no model disclosed" apart from a model literally named `unknown`."""
+    from lazy_harness.agents.base import Signal
+
+    path = _write(tmp_path, _usage_record(input_tokens=11))
+
+    (event,) = _by_signal(path, Signal.TOKEN_USAGE)
+    assert event.model is None
+
+
+def test_a_turn_context_yields_no_event_of_its_own(tmp_path: Path) -> None:
+    """It is read for one field, not delivered: no signal is defined over it."""
+    path = _write(tmp_path, _turn_context("gpt-5-codex"))
+
+    assert _read(path) == []
+
+
+def test_the_carried_model_does_not_leak_from_one_rollout_into_the_next(
+    tmp_path: Path,
+) -> None:
+    """One adapter instance serves every profile — `registry.py` builds a bare
+    `cls()` — so carrying the model on `self` would bill one session's tokens
+    to the model another session declared. The state belongs to the read."""
+    from lazy_harness.agents.base import Signal
+
+    reader = _reader()
+    named = _write(
+        tmp_path, _turn_context("gpt-5-codex"), _usage_record(input_tokens=1), name="a.jsonl"
+    )
+    silent = _write(tmp_path, _usage_record(input_tokens=2), name="b.jsonl")
+
+    first = [e for e in reader.read(named) if e.signal is Signal.TOKEN_USAGE]
+    second = [e for e in reader.read(silent) if e.signal is Signal.TOKEN_USAGE]
+
+    assert [e.model for e in first] == ["gpt-5-codex"]
+    assert [e.model for e in second] == [None]
+
+
+def test_two_interleaved_reads_do_not_share_a_carried_model(tmp_path: Path) -> None:
+    """`read()` is a generator and hooks hold them open; two live at once."""
+    from lazy_harness.agents.base import Signal
+
+    reader = _reader()
+    named = _write(
+        tmp_path, _turn_context("gpt-5-codex"), _usage_record(input_tokens=1), name="a.jsonl"
+    )
+    silent = _write(tmp_path, _usage_record(input_tokens=2), name="b.jsonl")
+
+    a, b = reader.read(named), reader.read(silent)
+    from_a = next(e for e in a if e.signal is Signal.TOKEN_USAGE)
+    from_b = next(e for e in b if e.signal is Signal.TOKEN_USAGE)
+
+    assert (from_a.model, from_b.model) == ("gpt-5-codex", None)
+
+
+def test_messages_and_tool_calls_carry_the_model_too(tmp_path: Path) -> None:
+    """The model that produced a turn produced the tool calls in it."""
+    from lazy_harness.agents.base import Signal
+
+    path = _write(
+        tmp_path,
+        _turn_context("gpt-5-codex"),
+        _message("assistant", "hi"),
+        _exec_call("await run()"),
+    )
+
+    events = [e for e in _read(path) if e.signal in (Signal.MESSAGES, Signal.TOOL_CALLS)]
+    assert events
+    assert all(e.model == "gpt-5-codex" for e in events)
+
+
+# --- the message id, for dedup ----------------------------------------------
+
+
+def test_a_usage_record_carries_its_response_id_as_the_message_id(
+    tmp_path: Path,
+) -> None:
+    """Measured: `response_id` is a string on 176/176 records and globally unique
+    across all 15 rollouts, which is what a dedup key has to be."""
+    from lazy_harness.agents.base import Signal
+
+    path = _write(tmp_path, _turn_context(), _usage_record(response_id="resp_7", input_tokens=1))
+
+    (event,) = _by_signal(path, Signal.TOKEN_USAGE)
+    assert event.message_id == "resp_7"
+
+
+def test_a_usage_record_without_a_response_id_carries_no_message_id(
+    tmp_path: Path,
+) -> None:
+    from lazy_harness.agents.base import Signal
+
+    path = _write(tmp_path, _entry("token_usage_record", {"usage": {"input_tokens": 1}}))
+
+    (event,) = _by_signal(path, Signal.TOKEN_USAGE)
+    assert event.message_id is None
+
+
+def test_the_message_id_is_not_the_turn_id(tmp_path: Path) -> None:
+    """Measured: 176 records share 21 `turn_id`s. Deduping on it would drop
+    every usage record in a turn but the first."""
+    from lazy_harness.agents.base import Signal
+
+    path = _write(
+        tmp_path,
+        _turn_context(),
+        _usage_record(response_id="r1", input_tokens=1),
+        _usage_record(response_id="r2", input_tokens=2),
+    )
+
+    events = _by_signal(path, Signal.TOKEN_USAGE)
+    assert len({e.message_id for e in events}) == 2
 
 
 # --- malformed input degrades, it never raises ------------------------------

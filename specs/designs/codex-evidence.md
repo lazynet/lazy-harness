@@ -622,7 +622,7 @@ Los 15 archivos, `type` (+ `payload.type` donde existe):
 | `response_item/reasoning` | 134 | — (`encrypted_content`, no es texto que alguien vio) | no |
 | `event_msg/task_started` | 23 | — | no |
 | `event_msg/task_complete` | 23 | — | no |
-| `turn_context` | 23 | — (cwd, modelo, sandbox, permisos) | no |
+| `turn_context` | 23 | — (aporta `model`, ver 5.3) | **sí** |
 | `world_state` | 18 | — (instrucciones compuestas del turno) | no |
 | `session_meta` | 15 | — (`cli_version`, `cwd`, `git`, `id`) | no |
 | `event_msg/thread_settings_applied` | 8 | — | no |
@@ -633,7 +633,7 @@ Los 15 archivos, `type` (+ `payload.type` donde existe):
 explícito.** Codex 0.154.0 no tiene `/goal` y el rollout no lleva nada
 equivalente: `GOAL_STATUS` no se entrega, y `signals()` no lo declara.
 
-### 5.3 Los tres streams que se leen
+### 5.3 Lo que se lee: tres señales y un campo
 
 **`response_item/message`** — `{type, id, role, content[], phase?, internal_chat_message_metadata_passthrough}`.
 `role` ∈ `{assistant: 67, developer: 46, user: 38}`. `content[]` son bloques
@@ -655,6 +655,17 @@ a `ToolCall.command` (ADR-048).
 `{cell_id, max_tokens, yield_time_ms}` — el otro extremo del mismo runtime de
 celdas.
 
+**`turn_context`** — `{cwd, model, approval_policy, approvals_reviewer, sandbox_policy, file_system_sandbox_policy, permission_profile, active_permission_profile, collaboration_mode, personality, effort, summary, timezone, current_date, realtime_active, multi_agent_version, comp_hash, turn_id, root_turn_id, workspace_roots}`.
+Se lee **un solo campo: `model`** (`str` no vacío en 23/23 líneas, un único
+modelo distinto por archivo en 15/15). Es el único kind del rollout que nombra
+el modelo, y está en una línea distinta de la que reporta los tokens: el reader
+arrastra el último declarado hacia adelante, sobre los eventos que le siguen
+(`_turn_context_model`). En los 15 archivos medidos, **los 176
+`token_usage_record` vienen después de algún `turn_context`** — igual el reader
+deja el modelo en `None` si no lo hubo, porque un archivo truncado o rotado es
+exactamente donde aparecería. No viola ADR-048: `turn_context` no duplica
+ninguna señal, y el resto de su payload no se emite.
+
 **`token_usage_record`** — `{session_id, thread_id, turn_id, root_turn_id, response_id, usage, turn_token_usage, thread_token_usage}`.
 Los tres objetos de usage tienen forma idéntica:
 `{input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens, reasoning_output_tokens, total_tokens}`, todos `int`. `usage` y
@@ -665,6 +676,14 @@ el acumulado de la sesión. Mapeo a `TokenUsage`:
 `cache_write_input_tokens→cache_creation_tokens`.
 `reasoning_output_tokens` y `total_tokens` no tienen campo y no se suman a
 ninguno.
+
+`response_id` → `message_id`, y es la clave de dedup: `str` en 176/176 y
+**único across los 15 archivos**, mientras que esos mismos 176 comparten 21
+`turn_id` — deduplicar por turno tiraría todos los usage records de un turno
+menos el primero. **`response_id` no aparece en el stream `response_item`**: 0
+de 176 coinciden con el `id` de un item, así que los dos streams no se joinean
+por ahí y el record se banca solo. `cache_creation_1h_tokens` queda `None`:
+Codex reporta una sola escritura de caché, sin split por TTL.
 
 ### 5.4 Lo que el stream `event_msg` duplica
 
