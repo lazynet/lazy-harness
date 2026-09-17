@@ -19,6 +19,7 @@ from lazy_harness.agents.registry import (
 )
 from lazy_harness.core.config import Config, ProfileEntry
 from lazy_harness.core.paths import config_dir, expand_path
+from lazy_harness.deploy.ledger import owned_links, prune_unowned, write_ledger
 from lazy_harness.deploy.segments import resolve_segments
 from lazy_harness.deploy.symlinks import ensure_symlink
 from lazy_harness.hooks.loader import HookInfo
@@ -224,6 +225,20 @@ def deploy_profiles(cfg: Config, *, only: str | None = None) -> None:
 
         agent = agent_for_profile(cfg, name)
         plan = resolve_segments(src_dir, agent.name, agent_names=list_agents())
+        generated = {link.relative for link in plan.links}
+
+        owned, adopted = owned_links(target_dir, src_dir)
+        if adopted and owned:
+            count = len(owned)
+            click.echo(
+                f"  · {name}: adopted {count} existing "
+                f"{_plural(count, 'link', 'links')} into {src_dir.name} as harness-owned"
+            )
+
+        # Before the new links, not after: a name that was a whole-directory
+        # link and is now split across files has to stop being a link first.
+        for stale in prune_unowned(target_dir, src_dir, owned=owned, keep=generated):
+            click.echo(f"  ✗ {name}/{stale} (no longer generated)")
 
         for collision in plan.collisions:
             click.echo(
@@ -239,6 +254,8 @@ def deploy_profiles(cfg: Config, *, only: str | None = None) -> None:
                 click.echo(f"  · {name}/{link.relative} (already linked)")
             else:
                 click.echo(f"  ✓ {name}/{link.relative}")
+
+        write_ledger(target_dir, generated)
 
 
 def _plural(count: int, singular: str, plural: str) -> str:

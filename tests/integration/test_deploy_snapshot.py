@@ -20,6 +20,7 @@ from lazy_harness.core.config import (
     ProfilesConfig,
 )
 from lazy_harness.core.paths import config_dir
+from lazy_harness.deploy.ledger import LEDGER_RELATIVE
 from lazy_harness.deploy.snapshot import snapshot_targets
 
 
@@ -371,6 +372,10 @@ def test_a_profile_whose_agent_cannot_plan_contributes_no_config_target(
     `NullAdapter` is the shipped sentinel for an agent that plans nothing. Asking
     it for its targets is an `AttributeError` on a duck-typed collaborator, and
     inventing `settings.json` for it would snapshot a path no deploy can write.
+
+    The ownership ledger is still a target: it belongs to `deploy_profiles`,
+    which links a null-agent profile's assets like any other, not to the
+    `ConfigPlanner` half this test pins.
     """
     profiles_src = config_dir() / "profiles"
     (profiles_src / "void").mkdir(parents=True)
@@ -386,7 +391,11 @@ def test_a_profile_whose_agent_cannot_plan_contributes_no_config_target(
 
     targets = snapshot_targets(cfg)
 
-    assert targets == [home_dir / ".void" / "CLAUDE.md"]
+    assert targets == [
+        home_dir / ".void" / "CLAUDE.md",
+        home_dir / ".void" / LEDGER_RELATIVE,
+    ]
+    assert not [p for p in targets if p.name == "settings.json"]
 
 
 def test_a_codex_profile_snapshots_the_config_toml_it_merges_into(home_dir: Path) -> None:
