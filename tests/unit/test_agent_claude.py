@@ -346,3 +346,43 @@ def test_generate_hook_config_never_emits_a_null_matcher() -> None:
     for entries in result.values():
         for entry in entries:
             assert isinstance(entry["matcher"], str)
+
+
+def test_claude_resolve_binary_skips_a_candidate_whose_interpreter_is_gone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Newest mtime does not win when the shebang names an interpreter that is gone.
+
+    Measured on a real machine, not imagined: a 89-byte script left in the
+    version dir by a snippet run outside the suite carried the interpreter of a
+    git worktree's venv. Its mtime beat the genuine 214MB build by six minutes,
+    so both Claude profiles resolved to it; when the worktree was removed,
+    `lh run` died with `FileNotFoundError` naming the *script*, because
+    `execve` reports a missing interpreter as a missing file.
+
+    The older, valid build is the assertion: a fix that merely refused the
+    stale candidate and returned `None` would strand a machine that still has
+    a working claude installed.
+    """
+    import os
+
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    fake_home = tmp_path / "home"
+    versions = fake_home / ".local" / "share" / "claude" / "versions"
+    versions.mkdir(parents=True)
+
+    real_build = versions / "2.1.274"
+    real_build.write_text("#!/bin/sh\nexit 0\n")
+    real_build.chmod(0o755)
+
+    orphaned = versions / "0.0.1-fake"
+    orphaned.write_text(f"#!{tmp_path / 'removed-worktree' / '.venv' / 'bin' / 'python3'}\npass\n")
+    orphaned.chmod(0o755)
+
+    os.utime(real_build, (1_000_000_000, 1_000_000_000))
+    os.utime(orphaned, (2_000_000_000, 2_000_000_000))
+
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+
+    assert ClaudeCodeAdapter().resolve_binary() == real_build

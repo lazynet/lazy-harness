@@ -127,4 +127,19 @@ def run(
     # Last thing before the process image is replaced: `os.execvpe` never
     # returns, so a row written after it is a row never written.
     record_launch(profile=profile_name, agent=adapter.name, entry="run")
-    os.execvpe(str(exec_file), exec_args, env)
+    try:
+        os.execvpe(str(exec_file), exec_args, env)
+    except OSError as exc:
+        # `execvpe` does not return, so anything raised here reaches the user as
+        # an unhandled exception through click's frames. The path and the reason
+        # are what a person can act on; the stack is not.
+        reason = exc.strerror or str(exc)
+        console.print(f"[red]Error:[/red] cannot exec {escape(str(exec_file))}: {escape(reason)}")
+        if exec_file != binary:
+            # The shim is this harness's own doing — it exists to make the
+            # process name read `claude` — so a failure that names only the
+            # shim points the reader at a path they never chose. ENOENT here is
+            # usually about neither file: `execve` reports a missing shebang
+            # interpreter against the script it could not start.
+            console.print(f"[dim]stands for {escape(str(binary))}[/dim]")
+        raise SystemExit(1) from exc

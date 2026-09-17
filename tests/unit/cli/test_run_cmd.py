@@ -213,3 +213,44 @@ def test_the_warning_fires_without_a_tty(routed_config: Path, tmp_path: Path) ->
     )
 
     assert WARNING_MARKER in proc.stderr, "a piped stdin must not silence the warning"
+
+
+def test_run_names_a_binary_it_could_not_launch_instead_of_raising(
+    routed_config: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed `exec` is a diagnostic, not a traceback out of `cli()`.
+
+    `execvpe` is the last thing `lh run` does and it does not return, so every
+    failure at that point reaches the user as an unhandled exception through
+    click. The one that actually happened read `FileNotFoundError: [Errno 2]
+    No such file or directory: '<cache>/bin/claude'` over eleven frames of
+    click internals, about a file that was on disk — the missing thing was the
+    interpreter in its shebang. Six lines of stack say nothing a person can act
+    on; the path and the reason do.
+
+    The syscall is the one thing that has to be faked here: it replaces the
+    process image, so a real one ends the test run.
+    """
+    import os
+
+    agent = _write_agent()
+
+    shim = tmp_path / "cache" / "bin" / "claude"
+
+    def refuse(*args: object, **kwargs: object) -> None:
+        raise FileNotFoundError(2, "No such file or directory", str(shim))
+
+    monkeypatch.setattr(os, "execvpe", refuse)
+
+    code, _out, err = _run_in([], tmp_path)
+    # Rich wraps to the console width, so a long path arrives with newlines in
+    # the middle of it. Joined, not widened: the wrapping is what a terminal
+    # does and is not what this test is about.
+    flat = err.replace("\n", "")
+
+    assert code != 0
+    # Both paths, because neither alone is actionable: the shim is a name the
+    # user never chose, and the build it stands for is the thing they can check.
+    assert str(shim) in flat
+    assert str(agent) in flat
+    assert "No such file or directory" in flat

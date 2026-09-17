@@ -345,6 +345,33 @@ def _merge_hook_blocks(
     return merged, preserved, repaired, dropped
 
 
+def _interpreter_is_present(candidate: Path) -> bool:
+    """False for a script whose `#!` line names an interpreter that is not there.
+
+    `execve` reports a missing interpreter as `ENOENT` against the *script*, so
+    a launcher that trusted such a candidate raises `FileNotFoundError` naming a
+    file that plainly exists — which is what `lh run` did on both Claude
+    profiles after a stray fixture, shebanged into a git worktree's venv, won
+    the mtime comparison and then outlived that worktree.
+
+    A genuine build is a compiled executable with no shebang and is accepted
+    without touching the filesystem twice. `#!/usr/bin/env python3` is judged on
+    `env`, not on what `env` would go on to find: resolving that needs the
+    interpreter's own PATH lookup, and a launcher is not the place to guess it.
+    """
+    try:
+        with candidate.open("rb") as handle:
+            if handle.read(2) != b"#!":
+                return True
+            shebang = handle.readline(4096).decode("utf-8", "replace")
+    except OSError:
+        return False
+    interpreter = shebang.split(maxsplit=1)
+    if not interpreter:
+        return False
+    return Path(interpreter[0]).exists()
+
+
 class ClaudeCodeAdapter:
     """Adapter for Claude Code (Anthropic's CLI agent)."""
 
@@ -381,7 +408,9 @@ class ClaudeCodeAdapter:
         versions_dir = Path.home() / ".local" / "share" / "claude" / "versions"
         if versions_dir.is_dir():
             candidates = [
-                p for p in versions_dir.iterdir() if p.is_file() and os.access(p, os.X_OK)
+                p
+                for p in versions_dir.iterdir()
+                if p.is_file() and os.access(p, os.X_OK) and _interpreter_is_present(p)
             ]
             if candidates:
                 return max(candidates, key=lambda p: p.stat().st_mtime)
