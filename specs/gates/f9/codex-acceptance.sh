@@ -40,21 +40,26 @@
 # re-derive them.
 # ---------------------------------------------------------------------------
 #
-# 1. THERE IS NO `stale` TRUST VERDICT, AND THERE IS NOT GOING TO BE ONE.
-#    `agents/codex_trust.py` reports `untrusted`, `unknown` and `orphaned`, and
-#    its module docstring is explicit that computing Codex's `current_hash` —
-#    the only thing that could distinguish `Trusted` from `Modified` — is *"the
-#    one thing the design declines to do"*, because it means reimplementing
-#    Codex's TOML normalisation and version hash, silently wrong on any upstream
-#    change. So phase C cannot assert `trust stale`. What it asserts instead is
-#    the signal the design actually built: trust keys are
-#    `<path>:<snake_case event>:<group index>:<handler index>` and *"both indices
-#    are positions, which is why a redeploy that reorders a group re-prompts for
-#    everything below it"* (`agents/codex.py:458-472`). A changed declaration
-#    therefore shows up as `untrusted` entries that were approved a moment ago,
-#    plus `orphaned` entries keyed on handlers `hooks.json` no longer declares.
-#    That is strictly better evidence than a recomputed hash, because the
-#    harness owns both halves of it.
+# 1. UPDATE 2026-09-16 (release-gate-071): `trust stale` SHIPPED IN #367.
+#    This correction originally read "there is no `stale` trust verdict, and
+#    there is not going to be one" — true against `ce86cb3`, false since #367.
+#    What did NOT change: `agents/codex_trust.py` still declines to recompute
+#    Codex's own `current_hash` — the only thing that could distinguish
+#    `Trusted` from `Modified` on Codex's own terms — because that means
+#    reimplementing Codex's TOML normalisation and version hash, silently wrong
+#    on any upstream change. `stale` is not that. It is a harness-side signal:
+#    `lh doctor` compares a hook's current declaration against the pre-deploy
+#    copy `deploy/snapshot.py` already keeps in its manifest, so it can say "the
+#    harness changed this hook's declaration since it last deployed" without
+#    asking Codex anything (`TRUST_STALE_VERDICT`, `agents/codex_trust.py`).
+#    Trust keys still carry `<path>:<snake_case event>:<group index>:<handler
+#    index>`, and both indices are still positions, which is why a redeploy that
+#    reorders a group also re-prompts for everything below it
+#    (`agents/codex.py:458-472`) — that positional signal is what `orphaned` and
+#    `untrusted` below are built from, and it is kept as the fallback for an `lh`
+#    installed before #367. So phase C now asserts `trust stale` as the primary
+#    signal a changed declaration produced, and treats `orphaned`/`untrusted`
+#    as evidence of the same fact on an older binary, never as the first choice.
 #
 # 2. METERING CODEX IS THE POINT OF B5, AND ADR-051 IS BEING SUPERSEDED.
 #    ADR-051 declined to meter Codex: `TranscriptEvent` carries no model, no
@@ -310,8 +315,8 @@ FIXTURE_BASH="rm -rf $DOOMED"
 # Fixture 2 — a native edit. `apply_patch` is in FILE_TOOLS and `**/.env` is in
 # SECRET_PATH_GLOBS, so the MODIFY_FILE arm denies it. The Codex adapter maps
 # `apply_patch -> Operation.MODIFY_FILE` (`agents/codex.py:314-317`), so the arm
-# is reachable — F8's header still says the map has one entry and is stale on
-# that point.
+# is reachable — F8's header used to say the map had one entry; corrected to
+# two (`Bash`, `apply_patch`) in the same PR that fixed this comment.
 FIXTURE_PATCH_PATH="$SECRET"
 
 if [ "$DRY_RUN" -eq 0 ]; then
@@ -668,12 +673,13 @@ step "$LH_BIN" metrics launches --json
 # --- phase-c-reapproval ----------------------------------------------------
 banner "phase-c-reapproval — a changed declaration re-prompts instead of silently not firing"
 
-echo "  Correction 1 in the header: there is no 'stale' verdict and there will"
-echo "  not be one. What a changed declaration produces is UNTRUSTED entries"
-echo "  that were approved minutes ago, and ORPHANED entries keyed on handlers"
+echo "  Correction 1 in the header: 'lh doctor' derives a 'trust stale' verdict"
+echo "  from the deploy snapshot (#367) without recomputing Codex's own hash."
+echo "  A changed declaration is expected to show up as TRUST STALE. On an lh"
+echo "  installed before #367, the same change shows up instead as UNTRUSTED"
+echo "  entries approved minutes ago, or ORPHANED entries keyed on handlers"
 echo "  hooks.json no longer declares — because the trust key carries the group"
-echo "  and handler POSITION (agents/codex.py:458-472)."
-echo "  STALE VERDICT NOT AVAILABLE — by design, not by omission."
+echo "  and handler POSITION (agents/codex.py:458-472). Either is accepted."
 echo
 
 # A temp LH_CONFIG_DIR, never the user's. The profile's config_dir inside it
@@ -703,11 +709,14 @@ if [ "$DRY_RUN" -eq 0 ]; then
 
     LH_CONFIG_DIR="$TMP_CFG" "$LH_BIN" deploy --profile "$PROFILE" >/dev/null 2>&1
     DOCTOR_C="$(LH_CONFIG_DIR="$TMP_CFG" "$LH_BIN" doctor 2>&1)"
-    if printf '%s' "$DOCTOR_C" | grep -q 'orphaned'; then
+    if printf '%s' "$DOCTOR_C" | grep -q 'trust stale'; then
+      ok "doctor reports trust stale after the declaration changed"
+    elif printf '%s' "$DOCTOR_C" | grep -q 'orphaned'; then
       ok "doctor reports orphaned trust entries after the declaration changed"
+      info "no 'trust stale' line — this lh predates #367"
     elif printf '%s' "$DOCTOR_C" | grep -q 'untrusted'; then
       ok "doctor reports untrusted hooks again after the declaration changed"
-      info "no 'orphaned' line — the change added a handler rather than dropping one"
+      info "no 'trust stale' or 'orphaned' line — this lh predates #367, and the change added a handler rather than dropping one"
     else
       fail "a changed declaration produced no trust signal; the next session would silently not fire it"
     fi

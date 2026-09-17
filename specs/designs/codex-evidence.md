@@ -751,7 +751,7 @@ evidencia sobre el sistema, y un `3` no puede archivarse como criterio cumplido
 | B6 | trusted | `lh run --bypass=enable` | **error** — ADR-049 no mapea `enable` en Codex | *(no corrió)* |
 | B7 | trusted | `lh run --bypass=activate --dry-run` | el argv trae `--approve-for-me` | *(no corrió)* |
 | B8 | trusted | `lh run … -- exec …` real | `launches` suma una fila `agent=codex`, `entry=run` | *(no corrió)* |
-| C1 | reapproval | declaración cambiada + redeploy | `lh doctor` reporta `orphaned` y/o `untrusted` de nuevo | *(no corrió)* |
+| C1 | reapproval | declaración cambiada + redeploy | `lh doctor` reporta `trust stale` (#367); `orphaned` y/o `untrusted` si el `lh` instalado es anterior a #367 | *(no corrió)* |
 
 Las aserciones de stream valen **sólo para la versión en que se observaron**.
 El preflight imprime `codex --version` y avisa — sin fallar — si difiere de
@@ -762,13 +762,20 @@ El preflight imprime `codex --version` y avisa — sin fallar — si difiere de
 Medidas sobre `origin/main` en `ce86cb3`. Contradicen el brief que encargó el
 gate; el repo gana.
 
-1. **No hay veredicto `stale`, y no va a haberlo.** `agents/codex_trust.py`
-   reporta `untrusted`, `unknown` y `orphaned`, y su docstring dice que
-   recomputar el `current_hash` de Codex es *"the one thing the design declines
-   to do"*. La fase C no puede afirmar `trust stale`. Lo que afirma es la señal
-   que el diseño sí construyó: la trust key lleva la **posición** del grupo y
-   del handler (`agents/codex.py:458-472`), así que una declaración cambiada
-   reaparece como `untrusted` recién aprobados más entradas `orphaned`.
+1. **Actualizado 2026-09-16 (release-gate-071): `trust stale` se shippeó en
+   #367.** Esta corrección decía "no hay veredicto `stale`, y no va a haberlo"
+   — cierto contra `ce86cb3`, falso desde #367. Lo que no cambió:
+   `agents/codex_trust.py` sigue sin recomputar el `current_hash` de Codex —lo
+   único que distinguiría `Trusted` de `Modified` en los términos del propio
+   Codex— porque eso es reimplementar su normalización TOML y su hash de
+   versión, silenciosamente mal ante cualquier cambio de Codex. `stale` no es
+   eso: es una señal del lado del harness, `lh doctor` compara la declaración
+   actual contra la copia pre-deploy que `deploy/snapshot.py` ya guarda en su
+   manifest (`TRUST_STALE_VERDICT`, `agents/codex_trust.py`). La trust key
+   sigue llevando la **posición** del grupo y del handler
+   (`agents/codex.py:458-472`), y eso sigue siendo lo que arma `orphaned` y
+   `untrusted` — quedan como alternativa para un `lh` instalado antes de #367,
+   nunca como primera opción. La fase C ahora afirma `trust stale` primero.
 2. **Medir Codex es el punto de B5, y ADR-051 está siendo superseded.** ADR-051
    se negó a medir Codex porque `TranscriptEvent` no lleva modelo, ni message id,
    ni el split de cache de 1 hora, y `session_stats` es `UNIQUE(session, model)`.
