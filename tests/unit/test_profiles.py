@@ -194,3 +194,151 @@ def test_resolve_profile_agrees_with_resolve_with_source(tmp_path: Path, cwd: Pa
     cfg, _ = _make_config(tmp_path)
 
     assert resolve_profile(cfg, cwd) == resolve_profile_with_source(cfg, cwd).name
+
+
+# --- D7: two profiles sharing a root, unresolved without a default ----------
+
+
+def test_resolve_refuses_a_shared_root_with_no_default(tmp_path: Path) -> None:
+    """Design decision 7: the tie is refused, not silently broken by TOML order."""
+    from lazy_harness.core.profiles import ProfileError, resolve_profile_with_source
+
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    cfg, _ = _make_config(
+        tmp_path,
+        {
+            "personal": ProfileEntry(config_dir=str(tmp_path / ".claude-x"), roots=[str(shared)]),
+            "experiment": ProfileEntry(
+                config_dir=str(tmp_path / ".other-x"), roots=[str(shared)], agent="other"
+            ),
+        },
+    )
+
+    with pytest.raises(ProfileError, match="personal") as excinfo:
+        resolve_profile_with_source(cfg, cwd=shared)
+    assert "experiment" in str(excinfo.value)
+
+
+def test_resolve_picks_the_root_default_among_a_shared_root(tmp_path: Path) -> None:
+    from lazy_harness.core.profiles import resolve_profile_with_source
+
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    cfg, _ = _make_config(
+        tmp_path,
+        {
+            "personal": ProfileEntry(
+                config_dir=str(tmp_path / ".claude-x"), roots=[str(shared)], root_default=True
+            ),
+            "experiment": ProfileEntry(
+                config_dir=str(tmp_path / ".other-x"), roots=[str(shared)], agent="other"
+            ),
+        },
+    )
+
+    resolution = resolve_profile_with_source(cfg, cwd=shared)
+
+    assert resolution.name == "personal"
+    assert resolution.source == "root-match"
+
+
+def test_resolve_is_unaffected_when_only_one_profile_claims_the_root(tmp_path: Path) -> None:
+    """No ambiguity, no refusal: the common case must stay exactly as it was."""
+    from lazy_harness.core.profiles import resolve_profile_with_source
+
+    work_root = tmp_path / "work"
+    work_root.mkdir()
+    cfg, _ = _make_config(
+        tmp_path,
+        {
+            "personal": ProfileEntry(config_dir=str(tmp_path / ".claude-x"), roots=[str(tmp_path)]),
+            "work": ProfileEntry(config_dir=str(tmp_path / ".claude-w"), roots=[str(work_root)]),
+        },
+    )
+
+    resolution = resolve_profile_with_source(cfg, cwd=work_root)
+
+    assert resolution.name == "work"
+    assert resolution.source == "root-match"
+
+
+def test_collect_shared_roots_is_empty_when_no_root_is_shared(tmp_path: Path) -> None:
+    from lazy_harness.core.profiles import collect_shared_roots
+
+    cfg, _ = _make_config(
+        tmp_path,
+        {
+            "personal": ProfileEntry(config_dir=str(tmp_path / ".claude-x"), roots=[str(tmp_path)]),
+            "work": ProfileEntry(
+                config_dir=str(tmp_path / ".claude-w"), roots=[str(tmp_path / "work")]
+            ),
+        },
+    )
+
+    assert collect_shared_roots(cfg) == []
+
+
+def test_collect_shared_roots_names_every_claimant_and_its_agent(tmp_path: Path) -> None:
+    from lazy_harness.core.profiles import collect_shared_roots
+
+    shared = tmp_path / "shared"
+    cfg, _ = _make_config(
+        tmp_path,
+        {
+            "personal": ProfileEntry(config_dir=str(tmp_path / ".claude-x"), roots=[str(shared)]),
+            "experiment": ProfileEntry(
+                config_dir=str(tmp_path / ".other-x"), roots=[str(shared)], agent="null"
+            ),
+        },
+    )
+
+    result = collect_shared_roots(cfg)
+
+    assert len(result) == 1
+    assert result[0].root == str(shared)
+    assert set(result[0].profiles) == {"personal", "experiment"}
+    assert result[0].agents == {"personal": "claude-code", "experiment": "null"}
+    assert result[0].default is None
+
+
+def test_collect_shared_roots_reports_the_declared_default(tmp_path: Path) -> None:
+    from lazy_harness.core.profiles import collect_shared_roots
+
+    shared = tmp_path / "shared"
+    cfg, _ = _make_config(
+        tmp_path,
+        {
+            "personal": ProfileEntry(
+                config_dir=str(tmp_path / ".claude-x"), roots=[str(shared)], root_default=True
+            ),
+            "experiment": ProfileEntry(
+                config_dir=str(tmp_path / ".other-x"), roots=[str(shared)], agent="null"
+            ),
+        },
+    )
+
+    result = collect_shared_roots(cfg)
+
+    assert result[0].default == "personal"
+
+
+def test_an_explicit_override_short_circuits_the_shared_root_refusal(tmp_path: Path) -> None:
+    from lazy_harness.core.profiles import resolve_profile_with_source
+
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    cfg, _ = _make_config(
+        tmp_path,
+        {
+            "personal": ProfileEntry(config_dir=str(tmp_path / ".claude-x"), roots=[str(shared)]),
+            "experiment": ProfileEntry(
+                config_dir=str(tmp_path / ".other-x"), roots=[str(shared)], agent="other"
+            ),
+        },
+    )
+
+    resolution = resolve_profile_with_source(cfg, cwd=shared, override="experiment")
+
+    assert resolution.name == "experiment"
+    assert resolution.source == "explicit"

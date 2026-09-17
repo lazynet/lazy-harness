@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC
 from pathlib import Path
 
@@ -1292,6 +1293,99 @@ def test_doctor_names_an_agent_that_declares_no_sessions_directory(tmp_path: Pat
     assert "unread" not in out
 
 
+# --- Shared-root default line (D7) ------------------------------------------
+
+
+def _shared_roots_output(cfg) -> str:  # noqa: ANN001
+    import io
+
+    from rich.console import Console
+
+    from lazy_harness.cli.doctor_cmd import _render_shared_roots
+    from lazy_harness.core.profiles import collect_shared_roots
+
+    buf = io.StringIO()
+    _render_shared_roots(
+        Console(file=buf, width=140, force_terminal=False, no_color=True),
+        collect_shared_roots(cfg),
+    )
+    return buf.getvalue()
+
+
+def test_render_shared_roots_silent_when_nothing_shared(tmp_path: Path) -> None:
+    from lazy_harness.core.config import Config, HarnessConfig, ProfileEntry
+
+    cfg = Config(harness=HarnessConfig(version="1"))
+    cfg.profiles.items = {
+        "p1": ProfileEntry(config_dir=str(tmp_path / "p1"), roots=[str(tmp_path / "r1")]),
+    }
+
+    assert _shared_roots_output(cfg) == ""
+
+
+def test_render_shared_roots_names_both_claimants_with_no_default(tmp_path: Path) -> None:
+    from lazy_harness.core.config import Config, HarnessConfig, ProfileEntry
+
+    shared = tmp_path / "shared"
+    cfg = Config(harness=HarnessConfig(version="1"))
+    cfg.profiles.items = {
+        "personal": ProfileEntry(config_dir=str(tmp_path / "p"), roots=[str(shared)]),
+        "experiment": ProfileEntry(
+            config_dir=str(tmp_path / "e"), roots=[str(shared)], agent="null"
+        ),
+    }
+
+    out = _shared_roots_output(cfg)
+
+    assert "personal (claude-code)" in out
+    assert "experiment (null)" in out
+    assert "no default" in out
+    assert "--profile" in out
+
+
+def test_render_shared_roots_names_the_default(tmp_path: Path) -> None:
+    from lazy_harness.core.config import Config, HarnessConfig, ProfileEntry
+
+    shared = tmp_path / "shared"
+    cfg = Config(harness=HarnessConfig(version="1"))
+    cfg.profiles.items = {
+        "personal": ProfileEntry(
+            config_dir=str(tmp_path / "p"), roots=[str(shared)], root_default=True
+        ),
+        "experiment": ProfileEntry(
+            config_dir=str(tmp_path / "e"), roots=[str(shared)], agent="null"
+        ),
+    }
+
+    out = _shared_roots_output(cfg)
+
+    assert "default: personal" in out
+
+
+def test_doctor_reports_the_shared_root_line(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Wired into the command, not only unit-tested next to it."""
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    shared = tmp_path / "shared"
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        '[harness]\nversion = "1"\n'
+        '[agent]\ntype = "claude-code"\n'
+        '[profiles]\ndefault = "p1"\n\n'
+        f'[profiles.p1]\nconfig_dir = "~/.claude-p1"\nroots = ["{shared}"]\n\n'
+        f'[profiles.p2]\nconfig_dir = "~/.claude-p2"\nroots = ["{shared}"]\nagent = "null"\n'
+        '[knowledge]\nroot = ""\n'
+    )
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
+
+    result = CliRunner().invoke(doctor, [])
+
+    assert "shared by" in result.output
+    assert "no default" in result.output
+
+
 def test_doctor_reports_one_line_per_profile(tmp_path: Path) -> None:
     """Four profiles, four agents, four verdicts, one run."""
     (tmp_path / "lazy" / "projects" / "-r").mkdir(parents=True)
@@ -1350,3 +1444,113 @@ def test_doctor_prints_the_transcripts_section(
     monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
     result = CliRunner().invoke(doctor, [])
     assert "Transcripts" in result.output
+
+
+# --- lh doctor --json --------------------------------------------------------
+
+_JSON_REQUIRED_KEYS = (
+    "profiles",
+    "codex_trust",
+    "transcripts",
+    "launches",
+    "hook_signals",
+    "hook_operations",
+    "uncarried_events",
+)
+
+
+def test_doctor_json_is_a_single_parseable_object_with_no_other_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    cfg = _write_config(tmp_path)
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
+
+    result = CliRunner().invoke(doctor, ["--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert isinstance(payload, dict)
+
+
+def test_doctor_json_has_every_required_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    cfg = _write_config(tmp_path)
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
+
+    payload = json.loads(CliRunner().invoke(doctor, ["--json"]).output)
+
+    for key in _JSON_REQUIRED_KEYS:
+        assert key in payload, f"missing key {key!r}: {sorted(payload)}"
+
+
+def test_doctor_json_names_a_profile_and_its_config_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    cfg = _write_config(tmp_path)
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
+
+    payload = json.loads(CliRunner().invoke(doctor, ["--json"]).output)
+
+    assert payload["profiles"][0]["name"] == "p1"
+
+
+def test_doctor_text_and_json_agree_on_codex_trust(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Repo gate: two paths answer one question, so a test invokes both and
+    asserts they agree. `codex-acceptance.sh` (F9) reads the JSON verdict;
+    a human reads the text one — a doctor that disagreed with itself would
+    pass a gate the text output already contradicts."""
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    cfg = _codex_profile(tmp_path)
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
+
+    text_output = _unwrapped(CliRunner().invoke(doctor, []).output)
+    payload = json.loads(CliRunner().invoke(doctor, ["--json"]).output)
+
+    trust = payload["codex_trust"]
+    assert len(trust) == 1
+    report = trust[0]
+    assert report["profile"] == "cx"
+    assert report["untrusted"], "expected the freshly-deployed hook to be untrusted"
+
+    for label in report["untrusted"]:
+        assert label in text_output
+    declared = len(report["untrusted"]) + len(report["unknown"]) + len(report["stale"])
+    assert f"{len(report['untrusted'])} of {declared}" in text_output
+
+
+def test_doctor_json_reports_no_codex_trust_without_a_codex_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    cfg = _write_config(tmp_path)
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
+
+    payload = json.loads(CliRunner().invoke(doctor, ["--json"]).output)
+
+    assert payload["codex_trust"] == []
+
+
+def test_doctor_json_does_not_change_a_single_text_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The refactor into collect_*() must be invisible in text mode."""
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    cfg = _write_config(tmp_path)
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
+
+    result = CliRunner().invoke(doctor, [])
+
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(result.output)

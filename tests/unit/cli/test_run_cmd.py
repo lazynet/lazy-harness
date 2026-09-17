@@ -215,6 +215,58 @@ def test_the_warning_fires_without_a_tty(routed_config: Path, tmp_path: Path) ->
     assert WARNING_MARKER in proc.stderr, "a piped stdin must not silence the warning"
 
 
+# --- D7: two profiles sharing a root, unresolved without a default --------
+
+
+def test_run_refuses_a_shared_root_with_no_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Design decision 7: `lh run` must not silently pick by TOML order."""
+    lh_config = tmp_path / "lh"
+    lh_config.mkdir()
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    _write_config(
+        lh_config,
+        f'[profiles.personal]\nconfig_dir = "{tmp_path / "cfg-personal"}"\n'
+        f'roots = ["{shared}"]\n\n'
+        f'[profiles.experiment]\nconfig_dir = "{tmp_path / "cfg-experiment"}"\n'
+        f'roots = ["{shared}"]\nagent = "null"\n',
+    )
+    monkeypatch.setenv("LH_CONFIG_DIR", str(lh_config))
+    monkeypatch.setenv("LH_CACHE_DIR", str(tmp_path / "cache"))
+
+    code, _out, err = _run_in(["--dry-run"], shared)
+
+    assert code != 0
+    assert "personal" in err
+    assert "experiment" in err
+
+
+def test_run_uses_the_root_default_among_a_shared_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_agent()
+    lh_config = tmp_path / "lh"
+    lh_config.mkdir()
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    _write_config(
+        lh_config,
+        f'[profiles.personal]\nconfig_dir = "{tmp_path / "cfg-personal"}"\n'
+        f'roots = ["{shared}"]\nroot_default = true\n\n'
+        f'[profiles.experiment]\nconfig_dir = "{tmp_path / "cfg-experiment"}"\n'
+        f'roots = ["{shared}"]\nagent = "null"\n',
+    )
+    monkeypatch.setenv("LH_CONFIG_DIR", str(lh_config))
+    monkeypatch.setenv("LH_CACHE_DIR", str(tmp_path / "cache"))
+
+    code, out, err = _run_in(["--dry-run"], shared)
+
+    assert code == 0, err
+    assert "personal" in err, out + err
+
+
 def test_run_names_a_binary_it_could_not_launch_instead_of_raising(
     routed_config: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

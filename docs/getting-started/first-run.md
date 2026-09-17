@@ -7,11 +7,12 @@ This guide walks through `lh init` from a clean machine. If you are migrating an
 1. Refuses to run if you have existing Claude Code state (`~/.claude/`, `~/.claude-*/`, or an existing `~/.config/lazy-harness/config.toml`).
 2. Asks for a profile name (default: `personal`).
 3. Asks for the agent (default: `claude-code` — the only option today).
-4. Asks for a knowledge directory path (default: `~/Documents/lazy-harness-knowledge`).
-5. Detects QMD if present and offers to configure a knowledge collection.
-6. Writes `~/.config/lazy-harness/config.toml`.
-7. Creates the profile directory at `~/.config/lazy-harness/profiles/<name>/` with a minimal `CLAUDE.md` and `settings.json`.
-8. Creates the knowledge directory with `sessions/` and `learnings/` subdirs.
+4. Asks for the billing model (`per_token` or `flat_rate`, default: `per_token` — ADR-050 rejects a per-agent default, so this stays `per_token` for every agent unless you answer `flat_rate`).
+5. Asks for a knowledge directory path (default: `~/Documents/lazy-harness-knowledge`).
+6. Detects QMD if present and offers to configure a knowledge collection.
+7. Writes `~/.config/lazy-harness/config.toml`, with `config_dir` following the agent's own convention (`~/.claude-<name>`, `~/.codex-<name>`, `~/.copilot-<name>`).
+8. Creates the profile directory at `~/.config/lazy-harness/profiles/<name>/` with a minimal `CLAUDE.md` and `settings.json`.
+9. Creates the knowledge directory with `sessions/` and `learnings/` subdirs.
 
 ## Running it
 
@@ -26,6 +27,7 @@ lazy-harness — initial setup
 
 Profile name [personal]:
 Agent [claude-code]:
+Billing model (per_token, flat_rate) [per_token]:
 Knowledge directory [~/Documents/lazy-harness-knowledge]:
 QMD detected. Configure knowledge collection? [Y/n]: Y
 

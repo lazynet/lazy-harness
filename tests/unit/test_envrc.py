@@ -138,3 +138,82 @@ def test_redeploy_at_same_version_is_byte_identical(tmp_path: Path) -> None:
 
     assert second_result.action == "unchanged"
     assert first == second
+
+
+# --- D7: two profiles with different agents on one root ---------------------
+
+
+def test_write_envrc_twice_over_one_root_keeps_both_exports(tmp_path: Path) -> None:
+    """The measured defect (specs/backlog.md D7): the second profile's write
+    must not replace the first profile's export — both agents claim this root."""
+    from lazy_harness.core.envrc import write_envrc
+
+    root = tmp_path / "repo"
+    write_envrc(root, "CLAUDE_CONFIG_DIR", Path("/h/.claude-work"))
+    write_envrc(root, "CODEX_HOME", Path("/h/.codex-sandbox"))
+
+    content = (root / ".envrc").read_text()
+    assert 'export CLAUDE_CONFIG_DIR="/h/.claude-work"' in content
+    assert 'export CODEX_HOME="/h/.codex-sandbox"' in content
+    assert content.count("# >>> lazy-harness >>>") == 1
+
+
+def test_write_envrc_third_identical_write_is_unchanged(tmp_path: Path) -> None:
+    from lazy_harness.core.envrc import write_envrc
+
+    root = tmp_path / "repo"
+    write_envrc(root, "CLAUDE_CONFIG_DIR", Path("/h/.claude-work"))
+    write_envrc(root, "CODEX_HOME", Path("/h/.codex-sandbox"))
+    third = write_envrc(root, "CODEX_HOME", Path("/h/.codex-sandbox"))
+
+    assert third.action == "unchanged"
+
+
+def test_write_envrc_old_single_export_block_upgrades_in_place(tmp_path: Path) -> None:
+    """A block written by a pre-D7 harness has no notion of multiple exports —
+    a second profile's write must add to it, not treat it as foreign content."""
+    from lazy_harness.core.envrc import write_envrc
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    envrc = root / ".envrc"
+    envrc.write_text(
+        "# >>> lazy-harness >>>\n"
+        "# Managed by `lh profile envrc` (lazy-harness 0.70.0) — do not edit this block by hand.\n"
+        'export CLAUDE_CONFIG_DIR="/h/.claude-work"\n'
+        "# <<< lazy-harness <<<\n"
+    )
+
+    result = write_envrc(root, "CODEX_HOME", Path("/h/.codex-sandbox"))
+
+    assert result.action == "updated"
+    content = envrc.read_text()
+    assert 'export CLAUDE_CONFIG_DIR="/h/.claude-work"' in content
+    assert 'export CODEX_HOME="/h/.codex-sandbox"' in content
+
+
+def test_multi_export_block_orders_exports_deterministically_by_env_var(
+    tmp_path: Path,
+) -> None:
+    from lazy_harness.core.envrc import write_envrc
+
+    root = tmp_path / "repo"
+    write_envrc(root, "CODEX_HOME", Path("/h/.codex-sandbox"))
+    write_envrc(root, "CLAUDE_CONFIG_DIR", Path("/h/.claude-work"))
+
+    content = (root / ".envrc").read_text()
+    assert content.index("CLAUDE_CONFIG_DIR") < content.index("CODEX_HOME")
+
+
+def test_rewriting_the_same_env_var_updates_its_config_dir_only(tmp_path: Path) -> None:
+    from lazy_harness.core.envrc import write_envrc
+
+    root = tmp_path / "repo"
+    write_envrc(root, "CLAUDE_CONFIG_DIR", Path("/old"))
+    write_envrc(root, "CODEX_HOME", Path("/h/.codex-sandbox"))
+    write_envrc(root, "CLAUDE_CONFIG_DIR", Path("/new"))
+
+    content = (root / ".envrc").read_text()
+    assert 'export CLAUDE_CONFIG_DIR="/new"' in content
+    assert "/old" not in content
+    assert 'export CODEX_HOME="/h/.codex-sandbox"' in content

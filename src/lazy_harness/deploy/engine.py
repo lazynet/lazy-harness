@@ -79,6 +79,38 @@ class ConfigTargetChangedError(RuntimeError):
         )
 
 
+class ExternalHookPlaceholderError(ValueError):
+    """An `[hooks.*].external` command names a placeholder deploy does not know.
+
+    Raised from `_hook_entries_for`'s per-profile expansion (ADR-054): the only
+    two recognised placeholders are `{profile}` and `{config_dir}`, and naming
+    anything else is a typo the config author needs to see, not a bare
+    Python `KeyError` surfacing through `lh deploy`.
+    """
+
+    def __init__(self, command: str, cause: KeyError | IndexError) -> None:
+        self.command = command
+        placeholder = cause.args[0] if cause.args else cause
+        super().__init__(
+            f"external hook command {command!r} names unknown placeholder "
+            f"{{{placeholder}}} — only {{profile}} and {{config_dir}} are recognised"
+        )
+
+
+def _expand_external_command(command: str, *, profile: str, config_dir: str) -> str:
+    """Expand `{profile}` / `{config_dir}` in an `external` hook's command.
+
+    `{config_dir}` is the profile's raw `config_dir` field, not its expanded
+    absolute path — see ADR-054 for why. A command with no `{...}` in it is
+    unchanged: `str.format` is a no-op on a string with no fields, so every
+    `external` entry declared before this existed keeps working.
+    """
+    try:
+        return command.format(profile=profile, config_dir=config_dir)
+    except (KeyError, IndexError) as exc:
+        raise ExternalHookPlaceholderError(command, exc) from exc
+
+
 class UnknownProfileError(ValueError):
     """`--profile` named a profile the config does not declare.
 
@@ -355,10 +387,14 @@ def _hook_entries_for(cfg: Config, profile: str, binary: str) -> dict[str, list[
             for hook in hooks
         ]
 
+    raw_config_dir = cfg.profiles.items[profile].config_dir
     for event_name, event_cfg in cfg.hooks.items():
         for ext in event_cfg.external:
+            command = _expand_external_command(
+                ext.command, profile=profile, config_dir=raw_config_dir
+            )
             entries.setdefault(event_name, []).append(
-                HookEntry(command=ext.command, matcher=ext.matcher)
+                HookEntry(command=command, matcher=ext.matcher)
             )
     return entries
 
