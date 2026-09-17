@@ -349,16 +349,21 @@ profile_sync_claude_md = profile.command("sync-claude-md", hidden=True)(_profile
 @click.argument("name")
 @click.option("--dry-run", is_flag=True, help="Show the plan without moving anything")
 def profile_migrate(name: str, dry_run: bool) -> None:
-    """Move a profile's root assets into `shared/` and per-agent segments.
+    """Move a profile's root assets into `shared/` and per-agent segments,
+    and rename its system-doc segments to their roles.
 
     An entry an adapter names in its config targets goes to that agent's
     segment; everything the registry does not claim goes to `shared/`. The
     assembled system docs and the segments they are built from stay at the
-    profile root, where `lh profile sync-system-doc` writes them.
+    profile root, where `lh profile sync-system-doc` writes them — but the
+    segments take their role names there: `CLAUDE.head.md` becomes `head.md`,
+    `CLAUDE.tail.md` becomes `tail.md`, and `_common/CLAUDE.common.md` becomes
+    `_common/common.md` once no other profile still reads it (ADR-055).
 
     Migrating is optional: an unmigrated profile still deploys its root to
-    every agent. What it buys is that a Codex profile stops receiving Claude
-    Code's assets, and the reverse.
+    every agent, and the assembler still reads the legacy names. What it buys
+    is that a Codex profile stops receiving Claude Code's assets, and the
+    reverse.
     """
     console = Console()
     profile_dir = config_dir() / "profiles" / name
@@ -380,13 +385,28 @@ def profile_migrate(name: str, dry_run: bool) -> None:
             f" [dim]({escape(move.reason)})[/dim]"
         )
 
-    if not plan.moves:
+    # Renames are their own verb, not a move with the same source and
+    # destination directory: a reader scanning for "what left the root" must not
+    # find the segments in that list, because they did not leave it.
+    rename_verb = "would rename" if dry_run else "rename"
+    for rename in plan.renames:
+        console.print(
+            f"[cyan]{rename_verb}[/cyan] {escape(rename.label)}"
+            f" → {escape(rename.destination_label)}"
+            f" [dim]({escape(rename.reason)})[/dim]"
+        )
+
+    if not plan.moves and not plan.renames:
         console.print("[green]Already segmented — nothing to move.[/green]")
         return
 
     if dry_run:
         console.print()
-        console.print(f"[dim]{len(plan.moves)} entries would move. Re-run without --dry-run.[/dim]")
+        console.print(
+            f"[dim]{len(plan.moves)} entries would move, "
+            f"{len(plan.renames)} segments would be renamed. "
+            "Re-run without --dry-run.[/dim]"
+        )
         return
 
     try:
@@ -396,7 +416,10 @@ def profile_migrate(name: str, dry_run: bool) -> None:
         raise SystemExit(1)
 
     console.print()
-    console.print(f"[green]Moved {len(plan.moves)} entries.[/green]")
+    if plan.moves:
+        console.print(f"[green]Moved {len(plan.moves)} entries.[/green]")
+    if plan.renames:
+        console.print(f"[green]Renamed {len(plan.renames)} segments.[/green]")
     console.print("[bold]Next:[/bold] [cyan]lh deploy[/cyan] to relink, then re-add to chezmoi.")
 
 

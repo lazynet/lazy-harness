@@ -143,7 +143,39 @@ resolved in silence.
 `lh profile migrate <name>` moves an existing flat profile into this layout; see
 the [CLI reference](../reference/cli.md#lh-profile). The assembled system docs
 and the segments they are built from stay at the root, because that is where
-`lh profile sync-system-doc` writes them.
+`lh profile sync-system-doc` writes them — but the segments take their **role
+names** there in the same run.
+
+#### Renaming the segments
+
+Before the segments were named by role they were named after the destination:
+`CLAUDE.head.md`, `_common/CLAUDE.common.md`, `CLAUDE.tail.md`. Both spellings
+still assemble — a profile with no `head.md` falls back to the stem of its first
+destination, and `sync-system-doc` prints `legacy segment layout` so the pending
+rename is visible rather than silent. `lh profile migrate` performs it:
+
+```
+rename CLAUDE.head.md → head.md (role name for CLAUDE's segment)
+rename CLAUDE.tail.md → tail.md (role name for CLAUDE's segment)
+rename _common/CLAUDE.common.md → _common/common.md (role name for the shared segment)
+```
+
+Two rules keep a tree mid-migration working:
+
+- **The shared segment waits for the last profile.** `_common/` belongs to the
+  whole tree, and `sync-system-doc` loads every shared segment it needs before
+  writing anything — so renaming it while another profile still reads the old
+  name stops the sync for *every* profile. `migrate` renames it only once no
+  sibling still carries `<stem>.head.md`, and prints
+  `keep _common/CLAUDE.common.md (still read by profile 'work')` while it waits.
+- **A leftover is named, never overwritten.** If both `head.md` and
+  `CLAUDE.head.md` are present, the role-named one is the one being read, so the
+  legacy file is reported as a leftover for you to delete. Two legacy spellings
+  claiming one role is refused whole, before anything moves.
+
+Adding a profile for a second agent is the same constraint read forwards: a new
+profile is born role-named, so rename the shared segment **before** you create
+it, not after.
 
 #### The ownership ledger
 

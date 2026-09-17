@@ -169,3 +169,112 @@ def test_apply_refuses_when_a_move_would_overwrite_and_moves_nothing(tmp_path: P
     assert (profile / "skills" / "a.md").read_text() == "root"
     assert (profile / "commands").is_dir(), "an unrelated entry was moved before the refusal"
     assert not (profile / "shared" / "commands").exists()
+
+
+def _renames(plan) -> dict[str, str]:
+    return {r.source.name: r.destination.name for r in plan.renames}
+
+
+def test_migrate_renames_the_legacy_doc_segments_to_their_roles(tmp_path: Path) -> None:
+    """ADR-043 shipped the role names with a read fallback; the rename itself
+    is a migration, and this is the command that runs it."""
+    profiles = tmp_path / "profiles"
+    _tree(profiles, {"_common": {"CLAUDE.common.md": "shared"}})
+    profile = profiles / "lazy"
+    _tree(profile, {"CLAUDE.head.md": "id", "CLAUDE.tail.md": "ctx", "skills": {"a.md": "a"}})
+
+    plan = plan_migration(profile)
+    assert _renames(plan) == {
+        "CLAUDE.head.md": "head.md",
+        "CLAUDE.tail.md": "tail.md",
+        "CLAUDE.common.md": "common.md",
+    }
+
+    apply_migration(plan)
+
+    assert (profile / "head.md").read_text() == "id"
+    assert (profile / "tail.md").read_text() == "ctx"
+    assert (profiles / "_common" / "common.md").read_text() == "shared"
+    assert not (profile / "CLAUDE.head.md").exists()
+    assert not (profiles / "_common" / "CLAUDE.common.md").exists()
+
+
+def test_a_profile_already_on_role_names_has_nothing_to_rename(tmp_path: Path) -> None:
+    profiles = tmp_path / "profiles"
+    _tree(profiles, {"_common": {"common.md": "shared"}})
+    profile = profiles / "lazy"
+    _tree(profile, {"head.md": "id", "tail.md": "ctx"})
+
+    assert plan_migration(profile).renames == []
+
+
+def test_the_shared_segment_stays_while_another_profile_still_reads_it(tmp_path: Path) -> None:
+    """`_common/` is one directory for the whole tree. Renaming it out from
+    under a profile that has not migrated turns that profile's next sync into
+    a `SyncError` — the shared half waits for the last profile."""
+    profiles = tmp_path / "profiles"
+    _tree(profiles, {"_common": {"CLAUDE.common.md": "shared"}})
+    _tree(profiles / "flex", {"CLAUDE.head.md": "id", "CLAUDE.tail.md": "ctx"})
+    profile = profiles / "lazy"
+    _tree(profile, {"CLAUDE.head.md": "id", "CLAUDE.tail.md": "ctx"})
+
+    plan = plan_migration(profile)
+    apply_migration(plan)
+
+    assert _renames(plan) == {"CLAUDE.head.md": "head.md", "CLAUDE.tail.md": "tail.md"}
+    assert (profiles / "_common" / "CLAUDE.common.md").is_file()
+    assert ("_common/CLAUDE.common.md", "still read by profile 'flex'") in plan.kept
+
+
+def test_the_shared_segment_is_renamed_once_the_last_profile_migrates(tmp_path: Path) -> None:
+    profiles = tmp_path / "profiles"
+    _tree(profiles, {"_common": {"CLAUDE.common.md": "shared"}})
+    _tree(profiles / "flex", {"head.md": "id", "tail.md": "ctx"})
+    profile = profiles / "lazy"
+    _tree(profile, {"CLAUDE.head.md": "id", "CLAUDE.tail.md": "ctx"})
+
+    apply_migration(plan_migration(profile))
+
+    assert (profiles / "_common" / "common.md").is_file()
+
+
+def test_a_legacy_segment_left_beside_its_role_named_replacement_is_named_not_renamed(
+    tmp_path: Path,
+) -> None:
+    """Mid-migration a profile carries both, and the role-named file is the one
+    the assembler reads. Renaming over it would destroy the live segment, so
+    the leftover is reported for the user to delete."""
+    profiles = tmp_path / "profiles"
+    _tree(profiles, {"_common": {"common.md": "shared"}})
+    profile = profiles / "lazy"
+    _tree(profile, {"head.md": "new", "CLAUDE.head.md": "old", "tail.md": "ctx"})
+
+    plan = plan_migration(profile)
+    apply_migration(plan)
+
+    assert "CLAUDE.head.md" not in _renames(plan)
+    assert (profile / "head.md").read_text() == "new"
+    assert ("CLAUDE.head.md", "leftover — head.md is already there") in plan.kept
+
+
+def test_apply_refuses_when_two_legacy_heads_would_become_one(tmp_path: Path) -> None:
+    """A tree carrying both stems has two files claiming one role. Silently
+    letting the second win would delete a segment with nothing to say so."""
+    profiles = tmp_path / "profiles"
+    _tree(profiles, {"_common": {"CLAUDE.common.md": "shared"}})
+    profile = profiles / "lazy"
+    _tree(
+        profile,
+        {
+            "CLAUDE.head.md": "claude",
+            "CLAUDE.tail.md": "claude",
+            "AGENTS.head.md": "codex",
+            "AGENTS.tail.md": "codex",
+        },
+    )
+
+    with pytest.raises(MigrateError, match="head.md"):
+        apply_migration(plan_migration(profile))
+
+    assert (profile / "CLAUDE.head.md").is_file(), "a refused migration renamed something"
+    assert (profile / "AGENTS.head.md").is_file()
