@@ -56,16 +56,21 @@
 #    That is strictly better evidence than a recomputed hash, because the
 #    harness owns both halves of it.
 #
-# 2. `session_stats` HAS NO `agent` COLUMN, AND CODEX IS UNMETERED ON PURPOSE.
-#    The columns are `session, date, model, profile, project, …`
-#    (`monitoring/db.py:58-73`); only `launches` carries `agent`
-#    (`:133-139`). And ADR-051 is **accepted**: *"Codex is not metered through
+# 2. CODEX IS UNMETERED ON PURPOSE, SO THE PASS CONDITION IS AN ABSENCE.
+#    ADR-051 is **accepted**: *"Codex is not metered through
 #    `CodexAdapter.read()` either"*, because `TranscriptEvent` carries no model
 #    and `session_stats` is `UNIQUE(session, model)`. `ingest_profile` returns an
 #    empty report for any agent whose name is not `claude-code`
-#    (`monitoring/ingest.py:141-145`). So "no `session_stats` row for the Codex
+#    (`monitoring/ingest.py:145-146`). So "no `session_stats` row for the Codex
 #    profile" is this gate's PASS condition, not a gap and not a blocker — a row
 #    appearing there would mean ADR-051 was reversed without its ADR.
+#
+#    NOTE, added on the rebase onto `0ae230a`: this correction used to have a
+#    second half — *"`session_stats` has no `agent` column"* — and ADR-050
+#    (#364) has since added one (`monitoring/db.py:74`). That half is withdrawn.
+#    The half above is untouched by it: a column exists to be filled by the
+#    Claude Code path, and ingest still refuses Codex before reaching it, so the
+#    row count for this profile is still zero and B5 still asserts an absence.
 #
 # 3. `lh exec` DOES NOT COUNT A LAUNCH. `record_launch` has exactly one call
 #    site, `cli/run_cmd.py:129`, with `entry="run"`, placed last before

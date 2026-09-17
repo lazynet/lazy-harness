@@ -747,11 +747,15 @@ gate; el repo gana.
    que el diseño sí construyó: la trust key lleva la **posición** del grupo y
    del handler (`agents/codex.py:458-472`), así que una declaración cambiada
    reaparece como `untrusted` recién aprobados más entradas `orphaned`.
-2. **`session_stats` no tiene columna `agent`** (`monitoring/db.py:58-73`);
-   sólo `launches` la tiene (`:133-139`). Y ADR-051 está **accepted**: Codex no
-   se mide, `ingest_profile` devuelve un reporte vacío para todo agente que no
-   sea `claude-code` (`monitoring/ingest.py:141-145`). La **ausencia** de filas
-   es el PASS de B5, no un gap ni un bloqueo.
+2. **Codex no se mide, y por eso el PASS de B5 es una ausencia.** ADR-051 está
+   **accepted**: `ingest_profile` devuelve un reporte vacío para todo agente que
+   no sea `claude-code` (`monitoring/ingest.py:145-146`). La **ausencia** de
+   filas es el PASS de B5, no un gap ni un bloqueo.
+   *(Esta corrección tenía una segunda mitad — "`session_stats` no tiene columna
+   `agent`" — que ADR-050 (#364) invalidó al agregarla, `monitoring/db.py:74`.
+   Se retira esa mitad; la de arriba no depende de ella: la columna existe para
+   que la llene el path de Claude Code, e `ingest` sigue rechazando Codex antes
+   de llegar a escribirla.)*
 3. **`lh exec` no cuenta un launch.** `record_launch` tiene un solo call site,
    `cli/run_cmd.py:129`, con `entry="run"`. Un `--dry-run` retorna antes y no
    registra nada, por diseño. Por eso B8 usa un `lh run` real con passthrough.
