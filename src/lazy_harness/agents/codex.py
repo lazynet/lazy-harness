@@ -32,6 +32,7 @@ nobody has fed. It waits on a run, not on a design decision.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -47,6 +48,7 @@ from lazy_harness.agents.base import (
     HookOutput,
     HookSupport,
     Operation,
+    SessionIdentity,
     Signal,
     TokenUsage,
     ToolCall,
@@ -327,6 +329,10 @@ _TOOL_OPERATIONS: dict[str, Operation] = {
 # guess this adapter exists to avoid.
 
 _ROLLOUT_GLOB = "rollout-*.jsonl"
+# The uuid v7 that closes a rollout's file name. Measured: it equals
+# `session_meta.id` in 15/15 rollouts, so the session is identifiable without
+# opening the file — which matters on a tree of thousands.
+_ROLLOUT_SESSION = re.compile(r"^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-(?P<session>.+)$")
 
 # `developer` is the third role in the stream and is deliberately not here. It
 # is Codex's instruction channel — the composed `AGENTS.md` and config text,
@@ -1031,6 +1037,54 @@ class CodexAdapter:
                 yield path
         except OSError:
             return
+
+    def session_identity(self, path: Path) -> SessionIdentity:
+        """The session from the file name, the project from `session_meta.cwd`.
+
+        A rollout path encodes a **date**, never a project — the tree is
+        `sessions/YYYY/MM/DD/` — so the project has to come out of the file.
+        `session_meta` is the first record written, and this stops at it rather
+        than reading a log that can run to hundreds of megabytes to learn one
+        string.
+
+        The session id comes off the file name instead, which is measurably the
+        same answer: the name's trailing uuid v7 equalled `session_meta.id` in
+        15/15 rollouts. That keeps a session identifiable when the record is
+        missing, half-written, or the file has since been removed — this must
+        not raise, and a session named by its file beats a session lost.
+
+        The project is `cwd` resolved the way every other subsystem resolves
+        one, so a worktree bills to its repository rather than to a row per
+        branch. A `cwd` that no longer exists still names its own directory,
+        which is the right answer for a checkout that has been cleaned up.
+        """
+        from lazy_harness.core.project_identity import repo_name
+
+        match = _ROLLOUT_SESSION.match(path.stem)
+        session_id = match.group("session") if match else path.stem
+
+        project: str | None = None
+        try:
+            with path.open("r", encoding="utf-8", errors="replace") as handle:
+                for raw_line in handle:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(entry, dict) or entry.get("type") != "session_meta":
+                        continue
+                    payload = entry.get("payload")
+                    if isinstance(payload, dict):
+                        cwd = payload.get("cwd")
+                        if isinstance(cwd, str) and cwd:
+                            project = repo_name(Path(cwd))
+                    break
+        except OSError:
+            pass
+        return SessionIdentity(session_id=session_id, project=project)
 
     def read(self, path: Path) -> Iterator[TranscriptEvent]:
         """One rollout, line by line, yielding only what a signal is defined over.

@@ -1252,9 +1252,11 @@ def test_doctor_reports_ok_when_a_reader_has_transcripts(tmp_path: Path) -> None
 
     out = _transcript_output(tmp_path, {"lazy": "claude-code"})
     assert "lazy" in out
-    assert "has a reader for" in out
-    # Never "reads": a reader existing is not a consumer reading it.
-    assert "claude-code reads" not in out
+    # "reads", since ADR-053: `lh metrics ingest` goes through this reader, so
+    # the verdict and the pipeline say the same thing. While ingest declined
+    # the reader's events, this line read "has a reader for" instead.
+    assert "claude-code reads" in out
+    assert "has a reader for" not in out
 
 
 def test_doctor_reports_degraded_when_transcripts_have_no_reader(tmp_path: Path) -> None:

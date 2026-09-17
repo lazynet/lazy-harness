@@ -23,6 +23,7 @@ from lazy_harness.agents.base import (
     HookOutput,
     HookSupport,
     Operation,
+    SessionIdentity,
     Signal,
     TokenUsage,
     ToolCall,
@@ -826,6 +827,41 @@ class ClaudeCodeAdapter:
                 message_id=message_id,
                 raw=entry,
             )
+
+    # --- session identity (TranscriptIdentity) ---
+
+    def session_identity(self, path: Path) -> SessionIdentity:
+        """Read off the path: Claude Code encodes both facts in it.
+
+        A transcript lives at `<sessions>/<encoded project>/<session>.jsonl`,
+        and a subagent's at `<encoded project>/<session>/subagents/**.jsonl`.
+        Subagent turns bill to the session that spawned them — attributing them
+        to their own file would turn every spawn into a session row of its own
+        and understate exactly the runs that did the most work.
+
+        The project directory is found by its *parent* being the sessions
+        directory this adapter declares, not by counting components: a
+        subagent transcript sits two levels deeper than a plain one, and a
+        fixed index would read the session id as the project on one of them.
+        """
+        # Local import: `monitoring` imports this package, so naming it at
+        # module scope would close an import cycle.
+        from lazy_harness.monitoring.collector import extract_project_name
+
+        parts = path.parts
+        session_id = path.stem
+        if "subagents" in parts[:-1]:
+            index = parts.index("subagents")
+            if index >= 1:
+                session_id = parts[index - 1]
+
+        project: str | None = None
+        sessions_dir = self.session_dirs().get("sessions") or "projects"
+        for ancestor in path.parents:
+            if ancestor.parent.name == sessions_dir:
+                project = extract_project_name(ancestor.name)
+                break
+        return SessionIdentity(session_id=session_id, project=project)
 
     # --- headless invocation (HeadlessAgent) ---
 

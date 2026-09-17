@@ -500,6 +500,46 @@ class TranscriptReader(Protocol):
 
 
 @dataclass(frozen=True)
+class SessionIdentity:
+    """Which session a transcript belongs to, and where its work happened.
+
+    Metering keys a row on `(session, model)` and reports it under a project,
+    and neither question is answerable from a transcript's *contents*: one
+    agent encodes both in the path, another names the session in its file name
+    and the project in a record no signal is defined over. So the agent
+    answers, and the consumer stops guessing per dialect.
+
+    `project` is `None` when the transcript discloses none — a different fact
+    from a project literally named "unknown", which is what a fallback invents.
+    """
+
+    session_id: str
+    project: str | None = None
+
+
+@runtime_checkable
+class TranscriptIdentity(Protocol):
+    """Optional capability: a reader that can say which session a transcript is.
+
+    Separate from `TranscriptReader` for the reason `HeadlessAgent` is separate
+    from `AgentAdapter`, and the separation is load-bearing here: `isinstance`
+    against `TranscriptReader` is what `transcript_health` and
+    `stop_verify_guard` gate on, so folding this method in would make every
+    reader that cannot identify a session — including every test fake — report
+    `DEGRADED` on the strength of a capability neither of them needs.
+    """
+
+    def session_identity(self, path: Path) -> SessionIdentity:
+        """Identify the session this transcript bills to.
+
+        Must not raise. A transcript that vanished between the walk and the
+        read, or one whose identifying record is half-written, still has a file
+        name; answering from it beats losing the session.
+        """
+        ...
+
+
+@dataclass(frozen=True)
 class HookEntry:
     """One hook command to be installed under an event.
 

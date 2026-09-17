@@ -44,3 +44,51 @@ def test_the_new_token_field_is_absent_and_not_zero_when_unreported() -> None:
     usage = TokenUsage(input_tokens=11)
 
     assert usage.cache_creation_1h_tokens is None
+
+
+# --- session identity, the other half of what metering needs ----------------
+
+
+def test_a_session_identity_names_the_session_and_may_name_no_project() -> None:
+    """`None`, not `"unknown"`: a fallback invents a project that never existed."""
+    from lazy_harness.agents.base import SessionIdentity
+
+    identity = SessionIdentity(session_id="s1")
+
+    assert (identity.session_id, identity.project) == ("s1", None)
+
+
+def test_both_readers_can_identify_the_session_a_transcript_belongs_to() -> None:
+    """Optional capability, separate Protocol — the idiom `HeadlessAgent` set.
+
+    An agent whose transcript does not disclose a session simply does not
+    implement it, and a consumer falls back rather than being refused.
+    """
+    from lazy_harness.agents.base import TranscriptIdentity
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+    from lazy_harness.agents.codex import CodexAdapter
+
+    assert isinstance(ClaudeCodeAdapter(), TranscriptIdentity)
+    assert isinstance(CodexAdapter(), TranscriptIdentity)
+
+
+def test_identifying_a_session_is_not_required_to_be_a_transcript_reader() -> None:
+    """The split is load-bearing: adding this to `TranscriptReader` would make
+    every existing fake reader fail `isinstance` and report DEGRADED."""
+    from collections.abc import Iterator
+    from pathlib import Path
+
+    from lazy_harness.agents.base import TranscriptIdentity, TranscriptReader
+
+    class ReaderOnly:
+        def locate_sessions(self, config_dir: Path, since: object) -> Iterator[Path]:
+            yield from ()
+
+        def read(self, path: Path) -> Iterator[TranscriptEvent]:
+            yield from ()
+
+        def signals(self) -> set:
+            return set()
+
+    assert isinstance(ReaderOnly(), TranscriptReader)
+    assert not isinstance(ReaderOnly(), TranscriptIdentity)

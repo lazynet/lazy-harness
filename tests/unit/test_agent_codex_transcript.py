@@ -817,3 +817,79 @@ def test_locate_sessions_is_lazy_about_the_directory_walk(tmp_path: Path) -> Non
 
     assert not isinstance(stream, list)
     assert len(list(stream)) == 1
+
+
+# --- session identity (TranscriptIdentity) ----------------------------------
+
+
+def _identity_rollout(tmp_path: Path, uuid: str, *entries: object) -> Path:
+    d = tmp_path / "sessions" / "2026" / "09" / "16"
+    d.mkdir(parents=True, exist_ok=True)
+    path = d / f"rollout-2026-09-16T09-02-04-{uuid}.jsonl"
+    path.write_text(_lines(*entries))
+    return path
+
+
+def _session_meta(session_id: str, cwd: str) -> dict:
+    """Evidence §5.1: `id` equals `session_id`, measured 15/15."""
+    return _entry(
+        "session_meta",
+        {
+            "id": session_id,
+            "session_id": session_id,
+            "cwd": cwd,
+            "cli_version": "0.154.0",
+            "originator": "codex_cli_rs",
+        },
+    )
+
+
+def test_the_session_is_the_uuid_in_the_rollout_name(tmp_path: Path) -> None:
+    """Measured: the name's uuid equals `session_meta.id` in 15/15 rollouts."""
+    uuid = "01a0aa69-fce1-7930-a795-dc39a8c1ebb4"
+    path = _identity_rollout(
+        tmp_path, uuid, _session_meta(uuid, "/w/demo"), _usage_record(input_tokens=1)
+    )
+
+    assert _reader().session_identity(path).session_id == uuid
+
+
+def test_the_project_comes_from_the_working_directory_session_meta_records(
+    tmp_path: Path,
+) -> None:
+    """A rollout path encodes a date, never a project — `cwd` is the only source."""
+    uuid = "01a0aa69-fce1-7930-a795-dc39a8c1ebb4"
+    path = _identity_rollout(
+        tmp_path, uuid, _session_meta(uuid, "/w/demo"), _usage_record(input_tokens=1)
+    )
+
+    assert _reader().session_identity(path).project == "demo"
+
+
+def test_a_rollout_without_session_meta_names_no_project(tmp_path: Path) -> None:
+    """`None`, not a guess: the session is still identified by its file name."""
+    uuid = "01a0aa69-fce1-7930-a795-dc39a8c1ebb4"
+    path = _identity_rollout(tmp_path, uuid, _usage_record(input_tokens=1))
+
+    identity = _reader().session_identity(path)
+    assert (identity.session_id, identity.project) == (uuid, None)
+
+
+def test_identifying_a_session_reads_no_further_than_it_must(tmp_path: Path) -> None:
+    """`session_meta` is line 1 of a rollout that can run to hundreds of megabytes."""
+    uuid = "01a0aa69-fce1-7930-a795-dc39a8c1ebb4"
+    path = _identity_rollout(tmp_path, uuid, _session_meta(uuid, "/w/demo"))
+    with path.open("a") as fh:
+        fh.write("{ not json\n" * 50)
+
+    assert _reader().session_identity(path).project == "demo"
+
+
+def test_an_unreadable_rollout_still_yields_an_identity(tmp_path: Path) -> None:
+    """Never raises: the caller is metering a tree it does not control."""
+    uuid = "01a0aa69-fce1-7930-a795-dc39a8c1ebb4"
+    path = _identity_rollout(tmp_path, uuid)
+    path.unlink()
+
+    identity = _reader().session_identity(path)
+    assert (identity.session_id, identity.project) == (uuid, None)

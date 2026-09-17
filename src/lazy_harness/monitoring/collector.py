@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from lazy_harness.core.project_identity import main_repo_root
+from lazy_harness.core.project_identity import repo_name
 from lazy_harness.monitoring.pricing import calculate_cost, is_pseudo_model
 
 _KNOWN_CONTAINERS = frozenset(
@@ -32,21 +32,6 @@ def extract_session_date(filepath: Path) -> str:
     except OSError:
         pass
     return "unknown"
-
-
-def _repo_name(resolved: Path) -> str:
-    """The name the project should be reported under for a real path.
-
-    A linked worktree is a checkout of a repository, not a project of its
-    own: reporting it by its own basename splits one repository across as
-    many rows as it has branches, and understates the cost of every one of
-    them. `main_repo_root` is the same rule memory keys on, so the two
-    subsystems agree about what a project is.
-    """
-    root = main_repo_root(resolved)
-    if root is not None and root.name:
-        return root.name
-    return resolved.name
 
 
 def extract_project_name(encoded_dir: str) -> str:
@@ -81,7 +66,7 @@ def extract_project_name(encoded_dir: str) -> str:
 
     resolved = try_build(0, "/")
     if resolved:
-        return _repo_name(Path(resolved))
+        return repo_name(Path(resolved))
 
     # Fallback: look for a known container directory (repos, projects, etc.)
     # and return everything after it as the project name.

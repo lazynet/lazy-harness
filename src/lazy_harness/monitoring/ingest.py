@@ -1,23 +1,33 @@
 """Metrics ingest pipeline.
 
-Walks the sessions tree **the profile's own agent declares** — never a literal
-`projects/` — parses token usage from every session JSONL (including nested
-subagent files), and upserts one `session_stats` row per `(session, model)` on
-every run.
+Reads every profile's transcripts **through its own agent's reader** — never a
+literal `projects/` and never a hand-written parser for one dialect — and
+upserts one `session_stats` row per `(session, model)` on every run.
 
-A profile whose agent declares no sessions directory, or whose transcripts are
-in a dialect this parser was not written for, is **skipped** rather than walked
-as though it were Claude Code. Walking it would find nothing and report the
-profile empty, which is indistinguishable from a profile that did no work;
-`lh doctor`'s transcript line carries the verdict instead.
+The agent answers three questions this module used to answer for it: where the
+transcripts are (`locate_sessions`), what a line means (`read`), and which
+session and project a transcript belongs to (`session_identity`). What is left
+here is the metering itself, plus the one exclusion that is genuinely this
+harness's own business rather than the agent's — see `memory/` below.
+
+A profile whose agent declares no sessions directory, or **implements no
+`TranscriptReader`**, is skipped rather than walked as though it were Claude
+Code. Walking it would find nothing and report the profile empty, which is
+indistinguishable from a profile that did no work; `lh doctor`'s transcript
+line carries the verdict instead. ADR-053 made that test a capability where
+ADR-051 had made it a name, so an agent that can be read is metered whatever
+it is called.
 
 Two precision properties the pipeline guarantees:
 
 1. **Cross-file message-id dedup** — Claude Code's `/resume` writes a new
    JSONL that re-includes the prior conversation. Without dedup, the shared
-   prefix gets double-counted. Every assistant message has a stable
-   `message.id`; we attribute it to the oldest file (by mtime) that mentions
-   it and ignore every subsequent occurrence.
+   prefix gets double-counted. `TranscriptEvent.message_id` carries the
+   provider's own id for the turn (Claude Code's `message.id`, Codex's
+   `response_id`); we attribute it to the oldest file (by mtime) that mentions
+   it and ignore every subsequent occurrence. An event whose provider offers
+   no such id is counted every time it is seen — there is nothing to match on,
+   and dropping it would be worse than counting it twice.
 
 2. **Overwrite, never accumulate** — `upsert_stats` writes each row with
    `ON CONFLICT(session, model) DO UPDATE`, so re-reading a transcript that
@@ -40,16 +50,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from lazy_harness.agents.base import (
+    SessionIdentity,
+    Signal,
+    TranscriptIdentity,
+    TranscriptReader,
+)
 from lazy_harness.agents.session_paths import session_path
 from lazy_harness.core.config import Config
 from lazy_harness.core.identity import resolve_host, resolve_identity
 from lazy_harness.core.paths import expand_path
 from lazy_harness.core.profiles import ProfileInfo, list_profiles
-from lazy_harness.monitoring.collector import (
-    extract_project_name,
-    extract_session_date,
-    iter_assistant_messages,
-)
+from lazy_harness.monitoring.collector import extract_session_date
 from lazy_harness.monitoring.db import MetricsDB
 from lazy_harness.monitoring.event_id import derive_event_id
 from lazy_harness.monitoring.pricing import cost_for_billing_model
@@ -58,12 +70,14 @@ from lazy_harness.plugins.contracts import (
     MetricEvent,
 )
 
-# The registry key of the agent whose transcript dialect `iter_assistant_messages`
-# parses. A name, and not a capability query, because nothing in `AgentAdapter`
-# answers "what dialect is your transcript" — `TranscriptReader` says a reader
-# exists, not that its events carry what metering needs. ADR-051 measures the
-# gap and proposes the fields that would delete this constant.
-_PARSED_DIALECT = "claude-code"
+# Directory name, anywhere under the sessions tree, whose `*.jsonl` are this
+# harness's own episodic logs rather than agent transcripts — 17 of them on the
+# measured host. The readers yield them because they *are* JSONL under the
+# tree, and correctly so: what this directory holds is a statement about what
+# `lazy-harness` writes under an agent's config dir, not about the agent. It is
+# the one dimension of ADR-051's measured gap that ADR-053 deliberately left
+# with the consumer.
+_HARNESS_LOG_DIR = "memory"
 
 
 @dataclass
@@ -87,38 +101,51 @@ class IngestReport:
 
 
 def _find_session_files(
-    projects_dir: Path,
+    agent: TranscriptReader,
+    config_dir: Path,
     errors: list[str],
-) -> list[tuple[int, Path, str, str]]:
-    """Return (mtime_ns, path, project_name, session_id) for every session JSONL.
+) -> list[Path]:
+    """Every transcript this run will meter, oldest write first.
 
-    Walks recursively but skips any file that sits under a `memory/`
-    ancestor directory — those are user-owned episodic logs, not agent
-    sessions. Files nested under a `<parent_uuid>/subagents/` directory are
-    attributed to the parent session_id so subagent turns fold into the
-    parent session's totals instead of creating fake session rows.
+    The walk itself belongs to the agent — `locate_sessions` knows the tree's
+    shape and its file naming, and neither is the same for two agents. Two
+    things are decided here instead.
+
+    **Order.** `locate_sessions` promises none; dedup needs one. A message id
+    is attributed to the oldest file that mentions it, so the sort is what
+    makes "which file owns this turn" a stable answer across runs rather than
+    whatever order the filesystem returned.
+
+    **The `memory/` exclusion.** Skipped at any depth, and skipped here rather
+    than in the reader, because it is a fact about what this harness writes
+    under an agent's config directory — a reader that learned to hide those
+    files would be answering a question that is not its own, and would hide
+    them from every other consumer too.
     """
-    files: list[tuple[int, Path, str, str]] = []
-    for project_dir in sorted(projects_dir.iterdir()):
-        if not project_dir.is_dir():
+    stamped: list[tuple[int, Path]] = []
+    for path in agent.locate_sessions(config_dir, None):
+        if _HARNESS_LOG_DIR in path.parts[:-1]:
             continue
-        project_name = extract_project_name(project_dir.name)
-        for f in project_dir.rglob("*.jsonl"):
-            rel_parts = f.relative_to(project_dir).parts
-            if "memory" in rel_parts[:-1]:
-                continue
-            if "subagents" in rel_parts[:-1]:
-                session_id = rel_parts[0]
-            else:
-                session_id = f.stem
-            try:
-                mtime_ns = f.stat().st_mtime_ns
-            except OSError as e:
-                errors.append(f"{f}: {e}")
-                continue
-            files.append((mtime_ns, f, project_name, session_id))
-    files.sort(key=lambda t: t[0])
-    return files
+        try:
+            stamped.append((path.stat().st_mtime_ns, path))
+        except OSError as e:
+            errors.append(f"{path}: {e}")
+            continue
+    stamped.sort(key=lambda t: t[0])
+    return [path for _mtime_ns, path in stamped]
+
+
+def _identify(agent: object, path: Path) -> SessionIdentity:
+    """Which session and project a transcript bills to.
+
+    An agent that cannot say falls back to the file's own stem and no project,
+    which is what every consumer did before `TranscriptIdentity` existed. A
+    reader is not required to implement it — that is the whole reason it is a
+    second Protocol — so this is a degradation, not a refusal.
+    """
+    if isinstance(agent, TranscriptIdentity):
+        return agent.session_identity(path)
+    return SessionIdentity(session_id=path.stem)
 
 
 def ingest_profile(
@@ -138,41 +165,47 @@ def ingest_profile(
     if agent is None:
         from lazy_harness.agents.registry import get_agent
 
-        agent = get_agent(_PARSED_DIALECT)
+        agent = get_agent("claude-code")
     # Both refusals are silent here and named by `lh doctor`: an ingest run
     # prints per-profile errors, and a profile it was never going to read is
-    # not an error of this run.
+    # not an error of this run. The first is a *capability* test and not a
+    # name — ADR-053. `TranscriptReader` is runtime_checkable, so this is the
+    # whole check and it tracks the code rather than a list.
     agent_name = getattr(agent, "name", "")
-    if agent_name != _PARSED_DIALECT:
+    if not isinstance(agent, TranscriptReader):
         return report
     sessions_dir = session_path(agent, profile.config_dir, "sessions")
     if sessions_dir is None or not sessions_dir.is_dir():
         return report
 
-    files = _find_session_files(sessions_dir, report.errors)
+    files = _find_session_files(agent, profile.config_dir, report.errors)
 
     seen_msg_ids: set[str] = set()
     aggregated: dict[tuple[str, str], dict] = {}
 
-    for _mtime_ns, session_file, project_name, session_id in files:
+    for session_file in files:
         report.sessions_scanned += 1
-        try:
-            messages = list(iter_assistant_messages(session_file))
-        except OSError as e:
-            report.errors.append(f"{session_file}: {e}")
-            continue
-        if not messages:
-            continue
+        identity = _identify(agent, session_file)
         session_date = extract_session_date(session_file)
         novel_for_this_file = 0
-        for m in messages:
-            report.messages_total += 1
-            if m["msg_id"] in seen_msg_ids:
-                report.messages_deduped += 1
+        for event in agent.read(session_file):
+            if event.signal is not Signal.TOKEN_USAGE or event.usage is None:
                 continue
-            seen_msg_ids.add(m["msg_id"])
+            report.messages_total += 1
+            # A provider with no stable id for the turn gets counted every
+            # time: there is nothing to match on, and dropping an unidentified
+            # turn loses real tokens where double-counting one only inflates a
+            # resume's shared prefix.
+            if event.message_id is not None:
+                if event.message_id in seen_msg_ids:
+                    report.messages_deduped += 1
+                    continue
+                seen_msg_ids.add(event.message_id)
             novel_for_this_file += 1
-            key = (session_id, m["model"])
+            # `UNIQUE(session, model)` needs a model, and an event that names
+            # none still spent tokens. "unknown" is the spelling the pricing
+            # table already treats as unpriced, which is the honest outcome.
+            key = (identity.session_id, event.model or "unknown")
             agg = aggregated.get(key)
             if agg is None:
                 agg = {
@@ -182,14 +215,15 @@ def ingest_profile(
                     "cache_create": 0,
                     "cache_create_1h": 0,
                     "date": session_date,
-                    "project": project_name,
+                    "project": identity.project or "",
                 }
                 aggregated[key] = agg
-            agg["input"] += m["input"]
-            agg["output"] += m["output"]
-            agg["cache_read"] += m["cache_read"]
-            agg["cache_create"] += m["cache_create"]
-            agg["cache_create_1h"] += m["cache_create_1h"]
+            usage = event.usage
+            agg["input"] += usage.input_tokens or 0
+            agg["output"] += usage.output_tokens or 0
+            agg["cache_read"] += usage.cache_read_tokens or 0
+            agg["cache_create"] += usage.cache_creation_tokens or 0
+            agg["cache_create_1h"] += usage.cache_creation_1h_tokens or 0
         if novel_for_this_file == 0:
             report.sessions_skipped += 1
 

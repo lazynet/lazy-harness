@@ -568,3 +568,39 @@ def test_locate_sessions_is_lazy_about_the_directory_walk(tmp_path: Path) -> Non
 
     assert not isinstance(stream, list)
     assert len(list(stream)) == 1
+
+
+# --- session identity (TranscriptIdentity) ----------------------------------
+
+
+def test_the_session_is_the_transcript_stem(tmp_path: Path) -> None:
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    path = tmp_path / "projects" / "-Users-foo-repos-demo" / "sess-1.jsonl"
+    path.parent.mkdir(parents=True)
+    path.write_text("")
+
+    assert ClaudeCodeAdapter().session_identity(path).session_id == "sess-1"
+
+
+def test_a_subagent_transcript_bills_to_the_session_that_spawned_it(
+    tmp_path: Path,
+) -> None:
+    """Subagent turns fold into the parent, or every spawn becomes a fake session row."""
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    path = tmp_path / "projects" / "-repo" / "parent-1" / "subagents" / "kid.jsonl"
+    path.parent.mkdir(parents=True)
+    path.write_text("")
+
+    assert ClaudeCodeAdapter().session_identity(path).session_id == "parent-1"
+
+
+def test_the_project_comes_from_the_encoded_directory_name(tmp_path: Path) -> None:
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    path = tmp_path / "projects" / "-Users-foo-repos-demo" / "sess-1.jsonl"
+    path.parent.mkdir(parents=True)
+    path.write_text("")
+
+    assert ClaudeCodeAdapter().session_identity(path).project == "demo"

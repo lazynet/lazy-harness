@@ -8,17 +8,17 @@ This page explains what the pipeline does, how it guarantees precision, and how 
 
 Two pieces are needed on either side of the pipeline:
 
-- **Producer** — `lazy_harness.monitoring.collector.iter_assistant_messages()` yields one dict per `type=="assistant"` entry in a JSONL file. Each dict carries the upstream `message.id`, the model string, and the four token buckets (`input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`). Messages without a `usage` block are skipped. When a legacy record has no `message.id`, the producer falls back to a synthetic id derived from the file stem and line number so dedup still works.
+- **Producer** — **the profile's own agent**, through the `TranscriptReader` Protocol. `agent.read(path)` yields one `TranscriptEvent` per signal occurrence, and ingest keeps the `TOKEN_USAGE` ones: each carries a `TokenUsage` (the four token buckets, plus the 1-hour cache write where the provider splits it), the `model` that produced the turn, and the provider's own `message_id` for it. There is no dialect-specific parser here any more — Claude Code's `message.id` and Codex's `response_id` arrive through the same field, and an agent that implements the Protocol is metered whatever it is called. A companion Protocol, `TranscriptIdentity`, answers which session and project a transcript belongs to; a reader that does not implement it falls back to the file's stem and no project.
 - **Sink** — `lazy_harness.monitoring.db.MetricsDB` owns the SQLite file. `session_stats` is keyed by `UNIQUE(session, model)` and stores per-bucket token counts plus a pre-computed cost. `upsert_stats(entries)` writes each row with `INSERT … ON CONFLICT(session, model) DO UPDATE`, so re-ingesting a session overwrites its totals in place while sessions absent from this run are left untouched.
 
 ## The walk
 
 `ingest_all(cfg, db, pricing)` iterates every configured profile via `list_profiles(cfg)`. For each profile it calls `ingest_profile(profile, db, pricing)` which:
 
-1. Resolves the transcript directory **the profile's own agent declares** — `<config_dir>/<agent.session_dirs()["sessions"]>`, which is `projects/` for Claude Code and `sessions/` for Codex, and is unrelated to the metrics database's location. Three cases are skipped rather than walked: a profile whose directory doesn't exist, one whose agent declares no sessions directory at all, and one whose agent writes a transcript dialect this parser was not written for. The last is the reason the skip is not silent elsewhere — walking a Codex rollout with Claude Code's parser finds nothing and reports the profile *empty*, which is indistinguishable from a profile that did no work. `lh doctor`'s **Transcripts** section carries the verdict instead.
-2. Collects every `*.jsonl` under that directory **recursively** (`rglob`), including nested subagent files at `<session-uuid>/subagents/agent-*.jsonl`. Paths that sit under a `memory/` ancestor are excluded — those are user-owned episodic logs (`decisions.jsonl`, `failures.jsonl`), not agent transcripts.
-3. Sorts the collected files by `st_mtime_ns` ascending. Older files attribute their messages first, so the canonical ownership is stable across runs.
-4. Iterates the files in order, maintaining a `seen_msg_ids: set[str]` across the whole profile. Each assistant message's id is checked against the set; novel messages bump an in-memory aggregator keyed by `(session_id, model)`; already-seen messages are counted as deduped and dropped.
+1. Resolves the transcript directory **the profile's own agent declares** — `<config_dir>/<agent.session_dirs()["sessions"]>`, which is `projects/` for Claude Code and `sessions/` for Codex, and is unrelated to the metrics database's location. Two cases are skipped rather than walked: a profile whose directory doesn't exist or whose agent declares no sessions directory at all, and one whose agent **implements no `TranscriptReader`**. The second is a capability test, not a name — an agent nobody has written a reader for is skipped, and `lh doctor`'s **Transcripts** section carries the verdict, because walking it would find nothing and report the profile *empty*, which is indistinguishable from a profile that did no work.
+2. Asks the agent for its transcripts (`locate_sessions`), which for Claude Code means every `*.jsonl` under the directory **recursively**, including nested subagent files at `<session-uuid>/subagents/agent-*.jsonl`, and for Codex means `sessions/YYYY/MM/DD/rollout-*.jsonl`. Paths that sit under a `memory/` ancestor are excluded **here rather than in the reader** — those are this harness's own episodic logs (`decisions.jsonl`, `failures.jsonl`), so what to do with them is the consumer's business and not the agent's.
+3. Sorts the collected files by `st_mtime_ns` ascending. `locate_sessions` promises no order, and dedup needs one: older files attribute their messages first, so the canonical ownership is stable across runs.
+4. Iterates the files in order, maintaining a `seen_msg_ids: set[str]` across the whole profile. Each event's `message_id` is checked against the set; novel events bump an in-memory aggregator keyed by `(session_id, model)`; already-seen ones are counted as deduped and dropped. An event whose provider gives no stable id is counted every time it is seen — there is nothing to match on, and losing real tokens is worse than double-counting a resume's shared prefix.
 5. After the walk, the in-memory aggregator is priced via `calculate_cost()` (per model × per token bucket, rates from `DEFAULT_PRICING` plus any `[monitoring.pricing]` override) and handed to `upsert_stats(entries)`. Each `(session, model)` row is inserted or overwritten with its freshly-computed total. Sessions whose transcripts no longer exist on disk are **not** re-scanned, so their rows are left in place rather than deleted — the table accumulates beyond Claude Code's transcript retention window.
 
 The whole pass is summarized as an `IngestReport` with the following counters: `sessions_scanned`, `sessions_updated`, `sessions_skipped`, `messages_total`, `messages_deduped`, and any per-file `errors`. `lh metrics ingest` prints the headline counters as the last line of output.
@@ -28,13 +28,13 @@ flowchart LR
   A[lh metrics ingest] --> B[load config.toml]
   B --> C[open MetricsDB]
   C --> D{for each profile}
-  D --> D2{agent declares a\nsessions dir we parse?}
+  D --> D2{agent is a\nTranscriptReader?}
   D2 -- no --> D3[skip - doctor reports it]
-  D2 -- yes --> E[rglob sessions dir/**/*.jsonl]
+  D2 -- yes --> E[agent.locate_sessions]
   E --> F[skip memory/*]
   F --> G[sort by mtime asc]
-  G --> H[iter_assistant_messages]
-  H --> I{msg.id in seen?}
+  G --> H[agent.read - TOKEN_USAGE events]
+  H --> I{message_id in seen?}
   I -- yes --> J[drop - deduped]
   I -- no --> K[aggregate by session, model]
   K --> L[calculate_cost]
@@ -51,7 +51,7 @@ Three independent guarantees stack up:
 
 When Claude Code `/resume`s a conversation, it writes a **new** JSONL whose first section re-includes every prior message. Without dedup, the shared prefix gets counted once per resume chain — for a conversation resumed four times, that's 5× overcounting.
 
-The pipeline defends against that with `seen_msg_ids`: each upstream `message.id` is attributed to exactly one `(session_id, model)` bucket — the first one the walk sees it in, which is the oldest file by mtime. Every subsequent occurrence in a resumed JSONL is skipped and counted under `messages_deduped`.
+The pipeline defends against that with `seen_msg_ids`: each `TranscriptEvent.message_id` — Claude Code's upstream `message.id`, Codex's `response_id` — is attributed to exactly one `(session_id, model)` bucket, the first one the walk sees it in, which is the oldest file by mtime. Every subsequent occurrence in a resumed JSONL is skipped and counted under `messages_deduped`.
 
 In production this matters a lot: on the author's install, ~50% of assistant messages in `~/.claude-*` projects are duplicates introduced by resumes. Dedup is the difference between matching `ccusage` and being off by ~3×.
 
