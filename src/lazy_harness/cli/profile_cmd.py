@@ -18,6 +18,11 @@ from lazy_harness.core.move_projects import (
     move_projects as do_move_projects,
 )
 from lazy_harness.core.paths import config_dir, config_file, contract_path, expand_path
+from lazy_harness.core.profile_migrate import (
+    MigrateError,
+    apply_migration,
+    plan_migration,
+)
 from lazy_harness.core.profiles import ProfileError, add_profile, list_profiles, remove_profile
 from lazy_harness.core.sync_agent_md import SyncError, sync_profiles
 
@@ -338,6 +343,61 @@ def _profile_sync_system_doc() -> None:
 # of sync.
 profile_sync_system_doc = profile.command("sync-system-doc")(_profile_sync_system_doc)
 profile_sync_claude_md = profile.command("sync-claude-md", hidden=True)(_profile_sync_system_doc)
+
+
+@profile.command("migrate")
+@click.argument("name")
+@click.option("--dry-run", is_flag=True, help="Show the plan without moving anything")
+def profile_migrate(name: str, dry_run: bool) -> None:
+    """Move a profile's root assets into `shared/` and per-agent segments.
+
+    An entry an adapter names in its config targets goes to that agent's
+    segment; everything the registry does not claim goes to `shared/`. The
+    assembled system docs and the segments they are built from stay at the
+    profile root, where `lh profile sync-system-doc` writes them.
+
+    Migrating is optional: an unmigrated profile still deploys its root to
+    every agent. What it buys is that a Codex profile stops receiving Claude
+    Code's assets, and the reverse.
+    """
+    console = Console()
+    profile_dir = config_dir() / "profiles" / name
+
+    try:
+        plan = plan_migration(profile_dir)
+    except MigrateError as e:
+        console.print(f"[red]Error:[/red] {escape(str(e))}")
+        raise SystemExit(1)
+
+    for entry_name, reason in plan.kept:
+        console.print(f"[dim]keep      {escape(entry_name)} ({escape(reason)})[/dim]")
+
+    verb = "would move" if dry_run else "move"
+    for move in plan.moves:
+        console.print(
+            f"[cyan]{verb}[/cyan] {escape(move.name)}"
+            f" → {escape(move.segment)}/{escape(move.name)}"
+            f" [dim]({escape(move.reason)})[/dim]"
+        )
+
+    if not plan.moves:
+        console.print("[green]Already segmented — nothing to move.[/green]")
+        return
+
+    if dry_run:
+        console.print()
+        console.print(f"[dim]{len(plan.moves)} entries would move. Re-run without --dry-run.[/dim]")
+        return
+
+    try:
+        apply_migration(plan)
+    except MigrateError as e:
+        console.print(f"[red]Refused:[/red] {escape(str(e))}")
+        raise SystemExit(1)
+
+    console.print()
+    console.print(f"[green]Moved {len(plan.moves)} entries.[/green]")
+    console.print("[bold]Next:[/bold] [cyan]lh deploy[/cyan] to relink, then re-add to chezmoi.")
 
 
 @profile.command("remove")
