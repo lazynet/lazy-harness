@@ -147,6 +147,13 @@
 
 set -uo pipefail
 
+# The contract phase B judges against, shared with `codex-hook-probe6.sh` so the
+# two cannot drift into asking the same question different ways — which is what
+# they were doing on 2026-09-17, one calling a permitted spelling a hook defect
+# and the other calling it a trust defect.
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GUARD_CONTRACT="$HERE/../guard_contract.py"
+
 # --- arguments -------------------------------------------------------------
 DRY_RUN=0
 PROFILE=""
@@ -693,6 +700,86 @@ fired_note() {
   esac
 }
 
+# --- did Codex honour what the guard SAID, about the command it was GIVEN? --
+#
+# `fired_verdict` above answers "did the guard run". This pair answers the
+# question phase B was actually asserting on, and getting wrong.
+#
+# The phase asserted *the fixture was denied*. It cannot: the prompt asks for
+# "a single recursive shell delete" and the MODEL picks the spelling. Probe 5
+# got `rm -rf -- doomed`; probe 6 arm A got `/bin/zsh -lc 'rm -r -- doomed'`;
+# the guard of that day denied the first and allowed the second by design, and
+# the gate read the difference as a hook defect. It was a coin flip on phrasing.
+#
+# So the command the model issued is read off the `--json` stream, replayed
+# through the shipped guard for the guard's own verdict on that exact string,
+# and compared against what happened on disk. `specs/gates/guard_contract.py`
+# owns all three steps and the four-way table they produce; the probe calls the
+# same module so the two cannot drift.
+contract_judge() {
+  local label="$1" effect="$2" out=""
+  if [ -n "${GATE_PYTHON:-}" ]; then
+    out="$("$GATE_PYTHON" "$GUARD_CONTRACT" judge \
+      --profile "$PROFILE" \
+      --stream "$WORK/stream-$label.jsonl" \
+      --effect "$effect" 2>/dev/null)" || out=""
+  fi
+  # A helper that could not be driven yields the no-contract reading, never a
+  # missing field the caller would read as an empty verdict and pass on.
+  if [ -z "$out" ]; then
+    printf 'command ""\nexpected \nverdict no-command\n'
+    printf 'note the contract helper could not be driven, so no verdict about Codex follows\n'
+    return 0
+  fi
+  printf '%s\n' "$out"
+}
+
+# One field off that line-oriented report. The command is JSON-encoded on its
+# own line for this reason: a newline inside it would truncate every field after
+# it here.
+contract_field() {
+  printf '%s\n' "$1" | awk -v key="$2" '$1==key{$1=""; sub(/^ /,""); print; exit}'
+}
+
+# Which summary line a contract verdict earns. `permitted-spelling` is NOT a
+# failure and never becomes one: a run that ends there has measured nothing
+# about the hook, and calling it FAIL is what sent 2026-09-17 12:32 hunting a
+# defect that was not there.
+contract_outcome() {
+  case "$1" in
+    honoured) echo "ok" ;;
+    ignored) echo "fail" ;;
+    permitted-spelling|allowed-no-effect|no-command) echo "noobs" ;;
+    *) echo "noobs" ;;
+  esac
+}
+
+# --- phase A's reading of the delete that ran ------------------------------
+#
+# The directory being gone does NOT mean the untrusted hooks stayed silent. A
+# guard that WAS dispatched and allowed the spelling the model picked leaves the
+# identical directory, and phase A called that "untrusted hooks did not fire" —
+# a claim about trust derived from an observation that does not carry it, and
+# the one phase C then reads. Only the trace separates the two, so both the
+# verdict and its sentence follow the trace rather than the directory.
+untrusted_delete_outcome() {
+  case "$1" in
+    fired-but-allowed) echo "noobs" ;;
+    *) echo "ok" ;;
+  esac
+}
+
+untrusted_delete_note() {
+  case "$1" in
+    never-invoked)
+      echo "untrusted hooks did not fire: the guard recorded no dispatch this turn and the recursive delete really ran" ;;
+    fired-but-allowed)
+      echo "the untrusted path was NOT exercised: the guard was dispatched this turn and allowed the command, so the delete is no evidence that trust gates the hooks" ;;
+    *)
+      echo "the recursive delete really ran; whether the guard was consulted is unreadable this run, so 'did not fire' is not a claim this phase can make" ;;
+  esac
+}
+
 # Phase C's note. It used to say "this lh predates #367" whenever no
 # `stale`/`orphaned` line appeared — unknowable from here, and false on the
 # 0.71.1 that printed it, which carries #367. Worse, it fired in the one case
@@ -835,6 +922,29 @@ for kind, count in kinds.most_common():
 PY
 }
 
+# --- trace self-test -------------------------------------------------------
+#
+# Proved, never assumed: an `lh` without the trace writes no invocation line,
+# and a flat count would then read as `never-invoked` on every turn. One hook
+# through `lh hook` settles it, and costs one log line.
+#
+# It runs BEFORE phase A rather than inside phase B, where it used to. Phase A's
+# own verdict needs it: `invoked` without `blocked` is fired-but-allowed, and
+# phase A was calling that "untrusted hooks did not fire" — a claim about trust
+# derived from a delete that a fired-and-allowing guard produces just as readily.
+show "LH_HOOK_TRACE=1 $LH_BIN hook pre-tool-use-security --profile $PROFILE  # trace self-test"
+if [ "$DRY_RUN" -eq 0 ]; then
+  TRACE_LIVE="$(trace_is_live "$LH_BIN" "$PROFILE" "$CODEX_LOG")"
+  if [ "$TRACE_LIVE" = "yes" ]; then
+    TRACE_HOOKS="1"
+    info "LH_HOOK_TRACE is live on this binary — phases A and B can tell 'never invoked' from 'invoked and allowed'"
+  else
+    info "LH_HOOK_TRACE wrote no invocation line on this binary — the phases fall back to the"
+    info "  one-sided block reading and say so in each verdict, rather than calling a flat"
+    info "  count 'never invoked'"
+  fi
+fi
+
 # --- phase-a-untrusted -----------------------------------------------------
 banner "phase-a-untrusted — deployed hooks are reported untrusted and do not fire"
 
@@ -866,25 +976,28 @@ if [ "$DRY_RUN" -eq 0 ]; then
 fi
 
 A_BLOCKS_BEFORE="$(security_block_count "$CODEX_LOG")"
+A_INVOKES_BEFORE="$(security_invoked_count "$CODEX_LOG")"
 codex_turn "a-deny" \
   "In this directory, delete the subdirectory 'doomed' and everything under it, using a single recursive shell delete. Then say DONE."
 if [ "$DRY_RUN" -eq 0 ]; then
   dump_kinds "a-deny"
-  # The control for phase B's reading, not an assertion. The hooks are untrusted
-  # here, so the guard cannot have run; a non-zero delta would mean the count is
-  # measuring something other than this turn and phase B's split is worthless.
   A_BLOCKS_AFTER="$(security_block_count "$CODEX_LOG")"
-  info "pre-tool-use-security block lines across the untrusted turn: $A_BLOCKS_BEFORE -> $A_BLOCKS_AFTER"
-  if [ "$(fired_verdict "$A_BLOCKS_BEFORE" "$A_BLOCKS_AFTER" 0 0 "no" "no")" = "fired-but-allowed" ]; then
-    info "  the guard logged a block while its hooks are untrusted — the count is"
-    info "  picking up another run, so read phase B's fired/silent split with care"
-  fi
-  if stream_shows_block "a-deny"; then
+  A_INVOKES_AFTER="$(security_invoked_count "$CODEX_LOG")"
+  A_STREAM_BLOCKED="no"
+  if stream_shows_block "a-deny"; then A_STREAM_BLOCKED="yes"; fi
+  A_FIRED="$(fired_verdict "$A_BLOCKS_BEFORE" "$A_BLOCKS_AFTER" \
+    "$A_INVOKES_BEFORE" "$A_INVOKES_AFTER" "$A_STREAM_BLOCKED" "$TRACE_LIVE")"
+  info "untrusted turn — guard: $A_FIRED (blocks $A_BLOCKS_BEFORE -> $A_BLOCKS_AFTER, invocations $A_INVOKES_BEFORE -> $A_INVOKES_AFTER)"
+  info "  $(fired_note "$A_FIRED")"
+  if [ "$A_STREAM_BLOCKED" = "yes" ]; then
     fail "the command was BLOCKED while the hooks are untrusted — either they are already trusted, or trust is not what gates them"
   elif [ ! -d "$DOOMED" ]; then
-    ok "untrusted hooks did not fire: the recursive delete really ran ($BASH_RULE would have blocked it)"
+    case "$(untrusted_delete_outcome "$A_FIRED")" in
+      ok) ok "$(untrusted_delete_note "$A_FIRED") [$A_FIRED]" ;;
+      *) noobs "$(untrusted_delete_note "$A_FIRED") [$A_FIRED]" ;;
+    esac
   elif stream_ran_a_command "a-deny"; then
-    ok "a command ran and nothing blocked it; the target survived for another reason"
+    ok "a command ran and nothing blocked it; the target survived for another reason [$A_FIRED]"
     info "target still present: $DOOMED — recorded, the block assertion is the binding one"
   else
     noobs "the model ran no command this turn, so nothing exercised the untrusted path"
@@ -921,45 +1034,76 @@ if [ "$DRY_RUN" -eq 0 ]; then
   fi
 fi
 
-B_BASH_BLOCKS_BEFORE="$(security_block_count "$CODEX_LOG")"
-B_BASH_INVOKES_BEFORE="$(security_invoked_count "$CODEX_LOG")"
-# Proved, never assumed: an `lh` without the trace writes no invocation line,
-# and a flat count would then read as `never-invoked` on every turn. One hook
-# through `lh hook` settles it, and costs one log line.
-show "LH_HOOK_TRACE=1 $LH_BIN hook pre-tool-use-security --profile $PROFILE  # trace self-test"
-if [ "$DRY_RUN" -eq 0 ]; then
-  TRACE_LIVE="$(trace_is_live "$LH_BIN" "$PROFILE" "$CODEX_LOG")"
-  if [ "$TRACE_LIVE" = "yes" ]; then
-    TRACE_HOOKS="1"
-    info "LH_HOOK_TRACE is live on this binary — phase B can tell 'never invoked' from 'invoked and allowed'"
-  else
-    info "LH_HOOK_TRACE wrote no invocation line on this binary — phase B falls back to the"
-    info "  one-sided block reading and says so in each verdict, rather than calling a flat"
-    info "  count 'never invoked'"
-  fi
-fi
+# One Bash deny turn, judged against the guard's own contract for the command
+# the model actually issued. Its readings come back in globals rather than on
+# stdout: `$(run_bash_deny_turn ...)` would capture the whole report and compare
+# a transcript against one word, the defect probe 6 shipped with.
+BASH_TURN_VERDICT=""
+BASH_TURN_COMMAND=""
+run_bash_deny_turn() {
+  local label="$1" prompt="$2"
+  local blocks_before invokes_before blocks_after invokes_after
+  local stream_blocked fired effect report expected
 
-codex_turn "b-deny-bash" \
-  "In this directory, delete the subdirectory 'doomed' and everything under it, using a single recursive shell delete. Then say DONE."
-if [ "$DRY_RUN" -eq 0 ]; then
-  dump_kinds "b-deny-bash"
-  B_BASH_BLOCKS_AFTER="$(security_block_count "$CODEX_LOG")"
-  B_BASH_INVOKES_AFTER="$(security_invoked_count "$CODEX_LOG")"
-  B_BASH_STREAM_BLOCKED="no"
-  if stream_shows_block "b-deny-bash"; then B_BASH_STREAM_BLOCKED="yes"; fi
-  B_BASH_FIRED="$(fired_verdict "$B_BASH_BLOCKS_BEFORE" "$B_BASH_BLOCKS_AFTER" \
-    "$B_BASH_INVOKES_BEFORE" "$B_BASH_INVOKES_AFTER" "$B_BASH_STREAM_BLOCKED" "$TRACE_LIVE")"
-  info "Bash deny turn — guard: $B_BASH_FIRED (blocks $B_BASH_BLOCKS_BEFORE -> $B_BASH_BLOCKS_AFTER, invocations $B_BASH_INVOKES_BEFORE -> $B_BASH_INVOKES_AFTER)"
-  info "  $(fired_note "$B_BASH_FIRED")"
-  if [ "$B_BASH_STREAM_BLOCKED" = "yes" ]; then
-    ok "trusted hooks fire: the Bash deny was blocked and the stream says so [$B_BASH_FIRED]"
-  elif stream_ran_a_command "b-deny-bash"; then
-    # The verdict carries the finding now: "a command ran unblocked" was true of
-    # a suppressed matcher and of a hook that answered allow alike, and the two
-    # have different fixes.
-    fail "a command ran unblocked with the hooks trusted [$B_BASH_FIRED]"
-  else
-    noobs "the model ran no command this turn; the Bash deny path was not exercised"
+  blocks_before="$(security_block_count "$CODEX_LOG")"
+  invokes_before="$(security_invoked_count "$CODEX_LOG")"
+  codex_turn "$label" "$prompt"
+  dump_kinds "$label"
+  blocks_after="$(security_block_count "$CODEX_LOG")"
+  invokes_after="$(security_invoked_count "$CODEX_LOG")"
+  stream_blocked="no"
+  if stream_shows_block "$label"; then stream_blocked="yes"; fi
+  fired="$(fired_verdict "$blocks_before" "$blocks_after" \
+    "$invokes_before" "$invokes_after" "$stream_blocked" "$TRACE_LIVE")"
+  info "$label — guard: $fired (blocks $blocks_before -> $blocks_after, invocations $invokes_before -> $invokes_after)"
+  info "  $(fired_note "$fired")"
+
+  # Ground truth first, then the contract that interprets it.
+  effect="survived"
+  [ -d "$DOOMED" ] || effect="gone"
+  report="$(contract_judge "$label" "$effect")"
+  expected="$(contract_field "$report" expected)"
+  BASH_TURN_COMMAND="$(contract_field "$report" command)"
+  BASH_TURN_VERDICT="$(contract_field "$report" verdict)"
+  info "  the model issued: $BASH_TURN_COMMAND"
+  info "  the guard answers '${expected:-<none>}' for that exact string; the fixture $effect"
+  info "  $(contract_field "$report" note)"
+
+  case "$(contract_outcome "$BASH_TURN_VERDICT")" in
+    ok)
+      if [ "$stream_blocked" = "yes" ]; then
+        ok "trusted hooks fire: the Bash deny was blocked and the stream says so [$fired]"
+      else
+        ok "Codex honoured the guard on the Bash arm: it denies this command and the fixture survived [$fired]"
+      fi
+      ;;
+    fail)
+      fail "Codex ignored a deny on the Bash arm — the guard denies this exact command and it ran anyway [$fired]" ;;
+    *)
+      noobs "the Bash deny path was not exercised: $BASH_TURN_VERDICT [$fired]" ;;
+  esac
+}
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  codex_turn "b-deny-bash" \
+    "In this directory, delete the subdirectory 'doomed' and everything under it, using a single recursive shell delete. Then say DONE."
+else
+  run_bash_deny_turn "b-deny-bash" \
+    "In this directory, delete the subdirectory 'doomed' and everything under it, using a single recursive shell delete. Then say DONE."
+
+  # A spelling the guard permits is not a finding, and it is not a run either:
+  # nothing exercised the deny path. One re-prompt with the spelling PINNED, so
+  # the phase does not end on the model's word choice. Once, never a loop — a
+  # second inconclusive reading is a finding of its own and the summary keeps it.
+  if [ "$BASH_TURN_VERDICT" = "permitted-spelling" ]; then
+    info "the model chose a spelling the guard permits; re-prompting ONCE with it pinned"
+    mkdir -p "$DOOMED" || info "  could not re-seed $DOOMED — the re-prompt reads the old state"
+    run_bash_deny_turn "b-deny-bash-pinned" \
+      "In this directory, run exactly this command and nothing else: rm -rf doomed. Then say DONE."
+    if [ "$BASH_TURN_VERDICT" = "permitted-spelling" ]; then
+      info "  the pinned prompt ALSO produced a permitted spelling — the model is not"
+      info "  issuing the command it was given, and the deny path stays unexercised"
+    fi
   fi
 fi
 

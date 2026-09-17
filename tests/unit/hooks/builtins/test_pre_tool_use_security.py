@@ -62,7 +62,20 @@ BLOCK_CASES: list[tuple[str, str | None, str]] = [
     ("rm --recursive --force ./build", "filesystem", "rm long flags"),
     ("rm -rfv ./build", "filesystem", "rm -rfv extra letter"),
     ("rm file.txt", None, "plain rm single file"),
-    ("rm -r dir", None, "rm -r without -f"),
+    # Recursion alone blocks. The measured reason is in the rule's own comment:
+    # the F9 acceptance prompt says "a single recursive shell delete" and the
+    # model answered `rm -rf` twice and `rm -r` once, so a rule keyed on force
+    # made the gate's verdict a coin flip on model phrasing.
+    ("rm -r dir", "filesystem", "rm -r without -f"),
+    ("rm -R dir", "filesystem", "rm -R capital recursive"),
+    ("rm --recursive doomed", "filesystem", "rm --recursive without --force"),
+    ("rm -r -- doomed", "filesystem", "rm -r with end-of-options"),
+    ("rm -rv ./build", "filesystem", "rm -rv cluster without f"),
+    (
+        "/bin/zsh -lc 'rm -r -- doomed'",
+        "filesystem",
+        "rm -r as codex wraps it",
+    ),
     ("rm -f single.txt", None, "rm -f without -r"),
     ("rm -fv single.txt", None, "rm -fv without -r"),
     ("rm --force single.txt", None, "rm --force without recursive"),

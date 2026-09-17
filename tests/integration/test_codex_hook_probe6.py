@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent.parent
@@ -65,7 +66,7 @@ if home:
 # Blocks or does not, on command. A shim that only recorded being called could
 # not exercise the arm-B branch, which is the one design property here.
 _CODEX_SHIM = """#!/usr/bin/env python3
-import os, shutil, sys
+import json, os, shutil, sys
 
 with open(os.environ["PROBE6_WITNESS"], "a") as fh:
     fh.write("codex %s\\n" % " ".join(sys.argv[1:]))
@@ -76,8 +77,47 @@ if "--version" in sys.argv:
 home = os.environ.get("CODEX_HOME", "<unset>")
 print("turn ran with CODEX_HOME=%s" % home)
 
-if os.environ.get("PROBE6_CODEX_BLOCKS") == "1":
-    logs = os.path.join(home, "logs")
+logs = os.path.join(home, "logs")
+
+# The command the model issued this turn, in the FLAT envelope 0.154.0 writes
+# (`codex-evidence.md` 7.3). It goes to stdout, which the probe redirects to
+# stream-<arm>.jsonl.
+issued = os.environ.get("PROBE6_ISSUED_COMMAND", "")
+if issued:
+    print(json.dumps({
+        "type": "item.completed",
+        "item": {"id": "item_1", "type": "command_execution",
+                 "command": issued, "exit_code": 0, "status": "completed"},
+    }))
+
+# Codex writes a trust_level for every workspace it is pointed at, and bumps a
+# usage counter, on every run. Neither is anything this probe reads.
+if os.environ.get("PROBE6_WRITES_PROJECT_ENTRY") == "1":
+    index = sys.argv.index("-C")
+    with open(os.path.join(home, "config.toml"), "a") as fh:
+        fh.write('\\n[projects."%s"]\\ntrust_level = "trusted"\\n' % sys.argv[index + 1])
+
+# A group that was consulted and answered allow writes the trace line and
+# nothing else. Indistinguishable from a silent one without it, which is the
+# distinction probe 6 shipped unable to make.
+if os.environ.get("PROBE6_CODEX_INVOKES") == "1":
+    os.makedirs(logs, exist_ok=True)
+    with open(os.path.join(logs, "hooks.log"), "a") as fh:
+        fh.write("pre-tool-use-security: invoked\\n")
+
+# Writes the probe DOES have to notice, against the exemption above.
+if os.environ.get("PROBE6_MOVES_TRUST") == "1":
+    with open(os.path.join(home, "config.toml"), "a") as fh:
+        fh.write('\\n[hooks.state]\\n"pre_tool_use:0:0" = "moved-mid-run"\\n')
+if os.environ.get("PROBE6_MOVES_DECLARATION") == "1":
+    with open(os.path.join(home, "hooks.json"), "w") as fh:
+        fh.write('{"hooks": {"PreToolUse": []}}')
+
+blocks = os.environ.get("PROBE6_CODEX_BLOCKS") == "1"
+if os.environ.get("PROBE6_ARM_B_BLOCKS") == "1" and "--dangerously-bypass-hook-trust" in sys.argv:
+    blocks = True
+
+if blocks:
     os.makedirs(logs, exist_ok=True)
     with open(os.path.join(logs, "hooks.log"), "a") as fh:
         fh.write("pre-tool-use-security: invoked\\n")
@@ -94,9 +134,26 @@ shutil.rmtree(os.path.join(sys.argv[index + 1], "doomed"), ignore_errors=True)
 _TIMEOUT_SHIM = '#!/bin/sh\nshift\nexec "$@"\n'
 
 
-def _run(tmp_path: Path, *args: str, blocks: bool = True) -> subprocess.CompletedProcess[str]:
+def _run(
+    tmp_path: Path,
+    *args: str,
+    blocks: bool = True,
+    invokes: bool = False,
+    issued: str = "",
+    writes_project_entry: bool = False,
+    moves_trust: bool = False,
+    moves_declaration: bool = False,
+    arm_b_blocks: bool = False,
+    real_python: bool = False,
+) -> subprocess.CompletedProcess[str]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
+    # The probe resolves its interpreter out of `lh`'s own directory, the way
+    # the F9 gate does. `real_python=False` removes it so the degraded path —
+    # no interpreter that can import `lazy_harness` — is exercised too.
+    python_shim = bin_dir / "python3"
+    if real_python and not python_shim.exists():
+        python_shim.symlink_to(sys.executable)
     for name, body in (
         ("lh", _LH_SHIM),
         ("codex", _CODEX_SHIM),
@@ -117,6 +174,12 @@ def _run(tmp_path: Path, *args: str, blocks: bool = True) -> subprocess.Complete
     env[WITNESS_VAR] = str(tmp_path / "witness")
     env["PROBE6_FAKE_HOME"] = str(home)
     env["PROBE6_CODEX_BLOCKS"] = "1" if blocks else "0"
+    env["PROBE6_CODEX_INVOKES"] = "1" if invokes else "0"
+    env["PROBE6_ISSUED_COMMAND"] = issued
+    env["PROBE6_WRITES_PROJECT_ENTRY"] = "1" if writes_project_entry else "0"
+    env["PROBE6_MOVES_TRUST"] = "1" if moves_trust else "0"
+    env["PROBE6_MOVES_DECLARATION"] = "1" if moves_declaration else "0"
+    env["PROBE6_ARM_B_BLOCKS"] = "1" if arm_b_blocks else "0"
     env["PROBE_OUT"] = str(tmp_path / "out")
     env.pop("CODEX_HOME", None)
 
@@ -298,3 +361,102 @@ def test_the_fixture_lives_outside_the_profile(tmp_path: Path) -> None:
     result = _run(tmp_path, "--dry-run")
 
     assert str(tmp_path / "codex-lazy") not in result.stdout.split("workspace:")[-1]
+
+
+# --- the profile fingerprint reads what it promised, and nothing else ------
+#
+# Probe 6's run of 2026-09-17 16:41 printed `THE PROFILE MOVED UNDER THE PROBE
+# -- every reading above is suspect` over a write the probe itself provoked and
+# that touches nothing it reads: Codex records a `trust_level` for each
+# workspace it is pointed at. `hooks.state` and `hooks.json` were byte-identical
+# across that same run. An alarm that fires on every run is one the reader
+# learns to skip.
+
+_RECURSIVE = "rm " + "-r" + " -- doomed"
+_RECURSIVE_FORCED = "rm " + "-r" + "f" + " -- doomed"
+
+
+def test_a_projects_entry_codex_writes_does_not_flip_the_summary(tmp_path: Path) -> None:
+    result = _run(tmp_path, blocks=True, writes_project_entry=True)
+
+    assert "THE PROFILE MOVED" not in result.stdout + result.stderr
+    assert "byte-identical" in result.stdout
+
+
+def test_a_change_to_the_trust_state_still_flips_the_summary(tmp_path: Path) -> None:
+    """The other direction, and the one the exemption must not cost. A filter
+    that exempted everything would pass the test above and report nothing."""
+    result = _run(tmp_path, blocks=True, moves_trust=True)
+
+    assert "THE PROFILE MOVED" in result.stdout + result.stderr
+
+
+def test_a_change_to_the_declaration_still_flips_the_summary(tmp_path: Path) -> None:
+    result = _run(tmp_path, blocks=True, moves_declaration=True)
+
+    assert "THE PROFILE MOVED" in result.stdout + result.stderr
+
+
+def test_the_summary_names_the_projects_entries_codex_leaves_behind(tmp_path: Path) -> None:
+    """The user has to clean them out of the real `config.toml`, and has to know
+    it was Codex and not the probe that put them there."""
+    result = _run(tmp_path, blocks=True)
+
+    assert "[projects." in result.stdout
+
+
+# --- the verdict table gained the row this run produced --------------------
+
+
+def test_arm_a_allowing_with_an_invocation_is_fired_but_allowed(tmp_path: Path) -> None:
+    """The reading probe 6 could not reach. `pre-tool-use-security` was invoked
+    in arm A (`invoked 1 -> 2`) and allowed; an unapproved group is not invoked,
+    so trust was never the delta."""
+    result = _run(tmp_path, blocks=False, invokes=True, issued=_RECURSIVE)
+
+    assert "FIRED-BUT-ALLOWED" in result.stdout
+    assert "TRUST" not in result.stdout
+
+
+def test_trust_is_only_offered_when_arm_a_shows_no_invocation(tmp_path: Path) -> None:
+    """The half that keeps the fix honest: with no invocation delta in arm A and
+    arm B blocking, `TRUST` is still the right answer and must stay reachable."""
+    result = _run(tmp_path, blocks=False, invokes=False, arm_b_blocks=True)
+
+    assert "TRUST" in result.stdout
+
+
+def test_arm_b_is_not_spent_on_a_fired_but_allowed_arm_a(tmp_path: Path) -> None:
+    """Arm B splits trust from the declaration. Neither is in question once the
+    guard is observed running, so the model call is not spent."""
+    _run(tmp_path, blocks=False, invokes=True, issued=_RECURSIVE)
+
+    assert len(_turns(tmp_path)) == 1
+
+
+def test_the_command_the_model_issued_is_printed(tmp_path: Path) -> None:
+    """Read off `stream-a.jsonl`, because the spelling IS the finding: the same
+    prompt produced a forced spelling in probe 5 and a recursion-only one here."""
+    issued = "/bin/zsh -lc " + repr(_RECURSIVE)
+    result = _run(tmp_path, blocks=False, invokes=True, issued=issued)
+
+    assert issued in result.stdout
+
+
+def test_the_guards_own_rule_for_that_spelling_is_reported(tmp_path: Path) -> None:
+    """Replayed in process through the same module the F9 gate uses, so the two
+    cannot disagree about what the guard says."""
+    result = _run(tmp_path, blocks=False, invokes=True, issued=_RECURSIVE_FORCED, real_python=True)
+
+    assert "deny" in result.stdout
+
+
+def test_an_unresolvable_interpreter_says_so_rather_than_inventing_a_rule(
+    tmp_path: Path,
+) -> None:
+    """No interpreter beside `lh` can import `lazy_harness` in this fixture. The
+    probe must report the command and decline the rule, never print a guess."""
+    result = _run(tmp_path, blocks=False, invokes=True, issued=_RECURSIVE)
+
+    assert _RECURSIVE in result.stdout
+    assert "could not be replayed" in result.stdout
