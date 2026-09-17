@@ -9,7 +9,7 @@ import click
 from rich.console import Console
 from rich.markup import escape
 
-from lazy_harness.core.config import ConfigError, load_config
+from lazy_harness.core.config import BILLING_MODELS, ConfigError, load_config
 from lazy_harness.core.paths import config_file
 from lazy_harness.init.wizard import (
     ExistingSetupError,
@@ -41,6 +41,11 @@ def init(force: bool) -> None:
 
     profile_name = click.prompt("Profile name", default="personal")
     agent = click.prompt("Agent", default="claude-code")
+    billing_model = click.prompt(
+        "Billing model",
+        type=click.Choice(BILLING_MODELS),
+        default="per_token",
+    )
     knowledge_default = str(home / "Documents" / "lazy-harness-knowledge")
     knowledge_path = click.prompt("Knowledge directory", default=knowledge_default)
 
@@ -53,6 +58,7 @@ def init(force: bool) -> None:
         agent=agent,
         knowledge_path=Path(knowledge_path).expanduser(),
         enable_qmd=enable_qmd,
+        billing_model=billing_model,
     )
     run_wizard(answers, config_path=cfg)
 
