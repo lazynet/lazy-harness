@@ -319,16 +319,42 @@ FIXTURE_BASH="rm -rf $DOOMED"
 # two (`Bash`, `apply_patch`) in the same PR that fixed this comment.
 FIXTURE_PATCH_PATH="$SECRET"
 
+# `uv tool install` publishes `lh` into `~/.local/bin` as a symlink whose
+# target is the venv holding the interpreter that can `import lazy_harness`;
+# that interpreter lives beside the symlink's TARGET, not beside the symlink
+# itself. Resolves the link first (falling back to a Python-side realpath if
+# `readlink -f` is not the GNU/macOS-12.3+ one), then tries `python3` then
+# `python` in that directory — whichever imports the shipped package wins.
+# Prints the winning interpreter path on stdout; on failure, prints the
+# refusal (naming the directory searched) to stderr and returns non-zero.
+resolve_gate_python() {
+  local lh_bin="$1"
+  local real_bin
+  real_bin="$(readlink -f "$lh_bin" 2>/dev/null)"
+  if [ -z "$real_bin" ]; then
+    real_bin="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$lh_bin" 2>/dev/null)"
+  fi
+  [ -n "$real_bin" ] || real_bin="$lh_bin"
+  local bin_dir
+  bin_dir="$(dirname "$real_bin")"
+  local candidate
+  for candidate in python3 python; do
+    if [ -x "$bin_dir/$candidate" ] && "$bin_dir/$candidate" -c 'import lazy_harness' >/dev/null 2>&1; then
+      echo "$bin_dir/$candidate"
+      return 0
+    fi
+  done
+  echo "harness error: no interpreter in '$bin_dir' can import lazy_harness." >&2
+  echo "  searched: $bin_dir (resolved from '$lh_bin')" >&2
+  echo "  The deny fixtures are validated against the SHIPPED denylist rather" >&2
+  echo "  than trusted; without that read this gate would assert that a" >&2
+  echo "  command is blocked without knowing anything blocks it, so it" >&2
+  echo "  refuses instead." >&2
+  return 1
+}
+
 if [ "$DRY_RUN" -eq 0 ]; then
-  GATE_PYTHON="$(dirname "$LH_BIN")/python3"
-  [ -x "$GATE_PYTHON" ] && "$GATE_PYTHON" -c 'import lazy_harness' >/dev/null 2>&1 || {
-    echo "harness error: no interpreter beside '$LH_BIN' can import lazy_harness." >&2
-    echo "  The deny fixtures are validated against the SHIPPED denylist rather" >&2
-    echo "  than trusted; without that read this gate would assert that a" >&2
-    echo "  command is blocked without knowing anything blocks it, so it" >&2
-    echo "  refuses instead." >&2
-    exit 2
-  }
+  GATE_PYTHON="$(resolve_gate_python "$LH_BIN")" || exit 2
 
   DENY_RULES="$("$GATE_PYTHON" - "$FIXTURE_BASH" "$FIXTURE_PATCH_PATH" <<'PY' 2>/dev/null
 import sys
