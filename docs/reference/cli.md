@@ -644,6 +644,50 @@ lh run --profile work
 lh run --dry-run -- --resume
 ```
 
+### `--bypass` — permission bypass as a declared intent
+
+Every other argument `lh run` receives is forwarded to the agent untouched.
+`--bypass` is the exception, and it exists because a forwarded permission flag
+means different things to different binaries: the level is named, and the
+profile's own adapter decides which flags express it.
+
+| Level | Means |
+|---|---|
+| `enable` | Make bypass **available**; do not turn it on. |
+| `activate` | Turn it on. Prompts stop; whatever sandbox exists stays. |
+| `no-sandbox` | Also remove the sandbox, where one exists. |
+
+The levels are ordered by how much they give away, which is why a missing one is
+never filled by its neighbour.
+
+| Level | Claude Code | Codex |
+|---|---|---|
+| `enable` | `--allow-dangerously-skip-permissions` | *unsupported* |
+| `activate` | `--dangerously-skip-permissions` | `--approve-for-me` |
+| `no-sandbox` | *unsupported* | `--dangerously-bypass-approvals-and-sandbox` |
+
+Copilot supports no level: nothing has been measured for it, and an unmeasured
+flag is not put in front of a binary.
+
+**An unsupported level is an error, not a fallback.** `lh run` exits non-zero
+and names the agent and the level; nothing is forwarded. Claude Code exposes no
+OS-sandbox switch on its argv, so `--bypass=no-sandbox` on a Claude profile is
+refused rather than quietly answered with the `activate` flag — which would
+stop the prompts instead of removing the sandbox, a different and larger grant
+than the one requested. Codex has nothing meaning "available but off", so
+`--bypass=enable` is refused there for the same reason.
+
+The expansion is inserted after `argv[0]` and before your own arguments, so
+everything you pass still reaches the agent in order.
+
+```bash
+lh run --bypass=enable              # claude: --allow-dangerously-skip-permissions
+lh run --profile cx --bypass=activate   # codex: --approve-for-me
+lh run --dry-run --bypass=activate  # see the expansion without launching
+```
+
+The per-agent mappings and the evidence behind each one are in ADR-049.
+
 ## `lh scheduler`
 
 Manages scheduled jobs declared in `[scheduler.jobs.<name>]`. The backend is auto-detected (launchd on macOS, systemd on Linux with `systemctl`, cron otherwise) or pinned via `[scheduler] backend`. All three install, uninstall and report state.
