@@ -71,6 +71,8 @@ class MetricsDB:
                 event_id TEXT NOT NULL DEFAULT '',
                 host TEXT NOT NULL DEFAULT '',
                 workload TEXT NOT NULL DEFAULT '',
+                agent TEXT NOT NULL DEFAULT '',
+                billing_model TEXT NOT NULL DEFAULT 'per_token',
                 UNIQUE(session, model)
             )
         """)
@@ -155,6 +157,13 @@ class MetricsDB:
         backfilled: nothing on disk can say which machine wrote a historical
         row or which caller asked for it, and an invented value would read as
         a fact.
+
+        agent and billing_model (ADR-050) follow the same mechanism. `agent`
+        is left unbackfilled like host/workload — nothing on disk says which
+        adapter produced a historical row. `billing_model` defaults to
+        `'per_token'` rather than empty: every row that predates the split
+        was already priced against the per-token table, so that default
+        recovers a fact rather than inventing one.
         """
         cols = {row[1] for row in self._conn.execute("PRAGMA table_info(session_stats)")}
         if "user_id" not in cols:
@@ -170,6 +179,15 @@ class MetricsDB:
         if "workload" not in cols:
             self._conn.execute(
                 "ALTER TABLE session_stats ADD COLUMN workload TEXT NOT NULL DEFAULT ''"
+            )
+        if "agent" not in cols:
+            self._conn.execute(
+                "ALTER TABLE session_stats ADD COLUMN agent TEXT NOT NULL DEFAULT ''"
+            )
+        if "billing_model" not in cols:
+            self._conn.execute(
+                "ALTER TABLE session_stats ADD COLUMN billing_model "
+                "TEXT NOT NULL DEFAULT 'per_token'"
             )
         if "event_id" not in cols:
             self._conn.execute(
@@ -195,8 +213,8 @@ class MetricsDB:
             self._conn.execute(
                 """INSERT INTO session_stats
                 (session, date, model, profile, project, input_tokens, output_tokens,
-                 cache_read, cache_create, cost)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 cache_read, cache_create, cost, agent, billing_model)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(session, model) DO UPDATE SET
                     date=excluded.date,
                     profile=excluded.profile,
@@ -205,7 +223,9 @@ class MetricsDB:
                     output_tokens=excluded.output_tokens,
                     cache_read=excluded.cache_read,
                     cache_create=excluded.cache_create,
-                    cost=excluded.cost""",
+                    cost=excluded.cost,
+                    agent=excluded.agent,
+                    billing_model=excluded.billing_model""",
                 (
                     entry["session"],
                     entry["date"],
@@ -217,6 +237,8 @@ class MetricsDB:
                     entry.get("cache_read", 0),
                     entry.get("cache_create", 0),
                     entry.get("cost", 0.0),
+                    entry.get("agent", ""),
+                    entry.get("billing_model", "per_token"),
                 ),
             )
             affected += 1
@@ -229,8 +251,8 @@ class MetricsDB:
             INSERT INTO session_stats
                 (session, date, model, profile, project,
                  input_tokens, output_tokens, cache_read, cache_create, cost,
-                 user_id, tenant_id, event_id, host, workload)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 user_id, tenant_id, event_id, host, workload, agent, billing_model)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(session, model) DO UPDATE SET
                 date=excluded.date,
                 profile=excluded.profile,
@@ -244,7 +266,9 @@ class MetricsDB:
                 tenant_id=excluded.tenant_id,
                 event_id=excluded.event_id,
                 host=excluded.host,
-                workload=excluded.workload
+                workload=excluded.workload,
+                agent=excluded.agent,
+                billing_model=excluded.billing_model
             """,
             (
                 event.session,
@@ -262,6 +286,8 @@ class MetricsDB:
                 event.event_id,
                 event.host,
                 event.workload,
+                event.agent,
+                event.billing_model,
             ),
         )
         self._conn.commit()
@@ -442,6 +468,8 @@ class MetricsDB:
                 "cost": r["cost"],
                 "host": r["host"],
                 "workload": r["workload"],
+                "agent": r["agent"],
+                "billing_model": r["billing_model"],
             }
             for r in rows
         ]

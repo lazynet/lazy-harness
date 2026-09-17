@@ -561,6 +561,138 @@ def test_query_stats_reports_empty_strings_for_a_row_written_by_upsert_stats(
     assert rows[0]["cost"] == 0.5
 
 
+def test_new_db_has_agent_and_billing_model_columns(tmp_path: Path) -> None:
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        cols = {row[1] for row in db._conn.execute("PRAGMA table_info(session_stats)").fetchall()}
+    finally:
+        db.close()
+    assert "agent" in cols
+    assert "billing_model" in cols
+
+
+def test_migration_adds_agent_and_billing_model_to_a_pre_v3_db(tmp_path: Path) -> None:
+    """A DB created after host/workload (ADR-037) but before ADR-050."""
+    path = tmp_path / "mid.db"
+    legacy = sqlite3.connect(str(path))
+    legacy.execute(
+        """
+        CREATE TABLE session_stats (
+            session TEXT NOT NULL,
+            date TEXT NOT NULL,
+            model TEXT NOT NULL,
+            profile TEXT NOT NULL DEFAULT '',
+            project TEXT NOT NULL DEFAULT '',
+            input_tokens INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_read INTEGER NOT NULL DEFAULT 0,
+            cache_create INTEGER NOT NULL DEFAULT 0,
+            cost REAL NOT NULL DEFAULT 0.0,
+            user_id TEXT NOT NULL DEFAULT 'local',
+            tenant_id TEXT NOT NULL DEFAULT 'local',
+            event_id TEXT NOT NULL DEFAULT '',
+            host TEXT NOT NULL DEFAULT '',
+            workload TEXT NOT NULL DEFAULT '',
+            UNIQUE(session, model)
+        )
+        """
+    )
+    legacy.execute(
+        "INSERT INTO session_stats (session, date, model, cost) VALUES (?, ?, ?, ?)",
+        ("old", "2026-04-01", "sonnet", 1.25),
+    )
+    legacy.commit()
+    legacy.close()
+
+    db = MetricsDB(path)
+    try:
+        row = db._conn.execute(
+            "SELECT session, cost, agent, billing_model FROM session_stats WHERE session = 'old'"
+        ).fetchone()
+    finally:
+        db.close()
+    assert row["cost"] == 1.25, "a pre-v3 row must survive the migration untouched"
+    assert row["agent"] == ""
+    assert row["billing_model"] == "per_token"
+
+
+def test_upsert_event_stores_agent_and_billing_model(tmp_path: Path) -> None:
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.upsert_event(_event(agent="claude-code", billing_model="flat_rate"))
+        row = db._conn.execute(
+            "SELECT agent, billing_model FROM session_stats WHERE session = 's1'"
+        ).fetchone()
+    finally:
+        db.close()
+    assert row["agent"] == "claude-code"
+    assert row["billing_model"] == "flat_rate"
+
+
+def test_upsert_event_updates_agent_and_billing_model_on_conflict(tmp_path: Path) -> None:
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.upsert_event(_event(agent="claude-code", billing_model="per_token"))
+        db.upsert_event(_event(agent="codex", billing_model="flat_rate"))
+        rows = db._conn.execute(
+            "SELECT agent, billing_model FROM session_stats WHERE session = 's1'"
+        ).fetchall()
+    finally:
+        db.close()
+    assert len(rows) == 1
+    assert rows[0]["agent"] == "codex"
+    assert rows[0]["billing_model"] == "flat_rate"
+
+
+def test_query_stats_projects_agent_and_billing_model(tmp_path: Path) -> None:
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.upsert_event(_event(agent="claude-code", billing_model="flat_rate"))
+        rows = db.query_stats()
+    finally:
+        db.close()
+    assert len(rows) == 1
+    assert rows[0]["agent"] == "claude-code"
+    assert rows[0]["billing_model"] == "flat_rate"
+
+
+def test_upsert_stats_stores_agent_and_billing_model(tmp_path: Path) -> None:
+    """`upsert_stats` is ingest's default write path, not just the opt-in
+    `sqlite_local` sink's `upsert_event` — the dimension must reach it too."""
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.upsert_stats(
+            [
+                {
+                    "session": "s9",
+                    "date": "2026-08-31",
+                    "model": "sonnet",
+                    "profile": "lazy",
+                    "project": "p",
+                    "cost": 0.5,
+                    "agent": "claude-code",
+                    "billing_model": "flat_rate",
+                }
+            ]
+        )
+        rows = db.query_stats()
+    finally:
+        db.close()
+    assert rows[0]["agent"] == "claude-code"
+    assert rows[0]["billing_model"] == "flat_rate"
+
+
+def test_upsert_stats_defaults_agent_and_billing_model_when_absent(tmp_path: Path) -> None:
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.upsert_stats([{"session": "s9", "date": "2026-08-31", "model": "sonnet", "cost": 0.5}])
+        rows = db.query_stats()
+    finally:
+        db.close()
+    assert rows[0]["agent"] == ""
+    assert rows[0]["billing_model"] == "per_token"
+
+
 def test_delete_attribution_removes_only_the_named_session(tmp_path: Path) -> None:
     """Reconciliation moves a row; it must not leave the stale one behind.
 
