@@ -350,3 +350,45 @@ def test_profile_sync_names_the_destination_it_wrote(home_dir: Path) -> None:
 
     assert result.exit_code == 0
     assert "CLAUDE.md" in result.output
+
+
+def test_sync_system_doc_writes_each_profiles_own_agent_file(home_dir: Path) -> None:
+    """The CLI entrypoint, not just `sync_profiles` underneath it: this command
+    resolves one global adapter (`profile_cmd.py`'s `get_agent(cfg.agent.type)`)
+    to hand `sync_profiles` a fallback for a directory the config no longer
+    names -- `cfg` is what makes it per profile everywhere else. A profile
+    declaring its own agent must still get its own agent's destination, not the
+    global one's."""
+    cfg = Config(
+        harness=HarnessConfig(version="1"),
+        profiles=ProfilesConfig(
+            default="personal",
+            items={
+                "personal": ProfileEntry(config_dir=str(home_dir / ".claude-personal")),
+                "work": ProfileEntry(config_dir=str(home_dir / ".codex-work"), agent="codex"),
+            },
+        ),
+    )
+    save_config(cfg, home_dir / ".config" / "lazy-harness" / "config.toml")
+    profiles_dir = home_dir / ".config" / "lazy-harness" / "profiles"
+    common = profiles_dir / "_common"
+    common.mkdir(parents=True)
+    (common / "CLAUDE.common.md").write_text("# common\n")
+    (common / "AGENTS.common.md").write_text("# common\n")
+    personal = profiles_dir / "personal"
+    personal.mkdir()
+    (personal / "CLAUDE.head.md").write_text("# head\n")
+    (personal / "CLAUDE.tail.md").write_text("# tail\n")
+    work = profiles_dir / "work"
+    work.mkdir()
+    (work / "AGENTS.head.md").write_text("# head\n")
+    (work / "AGENTS.tail.md").write_text("# tail\n")
+
+    result = CliRunner().invoke(cli, ["profile", "sync-system-doc"])
+
+    assert result.exit_code == 0, result.output
+    assert (personal / "CLAUDE.md").is_file()
+    assert (work / "AGENTS.md").is_file(), (
+        f"profile 'work' runs codex; the tree got {sorted(p.name for p in work.iterdir())}"
+    )
+    assert not (work / "CLAUDE.md").exists()
