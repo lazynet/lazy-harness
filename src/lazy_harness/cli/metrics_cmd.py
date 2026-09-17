@@ -68,10 +68,11 @@ def metrics_ingest(dry_run: bool, verbose: bool) -> None:
     finally:
         db.close()
 
+    error_suffix = f" · errors {len(report.errors)}" if report.errors else ""
     console.print(
         f"[green]✓[/green] scanned {report.sessions_scanned} · "
         f"updated {report.sessions_updated} · "
-        f"skipped {report.sessions_skipped}"
+        f"skipped {report.sessions_skipped}{error_suffix}"
     )
     if report.unknown_models:
         names = ", ".join(sorted(report.unknown_models))
