@@ -693,6 +693,89 @@ el comando realmente ejecutado: `command` es una lista de 3 elementos, siempre
 - **Un segundo `cli_version`.** 15/15 archivos dicen `0.154.0`.
 - **`GOAL_STATUS`**, por 5.2.
 
+## 6. Acceptance run
+
+El criterio de éxito de la iteración, escrito como script:
+`specs/gates/f9/codex-acceptance.sh`. **No corrió todavía** — esta sección
+existe para que la corrida tenga dónde pegar lo que observe, y la columna
+`observado` está vacía a propósito.
+
+El gate lo corre el usuario desde una terminal Aqua, contra un `lh` instalado y
+el profile `lazy-codex` (`config_dir = ~/.codex-lazy`, `agent = "codex"`):
+
+```bash
+specs/gates/f9/codex-acceptance.sh lazy-codex
+```
+
+`--dry-run` imprime cada comando con los placeholders sustituidos y no ejecuta
+ninguno; es el único modo que corre en CI y en un pane de agente, y es lo que
+cubre `tests/integration/test_f9_gate_dry_run.py`.
+
+Códigos de salida: `0` PASS, `1` FAIL (el gate corrió y el sistema no lo
+satisfizo), `2` HARNESS ERROR (el gate no pudo correr y no midió nada). La
+distinción es el punto: un `2` nunca es evidencia sobre el sistema.
+
+### 6.1 Fases y observaciones esperadas
+
+| # | Fase | Aserción | Esperado | Observado |
+|---|---|---|---|---|
+| A1 | untrusted | `lh doctor` tras `lh deploy` | reporta hooks `untrusted` | *(no corrió)* |
+| A2 | untrusted | fixture de deny por `Bash` | el comando **corre**: hooks sin trust no disparan | *(no corrió)* |
+| B1 | trusted | `lh doctor` tras aprobar en la TUI | ningún hook `untrusted`; quedan en `unknown` | *(no corrió)* |
+| B2 | trusted | mismo fixture `Bash` | **bloqueado**; el stream trae `Command blocked by PreToolUse hook` | *(no corrió)* |
+| B3 | trusted | `apply_patch` sobre `.env` | **bloqueado**; el archivo queda intacto en disco | *(no corrió)* |
+| B4 | trusted | turno benigno completo | corre `session_stop`, queda rollout | *(no corrió)* |
+| B5 | trusted | `lh metrics ingest` | **cero** filas `session_stats` para el profile (ADR-051) | *(no corrió)* |
+| B6 | trusted | `lh run --bypass=enable` | **error** — ADR-049 no mapea `enable` en Codex | *(no corrió)* |
+| B7 | trusted | `lh run --bypass=activate --dry-run` | el argv trae `--approve-for-me` | *(no corrió)* |
+| B8 | trusted | `lh run … -- exec …` real | `launches` suma una fila `agent=codex`, `entry=run` | *(no corrió)* |
+| C1 | reapproval | declaración cambiada + redeploy | `lh doctor` reporta `orphaned` y/o `untrusted` de nuevo | *(no corrió)* |
+
+Las aserciones de stream valen **sólo para la versión en que se observaron**.
+El preflight imprime `codex --version` y avisa — sin fallar — si difiere de
+`0.154.0`; esa versión va pegada junto a la tabla.
+
+### 6.2 Tres correcciones que el gate encontró al escribirse
+
+Medidas sobre `origin/main` en `ce86cb3`. Contradicen el brief que encargó el
+gate; el repo gana.
+
+1. **No hay veredicto `stale`, y no va a haberlo.** `agents/codex_trust.py`
+   reporta `untrusted`, `unknown` y `orphaned`, y su docstring dice que
+   recomputar el `current_hash` de Codex es *"the one thing the design declines
+   to do"*. La fase C no puede afirmar `trust stale`. Lo que afirma es la señal
+   que el diseño sí construyó: la trust key lleva la **posición** del grupo y
+   del handler (`agents/codex.py:458-472`), así que una declaración cambiada
+   reaparece como `untrusted` recién aprobados más entradas `orphaned`.
+2. **`session_stats` no tiene columna `agent`** (`monitoring/db.py:58-73`);
+   sólo `launches` la tiene (`:133-139`). Y ADR-051 está **accepted**: Codex no
+   se mide, `ingest_profile` devuelve un reporte vacío para todo agente que no
+   sea `claude-code` (`monitoring/ingest.py:141-145`). La **ausencia** de filas
+   es el PASS de B5, no un gap ni un bloqueo.
+3. **`lh exec` no cuenta un launch.** `record_launch` tiene un solo call site,
+   `cli/run_cmd.py:129`, con `entry="run"`. Un `--dry-run` retorna antes y no
+   registra nada, por diseño. Por eso B8 usa un `lh run` real con passthrough.
+
+### 6.3 Dependencias
+
+- **B3 (trust de Codex) ya está en `main`**: `agents/codex_trust.py` y la
+  sección `Codex hook trust` de `lh doctor` existen, así que A1, B1 y C1 tienen
+  contra qué correr. Lo único que el gate no asume es la línea de re-trust en la
+  salida de `lh deploy`: la afirma si está y la reporta si no.
+- **B4 no bloquea nada.** La lectura de que `ingest` "todavía rechaza Codex" y
+  que eso sería un `BLOCKED BY B4` es incorrecta: el rechazo es la decisión
+  de ADR-051. Lo que cambiaría B5 es un cambio de Protocol en `agents/base.py`
+  que ADR-051 explícitamente **no** hace.
+- **Afordancia de CLI que falta:** `lh doctor` no acepta `--json`
+  (`cli/doctor_cmd.py:750-751` no declara opciones), así que A1, B1 y C1 se
+  resuelven con `grep` sobre texto renderizado. Un `--json` de la sección de
+  trust haría esas tres aserciones estructurales en vez de textuales.
+- **Lo único que el gate no puede cerrar desde el repo:** si el `codex`
+  top-level acepta `--approve-for-me` **antes** del subcomando `exec`. §7.1 lo
+  midió sobre `codex exec`; la nota de límite de §7.4 dice que la transferencia
+  al comando top-level es `[help]`, no `[run]`. B7 imprime el argv resuelto para
+  que un fallo de parseo en B8 sea legible.
+
 ## 7. Bypass levels
 
 Medido el 2026-09-16 con `specs/gates/probes/codex-bypass-probe.sh` contra
