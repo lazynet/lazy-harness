@@ -753,11 +753,14 @@ if [ "$DRY_RUN" -eq 0 ]; then
   ARGV="$("$LH_BIN" run --profile "$PROFILE" --bypass=activate --dry-run -- exec --json "Print ACCEPTANCE." 2>&1)"
   info "resolved argv (the dry run records NO launch — run_cmd.py returns above record_launch):"
   printf '%s\n' "$ARGV" | sed 's/^/        /'
-  # The one thing this gate cannot settle from the repo: whether the top-level
-  # `codex` accepts `--approve-for-me` BEFORE the `exec` subcommand. §7.1
-  # measured the flag on `codex exec`; §7.4's own limit note says the transfer
-  # to the top-level command is `[help]`, not `[run]`. The real run below is
-  # what closes it, and the argv is printed above so a parse failure is legible.
+  # SETTLED by the 2026-09-17 run, and kept here because the argv order is
+  # still the thing this step exists to make legible: the top-level `codex`
+  # DOES accept `--approve-for-me` before the `exec` subcommand. The launch
+  # below ran `codex --approve-for-me exec --json <prompt>` and its stream
+  # carried `thread.started`, a completed turn and 17261 input tokens — clap
+  # parsed it, so `run_cmd.py`'s `[argv0, *bypass_args, *args]` needs no
+  # per-adapter placement. §7.4's `[help]`-only limit note was a limit on what
+  # had been measured, not a refusal by the parser.
   if printf '%s' "$ARGV" | grep -q 'approve-for-me'; then
     ok "activate expands through the adapter to the flag ADR-049 recorded"
   else
@@ -786,8 +789,10 @@ PY
 [ "$DRY_RUN" -eq 0 ] && LAUNCH_BEFORE="$(launch_count)"
 
 # The real launch. `lh run` os.execvpe's, so this replaces the shell it runs in
-# — a subshell keeps the gate alive. The passthrough is what makes `lh run` the
-# counted entry: `lh exec` has no record_launch call site at all.
+# — a subshell keeps the gate alive. `lh run` is the counted entry here because
+# it is what this phase invokes; `lh exec` has a `record_launch` call site of
+# its own with `entry="exec"` (correction 3 in the header), and an earlier draft
+# of this comment claiming otherwise was read off a stale grep.
 show "( $LH_BIN run --profile $PROFILE --bypass=activate -- exec --json <prompt:launch> )"
 if [ "$DRY_RUN" -eq 0 ]; then
   ( "$TIMEOUT_BIN" "$TURN_BUDGET" "$LH_BIN" run --profile "$PROFILE" --bypass=activate \
