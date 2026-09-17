@@ -894,10 +894,29 @@ cache_write_input_tokens, output_tokens, reasoning_output_tokens}`).
 - **Los tres niveles no colapsan.** ACTIVATE y NO_SANDBOX son flags distintos y
   observablemente distintos, así que ninguno es alias del otro.
 
-**Límite de la evidencia:** la probe maneja `codex exec` porque es lo medible
-sin interacción, mientras que `lh run` ejecuta el `codex` top-level. Los dos
-flags del mapeo están en ambos comandos, así que la transferencia es `[help]`
-aunque la conducta sea `[run]`.
+**Límite de la evidencia, cerrado el 2026-09-17:** la probe maneja `codex exec`
+porque es lo medible sin interacción, mientras que `lh run` ejecuta el `codex`
+top-level. Los dos flags del mapeo están en ambos comandos, así que la
+transferencia era `[help]` aunque la conducta fuese `[run]`.
+
+La acceptance run la movió a `[run]`. El lanzamiento real de B8 fue
+`codex --approve-for-me exec --json <prompt>` — el argv que arma
+`run_cmd.py` como `[argv0, *bypass_args, *args]` — y su stream trajo
+`thread.started`, un `turn.completed` con 17261 input tokens y un
+`agent_message` con el texto pedido. clap lo parseó: el `codex` top-level
+acepta el flag **antes** del subcomando, así que la posición del bypass no
+necesita ser por adapter. El `[help]` de esta nota era un límite de lo medido,
+no una negativa del parser.
+
+**Una cuarta bandera, solo `[help]`:** `codex exec --help` sobre 0.154.0
+declara también `--dangerously-bypass-hook-trust` — *"Run enabled hooks without
+requiring persisted hook trust for this invocation. DANGEROUS."*. No está
+medida y **no** entra en `bypass_argv`: los tres niveles de ADR-049 son sobre
+approvals y sandbox, y esto es sobre trust de hooks, que es una cuarta cosa.
+Queda anotada porque es la única vía que el binario declara para ejercitar
+hooks sin la aprobación manual en la TUI, y por lo tanto es lo primero que
+alguien va a querer usar para automatizar el gate — decidirlo pide una medición
+y una entrada de backlog, no una inferencia desde el `--help`.
 
 ## Pendiente
 
