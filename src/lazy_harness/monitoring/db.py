@@ -421,8 +421,8 @@ class MetricsDB:
                 self._conn.execute(
                     """INSERT OR IGNORE INTO session_stats
                     (session, date, model, profile, project, input_tokens, output_tokens,
-                     cache_read, cache_create, cost)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                     cache_read, cache_create, cost, agent, billing_model)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         entry["session"],
                         entry["date"],
@@ -434,6 +434,8 @@ class MetricsDB:
                         entry.get("cache_read", 0),
                         entry.get("cache_create", 0),
                         entry.get("cost", 0.0),
+                        entry.get("agent", ""),
+                        entry.get("billing_model", "per_token"),
                     ),
                 )
                 inserted += 1
