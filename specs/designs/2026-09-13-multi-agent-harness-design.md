@@ -1,6 +1,6 @@
 # Multi-agent harness: what actually has to be abstracted
 
-**Status:** proposed (revision 4, 2026-09-13 — a third external review found an ordering contradiction in the sequence, an under-specified `TranscriptReader`, and a kill criterion superseded by the derived design; all three corrected below)
+**Status:** proposed (revision 4, 2026-09-13 — a third external review found an ordering contradiction in the sequence, an under-specified `TranscriptReader`, and a kill criterion superseded by the derived design; all three corrected below). Decision 10 (profile assets per agent) shipped 2026-09-16 (#369, [ADR-052](../adrs/052-profile-assets-per-agent.md)). Acceptance of the design overall is the F9 run (`../gates/f9/codex-acceptance.sh`, #365), which needs 0.71.0 installed and has not run yet — `codex-evidence.md` §6's `observado` column is still empty by design.
 **Date:** 2026-09-13
 **Derived design:** [2026-09-13-multi-agent-blast-radius-design.md](2026-09-13-multi-agent-blast-radius-design.md) — the impacts outside this seam, and the staging and rollback mechanism for this sequence.
 **Recorded as:** [ADR-041](../adrs/041-multi-agent-hook-contract.md) — the decision this document argues for, in the form the ADR index carries. `accepted` since 2026-09-15, when the step-4 gate ran and passed.
@@ -845,6 +845,18 @@ the hooks are reported untrusted and do not fire; trust them; confirm they fire;
 change one matcher, redeploy, confirm `lh doctor` reports it modified *before*
 the next session silently drops it.
 
+> **Shipped 2026-09-16 (#367).** "`lh deploy` prints the re-trust instruction
+> whenever it changes a declaration" and the `trust stale` table row above are
+> both implemented as written, not aspirational: `RETRUST_INSTRUCTION` and
+> `TRUST_STALE_VERDICT` are the two constants, `lh deploy` prints one line per
+> Codex profile whose declaration changed, and `lh doctor` derives `stale` by
+> comparing the current declaration against the pre-deploy copy
+> `deploy/snapshot.py` already keeps in its manifest — no Codex hash is
+> recomputed, exactly as option (b) requires. The observation this section asks
+> for (deploy untrusted, trust, redeploy with a changed matcher, confirm
+> `stale`) is still open: it is F9 phase C
+> (`../gates/f9/codex-acceptance.sh`, #365), not yet run against a real binary.
+
 ### 6. System docs become a list, without a scope field yet
 
 ```python
@@ -1123,6 +1135,18 @@ profile root (`sync_agent_md.py:71`: `entry / f"{stem}.head.md"`) and writes the
 assembled document there. If deploy stops linking the profile root, the document
 it assembles is never deployed. The assembler and the deployer must agree on one
 layout; that agreement is part of step 7, not a later cleanup.
+
+> **Shipped 2026-09-16 (#369, [ADR-052](../adrs/052-profile-assets-per-agent.md)).**
+> The source reads as **three** ordered layers, not two — root, `shared/`,
+> `<agent>/`, the agent names coming from `list_agents()` — because making the
+> root itself a layer, rather than the special case this decision described, is
+> what keeps an unmigrated profile deploying byte-identical to before. The
+> `deploy/engine.py:52-58` quote at the top of this decision is stale: the
+> unfiltered `iterdir()` loop now lives past `:168`, behind `resolve_segments`.
+> Collisions, the flat-layout fallback, the ownership ledger for links the
+> deploy no longer generates, and `sync_agent_md`'s root-marker agreement all
+> shipped as this decision specifies. `lh profile migrate <profile> [--dry-run]`
+> is the migration path. `specs/backlog.md` §Done has the full record.
 
 ### 11. Transcript dependence is a hook capability, declared before the reader exists
 

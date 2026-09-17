@@ -53,7 +53,7 @@ When Claude Code `/resume`s a conversation, it writes a **new** JSONL whose firs
 
 The pipeline defends against that with `seen_msg_ids`: each `TranscriptEvent.message_id` — Claude Code's upstream `message.id`, Codex's `response_id` — is attributed to exactly one `(session_id, model)` bucket, the first one the walk sees it in, which is the oldest file by mtime. Every subsequent occurrence in a resumed JSONL is skipped and counted under `messages_deduped`.
 
-In production this matters a lot: on the author's install, ~50% of assistant messages in `~/.claude-*` projects are duplicates introduced by resumes. Dedup is the difference between matching `ccusage` and being off by ~3×.
+In production this matters a lot: measured on a real install, ~50% of assistant messages in `~/.claude-*` projects are duplicates introduced by resumes. Dedup is the difference between matching `ccusage` and being off by ~3×.
 
 ### 2. Append-only source of truth
 
