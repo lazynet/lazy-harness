@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.73.0](https://github.com/lazynet/lazy-harness/compare/v0.72.1...v0.73.0) (2026-09-18)
+
+
+### Features
+
+* lh doctor and lh deploy name MCP servers a profile's adapter cannot place ([#400](https://github.com/lazynet/lazy-harness/issues/400)) ([60c351d](https://github.com/lazynet/lazy-harness/commit/60c351d9a8ce9751208e0187e361fffa3bc0b14a))
+
+
+### Documentation
+
+* hooks page links ADR-048 by repository URL ([#397](https://github.com/lazynet/lazy-harness/issues/397)) ([b8b2a12](https://github.com/lazynet/lazy-harness/commit/b8b2a12a3999d2a792e273f96bb736bb664fe164))
+* trust-hash measurement recorded, residuals tracked in the roadmap, H2 in the ledger ([#399](https://github.com/lazynet/lazy-harness/issues/399)) ([3879f81](https://github.com/lazynet/lazy-harness/commit/3879f81b0e7709efdb6e6359746037f73b9a8569))
+
 ## [0.72.1](https://github.com/lazynet/lazy-harness/compare/v0.72.0...v0.72.1) (2026-09-18)
 
 
