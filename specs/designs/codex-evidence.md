@@ -222,6 +222,47 @@ observed, with both NO-OBS closing on the run's own recorded artifacts rather th
 on a fifth run (§6.4). Phase B telling a permitted spelling from an ignored verdict
 is what made that run readable. All three deltas are measured; none is outstanding.
 
+### 4.3 Trust survives a release: 0.154.0 → 0.155.0
+
+The 31 `[hooks.state."<key>"].trusted_hash` entries in
+`~/.codex-lazy/config.toml` were written by TUI approval under `codex-cli`
+0.154.0 during probe 6 on 2026-09-17 16:41 (§4.2). Brew installed
+`codex-cli` 0.155.0 on 2026-09-18 18:20, and no Codex session ran between the
+upgrade and this measurement.
+
+At 18:54, `lh deploy --profile lazy-codex` under lazy-harness 0.72.1 rewrote
+`hooks.json` byte-identically: its sha256 was `7ba1c7bd…` before and after. All
+31 state entries survived, and a diff against the deploy snapshot was
+identical.
+
+The first 0.155.0 session started at 18:59:07 with
+`lh run --profile lazy-codex --bypass=activate -- -c
+model_reasoning_effort=medium` in a worktree of this repository. That bypass
+does **not** pass `--dangerously-bypass-hook-trust`: `agents/codex.py:995`
+deliberately excludes it from every bypass row because hook trust is a
+different axis from approvals and sandboxing. Dispatch therefore depended on
+the stored trust alone.
+
+No hook review screen appeared at startup in the 18:59 pane read. `hooks.log`
+records `18:59:38 session-context: fired` and `injected 4302 chars` for
+SessionStart; at 19:01:42 it records `session-export: fired`,
+`compound-loop: fired`, and a queued task for Stop. The TUI status line showed
+`Running hooks`. After the session, `config.toml` still had its 18:54 mtime and
+all 31 hashes were unchanged.
+
+PreToolUse dispatch is not observable in `hooks.log`:
+`pre-tool-use-security` logs only blocks, apart from the explicit `invoked`
+mode used by the F9 gate. The observation therefore covers SessionStart and
+Stop groups. The trust key is per group and carries nothing event-specific
+(§4, row 1), so the normalisation that held for those groups held for the
+file.
+
+Decision 5's option (b) stands and gains its first cross-release data point;
+option (a) stays rejected. One release pair is not a guarantee: this row
+re-opens if a future upgrade shows the review screen for an unchanged
+`hooks.json`. `lh doctor` is unchanged and still reports `31 hooks carry a
+stored hash` as `unknown`, by design.
+
 
 ## Probes a correr
 
@@ -1238,6 +1279,9 @@ probes tocó trust ni matchers, y queda con el alcance original documentado ahí
 `allow`/`ask` sobre un edit tampoco se corrió — de menor prioridad ahora que el
 contrato de `deny` quedó confirmado en los dos paths, y sin usarse hoy en el
 harness para Codex.
+
+§4 cerró el 2026-09-17 con §4.1/§4.2 y sumó la medición cross-release de §4.3
+el 2026-09-18.
 
 **Cerrado además el 2026-09-16, probes 5-8 (`probe5-7.sh`, mismo binario,
 modelo `gpt-5.6-sol`):** multi-file `apply_patch` (probe 5, dos secciones
