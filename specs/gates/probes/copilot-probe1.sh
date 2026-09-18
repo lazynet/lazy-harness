@@ -162,7 +162,7 @@ loader_diagnostics() {
   local home="$1" log="$2"
   {
     grep -hiE 'hook|schema|Expected|Required|Invalid|Ignoring' "$log.stdout" "$log.stderr" 2>/dev/null || true
-    find "$home/logs" -type f 2>/dev/null -exec grep -hiE 'hook' {} + 2>/dev/null || true
+    find "$home/logs" -type f -exec grep -hiE 'hook' {} + 2>/dev/null || true
   } | sort -u | head -40
 }
 
