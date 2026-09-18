@@ -324,7 +324,7 @@ EXPECTED_INERT=(
 EXPECTED_LIVE=(
   post-tool-use-ansible-lint
   post-tool-use-format
-  post-tool-use-sync-claude
+  post-tool-use-sync-system-doc
   pre-tool-use-git-scope
   pre-tool-use-memory-size
   pre-tool-use-security
