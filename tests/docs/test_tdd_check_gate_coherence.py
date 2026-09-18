@@ -1,10 +1,10 @@
 """Every surface that enumerates the pre-commit gate enumerates all of it.
 
-`.claude/commands/tdd-check.md` is the gate. Five other surfaces describe it —
-`CLAUDE.md` mandates it, `CONTRIBUTING.md` spells it out for contributors, the
-PR template asks a human to tick it off, CI enforces it, and `docs/roadmap.md`
-names it as the floor Theme 1 builds on — and each one is a separate place to
-forget a check.
+`.claude/commands/tdd-check.md` is the gate. Six other surfaces describe it —
+`CLAUDE.md` mandates it, `AGENTS.md` spells it out for non-Claude agents,
+`CONTRIBUTING.md` spells it out for contributors, the PR template asks a human
+to tick it off, CI enforces it, and `docs/roadmap.md` names it as the floor
+Theme 1 builds on — and each one is a separate place to forget a check.
 
 A gate that only runs locally is a convention, not a gate: the next PR that
 never runs `/tdd-check` reintroduces whatever it was meant to catch. So the
@@ -26,6 +26,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TDD_CHECK = REPO_ROOT / ".claude/commands/tdd-check.md"
 CLAUDE_MD = REPO_ROOT / "CLAUDE.md"
+AGENTS_MD = REPO_ROOT / "AGENTS.md"
 CONTRIBUTING = REPO_ROOT / "CONTRIBUTING.md"
 PR_TEMPLATE = REPO_ROOT / ".github/PULL_REQUEST_TEMPLATE.md"
 TESTS_WORKFLOW = REPO_ROOT / ".github/workflows/tests.yml"
@@ -146,6 +147,12 @@ def test_contributing_spells_out_every_gate_command() -> None:
     body = CONTRIBUTING.read_text()
     missing = [cmd for cmd in _gate_commands() if cmd not in body]
     assert not missing, f"CONTRIBUTING.md omits: {missing}"
+
+
+def test_agents_md_spells_out_every_gate_command() -> None:
+    body = AGENTS_MD.read_text()
+    missing = [cmd for cmd in _gate_commands() if cmd not in body]
+    assert not missing, f"AGENTS.md omits: {missing}"
 
 
 def test_the_pr_template_asks_about_every_gate_command() -> None:
