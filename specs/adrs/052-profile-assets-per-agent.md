@@ -155,7 +155,10 @@ agent it runs, which is the compatibility decision 1 buys and also the reason
 the defect persists until the user acts. `lh profile migrate --dry-run` is the
 only thing that tells them what would move.
 
-**The first deploy after this ships prints an adoption line for every profile.**
+**The first deploy after this ships prints an adoption line for every profile that
+had links under the flat layout.** The line is gated on there being something to
+adopt (`deploy/engine.py`, `if adopted and owned:`), so a profile that starts clean
+prints nothing.
 It is a one-time line, and a deploy that prints it twice for the same profile
 means the ledger is not being written — worth treating as a defect report rather
 than as noise.
