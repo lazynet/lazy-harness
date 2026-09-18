@@ -51,6 +51,11 @@ from pathlib import Path
 # contract this module knows how to judge, and it says so rather than guessing.
 _DECISIONS = ("deny", "allow")
 
+# Codex's own refusal line and the tail it appends the command on. Measured on
+# `codex-cli` 0.154.0, acceptance run 4 — `codex-evidence.md` §6.4.
+_BLOCK_MARKER = "Command blocked by PreToolUse hook"
+_COMMAND_MARKER = ". Command: "
+
 
 def _rows(stream_path: Path) -> list[dict]:
     """Every parseable JSON object in the stream, in order.
@@ -86,20 +91,122 @@ def _items(stream_path: Path, item_type: str) -> list[dict]:
     return found
 
 
-def issued_command(stream_path: Path) -> str:
-    """The shell command the model actually issued this turn, or `""`.
-
-    The LAST one, because a turn can run several and the fixture's fate is
-    decided by the one that touched it. Nothing is stripped — `/bin/zsh -lc
-    '...'` is the string Codex handed the hook, so it is the string the replay
-    has to hand it too, and `_COMMAND_START` reaches through the wrapper.
-    """
-    commands = [
+def executed_commands(stream_path: Path) -> list[str]:
+    """Every shell command the stream recorded as having RUN, in order."""
+    return [
         item["command"]
         for item in _items(stream_path, "command_execution")
         if isinstance(item.get("command"), str)
     ]
-    return commands[-1] if commands else ""
+
+
+def blocked_commands(stream_path: Path) -> list[str]:
+    """Every command Codex's `PreToolUse` hook refused, in order.
+
+    **Codex emits no `command_execution` item for a command it blocked.**
+    Measured on the acceptance run of 2026-09-18 08:27
+    (`stream-b-deny-bash-pinned.jsonl`): the model issued the pinned delete, the
+    hook denied it, the fixture survived, and the whole stream is two
+    `agent_message` items and the turn markers. Probe 5 saw the same shape
+    (`codex-evidence.md` §4.1). Reading only `command_execution` therefore makes
+    a denied-and-honoured turn indistinguishable from a turn that ran nothing.
+
+    What Codex does leave is one line on its own stderr, which the gate captures
+    because `codex_turn` redirects it into this same file:
+
+        <ts> ERROR codex_core::tools::router: error=Command blocked by
+        PreToolUse hook: <the guard's reason>. Command: <the command>
+
+    The reason is the guard's, so it spans four physical lines and the command
+    is NOT on the line carrying the marker — nothing line-oriented can find it.
+    The region runs from the marker to the next row that parses as JSON, or to
+    the end of the file, and the command is the `. Command: ` tail of it. The
+    FIRST such tail, because the command itself may contain anything, including
+    an `apply_patch` blob with newlines; the guard's own reason may not.
+
+    No tail means no command: the gate reports NO-OBS rather than judging the
+    empty string, the direction that fails closed.
+    """
+    found: list[str] = []
+    region: list[str] | None = None
+
+    def close(region: list[str]) -> None:
+        text = "\n".join(region)
+        head, marker, tail = text.partition(_COMMAND_MARKER)
+        if marker and tail:
+            found.append(tail)
+
+    try:
+        text = Path(stream_path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    for line in text.splitlines():
+        is_row = False
+        try:
+            is_row = isinstance(json.loads(line), dict)
+        except ValueError:
+            is_row = False
+        if is_row:
+            if region is not None:
+                close(region)
+                region = None
+            continue
+        if region is not None:
+            region.append(line)
+        elif _BLOCK_MARKER in line:
+            region = [line]
+    if region is not None:
+        close(region)
+    return found
+
+
+def issued_command(stream_path: Path) -> str:
+    """The shell command the model actually issued this turn, or `""`.
+
+    The LAST one the stream recorded, because a turn can run several and the
+    fixture's fate is decided by the one that touched it. Nothing is stripped —
+    `/bin/zsh -lc '...'` is the string Codex handed the hook, so it is the
+    string the replay has to hand it too, and `_COMMAND_START` reaches through
+    the wrapper.
+
+    When the stream recorded no execution at all, the block line is the only
+    record left and the last command it names is used instead. That fallback is
+    a fallback: a recorded execution is the stronger evidence and keeps
+    precedence. `contract_command` is what decides between them when a turn has
+    both.
+    """
+    commands = executed_commands(stream_path)
+    if commands:
+        return commands[-1]
+    blocked = blocked_commands(stream_path)
+    return blocked[-1] if blocked else ""
+
+
+def contract_command(stream_path: Path, effect_happened: bool) -> tuple[str, str]:
+    """The command this turn's contract is about, and where it was read from.
+
+    Returns `(command, source)` with source `"stream"`, `"block-line"` or `""`.
+
+    **A blocked command outranks an allowed one.** Run 4's first phase B turn
+    ran both: a delete the hook refused, and a read-only inspection it allowed
+    afterwards. `executed_commands[-1]` picks the inspection, replays *that*,
+    gets `allow` and reports `permitted-spelling` over a turn where the guard
+    denied and Codex obeyed. The question the phase asks is about the delete.
+
+    **Except when the effect happened and something else ran.** Then no evidence
+    attributes the effect to either command, and `ignored` — the one verdict
+    that accuses Codex of a defect — would be an accusation on a coin flip. The
+    allowed command is judged instead, which lands on `permitted-spelling`:
+    inconclusive, print the spelling, re-prompt once. Routing ambiguity there
+    rather than into a FAIL is the whole reason this module exists.
+    """
+    blocked = blocked_commands(stream_path)
+    executed = executed_commands(stream_path)
+    if blocked and not (effect_happened and executed):
+        return blocked[-1], "block-line"
+    if executed:
+        return executed[-1], "stream"
+    return ("", "")
 
 
 def issued_edit_paths(stream_path: Path) -> list[str]:
@@ -219,7 +326,7 @@ def _judge(argv: list[str]) -> int:
     )
     args = parser.parse_args(argv)
 
-    command = issued_command(args.stream)
+    command, source = contract_command(args.stream, args.effect == "gone")
     expected = guard_verdict(args.profile, "Bash", {"command": command}) if command else ""
     verdict = contract_verdict(expected, args.effect == "gone")
 
@@ -227,6 +334,7 @@ def _judge(argv: list[str]) -> int:
     # newline inside it cannot truncate every field after it in the caller's
     # `awk`.
     print(f"command {json.dumps(command)}")
+    print(f"source {source}")
     print(f"expected {expected}")
     print(f"verdict {verdict}")
     print(f"note {contract_note(verdict)}")
