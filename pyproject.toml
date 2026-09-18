@@ -49,6 +49,7 @@ dev = [
     "pytest-httpserver>=1.1.5",
     "pyyaml>=6.0",
     "ruff>=0.4",
+    "shellcheck-py>=0.10",
 ]
 docs = [
     "mkdocs-material>=9.5",
