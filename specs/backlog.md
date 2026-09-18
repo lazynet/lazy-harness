@@ -8,6 +8,8 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 
 ## Done
 
+- [x] **Los MCP servers descartados por el adapter de un profile dejaron de ser silenciosos** — un profile Copilot no producía ningún write para los servers `qmd`, `engram` o `graphify` detectados, pero ni `lh deploy` ni `lh doctor` nombraban el gap. La respuesta ahora se deriva comparando los planes frescos reales del adapter con y sin servers, así que Codex y Claude Code no se reportan por error: `lh deploy` emite una línea `· <profile>/mcp`, `lh doctor` expone la sección **MCP servers**, y `lh doctor --json` lleva los mismos registros en `mcp_gaps`. PR #NNN; entra en 0.73.0.
+
 Este ledger se escribe en español. Las entradas se appendean en el orden en que se cierran y se agrupan por su marcador «entra en X.Y.Z»: ese marcador es lo que dice a qué release pertenece una entrada, no su posición en el archivo. No hay orden garantizado entre bloques de release, así que para leer una release hay que grepear el marcador, no confiar en la secuencia.
 
 - [x] **Las tres pruebas de resolución de rutas fijan explícitamente el entorno que asumen** — las tres tests que nombraba la entrada de §Open (`test_the_guard_writes_its_block_line_under_the_profiles_own_agent_dir`, `test_agent_dir_for_returns_the_profiles_own_agent_and_config_dir`, `test_agent_runtime_dir_prefers_the_profile_config_dir_over_the_dotted_name`) ahora hacen `monkeypatch.delenv` de `CODEX_HOME`/`CLAUDE_CONFIG_DIR` antes de aseverar, y pasan verde con y sin esas variables seteadas; `AGENTS.md` pierde el workaround `env -u` que las rodeaba. Ejecutado por workers de Codex (`lh run --profile lazy-codex`). PR #394, mergeado el 2026-09-18; entra en 0.72.1.
@@ -233,14 +235,6 @@ Sin items abiertos — F1 (PR #347) y F2 (PR #351) cerrados; ver §Done.
 3. **El criterio de kill de adopción de la decisión 1**, con horizonte verificado al **2026-11-11**: `monitoring/launches.py` tiene `CODEX_ADAPTER_MERGED` = 2026-09-16 y `horizon_weeks=8`, y `adoption_check` devuelve `None` antes de `horizon_end`. El criterio está narrado en `docs/roadmap.md` pero sin checkbox, así que nada lo hace vencer.
 
 **Fuente:** `/coherence-audit` antes de 0.72.0, hallazgo medium sobre el Closing del diseño.
-
-### MCP servers are silently not deployed on a Copilot profile
-
-**Por qué:** `CopilotAdapter.plan_config()` (`agents/copilot.py:304-320`) ignora el parámetro `servers` a propósito — Copilot no expone `mcp_config_file()` (devuelve `""`) y `~/.copilot/mcp-config.json` queda fuera del alcance del harness porque el binario lo escribe él mismo. La decisión está registrada en ADR-047 y en el docstring del método, pero no en ningún lugar que el usuario vea al deployar: ni `lh deploy` ni `lh doctor` dicen, por perfil, que los MCP servers detectados (`qmd`, `engram`, `graphify`) no llegan a un profile Copilot — a diferencia de `Hook signals`/`Hook operations`/`Hook events`, que sí nombran sus gaps.
-
-**Fuente:** PR #357 (`CopilotAdapter`, ADR-047).
-
-**Acción:** agregar una línea a `lh doctor` (o al output de `lh deploy`) que nombre, por perfil, si el adapter ignora `servers` — mismo patrón que las secciones `Hook signals`/`Hook operations`/`Hook events`.
 
 ### `release-please` deja `uv.lock` un release atrás
 

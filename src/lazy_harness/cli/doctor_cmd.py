@@ -42,6 +42,7 @@ from lazy_harness.core.paths import (
 )
 from lazy_harness.core.profiles import SharedRootInfo, collect_shared_roots, list_profiles
 from lazy_harness.core.secrets import secrets_dir_for
+from lazy_harness.deploy.mcp_gaps import McpServerGap, collect_mcp_gaps
 from lazy_harness.hooks.event_surface import (
     HookOperationGap,
     UncarriedEventHook,
@@ -656,6 +657,23 @@ def _render_uncarried_events(console: Console, gaps: list[UncarriedEventHook]) -
     )
 
 
+def _render_mcp_gaps(console: Console, gaps: list[McpServerGap]) -> None:
+    """Name detected MCP servers a profile's adapter does not place."""
+    if not gaps:
+        return
+    console.print("\n[bold]MCP servers[/bold]")
+    for gap in gaps:
+        servers = ", ".join(escape(server) for server in gap.servers)
+        console.print(
+            f"  [yellow]![/yellow] {escape(gap.profile)}/{escape(gap.agent)} — "
+            f"detected servers not placed: {servers}"
+        )
+    console.print(
+        "      [dim]The adapter exposes no MCP document the harness may write; "
+        "the binary owns its own file. Closed by the adapter, not by config.[/dim]"
+    )
+
+
 def _render_codex_trust(console: Console, reports: list[CodexHookTrust]) -> None:
     """What Codex will refuse to run, and how far that can be established.
 
@@ -874,6 +892,7 @@ def _doctor_json(cfg: Config) -> dict:
         "hook_signals": [asdict(g) for g in collect_hook_signal_gaps(cfg)],
         "hook_operations": [asdict(g) for g in collect_hook_operation_gaps(cfg)],
         "uncarried_events": [asdict(g) for g in collect_uncarried_events(cfg)],
+        "mcp_gaps": [asdict(g) for g in collect_mcp_gaps(cfg)],
     }
 
 
@@ -1011,6 +1030,7 @@ def doctor(as_json: bool) -> None:
     _render_hook_signals(console, collect_hook_signal_gaps(cfg))
     _render_hook_operations(console, collect_hook_operation_gaps(cfg))
     _render_uncarried_events(console, collect_uncarried_events(cfg))
+    _render_mcp_gaps(console, collect_mcp_gaps(cfg))
     _render_codex_trust(console, collect_codex_trust(cfg))
 
     launches_db = _open_launches_db(cfg)

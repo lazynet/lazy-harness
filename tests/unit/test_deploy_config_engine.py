@@ -2,8 +2,9 @@
 
 Merging is the adapter's (decision 4, 2026-09-13 multi-agent design); the engine
 only does I/O. These tests pin the engine half: that it asks for the targets,
-reads the ones that exist, calls `plan_config` exactly once per profile, applies
-what comes back, and refuses an adapter that cannot plan at all.
+reads the ones that exist, applies exactly one deploy plan per profile, and
+refuses an adapter that cannot plan at all. The MCP gap diagnostic also compares
+two fresh, unapplied plans with and without servers.
 
 Byte identity with the writers this replaces is pinned in `tests/goldens/config-
 deploy/`, captured from the engine as it wrote before the merge logic moved.
@@ -125,26 +126,33 @@ def test_a_second_deploy_changes_no_bytes(seeded_profile: Path, servers: None) -
 # --- the cycle -----------------------------------------------------------
 
 
-def test_plan_config_is_called_once_per_profile(
+def test_one_deploy_plan_per_profile_is_applied_beside_fresh_mcp_diagnostics(
     tmp_path: Path, servers: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """One call, so an adapter whose hooks and MCP share a file cannot overwrite
-    its own earlier result."""
+    """Only the plan carrying hooks is applied for each profile.
+
+    The two additional fresh plans are the MCP gap diagnostic's differential;
+    neither reaches `_apply`, so an adapter whose hooks and MCP share a file
+    still emits one deploy plan and cannot overwrite its own earlier result.
+    """
     from lazy_harness.agents.claude_code import ClaudeCodeAdapter
     from lazy_harness.deploy.engine import deploy_config
 
-    calls: list[str] = []
+    calls: list[tuple[bool, bool, bool]] = []
     original = ClaudeCodeAdapter.plan_config
 
     def counting(self, hooks, servers_arg, existing, **kwargs):
-        calls.append("plan")
+        calls.append((bool(hooks), bool(servers_arg), bool(existing)))
         return original(self, hooks, servers_arg, existing, **kwargs)
 
     monkeypatch.setattr(ClaudeCodeAdapter, "plan_config", counting)
 
     deploy_config(_two_profiles(tmp_path))
 
-    assert len(calls) == 2, f"expected one plan per profile, got {len(calls)}"
+    assert len(calls) == 6
+    assert calls.count((True, True, False)) == 2
+    assert calls.count((False, True, False)) == 2
+    assert calls.count((False, False, False)) == 2
 
 
 def test_only_existing_targets_are_read(tmp_path: Path, servers: None) -> None:

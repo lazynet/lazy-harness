@@ -549,9 +549,10 @@ def deploy_config(cfg: Config, *, only: str | None = None) -> None:
 
     The cycle decision 4 of the 2026-09-13 multi-agent design prescribes. The
     adapter names its targets and merges them; the engine reads, writes, deletes
-    and prints. One `plan_config` call per profile, so an adapter whose hooks and
-    MCP servers share a file emits a single write for it and cannot overwrite its
-    own earlier result.
+    and prints. One deploy plan per profile reaches `_apply`, so an adapter whose
+    hooks and MCP servers share a file cannot overwrite its own earlier result.
+    The MCP gap diagnostic separately compares two fresh, unapplied plans with
+    and without servers.
 
     `only` narrows it to one profile through `selected_profiles`, exactly as the
     other deploy steps are narrowed.
@@ -573,6 +574,7 @@ def deploy_config(cfg: Config, *, only: str | None = None) -> None:
         ops = planner.plan_config(
             _hook_entries_for(cfg, name, binary), servers, existing, binary=binary
         )
+        _report_mcp_gap(cfg, name, servers)
         if not ops:
             click.echo(f"  · {name}: nothing to deploy.")
             continue
@@ -611,6 +613,21 @@ def _collect_mcp_servers(cfg: Config) -> dict[str, dict]:
     return servers
 
 
+def _report_mcp_gap(cfg: Config, profile: str, servers: dict[str, dict]) -> None:
+    """Print the servers omitted by this profile's adapter plan."""
+    from lazy_harness.deploy.mcp_gaps import mcp_gap_for_profile
+
+    gap = mcp_gap_for_profile(cfg, profile, servers=servers)
+    if gap is None:
+        return
+    count = len(gap.servers)
+    noun = "server" if count == 1 else "servers"
+    click.echo(
+        f"  · {profile}/mcp: {count} detected {noun} not placed — "
+        f"adapter exposes no MCP document ({', '.join(gap.servers)})"
+    )
+
+
 def deploy_mcp_servers(cfg: Config, *, only: str | None = None) -> None:
     """Deploy only the MCP half of each profile's config.
 
@@ -641,6 +658,7 @@ def _deploy_config_subset(cfg: Config, *, only: str | None, hooks: bool, servers
         entries = _hook_entries_for(cfg, name, binary) if hooks else {}
 
         ops = planner.plan_config(entries, detected, existing, binary=binary)
+        _report_mcp_gap(cfg, name, detected)
         if not ops:
             continue
 

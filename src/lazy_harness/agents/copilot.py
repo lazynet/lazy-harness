@@ -390,7 +390,11 @@ class CopilotAdapter:
         return None
 
     def mcp_config_file(self) -> str:
-        """Empty — this adapter places no MCP config. See `plan_config`."""
+        """Empty means no MCP document, unlike Codex.
+
+        `plan_config` is the oracle for that behavior, not this method
+        (ADR-047 §7).
+        """
         return ""
 
     def session_dirs(self) -> dict[str, str]:
