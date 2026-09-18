@@ -217,8 +217,12 @@ Two decisions follow, and both shipped inside 0.72.0:
   inconclusive and re-prompted once, never as a FAIL. Reasoned in the same design
   doc; shipped in **#387**.
 
-**Still open: the driver delta.** The F9 live path against bare `codex exec` was
-never reached, because arm A closed the question arm B existed to split
-(`codex-evidence.md` §4.2, closing paragraph). Run 4 of the acceptance gate is
-what tests it, now that phase B can tell a permitted spelling from an ignored
-verdict.
+**The third delta — the driver — closed on run 4, not after it.** Probe 6 never
+reached it: arm A closed the question arm B existed to split, so it fell to the
+acceptance gate's own live path. Run 4 drove that path end to end on 2026-09-18
+08:27 (`lh` 0.71.1, `codex-cli` 0.154.0) and returned 17 assertions, 0 failed,
+0 blocked, 2 not observed — and both not-observed closed on the run's recorded
+artifacts rather than on a fifth run (`codex-evidence.md` §6.4). Phase B judging
+the issued command against the guard's own verdict is what made that run
+readable. With it, all three deltas of the 12:32 failure are measured and none
+is left open.
