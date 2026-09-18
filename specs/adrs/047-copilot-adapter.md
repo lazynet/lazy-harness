@@ -231,6 +231,8 @@ key. Recorded so a future "deployed but never fires" report has a first suspect.
 **MCP servers configured for a Copilot profile are silently not deployed**
 (decision 7). `lh deploy` writes no MCP document and says nothing about it.
 
+**Evolution (2026-09-18):** this gap is now visible in `lh doctor` under **MCP servers** and in the per-profile `lh deploy` output.
+
 **The F8 translation gate does not cover Copilot and was not extended.** Its
 agent list is a shell literal (`claude-code codex codex-blobless`) and
 `specs/gates/f8/translate.py` imports exactly two adapters; the expected

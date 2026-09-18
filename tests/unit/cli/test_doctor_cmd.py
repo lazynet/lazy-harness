@@ -771,6 +771,109 @@ def test_render_uncarried_events_names_the_hook_and_event() -> None:
     assert "nothing installs and nothing runs" in out
 
 
+def test_render_mcp_servers_silent_when_nothing_is_dropped() -> None:
+    from lazy_harness.cli.doctor_cmd import _render_mcp_gaps
+
+    console, buf = _recording_console()
+    _render_mcp_gaps(console, [])
+    assert buf.getvalue() == ""
+
+
+def test_render_mcp_servers_names_every_server_and_the_mechanism() -> None:
+    from lazy_harness.cli.doctor_cmd import _render_mcp_gaps
+    from lazy_harness.deploy.mcp_gaps import McpServerGap
+
+    console, buf = _recording_console()
+    _render_mcp_gaps(
+        console,
+        [
+            McpServerGap(
+                profile="cp",
+                agent="copilot",
+                servers=("qmd", "engram", "graphify"),
+            )
+        ],
+    )
+    out = _unwrapped(buf.getvalue())
+
+    assert "MCP servers" in out
+    assert "cp/copilot" in out
+    assert "qmd, engram, graphify" in out
+    assert "adapter exposes no MCP document the harness may write" in out
+    assert "binary owns its own file" in out
+    assert "Closed by the adapter, not by config" in out
+
+
+def _agent_config(tmp_path: Path, agent: str) -> Path:
+    cfg = tmp_path / f"{agent}.toml"
+    cfg.write_text(
+        '[harness]\nversion = "1"\n'
+        f'[agent]\ntype = "{agent}"\n'
+        '[profiles]\ndefault = "p1"\n\n'
+        f'[profiles.p1]\nconfig_dir = "{tmp_path / agent}"\nagent = "{agent}"\n'
+        '[knowledge]\nroot = ""\n'
+    )
+    return cfg
+
+
+def test_doctor_reports_mcp_servers_for_a_copilot_profile(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from lazy_harness.cli.doctor_cmd import doctor
+    from lazy_harness.deploy import engine
+
+    monkeypatch.setattr(
+        engine,
+        "_collect_mcp_servers",
+        lambda cfg: {"qmd": {}, "engram": {}, "graphify": {}},
+    )
+    monkeypatch.setattr(
+        "lazy_harness.cli.doctor_cmd.config_file",
+        lambda: _agent_config(tmp_path, "copilot"),
+    )
+
+    output = _unwrapped(CliRunner().invoke(doctor, []).output)
+
+    assert "MCP servers" in output
+    assert "qmd, engram, graphify" in output
+    assert "adapter exposes no MCP document the harness may write" in output
+
+
+def test_doctor_omits_mcp_servers_when_nothing_is_detected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from lazy_harness.cli.doctor_cmd import doctor
+    from lazy_harness.deploy import engine
+
+    monkeypatch.setattr(engine, "_collect_mcp_servers", lambda cfg: {})
+    monkeypatch.setattr(
+        "lazy_harness.cli.doctor_cmd.config_file",
+        lambda: _agent_config(tmp_path, "copilot"),
+    )
+
+    output = _unwrapped(CliRunner().invoke(doctor, []).output)
+
+    assert "MCP servers" not in output
+
+
+@pytest.mark.parametrize("agent", ["claude-code", "codex"])
+def test_doctor_omits_mcp_servers_for_an_adapter_that_places_them(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, agent: str
+) -> None:
+    from lazy_harness.cli.doctor_cmd import doctor
+    from lazy_harness.deploy import engine
+
+    monkeypatch.setattr(engine, "_collect_mcp_servers", lambda cfg: {"qmd": {}})
+    monkeypatch.setattr(
+        "lazy_harness.cli.doctor_cmd.config_file",
+        lambda: _agent_config(tmp_path, agent),
+    )
+
+    output = _unwrapped(CliRunner().invoke(doctor, []).output)
+
+    assert "MCP servers" not in output
+
+
 class _SessionOnlyAdapter(NullAdapter):
     """Delivers `session_start` only — every other deployed hook is uncarried."""
 
@@ -1456,6 +1559,7 @@ _JSON_REQUIRED_KEYS = (
     "hook_signals",
     "hook_operations",
     "uncarried_events",
+    "mcp_gaps",
 )
 
 
@@ -1499,6 +1603,23 @@ def test_doctor_json_names_a_profile_and_its_config_dir(
     payload = json.loads(CliRunner().invoke(doctor, ["--json"]).output)
 
     assert payload["profiles"][0]["name"] == "p1"
+
+
+def test_doctor_json_carries_mcp_gaps(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from lazy_harness.cli.doctor_cmd import doctor
+    from lazy_harness.deploy import engine
+
+    monkeypatch.setattr(engine, "_collect_mcp_servers", lambda cfg: {"qmd": {}, "engram": {}})
+    monkeypatch.setattr(
+        "lazy_harness.cli.doctor_cmd.config_file",
+        lambda: _agent_config(tmp_path, "copilot"),
+    )
+
+    payload = json.loads(CliRunner().invoke(doctor, ["--json"]).output)
+
+    assert payload["mcp_gaps"] == [
+        {"profile": "p1", "agent": "copilot", "servers": ["qmd", "engram"]}
+    ]
 
 
 def test_doctor_text_and_json_agree_on_codex_trust(

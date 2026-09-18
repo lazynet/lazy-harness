@@ -108,6 +108,60 @@ def test_deploy_mcp_servers_noop_when_no_tools(
     assert not (profile_dir / "settings.json").is_file()
 
 
+def test_deploy_mcp_servers_names_servers_the_adapter_does_not_place(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from lazy_harness.deploy import engine
+
+    monkeypatch.setattr(
+        engine,
+        "_collect_mcp_servers",
+        lambda cfg: {
+            "qmd": {"command": "qmd", "args": ["mcp"]},
+            "engram": {"command": "engram", "args": ["mcp", "serve"]},
+            "graphify": {"command": "graphify-mcp"},
+        },
+    )
+
+    engine.deploy_mcp_servers(_make_cfg(tmp_path / ".copilot-test", "copilot"))
+
+    assert (
+        "· default/mcp: 3 detected servers not placed — adapter exposes no MCP document "
+        "(qmd, engram, graphify)" in capsys.readouterr().out
+    )
+
+
+def test_deploy_config_names_servers_the_adapter_does_not_place(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from lazy_harness.deploy import engine
+
+    monkeypatch.setattr(
+        engine,
+        "_collect_mcp_servers",
+        lambda cfg: {"qmd": {"command": "qmd", "args": ["mcp"]}},
+    )
+
+    engine.deploy_config(_make_cfg(tmp_path / ".copilot-test", "copilot"))
+
+    assert (
+        "· default/mcp: 1 detected server not placed — adapter exposes no MCP document (qmd)"
+        in capsys.readouterr().out
+    )
+
+
+def test_deploy_mcp_servers_is_silent_when_nothing_is_detected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from lazy_harness.deploy import engine
+
+    monkeypatch.setattr(engine, "_collect_mcp_servers", lambda cfg: {})
+
+    engine.deploy_mcp_servers(_make_cfg(tmp_path / ".copilot-test", "copilot"))
+
+    assert "/mcp:" not in capsys.readouterr().out
+
+
 def test_collect_mcp_servers_includes_qmd_when_available(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
