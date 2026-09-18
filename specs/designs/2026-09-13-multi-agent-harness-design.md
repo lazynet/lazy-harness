@@ -1,6 +1,7 @@
 # Multi-agent harness: what actually has to be abstracted
 
-**Status:** proposed (revision 4, 2026-09-13 — a third external review found an ordering contradiction in the sequence, an under-specified `TranscriptReader`, and a kill criterion superseded by the derived design; all three corrected below). Decision 10 (profile assets per agent) shipped 2026-09-16 (#369, [ADR-052](../adrs/052-profile-assets-per-agent.md)). Acceptance of the design overall is the F9 run (`../gates/f9/codex-acceptance.sh`, #365), which needs 0.71.0 installed and has not run yet — `codex-evidence.md` §6's `observado` column is still empty by design.
+**Status:** accepted — the F9 acceptance run of 2026-09-18 passed with no failed assertion (see *Closing*, below). Revision 4, 2026-09-13, followed a third external review that found an ordering contradiction in the sequence, an under-specified `TranscriptReader`, and a kill criterion superseded by the derived design; all three are corrected below.
+**Closed:** 2026-09-18
 **Date:** 2026-09-13
 **Derived design:** [2026-09-13-multi-agent-blast-radius-design.md](2026-09-13-multi-agent-blast-radius-design.md) — the impacts outside this seam, and the staging and rollback mechanism for this sequence.
 **Recorded as:** [ADR-041](../adrs/041-multi-agent-hook-contract.md) — the decision this document argues for, in the form the ADR index carries. `accepted` since 2026-09-15, when the step-4 gate ran and passed.
@@ -2265,3 +2266,50 @@ was the evidence standard. A document that carefully labelled each row `binary`,
 `log`, `source` or `none` still drew behavioural conclusions from `binary` rows,
 because the label recorded *where a string was found* and not *what a string can
 prove*. The first gate above is the fix.
+
+## Closing — 2026-09-18
+
+Accepted on the F9 acceptance run of **2026-09-18 08:27** — `lazy-harness,
+version 0.71.1`, `codex-cli 0.154.0`, profile `lazy-codex`: 17 assertions, **0
+failed, 0 blocked, 2 not observed**. The two NO-OBS both sat on the Bash deny
+path and both were gaps in the gate's own reading rather than Codex behaviour;
+they close against the run's recorded artifacts without a fifth run, and
+[`../designs/codex-evidence.md`](codex-evidence.md) §6.4 records the measurement
+and the re-reading.
+
+**Decisions 1–11 are shipped.** The ones this cycle closed: decision 10, profile
+assets deployed per agent (#369,
+[ADR-052](../adrs/052-profile-assets-per-agent.md)); decision 4's hook and MCP
+artifacts, through the Codex `config.toml` and `hooks.json` writers; decision 5's
+trust reporting, which the run exercised in all three of its states — `untrusted`
+right after a deploy, no hook untrusted after the TUI approval, and `trust stale`
+once a declaration changed (#367, #376). Decision 6's system-doc list and
+decision 9's tool normalisation are what [ADR-055](../adrs/055-segment-rename-and-the-agent-segment.md)
+and [ADR-056](../adrs/056-codex-honours-claude-shaped-matchers.md) finished.
+
+**The run's own reading of decision 5.** `lh doctor` reports Codex hooks as
+`unknown`, never `trusted`: `agents/codex_trust.py` declines to recompute
+Codex's hash, so *trusted* is a word this harness does not say. That is the
+design working as written, not a shortfall, and the run asserts it in that
+shape.
+
+**Three things stay open, and accepting this document does not close them.**
+
+1. **Whether Codex's persisted `trusted_hash` is stable across releases** —
+   the (a)-versus-(b) question in decision 5. Still **not measurable on this
+   machine**: the brew cask retains a single version, so there is no second
+   release to hash the same declaration against. The run does not narrow it:
+   it never recomputes the hash, by design.
+2. **Whether opencode's session storage is stable enough to read**, or whether
+   its `serve` HTTP API is the only defensible source. Untouched this cycle —
+   no opencode adapter exists.
+3. **The adoption kill criterion**, which lives in
+   [the derived design](2026-09-13-multi-agent-blast-radius-design.md) and whose
+   horizon opens **2026-11-11**.
+
+Recorded as [ADR-041](../adrs/041-multi-agent-hook-contract.md), `accepted`
+since 2026-09-15; this cycle added
+[ADR-054](../adrs/054-external-hook-placeholders.md),
+[ADR-055](../adrs/055-segment-rename-and-the-agent-segment.md) and
+[ADR-056](../adrs/056-codex-honours-claude-shaped-matchers.md), over PRs
+#375–#386.

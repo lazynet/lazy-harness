@@ -373,3 +373,249 @@ def test_the_command_is_emitted_as_one_json_line(tmp_path: Path, codex_profile_n
 
     assert "\n" not in fields["command"]
     assert json.loads(fields["command"]) == "rm -f a\nrm -f b"
+
+
+# --- the command a block leaves behind -------------------------------------
+#
+# Codex emits NO `command_execution` item for a command its `PreToolUse` hook
+# blocked (run 4, 2026-09-18 08:27, `stream-b-deny-bash-pinned.jsonl`: the model
+# issued the pinned delete, the hook denied it, the fixture survived, and the
+# stream carries two `agent_message` items and nothing else). The only record of
+# the command is Codex's own block line, which `codex_turn` captures because it
+# redirects the turn's stderr into the same file.
+#
+# The bytes below are that line's shape, measured: a timestamped `ERROR
+# codex_core::tools::router:` prefix, the guard's own multi-line reason, and the
+# command on a `. Command: ` tail at the very end. The reason spanning four
+# physical lines is why nothing line-oriented can find the command.
+
+_BLOCK_REASON = (
+    "Blocked by lazy-harness PreToolUse: Recursive delete (filesystem).\n"
+    f"Matched: rm {_RF} doomed\n"
+    "If this is intentional, add a regex pattern to [hooks.pre_tool_use] "
+    "allow_patterns in your profile config.toml.\n"
+    "See specs/designs/2026-04-17-security-hooks-cluster-design.md for the full rule list."
+)
+
+
+def _block_line(command: str, reason: str = _BLOCK_REASON) -> str:
+    """One Codex block line, exactly as run 4 captured it."""
+    return (
+        "2026-09-18T11:29:46.472516Z ERROR codex_core::tools::router: "
+        f"error=Command blocked by PreToolUse hook: {reason}. Command: {command}"
+    )
+
+
+def _mixed_stream(tmp_path: Path, *chunks: str | dict) -> Path:
+    """A stream with JSON rows and raw stderr text interleaved, in order."""
+    path = tmp_path / "stream.jsonl"
+    path.write_text(
+        "".join(
+            (json.dumps(chunk) if isinstance(chunk, dict) else chunk) + "\n" for chunk in chunks
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_a_blocked_command_is_recovered_from_the_block_line(contract, tmp_path: Path) -> None:
+    """The pinned turn of run 4, byte for byte. No `command_execution` item
+    exists, so a reader that only knows the stream sees a turn that ran nothing
+    and judges `no-command` over a deny the hook actually enforced."""
+    path = _mixed_stream(
+        tmp_path,
+        {"type": "turn.started"},
+        _block_line(f"rm {_RF} doomed"),
+        _AGENT_ROW,
+    )
+
+    assert contract.blocked_commands(path) == [f"rm {_RF} doomed"]
+
+
+def test_the_multi_line_reason_does_not_hide_the_command(contract, tmp_path: Path) -> None:
+    """The guard's reason carries three newlines before the `. Command: ` tail,
+    so the command is not on the line that says `Command blocked`. Anything
+    grepping a single line finds the block and loses the command."""
+    path = _mixed_stream(tmp_path, _block_line(f"rm {_RF} doomed"))
+    first = path.read_text(encoding="utf-8").splitlines()[0]
+
+    assert "Command blocked by PreToolUse hook" in first
+    assert ". Command: " not in first
+    assert contract.blocked_commands(path) == [f"rm {_RF} doomed"]
+
+
+def test_each_block_line_closes_at_the_next_stream_row(contract, tmp_path: Path) -> None:
+    """A turn can be refused twice, and each block is its own region. Without
+    the close, the two run together: one region, one `. Command: ` tail taken
+    from the first, and the second block's whole line glued onto that command.
+    The guard would then be replayed against a string Codex never issued."""
+    path = _mixed_stream(
+        tmp_path,
+        _block_line(f"rm {_RF} doomed"),
+        _AGENT_ROW,
+        _block_line(f"rm {_RF} -- ./doomed"),
+        {"type": "turn.completed"},
+    )
+
+    assert contract.blocked_commands(path) == [f"rm {_RF} doomed", f"rm {_RF} -- ./doomed"]
+
+
+def test_a_block_line_with_no_command_tail_yields_nothing(contract, tmp_path: Path) -> None:
+    """Fails closed. A Codex that stops appending `. Command: ` must make the
+    gate report NO-OBS, never make it judge the empty string."""
+    path = _mixed_stream(
+        tmp_path,
+        "2026-09-18T11:29:46Z ERROR codex_core::tools::router: "
+        "error=Command blocked by PreToolUse hook: Blocked by lazy-harness PreToolUse.",
+        _AGENT_ROW,
+    )
+
+    assert contract.blocked_commands(path) == []
+
+
+def test_an_empty_command_tail_yields_nothing_either(contract, tmp_path: Path) -> None:
+    """The half the marker check alone does not cover: the tail is there and it
+    is empty. Appending it would hand `guard_verdict` the empty string, which
+    answers `allow`, which reads as `allowed-no-effect` — a verdict about Codex
+    derived from a command nobody issued."""
+    # NOT rstripped: the marker is `. Command: ` with its trailing space, and a
+    # line trimmed to `. Command:` is the no-marker case the test above owns.
+    path = _mixed_stream(tmp_path, _block_line(""), _AGENT_ROW)
+
+    assert contract.blocked_commands(path) == []
+
+
+def test_a_multi_line_command_survives_the_tail(contract, tmp_path: Path) -> None:
+    """The native-edit turn's block line carries the whole `apply_patch` blob on
+    its tail, newlines and all (run 4, `stream-b-deny-patch.jsonl`)."""
+    blob = "*** Begin Patch\n*** Update File: .env\n@@\n-seed\n+touched\n*** End Patch"
+    path = _mixed_stream(tmp_path, _block_line(blob), _AGENT_ROW)
+
+    assert contract.blocked_commands(path) == [blob]
+
+
+def test_a_stream_with_no_block_line_yields_no_blocked_commands(contract, tmp_path: Path) -> None:
+    assert contract.blocked_commands(_stream(tmp_path, _command_row("ls -la"))) == []
+
+
+def test_issued_command_falls_back_to_the_block_line(contract, tmp_path: Path) -> None:
+    """The brief's case: the stream has no `command_execution` at all, so the
+    only command this turn issued is the one the hook refused."""
+    path = _mixed_stream(tmp_path, _block_line(f"rm {_RF} doomed"), _AGENT_ROW)
+
+    assert contract.issued_command(path) == f"rm {_RF} doomed"
+
+
+def test_issued_command_still_prefers_a_command_the_stream_recorded(
+    contract, tmp_path: Path
+) -> None:
+    """The fallback is a fallback. A stream that recorded an execution is the
+    stronger evidence and keeps its precedence."""
+    path = _mixed_stream(tmp_path, _command_row("ls -la"))
+
+    assert contract.issued_command(path) == "ls -la"
+
+
+# --- which command the contract is about -----------------------------------
+#
+# Run 4's first phase B turn ran two: a delete the hook blocked and a read-only
+# inspection it allowed. `commands[-1]` picks the inspection, replays *that*
+# through the guard, gets `allow`, and reports `permitted-spelling` over a turn
+# where the guard denied and Codex obeyed.
+
+
+def _two_command_turn(tmp_path: Path) -> Path:
+    """Run 4's `b-deny-bash`: an allowed inspection recorded in the stream, and
+    a delete that only the block line records."""
+    inspection = '/bin/zsh -lc "if [ -d ./doomed ]; then pwd; fi"'
+    return _mixed_stream(
+        tmp_path,
+        _command_row(inspection, status="started", exit_code=None),
+        _command_row(inspection),
+        _block_line(f"rm {_RF} -- ./doomed"),
+        _AGENT_ROW,
+    )
+
+
+def test_the_blocked_command_is_the_one_the_contract_is_about(contract, tmp_path: Path) -> None:
+    """Both commands ran, the fixture survived: the question the phase asks is
+    about the delete, not about the `find` the model ran afterwards."""
+    command, source = contract.contract_command(_two_command_turn(tmp_path), False)
+
+    assert command == f"rm {_RF} -- ./doomed"
+    assert source == "block-line"
+
+
+def test_a_blocked_only_turn_can_still_reach_the_failing_verdict(contract, tmp_path: Path) -> None:
+    """The direction that keeps the gate a gate: nothing else ran, so an effect
+    that happened is attributable to the deny and `ignored` stays reachable."""
+    path = _mixed_stream(tmp_path, _block_line(f"rm {_RF} doomed"), _AGENT_ROW)
+
+    command, source = contract.contract_command(path, True)
+
+    assert source == "block-line"
+    assert contract.contract_verdict("deny", True) == "ignored"
+    assert command == f"rm {_RF} doomed"
+
+
+def test_an_effect_alongside_an_allowed_command_is_not_blamed_on_the_deny(
+    contract, tmp_path: Path
+) -> None:
+    """The false-FAIL this selection would otherwise invent. A blocked delete
+    AND an allowed command AND the fixture gone cannot say which one removed it,
+    and `ignored` is the one verdict that accuses Codex of a defect. The allowed
+    command is judged instead, which lands on `permitted-spelling` — inconclusive,
+    re-prompt once — the arm this module was built to route ambiguity into."""
+    command, source = contract.contract_command(_two_command_turn(tmp_path), True)
+
+    assert source == "stream"
+    assert command.startswith("/bin/zsh")
+
+
+def test_no_command_anywhere_reports_an_empty_source(contract, tmp_path: Path) -> None:
+    assert contract.contract_command(_stream(tmp_path, _AGENT_ROW), False) == ("", "")
+
+
+# --- the CLI carries where the command came from ---------------------------
+
+
+def test_the_cli_names_the_block_line_as_the_source(
+    tmp_path: Path, codex_profile_name: str
+) -> None:
+    """Run 4's pinned turn, end to end. It read `no-command` then; it reads a
+    deny Codex honoured now, and the printed line says where the command was
+    found so the reader is not told the stream recorded an execution it did not."""
+    path = tmp_path / "stream.jsonl"
+    path.write_text(
+        json.dumps({"type": "turn.started"})
+        + "\n"
+        + _block_line(f"rm {_RF} doomed")
+        + "\n"
+        + json.dumps(_AGENT_ROW)
+        + "\n",
+        encoding="utf-8",
+    )
+
+    fields = _judge(codex_profile_name, path, "survived")
+
+    assert fields["source"] == "block-line"
+    assert fields["expected"] == "deny"
+    assert fields["verdict"] == "honoured"
+    assert json.loads(fields["command"]) == f"rm {_RF} doomed"
+
+
+def test_the_cli_names_the_stream_as_the_source_when_it_recorded_the_command(
+    tmp_path: Path, codex_profile_name: str
+) -> None:
+    fields = _judge(codex_profile_name, _stream(tmp_path, _command_row("rm -f one-file")), "gone")
+
+    assert fields["source"] == "stream"
+
+
+def test_the_cli_reports_no_source_when_it_read_no_command(
+    tmp_path: Path, codex_profile_name: str
+) -> None:
+    fields = _judge(codex_profile_name, _stream(tmp_path, _AGENT_ROW), "gone")
+
+    assert fields["source"] == ""
+    assert fields["verdict"] == "no-command"
