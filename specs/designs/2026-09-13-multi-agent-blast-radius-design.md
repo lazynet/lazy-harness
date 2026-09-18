@@ -1,6 +1,7 @@
 # Multi-agent harness: the blast radius outside the seam
 
-**Status:** proposed (revision 4, 2026-09-13 — a third external review found ten defects, all confirmed against the code. Four were assertions drawn from a name or a docstring without exercising the path, and one of those inverted this document's central claim about how a downgrade fails). All in-scope decisions (1, 2, 3, 4, 5, 6) are shipped as of 2026-09-16; acceptance is the F9 run (`../gates/f9/codex-acceptance.sh`), which needs 0.71.0 installed and has not run yet. Decision 7 is measured and open; decision 8 is out of scope by its own terms.
+**Status:** accepted — the F9 acceptance run of 2026-09-18 passed with no failed assertion (see *Closing*, below). Revision 4, 2026-09-13, followed a third external review that found ten defects, all confirmed against the code; four were assertions drawn from a name or a docstring without exercising the path, and one of those inverted this document's central claim about how a downgrade fails.
+**Closed:** 2026-09-18
 **Date:** 2026-09-13
 **Derives from:** [2026-09-13-multi-agent-harness-design.md](2026-09-13-multi-agent-harness-design.md) — every decision number cited as *parent decision N* refers to that document.
 **Recorded as:** [ADR-041](../adrs/041-multi-agent-hook-contract.md), jointly with the parent — one decision, two documents. The items here that are deliberately *not* scheduled are in [`../backlog.md`](../backlog.md) under *Multi-agente — items declarados*, so an absent config entry reads as a decision rather than an oversight.
@@ -1141,3 +1142,48 @@ sequences them. Reverting a segment rename means both, in that order.
    what a hook will refuse is reasoning about a hook that stops refusing
    anything the moment it runs slow. On Copilot, a deny-carrying hook's timeout
    is part of its security contract and belongs in what `lh doctor` reports.
+
+## Closing — 2026-09-18
+
+Accepted on the F9 acceptance run of **2026-09-18 08:27** — `lazy-harness,
+version 0.71.1`, `codex-cli 0.154.0`, profile `lazy-codex`: 17 assertions, **0
+failed, 0 blocked, 2 not observed**. The two NO-OBS both sat on the Bash deny
+path and both were gaps in the gate's own reading rather than Codex behaviour;
+they close against the run's recorded artifacts without a fifth run, and
+[`../designs/codex-evidence.md`](codex-evidence.md) §6.4 records the measurement
+and the re-reading.
+
+**Every decision in this document is shipped.**
+
+| decision | shipped by |
+|---|---|
+| 1 — the adoption metric moves off the transcript pipeline | #360 (`lh metrics launches`, `monitoring/launches.py:adoption_check`, the `Launches` section of `lh doctor`) |
+| 2 — `ingest` asks the adapter where sessions live | #368 ([ADR-053](../adrs/053-transcript-reader-carries-metering.md)) |
+| 3 — metric event v3: `agent`, and a flat billing model | #364 ([ADR-050](../adrs/050-metric-event-v3-agent-and-billing-model.md)), #378 |
+| 4 — segments named by role | #375 ([ADR-055](../adrs/055-segment-rename-and-the-agent-segment.md)) |
+| 5 — the sync hook derives its triggers, and is renamed | #375 ([ADR-055](../adrs/055-segment-rename-and-the-agent-segment.md)) |
+| 6 — permission-bypass is a declared intent | [ADR-049](../adrs/049-permission-bypass-intent.md); asserted green in the run (`--bypass=enable` refused, `activate` expands to the recorded flag) |
+| 7 — `.envrc` carries one export per agent | #380 ([ADR-054](../adrs/054-external-hook-placeholders.md)) |
+| 8 — `lazy-ai-tools` out of scope | by its own terms; the nomenclature debt stays recorded unpaid in [`../backlog.md`](../backlog.md) |
+| 9 — a deployed artifact declares the version that wrote it | `deploy/snapshot.py` manifest |
+| 10 — `lh deploy --snapshot` / `--rollback` | `cli/deploy_cmd.py:78-110` |
+| 11 — the beta unit is a profile | `lh deploy --profile NAME` |
+
+**Correction to the status line this block replaces.** It said *decision 7 is
+measured and open*. It shipped in #380 on 2026-09-17, implemented as designed:
+`write_envrc` accumulates one export per agent, `root_default` is added and
+validated, `lh run` refuses an ambiguous shared root and `lh doctor` reports it.
+
+**What accepting this does NOT close.** Decision 1's kill criterion is wired but
+**not yet due**. `adoption_check` returns `None` — not a verdict — until eight
+weeks after the real `CodexAdapter` merged (`1de385c`, #348, 2026-09-16), so the
+horizon opens **2026-11-11**; until then `lh doctor` prints `horizon opens
+<date>`, and if no Claude profile has a measurable launch-to-session ratio in
+the window it prints `horizon not started` instead. The adapters are removed if
+the threshold is missed when it does open. Acceptance of the design is not
+acceptance of the adoption it was built for.
+
+Recorded this cycle as [ADR-054](../adrs/054-external-hook-placeholders.md),
+[ADR-055](../adrs/055-segment-rename-and-the-agent-segment.md) and
+[ADR-056](../adrs/056-codex-honours-claude-shaped-matchers.md), over PRs
+#375–#386.
