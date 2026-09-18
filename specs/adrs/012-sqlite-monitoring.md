@@ -38,11 +38,11 @@ CREATE TABLE session_stats (
 CREATE INDEX idx_stats_date ON session_stats(date);
 ```
 
-The `UNIQUE(session, model)` constraint makes re-ingestion idempotent: running the collector against a session that already has stats overwrites the row via `ON CONFLICT(session, model) DO UPDATE`, so a transcript that has grown since the last run stores the new total instead of adding to the old one. `INSERT OR IGNORE`, which would keep the first row and discard the update, survives as `MetricsDB.insert_stats` with no caller outside `tests/unit/test_db.py`. Every view is a parametric SQL query, not a derived table.
+The `UNIQUE(session, model)` constraint makes re-ingestion idempotent: running the collector against a session that already has stats overwrites the row via `ON CONFLICT(session, model) DO UPDATE`, so a transcript that has grown since the last run stores the new total instead of adding to the old one. `INSERT OR IGNORE`, which would keep the first row and discard the update, survives as `MetricsDB.insert_stats` with no caller outside the test suite. Every view is a parametric SQL query, not a derived table.
 
-Pricing lives in `config.toml` under `[monitoring.pricing]`, a dict keyed by model name with input/output/cache-read/cache-create rates. `pricing.py` computes cost on ingest, not on query — the cost column is a materialized result so views never touch pricing.
+Pricing lives in `config.toml` under `[monitoring.pricing]`, a dict keyed by model name with five rates: input, output, cache-read, and the two cache-write rates — `cache_create` for the 5-minute write and `cache_create_1h` for the 1-hour one, billed separately. A config override replaces a model's whole rate dict, so one written against the older four-key shape carries no 1-hour rate; `cache_create_1h` then falls back to the published 2× input multiplier rather than billing at zero. Cost is also date-dependent: `price()` takes the session date and prefers an `INTRODUCTORY_PRICING` window over the standing rate, but only while the model's rates still equal the shipped default, so a rate the operator overrode is the last word. That table is empty as shipped — the mechanism is live, the discounts are not. `pricing.py` computes cost on ingest, not on query — the cost column is a materialized result so views never touch pricing.
 
-Views under `monitoring/views/` each render a distinct slice (`overview`, `projects`, `profiles`, `sessions`, `tokens`, `cron`, `hooks`, `memory`, `queue`). Each view is a self-contained module exposing a render function called from `monitoring/dashboard.py` and `cli/status_cmd.py`.
+Views under `monitoring/views/` each render a distinct slice (`overview`, `projects`, `profiles`, `sessions`, `tokens`, `cron`, `hooks`, `memory`, `queue`). Each view is a self-contained module exposing a render function, and `cli/status_cmd.py` is where they are registered — it imports all nine. `monitoring/dashboard.py` imports no view; the dependency runs the other way, with `status_cmd` importing `render_costs` from it.
 
 ## Alternatives considered
 
@@ -57,8 +57,8 @@ Views under `monitoring/views/` each render a distinct slice (`overview`, `proje
 - `lh status` is instant on any reasonable history size. The indexed `date` column and single-table queries keep every view under 50ms.
 - The database file lives at `~/.local/share/lazy-harness/metrics.db` by default, overridable with `[monitoring].db`. (This line said `~/.config/lazy-harness/` when the ADR was written; `core/paths.py:data_dir()` resolves `LH_DATA_DIR`, then `XDG_DATA_HOME`, then the platform data dir — never the config dir.) It is user-owned and survives uninstalls, consistent with the other persistent stores ([ADR-001](001-hybrid-architecture.md)).
 - Re-ingestion is safe. Running `lh status` (or a future scheduler job) on the same JSONLs over and over produces the same database.
-- Adding a new view = one new file in `monitoring/views/` and one registration in `dashboard.py`. No schema change, no migration. (This held for views. The schema itself later needed both — see *Evolution*.)
-- The collector filters project and profile out of the JSONL via the same decoder as `session_export` (see [ADR-011](011-session-export-and-classification.md)), sharing the calibration used for the knowledge directory.
+- Adding a new view = one new file in `monitoring/views/` and one registration in `cli/status_cmd.py`. No schema change, no migration. (This held for views. The schema itself later needed both — see *Evolution*.)
+- The collector derives the project from the JSONL's encoded directory name with its own decoder, `collector.extract_project_name` — not the one `session_export` uses (see [ADR-011](011-session-export-and-classification.md)); the two are independent implementations of the same calibration. The profile is not decoded from the transcript at all: `ingest.py` stamps it from the profile whose sessions directory it is walking.
 - The schema is deliberately flat. Future features (per-tool usage breakdown, per-hook timing) will either add columns or introduce a second table, not restructure this one.
 
 ## Evolution
@@ -79,9 +79,11 @@ Tables now created by `MetricsDB._create_tables`:
 | `session_attribution` | `workload` and `host`, written by `lh exec` before the agent starts and joined at ingest. | [ADR-037](037-metric-event-v2-host-and-workload.md) (#223) |
 | `launches` | Append-only log of every agent launch actually started — written by `lh run` and `lh exec` after validation and the dry-run diversion, never by `resolve_launch` itself. | multi-agent kill-criteria thermometer (#346) |
 
-`session_stats` also gained five columns beyond the ten above — `user_id`, `tenant_id`,
-`event_id`, `host`, `workload` — added to existing databases by
-`_migrate_identity_columns()` rather than by a rebuild. `event_id` is backfilled
+`session_stats` also gained seven columns beyond the ten above — `user_id`, `tenant_id`,
+`event_id`, `host`, `workload`, and the [ADR-050](050-metric-event-v3-agent-and-billing-model.md) pair
+`agent` and `billing_model` (the latter defaulting to `per_token`, so a row written before
+the column existed reads back as the billing shape it was actually charged under) — added
+to existing databases by `_migrate_identity_columns()` rather than by a rebuild. `event_id` is backfilled
 deterministically from `(profile, session, model)` so the remote sink has a stable
 idempotency key; `host` and `workload` are deliberately not backfilled, because nothing
 on disk can say which machine wrote a historical row.

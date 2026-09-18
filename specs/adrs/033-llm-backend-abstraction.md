@@ -243,8 +243,11 @@ logic moves into `ClaudeBackend.complete`.
 
 > **Superseded by ADR-039.** Callers no longer build a backend at all: they call
 > `run_inference(prompt, role=..., cfg=..., timeout=...)`, which resolves the role
-> and never raises. `get_backend` survives only to serve the deprecated
-> `[compound_loop]` form.
+> and never raises. The deprecated `[compound_loop]` form is served by
+> `roles.resolve_role`, which special-cases it, and the `registry.build_backend`
+> call `invoke.py` makes with what it returns. `get_backend` is not on that path:
+> it has no production caller at all, only its definition in `registry.py` and the
+> `llm/__init__.py` re-export.
 
 ### Separation from agent selection
 

@@ -257,7 +257,7 @@ Categories shipped:
 
 | Category | Examples blocked |
 |---|---|
-| `filesystem` | `rm` with **both** recursion and force (`-rf`, `-fr`, `-r -f`, `--recursive --force`), `truncate <file>` |
+| `filesystem` | `rm` asked to recurse, in any spelling — a short cluster containing `r` or `R` (`-r`, `-R`, `-rf`, `-fr`, `-rv`, `-rfv`) or `--recursive`. **Recursion alone is the trigger**: force is not required and is not matched at all, so force without recursion (`rm -f`, `rm -fv`, `rm --force`) stays allowed, as does `rm <file>`. `truncate <file>` |
 | `git` | `git push --force` (without `--force-with-lease`), `git reset --hard`, `git add -f .env`/`*.pem`/`id_rsa`/credentials |
 | `sql` | `DROP TABLE`, `DROP DATABASE`, `TRUNCATE TABLE` |
 | `terraform` | `terraform destroy`, `terraform apply -auto-approve`, `terraform apply -replace=…`, `terraform state rm`/`push` |

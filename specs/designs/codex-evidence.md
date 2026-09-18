@@ -214,10 +214,13 @@ workspace and bumped a usage counter. Two such stale `[projects.*]` entries now
 sit in the real `~/.codex-lazy/config.toml` and can be deleted by hand. The
 probe's fingerprint covers `hooks.json` and `hooks.state.*` only.
 
-**Still open.** The driver delta — the F9 live path against bare `codex exec` —
-was never reached, because arm A closed the question arm B existed to split. Run
-4 of the acceptance gate is what tests it, now that phase B can tell a permitted
-spelling from an ignored verdict.
+**The driver delta, closed on run 4.** This probe never reached it — arm A closed
+the question arm B existed to split — so it fell to the acceptance gate's own live
+path. Run 4 drove that path end to end on 2026-09-18 08:27 (`lh` 0.71.1,
+`codex-cli` 0.154.0) and returned 17 assertions, 0 failed, 0 blocked, 2 not
+observed, with both NO-OBS closing on the run's own recorded artifacts rather than
+on a fifth run (§6.4). Phase B telling a permitted spelling from an ignored verdict
+is what made that run readable. All three deltas are measured; none is outstanding.
 
 
 ## Probes a correr
