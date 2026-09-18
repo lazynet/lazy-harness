@@ -8,10 +8,11 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 
 ## Done
 
-- [x] **Los MCP servers descartados por el adapter de un profile dejaron de ser silenciosos** — un profile Copilot no producía ningún write para los servers `qmd`, `engram` o `graphify` detectados, pero ni `lh deploy` ni `lh doctor` nombraban el gap. La respuesta ahora se deriva comparando los planes frescos reales del adapter con y sin servers, así que Codex y Claude Code no se reportan por error: `lh deploy` emite una línea `· <profile>/mcp`, `lh doctor` expone la sección **MCP servers**, y `lh doctor --json` lleva los mismos registros en `mcp_gaps`. PR #NNN; entra en 0.73.0.
-
 Este ledger se escribe en español. Las entradas se appendean en el orden en que se cierran y se agrupan por su marcador «entra en X.Y.Z»: ese marcador es lo que dice a qué release pertenece una entrada, no su posición en el archivo. No hay orden garantizado entre bloques de release, así que para leer una release hay que grepear el marcador, no confiar en la secuencia.
 
+- [x] **Los MCP servers descartados por el adapter de un profile dejaron de ser silenciosos** — un profile Copilot no producía ningún write para los servers `qmd`, `engram` o `graphify` detectados, pero ni `lh deploy` ni `lh doctor` nombraban el gap. La respuesta ahora se deriva comparando los planes frescos reales del adapter con y sin servers, así que Codex y Claude Code no se reportan por error: `lh deploy` emite una línea `· <profile>/mcp`, `lh doctor` expone la sección **MCP servers**, y `lh doctor --json` lleva los mismos registros en `mcp_gaps`. PR #400; entra en 0.73.0.
+- [x] **Los tres residuales del diseño multi-agente ya están trackeados** — el residual 1 quedó medido en `codex-evidence.md` §4.3: los hashes persistidos por Codex 0.154.0 fueron honrados por 0.155.0 sin re-aprobación. Los residuales 2 y 3 tienen ahora líneas `[ ]` en Theme 5 del roadmap, con sus triggers: la lane del adapter de opencode para decidir entre el store y `serve`, y la apertura del horizonte de adopción el 2026-11-11. PR #399; entra en 0.73.0.
+- [x] **H2 queda en el ledger con el resultado que realmente midió** — H2 era «el grupo dispara y el payload hace que el hook responda allow», el fail-open que `codex-matcher-probe.sh:28-36` separaba de un matcher suprimido. La corrida del 2026-09-17 13:22 observó el grupo disparar y el hook responder allow, pero la tabla de decisión en `:345-360` y la relectura de §4.2 fijan la causa: `rm -r` era una grafía permitida por la regla, no un defecto del payload ni del matcher; la regla luego se amplió para negar recursión sola. El delta del driver conserva su historia: cerró en la corrida 4 del gate de aceptación, el 2026-09-18 08:27, con 17 aserciones, 0 failed, 0 blocked y 2 not observed cerrados sobre los artefactos de esa misma corrida, sin una quinta. PR #399; entra en 0.73.0.
 - [x] **Las tres pruebas de resolución de rutas fijan explícitamente el entorno que asumen** — las tres tests que nombraba la entrada de §Open (`test_the_guard_writes_its_block_line_under_the_profiles_own_agent_dir`, `test_agent_dir_for_returns_the_profiles_own_agent_and_config_dir`, `test_agent_runtime_dir_prefers_the_profile_config_dir_over_the_dotted_name`) ahora hacen `monkeypatch.delenv` de `CODEX_HOME`/`CLAUDE_CONFIG_DIR` antes de aseverar, y pasan verde con y sin esas variables seteadas; `AGENTS.md` pierde el workaround `env -u` que las rodeaba. Ejecutado por workers de Codex (`lh run --profile lazy-codex`). PR #394, mergeado el 2026-09-18; entra en 0.72.1.
 - [x] **F7 conserva el word-split intencional y pasa ShellCheck con directivas acotadas** — el SC2046 de `isolation-gate.sh:627,744` (`run_set "$lane" "$scenario" "$mode" $(lane_hooks "$lane")`) era un word-split intencional; se agregan directivas `shellcheck disable=SC2046` acotadas con la razón, se saca el `xfail` de `test_gate_scripts_shellcheck.py`, y F7 corrió verde contra el 0.72.0 instalado vía `run-installed.sh` (las tres formas PASS). Ejecutado por workers de Codex (`lh run --profile lazy-codex`). PR #395, mergeado el 2026-09-18; entra en 0.72.1.
 - [x] **El índice de ADRs se verifica contra los archivos en disco** — la pasada de coherencia venía chequeando 56 = 56 a mano; tres tests derivados del glob y del README (`tests/docs/test_adr_index_coherence.py`) cubren archivos sin fila, filas colgantes y estados divergentes en las dos direcciones, y las tres mutaciones manuales prueban que las aserciones son load-bearing. Ejecutado por workers de Codex (`lh run --profile lazy-codex`). PR #393, mergeado el 2026-09-18; entra en 0.72.1.
@@ -217,24 +218,6 @@ Sin items abiertos — F1 (PR #347) y F2 (PR #351) cerrados; ver §Done.
 **Medido el 2026-09-18:** cero hits de `3.14` en todo el repo — ni en `specs/`, ni en `docs/`, ni en `.github/`, ni en `pyproject.toml`. No es que la decisión esté tomada y sin documentar; es que el tema no existe en ninguna superficie. Decidir una de dos: sumar 3.14 a la matriz y arreglar los tres tests con un mecanismo que siga fallando en 3.14 (no `chmod`), o declarar el techo de versión soportada en `pyproject.toml` y anotarlo.
 
 **Fuente:** `/coherence-audit` antes de 0.72.0, seed 3.
-
-### H2 no está en el ledger
-
-**Por qué:** H2 vive sólo dentro de `specs/gates/probes/codex-matcher-probe.sh` (`:32`, `:351`) y no aparece en este archivo — `grep -c "H2" specs/backlog.md` da 0. `specs/backlog.md:18` registra el probe y dice que falsifica H1 y H3, sin nombrar H2 nunca. Queda como hueco del ledger: el probe midió algo que ninguna superficie legible declara.
-
-**El delta del driver, en cambio, no es trabajo abierto.** Cerró **en** la corrida 4 del gate de aceptación (2026-09-18 08:27, `lh` 0.71.1), no después: esa corrida es el camino vivo de F9 y salió 17 aserciones, 0 failed, 0 blocked, 2 not observed, con los dos NO-OBS cerrando sobre los artefactos grabados de la propia corrida y sin una quinta (`codex-evidence.md` §6.4). Se anota acá sólo para que el próximo audit no lo vuelva a levantar como abierto.
-
-**Fuente:** `/coherence-audit` antes de 0.72.0, seed 2a.
-
-### Los tres residuales del diseño multi-agente no están trackeados
-
-**Por qué:** `specs/designs/2026-09-13-multi-agent-harness-design.md` cierra `accepted` nombrando tres cosas que aceptarlo **no** cierra, y ninguna de las tres tenía entrada acá ni línea `[ ]` en el roadmap:
-
-1. **Estabilidad del `trusted_hash` de Codex.** `lh doctor` reporta un hash guardado como `unknown` y nunca como trusted, porque decidir entre trusted y modified exige recomputar la normalización TOML de Codex — silenciosamente incorrecto ante cualquier cambio upstream, y sin señal hasta que los hooks dejan de dispararse.
-2. **Almacenamiento de sesiones de opencode.** Declarado fuera de alcance en el diseño, sin adapter que lo cubra.
-3. **El criterio de kill de adopción de la decisión 1**, con horizonte verificado al **2026-11-11**: `monitoring/launches.py` tiene `CODEX_ADAPTER_MERGED` = 2026-09-16 y `horizon_weeks=8`, y `adoption_check` devuelve `None` antes de `horizon_end`. El criterio está narrado en `docs/roadmap.md` pero sin checkbox, así que nada lo hace vencer.
-
-**Fuente:** `/coherence-audit` antes de 0.72.0, hallazgo medium sobre el Closing del diseño.
 
 ### `release-please` deja `uv.lock` un release atrás
 

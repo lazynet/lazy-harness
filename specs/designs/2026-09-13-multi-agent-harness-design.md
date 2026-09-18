@@ -2247,6 +2247,12 @@ name alone, a **control** was run to prove the probe discriminates.
   `--dangerously-bypass-hook-trust`, so `[hooks.state]` never materialised there
   either, and there is still no stored `trusted_hash` anywhere on this host to
   read back.
+
+  **Measured 2026-09-18.** Across one release pair, 0.154.0 → 0.155.0, the next
+  release honoured the stored hashes for an unchanged `hooks.json` without
+  re-approval ([Codex evidence §4.3](codex-evidence.md)). What stays open is
+  stability across more than one pair; the `hook_hash`/`trusted_hash`
+  terminology note above remains unchanged.
 - Whether opencode's session storage is stable enough to read at all, or whether
   its `serve` HTTP API is the only defensible source.
 
@@ -2295,11 +2301,9 @@ shape.
 
 **Three things stay open, and accepting this document does not close them.**
 
-1. **Whether Codex's persisted `trusted_hash` is stable across releases** —
-   the (a)-versus-(b) question in decision 5. Still **not measurable on this
-   machine**: the brew cask retains a single version, so there is no second
-   release to hash the same declaration against. The run does not narrow it:
-   it never recomputes the hash, by design.
+1. **Codex's persisted `trusted_hash` survived one release pair** — 0.154.0 →
+   0.155.0 honoured the stored hashes without re-approval; stability across
+   more than one pair remains open ([Codex evidence §4.3](codex-evidence.md)).
 2. **Whether opencode's session storage is stable enough to read**, or whether
    its `serve` HTTP API is the only defensible source. Untouched this cycle —
    no opencode adapter exists.
