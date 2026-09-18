@@ -104,7 +104,7 @@ def test_agent_runtime_dir_falls_back_to_dotted_agent_name(
 
 
 def test_agent_runtime_dir_prefers_the_profile_config_dir_over_the_dotted_name(
-    home_dir: Path, tmp_path: Path
+    home_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The step 4 contract gate watched a hook run with `--profile gate-throwaway`
     write its log into the user's real `~/.codex`.
@@ -118,6 +118,9 @@ def test_agent_runtime_dir_prefers_the_profile_config_dir_over_the_dotted_name(
     from lazy_harness.agents.registry import get_agent
     from lazy_harness.core.paths import agent_runtime_dir
 
+    # The launcher exports adapter overrides, while this test exercises the profile-owned path.
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     scratch = tmp_path / "codex-home"
 
     resolved = agent_runtime_dir(get_agent("codex"), profile_config_dir=str(scratch))

@@ -657,13 +657,18 @@ def _two_agent_config(tmp_path: Path) -> Path:
     return cfg
 
 
-def test_agent_dir_for_returns_the_profiles_own_agent_and_config_dir(tmp_path: Path) -> None:
+def test_agent_dir_for_returns_the_profiles_own_agent_and_config_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The step 4 gate's F4: a hook invoked with `--profile gate-throwaway` wrote
     its log into the user's real `~/.codex`, because neither half of this answer
     was resolved per profile."""
     from lazy_harness.core.config import load_config
     from lazy_harness.hooks.builtins._shared import agent_dir_for
 
+    # The launcher exports adapter overrides, while this test exercises the profile-owned path.
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     cfg = load_config(_two_agent_config(tmp_path))
 
     agent, agent_dir = agent_dir_for(cfg, "gate")

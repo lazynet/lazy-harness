@@ -153,9 +153,13 @@ def test_the_deny_envelope_is_the_one_codex_honours(codex_profile: Path) -> None
 
 def test_the_guard_writes_its_block_line_under_the_profiles_own_agent_dir(
     codex_profile: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The line F9's phase B counts. Landing it under the global agent's dir
     would make every delta read zero and every turn read `never invoked`."""
+    # The launcher exports adapter overrides, while this test exercises the profile-owned path.
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     _decision(_bash_payload("rm -rf /tmp/f9-doomed"))
 
     log = (codex_profile / "logs" / "hooks.log").read_text(encoding="utf-8")
