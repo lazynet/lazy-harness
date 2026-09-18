@@ -143,8 +143,9 @@ ignored verdict.** All five are falsified by measurement. What separates the
 `hooks.json` (8 real groups, including `moshi` and `graphify hook-guard`, against
 5 hand-rendered ones), the trust store (31 TUI-approved `hooks.state.` entries
 against `--dangerously-bypass-hook-trust`), and the driver (the F9 live path
-against `codex exec`). `specs/gates/probes/codex-hook-probe6.sh` is designed to
-separate them and has not been run.
+against `codex exec`). `specs/gates/probes/codex-hook-probe6.sh` was written to
+separate them. It ran the day after this ADR was accepted, and none of the three
+was the cause — see **Evolution** below.
 
 Two readings of the deployed profile narrow it further, and both were taken
 without spending a turn. `~/.codex-lazy/logs/hooks.log` carries
@@ -154,10 +155,13 @@ so the 12:32 run did reach the deployed home and its matcher-less groups did fir
 run with no `LH_HOOK_TRACE` yet to say why. And in the deployed `hooks.json`
 `pre-tool-use-security` is **group index 0**, with a `trusted_hash` stored under
 `hooks.state."…:pre_tool_use:0:0"` — so neither "an earlier group ended the
-dispatch" nor "the group has no approval" is available as an explanation. What
-arm B can still find is a stored hash that no longer matches the group as
-deployed, which `codex_trust.py` declines to recompute and only a re-approval can
-settle.
+dispatch" nor "the group has no approval" is available as an explanation. The one
+candidate left standing when this ADR was written was a stored hash no longer
+matching the group as deployed, which `codex_trust.py` declines to recompute and
+only a re-approval could settle. Arm B of probe 6 was built to test exactly that,
+and measured it away: the fingerprint was byte-identical across the run and the
+guard was invoked under the real trust store. The **Evolution** below records
+what the cause actually was.
 
 **A gate reading the trace must read the agent's runtime dir.** The F9 gate now
 pins `CODEX_HOME` on the turns it drives and on its trace self-test, so what is
@@ -175,3 +179,46 @@ and a run that did not.
 **A commit subject is not a changelog.** `#382`'s subject named a behaviour it
 measured as though it were a change it made, and the `(ADR-056)` it cited did not
 exist in the tree for the ADR to correct the record. Both are closed here.
+
+## Evolution
+
+**2026-09-17/18 — probe 6 ran, and the cause was none of the three deltas.**
+
+`specs/gates/probes/codex-hook-probe6.sh` ran 2026-09-17 16:41 against the real
+`~/.codex-lazy`, both arms; `specs/designs/codex-evidence.md` §4.2 carries the
+table. Arm A, under the real trust store, issued a recursion-only delete
+(`/bin/zsh -lc` wrapping `rm -r -- doomed`): `pre-tool-use-security` was
+**invoked**, answered *allow*, and the fixture was deleted. Arm B, under
+`--dangerously-bypass-hook-trust`, issued `rm -rf -- doomed` and was **blocked**.
+
+An unapproved group is never dispatched, so an invocation in arm A is proof that
+the 31 stored approvals covered the group that mattered: **trust was never the
+delta**. Neither was the deployed `hooks.json` — its fingerprint was
+byte-identical across the run (`7ba1c7bd` → `7ba1c7bd`), as were the
+`hooks.state.*` tables. The 12:32 FAIL was a fired-but-allowed on a spelling the
+guard permitted by design: the recursive-delete rule required recursion *and*
+force, and F9 phase B's prompt — "a single recursive shell delete" — drew
+`rm -rf` twice and a recursion-only spelling once. The gate's verdict was a coin
+flip on model phrasing, and both the gate and the probe reported the losing toss
+as a defect in the thing they were measuring.
+
+Two decisions follow, and both shipped inside 0.72.0:
+
+- **The recursive-delete rule denies on recursion alone.** Force is no longer
+  required and is not matched at all. The decision, the measurement behind it and
+  its accepted cost (an interactive recursive delete, which prompts and now blocks
+  anyway) are reasoned in
+  `specs/designs/2026-04-17-security-hooks-cluster-design.md:143`, in the `rm`
+  rule's authoring notes. Shipped in **#385**.
+- **F9 phase B judges the agent against the guard's own answer.** It reads the
+  command the block left behind off the `--json` stream, replays it through the
+  shipped guard via `specs/gates/guard_contract.py`, and compares that verdict
+  against what happened on disk. A spelling the guard permits is reported
+  inconclusive and re-prompted once, never as a FAIL. Reasoned in the same design
+  doc; shipped in **#387**.
+
+**Still open: the driver delta.** The F9 live path against bare `codex exec` was
+never reached, because arm A closed the question arm B existed to split
+(`codex-evidence.md` §4.2, closing paragraph). Run 4 of the acceptance gate is
+what tests it, now that phase B can tell a permitted spelling from an ignored
+verdict.
