@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.72.0](https://github.com/lazynet/lazy-harness/compare/v0.71.1...v0.72.0) (2026-09-18)
+
+
+### Features
+
+* flat-rate billing documented and tested end to end, exec cost_source speaks the v3 vocabulary ([#378](https://github.com/lazynet/lazy-harness/issues/378)) ([859a183](https://github.com/lazynet/lazy-harness/commit/859a1837eb3bc4d662f17d6808626092b2c0d00b))
+* shared roots keep every agent's export, doctor speaks JSON, init knows agent and billing model (ADR-054) ([#380](https://github.com/lazynet/lazy-harness/issues/380)) ([9d3e148](https://github.com/lazynet/lazy-harness/commit/9d3e148db597bbb1005fd20272174a8d7710334c))
+* system-doc segments by role, a Codex agent segment, and migrate renames them (ADR-055) ([#375](https://github.com/lazynet/lazy-harness/issues/375)) ([0d99dfb](https://github.com/lazynet/lazy-harness/commit/0d99dfbd10ec7e0a14a53694e0edfcc6922a79d2))
+
+
+### Bug Fixes
+
+* Codex hook groups carry matchers Codex can match, and F9 tells a silent hook from an allowing one (ADR-056) ([#382](https://github.com/lazynet/lazy-harness/issues/382)) ([b971a9b](https://github.com/lazynet/lazy-harness/commit/b971a9ba1f4d9090769a84debab01a19fb451921))
+* Codex trust keys use the native event name, and the F9 gate observes what it asserts ([#376](https://github.com/lazynet/lazy-harness/issues/376)) ([8b785c7](https://github.com/lazynet/lazy-harness/commit/8b785c73d5ad87ca7faad11caaea58d33cfb58c1))
+* recursion alone blocks, and F9 phase B judges Codex against the guard's contract (ADR-056) ([#385](https://github.com/lazynet/lazy-harness/issues/385)) ([d5caeb8](https://github.com/lazynet/lazy-harness/commit/d5caeb825b36cbac742c819fca6b4e1953c4635b))
+* run-installed.sh avoids associative arrays for bash 3.2 ([#381](https://github.com/lazynet/lazy-harness/issues/381)) ([65bc51a](https://github.com/lazynet/lazy-harness/commit/65bc51af169d7a742915b602e27f3fc82ca43289))
+* shellcheck runs on every gate script, copilot probe 1 is clean ([#389](https://github.com/lazynet/lazy-harness/issues/389)) ([c08089f](https://github.com/lazynet/lazy-harness/commit/c08089ff0277ae64f7f0c7c343ba40615f039c69))
+* the F9 gate reads the command a block leaves behind, and the multi-agent designs close (ADR-056) ([#387](https://github.com/lazynet/lazy-harness/issues/387)) ([b29d8b8](https://github.com/lazynet/lazy-harness/commit/b29d8b8c68ff86e9dd7c13b01fe2db984485325a))
+* the hook-exec probe reads what it wrote, ADR-056 records the measured matcher semantics, and probe 6 is designed ([#383](https://github.com/lazynet/lazy-harness/issues/383)) ([df93a9e](https://github.com/lazynet/lazy-harness/commit/df93a9e99c18bfd827345cfebc773b2c51980414))
+
+
+### Documentation
+
+* backlog records every PR merged since 0.71.1 ([#386](https://github.com/lazynet/lazy-harness/issues/386)) ([1b4ef75](https://github.com/lazynet/lazy-harness/commit/1b4ef7532ebf8fed2ca0bfd75a0747773f51cdf0))
+* coherence audit before 0.72.0 closes 22 drift findings ([#388](https://github.com/lazynet/lazy-harness/issues/388)) ([89c825b](https://github.com/lazynet/lazy-harness/commit/89c825b01db967e723845b196577380cc8cf7e29))
+* replace synthetic cost-reporting worked example with measured renders ([#384](https://github.com/lazynet/lazy-harness/issues/384)) ([c065c49](https://github.com/lazynet/lazy-harness/commit/c065c494c296949a2a031b006905dfcec69f51cd))
+
 ## [0.71.1](https://github.com/lazynet/lazy-harness/compare/v0.71.0...v0.71.1) (2026-09-17)
 
 
