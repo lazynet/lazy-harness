@@ -44,6 +44,7 @@ specs/               # Internal design artifacts — NOT published
 - **New ADR** → `specs/adrs/NNN-kebab-title.md`, add row to `specs/adrs/README.md` with Status column.
 - **New user-facing guide** → `docs/how/<topic>.md`, linked from `mkdocs.yml`.
 - **New contributor-only doc** → `specs/workflow/<topic>.md` (this directory) or `specs/designs/<date>-<topic>.md` for in-progress designs.
+- **New implementation plan** → `specs/plans/<date>-<topic>-plan.md`. Once the work lands the plan is frozen, like `specs/archive/` — see below.
 - **Historical context you want to preserve but not edit** → leave in `specs/archive/` and do not touch.
 
 ## What each tree is NOT for
@@ -52,3 +53,4 @@ specs/               # Internal design artifacts — NOT published
 - `tests/` is not a place for sample fixtures that are also shipped code. Real test data lives alongside the tests.
 - `docs/` is not for internal reasoning. If it reveals how a decision was made or mentions implementation alternatives, it belongs in `specs/` instead.
 - `specs/archive/` is not a cleanup target. It is frozen on purpose. Moving archive files as part of a wider restructure is fine; editing their content is not.
+- `specs/plans/` is frozen the same way, and for a different reason: a plan records what was intended at a point in time, so it is evidence of a decision rather than a description of the code. Where a plan and the tree disagree, the code and the ADRs win and the plan stays as written — keeping it in sync would turn every implementation change into an N-document edit. Record the correction where the decision lives, not in the plan.
