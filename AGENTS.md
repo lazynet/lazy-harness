@@ -18,10 +18,7 @@ Three things `CLAUDE.md` assumes that a non-Claude agent does not have:
 - **`/coherence-audit`** is `.claude/commands/coherence-audit.md`; it is
   read-only and a release gate, run it as written.
 
-Two rules for any agent running inside an `lh run` pane:
+One rule for any agent running inside an `lh run` pane:
 
 - Never change the active `gh` account. If `gh` refuses with
   `must be a collaborator`, stop and report which account is active.
-- The launcher exports `CODEX_HOME` and `CLAUDE_CONFIG_DIR`; run the test
-  suite as `env -u CODEX_HOME -u CLAUDE_CONFIG_DIR uv run --frozen pytest -q`
-  until the tests that depend on them are isolated.
