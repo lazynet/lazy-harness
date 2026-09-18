@@ -197,13 +197,17 @@ def test_apply_patch_joins_inspected_tools_without_widening_claude_codes_matcher
     """`FILE_TOOLS` gains Codex's native edit tool (backlog: "`FILE_TOOLS` no
     incluye `apply_patch`").
 
-    Codex has no per-tool matcher to widen — `_hook_groups` omits one and the
-    hook already fires on every tool call regardless (see the test right below
-    this one) — so the only observable surface is `INSPECTED_TOOLS` itself.
-    `apply_patch` is never in `_emitted_by("claude_code")`, so the intersection
-    `test_deployed_matcher_covers_every_tool_each_builtin_inspects` checks
-    against is unaffected, and the Claude Code matcher this gate already pins
-    stays exactly what it was.
+    ADR-056's matcher probe (`specs/adrs/056-codex-honours-claude-shaped-matchers.md:35-40`)
+    measured that Codex evaluates `PreToolUse` matchers as regexes and aliases
+    a tool's Codex-native name to its Claude-compatible one during that
+    evaluation: `Edit|Write` fired on a call whose payload reported
+    `tool_name: apply_patch`, while `^Bash$` did not (same ADR, `:47-50`). The
+    deployed `pre-tool-use-security` matcher, `Bash|Read|Edit|Write|NotebookEdit`,
+    already reaches `apply_patch` through that aliasing, so nothing here widens
+    it. `apply_patch` is never in `_emitted_by("claude_code")`, so the
+    intersection `test_deployed_matcher_covers_every_tool_each_builtin_inspects`
+    checks against is unaffected, and the Claude Code matcher this gate already
+    pins stays exactly what it was.
     """
     import lazy_harness.hooks.builtins.pre_tool_use_security as security
 
@@ -214,12 +218,16 @@ def test_apply_patch_joins_inspected_tools_without_widening_claude_codes_matcher
 
 
 def test_the_codex_side_reaches_its_edit_tool_without_a_matcher() -> None:
-    """Codex's half of the same guarantee, which is not a matcher at all.
+    """Codex's `PostToolUse` half, which omits the matcher rather than widening it.
 
-    `CodexAdapter._hook_groups` omits `matcher` rather than emitting an empty
-    one, and the omitted form is the only shape observed firing on every tool
-    call. So the Claude-side intersection above is not a hole: under Codex the
-    hook is invoked for `apply_patch` because it is invoked for everything.
+    ADR-056's matcher probe (`specs/adrs/056-codex-honours-claude-shaped-matchers.md:35-40`)
+    measured that a missing `matcher` key is not the only shape that reaches
+    `apply_patch` — `Edit|Write` does too, via the aliasing in the test above —
+    but it is the one `CodexAdapter._hook_groups` emits here, and every group
+    Codex is handed gets evaluated rather than short-circuiting on the first
+    match (same ADR, `:51-52`). So the Claude-side intersection above is not a
+    hole: under Codex the hook is invoked for `apply_patch` regardless of
+    which of the two shapes carries it.
     """
     from lazy_harness.agents.codex import CodexAdapter
 
