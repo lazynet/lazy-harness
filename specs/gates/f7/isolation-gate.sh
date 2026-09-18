@@ -624,6 +624,8 @@ for scenario in "${HARD_SCENARIOS[@]}"; do
   write_config "$scenario"
   for lane in "${LANES[@]}"; do
     for mode in "${MODES[@]}"; do
+      # Splitting the newline-separated list is intentional; an array would turn an empty lane into an empty argument.
+      # shellcheck disable=SC2046
       run_set "$lane" "$scenario" "$mode" $(lane_hooks "$lane")
     done
   done
@@ -741,6 +743,8 @@ for scenario in "${SOFT_SCENARIOS[@]}"; do
   write_config "$scenario"
   for lane in "${LANES[@]}"; do
     for mode in "${MODES[@]}"; do
+      # Splitting the newline-separated list is intentional; an array would turn an empty lane into an empty argument.
+      # shellcheck disable=SC2046
       run_set "$lane" "$scenario" "$mode" $(lane_hooks "$lane")
       while read -r hook; do
         [ -n "$hook" ] || continue

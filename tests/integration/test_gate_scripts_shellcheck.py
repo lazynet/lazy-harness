@@ -17,9 +17,7 @@ GATE_SCRIPTS = sorted(REPO_ROOT.glob("specs/gates/**/*.sh"))
 
 # Strict xfail: a later fix must flip these red until the marker is removed.
 # Tracked in specs/backlog.md §Open.
-XFAIL_REASONS = {
-    "f7/isolation-gate.sh": "SC2046 — tracked in specs/backlog.md §Open",
-}
+XFAIL_REASONS = {}
 
 
 def test_glob_is_not_empty() -> None:
