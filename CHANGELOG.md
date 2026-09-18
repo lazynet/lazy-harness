@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.72.1](https://github.com/lazynet/lazy-harness/compare/v0.72.0...v0.72.1) (2026-09-18)
+
+
+### Bug Fixes
+
+* F7 keeps its intentional word-split and is shellcheck-clean ([#395](https://github.com/lazynet/lazy-harness/issues/395)) ([299638e](https://github.com/lazynet/lazy-harness/commit/299638ee1a58f6234213b43069b3a39167bc31f3))
+* F8 expected sets name only builtins the registry returns ([#390](https://github.com/lazynet/lazy-harness/issues/390)) ([2136e6e](https://github.com/lazynet/lazy-harness/commit/2136e6ec85c4c9df5294d486c3b3c986bc1cb890))
+
+
+### Documentation
+
+* **backlog:** [#390](https://github.com/lazynet/lazy-harness/issues/390) in §Done, env-leak test failures in §Open ([85b8516](https://github.com/lazynet/lazy-harness/commit/85b8516f6a30a8669e6672e2ae97bb106b32c619))
+* **backlog:** four Codex lanes in §Done, two §Open entries closed ([546b1f4](https://github.com/lazynet/lazy-harness/commit/546b1f4b763ffd28f01e2c69005e125cd63f8c5d))
+
 ## [0.72.0](https://github.com/lazynet/lazy-harness/compare/v0.71.1...v0.72.0) (2026-09-18)
 
 
