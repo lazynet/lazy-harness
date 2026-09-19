@@ -14,7 +14,8 @@ decisión sin evidencia nueva de un binario instalado.
 
 Estado verificado al cerrar la sesión del 2026-09-19:
 
-- HEAD: e9f87b6 docs: record proposal queue drain
+- implementation head before this handoff: e9f87b6 docs: record proposal queue drain;
+  the newest docs-only commit contains this prompt
 - implementación principal: 2dc5553 feat: implement wave 1 design
 - commits previos integrados: 53f7305, e01d68f, 123778c, 75cf439
 - worktree limpio, branch sin upstream
