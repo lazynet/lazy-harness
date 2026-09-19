@@ -619,7 +619,13 @@ veredicto de la antigüedad de `last_refresh` es una heurística con su propio
 umbral: decisión separada, con su propia probe (cuán viejo puede ser
 `last_refresh` con el login todavía vivo).
 
-**Probe 9 (keychain entry) was not run.**
+**Probe 9 (keychain entry) ran on 2026-09-16 from an Aqua terminal, never from
+an agent pane.** Without `-w`, it exposed the Claude Code item's metadata and
+showed an `mdat` from the day of a successful login while the file mirror was
+older. No secret value was printed. [ADR-058](../adrs/058-keychain-mdat-is-operator-only.md)
+records why that useful operator evidence still must not become an automatic
+hook call: an agent pane also descends from Aqua, so the required execution
+boundary cannot be enforced by lazy-harness.
 
 ## Lo que el gate F8 ya midió y el evidence tiene que confirmar o falsificar
 

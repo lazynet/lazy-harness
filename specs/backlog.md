@@ -8,6 +8,10 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 
 ## Done
 
+- [x] **`last_refresh` no es un veredicto de auth de Codex (ADR-057)** — el probe registró el shape entero y no hay expiry ni estado de rechazo. Dos perfiles vivos mostraron edades distintas (aproximadamente uno y cuatro días) sin establecer un máximo válido. Elegir un umbral sería inventar semántica; `CodexAdapter.credentials_file()` conserva `None` y el preflight dice `n/a`. Cerrado el 2026-09-19 por decisión explícita, sin cambio de código.
+- [x] **`mdat` del Keychain queda como evidencia operator-only (ADR-058)** — Probe 9 cerró el shape y confirmó que el metadata sirve, pero no existe un guard que distinga una terminal Aqua operada por el usuario de un pane de agente descendiente de la misma sesión. Lazy-harness no ejecuta `security`; el mirror stale de macOS sigue degradando a `unknown`. Cerrado el 2026-09-19 por decisión explícita, sin cambio de código.
+- [x] **Portabilidad de skills, commands y agents decidida (ADR-059)** — sólo los skills tienen semántica portable después de proyectarlos al discovery root que declara cada adapter. Los commands reutilizables migran a skills; los commands nativos y las definiciones de subagentes quedan en su segmento. La implementación está diferida hasta que un skill de profile tenga que correr fuera de Claude Code, con prueba real de `~/.agents/skills` y rechazo whole-plan de colisiones globales.
+
 Este ledger se escribe en español. Las entradas se appendean en el orden en que se cierran y se agrupan por su marcador «entra en X.Y.Z»: ese marcador es lo que dice a qué release pertenece una entrada, no su posición en el archivo. No hay orden garantizado entre bloques de release, así que para leer una release hay que grepear el marcador, no confiar en la secuencia.
 
 - [x] **Python 3.14 entra en la matriz y los gates de secrets quedan corregidos** — el problema no era `chmod(0o000)`: en Python 3.14 `Path.is_file()` responde `False`, en vez de levantar, para un archivo bajo un parent no traversable. Eran dos sitios, no tres, y uno era producción: `lh doctor` reportaba erróneamente que el profile heredaba credenciales. Se agregó la leg `ubuntu-latest` / Python 3.14, `test_render_profile_secrets_stays_quiet_when_the_directory_cannot_be_read` queda cubierto además por una simulación portable de la respuesta 3.14, `test_a_secrets_directory_that_cannot_be_traversed_refuses` fija la premisa real de `read_text()`, y doctor usa `stat()` para distinguir ausencia de inaccesibilidad. PR #404; entra en 0.74.0.
@@ -525,35 +529,6 @@ Cada una mezcla responsabilidades no relacionadas: recolección de contexto y re
 **Fuente:** #348, follow-up 6.
 
 **Acción:** ninguna propuesta en esta entrada — el harness no escribe `[projects.*]` hoy.
-
-### Probe 9 — shape de `security find-generic-password` contra el keychain de Claude Code; A5 deja de estar rechazada por secuencia
-
-**Por qué:** [ADR-045](adrs/045-credential-boundary.md) rechazó A5 ("Read the keychain") **por secuencia, no por principio**: "no probe de `security find-generic-password`'s output shape has been run", y el propio D7 de esa ADR dice que el lugar donde nunca debe correrse es un agent pane o un contexto Background de launchd — es lo que destruyó `credentials.enc` dos veces. El usuario corrió el probe el 2026-09-16 desde una terminal **Aqua** — nunca desde un pane de agente —, contra el perfil cuyo config dir hashea al sufijo del label, sin `-w`, así que no se imprimió ningún secreto:
-
-```
-security find-generic-password -l "Claude Code-credentials-<8 hex de sha256(config_dir)>"
-→ exit 0, un item:
-  class: "genp"
-  label / "svce": "Claude Code-credentials-<8 hex>"
-  "acct": <redactado — nombre de cuenta local>
-  "cdat": 20260502205443Z      (creado 2026-05-02)
-  "mdat": 20260916220007Z      (modificado 2026-09-16, el día de un login exitoso)
-  el resto de los atributos NULL
-```
-
-Los dos campos usables son `cdat` y `mdat`. `mdat` es una señal de liveness legible sin imprimir nunca el secreto, y es exactamente lo que distingue el caso de D6 de esa misma ADR (2026-09-16: `.credentials.json` con `mtime` 2026-09-08 y un `refreshTokenExpiresAt` vencido, mientras la entrada del keychain estaba fresca). **A5 pasa de rechazada-por-secuencia a pendiente-de-ADR**: implementarla sigue siendo un ADR propio (la misma D7 lo dice) — necesita el guard de ejecución Aqua-only, un umbral de staleness sobre `mdat`, y un test de que el hook sigue saliendo 0 cuando `security` está ausente o el keychain está bloqueado.
-
-**Fuente:** addendum a la lane `launches-consumer`, probe 9, 2026-09-16.
-
-**Acción:** ninguna propuesta en esta entrada — implementar A5 es un ADR aparte.
-
-### Heurística de antigüedad de `last_refresh` para el veredicto de preflight de Codex
-
-**Por qué:** ADR-049 (#363) midió `~/.codex/auth.json` entero (`auth_mode`, `OPENAI_API_KEY`, `last_refresh`, y `tokens` → `{id_token, access_token, refresh_token, account_id}`) y confirmó que **no tiene campo de expiry en ningún nivel** — es lo que mantiene `CodexAdapter.credentials_file()` devolviendo `None`, aunque por una razón distinta a la de su propio docstring. El preflight necesita otra señal para derivar un veredicto de frescura, y `last_refresh` es el único candidato medido; hoy no hay heurística de antigüedad implementada sobre ese campo.
-
-**Fuente:** PR #363 (A1, ADR-049), lane `release-gate-071` (nota B, `_wave-d-gate-notes.md`).
-
-**Acción:** ADR aparte — definir el umbral de antigüedad de `last_refresh` que separa un token fresco de uno stale, y cablear el preflight de Codex a esa heurística.
 
 ### El denylist de seguridad y el guard de git-scope bloquean prosa que sólo cita una grafía peligrosa
 

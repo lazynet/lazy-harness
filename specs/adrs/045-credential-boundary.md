@@ -258,3 +258,17 @@ entry without changing the outcome.
   preflight both say so rather than guessing, which is the whole of the
   improvement — a check that admits a blind spot is usable, and one that reports
   a false `FAIL` is not.
+
+## Evolution — 2026-09-19: the follow-up signals do not justify automation
+
+[ADR-057](057-codex-last-refresh-is-not-liveness.md) closes the Codex half:
+`auth.json.last_refresh` has no measured relationship to expiry, so no age
+threshold becomes an auth verdict and Codex retains the `None` / `n/a` path.
+
+[ADR-058](058-keychain-mdat-is-operator-only.md) closes D7's Keychain follow-up.
+Probe 9 did establish that `mdat` is useful non-secret evidence when read
+manually from an Aqua terminal. It did not produce a guard that can distinguish
+that operator action from a command launched by an agent pane, which also
+descends from Aqua. Lazy-harness therefore continues not to invoke `security`;
+`mdat` remains operator-only evidence and the macOS mirror degradation in D6
+stays in force.
