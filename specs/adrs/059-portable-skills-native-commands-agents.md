@@ -77,6 +77,11 @@ managed directly at `~/.agents/skills`, while current profile-owned skills are
 intentionally under `claude-code/skills`; moving either before that trigger
 would add a second owner without changing a running profile.
 
+The trigger was met on 2026-09-19. `lazymind-projects` is a profile-owned skill
+required by the shared project-state workflow, but it exists only under the
+Claude Code profile and is absent from the Codex catalog. Its implementation
+is scheduled with Wave 1; this changes the schedule, not the accepted design.
+
 At implementation time the acceptance test must use the installed Codex binary
 and `codex debug prompt-input` in both directions: the projected skill appears,
 then disappears when its link is removed. It must also exercise two profiles
@@ -114,4 +119,3 @@ not documented as stable.
   definitions remain valid during the deferral.
 - Implementation will widen the adapter and deploy planner only for skill
   placement; it will not introduce a general asset translation framework.
-

@@ -1,0 +1,63 @@
+# Session project-state sync design
+
+**Status:** proposed  
+**Date:** 2026-09-19  
+**Decision:** [ADR-062](../adrs/062-session-end-publishes-bounded-project-state.md)
+
+## Finding
+
+No general PRJ update exists at session close. `session_end.main()` records a
+metric and force-enqueues compound-loop. After inference, `process_task()` only
+calls `append_grade_to_prj_backlog()` when grading is enabled, `lazymind_dir` is
+configured and the grade is poor or acceptable with issues. That function
+inserts one regression item under an exact backlog heading. It does not update
+`Estado actual`, record successful work or bump frontmatter `updated`.
+
+This explains both symptoms: a healthy session never touches the PRJ, and a
+bad session may append content while leaving `updated` stale.
+
+## Contract
+
+Compound-loop gains an optional structured `project_update` result containing
+`summary`, `completed`, `next` and `references`. It is applied only when:
+
+- `lazymind_dir` is configured;
+- the current repository resolves to one existing PRJ;
+- the PRJ already contains a generated `## Última sesión` section;
+- the session is interactive and produced a valid structured result.
+
+The worker replaces only that bounded section through the same parser contract
+as `vaultkit sync`. It never creates a PRJ, rewrites `Estado actual`, archives
+history or touches unrelated sections. The section records session ID,
+timestamp and repository revision as provenance.
+
+Frontmatter `updated` changes only when the bounded body changes. A no-op sync
+leaves the file byte-identical. Every refusal is logged with a reason; SessionEnd
+remains fail-soft and never blocks agent shutdown.
+
+## Why a bounded section
+
+Appending every session caused the current PRJ to reach 12,570 words and makes
+the live readme less useful. Letting an inferred summary rewrite human-curated
+`Estado actual` is worse. One replaceable session snapshot preserves handoff
+value without turning the PRJ into another transcript store.
+
+The historical handoff remains in knowledge memory. Poor-quality grading may
+continue to append an actionable backlog entry, but it must also bump `updated`
+when that append changes the file.
+
+## Acceptance gates
+
+- Good, poor and skipped sessions cover the three write paths.
+- Missing PRJ, ambiguous match, missing generated section and invalid result
+  are named no-ops.
+- A second identical run is byte-identical and does not change `updated`.
+- A changed result replaces only `## Última sesión` and bumps `updated`.
+- A poor grade appends one deduplicated backlog item and bumps `updated`.
+- Installed-agent SessionEnd probes prove the task is queued for Claude Code
+  and Codex, while persistence is tested in the worker process.
+
+Rollout starts on PRJ-LazyHarness only. Its current 12,570-word state requires
+a separate, reviewed archival pass before adding the generated section; this
+design does not silently compact it.
+
