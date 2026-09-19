@@ -47,3 +47,26 @@ Corollary decisions:
 - A broken profile is easy to debug: `ls -la ~/.claude-<name>/` shows every symlink, and `readlink` shows the source path directly.
 - Adding a profile is two commands: create the source directory under `~/.config/lazy-harness/profiles/<name>/`, then `lh profile add <name> --config-dir ~/.claude-<name>` to register it. `lh deploy` links the content.
 - On Windows, NTFS symlinks require a privilege that many setups do not grant by default. This is a known gap; the framework will likely grow a `--strategy=copy` flag for that platform rather than invent a third mechanism.
+
+## Evolution — 2026-09-19: adapter config targets write through their links
+
+ADR-052 moved adapter-owned config files into agent segments, and ADR-042 made
+the adapter plan their complete merged content. A deployed Claude Code
+`settings.json` is therefore a symlink from the runtime directory to
+`profiles/<name>/claude-code/settings.json`; the deploy planner opens the
+runtime path and intentionally writes through that link.
+
+This supersedes two claims above without changing the general source/target
+split:
+
+- hook configuration is no longer a real generated file beside the content
+  links;
+- the framework does rewrite the small set of source files named by the active
+  adapter's `config_targets()`.
+
+The write-through is the ownership contract, not an implementation accident.
+It keeps one effective config document instead of a source template plus a
+runtime copy whose merge order could drift. User-authored content and runtime
+state remain on their original sides of the boundary. Only adapter config
+targets cross it, and their merge rules must preserve fields owned by the
+agent or by another manager.

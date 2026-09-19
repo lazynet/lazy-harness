@@ -16,11 +16,11 @@ target         ~/.claude-<name>/                                    agent
 default link   ~/.claude                → target of default profile agent
 ```
 
-- **Source.** The user owns this. It lives in their dotfile-managed config dir. It is where `CLAUDE.md`, `skills/`, and any other profile content live. The framework reads from here but does not write to it outside of `lh init` / `lh profile add`.
-- **Target.** This is the directory Claude Code reads from when `CLAUDE_CONFIG_DIR` is set to it (or when it is `~/.claude` for the default profile). The framework writes symlinks into this directory during deploy, plus a generated `settings.json` for hooks. Claude Code itself also writes into this directory during normal use (session JSONLs, `projects/` state, memory files).
+- **Source.** The user owns this. It lives in their dotfile-managed config dir. It is where `CLAUDE.md`, `skills/`, and any other profile content live. Most of it is input to deploy. An adapter's config targets are the deliberate exception: if a target such as Claude Code's `settings.json` is present in an agent segment, deploy writes the merged document through the runtime symlink and therefore updates that source file.
+- **Target.** This is the directory Claude Code reads from when `CLAUDE_CONFIG_DIR` is set to it (or when it is `~/.claude` for the default profile). The framework writes symlinks into this directory during deploy. Claude Code itself also writes into this directory during normal use (session JSONLs, `projects/` state, memory files).
 - **Default link.** A single top-level symlink `~/.claude → <default profile's target>`. This is what makes plain `claude` work without an env var.
 
-The source and target are deliberately separated. Source is read-only from the agent's perspective — the framework controls the symlinks into it. Target is write-active — Claude Code drops session data, project state, and memory files there.
+The source and target are deliberately separated. Profile content is read-only from the agent's perspective, while the target remains write-active for session data and project state. Adapter config targets are shared state between the source and runtime views: their target paths are symlinks, and `lh deploy` intentionally writes through them so the dotfile-managed source converges on the effective merged configuration.
 
 ## How profiles are declared
 
