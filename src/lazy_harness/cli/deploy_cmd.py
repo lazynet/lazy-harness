@@ -6,7 +6,11 @@ from datetime import datetime
 from pathlib import Path
 
 import click
+from rich.console import Console
+from rich.markup import escape
 
+from lazy_harness.agents.registry import get_agent
+from lazy_harness.cli.profile_cmd import render_sync_results
 from lazy_harness.core.backups import (
     DEPLOY_NAMESPACE,
     backups_root,
@@ -15,7 +19,8 @@ from lazy_harness.core.backups import (
     prune_backups,
 )
 from lazy_harness.core.config import Config, ConfigError, load_config
-from lazy_harness.core.paths import config_file
+from lazy_harness.core.paths import config_dir, config_file
+from lazy_harness.core.sync_agent_md import SyncError, sync_profiles
 from lazy_harness.deploy.engine import (
     ConfigPlannerRequiredError,
     UnknownProfileError,
@@ -30,6 +35,19 @@ from lazy_harness.migrate.rollback import apply_rollback_log
 # Ten snapshots of a ~135 KB artifact set cost about 1.35 MB. Pruning by count
 # keeps the cheap operation cheap without a condition that could decide wrong.
 KEEP_SNAPSHOTS = 10
+
+
+def _sync_system_docs(cfg: Config, *, only: str | None = None) -> None:
+    profiles_dir = config_dir() / "profiles"
+    if not profiles_dir.is_dir():
+        click.echo("No profile dirs found.")
+        return
+
+    results = sync_profiles(profiles_dir, get_agent(cfg.agent.type), cfg=cfg, only=only)
+    if not results:
+        click.echo("No profile dirs found.")
+        return
+    render_sync_results(results, Console())
 
 
 def _take_snapshot(cfg: Config, only: str | None = None) -> Path:
@@ -54,6 +72,14 @@ def _take_snapshot(cfg: Config, only: str | None = None) -> Path:
 def _run_deploy(cfg: Config, only: str | None = None) -> None:
     scope = f" ({only})" if only else ""
     click.echo(f"=== lazy-harness deploy{scope} ===\n")
+
+    click.echo("Syncing system docs:")
+    try:
+        _sync_system_docs(cfg, only=only)
+    except SyncError as e:
+        click.echo(f"Error: {escape(str(e))}", err=True)
+        raise SystemExit(1) from e
+    click.echo()
 
     click.echo("Deploying profiles:")
     deploy_profiles(cfg, only=only)

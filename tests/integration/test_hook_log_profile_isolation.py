@@ -606,12 +606,11 @@ def cross_agent_config(tmp_path: Path, home_dir: Path, monkeypatch: pytest.Monke
 
     profiles = tmp_path / "tree" / "profiles"
     (profiles / "_common").mkdir(parents=True)
-    (profiles / "_common" / "CLAUDE.common.md").write_text("SHARED RULES\n")
-    (profiles / "_common" / "AGENTS.common.md").write_text("SHARED RULES\n")
+    (profiles / "_common" / "common.md").write_text("SHARED RULES\n")
     (profiles / "alpha").mkdir()
+    (profiles / "alpha" / "head.md").write_text("alpha HEAD\n")
+    (profiles / "alpha" / "tail.md").write_text("alpha TAIL\n")
     for stem in ("CLAUDE", "AGENTS"):
-        (profiles / "alpha" / f"{stem}.head.md").write_text("alpha HEAD\n")
-        (profiles / "alpha" / f"{stem}.tail.md").write_text("alpha TAIL\n")
         (profiles / "alpha" / f"{stem}.md").write_text(_STALE_DOC)
     return profiles
 
@@ -650,12 +649,12 @@ def test_sync_claude_regenerates_the_doc_of_the_agent_the_invoked_profile_runs(
     reads a runtime directory. The mask this test has to defeat is the *global*
     `[agent].type`, which is why `gate` declares an agent of its own.
     """
-    from lazy_harness.core.sync_agent_md import legacy_segment_names, render_agent_md
+    from lazy_harness.core.sync_agent_md import ROLE_SEGMENT_NAMES, render_agent_md
 
     exit_code = _run_hook(
         "post-tool-use-sync-claude",
         "gate",
-        _sync_claude_payload(cross_agent_config / "alpha" / "CLAUDE.head.md", tmp_path),
+        _sync_claude_payload(cross_agent_config / "alpha" / "head.md", tmp_path),
     )
 
     assert exit_code == 0
@@ -663,7 +662,7 @@ def test_sync_claude_regenerates_the_doc_of_the_agent_the_invoked_profile_runs(
         "alpha HEAD\n",
         "SHARED RULES\n",
         "alpha TAIL\n",
-        names=legacy_segment_names("CLAUDE"),
+        names=ROLE_SEGMENT_NAMES,
     )
     # The absence half: the global agent's contract is the file the pre-migration
     # hook wrote, so asserting only on `CLAUDE.md` would pass against a hook that
@@ -694,7 +693,7 @@ def test_sync_claude_writes_nothing_outside_the_profiles_tree_it_was_pointed_at(
     exit_code = _run_hook(
         "post-tool-use-sync-claude",
         "gate",
-        _sync_claude_payload(cross_agent_config / "alpha" / "CLAUDE.head.md", tmp_path),
+        _sync_claude_payload(cross_agent_config / "alpha" / "head.md", tmp_path),
     )
 
     assert exit_code == 0

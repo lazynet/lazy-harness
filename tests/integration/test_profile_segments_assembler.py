@@ -177,16 +177,10 @@ def _claude_adapter():
     return get_agent("claude-code")
 
 
-def test_the_assembler_stops_reporting_a_legacy_layout_once_migrate_has_run(
+def test_a_legacy_only_layout_is_skipped_until_migrate_has_run(
     home_dir: Path,
 ) -> None:
-    """The two halves of ADR-043's migration window, closing together.
-
-    `sync_profiles` reports `legacy segment layout` so the pending rename is
-    visible; `migrate` performs it. If the names the rename writes were not the
-    names the assembler reads, the report would survive the migration — which
-    is the drift that would leave the fallback permanent.
-    """
+    """Migration is the only path from legacy names back into the assembler."""
     cfg, src = _legacy_tree(home_dir)
     profiles = config_dir() / "profiles"
 
@@ -194,12 +188,10 @@ def test_the_assembler_stops_reporting_a_legacy_layout_once_migrate_has_run(
     apply_migration(plan_migration(src))
     after = sync_profiles(profiles, _claude_adapter(), cfg=cfg)
 
-    assert [r.reason for r in before] == [
-        "legacy segment layout — rename to head.md / common.md / tail.md"
-    ]
-    assert [r.reason for r in after] == [""], (
-        f"the rename left the assembler on the fallback: {after}"
-    )
+    assert [r.action for r in before] == ["skipped"]
+    assert "CLAUDE.head.md" in before[0].reason
+    assert "lh profile migrate gate" in before[0].reason
+    assert [r.action for r in after] == ["written"]
     assembled = (src / "CLAUDE.md").read_text()
     assert "identity" in assembled
     assert "shared rules" in assembled

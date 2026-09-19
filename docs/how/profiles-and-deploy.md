@@ -79,7 +79,7 @@ At most one profile per shared root may set `root_default`; a second is rejected
 
 ## Deploy flow — what `lh deploy` actually does
 
-Module: `src/lazy_harness/deploy/engine.py`. Four functions, called in this order by `cli/deploy_cmd.py` — preceded by a snapshot.
+Modules: `src/lazy_harness/cli/deploy_cmd.py` and `src/lazy_harness/deploy/engine.py`. The four steps below run in order, preceded by a snapshot.
 
 ### 0. The snapshot — taken before anything is written
 
@@ -96,7 +96,13 @@ Snapshots land in `~/.config/lazy-harness/backups/deploy/<ts>/`, pruned to the n
 
 `lh deploy --snapshot` records one and exits without deploying. `lh deploy --rollback` replays the newest: it restores file contents, repoints symlinks that still exist, and removes the artifacts the deploy created. The repoint is unconditional — under [ADR-009](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/009-profile-symlink-deploy.md) every profile artifact is an existing symlink, so a rollback that only recreated *missing* links would report success and change nothing.
 
-### 1. `deploy_profiles(cfg)` — symlink profile content
+### 1. Assemble system docs
+
+Before linking profile content, deploy runs the same assembler and result renderer as `lh profile sync-system-doc`. This creates a missing generated document and restamps an existing one with the running harness version before the symlink step exposes it to the agent. A sync error stops the deploy rather than linking a stale document; a missing `profiles/` directory is reported and the remaining deploy steps continue.
+
+`lh deploy --profile <name>` narrows this step too: only that profile's segments are read and only its system doc is written.
+
+### 2. `deploy_profiles(cfg)` — symlink profile content
 
 For each profile in config:
 
@@ -143,10 +149,10 @@ names** there in the same run.
 #### Renaming the segments
 
 Before the segments were named by role they were named after the destination:
-`CLAUDE.head.md`, `_common/CLAUDE.common.md`, `CLAUDE.tail.md`. Both spellings
-still assemble — a profile with no `head.md` falls back to the stem of its first
-destination, and `sync-system-doc` prints `legacy segment layout` so the pending
-rename is visible rather than silent. `lh profile migrate` performs it:
+`CLAUDE.head.md`, `_common/CLAUDE.common.md`, `CLAUDE.tail.md`. A legacy-only
+profile is now skipped, with a result that names its legacy head and the exact
+`lh profile migrate <name>` command. Migration is the only path back into the
+assembler:
 
 ```
 rename CLAUDE.head.md → head.md (role name for CLAUDE's segment)
@@ -197,13 +203,13 @@ The linking is **per item**, not per directory. The target ends up with a mix of
 
 All three coexist in the target without stepping on each other.
 
-### 2. `deploy_config(cfg)` — plan and write the agent's own config documents
+### 3. `deploy_config(cfg)` — plan and write the agent's own config documents
 
 Hooks and MCP servers are one step, because an adapter is free to keep both in one file. Merging belongs to the adapter — parsing a native config format never was agent-neutral — and writing belongs to the engine. The cycle is:
 
 1. **Discover.** Ask the profile's adapter for `config_targets()`: every file it may read or write, relative to the profile's config dir. Claude Code names `settings.json` and `.claude.json`.
 2. **Read.** Read each target that exists and pass them as a mapping. A target that is not on disk is absent from the mapping, which is not the same as present and empty.
-3. **Plan.** Call `plan_config(hooks, servers, existing, binary=...)` **once**, with the hook entries resolved for that profile and the MCP servers probed for this run — QMD (present on `PATH`), Engram (`[memory.engram].enabled` **and** present) and Graphify (`[knowledge.structure].enabled` **and** a `graphify-mcp` binary present; the CLI alone is not enough, older installs shipped no MCP entry point). One call, so an adapter whose hooks and MCP servers share a file emits a single write for it and cannot overwrite its own earlier result.
+3. **Plan.** Build one plan that reaches `_apply`, with the hook entries resolved for that profile and the MCP servers probed for this run — QMD (present on `PATH`), Engram (`[memory.engram].enabled` **and** present) and Graphify (`[knowledge.structure].enabled` **and** a `graphify-mcp` binary present; the CLI alone is not enough, older installs shipped no MCP entry point). The MCP gap diagnostic also builds two fresh, unapplied plans, with and without servers, only for comparison. Because exactly one plan is applied, an adapter whose hooks and MCP servers share a file cannot overwrite its own earlier result.
 4. **Apply.** Write each returned document's text verbatim, delete the paths the plan retires (`artifact is None`, which is how an adapter stops generating a file it used to write), and print the diagnostics the plan carries: entries **preserved** because another tool owns them, entries **dropped** because the harness no longer generates them, and entries **repaired** because the agent would have rejected the file over them. A repair also leaves a `.bak` of the pre-merge bytes.
 
 An adapter that has not been taught to plan its own config is refused before the first profile is written, rather than discovered halfway through a deploy.
@@ -214,7 +220,7 @@ Re-running `lh deploy` is safe and converges: the same config produces the same 
 
 Design: [ADR-024](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/024-mcp-server-orchestration.md) for the MCP half; the adapter/engine split is decision 4 of the 2026-09-13 multi-agent design.
 
-### 3. `deploy_claude_symlink(cfg)` — the default shortcut
+### 4. `deploy_claude_symlink(cfg)` — the default shortcut
 
 Creates `~/.claude → <default profile's target>`. This is the fallback that lets `claude` work without any env var. If the default is `personal`, running plain `claude` in a directory outside of any profile root still gets the personal profile.
 

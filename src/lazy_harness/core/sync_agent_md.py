@@ -23,14 +23,11 @@ An adapter may name more than one destination. One document is rendered and
 written to each of them, byte for byte: a destination is where the agent looks,
 not a variant of the content (ADR-043).
 
-**The legacy stem-keyed layout still renders.** Before ADR-043 the segments were
-named after the destination — `CLAUDE.head.md`, `_common/CLAUDE.common.md`,
-`CLAUDE.tail.md` — and a deployed tree is chezmoi source in another repository,
-renamed by its own change. A profile carrying no `head.md` falls back to the
-stem of its first destination, and the `SyncResult` says so, so the command
-reports the pending migration rather than silently doing nothing. A tree
-carrying both layouts uses the role-named one: the legacy files are leftovers,
-and reading them would make the rename a no-op that reports success.
+The legacy stem-keyed layout no longer renders. A directory carrying only
+`CLAUDE.head.md`, `_common/CLAUDE.common.md`, and `CLAUDE.tail.md` is skipped,
+and the result names the legacy head and `lh profile migrate` as the only path
+back into the assembler. A tree carrying both layouts uses the role-named one:
+the legacy files are leftovers and are never read.
 """
 
 from __future__ import annotations
@@ -57,8 +54,6 @@ TAIL_SEGMENT = "tail.md"
 
 ROLE_SEGMENT_NAMES = (HEAD_SEGMENT, f"_common/{COMMON_SEGMENT}", TAIL_SEGMENT)
 
-LEGACY_REASON = "legacy segment layout — rename to head.md / common.md / tail.md"
-
 # The version is embedded so a reader can tell a doc written by an older or
 # newer harness apart from one matching the running binary (decision 9,
 # 2026-09-13 multi-agent blast radius design). `lazy_harness.core.artifact_version`
@@ -79,22 +74,16 @@ def segment_filenames() -> frozenset[str]:
     """Every basename whose edit must trigger a resync.
 
     Derived from the roles above plus the registry: one agent segment per
-    registered agent, and the legacy stem-keyed names of every destination
-    those agents declare. A tree mid-migration carries both spellings, and a
-    trigger set that knows only one of them stops firing on half the tree.
+    registered agent. Legacy spellings are not inputs, so editing one must not
+    trigger a resync.
     """
     from lazy_harness.agents.registry import get_agent, list_agents
 
     names = {HEAD_SEGMENT, COMMON_SEGMENT, TAIL_SEGMENT}
     for agent_type in list_agents():
-        docs = get_agent(agent_type).system_docs()
-        if not docs:
+        if not get_agent(agent_type).system_docs():
             continue
         names.add(f"{agent_type}.md")
-        for doc in docs:
-            stem = doc.name.removesuffix(".md")
-            head, common, tail = legacy_segment_names(stem)
-            names.update({head, Path(common).name, tail})
     return frozenset(names)
 
 
@@ -139,7 +128,6 @@ class _Layout:
     head: Path
     tail: Path
     common_name: str  # inside `_common/`
-    legacy: bool
 
     def names(self, agent_segment: Path | None) -> tuple[str, ...]:
         parts = [self.head.name, f"_common/{self.common_name}"]
@@ -150,13 +138,17 @@ class _Layout:
 
 
 def sync_profiles(
-    profiles_dir: Path, adapter: AgentAdapter, *, cfg: Config | None = None
+    profiles_dir: Path,
+    adapter: AgentAdapter,
+    *,
+    cfg: Config | None = None,
+    only: str | None = None,
 ) -> list[SyncResult]:
     """Regenerate the system doc for every profile under `profiles_dir`.
 
     Skips a profile whose adapter declares no system doc (the adapter does not
-    use a file-based system instruction doc), and one that carries no segments
-    in either layout.
+    use a file-based system instruction doc), and one that carries no role-named
+    segments. When `only` is set, no sibling profile is read or written.
 
     `cfg` resolves each directory's adapter through `agent_for_profile`, which
     is what makes the destinations per profile. Without it every directory in
@@ -166,19 +158,13 @@ def sync_profiles(
     stays as the answer for a directory the config does not name: the tree can
     hold profiles that were removed from `config.toml` but not from disk.
 
-    The shared segment is loaded per filename for the same reason. A tree
-    mixing layouts needs `_common/common.md` and `_common/<stem>.common.md`
-    both, and a profile carrying head and tail without its own shared segment
-    is still the loud failure it always was.
+    A profile carrying head and tail without the shared segment is still the
+    loud failure it always was.
     """
     resolved: dict[str, tuple[list[Path], str, str]] = {}
 
     def _agent_for(profile: str) -> tuple[list[Path], str, str]:
-        """(destinations, stem, agent name) for one profile dir, resolved once.
-
-        The stem keys the *legacy* segments only; the role-named layout has
-        none, which is the point of the rename.
-        """
+        """(destinations, stem, agent name) for one profile dir, resolved once."""
         if profile not in resolved:
             agent = adapter
             # Only a directory the config actually declares resolves through
@@ -212,17 +198,17 @@ def sync_profiles(
                 head=entry / HEAD_SEGMENT,
                 tail=entry / TAIL_SEGMENT,
                 common_name=COMMON_SEGMENT,
-                legacy=False,
-            )
-        if stem and (entry / f"{stem}.head.md").is_file():
-            head, common, tail = legacy_segment_names(stem)
-            return _Layout(
-                head=entry / head,
-                tail=entry / tail,
-                common_name=Path(common).name,
-                legacy=True,
             )
         return None
+
+    def _entries() -> list[Path]:
+        return [
+            entry
+            for entry in sorted(profiles_dir.iterdir())
+            if entry.is_dir()
+            and not entry.name.startswith("_")
+            and (only is None or entry.name == only)
+        ]
 
     def _agent_segment(agent_name: str) -> Path | None:
         """`_common/<agent>.md`, shared across profiles, absent for most agents.
@@ -236,13 +222,10 @@ def sync_profiles(
         path = profiles_dir / "_common" / f"{agent_name}.md"
         return path if path.is_file() else None
 
-    # Every shared segment this tree needs is loaded before the first write.
-    # The lookup is per filename, so a tree mixing layouts can reach a missing
-    # shared segment mid-loop, and a refusal that lands there leaves the
-    # profiles already visited rewritten.
-    for entry in sorted(profiles_dir.iterdir()):
-        if not entry.is_dir() or entry.name.startswith("_"):
-            continue
+    # Every shared segment this tree needs is loaded before the first write, so
+    # a missing common segment refuses the whole selected scope atomically.
+    entries = _entries()
+    for entry in entries:
         docs, stem, _ = _agent_for(entry.name)
         if not docs:
             continue
@@ -251,9 +234,7 @@ def sync_profiles(
             _common_for(layout.common_name)
 
     results: list[SyncResult] = []
-    for entry in sorted(profiles_dir.iterdir()):
-        if not entry.is_dir() or entry.name.startswith("_"):
-            continue
+    for entry in entries:
         docs, stem, agent_name = _agent_for(entry.name)
         if not docs:
             continue
@@ -262,12 +243,17 @@ def sync_profiles(
             # Flat profile: a hand-written doc the generator must not erase.
             # Reported rather than passed over, because "no segments" and "not
             # a profile dir" look the same to a reader of the command's output.
+            legacy_head = legacy_segment_names(stem)[0] if stem else ""
+            if legacy_head and (entry / legacy_head).is_file():
+                reason = f"legacy segments ({legacy_head}) — run lh profile migrate {entry.name}"
+            else:
+                reason = f"missing {HEAD_SEGMENT}"
             results.append(
                 SyncResult(
                     profile=entry.name,
                     action="skipped",
                     path=entry / docs[0],
-                    reason=f"missing {HEAD_SEGMENT}",
+                    reason=reason,
                 )
             )
             continue
@@ -290,7 +276,6 @@ def sync_profiles(
             agent=agent_path.read_text() if agent_path is not None else "",
             names=layout.names(agent_path),
         )
-        reason = LEGACY_REASON if layout.legacy else ""
         # One rendered document, N destinations (ADR-043). Every entry gets the
         # identical bytes: a destination is where the agent looks, not a variant
         # of the content. A nested destination brings its own directory, which
@@ -299,12 +284,8 @@ def sync_profiles(
             out = entry / rel
             out.parent.mkdir(parents=True, exist_ok=True)
             if out.is_file() and out.read_text() == new_content:
-                results.append(
-                    SyncResult(profile=entry.name, action="unchanged", path=out, reason=reason)
-                )
+                results.append(SyncResult(profile=entry.name, action="unchanged", path=out))
                 continue
             out.write_text(new_content)
-            results.append(
-                SyncResult(profile=entry.name, action="written", path=out, reason=reason)
-            )
+            results.append(SyncResult(profile=entry.name, action="written", path=out))
     return results
