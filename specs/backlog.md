@@ -698,21 +698,13 @@ Salen de [`designs/2026-09-13-multi-agent-blast-radius-design.md`](designs/2026-
 
 ### Segmentos de perfil nombrados por rol, no por filename destino
 
-El árbol de system docs se keyea hoy por el filename de Claude (`CLAUDE.md`) a través de tres repos. `system_docs()` reemplaza a `system_doc_name()` y los segmentos pasan a nombrarse por rol.
+El árbol de system docs se keyeaba por el filename de Claude (`CLAUDE.md`) a través de tres repos. `system_docs()` reemplazó a `system_doc_name()` y los segmentos pasaron a nombrarse por rol.
 
 **Condición de arranque:** con el step 8 del spec padre, en el mismo release que el rename del hook de sync (decisión 5). Tampoco sobrevive a los kill criteria.
 
-**Shippeado parcialmente el 2026-09-16 ([ADR-043](adrs/043-system-docs-by-role.md)).** La mitad del paquete Python está: `system_docs() -> list[Path]`, los cuatro call sites, los segmentos por rol (`head.md` / `_common/common.md` / `_common/<agent>.md` / `tail.md`), un documento renderizado a cada destino, y el trigger set del hook de sync derivado de los roles en vez de listado. El layout legacy sigue renderizando detrás de un diagnóstico, que es la ventana de migración.
+**Shippeado por completo el 2026-09-19 ([ADR-043](adrs/043-system-docs-by-role.md), [ADR-055](adrs/055-segment-rename-and-the-agent-segment.md), #403).** La primera mitad salió el 2026-09-16: `system_docs() -> list[Path]`, los cuatro call sites, los segmentos por rol (`head.md` / `_common/common.md` / `_common/<agent>.md` / `tail.md`), un documento renderizado a cada destino y el trigger set derivado de los roles. El rename del hook salió en #366 y los asset segments en #369 / ADR-052.
 
-Queda pendiente, y **no es olvido**:
-
-- **El rename de chezmoi.** Los ocho archivos planos de `dotfiles/dot_config/lazy-harness/profiles/` siguen con nombres `CLAUDE.*`. Mientras no se renombren, el header generado sigue nombrándolos —correctamente, porque es el layout que se lee— y el fallback sigue vivo. El fallback sale con ese rename, no antes.
-- **El rename del hook** (`post_tool_use_sync_claude` → `post_tool_use_sync_system_doc`, `lh profile sync-claude-md` → `lh profile sync-system-doc`) y el párrafo del system doc deployado que documenta su trigger. Van juntos con el rename de chezmoi: el gate pide que la prosa y el mecanismo se muevan en el mismo cambio, y ese párrafo lo lee una persona que actúa sobre él. **Shippeado el 2026-09-16 (#366)** — el rename del hook landeó sin esperar al de chezmoi: la vieja clave queda como alias en el registry y `lh deploy` avisa una línea mientras `config.toml` la siga nombrando. El párrafo de dotfiles sigue sin aplicarse (read-only por scope, texto de reemplazo en el reporte de #366).
-- **Los asset segments de la decisión 10.** Viven en `deploy/engine.py:deploy_profiles`, que linkea cada entrada del source dir como un symlink opaco (`:188`). La mitad del assembler sola escribiría el documento en `<profile>/<agent>/`, o sea en `~/.claude-<p>/<agent>/CLAUDE.md`, donde el agente no lo lee. Media agreement es peor que ninguna. **Shippeado el 2026-09-16 (#369, [ADR-052](adrs/052-profile-assets-per-agent.md))** — landeó también sin esperar al rename de chezmoi: el source se lee como tres capas (root, `shared/`, `<agent>/`) y `system_docs()` se respeta como marcador de root, así que el assembler sigue escribiendo donde el deploy todavía linkea. Ver la entrada de §Done.
-
-Del trío original sólo queda **el rename de chezmoi** — el resto shippeó sin esperarlo, contra lo que este item asumía cuando decía "van juntos".
-
-**Sobre los kill criteria:** medido el 2026-09-16, no dispararon **y no podían**. El instrumento es la tabla `launches` de la decisión 1 del spec derivado, y `grep -rn 'launches' src/lazy_harness/ --include='*.py'` devuelve un solo hit, el docstring de `agents/launch.py`. El reloj arranca en el step 9 (un `CodexAdapter` real) y `agents/codex.py:1` sigue diciendo "the throwaway that runs step 4's contract gate". No hay evidencia en ninguna dirección, que no es lo mismo que "los criterios se cumplen".
+La ventana terminó cuando el source de chezmoi y los tres perfiles desplegados quedaron sólo con nombres por rol. #403 retiró el reader legacy, dejó a un profile legacy-only con una instrucción explícita a `lh profile migrate`, sacó las grafías viejas del trigger set y sumó el ensamblado de system docs a `lh deploy`. La historia y el kill criterion cerrado quedan en ADR-055; la entrada de §Done registra el cambio de release.
 
 ### `lazy-ai-tools` — deuda de nomenclatura, registrada sin pagar
 

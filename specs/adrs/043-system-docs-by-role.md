@@ -123,14 +123,16 @@ with the chezmoi rename.
 
 **Evolution, 2026-09-19.** The rename and kill criterion closed on 2026-09-18;
 the fallback was retired as recorded in [ADR-055's Evolution](055-segment-rename-and-the-agent-segment.md#evolution).
+The same retirement removed the legacy spellings from `segment_filenames()`:
+they are no longer inputs, so editing one no longer triggers a resync.
 
 ### 4. The sync hook's trigger set is derived from the roles
 
 `post_tool_use_sync_claude.SEGMENT_FILES` was a literal
 `{"CLAUDE.head.md", "CLAUDE.tail.md", "CLAUDE.common.md"}`. It is now
-`segment_filenames()`, computed from the role constants plus the registry: one
-agent segment per registered agent, and the legacy spellings of every
-destination those agents declare.
+`segment_filenames()`, computed from the role constants plus the registry: the
+three role basenames and one agent segment per registered agent. Legacy
+spellings are not part of the current trigger set.
 
 This is the half of the blast-radius design's decision 5 that had to move with
 the rename. A static list mirroring a set of files is how renaming the segments
@@ -273,14 +275,15 @@ measurement above.
 
 **Negative**
 
-- Two segment layouts are readable for one migration window, which is two
-  answers to "where do segments live" until the chezmoi rename lands.
+- **Historical — closed by #403 and ADR-055.** Two segment layouts were readable
+  during the migration window, which temporarily gave two answers to "where do
+  segments live". The role-named layout is now the only readable one.
 - `render_agent_md`'s signature changed, and its `names` argument exists only so
   the generated header can spell the layout actually read. Three test call sites
   moved with it.
-- The deployed tree still carries the legacy names, so on both machines the
-  generated header keeps naming `CLAUDE.head.md` until the rename ships. The
-  header is the most-read line in the tree.
+- **Historical — closed by #403 and ADR-055.** The deployed tree carried the
+  legacy names, so generated headers named `CLAUDE.head.md` until the rename
+  landed. All deployed profiles now use the role names.
 - Decision 10's half of this design step is deferred with a named blocker rather
   than done, so the design's "the assembler and the deployer must agree on one
   layout" is still an open item — now with the reason recorded.

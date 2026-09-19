@@ -16,7 +16,7 @@ The pre-commit gate defined in [`CLAUDE.md`](https://github.com/lazynet/lazy-har
 - [x] Rewrite `tests/unit/test_version.py` to compare `pyproject.toml` and `src/lazy_harness/__init__.py` against each other (no hardcoded expected value).
 - [x] Resolve 23 preexisting `ruff check src tests` findings — auto-fix the fixable, justify or exclude the rest.
 - [x] Make the pre-commit gate green on `main` and keep it green.
-- [x] Add a GitHub Actions workflow that runs the gate on every PR and blocks merge on failure. All four checks are enforced: [`tests.yml`](https://github.com/lazynet/lazy-harness/blob/main/.github/workflows/tests.yml) runs `pytest`, `ruff check` and `ruff format --check` across four OS/Python combinations and builds the docs with `mkdocs build --strict` in a `docs` job of its own — [`docs.yml`](https://github.com/lazynet/lazy-harness/blob/main/.github/workflows/docs.yml) publishes the site on push to `main` and never sees a pull request, so the fourth check has to live here.
+- [x] Add a GitHub Actions workflow that runs the gate on every PR and blocks merge on failure. All four checks are enforced: [`tests.yml`](https://github.com/lazynet/lazy-harness/blob/main/.github/workflows/tests.yml) runs `pytest`, `ruff check` and `ruff format --check` across five OS/Python combinations and builds the docs with `mkdocs build --strict` in a `docs` job of its own — [`docs.yml`](https://github.com/lazynet/lazy-harness/blob/main/.github/workflows/docs.yml) publishes the site on push to `main` and never sees a pull request, so the fourth check has to live here.
 
 ## Theme 2 — Knowledge pipeline maturity
 
