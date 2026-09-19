@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.74.0](https://github.com/lazynet/lazy-harness/compare/v0.73.0...v0.74.0) (2026-09-19)
+
+
+### Features
+
+* retire the legacy segment fallback; lh deploy assembles system docs ([#403](https://github.com/lazynet/lazy-harness/issues/403)) ([cc8d545](https://github.com/lazynet/lazy-harness/commit/cc8d545e79b8d8bf1c11999bd371160ec45f9475))
+
+
+### Documentation
+
+* align release 0.74 governance ([#405](https://github.com/lazynet/lazy-harness/issues/405)) ([5323d9a](https://github.com/lazynet/lazy-harness/commit/5323d9a4e76f76c5342825b38799b59a73d5b159))
+* **backlog:** audit header, 3.14 heading, release-please CI startup failure ([#401](https://github.com/lazynet/lazy-harness/issues/401)) ([ffe607a](https://github.com/lazynet/lazy-harness/commit/ffe607aa616c659e5c10ac2ec8c5e0295370e591))
+
 ## [0.73.0](https://github.com/lazynet/lazy-harness/compare/v0.72.1...v0.73.0) (2026-09-18)
 
 
