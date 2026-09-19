@@ -1,7 +1,11 @@
 # ADR-062: SessionEnd publishes bounded project state
 
-**Status:** proposed
+**Status:** accepted
 **Date:** 2026-09-19
+**Implemented:** 2026-09-19 — the worker accepts Claude and Codex transcripts,
+resolves the canonical checkout through `git-common-dir`, and replaces only a
+uniquely marked generated section. PRJ-LazyHarness archival and opt-in remain
+an external rollout step.
 **Supersedes:** —
 **Superseded by:** —
 **Related:** ADR-019 (SessionEnd handoff), ADR-021 (response grading)
@@ -33,4 +37,3 @@ agent to call a skill before exit cannot cover abrupt or non-Claude sessions.
 - PRJ freshness becomes explicit and testable across agents.
 - A project must opt in by carrying the generated section.
 - Existing oversized PRJs need reviewed archival before rollout.
-

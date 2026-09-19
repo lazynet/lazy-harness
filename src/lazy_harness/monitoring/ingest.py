@@ -241,14 +241,19 @@ def ingest_profile(
                     response_tokens,
                     service_tier="standard",
                     context_class=event.context_class,
-                    on=session_date,
+                    on=(
+                        event.timestamp.date().isoformat()
+                        if event.timestamp is not None
+                        else session_date
+                    ),
                 )
-                if equivalent.status == "priced" and agg["api_equivalent_complete"]:
-                    agg["api_equivalent_cost"] += equivalent.amount or 0.0
-                    agg["api_equivalent_status"] = "priced"
-                    agg["api_price_basis"] = (
-                        asdict(equivalent.basis) if equivalent.basis is not None else None
-                    )
+                if equivalent.status == "priced":
+                    if agg["api_equivalent_complete"]:
+                        agg["api_equivalent_cost"] += equivalent.amount or 0.0
+                        agg["api_equivalent_status"] = "priced"
+                        agg["api_price_basis"] = (
+                            asdict(equivalent.basis) if equivalent.basis is not None else None
+                        )
                 elif equivalent.status != "no_usage":
                     agg["api_equivalent_complete"] = False
                     agg["api_equivalent_status"] = equivalent.status

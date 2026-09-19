@@ -1,12 +1,12 @@
 # Contributing to lazy-harness
 
-Thanks for looking at the project. This file is a short pointer to the places that matter — the full contributor contract lives in `CLAUDE.md` and `specs/workflow/`.
+Thanks for looking at the project. This file is a short pointer to the places that matter — the full contributor contract lives in `AGENTS.md` and `specs/workflow/`.
 
 ## Before you start
 
 `lazy-harness` is a single-maintainer project with a strict discipline. Two things are worth knowing up front:
 
-- **Strict TDD is non-negotiable.** No production code lands without a failing test written first. See `CLAUDE.md` non-negotiable #2 for the exact rule, and [`specs/workflow/README.md`](specs/workflow/README.md) for the pointer to the `superpowers:test-driven-development` skill that codifies the workflow.
+- **Strict TDD is non-negotiable.** No production code lands without a failing test written first. See `AGENTS.md` non-negotiable #2 for the exact rule, and [`specs/workflow/README.md`](specs/workflow/README.md) for the pointer to the `superpowers:test-driven-development` skill that codifies the workflow.
 - **Every change is made in a git worktree, not on `main`.** See [`specs/workflow/worktrees.md`](specs/workflow/worktrees.md) for the full rules. The repo provides a `/new-worktree` slash command that scaffolds the worktree with correct naming.
 
 If either of those is a dealbreaker for your workflow, `lazy-harness` is probably not the right project to contribute to — no judgement, but it saves both of us time to know it early.
@@ -53,7 +53,7 @@ If any of those fail on a clean clone, that is a bug in the repo itself — plea
 
 ## What not to do
 
-These are the same `What NOT to do` rules from `CLAUDE.md`, reproduced here so external contributors see them without having to read the agent-facing file:
+These are the same `What NOT to do` rules from `AGENTS.md`, reproduced here so external contributors see them without having to read the agent-facing file:
 
 - Do not write production code without a failing test first.
 - Do not refactor code that was not part of your task. Mention improvements in the PR description; do not touch them.

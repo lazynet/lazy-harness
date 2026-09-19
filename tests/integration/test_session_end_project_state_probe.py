@@ -71,6 +71,7 @@ def profiles(
     )
     monkeypatch.setenv("LH_CONFIG_DIR", str(lh_config))
     monkeypatch.setenv("LH_DATA_DIR", str(tmp_path / "lhdata"))
+    monkeypatch.delenv("CODEX_HOME", raising=False)
     return dirs
 
 
@@ -109,6 +110,12 @@ def test_session_end_queues_the_task_and_leaves_the_vault_untouched(
     spawned: list[list[str]],
     tmp_path: Path,
 ) -> None:
+    from lazy_harness.core.config import load_config
+    from lazy_harness.core.paths import config_file
+    from lazy_harness.hooks.builtins._shared import agent_dir_for
+
+    _, runtime_dir = agent_dir_for(load_config(config_file()), profile)
+    assert runtime_dir == profiles[profile]
     cwd = tmp_path / "probe"
     cwd.mkdir()
     transcript = _transcript(tmp_path, cwd)
@@ -128,6 +135,7 @@ def test_session_end_queues_the_task_and_leaves_the_vault_untouched(
     )
 
     assert result.exit_code == 0, result.output
+    assert result.stderr == ""
     tasks = list((profiles[profile] / "queue").glob("*.task"))
     assert len(tasks) == 1, (profiles[profile] / "logs" / "hooks.log").read_text()
     task = tasks[0].read_text(encoding="utf-8")
@@ -154,5 +162,6 @@ def test_session_end_queues_nowhere_but_the_invoked_profile(
     )
 
     assert result.exit_code == 0, result.output
+    assert result.stderr == ""
     assert len(list((profiles["cx"] / "queue").glob("*.task"))) == 1
     assert not (profiles["cc"] / "queue").exists()

@@ -1,7 +1,10 @@
 # ADR-061: Billed cost and API-equivalent cost are separate
 
-**Status:** proposed
+**Status:** accepted
 **Date:** 2026-09-19
+**Implemented:** 2026-09-19 — MetricEvent v4, SQLite migration, response-level
+pricing, replay monotonicity and the CLI views ship locally. Receiver and
+Grafana deployment remain a separate rollout lane.
 **Supersedes:** —
 **Superseded by:** —
 **Related:** ADR-050 (agent and billing model in MetricEvent v3)
@@ -33,4 +36,3 @@ response-level context classes and effective dates.
 - CLI, remote storage and Grafana label both measures.
 - Partial coverage stays visible.
 - Producer, receiver and dashboard ship in compatibility order.
-

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from typing import Literal
 
 ApiEquivalentStatus = Literal["priced", "unknown_model", "unknown_tier", "no_usage"]
@@ -24,6 +25,10 @@ class ApiEquivalentPrice:
 
 
 _OPENAI_API_RATE_VERSION = "openai-2026-09-19"
+_OPENAI_API_RATE_WINDOWS = {
+    "gpt-5.6-sol": (date(2026, 9, 19), date(2026, 11, 21)),
+    "gpt-6-astra": (date(2026, 9, 19), date(2026, 9, 19)),
+}
 _OPENAI_API_RATES: dict[tuple[str, str, str], dict[str, float]] = {
     ("gpt-5.6-sol", "standard", "short"): {
         "input": 4.0,
@@ -68,12 +73,19 @@ def price_api_response(
         return ApiEquivalentPrice(None, "unknown_model")
     if service_tier is None or context_class is None:
         return ApiEquivalentPrice(None, "unknown_tier")
+    try:
+        effective_on = date.fromisoformat(on) if on is not None else None
+    except ValueError:
+        return ApiEquivalentPrice(None, "unknown_tier")
+    valid_from, valid_through = _OPENAI_API_RATE_WINDOWS[model]
+    if effective_on is None or not (valid_from <= effective_on <= valid_through):
+        return ApiEquivalentPrice(None, "unknown_tier")
     rates = _OPENAI_API_RATES.get((model, service_tier, context_class))
-    if rates is None or (on is not None and on < "2026-09-19"):
+    if rates is None:
         return ApiEquivalentPrice(None, "unknown_tier")
     amount = sum(int(tokens.get(name, 0) or 0) * rate for name, rate in rates.items())
     return ApiEquivalentPrice(
-        round(amount / 1_000_000, 6),
+        amount / 1_000_000,
         "priced",
         ApiPriceBasis("openai", service_tier, "USD", _OPENAI_API_RATE_VERSION),
     )

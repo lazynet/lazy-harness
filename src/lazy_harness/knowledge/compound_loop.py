@@ -38,6 +38,7 @@ _INTERACTIVE_MARKERS = ("permission-mode", "last-prompt")
 _INTERACTIVE_SCAN_LINES = 10
 
 _INSIGHT_PATTERN = re.compile(r"★ Insight ─+\s*\n(.*?)\n─+", re.DOTALL)
+_TRANSCRIPT_TEXT_BLOCKS = frozenset({"text", "input_text", "output_text"})
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,43 @@ def _normalize_for_hash(body: str) -> str:
 
 def _content_hash(body: str) -> str:
     return hashlib.sha256(_normalize_for_hash(body).encode("utf-8")).hexdigest()[:16]
+
+
+def _transcript_message(record: object) -> tuple[str, list[str]] | None:
+    """Normalise one Claude Code or Codex transcript message."""
+    if not isinstance(record, dict):
+        return None
+    kind = record.get("type")
+    if kind in ("user", "assistant"):
+        role = kind
+        message = record.get("message")
+        if not isinstance(message, dict):
+            return None
+        content = message.get("content", "")
+    elif kind == "response_item":
+        payload = record.get("payload")
+        if not isinstance(payload, dict) or payload.get("type") != "message":
+            return None
+        role = payload.get("role")
+        if role not in ("user", "assistant"):
+            return None
+        content = payload.get("content", "")
+    else:
+        return None
+
+    if isinstance(content, str):
+        stripped = content.strip()
+        return (role, [stripped]) if stripped else None
+    if not isinstance(content, list):
+        return None
+    texts: list[str] = []
+    for block in content:
+        if not isinstance(block, dict) or block.get("type") not in _TRANSCRIPT_TEXT_BLOCKS:
+            continue
+        raw_text = block.get("text")
+        if isinstance(raw_text, str) and (text := raw_text.strip()):
+            texts.append(text)
+    return (role, texts) if texts else None
 
 
 def _assistant_text(message: dict) -> str:
@@ -298,8 +336,12 @@ def is_interactive_session(session_jsonl: Path) -> bool:
                     d = json.loads(line)
                 except (json.JSONDecodeError, ValueError):
                     continue
-                if d.get("type") in _INTERACTIVE_MARKERS:
+                if isinstance(d, dict) and d.get("type") in _INTERACTIVE_MARKERS:
                     return True
+                message = _transcript_message(d)
+                if isinstance(d, dict) and d.get("type") == "response_item" and message:
+                    if message[0] == "user":
+                        return True
         return False
     except OSError:
         return False
@@ -315,23 +357,9 @@ def _last_user_prompt(session_jsonl: Path) -> str | None:
                     d = json.loads(line)
                 except (json.JSONDecodeError, ValueError):
                     continue
-                if d.get("type") != "user":
-                    continue
-                msg = d.get("message", {})
-                content = msg.get("content", "")
-                if isinstance(content, str):
-                    text = content.strip()
-                    if text:
-                        last = text
-                elif isinstance(content, list):
-                    parts = [
-                        block.get("text", "").strip()
-                        for block in content
-                        if isinstance(block, dict) and block.get("type") == "text"
-                    ]
-                    joined = "\n".join(p for p in parts if p)
-                    if joined:
-                        last = joined
+                message = _transcript_message(d)
+                if message is not None and message[0] == "user":
+                    last = "\n".join(message[1])
     except OSError:
         return None
     return last
@@ -407,6 +435,25 @@ def repo_revision(cwd: Path) -> str:
     return result.stdout.strip() or "unknown"
 
 
+def project_name_for_cwd(cwd: Path) -> str:
+    """Canonical repository name from the common git dir, with a local fallback."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return cwd.name
+    if result.returncode != 0:
+        return cwd.name
+    common_dir = Path(result.stdout.strip())
+    return common_dir.parent.name or cwd.name
+
+
 def write_slim_handoff(
     session_jsonl: Path,
     memory_dir: Path,
@@ -459,16 +506,9 @@ def count_user_chars(session_jsonl: Path) -> int:
                     d = json.loads(line)
                 except (json.JSONDecodeError, ValueError):
                     continue
-                if d.get("type") != "user":
-                    continue
-                msg = d.get("message", {})
-                content = msg.get("content", "")
-                if isinstance(content, str):
-                    total += len(content.strip())
-                elif isinstance(content, list):
-                    for block in content:
-                        if isinstance(block, dict) and block.get("type") == "text":
-                            total += len(block.get("text", "").strip())
+                message = _transcript_message(d)
+                if message is not None and message[0] == "user":
+                    total += sum(len(text) for text in message[1])
     except OSError:
         return 0
     return total
@@ -488,22 +528,10 @@ def extract_messages(session_jsonl: Path, tail: int = 20) -> tuple[str, int]:
                     d = json.loads(line)
                 except (json.JSONDecodeError, ValueError):
                     continue
-                msg_type = d.get("type")
-                if msg_type not in ("user", "assistant"):
-                    continue
-                msg = d.get("message", {})
-                content = msg.get("content", "")
-                texts: list[str] = []
-                if isinstance(content, str) and content.strip():
-                    texts.append(content.strip())
-                elif isinstance(content, list):
-                    for block in content:
-                        if isinstance(block, dict) and block.get("type") == "text":
-                            t = block.get("text", "").strip()
-                            if t:
-                                texts.append(t)
-                if texts:
-                    role = "User" if msg_type == "user" else "Assistant"
+                message = _transcript_message(d)
+                if message is not None:
+                    msg_role, texts = message
+                    role = "User" if msg_role == "user" else "Assistant"
                     messages.append(f"## {role}\n\n{chr(10).join(texts)}")
     except OSError:
         return "", 0
@@ -1438,7 +1466,7 @@ def process_task(
     existing_failures = collect_existing_failures(memory_dir)
     existing_learnings = collect_existing_learnings(learnings_dir)
 
-    project_name = os.path.basename(cwd)
+    project_name = project_name_for_cwd(Path(cwd))
     prompt = build_prompt(
         project_name,
         cwd,

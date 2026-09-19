@@ -178,7 +178,11 @@ it as complete. API-equivalent pricing is performed per response. The captured C
 evidence does not establish the official short/long context boundary, so those
 responses fail closed as `unknown_tier` until a reader can provide an explicit
 context class. `codex-auto-review` has no public price row and remains
-`unknown_model`; it is not aliased to another model.
+`unknown_model`; it is not aliased to another model. The captured Sol table is
+valid from 2026-09-19 through its evidenced promotional horizon of 2026-11-21.
+Astra was observed only on 2026-09-19, so other Astra dates fail closed.
+Missing, malformed, or out-of-window response dates also fail closed instead
+of treating a point-in-time snapshot as permanent pricing.
 
 **Codex today**: the reader's `turn_context` line declares `gpt-5-codex`
 (measured 2026-09-17), which carries no `DEFAULT_PRICING` entry. The

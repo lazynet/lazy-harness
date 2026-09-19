@@ -66,7 +66,7 @@ Split the compound loop into **a fast synchronous producer (the hook) and a slow
   7. `persist_results` writes atomically into `decisions.jsonl`, `failures.jsonl`, learnings markdown files, and `handoff.md`.
   8. Task file is moved to `queue/done/`.
 
-- **Queue contract.** The queue is just files. Task filenames encode timestamp and short session ID. The `done/` subdirectory is the authoritative "already processed" signal. No database, no locks other than the worker's single-instance `flock`.
+- **Queue contract.** The queue is just files. Task filenames encode timestamp and short session ID. The `done/` subdirectory is the authoritative "already processed" signal within its seven-day retention window. The worker prunes older entries after each drain, so a transcript can be reconsidered after that horizon. No database, no locks other than the worker's single-instance `flock`.
 
 - **Failure policy.** The worker must never crash the queue. Any exception processing one task is logged and the task is moved to `done/` anyway, so a poison task cannot block future sessions.
 
@@ -88,4 +88,12 @@ Split the compound loop into **a fast synchronous producer (the hook) and a slow
 - Debounce and "already processed" are belt-and-suspenders: a session that closes twice in short succession gets a single task queued (`is_debounced`) and a session whose task was already moved to `done/` is skipped on the second attempt. That second guard was reworked around file growth and no longer has a function of its own: `should_queue_task` composes `is_debounced` with `should_reprocess`, which reads `last_processed_mtime` from the `done/` entry and re-queues only once the transcript has grown past `reprocess_min_growth_seconds`. `session-end` passes `force=True` to bypass both.
 - The prompt itself is ported verbatim from the predecessor's bash worker. The docstring in `build_prompt` flags this explicitly: the prompt is calibration developed against hundreds of real sessions, and rewording it without re-tuning would silently degrade output quality.
 - Atomic writes (`_atomic_write` — tempfile + `os.replace`) are used for all markdown learnings. This is required whenever the learnings directory lives under iCloud/Dropbox: those syncers observe the `rename` event atomically, unlike the `open-write-close` window, which can race with sync.
+
+## Evolution — 2026-09-19
+
+Completed-task retention is bounded to seven days. The original unbounded
+`done/` directory grew linearly with sessions; pruning trades permanent
+deduplication history for a bounded operational queue. Durable decisions and
+failures remain in their JSONL stores, while a transcript encountered after
+the retention horizon may be processed again.
 - If the backend serving the `distill` role is unreachable, `run_inference` reports a typed failure and the task is marked skipped with a logged reason. This is deliberate — the worker is "best-effort memory enrichment", not a hard requirement. (Originally: `claude -p` absent from PATH and `invoke_claude` returning `None`.)

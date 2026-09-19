@@ -16,7 +16,7 @@ A change qualifies for the short-path only when **every** item below is true:
    - `specs/**` except the exclusions below
    - `README.md` (repo root)
 2. **No excluded path is touched:**
-   - `CLAUDE.md` (agent contract)
+   - `AGENTS.md` and `CLAUDE.md` (agent contract)
    - `specs/workflow/**` (process rules)
    - `specs/adrs/**` (accepted decisions)
    - `specs/archive/**` (frozen history — editing it is already forbidden)
@@ -52,7 +52,7 @@ No branch, no worktree, no PR.
 
 | Path                      | Why it is excluded                                                                                 |
 |---------------------------|----------------------------------------------------------------------------------------------------|
-| `CLAUDE.md`               | Defines how agents behave in this repo. A change here changes the contract; review is mandatory.   |
+| `AGENTS.md`, `CLAUDE.md`  | Define how agents behave in this repo. A change here changes the contract; review is mandatory.    |
 | `specs/workflow/**`       | Defines the contributor process itself. Changing it through the process it governs is the point.  |
 | `specs/adrs/**`           | Decisions of record. PR history is part of the decision audit trail.                              |
 | `mkdocs.yml`              | Misconfiguration breaks the public site build; deserves a CI run behind a PR.                     |

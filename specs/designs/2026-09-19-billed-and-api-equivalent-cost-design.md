@@ -1,6 +1,6 @@
 # Billed and API-equivalent cost design
 
-**Status:** proposed  
+**Status:** accepted
 **Date:** 2026-09-19  
 **Decision:** [ADR-061](../adrs/061-billed-cost-and-api-equivalent-cost-are-separate.md)
 
@@ -55,6 +55,8 @@ Cached input remains its own bucket. Evidence and sanitized fixtures live in
    `Billed cost` and `API-equivalent cost` with coverage beside the latter.
 
 Grafana lives in a separate repository and is a distinct deployment lane.
+The lazy-harness portion shipped on 2026-09-19; receiver ordering, backfill and
+Grafana remain deployment work rather than missing local implementation.
 
 ## Acceptance gates
 
@@ -69,4 +71,3 @@ Grafana lives in a separate repository and is a distinct deployment lane.
 
 Rollback stops v4 emission. Additive columns remain readable and v3 consumers
 continue using legacy billed fields.
-

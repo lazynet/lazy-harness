@@ -78,6 +78,7 @@ class MetricsDB:
                 api_equivalent_cost REAL,
                 api_equivalent_status TEXT,
                 api_price_basis TEXT,
+                event_schema_version INTEGER NOT NULL DEFAULT 0,
                 UNIQUE(session, model)
             )
         """)
@@ -231,6 +232,11 @@ class MetricsDB:
             self._conn.execute("ALTER TABLE session_stats ADD COLUMN api_equivalent_status TEXT")
         if "api_price_basis" not in cols:
             self._conn.execute("ALTER TABLE session_stats ADD COLUMN api_price_basis TEXT")
+        if "event_schema_version" not in cols:
+            self._conn.execute(
+                "ALTER TABLE session_stats ADD COLUMN event_schema_version "
+                "INTEGER NOT NULL DEFAULT 0"
+            )
 
     def upsert_stats(self, entries: list[dict[str, Any]]) -> int:
         affected = 0
@@ -323,8 +329,8 @@ class MetricsDB:
                  input_tokens, output_tokens, cache_read, cache_create, cost,
                  user_id, tenant_id, event_id, host, workload, agent, billing_model,
                  billed_cost, billed_cost_source, api_equivalent_cost,
-                 api_equivalent_status, api_price_basis)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 api_equivalent_status, api_price_basis, event_schema_version)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(session, model) DO UPDATE SET
                 date=excluded.date,
                 profile=excluded.profile,
@@ -341,11 +347,25 @@ class MetricsDB:
                 workload=excluded.workload,
                 agent=excluded.agent,
                 billing_model=excluded.billing_model,
-                billed_cost=excluded.billed_cost,
-                billed_cost_source=excluded.billed_cost_source,
-                api_equivalent_cost=excluded.api_equivalent_cost,
-                api_equivalent_status=excluded.api_equivalent_status,
-                api_price_basis=excluded.api_price_basis
+                billed_cost=CASE
+                    WHEN excluded.event_schema_version >= session_stats.event_schema_version
+                    THEN excluded.billed_cost ELSE session_stats.billed_cost END,
+                billed_cost_source=CASE
+                    WHEN excluded.event_schema_version >= session_stats.event_schema_version
+                    THEN excluded.billed_cost_source ELSE session_stats.billed_cost_source END,
+                api_equivalent_cost=CASE
+                    WHEN excluded.event_schema_version >= session_stats.event_schema_version
+                    THEN excluded.api_equivalent_cost ELSE session_stats.api_equivalent_cost END,
+                api_equivalent_status=CASE
+                    WHEN excluded.event_schema_version >= session_stats.event_schema_version
+                    THEN excluded.api_equivalent_status
+                    ELSE session_stats.api_equivalent_status END,
+                api_price_basis=CASE
+                    WHEN excluded.event_schema_version >= session_stats.event_schema_version
+                    THEN excluded.api_price_basis ELSE session_stats.api_price_basis END,
+                event_schema_version=MAX(
+                    session_stats.event_schema_version, excluded.event_schema_version
+                )
             """,
             (
                 event.session,
@@ -370,6 +390,7 @@ class MetricsDB:
                 event.api_equivalent_cost,
                 event.api_equivalent_status,
                 basis_json,
+                event.schema_version,
             ),
         )
         self._conn.commit()

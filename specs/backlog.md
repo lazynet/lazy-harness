@@ -1,8 +1,8 @@
 # lazy-harness backlog
 
-Wave 0 review, 2026-09-19: ADR-059's deferral trigger is met; Wave 1 is
-designed in ADR-060 through ADR-062 for portable repository instructions,
-separate billed/API-equivalent cost and bounded PRJ session state.
+Wave 1 implementation, 2026-09-19: ADR-059 through ADR-062 are implemented in
+lazy-harness. External rollout remains for the other ADR-060 pilots, the
+installed skill projection probe, receiver/Grafana and PRJ-LazyHarness opt-in.
 
 Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio MkDocs); el roadmap público vive en `docs/roadmap.md` y solo contiene los temas comprometidos a alto nivel.
 
@@ -14,7 +14,7 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 
 - [x] **`last_refresh` no es un veredicto de auth de Codex (ADR-057)** — el probe registró el shape entero y no hay expiry ni estado de rechazo. Dos perfiles vivos mostraron edades distintas (aproximadamente uno y cuatro días) sin establecer un máximo válido. Elegir un umbral sería inventar semántica; `CodexAdapter.credentials_file()` conserva `None` y el preflight dice `n/a`. Cerrado el 2026-09-19 por decisión explícita, sin cambio de código.
 - [x] **`mdat` del Keychain queda como evidencia operator-only (ADR-058)** — Probe 9 cerró el shape y confirmó que el metadata sirve, pero no existe un guard que distinga una terminal Aqua operada por el usuario de un pane de agente descendiente de la misma sesión. Lazy-harness no ejecuta `security`; el mirror stale de macOS sigue degradando a `unknown`. Cerrado el 2026-09-19 por decisión explícita, sin cambio de código.
-- [x] **Portabilidad de skills, commands y agents decidida (ADR-059)** — sólo los skills tienen semántica portable después de proyectarlos al discovery root que declara cada adapter. Los commands reutilizables migran a skills; los commands nativos y las definiciones de subagentes quedan en su segmento. La implementación está diferida hasta que un skill de profile tenga que correr fuera de Claude Code, con prueba real de `~/.agents/skills` y rechazo whole-plan de colisiones globales.
+- [x] **Portabilidad de skills, commands y agents implementada (ADR-059)** — sólo los skills se proyectan al discovery root declarado por cada adapter. El deploy rechaza colisiones globales antes de escribir, limpia por ledger y migra el root Claude legado sólo cuando el ledger previo prueba ownership. Commands y subagentes siguen nativos. El probe post-release contra el Codex instalado queda en el rollout binary-first.
 
 Este ledger se escribe en español. Las entradas se appendean en el orden en que se cierran y se agrupan por su marcador «entra en X.Y.Z»: ese marcador es lo que dice a qué release pertenece una entrada, no su posición en el archivo. No hay orden garantizado entre bloques de release, así que para leer una release hay que grepear el marcador, no confiar en la secuencia.
 
@@ -221,6 +221,32 @@ Sin items abiertos — F1 (PR #347) y F2 (PR #351) cerrados; ver §Done.
 
 ## Open — Prioridad MEDIA
 
+### ADR-060 sigue abierto: faltan lazy-ai-tools, dotfiles y la ventana de siete días
+
+**Por qué:** el piloto de ADR-060 aterrizó **sólo en lazy-harness**: `AGENTS.md`
+es el único contrato, las notas específicas viven en secciones condicionales,
+y el gate estático (`lh repo instructions`, `src/lazy_harness/core/repo_instructions.py`)
+corre sobre este árbol desde `tests/docs/test_repo_instructions_gate.py`. Los
+otros dos repos del primer batch (lazy-ai-tools, dotfiles) no se tocaron, y los
+once repos que llevan sólo `CLAUDE.md` siguen como los dejó Wave 0.
+
+**Fuente:** [ADR-060](adrs/060-agents-md-is-the-portable-repository-contract.md) y
+[el design](designs/2026-09-19-portable-repository-instructions-design.md) §Gates
+and rollout.
+
+**Corrección medida:** Claude Code `2.1.278` no expande imports de un
+`CLAUDE.md` padre, pero sí descubre `AGENTS.md` directamente desde un
+subdirectorio. Diez corridas en
+[repo-instruction-discovery-evidence.md](designs/repo-instruction-discovery-evidence.md);
+el contrato de archivo único conserva la garantía root+nested.
+
+**Acción:** migrar lazy-ai-tools y dotfiles con el mismo gate — el checker toma
+un path, así que no hace falta código nuevo para correrlo desde otro repo. La
+ventana de siete días hábiles **no está implementada y no debería inventarse
+como automatización**: es una observación con fecha de apertura, y el criterio
+que la cierra («ningún `CLAUDE.md` volvió al árbol») ya es mecánico
+via el gate. Wave 2 recién después de eso.
+
 ### El workflow tests falla en startup sobre la rama de release-please
 
 **Por qué:** en la rama `release-please--branches--main--components--lazy-harness`, cada corrida de `tests` de los dos últimos releases siguió el mismo patrón: dos corridas `action_required` en cada push del bot, seguidas por dos corridas `failure` con **cero jobs**. `gh run view` dice *"This run likely failed because of a workflow file issue"*. Se observó para `chore(main): release 0.72.1` (corridas del 2026-09-18 17:14–17:45 UTC) y para `chore(main): release 0.73.0` (corridas del 2026-09-18 21:25–22:39 UTC, por ejemplo `35402547729`). El mismo workflow pasa en `main` para los commits desde los que se corta el release PR (`60c351d`, `3879f81`, `b8b2a12`, todos `success`). Como consecuencia, el release PR no lleva checks propios (`statusCheckRollup` vacío en #398 al mergear): el gate de merge de un release depende de la última corrida de `main`, por accidente y no por decisión. No está investigado si `action_required` es el gate de aprobación de fork/bot para corridas `pull_request` de `github-actions[bot]`, ni por qué el reintento termina en una falla de startup en vez de una corrida omitida.
@@ -283,9 +309,10 @@ pre_compact   -> ctx
 
 ### `lh deploy` promete desplegar skills y no tiene código que lo haga
 
-**Reclasificado 2026-09-19.** Corregir el docstring ya no alcanza: se cumplió
-el trigger de ADR-059. Wave 1 implementa un skill-root explícito, colisiones
-globales y ownership ledger; no generaliza comandos ni subagentes.
+**Resuelto 2026-09-19.** ADR-059 implementa un skill-root explícito, colisiones
+globales y ownership ledger; no generaliza comandos ni subagentes. La
+migración adicional del symlink de directorio legado exige que el ledger viejo
+demuestre ownership y conserva intactos los roots de usuario no registrados.
 
 **Por qué:** `deploy/engine.py:1` y `deploy_cmd.py:41` declaran "profiles, hooks, skills". La palabra `skill` no aparece en ninguna otra línea de `src/` fuera de `migrate/detector.py`. Lo que existe es un bucle genérico — `for item in src_dir.iterdir(): ensure_symlink(item, target_dir / item.name)` — que symlinkea cualquier cosa que encuentre en el source del profile. Los skills funcionan por esa generalidad, no porque haya una ruta de código para ellos.
 
@@ -735,13 +762,13 @@ volvería a ser el problema que la opción 2 acaba de resolver.
 
 ## ADR decisions pending
 
-### El cierre de sesión no actualiza el estado del PRJ
+### El rollout del estado de sesión al PRJ requiere opt-in revisado
 
-**Causa confirmada 2026-09-19.** `session_end.main()` sólo encola compound-loop.
-El worker toca el PRJ exclusivamente para un grade poor/acceptable con issues,
-agrega una regresión al backlog y no actualiza frontmatter. Las sesiones sanas
-no tienen ningún writer. ADR-062 diseña una sección generada, acotada y opt-in;
-no se resuelve reescribiendo `Estado actual` desde inferencia.
+**Implementación cerrada 2026-09-19.** El worker acepta transcripts Claude y
+Codex, resuelve el repo canónico también desde worktrees y sólo reemplaza una
+sección única con marker `generated by lazy-harness`; fences, contenido humano,
+PRJ ausente o ambiguo quedan como no-op logueado. Falta archivar y agregar el
+marker a PRJ-LazyHarness mediante un cambio externo revisado.
 
 - ~~**Legacy ADR-010 Ollama backend**~~ — cerrado. Promovido por [ADR-033](adrs/033-llm-backend-abstraction.md) y hecho utilizable por [ADR-039](adrs/039-role-routed-inference.md) (ruteo por rol).
 - **Legacy ADR-013 Proactivity levels per profile** — promover o descartar. Criterio: si agregás un tercer perfil, promoverlo; si no, descartar.

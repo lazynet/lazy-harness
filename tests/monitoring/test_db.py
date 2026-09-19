@@ -658,6 +658,33 @@ def test_same_event_id_replay_enriches_v3_row_without_duplication(tmp_path: Path
     assert rows[0]["api_equivalent_status"] == "priced"
 
 
+def test_v3_replay_does_not_degrade_an_enriched_v4_row(tmp_path: Path) -> None:
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.upsert_event(
+            _event(
+                schema_version=4,
+                event_id="stable",
+                billed_cost=1.0,
+                billed_cost_source="pricing",
+                api_equivalent_cost=2.0,
+                api_equivalent_status="priced",
+                api_price_basis={"provider": "openai"},
+            )
+        )
+        db.upsert_event(_event(schema_version=3, event_id="stable", cost=1.0))
+        rows = db.query_stats(period="all")
+    finally:
+        db.close()
+
+    assert len(rows) == 1
+    assert rows[0]["billed_cost"] == 1.0
+    assert rows[0]["billed_cost_source"] == "pricing"
+    assert rows[0]["api_equivalent_cost"] == 2.0
+    assert rows[0]["api_equivalent_status"] == "priced"
+    assert json.loads(rows[0]["api_price_basis"]) == {"provider": "openai"}
+
+
 def test_migration_adds_agent_and_billing_model_to_a_pre_v3_db(tmp_path: Path) -> None:
     """A DB created after host/workload (ADR-037) but before ADR-050."""
     path = tmp_path / "mid.db"

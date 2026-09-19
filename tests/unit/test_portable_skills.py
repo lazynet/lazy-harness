@@ -12,6 +12,7 @@ from lazy_harness.agents.codex import CodexAdapter
 from lazy_harness.agents.copilot import CopilotAdapter
 from lazy_harness.core.config import Config, ProfileEntry
 from lazy_harness.deploy.engine import deploy_profiles
+from lazy_harness.deploy.ledger import LEDGER_RELATIVE, write_ledger
 from lazy_harness.deploy.skills import SKILL_LEDGER_RELATIVE, SkillCollisionError
 
 
@@ -132,6 +133,42 @@ def test_user_owned_entry_is_never_adopted_or_replaced(home_dir: Path) -> None:
     assert not owned.is_symlink()
     assert (owned / "SKILL.md").read_text() == "user"
     assert not (root.parent / SKILL_LEDGER_RELATIVE).exists()
+
+
+def test_legacy_claude_skills_link_is_migrated_from_the_general_ledger(home_dir: Path) -> None:
+    from lazy_harness.core.paths import config_dir
+
+    profile = config_dir() / "profiles" / "one"
+    skill = _skill(profile, "", "portable", "managed")
+    target = home_dir / ".one"
+    target.mkdir()
+    (target / "skills").symlink_to(profile / "skills", target_is_directory=True)
+    write_ledger(target, {Path("skills")})
+
+    deploy_profiles(_config(home_dir, {"one": "claude-code"}))
+
+    root = target / "skills"
+    assert root.is_dir()
+    assert not root.is_symlink()
+    assert (root / "portable").is_symlink()
+    assert (root / "portable").resolve() == skill.resolve()
+    assert json.loads((target / SKILL_LEDGER_RELATIVE).read_text())["links"] == ["portable"]
+    assert json.loads((target / LEDGER_RELATIVE).read_text())["links"] == []
+
+
+def test_unrecorded_legacy_shaped_claude_skills_link_is_not_adopted(home_dir: Path) -> None:
+    from lazy_harness.core.paths import config_dir
+
+    profile = config_dir() / "profiles" / "one"
+    _skill(profile, "", "portable", "managed")
+    target = home_dir / ".one"
+    target.mkdir()
+    (target / "skills").symlink_to(profile / "skills", target_is_directory=True)
+
+    with pytest.raises(SkillCollisionError, match="user-owned.*portable"):
+        deploy_profiles(_config(home_dir, {"one": "claude-code"}))
+
+    assert (target / "skills").is_symlink()
 
 
 def test_a_noncolliding_user_owned_entry_is_left_alone(home_dir: Path) -> None:

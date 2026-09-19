@@ -11,7 +11,7 @@ import pytest
 @pytest.mark.parametrize(
     ("fixture", "context_class", "expected"),
     [
-        ("gpt-5.6-sol.jsonl", "short", 0.099111),
+        ("gpt-5.6-sol.jsonl", "short", 0.0991112),
         ("gpt-6-astra.jsonl", "short", 0.21051),
     ],
 )
@@ -60,6 +60,63 @@ def test_api_equivalent_fails_closed_without_official_context_class() -> None:
     assert result.amount is None
     assert result.status == "unknown_tier"
     assert result.basis is None
+
+
+@pytest.mark.parametrize("on", [None, "2026-09-18", "2026-11-22", "not-a-date"])
+def test_api_equivalent_fails_closed_outside_the_evidenced_rate_window(
+    on: str | None,
+) -> None:
+    from lazy_harness.monitoring.pricing import price_api_response
+
+    result = price_api_response(
+        "gpt-5.6-sol",
+        {"input": 100, "output": 10},
+        service_tier="standard",
+        context_class="short",
+        on=on,
+    )
+
+    assert result.amount is None
+    assert result.status == "unknown_tier"
+    assert result.basis is None
+
+
+def test_astra_rates_are_only_valid_on_the_observation_date() -> None:
+    from lazy_harness.monitoring.pricing import price_api_response
+
+    observed = price_api_response(
+        "gpt-6-astra",
+        {"input": 100},
+        service_tier="standard",
+        context_class="short",
+        on="2026-09-19",
+    )
+    later = price_api_response(
+        "gpt-6-astra",
+        {"input": 100},
+        service_tier="standard",
+        context_class="short",
+        on="2026-09-20",
+    )
+
+    assert observed.status == "priced"
+    assert later.status == "unknown_tier"
+    assert later.amount is None
+
+
+def test_api_equivalent_keeps_sub_micro_response_costs() -> None:
+    from lazy_harness.monitoring.pricing import price_api_response
+
+    result = price_api_response(
+        "gpt-5.6-sol",
+        {"cache_read": 1},
+        service_tier="standard",
+        context_class="short",
+        on="2026-09-19",
+    )
+
+    assert result.status == "priced"
+    assert result.amount == pytest.approx(0.0000004)
 
 
 def test_codex_auto_review_is_not_aliased_for_api_equivalent_pricing() -> None:

@@ -11,6 +11,8 @@ from pathlib import Path
 
 from lazy_harness.agents.base import AgentAdapter
 from lazy_harness.core.config import ProfileEntry
+from lazy_harness.core.paths import expand_path
+from lazy_harness.deploy.ledger import read_ledger
 from lazy_harness.deploy.symlinks import ensure_symlink
 
 SKILL_LEDGER_RELATIVE = Path(".lazy-harness/skill-links.json")
@@ -33,6 +35,7 @@ class SkillRootPlan:
     links: dict[str, SkillClaim]
     selected_sources: frozenset[Path]
     owned_before: frozenset[str]
+    replaces_legacy_root: bool
 
 
 @dataclass(frozen=True)
@@ -119,6 +122,7 @@ def plan_skill_projections(
 ) -> SkillProjectionPlan:
     grouped: dict[Path, list[SkillClaim]] = {}
     selected_sources: dict[Path, set[Path]] = {}
+    legacy_roots: set[Path] = set()
     omissions: list[tuple[str, str]] = []
 
     for profile, entry in profiles.items():
@@ -131,9 +135,22 @@ def plan_skill_projections(
             if skills:
                 omissions.append((profile, adapter.name))
             continue
-        root = root.resolve()
+        root = root.parent.resolve() / root.name
         grouped.setdefault(root, [])
         selected_sources.setdefault(root, set()).add(source_dir.resolve())
+        config_root = expand_path(entry.config_dir)
+        legacy_owned = read_ledger(config_root)
+        try:
+            relative_root = root.relative_to(config_root)
+        except ValueError:
+            relative_root = None
+        if (
+            relative_root is not None
+            and legacy_owned is not None
+            and relative_root in legacy_owned
+            and _points_into(root, source_dir)
+        ):
+            legacy_roots.add(root)
         grouped[root].extend(
             SkillClaim(profile=profile, source=source) for source in skills.values()
         )
@@ -160,6 +177,8 @@ def plan_skill_projections(
             target = root / name
             if not target.is_symlink() and not target.exists():
                 continue
+            if root in legacy_roots:
+                continue
             managed = name in owned and _points_into(target, profiles_src)
             if not managed:
                 raise SkillCollisionError(
@@ -182,6 +201,7 @@ def plan_skill_projections(
                 links=links,
                 selected_sources=frozenset(selected_sources[root]),
                 owned_before=frozenset(owned),
+                replaces_legacy_root=root in legacy_roots,
             )
         )
     return SkillProjectionPlan(tuple(plans), tuple(omissions), narrowed)
@@ -192,6 +212,8 @@ def apply_skill_projections(plan: SkillProjectionPlan, profiles_src: Path) -> li
     output: list[str] = []
     for root_plan in plan.roots:
         root = root_plan.root
+        if root_plan.replaces_legacy_root and root.is_symlink():
+            root.unlink()
         generated = set(root_plan.links)
         retained: set[str] = set()
         removed: set[str] = set()

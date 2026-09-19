@@ -70,5 +70,9 @@ def register_commands() -> None:
 
     cli.add_command(memory, "memory")
 
+    from lazy_harness.cli.repo_cmd import repo
+
+    cli.add_command(repo, "repo")
+
 
 register_commands()
