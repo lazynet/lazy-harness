@@ -5,21 +5,18 @@ Date: 2026-09-19
 ## Outcome
 
 All six action items from the review are resolved. The Moshi diagnosis now
-separates a proven handler defect from an unproven daemon-root hypothesis; the
-chezmoi merge preserves both lazy-harness artifact stamps; the profile guide
-and ADR-009 describe the deployed write-through ownership model; and ADRs
-057–059 decide the three deferred cross-agent questions.
-
-The underlying Moshi/Codex event integration was not reconfigured in this
-work. The review asked for the report's causal correction and repair sequence,
-not for a live Moshi deployment. No Moshi service was restarted and no usage
-data was uploaded.
+separates the proven handler defect from the rejected daemon-root hypothesis;
+the managed hooks route each agent dialect correctly and a live Codex session
+was received by Moshi. The chezmoi merge preserves both lazy-harness artifact
+stamps, the profile guide and ADR-009 describe the deployed write-through
+ownership model, and ADRs 057–059 decide the deferred cross-agent questions.
 
 ## Resolution matrix
 
 | Item | Resolution | Evidence |
 | --- | --- | --- |
 | Moshi daemon-root causal claim | Marked as a hypothesis. The nine `claude-hook` handlers are sufficient to explain missing Codex events; `CODEX_HOME` reaches the service only if a real `codex-hook` event still fails session/transcript resolution. | `lazy-desktop-manager/reports/2026-09-18-moshi-codex-freshness.md` |
+| Moshi Codex integration | External hooks now dispatch `lazy-codex` through `moshi codex-hook` and Claude profiles through `claude-hook`. After trusting the nine changed hooks, session `01a0ba38-22c6-7020-88e3-c34a1ead6511` appeared in Moshi's Codex cache at 12:12 with the expected model, prompt, Herdr pane, and workspace metadata. No daemon `CODEX_HOME` change was needed. | dotfiles config + live probe |
 | Codex `features.hooks` advice | Removed as a current requirement. Moshi's warning remains historical evidence; Codex 0.155.0 reports hooks stable and enabled by default. | Same source report |
 | `lh_harness_binary` preservation | Added to the shared chezmoi modifier and its tool documentation. The real deploy → apply cycle preserves `lh_version`, `lh_harness_binary`, and the hooks object for lazy and flex. | dotfiles commit `a17e892` |
 | `settings.json` ownership | Chose the implementation's existing write-through contract. Adapter config targets are the narrow exception to source immutability; deploy writes the merged document through the runtime symlink into the agent segment. | ADR-009 Evolution + `docs/how/profiles-and-deploy.md` |
@@ -59,17 +56,19 @@ Branch: `fix/profile-coherence-fixes`
 
 - `.chezmoitemplates/lazy-harness/modify-settings.sh`
 - `docs/tools/lazy-harness.md`
+- `dot_config/lazy-harness/config.toml.tmpl`
 - `dot_config/lazy-harness/profiles/_common/common.md`
 
-The repository is clean after the automatic commit and push `a17e892`.
+The first three review fixes were committed and pushed automatically as
+`a17e892`; the Moshi dialect router is recorded separately as `6186144`.
 
 ### lazy-desktop-manager
 
 - `reports/2026-09-18-moshi-codex-freshness.md`
 
-That report remains untracked, matching its state before this work. The repo
-also retains the unrelated untracked Raycast report and its two pre-existing
-local commits.
+The diagnosis correction was committed separately as `21004d7`; the live
+verification is recorded in report-only commit `c2326a4`. The unrelated
+untracked reports and pre-existing local commits were left untouched.
 
 ## Verification
 
@@ -89,6 +88,16 @@ local commits.
   ADR cross-links.
 - `uv run --frozen pytest -q tests/docs`: passed, 47 tests.
 - `uv run --frozen pytest -q`: passed, 4991 tests in 465.54 seconds.
+- Deployed Moshi routing: all nine `lazy-codex` entries resolve to
+  `moshi codex-hook`; lazy and flex resolve to `moshi claude-hook` without the
+  stale duplicate entries.
+- Codex hook trust review: 9 modified Moshi hooks approved; every installed
+  lifecycle hook then reported active.
+- Live read-only probe: `MOSHI_PROBE_TRUSTED` completed in session
+  `01a0ba38-22c6-7020-88e3-c34a1ead6511`; Moshi created the matching
+  `codex-sessions` record at 12:12 with current session and Herdr metadata.
+- Daemon root: unchanged. The successful isolated probe disproved the need to
+  add `CODEX_HOME` to the Moshi LaunchAgent for this integration.
 
 ### Final gate
 
@@ -98,3 +107,18 @@ All four repository gates passed on the final worktree state:
 2. `uv run --frozen ruff check src tests` — passed.
 3. `uv run --frozen ruff format --check src tests` — 492 files already formatted.
 4. `uv run --frozen --group docs mkdocs build --strict` — passed.
+
+## Live Moshi probe
+
+The user explicitly approved one read-only Codex prompt and the associated
+hook egress to `api.getmoshi.app`. The first non-interactive attempt ran before
+the modified hook hashes were trusted and therefore emitted no Moshi record.
+After reviewing and trusting the nine generated Moshi hooks, the effective
+probe completed and produced a current record under Moshi's `codex-sessions`
+cache.
+
+The record contains the Codex model, first and last prompt timestamps, prompt
+kind and sequence, process ID, and Herdr pane/workspace mapping. This closes
+the handler repair and isolates the root question: the correct handler works
+without modifying the daemon environment. Usage collection remains disabled;
+this change did not opt the machine into background usage polling.
