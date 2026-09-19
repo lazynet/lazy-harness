@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.74.1](https://github.com/lazynet/lazy-harness/compare/v0.74.0...v0.74.1) (2026-09-19)
+
+
+### Documentation
+
+* resolve profile coherence review ([#406](https://github.com/lazynet/lazy-harness/issues/406)) ([80a8632](https://github.com/lazynet/lazy-harness/commit/80a8632999cd0a17a2c75e86d64e3513283738fb))
+
 ## [0.74.0](https://github.com/lazynet/lazy-harness/compare/v0.73.0...v0.74.0) (2026-09-19)
 
 
