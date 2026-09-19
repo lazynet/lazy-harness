@@ -8,9 +8,9 @@
 
 > **Stop re-explaining your project to your AI agent every morning.**
 
-`lazy-harness` is the missing scaffolding around AI coding agents like [Claude Code](https://claude.com/claude-code): persistent memory across sessions, isolated profiles for personal/work/client setups, a cross-platform hook engine, SQLite-backed monitoring, a knowledge directory, and a unified scheduler — all driven by one TOML file.
+`lazy-harness` is the missing scaffolding around AI coding agents: persistent memory across sessions, isolated profiles for personal/work/client setups, a cross-platform hook engine, SQLite-backed monitoring, a knowledge directory, and a unified scheduler — all driven by one TOML file.
 
-It does not fork or proxy the agent. It wraps the environment around it.
+It does not fork or proxy the agent. It wraps the environment around it — and it wraps **more than one**. [Claude Code](https://claude.com/claude-code) and [Codex CLI](https://developers.openai.com/codex/cli) are first-class adapters, [Copilot CLI](https://github.com/github/copilot-cli) is partial, and a profile picks its agent independently of every other profile. The same hook, the same `lh deploy`, the same metrics database.
 
 Full docs: **https://lazynet.github.io/lazy-harness/**
 
@@ -20,6 +20,7 @@ Full docs: **https://lazynet.github.io/lazy-harness/**
 - [Why](#why)
 - [Features](#features)
 - [The memory problem (and how it's solved)](#the-memory-problem-and-how-its-solved)
+- [More than one agent](#more-than-one-agent)
 - [Quick start](#quick-start)
 - [How it works](#how-it-works)
 - [Is this for you?](#is-this-for-you)
@@ -46,11 +47,12 @@ AI coding agents ship as a chat interface and a file tool. That's enough for a d
 
 | Feature | What it does | Try it |
 |---|---|---|
-| **Profiles** | Isolate `personal`, `work`, `client` — each with its own `CLAUDE.md`, `settings.json`, skills and knowledge. Switch by directory or env var. | `lh profile add work --config-dir ~/.claude-work --roots ~/repos/work` |
+| **Profiles** | Isolate `personal`, `work`, `client` — each with its own instructions, agent config, skills and knowledge, and each naming the agent it runs. Switch by directory or env var. | `lh profile add work --config-dir ~/.claude-work --roots ~/repos/work` |
 | **Hooks** | Cross-platform hook engine with built-ins for session-start context injection, pre-compact summaries, session export and compound-loop enforcement. Bring your own via `config.toml`. | `lh hooks list` |
 | **Monitoring** | SQLite-backed metrics on every session — duration, tokens, tools, cost. Ten built-in dashboard views. | `lh status sessions --period week` |
 | **Knowledge** | Filesystem knowledge directory for sessions and distilled learnings, optionally indexed by [QMD](https://github.com/tobi/qmd) for semantic search. | `lh knowledge sync && lh knowledge embed` |
 | **Scheduler** | Declare jobs in TOML; the harness writes the native unit files — launchd plists, systemd user timers, or a delimited crontab block. | `lh scheduler install` |
+| **Multi-agent** | One adapter per agent — Claude Code, Codex, Copilot. A profile declares `agent = "codex"` and the whole stack follows: hooks, deploy, launch, metering. | `lh doctor` |
 | **Migration** | Take an existing Claude Code setup and convert it in place — dry-run gate, full backup, one-command rollback. | `lh migrate --dry-run` |
 
 A typical `~/.config/lazy-harness/config.toml` is small:
@@ -63,6 +65,11 @@ roots = ["~/code/personal"]
 [profiles.work]
 config_dir = "~/.claude-work"
 roots = ["~/code/work"]
+
+[profiles.cx]
+agent = "codex"                 # same harness, different agent
+config_dir = "~/.codex-cx"
+roots = ["~/code/experiments"]
 
 [hooks.SessionStart]
 context-inject = { enabled = true }
@@ -91,13 +98,39 @@ The layers map to three classic memory archetypes: **episodic** (distilled + raw
 
 Before `lazy-harness`, the first 5 minutes of every session were context reconstruction. After, they're work.
 
+## More than one agent
+
+Supporting a second coding agent is not a plugin — it is a contract: what a hook may decide, which of those decisions an agent actually honours, what it can be asked to report, and which config documents it owns. That contract is [ADR-041](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/041-multi-agent-hook-contract.md), frozen only after a second, non-identity adapter had run against it.
+
+| | Claude Code | Codex | Copilot |
+|---|---|---|---|
+| Config-dir env var | `CLAUDE_CONFIG_DIR` | `CODEX_HOME` | `COPILOT_HOME` |
+| System doc | `CLAUDE.md` | `AGENTS.md` | `copilot-instructions.md` |
+| Config documents | `settings.json`, `.claude.json` | `hooks.json`, `config.toml` | `hooks/lazy-harness.json` |
+| MCP servers placed | ✅ | ✅ | ❌ |
+| Metered by `lh metrics` | ✅ | ✅ | — |
+| Headless `lh exec` | ✅ | ❌ | ❌ |
+| Skills projected | ✅ | ✅ (`~/.agents/skills`) | — |
+
+✅ measured and present · ❌ measured and absent · — not measured, so nothing is asserted.
+
+That third column state is the point. An adapter encodes what a real run or a real log showed, never what a vendor help page claims — `CopilotAdapter` returns no bypass flag for any level not because Copilot lacks one but because no probe has measured it, and putting an unmeasured flag in front of a binary is how you hand an agent a permission grant you did not intend.
+
+Three things follow from the contract being a contract:
+
+- **A hook the agent cannot serve is left out, and named.** Each built-in declares the signals it needs; each adapter declares what it delivers. `lh deploy` omits the mismatches and prints `· stop-verify-guard omitted in 'cx': agent 'codex' does not deliver goal_status`. Installed instead, that hook would run, find nothing to verify and pass — green because it *could not fail*.
+- **Agent selection is per profile, not per machine.** Two profiles can share a root, run different agents, and both stay correct. `lh doctor` names the ambiguity before a launch hits it.
+- **Intent is declared, not forwarded.** `lh run --bypass=activate` asks for a named level and the profile's adapter decides the flag. An unsupported level is an error, never quietly answered with a more permissive neighbour.
+
+Full detail: **[Supported agents](https://lazynet.github.io/lazy-harness/agents/)** · [The agent contract](https://lazynet.github.io/lazy-harness/agents/contract/) · [Portable assets](https://lazynet.github.io/lazy-harness/agents/portable-assets/)
+
 ## Quick start
 
 ### Prerequisites
 
 - Python 3.11+
 - [uv](https://docs.astral.sh/uv/) — `curl -LsSf https://astral.sh/uv/install.sh | sh`
-- [Claude Code](https://claude.com/claude-code) — the agent being wrapped
+- At least one supported agent — [Claude Code](https://claude.com/claude-code), [Codex CLI](https://developers.openai.com/codex/cli), or [Copilot CLI](https://github.com/github/copilot-cli)
 - `git`
 
 ### Install
@@ -156,11 +189,17 @@ The full walkthrough lives in the [getting-started guide](https://lazynet.github
                                                           ▼
                                          ┌─────────────────────────────────┐
                                          │  Agent target dirs (symlinks +  │
-                                         │  generated settings)            │
+                                         │  generated config)              │
                                          │  ~/.claude-personal/            │
                                          │  ~/.claude-work/                │
+                                         │  ~/.codex-cx/     (agent = codex)│
                                          │  ~/.claude → default            │
                                          └─────────────────────────────────┘
+
+Each profile's directory is written by **its own** agent's adapter: `settings.json` and
+`.claude.json` for Claude Code, `hooks.json` plus a merged `config.toml` for Codex. One
+`plan_config` call returns every write and delete for a profile, and the engine refuses
+the whole plan — rather than locking a file — if any target moved between read and apply.
 ```
 
 More: [Architecture overview](https://lazynet.github.io/lazy-harness/architecture/overview/) · [ADRs](https://github.com/lazynet/lazy-harness/tree/main/specs/adrs).
@@ -185,6 +224,7 @@ The full site is built from [`docs/`](docs/) with MkDocs Material and published 
 - [Philosophy](https://lazynet.github.io/lazy-harness/why/philosophy/)
 - [Memory model](https://lazynet.github.io/lazy-harness/why/memory-model/)
 - [Getting started](https://lazynet.github.io/lazy-harness/getting-started/install/) · [Migrating from a stock setup](https://lazynet.github.io/lazy-harness/getting-started/migrating/)
+- Agents: [Supported agents](https://lazynet.github.io/lazy-harness/agents/) · [The agent contract](https://lazynet.github.io/lazy-harness/agents/contract/) · [Portable assets](https://lazynet.github.io/lazy-harness/agents/portable-assets/) · [Codex](https://lazynet.github.io/lazy-harness/agents/codex/) · [Copilot](https://lazynet.github.io/lazy-harness/agents/copilot/)
 - How-tos: [Hooks](https://lazynet.github.io/lazy-harness/how/hooks/) · [Profiles & deploy](https://lazynet.github.io/lazy-harness/how/profiles-and-deploy/) · [Metrics ingest](https://lazynet.github.io/lazy-harness/how/metrics-ingest/) · [Knowledge pipeline](https://lazynet.github.io/lazy-harness/how/knowledge-pipeline/) · [Compound-loop memory](https://lazynet.github.io/lazy-harness/how/memory-compound/)
 - Reference: [CLI](https://lazynet.github.io/lazy-harness/reference/cli/) · [Config](https://lazynet.github.io/lazy-harness/reference/config/)
 - [Architecture overview](https://lazynet.github.io/lazy-harness/architecture/overview/) · [Roadmap](https://lazynet.github.io/lazy-harness/roadmap/)
@@ -195,7 +235,8 @@ Actively developed. Versioned via [release-please](https://github.com/googleapis
 
 - **Platforms:** macOS 13+ (Apple Silicon and Intel), Linux (tested on Arch, Debian, Ubuntu).
 - **Windows:** not supported yet.
-- **Supported agents:** [Claude Code](https://claude.com/claude-code). Other agents are planned via the adapter layer ([ADR-004](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/004-agent-adapter-pattern.md)).
+- **Supported agents:** [Claude Code](https://claude.com/claude-code) and [Codex CLI](https://developers.openai.com/codex/cli) as first-class adapters; [Copilot CLI](https://github.com/github/copilot-cli) partially, with its unmeasured surface documented rather than guessed. See [supported agents](https://lazynet.github.io/lazy-harness/agents/) for the capability matrix.
+- **Multi-agent adoption is measured, not assumed.** A kill criterion opens on 2026-11-11 and compares launches on a non-Claude profile against the trailing Claude baseline; below the threshold the adapters are removed rather than kept.
 
 ## Contributing
 

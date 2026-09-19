@@ -2,10 +2,11 @@
 
 A cross-platform harnessing framework for AI coding agents.
 
-`lazy-harness` turns a raw AI coding agent (Claude Code today, others planned) into a daily-driver workstation by adding the scaffolding that agents do not ship with: multi-profile isolation, a hook engine, a monitoring pipeline, a knowledge directory, a scheduler, and a session memory model that persists across conversations.
+`lazy-harness` turns a raw AI coding agent — Claude Code, Codex, or Copilot — into a daily-driver workstation by adding the scaffolding that agents do not ship with: multi-profile isolation, a hook engine, a monitoring pipeline, a knowledge directory, a scheduler, and a session memory model that persists across conversations.
 
 ## What it gives you
 
+- **More than one agent.** Claude Code, Codex and Copilot each have an adapter, and a profile names the one it runs. Hooks, deploy, launch, metering and skills all resolve the agent **per profile**, so two profiles on one machine can run different agents and share a root. A hook whose required signal an agent cannot deliver is left out of that profile and named, rather than installed to pass silently. See [supported agents](agents/index.md) and [the agent contract](agents/contract.md).
 - **Profiles.** Isolate separate agent setups — personal, work, client, experimental — with their own `CLAUDE.md`, `settings.json`, skills, and knowledge. Switch by directory or env var.
 - **Hooks.** A cross-platform hook engine with built-ins across seven events: session-start context injection and preflight checks, pre-compact summaries, session export, compound-loop distillation on both `Stop` and `SessionEnd`, deterministic Engram mirroring, a context-rotation notice, post-edit auto-format, `CLAUDE.md` re-composition, and four `PreToolUse` gates — two that block (destructive commands, unsafe shared-stash git operations) and two that warn (oversized `MEMORY.md` writes, unbounded reads of large files). Bring your own hooks via config. Every one of them is documented in [how hooks work](how/hooks.md), held to the code by a coherence test in both directions.
 - **Guardrails.** A built-in `PreToolUse` security hook blocks high-blast-radius shell commands (recursive deletes, `git reset --hard`, `terraform destroy`, `DROP TABLE`) and any file tool reaching a secret path (`.env`, SSH keys, `.aws/`, `*.pem`) before the agent executes them. Shell rules are overridable per profile via `[hooks.pre_tool_use].allow_patterns`; the secret-path globs deliberately are not. See [how hooks work](how/hooks.md#pre-tool-use-security-runs-on-pretooluse).
@@ -34,4 +35,4 @@ Read [the problem](why/problem.md) and [the memory model](why/memory-model.md).
 
 ## Status
 
-Released continuously from `main` on the 0.x line; every version is cut by release-please, so the [releases page](https://github.com/lazynet/lazy-harness/releases) is the authority on what is current. Supported platforms: macOS, Linux (Windows is not supported). Supported agent: Claude Code — others are planned via the adapter layer ([ADR-004](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/004-agent-adapter-pattern.md)), and none ship yet.
+Released continuously from `main` on the 0.x line; every version is cut by release-please, so the [releases page](https://github.com/lazynet/lazy-harness/releases) is the authority on what is current. Supported platforms: macOS, Linux (Windows is not supported). Supported agents: **Claude Code** and **Codex** as first-class adapters, **Copilot** partially, plus a `null` adapter for tests — see [supported agents](agents/index.md).
