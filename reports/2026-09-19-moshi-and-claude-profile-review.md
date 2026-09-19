@@ -113,6 +113,9 @@ left untouched.
   `CODEX_HOME=/Users/lazynet/.codex-lazy`. After reload, the same transcript
   query returned `totalLines: 17`, `entryCount: 14`, and `hasMore: true`.
 - Moshi service after reload: `running: true`, `gateway: true`.
+- iPhone acceptance test: after reopening the terminal following the gateway
+  reload, the user confirmed that the Codex agent and Chat View render
+  correctly in the Moshi client.
 
 ### Final gate
 
