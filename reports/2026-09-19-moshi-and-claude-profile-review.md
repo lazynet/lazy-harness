@@ -52,6 +52,10 @@ Worktree: `.worktrees/profile-coherence-fixes`
 
 Branch: `fix/profile-coherence-fixes`
 
+Pull request: https://github.com/lazynet/lazy-harness/pull/406
+
+Commits: `87b83e8`, `e895e23`.
+
 ### dotfiles
 
 - `.chezmoitemplates/lazy-harness/modify-settings.sh`
