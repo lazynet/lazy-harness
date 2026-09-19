@@ -2789,3 +2789,317 @@ def test_two_hosts_same_title_same_day_produce_distinct_paths(
         )
     names = sorted(p.name for p in (learnings / "2026-08").glob("*.md"))
     assert names == ["2026-08-10-same-idea-laptop.md", "2026-08-10-same-idea-server.md"]
+
+
+# ---------------------------------------------------------------------------
+# ADR-062 — one PRJ, deduplicated escalation, `updated` moves with content
+# ---------------------------------------------------------------------------
+
+
+def _build_lazymind_with_frontmatter(tmp_path: Path, prj_names: list[str]) -> Path:
+    lazymind = _build_lazymind(tmp_path, prj_names)
+    for name in prj_names:
+        prj = lazymind / "1-Projects" / f"PRJ-{name}" / f"PRJ-{name}.md"
+        prj.write_text(
+            prj.read_text().replace(
+                "---\ntype: project\n---", "---\ntype: project\nupdated: 2026-09-14\n---"
+            )
+        )
+    return lazymind
+
+
+def test_resolve_prj_candidates_lists_every_match(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.compound_loop import resolve_prj_candidates
+
+    lazymind = _build_lazymind(tmp_path, ["Harness", "LazyHarness"])
+    found = sorted(p.name for p in resolve_prj_candidates("lazy-harness", lazymind))
+    assert found == ["PRJ-Harness.md", "PRJ-LazyHarness.md"]
+
+
+def test_resolve_prj_md_refuses_an_ambiguous_match(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.compound_loop import resolve_prj_md
+
+    lazymind = _build_lazymind(tmp_path, ["Harness", "LazyHarness"])
+    assert resolve_prj_md("lazy-harness", lazymind) is None
+
+
+_POOR = {
+    "quality": "poor",
+    "issues": ["hallucination"],
+    "reasoning": "Made up a flag.",
+    "confidence": 0.9,
+}
+
+
+def test_append_grade_bumps_updated_when_it_writes(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.compound_loop import append_grade_to_prj_backlog
+
+    lazymind = _build_lazymind_with_frontmatter(tmp_path, ["LazyHarness"])
+    prj_md = lazymind / "1-Projects" / "PRJ-LazyHarness" / "PRJ-LazyHarness.md"
+
+    assert append_grade_to_prj_backlog(prj_md, _POOR, "2026-09-19", "abcd1234") is True
+    text = prj_md.read_text()
+    assert "updated: 2026-09-19\n" in text
+    assert "updated: 2026-09-14" not in text
+
+
+def test_append_grade_is_a_no_op_for_a_session_already_escalated(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.compound_loop import append_grade_to_prj_backlog
+
+    lazymind = _build_lazymind_with_frontmatter(tmp_path, ["LazyHarness"])
+    prj_md = lazymind / "1-Projects" / "PRJ-LazyHarness" / "PRJ-LazyHarness.md"
+    append_grade_to_prj_backlog(prj_md, _POOR, "2026-09-19", "abcd1234-deadbeef")
+    first = prj_md.read_bytes()
+
+    appended = append_grade_to_prj_backlog(prj_md, _POOR, "2026-09-20", "abcd1234-deadbeef")
+
+    assert appended is False
+    assert prj_md.read_bytes() == first
+    assert prj_md.read_text().count("Session quality regression") == 1
+
+
+def test_append_grade_still_escalates_a_different_session(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.compound_loop import append_grade_to_prj_backlog
+
+    lazymind = _build_lazymind_with_frontmatter(tmp_path, ["LazyHarness"])
+    prj_md = lazymind / "1-Projects" / "PRJ-LazyHarness" / "PRJ-LazyHarness.md"
+    append_grade_to_prj_backlog(prj_md, _POOR, "2026-09-19", "abcd1234")
+
+    assert append_grade_to_prj_backlog(prj_md, _POOR, "2026-09-20", "ffff0000") is True
+    assert prj_md.read_text().count("Session quality regression") == 2
+
+
+# ---------------------------------------------------------------------------
+# ADR-062 — process_task publishes the bounded snapshot, fail-soft
+# ---------------------------------------------------------------------------
+
+_SECTION = "## Última sesión"
+
+
+def _prj_with_section(lazymind: Path, name: str) -> Path:
+    prj = lazymind / "1-Projects" / f"PRJ-{name}" / f"PRJ-{name}.md"
+    prj.write_text(
+        prj.read_text().replace(
+            "## Backlog\n",
+            f"## Estado actual\n\nCurated.\n\n{_SECTION}\n\nold snapshot\n\n## Backlog\n",
+        )
+    )
+    return prj
+
+
+def _good_response(**overrides: Any) -> str:
+    body: dict[str, Any] = {
+        "decisions": [],
+        "failures": [],
+        "learnings": [],
+        "handoff": [],
+        "grade": {"quality": "good", "issues": ["none"], "reasoning": "fine", "confidence": 0.9},
+        "project_update": {
+            "summary": "Shipped the bounded snapshot.",
+            "completed": ["worker writes section"],
+            "next": ["archive PRJ"],
+            "references": ["#408"],
+        },
+    }
+    body.update(overrides)
+    return json.dumps(body)
+
+
+def _run_project_state_task(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, response: str, lazymind: Path | None
+) -> Any:
+    from lazy_harness.knowledge.compound_loop import process_task
+
+    session = _interactive_session(tmp_path)
+    task = create_task(
+        tmp_path / "queue", Path("/tmp/lazy-harness"), session, "abcd1234-deadbeef", tmp_path / "m"
+    )
+    cfg = Config(
+        compound_loop=CompoundLoopConfig(
+            enabled=True,
+            min_messages=2,
+            min_user_chars=100,
+            lazymind_dir=str(lazymind) if lazymind else None,
+        )
+    )
+    _stub_run_inference(monkeypatch, lambda *a: response)
+    return process_task(task, cfg, tmp_path / "Learnings")
+
+
+def test_process_task_replaces_the_generated_section_and_bumps_updated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lazymind = _build_lazymind_with_frontmatter(tmp_path, ["LazyHarness"])
+    prj = _prj_with_section(lazymind, "LazyHarness")
+
+    outcome = _run_project_state_task(tmp_path, monkeypatch, _good_response(), lazymind)
+
+    assert outcome.was_processed
+    assert "project: PRJ-LazyHarness.md" in outcome.wrote
+    text = prj.read_text()
+    assert "Shipped the bounded snapshot." in text
+    assert "old snapshot" not in text
+    assert "Curated." in text
+    assert "session abcd1234" in text
+    assert "updated: 2026-09-14" not in text
+
+
+def test_process_task_second_identical_run_is_byte_identical(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lazymind = _build_lazymind_with_frontmatter(tmp_path, ["LazyHarness"])
+    prj = _prj_with_section(lazymind, "LazyHarness")
+    _run_project_state_task(tmp_path, monkeypatch, _good_response(), lazymind)
+    first = prj.read_bytes()
+
+    outcome = _run_project_state_task(tmp_path, monkeypatch, _good_response(), lazymind)
+
+    assert outcome.was_processed
+    assert "project: PRJ-LazyHarness.md" not in outcome.wrote
+    assert any("unchanged" in note for note in outcome.notes)
+    assert prj.read_bytes() == first
+
+
+def test_process_task_names_a_missing_generated_section(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lazymind = _build_lazymind_with_frontmatter(tmp_path, ["LazyHarness"])
+    prj = lazymind / "1-Projects" / "PRJ-LazyHarness" / "PRJ-LazyHarness.md"
+    before = prj.read_bytes()
+
+    outcome = _run_project_state_task(tmp_path, monkeypatch, _good_response(), lazymind)
+
+    assert outcome.was_processed
+    assert any(_SECTION in note for note in outcome.notes)
+    assert prj.read_bytes() == before
+
+
+def test_process_task_names_a_missing_prj(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    lazymind = _build_lazymind_with_frontmatter(tmp_path, ["Unrelated"])
+
+    outcome = _run_project_state_task(tmp_path, monkeypatch, _good_response(), lazymind)
+
+    assert outcome.was_processed
+    assert any("no PRJ" in note for note in outcome.notes)
+
+
+def test_process_task_names_an_ambiguous_prj(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lazymind = _build_lazymind_with_frontmatter(tmp_path, ["Harness", "LazyHarness"])
+    prj_a = _prj_with_section(lazymind, "Harness")
+    prj_b = _prj_with_section(lazymind, "LazyHarness")
+    before = (prj_a.read_bytes(), prj_b.read_bytes())
+
+    outcome = _run_project_state_task(tmp_path, monkeypatch, _good_response(), lazymind)
+
+    assert outcome.was_processed
+    assert any("ambiguous" in note for note in outcome.notes)
+    assert (prj_a.read_bytes(), prj_b.read_bytes()) == before
+
+
+@pytest.mark.parametrize(
+    "project_update",
+    ["a string", {"summary": ""}, {"summary": "ok", "next": "not a list"}, None],
+    ids=["string", "empty-summary", "next-not-list", "null"],
+)
+def test_process_task_names_an_invalid_project_update(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, project_update: object
+) -> None:
+    lazymind = _build_lazymind_with_frontmatter(tmp_path, ["LazyHarness"])
+    prj = _prj_with_section(lazymind, "LazyHarness")
+    before = prj.read_bytes()
+
+    outcome = _run_project_state_task(
+        tmp_path, monkeypatch, _good_response(project_update=project_update), lazymind
+    )
+
+    assert outcome.was_processed
+    assert any("project_update" in note for note in outcome.notes)
+    assert prj.read_bytes() == before
+
+
+def test_process_task_names_an_unset_lazymind_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    outcome = _run_project_state_task(tmp_path, monkeypatch, _good_response(), None)
+
+    assert outcome.was_processed
+    assert any("lazymind_dir" in note for note in outcome.notes)
+
+
+def test_process_task_survives_a_crashing_project_sync(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.knowledge import compound_loop as cl
+
+    lazymind = _build_lazymind_with_frontmatter(tmp_path, ["LazyHarness"])
+    _prj_with_section(lazymind, "LazyHarness")
+
+    def boom(*a: Any, **kw: Any) -> Any:
+        raise RuntimeError("disk on fire")
+
+    monkeypatch.setattr(cl, "sync_last_session", boom)
+
+    outcome = _run_project_state_task(tmp_path, monkeypatch, _good_response(), lazymind)
+
+    assert outcome.was_processed
+    assert any("disk on fire" in note for note in outcome.notes)
+    assert (tmp_path / "m" / "grades.jsonl").is_file()
+
+
+def test_poor_grade_and_project_update_both_land(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lazymind = _build_lazymind_with_frontmatter(tmp_path, ["LazyHarness"])
+    prj = _prj_with_section(lazymind, "LazyHarness")
+
+    outcome = _run_project_state_task(tmp_path, monkeypatch, _good_response(grade=_POOR), lazymind)
+
+    assert "project: PRJ-LazyHarness.md" in outcome.wrote
+    assert "backlog: PRJ-LazyHarness.md" in outcome.wrote
+    text = prj.read_text()
+    assert "Shipped the bounded snapshot." in text
+    assert text.count("Session quality regression") == 1
+
+
+def test_build_prompt_asks_for_a_project_update() -> None:
+    prompt = build_prompt("p", "/tmp/p", "s", "t", "", "", "", "summary")
+    assert '"project_update"' in prompt
+    for key in ("summary", "completed", "next", "references"):
+        assert f'"{key}"' in prompt
+
+
+def test_repo_revision_reads_the_short_head(tmp_path: Path) -> None:
+    import subprocess
+
+    from lazy_harness.knowledge.compound_loop import repo_revision
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "x",
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+    head = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"], cwd=tmp_path, capture_output=True, text=True
+    ).stdout.strip()
+
+    assert repo_revision(tmp_path) == head
+
+
+def test_repo_revision_is_unknown_outside_a_repo(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.compound_loop import repo_revision
+
+    assert repo_revision(tmp_path / "nowhere") == "unknown"

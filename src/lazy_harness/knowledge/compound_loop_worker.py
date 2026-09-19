@@ -90,6 +90,8 @@ def _drain_queue(
                 _log(log_file, "wrote: " + "; ".join(outcome.wrote))
             else:
                 _log(log_file, "nothing to persist")
+            for note in outcome.notes:
+                _log(log_file, f"note: {note}")
             move_to_done(queue_dir, task_file)
 
 

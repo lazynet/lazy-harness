@@ -1,0 +1,274 @@
+"""ADR-062: a structured `project_update` replaces one generated PRJ section.
+
+Every write path here is exercised against a throwaway PRJ under `tmp_path`;
+nothing reaches the real vault.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from lazy_harness.knowledge.project_state import (
+    SECTION_HEADER,
+    ProjectUpdate,
+    Provenance,
+    bump_updated,
+    parse_project_update,
+    render_section,
+    replace_section,
+    sync_last_session,
+)
+
+_PROVENANCE = Provenance(
+    session_id="abcd1234-deadbeef", timestamp="2026-09-19T10:00:00", revision="301ed7b"
+)
+
+
+def _prj(tmp_path: Path, *, with_section: bool = True, updated: str | None = "2026-09-14") -> Path:
+    front = "---\ntype: project\n"
+    if updated is not None:
+        front += f"updated: {updated}\n"
+    front += "repo: lazy-harness\n---\n"
+    body = "# PRJ-LazyHarness\n\n## Estado actual\n\nCurated by a human.\n\n"
+    if with_section:
+        body += f"{SECTION_HEADER}\n\n<!-- generated -->\n\nold snapshot\n\n"
+    body += "## Backlog\n\n### Pendiente — Alta prioridad\n\n- [ ] existing item\n"
+    prj = tmp_path / "PRJ-LazyHarness.md"
+    prj.write_text(front + body, encoding="utf-8")
+    return prj
+
+
+# ---------------------------------------------------------------------------
+# parse_project_update — the LLM result is untrusted
+# ---------------------------------------------------------------------------
+
+
+def test_parse_accepts_the_full_shape() -> None:
+    parsed = parse_project_update(
+        {
+            "summary": "Shipped ADR-062.",
+            "completed": ["worker writes section"],
+            "next": ["archive PRJ"],
+            "references": ["#408"],
+        }
+    )
+    assert parsed == ProjectUpdate(
+        summary="Shipped ADR-062.",
+        completed=("worker writes section",),
+        next=("archive PRJ",),
+        references=("#408",),
+    )
+
+
+def test_parse_defaults_missing_lists_to_empty() -> None:
+    parsed = parse_project_update({"summary": "Only a summary."})
+    assert parsed == ProjectUpdate(summary="Only a summary.")
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        None,
+        "a string",
+        [],
+        42,
+        {},
+        {"summary": ""},
+        {"summary": "   "},
+        {"summary": 3},
+        {"summary": "ok", "completed": "not a list"},
+        {"summary": "ok", "next": [1, 2]},
+    ],
+    ids=[
+        "null",
+        "string",
+        "list",
+        "int",
+        "empty-dict",
+        "empty-summary",
+        "blank-summary",
+        "non-string-summary",
+        "completed-not-list",
+        "next-non-string-items",
+    ],
+)
+def test_parse_rejects_invalid_shapes(raw: object) -> None:
+    assert parse_project_update(raw) is None
+
+
+def test_parse_strips_whitespace_and_drops_blank_items() -> None:
+    parsed = parse_project_update({"summary": "  done  ", "completed": [" a ", "  "]})
+    assert parsed == ProjectUpdate(summary="done", completed=("a",))
+
+
+# ---------------------------------------------------------------------------
+# render_section — provenance and bounded shape
+# ---------------------------------------------------------------------------
+
+
+def test_render_starts_with_the_header_and_carries_provenance() -> None:
+    section = render_section(ProjectUpdate(summary="Shipped it."), _PROVENANCE)
+    lines = section.splitlines()
+    assert lines[0] == SECTION_HEADER
+    assert "abcd1234" in section
+    assert "2026-09-19T10:00:00" in section
+    assert "301ed7b" in section
+    assert "Shipped it." in section
+
+
+def test_render_omits_empty_subsections() -> None:
+    section = render_section(ProjectUpdate(summary="Shipped it."), _PROVENANCE)
+    assert "Completado" not in section
+    assert "Próximo" not in section
+    assert "Referencias" not in section
+
+
+def test_render_lists_every_item_under_its_subsection() -> None:
+    section = render_section(
+        ProjectUpdate(summary="s", completed=("c1", "c2"), next=("n1",), references=("r1",)),
+        _PROVENANCE,
+    )
+    assert section.index("Completado") < section.index("- c1") < section.index("- c2")
+    assert section.index("- c2") < section.index("Próximo") < section.index("- n1")
+    assert section.index("- n1") < section.index("Referencias") < section.index("- r1")
+
+
+def test_render_never_contains_a_second_h2() -> None:
+    section = render_section(
+        ProjectUpdate(summary="## Estado actual\nnot a heading", completed=("## Backlog",)),
+        _PROVENANCE,
+    )
+    h2s = [line for line in section.splitlines() if line.startswith("## ")]
+    assert h2s == [SECTION_HEADER]
+
+
+# ---------------------------------------------------------------------------
+# replace_section — bounded to one H2, everything else byte-for-byte
+# ---------------------------------------------------------------------------
+
+
+def test_replace_swaps_only_the_generated_section(tmp_path: Path) -> None:
+    prj = _prj(tmp_path)
+    original = prj.read_text(encoding="utf-8")
+    new = f"{SECTION_HEADER}\n\nfresh snapshot\n"
+
+    result = replace_section(original, new)
+
+    assert result is not None
+    assert "old snapshot" not in result
+    assert "fresh snapshot" in result
+    head, _, _ = original.partition(SECTION_HEADER)
+    _, _, tail = original.partition("## Backlog")
+    assert result.startswith(head)
+    assert result.endswith("## Backlog" + tail)
+
+
+def test_replace_returns_none_when_the_section_is_absent(tmp_path: Path) -> None:
+    prj = _prj(tmp_path, with_section=False)
+    assert replace_section(prj.read_text(encoding="utf-8"), f"{SECTION_HEADER}\n\nx\n") is None
+
+
+def test_replace_ignores_a_header_mention_inside_a_paragraph() -> None:
+    text = f"# T\n\nSee {SECTION_HEADER} below.\n\n## Backlog\n"
+    assert replace_section(text, f"{SECTION_HEADER}\n\nx\n") is None
+
+
+def test_replace_handles_the_section_at_end_of_file() -> None:
+    text = f"# T\n\n## Backlog\n\n- item\n\n{SECTION_HEADER}\n\nold\n"
+    result = replace_section(text, f"{SECTION_HEADER}\n\nnew\n")
+    assert result == f"# T\n\n## Backlog\n\n- item\n\n{SECTION_HEADER}\n\nnew\n"
+
+
+# ---------------------------------------------------------------------------
+# bump_updated — frontmatter only
+# ---------------------------------------------------------------------------
+
+
+def test_bump_updated_rewrites_the_frontmatter_field(tmp_path: Path) -> None:
+    text = _prj(tmp_path).read_text(encoding="utf-8")
+    bumped = bump_updated(text, "2026-09-19")
+    assert "updated: 2026-09-19\n" in bumped
+    assert "updated: 2026-09-14" not in bumped
+    assert bumped.replace("updated: 2026-09-19", "updated: 2026-09-14") == text
+
+
+def test_bump_updated_leaves_a_file_without_the_field_alone(tmp_path: Path) -> None:
+    text = _prj(tmp_path, updated=None).read_text(encoding="utf-8")
+    assert bump_updated(text, "2026-09-19") == text
+
+
+def test_bump_updated_does_not_touch_an_updated_line_in_the_body() -> None:
+    text = "---\ntype: project\n---\n# T\n\nupdated: 2020-01-01\n"
+    assert bump_updated(text, "2026-09-19") == text
+
+
+# ---------------------------------------------------------------------------
+# sync_last_session — the write path with its three verdicts
+# ---------------------------------------------------------------------------
+
+
+def test_sync_writes_the_section_and_bumps_updated(tmp_path: Path) -> None:
+    prj = _prj(tmp_path)
+
+    result = sync_last_session(
+        prj, ProjectUpdate(summary="Shipped it."), _PROVENANCE, date_str="2026-09-19"
+    )
+
+    assert result.written is True
+    text = prj.read_text(encoding="utf-8")
+    assert "Shipped it." in text
+    assert "old snapshot" not in text
+    assert "updated: 2026-09-19\n" in text
+    assert "Curated by a human." in text
+    assert "- [ ] existing item" in text
+
+
+def test_sync_is_byte_identical_on_a_second_identical_run(tmp_path: Path) -> None:
+    prj = _prj(tmp_path)
+    update = ProjectUpdate(summary="Shipped it.", completed=("a",))
+    sync_last_session(prj, update, _PROVENANCE, date_str="2026-09-19")
+    first = prj.read_bytes()
+    first_mtime = prj.stat().st_mtime_ns
+
+    result = sync_last_session(prj, update, _PROVENANCE, date_str="2026-09-20")
+
+    assert result.written is False
+    assert "unchanged" in result.reason
+    assert prj.read_bytes() == first
+    assert prj.stat().st_mtime_ns == first_mtime
+
+
+def test_sync_bumps_updated_only_when_the_body_changes(tmp_path: Path) -> None:
+    prj = _prj(tmp_path)
+    sync_last_session(prj, ProjectUpdate(summary="v1"), _PROVENANCE, date_str="2026-09-19")
+
+    changed = sync_last_session(
+        prj, ProjectUpdate(summary="v2"), _PROVENANCE, date_str="2026-09-21"
+    )
+
+    assert changed.written is True
+    text = prj.read_text(encoding="utf-8")
+    assert "v2" in text
+    assert "v1" not in text
+    assert "updated: 2026-09-21\n" in text
+
+
+def test_sync_refuses_a_prj_without_the_generated_section(tmp_path: Path) -> None:
+    prj = _prj(tmp_path, with_section=False)
+    before = prj.read_bytes()
+
+    result = sync_last_session(prj, ProjectUpdate(summary="x"), _PROVENANCE, date_str="2026-09-19")
+
+    assert result.written is False
+    assert SECTION_HEADER in result.reason
+    assert prj.read_bytes() == before
+
+
+def test_sync_refuses_an_unreadable_prj(tmp_path: Path) -> None:
+    result = sync_last_session(
+        tmp_path / "missing.md", ProjectUpdate(summary="x"), _PROVENANCE, date_str="2026-09-19"
+    )
+    assert result.written is False
+    assert "unreadable" in result.reason

@@ -437,3 +437,41 @@ def test_the_worker_names_its_queue_with_the_profiles_own_adapter(
         "the worker did not create the queue the producer writes to; it created "
         f"{sorted(p.name for p in profile_home.iterdir()) if profile_home.is_dir() else []}"
     )
+
+
+def test_worker_logs_every_named_refusal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """ADR-062: a declined PRJ write is logged with its reason, next to what
+    the task did persist — a silent no-op is indistinguishable from a bug."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    store = tmp_path / "store"
+    store.mkdir()
+    (store / "knowledge.toml").write_text(
+        '[knowledge]\nversion = 1\nsessions = "sessions"\nlearnings = "learnings"\n'
+    )
+    monkeypatch.setenv("LAZY_KNOWLEDGE_ROOT", str(store))
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        '[harness]\nversion = "1"\n\n[agent]\ntype = "null"\n\n[compound_loop]\nenabled = true\n'
+    )
+    queue_dir = home / ".null" / "queue"
+    queue_dir.mkdir(parents=True)
+    (queue_dir / "t.task").write_text("session_id=abc\n")
+
+    from lazy_harness.knowledge import compound_loop_worker as worker_mod
+    from lazy_harness.knowledge.compound_loop import TaskOutcome
+
+    monkeypatch.setattr(worker_mod, "config_file", lambda: cfg_file)
+    monkeypatch.setattr(
+        worker_mod,
+        "process_task",
+        lambda *a: TaskOutcome(
+            wrote=["decisions: 1"], notes=["project_update skipped: no PRJ matches 'x'"]
+        ),
+    )
+
+    assert worker_mod.main() == 0
+    log = (home / ".null" / "logs" / "compound-loop.log").read_text()
+    assert "wrote: decisions: 1" in log
+    assert "note: project_update skipped: no PRJ matches 'x'" in log
