@@ -60,8 +60,8 @@ def test_metric_event_json_roundtrip() -> None:
     assert restored == event
 
 
-def test_schema_version_is_int_three() -> None:
-    assert METRIC_EVENT_SCHEMA_VERSION == 3
+def test_schema_version_is_int_four() -> None:
+    assert METRIC_EVENT_SCHEMA_VERSION == 4
     assert isinstance(METRIC_EVENT_SCHEMA_VERSION, int)
 
 
@@ -245,6 +245,71 @@ def test_metric_event_v3_json_roundtrip() -> None:
     )
     payload = json.dumps(event.to_dict(), sort_keys=True)
     restored = MetricEvent.from_dict(json.loads(payload))
+    assert restored == event
+
+
+def test_from_dict_maps_v3_cost_only_to_billed_semantics() -> None:
+    payload = MetricEvent(
+        event_id="01HABCDE",
+        schema_version=3,
+        user_id="martin",
+        tenant_id="local",
+        profile="personal",
+        session="abc123",
+        model="claude-sonnet-4-5",
+        project="lazy-harness",
+        date="2026-04-14",
+        input_tokens=100,
+        output_tokens=50,
+        cache_read=0,
+        cache_create=0,
+        cost=0.0012,
+        cost_source="pricing",
+    ).to_dict()
+    for key in (
+        "billed_cost",
+        "billed_cost_source",
+        "api_equivalent_cost",
+        "api_equivalent_status",
+        "api_price_basis",
+    ):
+        payload.pop(key, None)
+
+    restored = MetricEvent.from_dict(payload)
+
+    assert restored.billed_cost == 0.0012
+    assert restored.billed_cost_source == "pricing"
+    assert restored.api_equivalent_cost is None
+    assert restored.api_equivalent_status is None
+    assert restored.api_price_basis is None
+
+
+def test_v4_flat_rate_event_keeps_billed_null_and_equivalent_independent() -> None:
+    event = MetricEvent(
+        event_id="01HABCDE",
+        schema_version=4,
+        user_id="martin",
+        tenant_id="local",
+        profile="personal",
+        session="abc123",
+        model="gpt-5.6-sol",
+        project="lazy-harness",
+        date="2026-09-19",
+        input_tokens=100,
+        output_tokens=50,
+        cache_read=0,
+        cache_create=0,
+        cost=0.0,
+        billing_model="flat_rate",
+        cost_source="subscription",
+        billed_cost=None,
+        billed_cost_source="subscription",
+        api_equivalent_cost=0.002,
+        api_equivalent_status="priced",
+        api_price_basis={"provider": "openai", "service_tier": "standard"},
+    )
+
+    restored = MetricEvent.from_dict(json.loads(json.dumps(event.to_dict())))
     assert restored == event
 
 

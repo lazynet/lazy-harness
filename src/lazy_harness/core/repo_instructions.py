@@ -1,0 +1,81 @@
+"""Static check for the portable repository instruction contract (ADR-060).
+
+`AGENTS.md` is the one repository instruction surface. Claude Code reads it
+directly when no `CLAUDE.md` shadows it; Codex walks the same parent chain.
+Agent-specific notes therefore live in clearly labelled sections of AGENTS.md.
+"""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from pathlib import Path
+
+CANONICAL_NAME = "AGENTS.md"
+APPENDIX_NAME = "CLAUDE.md"
+
+#: Directories that hold other checkouts or third-party trees. Walking them
+#: reports the same file once per copy, and reports pairs from other branches.
+_SKIPPED_DIRS = frozenset(
+    {
+        ".git",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".tox",
+        ".venv",
+        ".worktrees",
+        "node_modules",
+        "vendor",
+        "__pycache__",
+        "site-packages",
+    }
+)
+
+
+@dataclass(frozen=True)
+class Finding:
+    """One broken expectation, addressed to the file that has to change."""
+
+    path: Path
+    code: str
+    detail: str
+
+
+def check_repository(root: Path) -> list[Finding]:
+    """Every way `root` departs from the ADR-060 contract, sorted by path."""
+    findings: list[Finding] = []
+
+    if not (root / CANONICAL_NAME).is_file():
+        findings.append(
+            Finding(
+                path=Path(CANONICAL_NAME),
+                code="missing-agents-md",
+                detail=(f"no root {CANONICAL_NAME} exists, so repository rules are not portable"),
+            )
+        )
+
+    for directory in _walk(root):
+        appendix = directory / APPENDIX_NAME
+        if appendix.is_file():
+            findings.append(
+                Finding(
+                    path=appendix.relative_to(root),
+                    code="claude-md-shadows-agents",
+                    detail=(
+                        f"{APPENDIX_NAME} prevents Claude Code from walking the parent "
+                        f"{CANONICAL_NAME} chain"
+                    ),
+                )
+            )
+
+    return sorted(findings, key=lambda f: (f.path.as_posix(), f.code))
+
+
+def _walk(root: Path) -> list[Path]:
+    """Directories under `root`, skipping hidden and vendored trees."""
+    found: list[Path] = []
+    for current, dirnames, _ in os.walk(root):
+        dirnames[:] = [name for name in dirnames if name not in _SKIPPED_DIRS]
+        found.append(Path(current))
+    return found

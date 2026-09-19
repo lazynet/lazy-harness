@@ -3,6 +3,93 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
+from typing import Literal
+
+ApiEquivalentStatus = Literal["priced", "unknown_model", "unknown_tier", "no_usage"]
+
+
+@dataclass(frozen=True, slots=True)
+class ApiPriceBasis:
+    provider: str
+    service_tier: str
+    currency: str
+    rate_table_version: str
+
+
+@dataclass(frozen=True, slots=True)
+class ApiEquivalentPrice:
+    amount: float | None
+    status: ApiEquivalentStatus
+    basis: ApiPriceBasis | None = None
+
+
+_OPENAI_API_RATE_VERSION = "openai-2026-09-19"
+_OPENAI_API_RATE_WINDOWS = {
+    "gpt-5.6-sol": (date(2026, 9, 19), date(2026, 11, 21)),
+    "gpt-6-astra": (date(2026, 9, 19), date(2026, 9, 19)),
+}
+_OPENAI_API_RATES: dict[tuple[str, str, str], dict[str, float]] = {
+    ("gpt-5.6-sol", "standard", "short"): {
+        "input": 4.0,
+        "cache_read": 0.4,
+        "cache_create": 5.0,
+        "output": 20.0,
+    },
+    ("gpt-5.6-sol", "standard", "long"): {
+        "input": 8.0,
+        "cache_read": 0.8,
+        "cache_create": 10.0,
+        "output": 30.0,
+    },
+    ("gpt-6-astra", "standard", "short"): {
+        "input": 10.0,
+        "cache_read": 1.0,
+        "cache_create": 12.5,
+        "output": 50.0,
+    },
+    ("gpt-6-astra", "standard", "long"): {
+        "input": 20.0,
+        "cache_read": 2.0,
+        "cache_create": 25.0,
+        "output": 75.0,
+    },
+}
+
+
+def price_api_response(
+    model: str,
+    tokens: dict[str, int],
+    *,
+    service_tier: str | None,
+    context_class: str | None,
+    on: str | None = None,
+) -> ApiEquivalentPrice:
+    """Price one response only when every pricing dimension is evidenced."""
+    buckets = ("input", "output", "cache_read", "cache_create")
+    if not any(int(tokens.get(name, 0) or 0) for name in buckets):
+        return ApiEquivalentPrice(None, "no_usage")
+    if model not in {key[0] for key in _OPENAI_API_RATES}:
+        return ApiEquivalentPrice(None, "unknown_model")
+    if service_tier is None or context_class is None:
+        return ApiEquivalentPrice(None, "unknown_tier")
+    try:
+        effective_on = date.fromisoformat(on) if on is not None else None
+    except ValueError:
+        return ApiEquivalentPrice(None, "unknown_tier")
+    valid_from, valid_through = _OPENAI_API_RATE_WINDOWS[model]
+    if effective_on is None or not (valid_from <= effective_on <= valid_through):
+        return ApiEquivalentPrice(None, "unknown_tier")
+    rates = _OPENAI_API_RATES.get((model, service_tier, context_class))
+    if rates is None:
+        return ApiEquivalentPrice(None, "unknown_tier")
+    amount = sum(int(tokens.get(name, 0) or 0) * rate for name, rate in rates.items())
+    return ApiEquivalentPrice(
+        amount / 1_000_000,
+        "priced",
+        ApiPriceBasis("openai", service_tier, "USD", _OPENAI_API_RATE_VERSION),
+    )
+
 
 # Rates are per million tokens, from Anthropic's published table.
 # `cache_create` is the 5-minute write (1.25x base input); `cache_create_1h`

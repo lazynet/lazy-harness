@@ -1,8 +1,8 @@
 # Incident ledger
 
-Every verification gate in `CLAUDE.md` came from a failure the compound loop recorded more than once. `CLAUDE.md` carries the check — the thing to run. This file carries the evidence: what actually broke, and how.
+Every verification gate in `AGENTS.md` came from a failure the compound loop recorded more than once. `AGENTS.md` carries the check — the thing to run. This file carries the evidence: what actually broke, and how.
 
-The short version is in `CLAUDE.md`; this file is the expanded "why this gate exists" reference. The two are kept in the same order, so a gate's heading here matches its bullet there.
+The short version is in `AGENTS.md`; this file is the expanded "why this gate exists" reference. The two are kept in the same order, so a gate's heading here matches its bullet there.
 
 A gate whose incident is listed here is not retired. Retiring one means deleting both halves in the same commit, with the reason recorded in an ADR.
 

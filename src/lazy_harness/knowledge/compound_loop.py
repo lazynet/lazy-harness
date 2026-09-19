@@ -26,12 +26,19 @@ from pathlib import Path
 
 from lazy_harness.core.config import Config
 from lazy_harness.core.proposals import rule_lines
+from lazy_harness.knowledge.project_state import (
+    ProjectUpdate,
+    Provenance,
+    parse_project_update,
+    sync_last_session,
+)
 from lazy_harness.llm.invoke import run_inference
 
 _INTERACTIVE_MARKERS = ("permission-mode", "last-prompt")
 _INTERACTIVE_SCAN_LINES = 10
 
 _INSIGHT_PATTERN = re.compile(r"★ Insight ─+\s*\n(.*?)\n─+", re.DOTALL)
+_TRANSCRIPT_TEXT_BLOCKS = frozenset({"text", "input_text", "output_text"})
 
 
 @dataclass(frozen=True)
@@ -51,6 +58,43 @@ def _normalize_for_hash(body: str) -> str:
 
 def _content_hash(body: str) -> str:
     return hashlib.sha256(_normalize_for_hash(body).encode("utf-8")).hexdigest()[:16]
+
+
+def _transcript_message(record: object) -> tuple[str, list[str]] | None:
+    """Normalise one Claude Code or Codex transcript message."""
+    if not isinstance(record, dict):
+        return None
+    kind = record.get("type")
+    if kind in ("user", "assistant"):
+        role = kind
+        message = record.get("message")
+        if not isinstance(message, dict):
+            return None
+        content = message.get("content", "")
+    elif kind == "response_item":
+        payload = record.get("payload")
+        if not isinstance(payload, dict) or payload.get("type") != "message":
+            return None
+        role = payload.get("role")
+        if role not in ("user", "assistant"):
+            return None
+        content = payload.get("content", "")
+    else:
+        return None
+
+    if isinstance(content, str):
+        stripped = content.strip()
+        return (role, [stripped]) if stripped else None
+    if not isinstance(content, list):
+        return None
+    texts: list[str] = []
+    for block in content:
+        if not isinstance(block, dict) or block.get("type") not in _TRANSCRIPT_TEXT_BLOCKS:
+            continue
+        raw_text = block.get("text")
+        if isinstance(raw_text, str) and (text := raw_text.strip()):
+            texts.append(text)
+    return (role, texts) if texts else None
 
 
 def _assistant_text(message: dict) -> str:
@@ -292,8 +336,12 @@ def is_interactive_session(session_jsonl: Path) -> bool:
                     d = json.loads(line)
                 except (json.JSONDecodeError, ValueError):
                     continue
-                if d.get("type") in _INTERACTIVE_MARKERS:
+                if isinstance(d, dict) and d.get("type") in _INTERACTIVE_MARKERS:
                     return True
+                message = _transcript_message(d)
+                if isinstance(d, dict) and d.get("type") == "response_item" and message:
+                    if message[0] == "user":
+                        return True
         return False
     except OSError:
         return False
@@ -309,23 +357,9 @@ def _last_user_prompt(session_jsonl: Path) -> str | None:
                     d = json.loads(line)
                 except (json.JSONDecodeError, ValueError):
                     continue
-                if d.get("type") != "user":
-                    continue
-                msg = d.get("message", {})
-                content = msg.get("content", "")
-                if isinstance(content, str):
-                    text = content.strip()
-                    if text:
-                        last = text
-                elif isinstance(content, list):
-                    parts = [
-                        block.get("text", "").strip()
-                        for block in content
-                        if isinstance(block, dict) and block.get("type") == "text"
-                    ]
-                    joined = "\n".join(p for p in parts if p)
-                    if joined:
-                        last = joined
+                message = _transcript_message(d)
+                if message is not None and message[0] == "user":
+                    last = "\n".join(message[1])
     except OSError:
         return None
     return last
@@ -383,6 +417,43 @@ def _current_branch(cwd: Path) -> str:
     return result.stdout.strip()
 
 
+def repo_revision(cwd: Path) -> str:
+    """Short HEAD of the repository at `cwd`; "unknown" outside one."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    if result.returncode != 0:
+        return "unknown"
+    return result.stdout.strip() or "unknown"
+
+
+def project_name_for_cwd(cwd: Path) -> str:
+    """Canonical repository name from the common git dir, with a local fallback."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return cwd.name
+    if result.returncode != 0:
+        return cwd.name
+    common_dir = Path(result.stdout.strip())
+    return common_dir.parent.name or cwd.name
+
+
 def write_slim_handoff(
     session_jsonl: Path,
     memory_dir: Path,
@@ -435,16 +506,9 @@ def count_user_chars(session_jsonl: Path) -> int:
                     d = json.loads(line)
                 except (json.JSONDecodeError, ValueError):
                     continue
-                if d.get("type") != "user":
-                    continue
-                msg = d.get("message", {})
-                content = msg.get("content", "")
-                if isinstance(content, str):
-                    total += len(content.strip())
-                elif isinstance(content, list):
-                    for block in content:
-                        if isinstance(block, dict) and block.get("type") == "text":
-                            total += len(block.get("text", "").strip())
+                message = _transcript_message(d)
+                if message is not None and message[0] == "user":
+                    total += sum(len(text) for text in message[1])
     except OSError:
         return 0
     return total
@@ -464,22 +528,10 @@ def extract_messages(session_jsonl: Path, tail: int = 20) -> tuple[str, int]:
                     d = json.loads(line)
                 except (json.JSONDecodeError, ValueError):
                     continue
-                msg_type = d.get("type")
-                if msg_type not in ("user", "assistant"):
-                    continue
-                msg = d.get("message", {})
-                content = msg.get("content", "")
-                texts: list[str] = []
-                if isinstance(content, str) and content.strip():
-                    texts.append(content.strip())
-                elif isinstance(content, list):
-                    for block in content:
-                        if isinstance(block, dict) and block.get("type") == "text":
-                            t = block.get("text", "").strip()
-                            if t:
-                                texts.append(t)
-                if texts:
-                    role = "User" if msg_type == "user" else "Assistant"
+                message = _transcript_message(d)
+                if message is not None:
+                    msg_role, texts = message
+                    role = "User" if msg_role == "user" else "Assistant"
                     messages.append(f"## {role}\n\n{chr(10).join(texts)}")
     except OSError:
         return "", 0
@@ -845,7 +897,13 @@ Return ONLY this JSON structure (no markdown fences, no explanation):
     "reasoning": "1-2 sentences on why this grade",
     "confidence": 0.0
   }},
-  "goal_declared": false
+  "goal_declared": false,
+  "project_update": {{
+    "summary": "1-3 sentences on what this session did to the project",
+    "completed": ["concrete thing finished this session"],
+    "next": ["concrete thing left for the next session"],
+    "references": ["PR number, commit, file path or doc that anchors the above"]
+  }}
 }}
 
 Rules:
@@ -857,7 +915,8 @@ Rules:
 - handoff: concrete, actionable items left pending for the next session. NOT summaries of what was done. Only what remains to be done. If everything was resolved or it was just a Q&A, return [].
 - grade: rate the assistant's overall performance against the user's intent. quality is one of excellent|good|acceptable|poor. issues come from this fixed taxonomy: incomplete (stopped before resolving), hallucination (invented APIs/files/tools), tool_misuse (wrong tool/args/repeated failures), missed_context (ignored a stated constraint), wrong_approach (solved a different problem), inefficient (right answer, avoidable cost), none (no issues observed). Use ["none"] when quality is excellent or good. confidence is 0.0-1.0. reasoning must reference concrete evidence from the transcript.
 - goal_declared: true only if, BEFORE doing the work, the assistant stated a concrete verifiable success criterion for this session — a specific command, test, or check whose outcome would demonstrate the task is done (for example: "this is done when `pytest tests/test_foo.py` passes", or "verify by curling /health and confirming a 200"). What does NOT count: restating the user's request in different words is not a criterion; a summary of what was done written after the work is finished is not a criterion (this field asks whether a target was set before execution, not whether the result got described afterward); a vague intention such as "I'll make sure it works" or "let's get this right" is not a criterion. Use false for trivial or purely conversational sessions, or whenever no such criterion was stated.
-- Empty session or just status checks? Return {{"decisions": [], "failures": [], "learnings": [], "handoff": [], "claude_md_proposals": [], "grade": {{"quality": "good", "issues": ["none"], "reasoning": "trivial session", "confidence": 0.9}}, "goal_declared": false}}
+- project_update: a bounded snapshot of this session for the project's live readme, replaced whole on every session. summary describes what happened, in the past tense, from the project's point of view. completed lists only things actually finished and verified in the transcript; next lists only what remains. references anchor those items (PR numbers, commit hashes, file paths). Use null for a trivial or purely conversational session.
+- Empty session or just status checks? Return {{"decisions": [], "failures": [], "learnings": [], "handoff": [], "claude_md_proposals": [], "grade": {{"quality": "good", "issues": ["none"], "reasoning": "trivial session", "confidence": 0.9}}, "goal_declared": false, "project_update": null}}
 - Output ONLY the JSON object."""
 
 
@@ -1121,26 +1180,37 @@ def _name_variants(name: str) -> set[str]:
     return variants
 
 
-def resolve_prj_md(project_name: str, lazymind_dir: Path) -> Path | None:
-    """Find LazyMind/1-Projects/PRJ-<X>/PRJ-<X>.md matching project_name.
+def resolve_prj_candidates(project_name: str, lazymind_dir: Path) -> list[Path]:
+    """Every LazyMind/1-Projects/PRJ-<X>/PRJ-<X>.md matching project_name.
 
     Comparison normalises both sides to alphanumeric-only lowercase and
-    optionally strips common prefixes (lazy-, flex-, mngt-, prj-). Returns
-    None when the directory is missing or no candidate matches.
+    optionally strips common prefixes (lazy-, flex-, mngt-, prj-). Empty when
+    the directory is missing or no candidate matches.
     """
     projects_dir = lazymind_dir / "1-Projects"
     if not projects_dir.is_dir():
-        return None
+        return []
     target_variants = _name_variants(project_name)
     if not target_variants:
-        return None
-    for candidate in projects_dir.glob("PRJ-*/PRJ-*.md"):
+        return []
+    matches: list[Path] = []
+    for candidate in sorted(projects_dir.glob("PRJ-*/PRJ-*.md")):
         stem = candidate.stem
         if not stem.startswith("PRJ-"):
             continue
         if target_variants & _name_variants(stem[4:]):
-            return candidate
-    return None
+            matches.append(candidate)
+    return matches
+
+
+def resolve_prj_md(project_name: str, lazymind_dir: Path) -> Path | None:
+    """The one PRJ matching project_name; None when there is none or several.
+
+    An ambiguous match is a refusal, not a guess (ADR-062): writing into the
+    first of two candidates would put a session snapshot in the wrong project.
+    """
+    candidates = resolve_prj_candidates(project_name, lazymind_dir)
+    return candidates[0] if len(candidates) == 1 else None
 
 
 def _grade_warrants_backlog_entry(grade: dict) -> bool:
@@ -1166,7 +1236,9 @@ def append_grade_to_prj_backlog(
     warrants escalation. Returns True if an entry was written, False otherwise.
 
     Best-effort: returns False (without raising) when the section is missing or
-    the file cannot be parsed."""
+    the file cannot be parsed. One item per session: a reprocessed session
+    that already escalated is a no-op. A write bumps frontmatter `updated`
+    (ADR-062)."""
     if not _grade_warrants_backlog_entry(grade):
         return False
     try:
@@ -1178,6 +1250,11 @@ def append_grade_to_prj_backlog(
     issues = [i for i in grade.get("issues", []) if i and i != "none"]
     issues_str = ", ".join(issues) if issues else "none"
     short_id = session_id[:8] if session_id else "unknown"
+    if any(
+        "Session quality regression" in line and f"session {short_id}," in line
+        for line in text.splitlines()
+    ):
+        return False
     reasoning = grade.get("reasoning", "").strip() or "no reasoning given"
     item = (
         f"- [ ] **Session quality regression — {reasoning}** "
@@ -1203,16 +1280,26 @@ def append_grade_to_prj_backlog(
         break
     if not inserted:
         return False
-    _atomic_write(prj_md, "".join(out))
+    from lazy_harness.knowledge.project_state import bump_updated
+
+    _atomic_write(prj_md, bump_updated("".join(out), date_str))
     return True
 
 
 class TaskOutcome:
     """Result of processing a single task — pure data for logging and tests."""
 
-    def __init__(self, skipped: str | None = None, wrote: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        skipped: str | None = None,
+        wrote: list[str] | None = None,
+        notes: list[str] | None = None,
+    ) -> None:
         self.skipped = skipped
         self.wrote = wrote or []
+        # Named refusals of optional side effects (ADR-062): the task was
+        # processed, one write was declined, and the log says why.
+        self.notes = notes or []
 
     @property
     def was_processed(self) -> bool:
@@ -1295,6 +1382,44 @@ def _record_agent_dispatches(session_jsonl: Path, *, session_id: str, cwd: str) 
         pass
 
 
+def publish_project_state(
+    data: dict,
+    *,
+    lazymind_dir: str | None,
+    project_name: str,
+    cwd: str,
+    session_id: str,
+    timestamp: str,
+) -> tuple[str | None, str | None]:
+    """Apply the result's `project_update` to the one matching PRJ (ADR-062).
+
+    Returns `(wrote, note)`: at most one is set. Every refusal is a named
+    no-op; nothing here raises past the caller's fail-soft guard.
+    """
+    if not lazymind_dir:
+        return None, "project_update skipped: lazymind_dir unset"
+    update: ProjectUpdate | None = parse_project_update(data.get("project_update"))
+    if update is None:
+        return None, "project_update skipped: absent or invalid project_update in result"
+    candidates = resolve_prj_candidates(project_name, Path(lazymind_dir))
+    if not candidates:
+        return None, f"project_update skipped: no PRJ matches {project_name!r}"
+    if len(candidates) > 1:
+        names = ", ".join(c.name for c in candidates)
+        return None, f"project_update skipped: ambiguous PRJ for {project_name!r} ({names})"
+    prj_md = candidates[0]
+    provenance = Provenance(
+        session_id=session_id,
+        timestamp=timestamp,
+        revision=repo_revision(Path(cwd)) if cwd else "unknown",
+    )
+    date_str = timestamp[:10] if len(timestamp) >= 10 else "unknown"
+    result = sync_last_session(prj_md, update, provenance, date_str=date_str)
+    if result.written:
+        return f"project: {prj_md.name}", None
+    return None, f"project_update skipped: {result.reason}"
+
+
 def process_task(
     task_file: Path,
     cfg: Config,
@@ -1341,7 +1466,7 @@ def process_task(
     existing_failures = collect_existing_failures(memory_dir)
     existing_learnings = collect_existing_learnings(learnings_dir)
 
-    project_name = os.path.basename(cwd)
+    project_name = project_name_for_cwd(Path(cwd))
     prompt = build_prompt(
         project_name,
         cwd,
@@ -1386,6 +1511,23 @@ def process_task(
     if persisted_insights:
         wrote.append(f"insights: {len(persisted_insights)}")
 
+    notes: list[str] = []
+    try:
+        project_wrote, project_note = publish_project_state(
+            data,
+            lazymind_dir=cl.lazymind_dir,
+            project_name=project_name,
+            cwd=cwd,
+            session_id=session_id,
+            timestamp=timestamp,
+        )
+    except Exception as e:  # noqa: BLE001 — a PRJ write must not lose the rest of the task
+        project_wrote, project_note = None, f"project_update failed: {e}"
+    if project_wrote:
+        wrote.append(project_wrote)
+    if project_note:
+        notes.append(project_note)
+
     grade = data.get("grade")
     if cl.grading_enabled and isinstance(grade, dict) and cl.lazymind_dir:
         prj_md = resolve_prj_md(project_name, Path(cl.lazymind_dir))
@@ -1394,7 +1536,7 @@ def process_task(
             if append_grade_to_prj_backlog(prj_md, grade, date_str, session_id):
                 wrote.append(f"backlog: {prj_md.name}")
 
-    return TaskOutcome(wrote=wrote)
+    return TaskOutcome(wrote=wrote, notes=notes)
 
 
 def move_to_done(queue_dir: Path, task_file: Path) -> None:

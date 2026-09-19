@@ -12,10 +12,11 @@ A change qualifies for the short-path only when **every** item below is true:
 
 1. **Paths touched are a subset of the allowlist:**
    - `docs/**` (published MkDocs site, excluding `mkdocs.yml`)
+   - `reports/**` (point-in-time analysis and verification reports)
    - `specs/**` except the exclusions below
    - `README.md` (repo root)
 2. **No excluded path is touched:**
-   - `CLAUDE.md` (agent contract)
+   - `AGENTS.md` and `CLAUDE.md` (agent contract)
    - `specs/workflow/**` (process rules)
    - `specs/adrs/**` (accepted decisions)
    - `specs/archive/**` (frozen history — editing it is already forbidden)
@@ -24,7 +25,7 @@ A change qualifies for the short-path only when **every** item below is true:
    - `src/**`, `tests/**`
    - `pyproject.toml`, `uv.lock`
    - `.github/**`
-3. **Commit type is `docs(...)` or `chore(...)`** — both are ignored by release-please, so no accidental version bump can originate from a short-path commit.
+3. **Commit type is `docs(...)` or `chore(...)`.** `docs:` is visible to release-please and can trigger a patch release. `chore:` is hidden from the changelog; a hidden-only release has not been measured. Follow [release-flow.md](release-flow.md) and plan a docs-only push to `main` accordingly.
 4. **If `docs/**` is touched, `uv run --frozen --group docs mkdocs build --strict` passes locally.**
 5. **The diff is self-contained** — no paired code change lives in another uncommitted edit. Mixed changes always take the full flow.
 
@@ -51,7 +52,7 @@ No branch, no worktree, no PR.
 
 | Path                      | Why it is excluded                                                                                 |
 |---------------------------|----------------------------------------------------------------------------------------------------|
-| `CLAUDE.md`               | Defines how agents behave in this repo. A change here changes the contract; review is mandatory.   |
+| `AGENTS.md`, `CLAUDE.md`  | Define how agents behave in this repo. A change here changes the contract; review is mandatory.    |
 | `specs/workflow/**`       | Defines the contributor process itself. Changing it through the process it governs is the point.  |
 | `specs/adrs/**`           | Decisions of record. PR history is part of the decision audit trail.                              |
 | `mkdocs.yml`              | Misconfiguration breaks the public site build; deserves a CI run behind a PR.                     |

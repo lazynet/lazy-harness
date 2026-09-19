@@ -441,6 +441,12 @@ class TranscriptEvent:
     """tool_calls: the provider's own id, which pairs a call with its result."""
     usage: TokenUsage | None = None
     """token_usage."""
+    context_class: str | None = None
+    """token_usage: an explicit provider pricing class such as short or long.
+
+    Readers leave this absent when the provider reports only token counts or a
+    context-window size.  Consumers must not infer an unpublished boundary.
+    """
     model: str | None = None
     """token_usage / messages: the model that produced the turn, as the provider
     names it. `None` where the transcript does not disclose it — which is a
@@ -632,6 +638,16 @@ class AgentAdapter(Protocol):
 
         Return None if the agent does not use a global symlink convention.
         `lh deploy` only creates the symlink when this is non-None.
+        """
+        ...
+
+    def skill_root(self, profile_config_dir: str) -> Path | None:
+        """Native directory where this agent discovers skill directories.
+
+        The capability is deliberately narrower than a generic asset mapping:
+        commands and subagent definitions keep their native formats and stay
+        in their agent segment.  Return ``None`` when no discovery root has
+        been measured or when the runtime has disabled it.
         """
         ...
 

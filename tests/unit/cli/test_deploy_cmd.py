@@ -16,6 +16,40 @@ STEPS = (
 )
 
 
+@pytest.mark.parametrize("args", [[], ["--profile", "one"]])
+def test_deploy_reports_corrupt_skill_ledger_before_snapshot_or_writes(
+    home_dir: Path, args: list[str]
+) -> None:
+    from click.testing import CliRunner
+
+    from lazy_harness.cli.main import cli
+    from lazy_harness.core.config import Config, ProfileEntry, save_config
+    from lazy_harness.core.paths import config_dir, config_file
+    from lazy_harness.deploy.skills import SKILL_LEDGER_RELATIVE
+
+    cfg = Config()
+    cfg.profiles.default = "one"
+    cfg.profiles.items = {"one": ProfileEntry(config_dir=str(home_dir / ".one"), agent="codex")}
+    save_config(cfg, config_file())
+    source = config_dir() / "profiles" / "one" / "shared" / "skills" / "portable"
+    source.mkdir(parents=True)
+    (source / "SKILL.md").write_text("body")
+    ledger = home_dir / ".agents" / SKILL_LEDGER_RELATIVE
+    ledger.parent.mkdir(parents=True)
+    ledger.write_text("{broken")
+
+    result = CliRunner().invoke(cli, ["deploy", *args])
+
+    assert result.exit_code == 1
+    assert "Error:" in result.output
+    assert str(ledger) in result.output
+    assert "Restore" in result.output
+    assert "Snapshot:" not in result.output
+    assert not (home_dir / ".one").exists()
+    assert not (home_dir / ".agents" / "skills").exists()
+    assert ledger.read_text() == "{broken"
+
+
 def _record_calls(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
     """Replace each deploy step with a recorder of the `only` it received."""
     from lazy_harness.cli import deploy_cmd
@@ -207,4 +241,32 @@ def test_an_adapter_that_cannot_plan_config_exits_nonzero(
 
     assert result.exit_code != 0
     assert "plannerless" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_a_skill_collision_exits_nonzero_without_a_traceback(home_dir: Path) -> None:
+    from click.testing import CliRunner
+
+    from lazy_harness.cli.main import cli
+    from lazy_harness.core.config import Config, ProfileEntry, save_config
+    from lazy_harness.core.paths import config_dir
+
+    profiles = config_dir() / "profiles"
+    for name, body in (("one", "one"), ("two", "two")):
+        skill = profiles / name / "codex" / "skills" / "same"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text(body)
+    cfg = Config()
+    cfg.profiles.default = "one"
+    cfg.profiles.items = {
+        name: ProfileEntry(config_dir=str(home_dir / f".{name}"), agent="codex")
+        for name in ("one", "two")
+    }
+    save_config(cfg, config_dir() / "config.toml")
+
+    result = CliRunner().invoke(cli, ["deploy"])
+
+    assert result.exit_code != 0
+    assert "same" in result.output
+    assert "different content" in result.output
     assert "Traceback" not in result.output

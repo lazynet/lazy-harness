@@ -21,6 +21,10 @@ from lazy_harness.core.config import Config, ProfileEntry
 from lazy_harness.core.paths import config_dir, expand_path
 from lazy_harness.deploy.ledger import owned_links, prune_unowned, write_ledger
 from lazy_harness.deploy.segments import resolve_segments
+from lazy_harness.deploy.skills import (
+    apply_skill_projections,
+    plan_skill_projections,
+)
 from lazy_harness.deploy.symlinks import ensure_symlink
 from lazy_harness.hooks.loader import HookInfo
 from lazy_harness.hooks.signal_gaps import HookSignalGap
@@ -246,7 +250,30 @@ def deploy_profiles(cfg: Config, *, only: str | None = None) -> None:
         click.echo("No profiles directory found. Run: lh init")
         return
 
-    for name, entry in selected_profiles(cfg, only).items():
+    selected = selected_profiles(cfg, only)
+    agent_names = list_agents()
+    adapters = {name: agent_for_profile(cfg, name) for name in selected}
+    profile_plans = {}
+    for name in selected:
+        src_dir = profiles_src / name
+        if not src_dir.is_dir():
+            continue
+        profile_plans[name] = resolve_segments(
+            src_dir, adapters[name].name, agent_names=agent_names
+        )
+
+    # The Codex root is global, so every selected profile has to be compared
+    # before the first target directory or link is created.  This also checks
+    # user-owned entries: unlike ADR-052's per-profile first-run migration,
+    # the global catalog is never adopted by inference.
+    skill_plan = plan_skill_projections(
+        selected,
+        profiles_src,
+        adapters,
+        narrowed=only is not None,
+    )
+
+    for name, entry in selected.items():
         src_dir = profiles_src / name
         if not src_dir.is_dir():
             click.echo(f"  · Profile '{name}' has no content dir at {src_dir}")
@@ -255,9 +282,9 @@ def deploy_profiles(cfg: Config, *, only: str | None = None) -> None:
         target_dir = expand_path(entry.config_dir)
         target_dir.mkdir(parents=True, exist_ok=True)
 
-        agent = agent_for_profile(cfg, name)
-        plan = resolve_segments(src_dir, agent.name, agent_names=list_agents())
-        generated = {link.relative for link in plan.links}
+        plan = profile_plans[name]
+        links = [link for link in plan.links if link.relative.parts[0] != "skills"]
+        generated = {link.relative for link in links}
 
         owned, adopted = owned_links(target_dir, src_dir)
         if adopted and owned:
@@ -273,13 +300,15 @@ def deploy_profiles(cfg: Config, *, only: str | None = None) -> None:
             click.echo(f"  ✗ {name}/{stale} (no longer generated)")
 
         for collision in plan.collisions:
+            if collision.relative.parts[0] == "skills":
+                continue
             click.echo(
                 f"  · {name}/{collision.relative}: "
                 f"{_segment_label(collision.winner, src_dir)} wins over "
                 f"{_segment_label(collision.shadowed, src_dir)}"
             )
 
-        for link in plan.links:
+        for link in links:
             _clear_linked_parents(target_dir, link.relative)
             status = ensure_symlink(link.source, target_dir / link.relative)
             if status == "exists":
@@ -288,6 +317,13 @@ def deploy_profiles(cfg: Config, *, only: str | None = None) -> None:
                 click.echo(f"  ✓ {name}/{link.relative}")
 
         write_ledger(target_dir, generated)
+
+    for profile, agent_name in skill_plan.omissions:
+        click.echo(
+            f"  · skills omitted in '{profile}': agent '{agent_name}' declares no native skill root"
+        )
+    for line in apply_skill_projections(skill_plan, profiles_src):
+        click.echo(line)
 
 
 def _plural(count: int, singular: str, plural: str) -> str:

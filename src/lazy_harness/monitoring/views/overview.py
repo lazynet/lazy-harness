@@ -57,8 +57,11 @@ def render(ctx: StatusContext, db: MetricsDB | None) -> RenderableType:
             "out": 0,
             "cache_read": 0,
             "cache_create": 0,
-            "cost": 0.0,
-            "billing_models": set(),
+            "billed_cost": 0.0,
+            "api_equivalent_cost": 0.0,
+            "rows": 0,
+            "billed_covered": 0,
+            "api_covered": 0,
         }
         for name in profile_order
     }
@@ -77,8 +80,15 @@ def render(ctx: StatusContext, db: MetricsDB | None) -> RenderableType:
                 bucket["out"] = int(bucket["out"]) + r["output"]
                 bucket["cache_read"] = int(bucket["cache_read"]) + (r["cache_read"] or 0)
                 bucket["cache_create"] = int(bucket["cache_create"]) + (r["cache_create"] or 0)
-                bucket["cost"] = float(bucket["cost"]) + r["cost"]
-                bucket["billing_models"].add(r.get("billing_model") or "per_token")  # type: ignore[union-attr]
+                bucket["rows"] = int(bucket["rows"]) + 1
+                if r.get("billed_cost") is not None:
+                    bucket["billed_cost"] = float(bucket["billed_cost"]) + r["billed_cost"]
+                    bucket["billed_covered"] = int(bucket["billed_covered"]) + 1
+                if r.get("api_equivalent_cost") is not None:
+                    bucket["api_equivalent_cost"] = (
+                        float(bucket["api_equivalent_cost"]) + r["api_equivalent_cost"]
+                    )
+                    bucket["api_covered"] = int(bucket["api_covered"]) + 1
 
     month_label = datetime.now().strftime("%b")
 
@@ -89,14 +99,21 @@ def render(ctx: StatusContext, db: MetricsDB | None) -> RenderableType:
         label: str,
         tin: int,
         tout: int,
-        cost: float,
+        billed: float,
+        api_equivalent: float,
+        rows: int,
+        billed_covered: int,
+        api_covered: int,
         *,
-        all_flat: bool = False,
         priced_only: bool = False,
     ) -> str:
-        cost_cell = "—" if all_flat else f"${round(cost, 2)}"
+        billed_cell = _money(billed, billed_covered, rows)
+        api_cell = _money(api_equivalent, api_covered, rows)
         suffix = f"{month_label}, priced only" if priced_only else month_label
-        return f"{label:<5} {_fmt(tin)} in · {_fmt(tout)} out · {cost_cell} ({suffix})"
+        return (
+            f"{label:<5} {_fmt(tin)} in · {_fmt(tout)} out · "
+            f"billed {billed_cell} · API-equivalent {api_cell} ({suffix})"
+        )
 
     # Kept off the Tokens row on purpose. That row reports raw input alone, to
     # match how ccusage and Anthropic's billing bucket them, which leaves the
@@ -117,8 +134,11 @@ def render(ctx: StatusContext, db: MetricsDB | None) -> RenderableType:
     all_out = 0
     all_cache_read = 0
     all_cache_create = 0
-    all_cost = 0.0
-    all_billing_models: set[str] = set()
+    all_billed = 0.0
+    all_api = 0.0
+    all_rows = 0
+    all_billed_covered = 0
+    all_api_covered = 0
     for name in profile_order:
         b = per_profile[name]
         today_set = b["today"]  # type: ignore[assignment]
@@ -127,14 +147,16 @@ def render(ctx: StatusContext, db: MetricsDB | None) -> RenderableType:
         session_rows.append(
             _sess_line(f"{name}:", len(today_set), len(month_set), len(total_set))  # type: ignore[arg-type]
         )
-        billing_models = b["billing_models"]  # type: ignore[assignment]
         token_rows.append(
             _tok_line(
                 f"{name}:",
                 int(b["in"]),
                 int(b["out"]),
-                float(b["cost"]),
-                all_flat=billing_models == {"flat_rate"},  # type: ignore[comparison-overlap]
+                float(b["billed_cost"]),
+                float(b["api_equivalent_cost"]),
+                int(b["rows"]),
+                int(b["billed_covered"]),
+                int(b["api_covered"]),
             )
         )
         cache_rows.append(_cache_line(f"{name}:", int(b["cache_read"]), int(b["cache_create"])))
@@ -145,8 +167,11 @@ def render(ctx: StatusContext, db: MetricsDB | None) -> RenderableType:
         all_out += int(b["out"])
         all_cache_read += int(b["cache_read"])
         all_cache_create += int(b["cache_create"])
-        all_cost += float(b["cost"])
-        all_billing_models |= billing_models  # type: ignore[arg-type]
+        all_billed += float(b["billed_cost"])
+        all_api += float(b["api_equivalent_cost"])
+        all_rows += int(b["rows"])
+        all_billed_covered += int(b["billed_covered"])
+        all_api_covered += int(b["api_covered"])
 
     if len(profile_order) > 1:
         session_rows.append(_sess_line("all:", len(all_today), len(all_month), len(all_total)))
@@ -155,15 +180,18 @@ def render(ctx: StatusContext, db: MetricsDB | None) -> RenderableType:
                 "all:",
                 all_in,
                 all_out,
-                all_cost,
-                all_flat=all_billing_models == {"flat_rate"},
-                priced_only="flat_rate" in all_billing_models and "per_token" in all_billing_models,
+                all_billed,
+                all_api,
+                all_rows,
+                all_billed_covered,
+                all_api_covered,
+                priced_only=0 < all_billed_covered < all_rows,
             )
         )
         cache_rows.append(_cache_line("all:", all_cache_read, all_cache_create))
     elif not profile_order:
         session_rows.append(_sess_line("", 0, 0, 0))
-        token_rows.append(_tok_line("", 0, 0, 0.0))
+        token_rows.append(_tok_line("", 0, 0, 0.0, 0.0, 0, 0, 0))
         cache_rows.append(_cache_line("", 0, 0))
 
     session_val = session_rows
@@ -252,6 +280,13 @@ def _fmt(n: int) -> str:
     if n >= 1_000:
         return f"{n / 1_000:.1f}K"
     return str(n)
+
+
+def _money(amount: float, covered: int, rows: int) -> str:
+    if covered == 0:
+        return "—"
+    rendered = f"${round(amount, 2)}"
+    return rendered if covered == rows else f"{rendered} ({covered}/{rows})"
 
 
 def _build_panel(items: list[tuple[str, object]]) -> Panel:

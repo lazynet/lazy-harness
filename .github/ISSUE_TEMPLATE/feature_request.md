@@ -21,7 +21,7 @@ perspective? Sketch the CLI, config, or behaviour if you can. -->
 <!-- Other approaches you thought about and why you think this one is
 better. This is the most important section for non-trivial requests —
 the maintainer will weigh this against the committed themes in
-`docs/roadmap.md` and the `What NOT to do` rules in `CLAUDE.md`
+`docs/roadmap.md` and the `What NOT to do` rules in `AGENTS.md`
 (especially "no abstractions for hypothetical future needs"). -->
 
 ## Relation to the roadmap

@@ -9,7 +9,8 @@ If the numbers look empty or stale, the problem is upstream — see
 first place.
 
 !!! note "`lh status tokens` vs `lh metrics status`"
-    These sound alike and do different things. `lh status tokens` reports spend.
+    These sound alike and do different things. `lh status tokens` reports billed
+    spend separately from an API-equivalent comparison.
     `lh metrics status` reports **delivery**: how many events are queued, in
     flight, or already shipped to each configured remote sink. If you are asking
     "what did this cost", you want `lh status tokens`.
@@ -48,18 +49,20 @@ lh status tokens --by profile --period all
 By: profile | Period: All time | 3411 sessions
 
 ┏━━━━━━━━━━┳━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━━━┓
-┃Profile   ┃    In ┃   Out ┃ Cache% ┃     Cost┃
+┃Profile   ┃    In ┃   Out ┃ Cache% ┃ Billed cost┃ API-equivalent cost┃
 ┡━━━━━━━━━━╇━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━━━┩
-│personal  │  3.5G │ 19.8M │    95% │ $2407.45│
-│work      │  6.8G │ 45.8M │    95% │ $5540.77│
+│personal  │  3.5G │ 19.8M │    95% │ $2407.45│ —                  │
+│work      │  6.8G │ 45.8M │    95% │ $5540.77│ —                  │
 ├──────────┼───────┼───────┼────────┼─────────┤
-│Total     │ 10.3G │ 65.5M │    95% │ $7948.22│
+│Total     │ 10.3G │ 65.5M │    95% │ $7948.22│ —                  │
 └──────────┴───────┴───────┴────────┴─────────┘
 ```
 
 `In` is the sum of prompt tokens and both cache buckets; `Cache%` is the share
 of that figure served from cache reads, which is the number to watch — a high
-cache rate is most of what keeps the cost column down.
+cache rate is most of what keeps the billed-cost column down. API-equivalent
+cost is a separate public-list-price comparison and is never presented as an
+invoice.
 
 ### How is spend trending, split by profile?
 
@@ -70,13 +73,13 @@ lh status tokens --by month --by profile --period all
 Two dimensions, so the table adds a subtotal row per month:
 
 ```
-┃Month   ┃ Profile  ┃    In ┃   Out ┃ Cache% ┃     Cost┃
-│2026-07 │ personal │ 425M  │  3.4M │    93% │  $271.14│
-│2026-07 │ work     │  2.2G │ 15.3M │    95% │ $1872.82│
-│2026-07 │ subtotal │  2.7G │ 18.7M │    95% │ $2143.97│
-│2026-08 │ personal │  2.3G │ 11.3M │    96% │ $1472.50│
-│2026-08 │ work     │  1.4G │  7.2M │    97% │  $987.38│
-│2026-08 │ subtotal │  3.7G │ 18.5M │    96% │ $2459.88│
+┃Month   ┃ Profile  ┃    In ┃   Out ┃ Cache% ┃ Billed cost┃ API-equivalent cost┃
+│2026-07 │ personal │ 425M  │  3.4M │    93% │     $271.14│ —                  │
+│2026-07 │ work     │  2.2G │ 15.3M │    95% │    $1872.82│ —                  │
+│2026-07 │ subtotal │  2.7G │ 18.7M │    95% │    $2143.97│ —                  │
+│2026-08 │ personal │  2.3G │ 11.3M │    96% │    $1472.50│ —                  │
+│2026-08 │ work     │  1.4G │  7.2M │    97% │     $987.38│ —                  │
+│2026-08 │ subtotal │  3.7G │ 18.5M │    96% │    $2459.88│ —                  │
 ```
 
 Subtotals key on the **first** dimension, so swapping the flag order to
@@ -125,6 +128,11 @@ lh status tokens --by profile --by model --period month --json
       "cache_create": 90000000,
       "cache_pct": 98,
       "cost": 1350.81,
+      "billed_cost": 1350.81,
+      "billed_coverage": {"priced": 1, "rows": 1},
+      "api_equivalent_cost": null,
+      "api_equivalent_coverage": {"priced": 0, "rows": 1},
+      "api_equivalent_statuses": ["unknown_model"],
       "sessions": 412
     }
   ],
@@ -133,7 +141,10 @@ lh status tokens --by profile --by model --period month --json
 }
 ```
 
-`groups`, `subtotals`, and `total` all carry the same measure fields. `key` is
+`groups`, `subtotals`, and `total` all carry the same measure fields. The
+legacy `cost` key remains a billed-cost alias for v3 consumers; new consumers
+should use `billed_cost` and `api_equivalent_cost` with their coverage objects.
+`key` is
 absent on `total` and holds only the first dimension on each subtotal entry.
 `subtotals` is an empty list when fewer than two dimensions were requested.
 
@@ -153,19 +164,28 @@ subscription — a ChatGPT-plan Codex login, for example — where the
 per-token table has nothing to say about cost. `lh status` renders that
 distinction rather than guessing past it:
 
-| `billing_model` | Model has a rate | Renders as | `cost_source` |
+| `billing_model` | Billed cost | API-equivalent cost | billed source |
 | --- | --- | --- | --- |
-| `per_token` | yes | the dollar amount | `pricing` |
-| `per_token` | no | `unknown_models` warning on `lh metrics ingest`, model named | `null` |
-| `flat_rate` | yes or no | `—` (never `$0.00`) | `subscription` |
+| `per_token` | amount when priced | independently priced or null | `pricing` or `unknown` |
+| `flat_rate` | `—` (never `$0.00`) | independently priced or null | `subscription` |
 
-A `flat_rate` row short-circuits pricing entirely, so a model with no entry
+A `flat_rate` row short-circuits billed pricing entirely, so a model with no entry
 in `DEFAULT_PRICING` never falls into the `per_token` / no-rate row above —
 the subscription already paid for the usage, and reporting `$0.00` would
-read as free rather than unmetered. A group or total mixing both billing
-models is relabelled `Total (priced only)` rather than silently summing a
-subscription profile's real tokens into a number that looks like total
-spend.
+read as free rather than unmetered. A group or total with partial coverage
+prints the priced-row count beside the amount rather than silently presenting
+it as complete. API-equivalent pricing is performed per response. The captured Codex
+evidence does not establish the official short/long context boundary, so those
+responses fail closed as `unknown_tier` until a reader can provide an explicit
+context class. None of the shipped transcript readers supplies that class,
+so locally ingested API-equivalent cost currently has zero priced coverage:
+every amount is null and the CLI shows `—`. The pricing tables alone do not
+provide live coverage. `codex-auto-review` has no public price row and remains
+`unknown_model`; it is not aliased to another model. The captured Sol table is
+valid from 2026-09-19 through its evidenced promotional horizon of 2026-11-21.
+Astra was observed only on 2026-09-19, so other Astra dates fail closed.
+Missing, malformed, or out-of-window response dates also fail closed instead
+of treating a point-in-time snapshot as permanent pricing.
 
 **Codex today**: the reader's `turn_context` line declares `gpt-5-codex`
 (measured 2026-09-17), which carries no `DEFAULT_PRICING` entry. The
@@ -185,13 +205,13 @@ lh status tokens --by profile
 By: profile | Period: September 2026 | 2488 sessions
 
 ┏━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━━━┓
-┃Profile             ┃     In ┃   Out ┃ Cache% ┃     Cost┃
+┃Profile             ┃     In ┃   Out ┃ Cache% ┃ Billed cost┃ API-equivalent cost┃
 ┡━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━━━┩
-│work                │   5.1G │ 22.6M │    97% │  $3212.9│
-│personal            │   5.4G │ 26.2M │    97% │ $3716.73│
-│lazy-codex          │ 222.9K │   153 │    43% │        —│
+│work                │   5.1G │ 22.6M │    97% │    $3212.9│ —                  │
+│personal            │   5.4G │ 26.2M │    97% │   $3716.73│ —                  │
+│lazy-codex          │ 222.9K │   153 │    43% │          —│ —                  │
 ├────────────────────┼────────┼───────┼────────┼─────────┤
-│Total (priced only) │  10.4G │ 48.9M │    97% │ $6929.63│
+│Total               │  10.4G │ 48.9M │    97% │ $6929.63 (2/3)│ —              │
 └────────────────────┴────────┴───────┴────────┴─────────┘
 ```
 
@@ -215,10 +235,10 @@ Sessions  personal: 4 today · 1315 this month · 4013 total
           work: 181 today · 1168 this month · 3907 total
           lazy-codex: 5 today · 5 this month · 5 total
           all:  190 today · 2488 this month · 7925 total
-Tokens    personal: 79.0K in · 26.2M out · $3716.73 (Sep)
-          work: 68.4K in · 22.6M out · $3212.9 (Sep)
-          lazy-codex: 126.6K in · 153 out · — (Sep)
-          all:  274.0K in · 48.9M out · $6929.63 (Sep, priced only)
+Tokens    personal: 79.0K in · 26.2M out · billed $3716.73 · API-equivalent — (Sep)
+          work: 68.4K in · 22.6M out · billed $3212.9 · API-equivalent — (Sep)
+          lazy-codex: 126.6K in · 153 out · billed — · API-equivalent — (Sep)
+          all: 274.0K in · 48.9M out · billed $6929.63 (2/3) · API-equivalent — (Sep)
 Cache     personal: 5.2G read · 116.9M write
           work: 4.9G read · 112.8M write
           lazy-codex: 96.4K read · 0 write
@@ -285,7 +305,7 @@ visibly short of the table's `5.4G`, and that gap is expected, not a defect:
 each of the three figures is independently rounded to one decimal at its own
 magnitude (K, M, or G) before display, so summing three already-rounded
 numbers does not reproduce a total that was rounded once, from the unrounded
-per-token sum, on the table's side. `Out` and `Cost` do not have this split —
+per-token sum, on the table's side. `Out` and `Billed cost` do not have this split —
 both views agree on them exactly (`26.2M` and `$3716.73`) — which is the
 evidence that the `In` gap is a definition difference, not the two commands
 reading different data.

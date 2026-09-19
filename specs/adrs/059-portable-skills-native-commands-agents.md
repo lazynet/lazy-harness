@@ -1,7 +1,10 @@
 # ADR-059: Portable skills are projected; commands and agents remain native
 
-**Status:** accepted-deferred
+**Status:** accepted
 **Date:** 2026-09-19
+**Implemented:** 2026-09-19 — adapters declare `skill_root()`, deploy plans native-root
+projections across the selected profiles before writing, and
+`deploy/skills.py` owns per-skill links and their cleanup ledger.
 **Supersedes:** —
 **Superseded by:** —
 **Related:** ADR-043 (system docs by role), ADR-052 (profile assets per agent)
@@ -69,18 +72,18 @@ permissions, lifecycle, and wire format are part of the definition; translating
 the filename while leaving those semantics unresolved would create a portable
 looking asset that behaves differently.
 
-## Deferral trigger
+## Implementation trigger and rollout gate
 
-The decision is locked, but implementation waits until a profile-owned skill
-must run under a non-Claude profile. The current Codex catalog is already
-managed directly at `~/.agents/skills`, while current profile-owned skills are
-intentionally under `claude-code/skills`; moving either before that trigger
-would add a second owner without changing a running profile.
+The trigger was met on 2026-09-19: `lazymind-projects` is a profile-owned skill
+required by the shared project-state workflow, but it existed only under the
+Claude Code profile and was absent from the Codex catalog. Wave 1 implements
+the projection, including two profiles claiming one global name and refusal
+before the first write.
 
-At implementation time the acceptance test must use the installed Codex binary
-and `codex debug prompt-input` in both directions: the projected skill appears,
-then disappears when its link is removed. It must also exercise two profiles
-claiming one global name and prove the deploy refuses before the first write.
+The pre-implementation installed Codex probe established discovery in both
+directions. The post-release rollout repeats `codex debug prompt-input` against
+a skill projected by the installed harness, then removes the owned link and
+proves it disappears. That binary-first probe cannot run from this worktree.
 
 If Codex removes host discovery or defaults
 `skip_host_skill_discovery = true`, its adapter returns no root and deploy names
@@ -112,6 +115,5 @@ not documented as stable.
   are interchangeable.
 - Existing `claude-code/commands/`, `claude-code/skills/`, and future agent
   definitions remain valid during the deferral.
-- Implementation will widen the adapter and deploy planner only for skill
-  placement; it will not introduce a general asset translation framework.
-
+- Implementation widens the adapter and deploy planner only for skill
+  placement; it does not introduce a general asset translation framework.

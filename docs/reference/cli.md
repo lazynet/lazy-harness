@@ -669,6 +669,32 @@ lh profile sync-system-doc
 lh profile migrate lazy --dry-run
 ```
 
+## `lh repo`
+
+Checks on a repository's own instruction files.
+
+### `lh repo instructions`
+
+```bash
+lh repo instructions            # the current repository
+lh repo instructions ../other   # any path
+```
+
+Verifies the portable instruction contract: root `AGENTS.md` exists and no
+`CLAUDE.md` shadows its parent-chain discovery. Agent-specific guidance lives
+in labelled sections of `AGENTS.md`, so root and nested sessions receive the
+same contract in Claude Code and Codex.
+
+Two findings, each naming the file to change:
+
+| Code | Meaning |
+| --- | --- |
+| `missing-agents-md` | No root `AGENTS.md` exists, so repository rules are not portable. |
+| `claude-md-shadows-agents` | A `CLAUDE.md` prevents Claude Code from walking the parent `AGENTS.md` chain. |
+
+Exit code 0 when the tree is clean, 1 with one line per finding — so it works as
+a CI step, not only as a local convenience.
+
 ## `lh run`
 
 Resolves the right profile for the current directory (or `--profile <name>`), sets the agent's config-dir env var, and execs the agent binary with all remaining args. This is the canonical way to launch the agent through the harness.

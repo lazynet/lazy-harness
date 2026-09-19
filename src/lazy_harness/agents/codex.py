@@ -34,6 +34,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import tomllib
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
@@ -621,6 +622,25 @@ class CodexAdapter:
 
     def config_dir(self, profile_config_dir: str) -> Path:
         return expand_path(profile_config_dir)
+
+    def skill_root(self, profile_config_dir: str) -> Path | None:
+        """The host catalog observed on Codex 0.154.0 (ADR-059).
+
+        Codex can explicitly disable host discovery in its feature table.  A
+        malformed config is handled later by the config planner; it does not
+        turn an unreadable opt-out into an asserted capability here.
+        """
+        config = self.config_dir(profile_config_dir) / "config.toml"
+        try:
+            raw = tomllib.loads(config.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            raw = {}
+        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+            return None
+        features = raw.get("features")
+        if isinstance(features, dict) and features.get("skip_host_skill_discovery") is True:
+            return None
+        return Path.home() / ".agents" / "skills"
 
     def env_var(self) -> str:
         return "CODEX_HOME"

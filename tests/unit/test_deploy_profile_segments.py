@@ -74,16 +74,16 @@ def test_a_directory_in_two_segments_arrives_merged_not_replaced(home_dir: Path)
     _seed(
         home_dir,
         {
-            "shared": {"skills": {"from-shared.md": "s"}},
-            "codex": {"skills": {"from-codex.md": "c"}},
+            "shared": {"docs": {"from-shared.md": "s"}},
+            "codex": {"docs": {"from-codex.md": "c"}},
         },
     )
 
     deploy_profiles(_codex_profile(home_dir), only="gate")
 
-    skills = home_dir / "codex-home" / "skills"
-    assert (skills / "from-shared.md").is_symlink()
-    assert (skills / "from-codex.md").is_symlink()
+    docs = home_dir / "codex-home" / "docs"
+    assert (docs / "from-shared.md").is_symlink()
+    assert (docs / "from-codex.md").is_symlink()
 
 
 def test_a_same_name_file_is_won_by_the_agent_and_the_collision_is_printed(
@@ -94,20 +94,20 @@ def test_a_same_name_file_is_won_by_the_agent_and_the_collision_is_printed(
     _seed(
         home_dir,
         {
-            "shared": {"skills": {"dup.md": "from-shared"}},
-            "codex": {"skills": {"dup.md": "from-codex"}},
+            "shared": {"docs": {"dup.md": "from-shared"}},
+            "codex": {"docs": {"dup.md": "from-codex"}},
         },
     )
 
     deploy_profiles(_codex_profile(home_dir), only="gate")
 
-    link = home_dir / "codex-home" / "skills" / "dup.md"
+    link = home_dir / "codex-home" / "docs" / "dup.md"
     assert link.read_text() == "from-codex"
 
     out = capsys.readouterr().out
-    assert "skills/dup.md" in out
-    assert "codex/skills/dup.md" in out, f"winner not named in output:\n{out}"
-    assert "shared/skills/dup.md" in out, f"shadowed source not named in output:\n{out}"
+    assert "docs/dup.md" in out
+    assert "codex/docs/dup.md" in out, f"winner not named in output:\n{out}"
+    assert "shared/docs/dup.md" in out, f"shadowed source not named in output:\n{out}"
 
 
 def test_a_directory_in_one_segment_only_is_still_a_single_link(home_dir: Path) -> None:
@@ -140,31 +140,31 @@ def test_a_directory_previously_linked_whole_is_replaced_by_a_real_dir(
 ) -> None:
     """The deployer must never write through its own old link into the source.
 
-    A profile deployed flat carries a *symlink* at `skills`. Once two segments
-    carry that name, the links become per file — and creating `skills/a.md`
+    A profile deployed flat carries a *symlink* at `docs`. Once two segments
+    carry that name, the links become per file — and creating `docs/a.md`
     through the surviving symlink would land the new link inside
     `profiles/gate/shared/skills/`, i.e. the deployer editing its own input.
     """
     from lazy_harness.deploy.engine import deploy_profiles
 
     cfg = _codex_profile(home_dir)
-    src = _seed(home_dir, {"skills": {"old.md": "o"}})
+    src = _seed(home_dir, {"docs": {"old.md": "o"}})
     deploy_profiles(cfg, only="gate")
-    assert (home_dir / "codex-home" / "skills").is_symlink()
+    assert (home_dir / "codex-home" / "docs").is_symlink()
 
     # The user migrates: the same name is now carried by two segments.
-    (src / "skills").rename(src / "_staged")
+    (src / "docs").rename(src / "_staged")
     (src / "shared").mkdir()
-    (src / "_staged").rename(src / "shared" / "skills")
-    (src / "codex" / "skills").mkdir(parents=True)
-    (src / "codex" / "skills" / "new.md").write_text("n")
+    (src / "_staged").rename(src / "shared" / "docs")
+    (src / "codex" / "docs").mkdir(parents=True)
+    (src / "codex" / "docs" / "new.md").write_text("n")
 
     deploy_profiles(cfg, only="gate")
 
-    assert sorted(p.name for p in (src / "shared" / "skills").iterdir()) == ["old.md"], (
+    assert sorted(p.name for p in (src / "shared" / "docs").iterdir()) == ["old.md"], (
         "deploy wrote a link into the profile source through a stale directory link"
     )
-    skills = home_dir / "codex-home" / "skills"
-    assert not skills.is_symlink()
-    assert (skills / "old.md").is_symlink()
-    assert (skills / "new.md").is_symlink()
+    docs = home_dir / "codex-home" / "docs"
+    assert not docs.is_symlink()
+    assert (docs / "old.md").is_symlink()
+    assert (docs / "new.md").is_symlink()

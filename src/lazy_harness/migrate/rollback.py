@@ -81,8 +81,7 @@ def _restore_symlink(link: Path, target: str) -> str:
     link is still there. Under ADR-009 every profile artifact is an existing
     symlink, so the relink is the case a deploy rollback is made of.
     """
-    if link.is_symlink() or link.exists():
-        link.unlink()
+    _clear(link)
     link.parent.mkdir(parents=True, exist_ok=True)
     link.symlink_to(target)
     return f"relinked {link} -> {target}"

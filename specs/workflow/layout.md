@@ -1,6 +1,6 @@
 # Repository layout
 
-Map of where things live. The short version is in `CLAUDE.md`; this file is the expanded "why each tree exists" reference.
+Map of where things live. The short version is in `AGENTS.md`; this file is the expanded "why each tree exists" reference.
 
 ```
 src/lazy_harness/

@@ -10,6 +10,7 @@ from __future__ import annotations
 import fcntl
 import os
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -23,6 +24,8 @@ from lazy_harness.knowledge.compound_loop import (
 )
 from lazy_harness.knowledge.directory import learnings_dir as knowledge_learnings_dir
 from lazy_harness.knowledge.marker import MarkerError, resolve_root
+
+_DONE_RETENTION_SECONDS = 7 * 24 * 60 * 60
 
 
 def _log(log_file: Path, msg: str) -> None:
@@ -87,7 +90,22 @@ def _drain_queue(
                 _log(log_file, "wrote: " + "; ".join(outcome.wrote))
             else:
                 _log(log_file, "nothing to persist")
+            for note in outcome.notes:
+                _log(log_file, f"note: {note}")
             move_to_done(queue_dir, task_file)
+
+
+def _prune_done(queue_dir: Path, *, now: float | None = None) -> int:
+    cutoff = (time.time() if now is None else now) - _DONE_RETENTION_SECONDS
+    removed = 0
+    for task_file in (queue_dir / "done").glob("*.task"):
+        try:
+            if task_file.stat().st_mtime < cutoff:
+                task_file.unlink()
+                removed += 1
+        except OSError:
+            continue
+    return removed
 
 
 def _agent_dir_for_profile(cfg: Config | None, profile: str) -> tuple[AgentAdapter, Path]:
@@ -179,6 +197,9 @@ def main(argv: list[str] | None = None) -> int:
 
         _log(log_file, "started, checking queue")
         _drain_queue(queue_dir, cfg, learnings_dir, log_file)
+        pruned = _prune_done(queue_dir)
+        if pruned:
+            _log(log_file, f"pruned {pruned} completed task(s) older than 7 days")
         _log(log_file, "queue empty, exiting")
         return 0
     finally:

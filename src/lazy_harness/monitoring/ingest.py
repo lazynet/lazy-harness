@@ -46,7 +46,7 @@ configured after it was last written.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -64,7 +64,7 @@ from lazy_harness.core.profiles import ProfileInfo, list_profiles
 from lazy_harness.monitoring.collector import extract_session_date
 from lazy_harness.monitoring.db import MetricsDB
 from lazy_harness.monitoring.event_id import derive_event_id
-from lazy_harness.monitoring.pricing import cost_for_billing_model
+from lazy_harness.monitoring.pricing import cost_for_billing_model, price_api_response
 from lazy_harness.plugins.contracts import (
     METRIC_EVENT_SCHEMA_VERSION,
     MetricEvent,
@@ -217,6 +217,10 @@ def ingest_profile(
                         "cache_create_1h": 0,
                         "date": session_date,
                         "project": identity.project or "",
+                        "api_equivalent_cost": 0.0,
+                        "api_equivalent_status": "no_usage",
+                        "api_price_basis": None,
+                        "api_equivalent_complete": True,
                     }
                     aggregated[key] = agg
                 usage = event.usage
@@ -225,6 +229,35 @@ def ingest_profile(
                 agg["cache_read"] += usage.cache_read_tokens or 0
                 agg["cache_create"] += usage.cache_creation_tokens or 0
                 agg["cache_create_1h"] += usage.cache_creation_1h_tokens or 0
+                response_tokens = {
+                    "input": usage.input_tokens or 0,
+                    "output": usage.output_tokens or 0,
+                    "cache_read": usage.cache_read_tokens or 0,
+                    "cache_create": (usage.cache_creation_tokens or 0)
+                    + (usage.cache_creation_1h_tokens or 0),
+                }
+                equivalent = price_api_response(
+                    event.model or "unknown",
+                    response_tokens,
+                    service_tier="standard",
+                    context_class=event.context_class,
+                    on=(
+                        event.timestamp.date().isoformat()
+                        if event.timestamp is not None
+                        else session_date
+                    ),
+                )
+                if equivalent.status == "priced":
+                    if agg["api_equivalent_complete"]:
+                        agg["api_equivalent_cost"] += equivalent.amount or 0.0
+                        agg["api_equivalent_status"] = "priced"
+                        agg["api_price_basis"] = (
+                            asdict(equivalent.basis) if equivalent.basis is not None else None
+                        )
+                elif equivalent.status != "no_usage":
+                    agg["api_equivalent_complete"] = False
+                    agg["api_equivalent_status"] = equivalent.status
+                    agg["api_price_basis"] = None
             if novel_for_this_file == 0:
                 report.sessions_skipped += 1
         except Exception as e:
@@ -258,6 +291,20 @@ def ingest_profile(
         # metered, so an unpriced model is not a pricing gap.
         if cost_source is None:
             report.unknown_models.add(model)
+        if billing_model == "flat_rate":
+            billed_cost = None
+            billed_cost_source = "subscription"
+        elif cost_source == "pricing":
+            billed_cost = cost
+            billed_cost_source = "pricing"
+        else:
+            billed_cost = None
+            billed_cost_source = "unknown"
+        api_equivalent_cost = (
+            agg["api_equivalent_cost"]
+            if agg["api_equivalent_complete"] and agg["api_equivalent_status"] == "priced"
+            else None
+        )
         # The TTL split only has to survive as far as the price. Stored rows
         # and the sink payload keep one cache-write token total: splitting
         # the column would cost a schema migration and a wire-format bump
@@ -277,6 +324,11 @@ def ingest_profile(
                 "cost": cost,
                 "agent": agent_name,
                 "billing_model": billing_model,
+                "billed_cost": billed_cost,
+                "billed_cost_source": billed_cost_source,
+                "api_equivalent_cost": api_equivalent_cost,
+                "api_equivalent_status": agg["api_equivalent_status"],
+                "api_price_basis": agg["api_price_basis"],
             }
         )
         events.append(
@@ -303,6 +355,11 @@ def ingest_profile(
                 agent=agent_name,
                 billing_model=billing_model,
                 cost_source=cost_source,
+                billed_cost=billed_cost,
+                billed_cost_source=billed_cost_source,
+                api_equivalent_cost=api_equivalent_cost,
+                api_equivalent_status=agg["api_equivalent_status"],
+                api_price_basis=agg["api_price_basis"],
             )
         )
 

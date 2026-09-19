@@ -910,9 +910,15 @@ def _codex_turn(model: str = "gpt-5-codex") -> dict:
     }
 
 
-def _codex_usage(response_id: str, inp: int, out: int) -> dict:
+def _codex_usage(
+    response_id: str,
+    inp: int,
+    out: int,
+    *,
+    timestamp: str = "2026-09-16T12:02:14.926Z",
+) -> dict:
     return {
-        "timestamp": "2026-09-16T12:02:14.926Z",
+        "timestamp": timestamp,
         "type": "token_usage_record",
         "payload": {
             "session_id": "s",
@@ -996,6 +1002,192 @@ def test_a_codex_session_with_two_models_becomes_two_rows(tmp_path: Path) -> Non
         ("gpt-5-codex-mini", 20),
     ]
     db.close()
+
+
+def test_shipped_reader_shape_has_no_api_equivalent_context_class(tmp_path: Path) -> None:
+    from lazy_harness.agents.codex import CodexAdapter
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.ingest import ingest_profile
+    from lazy_harness.monitoring.pricing import load_pricing
+    from lazy_harness.plugins.contracts import MetricEvent
+
+    prof = _codex_profile(tmp_path)
+    _write_rollout(
+        prof,
+        "unpriced",
+        _codex_turn("gpt-5.6-sol"),
+        _codex_usage("r1", 10, 5, timestamp="2026-09-19T12:00:00Z"),
+    )
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        ingest_profile(prof, db, load_pricing(), agent=CodexAdapter(), billing_model="flat_rate")
+        row = db.query_stats()[0]
+        assert row["api_equivalent_cost"] is None
+        assert row["api_equivalent_status"] == "unknown_tier"
+        db.upsert_event(
+            MetricEvent(
+                event_id="legacy",
+                schema_version=3,
+                user_id="local",
+                tenant_id="local",
+                profile=prof.name,
+                session=row["session"],
+                model=row["model"],
+                project=row["project"],
+                date=row["date"],
+                input_tokens=10,
+                output_tokens=5,
+                cache_read=0,
+                cache_create=0,
+                cost=99.0,
+            )
+        )
+        replayed = db.query_stats()[0]
+        assert replayed["cost"] == row["cost"] == 0.0
+        assert replayed["billing_model"] == "flat_rate"
+        assert replayed["billed_cost"] is None
+        assert replayed["api_equivalent_status"] == "unknown_tier"
+    finally:
+        db.close()
+
+
+def test_api_equivalent_pricing_happens_before_response_aggregation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.agents.codex import CodexAdapter
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.ingest import ingest_profile
+    from lazy_harness.monitoring.pricing import ApiEquivalentPrice, ApiPriceBasis, load_pricing
+
+    prof = _codex_profile(tmp_path)
+    _write_rollout(
+        prof,
+        "priced",
+        _codex_turn("gpt-5.6-sol"),
+        _codex_usage("r1", 10, 5),
+        _codex_usage("r2", 20, 7),
+    )
+    calls: list[dict[str, int]] = []
+
+    def fake_price(model: str, tokens: dict[str, int], **_kwargs: object) -> ApiEquivalentPrice:
+        assert model == "gpt-5.6-sol"
+        calls.append(tokens)
+        return ApiEquivalentPrice(
+            amount=tokens["input"] / 1_000_000,
+            status="priced",
+            basis=ApiPriceBasis("openai", "standard", "USD", "test-v1"),
+        )
+
+    monkeypatch.setattr("lazy_harness.monitoring.ingest.price_api_response", fake_price)
+    db = MetricsDB(tmp_path / "m.db")
+    ingest_profile(prof, db, load_pricing(), agent=CodexAdapter(), billing_model="flat_rate")
+    row = db.query_stats(period="all")[0]
+    db.close()
+
+    assert [call["input"] for call in calls] == [10, 20]
+    assert row["billed_cost"] is None
+    assert row["billed_cost_source"] == "subscription"
+    assert row["api_equivalent_cost"] == pytest.approx(0.00003)
+    assert row["api_equivalent_status"] == "priced"
+
+
+def test_api_equivalent_pricing_uses_each_response_timestamp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.agents.codex import CodexAdapter
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.ingest import ingest_profile
+    from lazy_harness.monitoring.pricing import ApiEquivalentPrice, ApiPriceBasis, load_pricing
+
+    prof = _codex_profile(tmp_path)
+    _write_rollout(
+        prof,
+        "dated",
+        _codex_turn("gpt-5.6-sol"),
+        _codex_usage("r1", 10, 5, timestamp="2026-09-19T23:59:59Z"),
+        _codex_usage("r2", 20, 7, timestamp="2026-09-20T00:00:01Z"),
+    )
+    priced_on: list[str | None] = []
+
+    def fake_price(_model: str, tokens: dict[str, int], **kwargs: object) -> ApiEquivalentPrice:
+        priced_on.append(kwargs.get("on") if isinstance(kwargs.get("on"), str) else None)
+        return ApiEquivalentPrice(
+            amount=tokens["input"] / 1_000_000,
+            status="priced",
+            basis=ApiPriceBasis("openai", "standard", "USD", "test-v1"),
+        )
+
+    monkeypatch.setattr("lazy_harness.monitoring.ingest.price_api_response", fake_price)
+    db = MetricsDB(tmp_path / "m.db")
+    ingest_profile(prof, db, load_pricing(), agent=CodexAdapter(), billing_model="flat_rate")
+    db.close()
+
+    assert priced_on == ["2026-09-19", "2026-09-20"]
+
+
+def test_unknown_response_keeps_the_aggregate_unpriced_after_a_priced_response(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.agents.codex import CodexAdapter
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.ingest import ingest_profile
+    from lazy_harness.monitoring.pricing import ApiEquivalentPrice, ApiPriceBasis, load_pricing
+
+    prof = _codex_profile(tmp_path)
+    _write_rollout(
+        prof,
+        "mixed",
+        _codex_turn("gpt-5.6-sol"),
+        _codex_usage("r1", 10, 5),
+        _codex_usage("r2", 20, 7),
+    )
+    results = iter(
+        [
+            ApiEquivalentPrice(None, "unknown_tier"),
+            ApiEquivalentPrice(
+                0.001,
+                "priced",
+                ApiPriceBasis("openai", "standard", "USD", "test-v1"),
+            ),
+        ]
+    )
+    monkeypatch.setattr(
+        "lazy_harness.monitoring.ingest.price_api_response",
+        lambda *_args, **_kwargs: next(results),
+    )
+
+    db = MetricsDB(tmp_path / "m.db")
+    ingest_profile(prof, db, load_pricing(), agent=CodexAdapter(), billing_model="flat_rate")
+    row = db.query_stats(period="all")[0]
+    db.close()
+
+    assert row["api_equivalent_cost"] is None
+    assert row["api_equivalent_status"] == "unknown_tier"
+    assert row["api_price_basis"] is None
+
+
+@pytest.mark.parametrize(
+    ("model", "expected_status"),
+    [("gpt-5.6-sol", "unknown_tier"), ("codex-auto-review", "unknown_model")],
+)
+def test_codex_ingest_fails_closed_when_equivalent_cannot_be_priced(
+    tmp_path: Path, model: str, expected_status: str
+) -> None:
+    from lazy_harness.agents.codex import CodexAdapter
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.ingest import ingest_profile
+    from lazy_harness.monitoring.pricing import load_pricing
+
+    prof = _codex_profile(tmp_path)
+    _write_rollout(prof, "unpriced", _codex_turn(model), _codex_usage("r1", 10, 5))
+    db = MetricsDB(tmp_path / "m.db")
+    ingest_profile(prof, db, load_pricing(), agent=CodexAdapter(), billing_model="flat_rate")
+    row = db.query_stats(period="all")[0]
+    db.close()
+
+    assert row["api_equivalent_cost"] is None
+    assert row["api_equivalent_status"] == expected_status
+    assert row["api_price_basis"] is None
 
 
 def test_a_codex_response_id_is_counted_once_across_two_rollouts(tmp_path: Path) -> None:

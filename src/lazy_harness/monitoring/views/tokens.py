@@ -18,8 +18,11 @@ from lazy_harness.monitoring.views._helpers import format_tokens
 SUBTOTAL_LABEL = "subtotal"
 
 
-def _cost_cell(bucket: Bucket) -> str:
-    return "—" if bucket.all_flat_rate else f"${round(bucket.cost, 2)}"
+def _money_cell(amount: float, covered: int, total: int) -> str:
+    if covered == 0:
+        return "—"
+    rendered = f"${round(amount, 2)}"
+    return rendered if covered == total else f"{rendered} ({covered}/{total})"
 
 
 def _measures(bucket: Bucket) -> list[str]:
@@ -27,7 +30,12 @@ def _measures(bucket: Bucket) -> list[str]:
         format_tokens(bucket.total_input),
         format_tokens(bucket.output),
         f"{bucket.cache_pct}%",
-        _cost_cell(bucket),
+        _money_cell(bucket.billed_cost, bucket.billed_covered, bucket.row_count),
+        _money_cell(
+            bucket.api_equivalent_cost,
+            bucket.api_equivalent_covered,
+            bucket.row_count,
+        ),
     ]
 
 
@@ -47,7 +55,8 @@ def render_table(agg: Aggregation, period: Period) -> RenderableType:
     table.add_column("In", justify="right")
     table.add_column("Out", justify="right")
     table.add_column("Cache%", justify="right")
-    table.add_column("Cost", justify="right")
+    table.add_column("Billed cost", justify="right")
+    table.add_column("API-equivalent cost", justify="right")
 
     subtotals = {s.key[agg.dimensions[0]]: s for s in agg.subtotals}
     lead = agg.dimensions[0]
@@ -97,8 +106,23 @@ def _bucket_json(bucket: Bucket, *, with_key: bool = True) -> dict[str, Any]:
         "cache_read": bucket.cache_read,
         "cache_create": bucket.cache_create,
         "cache_pct": bucket.cache_pct,
-        "cost": None if bucket.all_flat_rate else round(bucket.cost, 2),
+        # v3 machine consumers retain the legacy billed aliases while v4
+        # consumers use the two unambiguous measures.
+        "cost": (round(bucket.billed_cost, 2) if bucket.billed_covered else None),
         "cost_source": "subscription" if bucket.all_flat_rate else None,
+        "billed_cost": (round(bucket.billed_cost, 2) if bucket.billed_covered else None),
+        "billed_coverage": {
+            "priced": bucket.billed_covered,
+            "rows": bucket.row_count,
+        },
+        "api_equivalent_cost": (
+            round(bucket.api_equivalent_cost, 2) if bucket.api_equivalent_covered else None
+        ),
+        "api_equivalent_coverage": {
+            "priced": bucket.api_equivalent_covered,
+            "rows": bucket.row_count,
+        },
+        "api_equivalent_statuses": sorted(bucket.api_equivalent_statuses),
         "sessions": bucket.session_count,
     }
     if with_key:

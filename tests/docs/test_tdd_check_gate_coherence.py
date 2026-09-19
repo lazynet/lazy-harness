@@ -1,8 +1,8 @@
 """Every surface that enumerates the pre-commit gate enumerates all of it.
 
-`.claude/commands/tdd-check.md` is the gate. Six other surfaces describe it —
-`CLAUDE.md` mandates it, `AGENTS.md` spells it out for non-Claude agents,
-`CONTRIBUTING.md` spells it out for contributors, the PR template asks a human
+`.claude/commands/tdd-check.md` is the gate. Five other surfaces describe it —
+`AGENTS.md` mandates it for every agent (ADR-060), `CONTRIBUTING.md` spells it
+out for contributors, the PR template asks a human
 to tick it off, CI enforces it, and `docs/roadmap.md` names it as the floor
 Theme 1 builds on — and each one is a separate place to forget a check.
 
@@ -25,7 +25,6 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TDD_CHECK = REPO_ROOT / ".claude/commands/tdd-check.md"
-CLAUDE_MD = REPO_ROOT / "CLAUDE.md"
 AGENTS_MD = REPO_ROOT / "AGENTS.md"
 CONTRIBUTING = REPO_ROOT / "CONTRIBUTING.md"
 PR_TEMPLATE = REPO_ROOT / ".github/PULL_REQUEST_TEMPLATE.md"
@@ -41,8 +40,10 @@ _HEADING_COMMAND = re.compile(r"`(?P<cmd>uv run --frozen[^`]*)`")
 # as a parse failure rather than silently scoring zero.
 _NUMBER_WORDS = {"two": 2, "three": 3, "four": 4, "five": 5, "six": 6}
 
+# Anchored on the sentence rather than on the file it lives in: ADR-060 moved
+# the rule into the portable `AGENTS.md` surface every agent loads.
 _CLAUDE_MD_COUNT = re.compile(
-    r"`/tdd-check` passes before every commit\*\*, all (?P<word>\w+) checks",
+    r"passes before every commit\*\*, all (?P<word>\w+) checks",
 )
 _CONTRIBUTING_COUNT = re.compile(r"All (?P<word>\w+) must pass with pristine output")
 
@@ -122,13 +123,18 @@ def test_the_gate_runs_the_formatter() -> None:
     assert any("format" in title.lower() for title in _gate_checks()), _gate_checks()
 
 
-def test_claude_md_states_the_number_of_checks_the_gate_actually_runs() -> None:
-    match = _CLAUDE_MD_COUNT.search(CLAUDE_MD.read_text())
+def _claude_surface() -> str:
+    """The portable surface Claude Code discovers through the parent chain."""
+    return AGENTS_MD.read_text()
+
+
+def test_the_loaded_claude_surface_states_the_number_of_checks_the_gate_runs() -> None:
+    match = _CLAUDE_MD_COUNT.search(_claude_surface())
     assert match is not None, "the /tdd-check non-negotiable no longer states a count"
     stated = _NUMBER_WORDS.get(match.group("word"))
     assert stated is not None, f"unmapped count word: {match.group('word')!r}"
     assert stated == len(_gate_checks()), (
-        f"CLAUDE.md says {match.group('word')} checks, "
+        f"the loaded AGENTS.md surface says {match.group('word')} checks, "
         f"tdd-check.md declares {len(_gate_checks())}: {_gate_checks()}"
     )
 
