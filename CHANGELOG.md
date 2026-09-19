@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.74.2](https://github.com/lazynet/lazy-harness/compare/v0.74.1...v0.74.2) (2026-09-19)
+
+
+### Documentation
+
+* **reports:** harness audit at 0.74.1 ([301ed7b](https://github.com/lazynet/lazy-harness/commit/301ed7beb5042f583b6d284ee223d7965cb4d71c))
+
 ## [0.74.1](https://github.com/lazynet/lazy-harness/compare/v0.74.0...v0.74.1) (2026-09-19)
 
 
