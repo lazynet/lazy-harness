@@ -41,9 +41,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # time, and editing them to satisfy a present-day rule would be the opposite of
 # a record.
 #
-# `CLAUDE.md` is also out, and deliberately: its one mention names `uv run` as
-# the tool the project uses rather than prescribing an invocation, so matching
-# it would be a false positive.
+# `AGENTS.md` also names bare `uv run` as a tool, alongside its gate commands;
+# scanning that overview with this line-based matcher would be a false positive.
 AUTOMATION_GLOBS = (
     ".claude/commands/*.md",
     ".github/workflows/*.yml",

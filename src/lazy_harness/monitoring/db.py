@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -12,6 +13,17 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from lazy_harness.plugins.contracts import MetricEvent
+
+
+def _stats_schema_version(entry: Mapping[str, object]) -> int:
+    enriched = {
+        "billed_cost",
+        "billed_cost_source",
+        "api_equivalent_cost",
+        "api_equivalent_status",
+        "api_price_basis",
+    }
+    return 4 if enriched.intersection(entry) else 3
 
 
 def resolve_db_path() -> Path:
@@ -260,8 +272,8 @@ class MetricsDB:
                 (session, date, model, profile, project, input_tokens, output_tokens,
                  cache_read, cache_create, cost, agent, billing_model, billed_cost,
                  billed_cost_source, api_equivalent_cost, api_equivalent_status,
-                 api_price_basis)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 api_price_basis, event_schema_version)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(session, model) DO UPDATE SET
                     date=excluded.date,
                     profile=excluded.profile,
@@ -270,14 +282,33 @@ class MetricsDB:
                     output_tokens=excluded.output_tokens,
                     cache_read=excluded.cache_read,
                     cache_create=excluded.cache_create,
-                    cost=excluded.cost,
+                    cost=CASE
+                        WHEN excluded.event_schema_version >= session_stats.event_schema_version
+                        THEN excluded.cost ELSE session_stats.cost END,
                     agent=excluded.agent,
-                    billing_model=excluded.billing_model,
-                    billed_cost=excluded.billed_cost,
-                    billed_cost_source=excluded.billed_cost_source,
-                    api_equivalent_cost=excluded.api_equivalent_cost,
-                    api_equivalent_status=excluded.api_equivalent_status,
-                    api_price_basis=excluded.api_price_basis""",
+                    billing_model=CASE
+                        WHEN excluded.event_schema_version >= session_stats.event_schema_version
+                        THEN excluded.billing_model ELSE session_stats.billing_model END,
+                    billed_cost=CASE
+                        WHEN excluded.event_schema_version >= session_stats.event_schema_version
+                        THEN excluded.billed_cost ELSE session_stats.billed_cost END,
+                    billed_cost_source=CASE
+                        WHEN excluded.event_schema_version >= session_stats.event_schema_version
+                        THEN excluded.billed_cost_source ELSE session_stats.billed_cost_source END,
+                    api_equivalent_cost=CASE
+                        WHEN excluded.event_schema_version >= session_stats.event_schema_version
+                        THEN excluded.api_equivalent_cost
+                        ELSE session_stats.api_equivalent_cost END,
+                    api_equivalent_status=CASE
+                        WHEN excluded.event_schema_version >= session_stats.event_schema_version
+                        THEN excluded.api_equivalent_status
+                        ELSE session_stats.api_equivalent_status END,
+                    api_price_basis=CASE
+                        WHEN excluded.event_schema_version >= session_stats.event_schema_version
+                        THEN excluded.api_price_basis ELSE session_stats.api_price_basis END,
+                    event_schema_version=MAX(
+                        session_stats.event_schema_version, excluded.event_schema_version
+                    )""",
                 (
                     entry["session"],
                     entry["date"],
@@ -296,6 +327,7 @@ class MetricsDB:
                     entry.get("api_equivalent_cost"),
                     entry.get("api_equivalent_status"),
                     basis_json,
+                    _stats_schema_version(entry),
                 ),
             )
             affected += 1
@@ -339,14 +371,18 @@ class MetricsDB:
                 output_tokens=excluded.output_tokens,
                 cache_read=excluded.cache_read,
                 cache_create=excluded.cache_create,
-                cost=excluded.cost,
+                cost=CASE
+                    WHEN excluded.event_schema_version >= session_stats.event_schema_version
+                    THEN excluded.cost ELSE session_stats.cost END,
                 user_id=excluded.user_id,
                 tenant_id=excluded.tenant_id,
                 event_id=excluded.event_id,
                 host=excluded.host,
                 workload=excluded.workload,
                 agent=excluded.agent,
-                billing_model=excluded.billing_model,
+                billing_model=CASE
+                    WHEN excluded.event_schema_version >= session_stats.event_schema_version
+                    THEN excluded.billing_model ELSE session_stats.billing_model END,
                 billed_cost=CASE
                     WHEN excluded.event_schema_version >= session_stats.event_schema_version
                     THEN excluded.billed_cost ELSE session_stats.billed_cost END,
@@ -540,8 +576,8 @@ class MetricsDB:
                     (session, date, model, profile, project, input_tokens, output_tokens,
                      cache_read, cache_create, cost, agent, billing_model, billed_cost,
                      billed_cost_source, api_equivalent_cost, api_equivalent_status,
-                     api_price_basis)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                     api_price_basis, event_schema_version)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         entry["session"],
                         entry["date"],
@@ -560,6 +596,7 @@ class MetricsDB:
                         entry.get("api_equivalent_cost"),
                         entry.get("api_equivalent_status"),
                         basis_json,
+                        _stats_schema_version(entry),
                     ),
                 )
                 inserted += 1

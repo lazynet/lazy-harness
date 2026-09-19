@@ -23,6 +23,10 @@ class SkillCollisionError(RuntimeError):
     """A native skill name is already claimed by incompatible content."""
 
 
+class SkillLedgerError(RuntimeError):
+    """Skill ownership cannot be established from the stored ledger."""
+
+
 @dataclass(frozen=True)
 class SkillClaim:
     profile: str
@@ -88,13 +92,40 @@ def _ledger_path(root: Path) -> Path:
 
 
 def _read_ledger(root: Path) -> set[str]:
+    path = _ledger_path(root)
     try:
-        raw = json.loads(_ledger_path(root).read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        if path.is_symlink():
+            raise _ledger_error(path, "dangling symlink") from None
         return set()
-    if not isinstance(raw, dict) or not isinstance(raw.get("links"), list):
-        return set()
-    return {name for name in raw["links"] if isinstance(name, str)}
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise _ledger_error(path, str(exc)) from exc
+    if not isinstance(raw, dict):
+        raise _ledger_error(path, "expected an object with version and links")
+    if type(raw.get("version")) is not int or raw["version"] != _LEDGER_VERSION:
+        raise _ledger_error(path, f"unsupported version {raw.get('version')!r}")
+    if not isinstance(raw.get("links"), list):
+        raise _ledger_error(path, "links must be a list of skill names")
+    for name in raw["links"]:
+        if (
+            not isinstance(name, str)
+            or not name
+            or name in {".", ".."}
+            or "/" in name
+            or "\\" in name
+            or "\x00" in name
+        ):
+            raise _ledger_error(path, f"invalid links entry {name!r}")
+    return set(raw["links"])
+
+
+def _ledger_error(path: Path, reason: str) -> SkillLedgerError:
+    return SkillLedgerError(
+        f"Cannot read skill ownership ledger {path}: {reason}. "
+        "Restore a known-good ledger or repair it after verifying link ownership; "
+        "nothing was written."
+    )
 
 
 def _points_into(link: Path, source_root: Path) -> bool:

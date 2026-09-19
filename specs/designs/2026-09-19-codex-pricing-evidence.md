@@ -43,4 +43,3 @@ No public price row was found for `codex-auto-review`. It stays unpriced; an
 alias would fabricate evidence. The short/long boundary was not established
 by this capture either. Until an official rule or API response supplies it, a
 response that needs the split is `unknown_tier`, not silently short-priced.
-

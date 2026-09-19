@@ -145,8 +145,11 @@ def snapshot_targets(cfg: Config, *, only: str | None = None) -> list[Path]:
         narrowed=only is not None,
     )
     for root_plan in skill_plan.roots:
-        targets.extend(root_plan.root / name for name in root_plan.links)
-        targets.extend(root_plan.root / name for name in root_plan.owned_before)
+        if root_plan.replaces_legacy_root:
+            targets.append(root_plan.root)
+        else:
+            targets.extend(root_plan.root / name for name in root_plan.links)
+            targets.extend(root_plan.root / name for name in root_plan.owned_before)
         targets.append(root_plan.root.parent / SKILL_LEDGER_RELATIVE)
 
     default_agent = agent_for_profile(cfg, cfg.profiles.default)

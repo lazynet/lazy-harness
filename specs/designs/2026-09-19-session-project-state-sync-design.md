@@ -1,7 +1,7 @@
 # Session project-state sync design
 
 **Status:** accepted
-**Date:** 2026-09-19  
+**Date:** 2026-09-19\
 **Decision:** [ADR-062](../adrs/062-session-end-publishes-bounded-project-state.md)
 
 ## Finding

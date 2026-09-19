@@ -1,7 +1,7 @@
 # Billed and API-equivalent cost design
 
 **Status:** accepted
-**Date:** 2026-09-19  
+**Date:** 2026-09-19\
 **Decision:** [ADR-061](../adrs/061-billed-cost-and-api-equivalent-cost-are-separate.md)
 
 ## Problem

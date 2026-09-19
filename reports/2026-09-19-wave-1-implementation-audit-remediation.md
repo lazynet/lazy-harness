@@ -34,6 +34,11 @@ The implementation required two corrections to the proposed designs:
 - Existing Claude profiles with an owned whole-directory `skills` symlink are
   migrated to per-skill links. An identical unrecorded symlink remains
   user-owned and causes a collision instead of being adopted.
+- The remediation snapshots the legacy root symlink, without traversing its
+  children, and restores it through the real rollback consumer after migration.
+- Invalid skill ledgers stop planning before writes with the ledger path,
+  failure reason and a repair instruction. Ownership is never reconstructed
+  from existing links; restoring a known-good ledger permits a retry.
 
 The installed Codex discovery behaviour was already measured in both
 directions. Repeating that probe against a skill projected by the released
@@ -55,7 +60,7 @@ edit event; the final diff and this report explicitly record it.
 
 - MetricEvent v4 and SQLite store billed and API-equivalent measures
   independently, with source/status/basis metadata.
-- Pricing happens per response using the response timestamp, not the session
+- The pricing path runs per response using the response timestamp, not the session
   filename date, with an explicit session-date fallback for readers lacking a
   timestamp.
 - Sol uses its documented 2026-09-19 through 2026-11-21 promotional window;
@@ -65,6 +70,17 @@ edit event; the final diff and this report explicitly record it.
   aggregate with `status=priced` and `cost=null`.
 - SQLite records the highest received event schema version so a late v3 replay
   cannot erase v4 enrichment, while v3 then v4 still enriches one logical row.
+  The remediation extends that guard to legacy `cost` and `billing_model`,
+  and records the version for both local stats writers. Legacy local upserts
+  also preserve the enriched cost fields.
+
+**Current coverage is zero for local transcript ingest.** No shipped reader
+assigns `context_class`, so `api_equivalent_cost` is uniformly null today.
+Known models with usage report `unknown_tier`; unsupported models report
+`unknown_model`. The tables and tests with injected pricing establish the data
+path, not live priced coverage. An unmocked Codex reader/ingest test confirms
+the null result for `gpt-5.6-sol` on an in-window response date. Ingest also
+hardcodes `service_tier="standard"`; measuring that dimension remains deferred.
 
 Receiver deployment, transcript backfill, outbox drain and Grafana changes are
 separate rollout steps and remain explicit roadmap items.
@@ -78,7 +94,9 @@ separate rollout steps and remain explicit roadmap items.
   worktrees and nested directories resolve to the same PRJ.
 - The publisher requires exactly one generated section, ignores headings and
   markers inside code fences, refuses human-authored lookalikes and changes
-  `updated` only on a real write.
+  `updated` on a write. Its equality check includes session ID and timestamp:
+  a new session can rewrite an identical summary because provenance changed.
+  Semantic summary deduplication is not implemented in this remediation.
 - Poor-grade backlog escalation remains independent and deduplicated.
 
 PRJ-LazyHarness still needs reviewed archival and explicit marker insertion.
@@ -95,8 +113,10 @@ The harness does not mutate the vault or opt a project in implicitly.
 | Repository hygiene | Stale clean worktrees found by the earlier audit were reduced. Dirty or unmerged user work remains untouched and is reported, not deleted. |
 | Profile asymmetries | Report-only as requested; no policy was inferred from different commands, skills, models or ambient credentials. |
 
-The audit-report workflow now matches its rule: `reports/**` is explicitly in
-`specs/workflow/doc-short-path.md`.
+`reports/**` is now explicitly in `specs/workflow/doc-short-path.md`. This does
+not retroactively authorize the earlier direct-to-main audit commit. The
+short-path's claim that `docs:` is ignored by release-please was also corrected:
+documentation commits can trigger a patch release.
 
 ## Dependabot
 
@@ -107,6 +127,12 @@ and moderate alerts until this branch reaches `main`.
 
 ## Verification
 
+The following list records the original implementation session, not an
+independent rerun by the later reviewer. In particular, its unqualified
+`git diff --check` did not establish cleanliness of the whole branch diff:
+the integration preflight found seven whitespace errors across five documents
+with `git diff --check main...HEAD`.
+
 - Focused cost, replay, instruction, skill and project-state suites: passed.
 - `uv run --frozen pytest -q`: passed.
 - `uv run --frozen ruff check src tests`: passed.
@@ -114,6 +140,50 @@ and moderate alerts until this branch reaches `main`.
 - `uv run --frozen --group docs mkdocs build --strict`: passed, with only the
   upstream Material for MkDocs 2.0 advisory.
 - `git diff --check`: passed.
+
+### Integration and review remediation — 2026-09-19
+
+- Fetched `origin`; `origin/main` remained
+  `301ed7beb5042f583b6d284ee223d7965cb4d71c`. Reviewed its sole added audit report
+  and integrated it with a non-fast-forward merge, without rewriting history.
+- Confirmed review P1.1/P1.2/P1.3 and P2.7/P2.8 against the implementation.
+  Fixed the README's deleted-file link and current repository-contract
+  references in the issue template, TDD procedure and coherence-test comment.
+  Runtime/profile references to `CLAUDE.md` remain valid and were retained.
+- Preserved Markdown hard breaks while removing the seven whitespace findings.
+- TDD red: 19 failing regressions before production changes (2 snapshot/rollback,
+  7 metrics replay, 10 invalid/unreadable ledger); 2 additional CLI regressions
+  failed with and without `--profile` because corrupt ownership data was accepted.
+- Expanded coverage includes priced and null v4 data, all three DB writers,
+  event and local legacy replays, enrichment and same-version updates; invalid
+  JSON types, versions, names, encoding, unreadable and dangling ledger paths;
+  and a successful retry after restoring known-good ownership data.
+- Mutation checks: removing local version tracking produced 9 failures; removing
+  the event `cost` guard produced 6; omitting the legacy snapshot root produced
+  2; removing directory-aware symlink restoration produced 1; swallowing ledger
+  read errors produced 3. Each mutation was restored without a Git checkout.
+- Focused final suite (deploy/rollback, metrics DB, ingest, CLI and docs):
+  **202 passed** in 1.52 seconds.
+- `uv run --frozen pytest -q`: **5139 passed** in 431.47 seconds, with no
+  failures, skips or pytest warnings.
+- `uv run --frozen ruff check src tests`: passed with no findings.
+- `uv run --frozen ruff format --check src tests`: passed; 502 files formatted.
+- `uv run --frozen --group docs mkdocs build --strict`: exit 0; no build,
+  link or navigation warnings. Material emitted its upstream MkDocs 2.0 advisory.
+- `git diff origin/main --check`: passed on the candidate merge tree;
+  `main` and `origin/main` both name the integrated SHA above.
+- Package versions and `uv.lock` were unchanged by this remediation.
+  All deploy/rollback executions used isolated test homes; no live profile
+  was deployed. No push, PR, remote merge or release was performed.
+
+Apart from the authorized stale-reference corrections, no other P2/P3
+implementation was included. The review's rate-table parity,
+service-tier measurement, formatter duplication, unselected-profile diagnostic,
+project-key duplication and semantic project-summary deduplication remain
+deferred. The monotonicity fix protects writes and replays by schema version;
+it does not order equal-version events by timestamp or backfill old experimental
+local rows already stored with version 0. No installed deployment, receiver,
+backfill, vault opt-in or external pilot was performed.
 
 ## Residuals
 

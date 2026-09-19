@@ -1004,6 +1004,53 @@ def test_a_codex_session_with_two_models_becomes_two_rows(tmp_path: Path) -> Non
     db.close()
 
 
+def test_shipped_reader_shape_has_no_api_equivalent_context_class(tmp_path: Path) -> None:
+    from lazy_harness.agents.codex import CodexAdapter
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.ingest import ingest_profile
+    from lazy_harness.monitoring.pricing import load_pricing
+    from lazy_harness.plugins.contracts import MetricEvent
+
+    prof = _codex_profile(tmp_path)
+    _write_rollout(
+        prof,
+        "unpriced",
+        _codex_turn("gpt-5.6-sol"),
+        _codex_usage("r1", 10, 5, timestamp="2026-09-19T12:00:00Z"),
+    )
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        ingest_profile(prof, db, load_pricing(), agent=CodexAdapter(), billing_model="flat_rate")
+        row = db.query_stats()[0]
+        assert row["api_equivalent_cost"] is None
+        assert row["api_equivalent_status"] == "unknown_tier"
+        db.upsert_event(
+            MetricEvent(
+                event_id="legacy",
+                schema_version=3,
+                user_id="local",
+                tenant_id="local",
+                profile=prof.name,
+                session=row["session"],
+                model=row["model"],
+                project=row["project"],
+                date=row["date"],
+                input_tokens=10,
+                output_tokens=5,
+                cache_read=0,
+                cache_create=0,
+                cost=99.0,
+            )
+        )
+        replayed = db.query_stats()[0]
+        assert replayed["cost"] == row["cost"] == 0.0
+        assert replayed["billing_model"] == "flat_rate"
+        assert replayed["billed_cost"] is None
+        assert replayed["api_equivalent_status"] == "unknown_tier"
+    finally:
+        db.close()
+
+
 def test_api_equivalent_pricing_happens_before_response_aggregation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

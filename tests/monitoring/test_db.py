@@ -413,6 +413,88 @@ def _event(**over: object) -> MetricEvent:
     return MetricEvent(**base)  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize("writer", ["event", "upsert_stats", "insert_stats"])
+@pytest.mark.parametrize("replay", ["event", "upsert_stats"])
+@pytest.mark.parametrize("equivalent", [2.5, None])
+def test_all_metrics_writers_preserve_v4_costs_against_legacy_replay(
+    tmp_path: Path, writer: str, replay: str, equivalent: float | None
+) -> None:
+    from dataclasses import asdict
+
+    enriched = _event(
+        cost=1.25,
+        billed_cost=1.25,
+        billed_cost_source="pricing",
+        billing_model="per_token",
+        api_equivalent_cost=equivalent,
+        api_equivalent_status="priced" if equivalent is not None else "unknown_tier",
+        api_price_basis={"version": "test"},
+    )
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        if writer == "event":
+            db.upsert_event(enriched)
+        else:
+            entry = asdict(enriched)
+            entry.pop("schema_version")
+            getattr(db, writer)([entry])
+        if replay == "event":
+            db.upsert_event(_event(schema_version=3, cost=0.1, billing_model="flat_rate"))
+        else:
+            db.upsert_stats(
+                [
+                    {
+                        "session": enriched.session,
+                        "model": enriched.model,
+                        "date": enriched.date,
+                        "cost": 0.1,
+                        "billing_model": "flat_rate",
+                    }
+                ]
+            )
+
+        rows = db.query_stats()
+        assert len(rows) == 1
+        assert rows[0]["cost"] == 1.25
+        assert rows[0]["billed_cost"] == 1.25
+        assert rows[0]["billing_model"] == "per_token"
+        assert rows[0]["billed_cost_source"] == "pricing"
+        assert rows[0]["api_equivalent_cost"] == equivalent
+        assert rows[0]["api_equivalent_status"] == enriched.api_equivalent_status
+        assert json.loads(rows[0]["api_price_basis"]) == {"version": "test"}
+        summary = db.aggregate_costs()
+        assert summary["total_cost"] == summary["billed_cost"] == 1.25
+    finally:
+        db.close()
+
+
+def test_local_metrics_can_enrich_legacy_rows_and_update_equal_versions(tmp_path: Path) -> None:
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.upsert_event(_event(schema_version=3, cost=0.1))
+        for cost in (1.25, 2.5):
+            db.upsert_stats(
+                [
+                    {
+                        "session": "s1",
+                        "model": "sonnet",
+                        "date": "2026-09-19",
+                        "cost": cost,
+                        "billed_cost": cost,
+                        "billed_cost_source": "pricing",
+                        "api_equivalent_cost": cost * 2,
+                        "api_equivalent_status": "priced",
+                    }
+                ]
+            )
+            db.upsert_event(_event(schema_version=3, cost=0.1))
+            row = db.query_stats()[0]
+            assert row["cost"] == row["billed_cost"] == cost
+            assert row["api_equivalent_cost"] == cost * 2
+    finally:
+        db.close()
+
+
 def test_new_db_has_host_and_workload_columns(tmp_path: Path) -> None:
     db = MetricsDB(tmp_path / "m.db")
     try:

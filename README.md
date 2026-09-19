@@ -212,7 +212,7 @@ uv run ruff check src tests
 uv run --group docs mkdocs build --strict
 ```
 
-Contributor workflow (worktrees, conventional commits, release flow): [`specs/workflow/`](specs/workflow/) · [`CLAUDE.md`](CLAUDE.md).
+Contributor workflow (worktrees, conventional commits, release flow): [`specs/workflow/`](specs/workflow/) · [`AGENTS.md`](AGENTS.md).
 
 ## License
 

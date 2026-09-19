@@ -29,7 +29,7 @@ from lazy_harness.deploy.engine import (
     deploy_profiles,
     selected_profiles,
 )
-from lazy_harness.deploy.skills import SkillCollisionError
+from lazy_harness.deploy.skills import SkillCollisionError, SkillLedgerError
 from lazy_harness.deploy.snapshot import snapshot_targets, take_snapshot
 from lazy_harness.migrate.rollback import apply_rollback_log
 
@@ -169,6 +169,6 @@ def deploy(snapshot_only: bool, rollback: bool, profile: str | None) -> None:
         if snapshot_only:
             return
         _run_deploy(cfg, profile)
-    except (ConfigPlannerRequiredError, SkillCollisionError) as e:
+    except (ConfigPlannerRequiredError, SkillCollisionError, SkillLedgerError) as e:
         click.echo(f"Error: {e}", err=True)
         raise SystemExit(1) from e

@@ -259,3 +259,91 @@ def test_commands_remain_native_while_skills_use_the_capability(home_dir: Path) 
     assert (home_dir / ".agents" / "skills" / "portable").is_symlink()
     assert (home_dir / ".one" / "commands").is_symlink()
     assert not (home_dir / ".one" / "skills").exists()
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "{broken",
+        "null",
+        "1",
+        "[]",
+        "{}",
+        '{"version": 1, "links": null}',
+        '{"version": 2, "links": ["portable"]}',
+        '{"version": 1, "links": ["portable", 7]}',
+        '{"version": 1, "links": ["portable", "../outside"]}',
+        '{"version": true, "links": ["portable"]}',
+        '{"version": 1, "links": [""]}',
+        '{"version": 1, "links": [".."]}',
+        '{"version": 1, "links": ["nested\\\\skill"]}',
+        '{"version": 1, "links": ["bad\\u0000name"]}',
+    ],
+)
+def test_invalid_skill_ledger_is_named_and_never_overwritten(home_dir: Path, payload: str) -> None:
+    from lazy_harness.core.paths import config_dir
+
+    profile = config_dir() / "profiles" / "one"
+    _skill(profile, "shared", "portable", "body")
+    cfg = _config(home_dir, {"one": "codex"})
+    deploy_profiles(cfg)
+    root = home_dir / ".agents" / "skills"
+    ledger = root.parent / SKILL_LEDGER_RELATIVE
+    known_good = ledger.read_text()
+    ledger.write_text(payload)
+    link_target = (root / "portable").readlink()
+
+    with pytest.raises(RuntimeError, match=r"skill-links\.json") as exc:
+        deploy_profiles(cfg)
+
+    assert str(ledger) in str(exc.value)
+    assert "user-owned" not in str(exc.value)
+    assert "Restore" in str(exc.value)
+    assert ledger.read_text() == payload
+    assert (root / "portable").readlink() == link_target
+    ledger.write_text(known_good)
+    deploy_profiles(cfg)
+    assert (root / "portable").readlink() == link_target
+
+
+@pytest.mark.parametrize("problem", ["encoding", "dangling"])
+def test_unreadable_skill_ledger_preserves_invalid_bytes_and_dangling_links(
+    home_dir: Path, problem: str
+) -> None:
+    from lazy_harness.core.paths import config_dir
+
+    _skill(config_dir() / "profiles" / "one", "shared", "portable", "body")
+    root = home_dir / ".agents" / "skills"
+    ledger = root.parent / SKILL_LEDGER_RELATIVE
+    ledger.parent.mkdir(parents=True)
+    absent = home_dir / "missing-ledger.json"
+    if problem == "encoding":
+        ledger.write_bytes(b"\xff")
+    else:
+        ledger.symlink_to(absent)
+
+    with pytest.raises(RuntimeError, match=r"skill-links\.json"):
+        deploy_profiles(_config(home_dir, {"one": "codex"}))
+
+    assert not root.exists()
+    assert not absent.exists()
+    if problem == "encoding":
+        assert ledger.read_bytes() == b"\xff"
+    else:
+        assert ledger.is_symlink()
+
+
+def test_unreadable_skill_ledger_is_named_before_deploy_writes(home_dir: Path) -> None:
+    from lazy_harness.core.paths import config_dir
+
+    _skill(config_dir() / "profiles" / "one", "shared", "portable", "body")
+    root = home_dir / ".agents" / "skills"
+    ledger = root.parent / SKILL_LEDGER_RELATIVE
+    ledger.mkdir(parents=True)
+
+    with pytest.raises(RuntimeError, match=r"skill-links\.json"):
+        deploy_profiles(_config(home_dir, {"one": "codex"}))
+
+    assert ledger.is_dir()
+    assert not root.exists()
+    assert not (home_dir / ".one").exists()

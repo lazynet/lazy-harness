@@ -1,7 +1,7 @@
 # Wave 0 closeout and Wave 1 design
 
-Date: 2026-09-19  
-Branch: `docs/wave-0-wave-1-design`  
+Date: 2026-09-19\
+Branch: `docs/wave-0-wave-1-design`\
 Worktree: `/Users/lazynet/repos/lazy/lazy-harness/.worktrees/wave-0-wave-1-design`
 
 ## Outcome

@@ -1,7 +1,7 @@
 # Portable repository instructions design
 
-**Status:** proposed  
-**Date:** 2026-09-19  
+**Status:** proposed\
+**Date:** 2026-09-19\
 **Decision:** [ADR-060](../adrs/060-agents-md-is-the-portable-repository-contract.md)
 
 ## Problem

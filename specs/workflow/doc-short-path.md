@@ -25,7 +25,7 @@ A change qualifies for the short-path only when **every** item below is true:
    - `src/**`, `tests/**`
    - `pyproject.toml`, `uv.lock`
    - `.github/**`
-3. **Commit type is `docs(...)` or `chore(...)`** — both are ignored by release-please, so no accidental version bump can originate from a short-path commit.
+3. **Commit type is `docs(...)` or `chore(...)`.** `docs:` is visible to release-please and can trigger a patch release. `chore:` is hidden from the changelog; a hidden-only release has not been measured. Follow [release-flow.md](release-flow.md) and plan a docs-only push to `main` accordingly.
 4. **If `docs/**` is touched, `uv run --frozen --group docs mkdocs build --strict` passes locally.**
 5. **The diff is self-contained** — no paired code change lives in another uncommitted edit. Mixed changes always take the full flow.
 

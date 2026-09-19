@@ -8,7 +8,10 @@ every file link it does. Two readers of one answer, asserted against each other.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+
+import pytest
 
 from lazy_harness.core.config import Config, HarnessConfig, ProfileEntry, ProfilesConfig
 from lazy_harness.core.paths import config_dir
@@ -87,3 +90,51 @@ def test_the_snapshot_does_not_target_segment_directories(home_dir: Path) -> Non
 
     assert "shared" not in targets
     assert "codex" not in targets
+
+
+@pytest.mark.parametrize("check", ["manifest", "rollback"])
+def test_legacy_skill_migration_snapshot_restores_the_root_without_copying_sources(
+    home_dir: Path, tmp_path: Path, check: str
+) -> None:
+    from lazy_harness.deploy.ledger import LEDGER_RELATIVE, write_ledger
+    from lazy_harness.deploy.skills import SKILL_LEDGER_RELATIVE
+    from lazy_harness.deploy.snapshot import take_snapshot
+    from lazy_harness.migrate.rollback import apply_rollback_log
+
+    cfg = _segmented(home_dir)
+    cfg.profiles.items["gate"].agent = "claude-code"
+    target = home_dir / "codex-home"
+    target.mkdir()
+    source = config_dir() / "profiles" / "gate" / "skills"
+    (source / "legacy").mkdir(parents=True)
+    (source / "legacy" / "SKILL.md").write_text("original")
+    root = target / "skills"
+    root.symlink_to(source, target_is_directory=True)
+    write_ledger(target, {Path("skills")})
+    previous_ledger = (target / LEDGER_RELATIVE).read_bytes()
+    snapshot = tmp_path / "snapshot"
+    manifest = take_snapshot(snapshot_targets(cfg, only="gate"), snapshot)
+
+    if check == "manifest":
+        entries = json.loads(manifest.read_text())["entries"]
+        roots = [entry for entry in entries if entry["path"] == str(root)]
+        assert len(roots) == 1
+        assert roots[0]["kind"] == "symlink"
+        assert not any(
+            Path(entry["path"]).is_relative_to(root) for entry in entries if entry not in roots
+        )
+        assert not list(snapshot.rglob("SKILL.md"))
+        return
+
+    deploy_profiles(cfg, only="gate")
+    assert not root.is_symlink()
+    assert (root / "legacy").is_symlink()
+    messages = apply_rollback_log(snapshot)
+
+    assert not any("failed" in message for message in messages)
+    assert root.is_symlink()
+    assert root.readlink() == source
+    assert (source / "legacy" / "SKILL.md").read_text() == "original"
+    assert not (source / "a").exists()
+    assert (target / LEDGER_RELATIVE).read_bytes() == previous_ledger
+    assert not (target / SKILL_LEDGER_RELATIVE).exists()

@@ -52,6 +52,6 @@ After all four complete, summarise:
 
 ## Why this exists
 
-This is the pre-commit checklist from `CLAUDE.md` made executable. Running it as a single command removes the temptation to skip one of the four under time pressure. TDD discipline depends on the full suite being green before you commit — not just the test you just added.
+This is the pre-commit checklist from `AGENTS.md` made executable. Running it as a single command removes the temptation to skip one of the four under time pressure. TDD discipline depends on the full suite being green before you commit — not just the test you just added.
 
 See `superpowers:test-driven-development` for the broader TDD workflow.
