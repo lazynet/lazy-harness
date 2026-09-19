@@ -90,7 +90,7 @@ The harness does not mutate the vault or opt a project in implicitly.
 | --- | --- |
 | Unbounded `queue/done/` | Worker prunes task files older than seven days; `lh status queue` already reported the done count, so no duplicate diagnostic was added. |
 | Missing profile skills | ADR-059 projection implemented, including legacy Claude migration. Installed deployment waits for merge/release by the binary-first rule. |
-| Full proposal queue | Eleven verdicts are prepared, but applying them changes the external knowledge store and still requires explicit user authorization. No proposal was silently discarded. |
+| Full proposal queue | Explicit authorization was received after the implementation commit. All eleven proposals were rejected with recorded reasons; a read-back confirmed `0 pending`. |
 | Codex trust keyed by position | Re-audit found current trust state is keyed by the actual upstream key and checked against deterministic generated content, including stale and orphan detection. No replacement implementation was justified. |
 | Repository hygiene | Stale clean worktrees found by the earlier audit were reduced. Dirty or unmerged user work remains untouched and is reported, not deleted. |
 | Profile asymmetries | Report-only as requested; no policy was inferred from different commands, skills, models or ambient credentials. |
@@ -120,7 +120,6 @@ and moderate alerts until this branch reaches `main`.
 - Deleting the repository root `CLAUDE.md` and keeping Claude-specific guidance
   in canonical `AGENTS.md` was explicitly approved on 2026-09-19 after the
   installed-binary nested-discovery risk was presented.
-- Apply the eleven prepared proposal verdicts only after explicit authorization.
 - After merge/release, install the released harness and run the Codex projected
   skill appearance/disappearance probe before deploying profile changes.
 - Complete the two remaining ADR-060 pilots and seven-working-day observation.
