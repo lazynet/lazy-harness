@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import stat
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -508,13 +509,15 @@ def _render_profile_secrets(console: Console, cfg: Config) -> None:
     for name in sorted(cfg.profiles.items):
         if name == cfg.profiles.default:
             continue
+        secrets_file = secrets_dir / f"{name}.env"
         try:
-            has_own = (secrets_dir / f"{name}.env").is_file()
+            has_own = stat.S_ISREG(secrets_file.stat().st_mode)
+        except FileNotFoundError:
+            has_own = False
         except OSError:
-            # `is_file()` raises rather than answering False when the directory
-            # cannot be traversed. Such a profile is not inheriting quietly —
-            # `resolve_launch` refuses it outright — so silence here is the
-            # accurate answer rather than the lenient one.
+            # On Python 3.14, `is_file()` answers False for an untraversable
+            # parent. `stat()` raises on every supported version, preserving
+            # the distinction between absent and unreadable.
             has_own = True
         if not has_own:
             inheriting.append(name)

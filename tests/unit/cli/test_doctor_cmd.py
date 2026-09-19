@@ -1301,6 +1301,24 @@ def test_render_profile_secrets_stays_quiet_when_the_directory_cannot_be_read(
     assert buf.getvalue() == ""
 
 
+def test_render_profile_secrets_does_not_use_is_file_as_a_readability_gate(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Simulate Python 3.14's answer for a file below an unreadable parent."""
+    from lazy_harness.cli.doctor_cmd import _render_profile_secrets
+
+    secrets_dir = tmp_path / "secrets"
+    secrets_dir.mkdir()
+    (secrets_dir / "flex.env").write_text("TOKEN=placeholder-not-a-real-value\n")
+    cfg = _secrets_config(secrets_dir, profiles=("p1", "flex"), default="p1")
+    monkeypatch.setattr(Path, "is_file", lambda self: False)
+
+    console, buf = _recording_console()
+    _render_profile_secrets(console, cfg)
+
+    assert buf.getvalue() == ""
+
+
 def test_doctor_reports_a_profile_that_inherits_its_credentials(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

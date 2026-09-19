@@ -188,16 +188,14 @@ def test_a_file_that_is_not_text_refuses(tmp_path: Path) -> None:
 def test_a_secrets_directory_that_cannot_be_traversed_refuses(tmp_path: Path) -> None:
     """The case the old existence gate turned into a raw traceback.
 
-    `Path.is_file()` does not swallow `EACCES` — `_ignore_error` lists ENOENT,
-    ENOTDIR, EBADF and ELOOP and nothing else — so `if not path.is_file()` on a
-    file whose parent cannot be traversed raised `PermissionError` from outside
-    the `except OSError` that wrapped only the read, and `lh run` printed a
-    traceback. Branching on the errno of the read itself gives the same case a
-    typed refusal.
+    Across supported Python versions, reading a file below an untraversable
+    parent raises `PermissionError`. Branching on that read errno gives the
+    case a typed refusal regardless of whether `Path.is_file()` raises, as it
+    did through 3.13, or answers False, as it does on 3.14.
 
-    The first block is the premise, pinned rather than assumed: if a future
-    Python starts ignoring `EACCES` here, this test says so instead of quietly
-    changing what it covers.
+    The first block pins the premise the production code actually depends on:
+    if a future Python starts ignoring `EACCES` on the read, this test says so
+    instead of quietly changing what it covers.
     """
     from lazy_harness.core.secrets import SecretsError, overlay_profile_secrets
 
@@ -209,7 +207,7 @@ def test_a_secrets_directory_that_cannot_be_traversed_refuses(tmp_path: Path) ->
 
     try:
         with pytest.raises(PermissionError):
-            (secrets_dir / "flex.env").is_file()
+            (secrets_dir / "flex.env").read_text()
         with pytest.raises(SecretsError, match=r"flex\.env"):
             overlay_profile_secrets({"A": "1"}, "flex", secrets_dir=secrets_dir)
     finally:

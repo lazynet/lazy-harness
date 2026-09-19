@@ -112,9 +112,9 @@ def overlay_profile_secrets(
         return result
 
     # Keyed on the errno of the read, not on a prior `Path.is_file()`. That gate
-    # did not answer False for a file whose *parent* cannot be traversed — it
-    # raised `PermissionError`, from outside the `except OSError` that wrapped
-    # only the read, so the case reached `lh run` as a traceback.
+    # raises before the read on Python <=3.13 and answers False on Python 3.14
+    # when the parent cannot be traversed. Only the read's errno distinguishes
+    # an absent file from one the profile declared but cannot access.
     try:
         raw = path.read_text(encoding="utf-8")
     except FileNotFoundError:
