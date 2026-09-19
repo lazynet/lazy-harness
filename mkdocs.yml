@@ -69,6 +69,12 @@ nav:
     - The problem: why/problem.md
     - Memory model: why/memory-model.md
     - Philosophy: why/philosophy.md
+  - Agents:
+    - Supported agents: agents/index.md
+    - The agent contract: agents/contract.md
+    - Portable assets: agents/portable-assets.md
+    - Codex: agents/codex.md
+    - Copilot: agents/copilot.md
   - How:
     - Hooks: how/hooks.md
     - Memory compound loop: how/memory-compound.md

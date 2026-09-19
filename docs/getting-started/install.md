@@ -4,7 +4,7 @@
 
 - **Python 3.11 or later.** Check with `python3 --version`.
 - **[uv](https://docs.astral.sh/uv/).** The Python package manager used to install lazy-harness. Install with `curl -LsSf https://astral.sh/uv/install.sh | sh`.
-- **Claude Code** (the agent lazy-harness wraps). Install from [claude.com/claude-code](https://claude.com/claude-code).
+- **At least one supported agent** — the thing lazy-harness wraps. [Claude Code](https://claude.com/claude-code) and [Codex CLI](https://developers.openai.com/codex/cli) are both first-class; [Copilot CLI](https://github.com/github/copilot-cli) is partially supported. One machine can run several at once, one per profile — see [supported agents](../agents/index.md).
 - **git** (for the install step — lazy-harness is not on PyPI yet).
 - Optional: [QMD](https://github.com/tobi/qmd) for semantic search across your knowledge directory.
 
@@ -33,7 +33,7 @@ lh doctor
 
 Two entry points depending on what is already on your machine:
 
-### If you do NOT have an existing Claude Code setup
+### If you do NOT have an existing agent setup
 
 ```bash
 lh init

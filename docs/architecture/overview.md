@@ -44,7 +44,7 @@ The framework **reads from** the user-owned content and **deploys** it into the 
 src/lazy_harness/
 ├── cli/             # click subcommands — one file per `lh <command>`
 ├── core/            # config, paths, profiles, envrc — foundational
-├── agents/          # agent adapter protocol + Claude Code adapter
+├── agents/          # adapter protocol + Claude Code, Codex, Copilot, null
 ├── hooks/           # hook engine + loader + built-in hooks
 ├── knowledge/       # session export, QMD wrapper, compound loop, graphify wrapper
 ├── memory/          # engram wrapper (ADR-022 episodic backend)
@@ -107,9 +107,11 @@ Generates per-profile `.envrc` fragments for users who wire profile selection th
 
 Writing the agent's config files is a separate, optional protocol, `ConfigPlanner`: `config_targets()` names the files an adapter may touch and `plan_config()` returns the complete set of writes. It is separate because a single `dict` return cannot express "N files in two formats" — Claude Code wants `settings.json` plus `.claude.json`, Codex a `hooks.json`.
 
-`agents/claude_code.py` is the reference implementation. `agents/registry.py` maps `config.toml`'s `[agent].type` value to an adapter class. Adding a new agent = one file + one registry entry, with no other code in the framework touching agent-specific concerns.
+`agents/claude_code.py` is the reference implementation. `agents/registry.py` maps `config.toml`'s `[agent].type` value to an adapter class; it registers four today — `claude-code`, `codex`, `copilot` and `null` — and `get_agent` refuses an unregistered name loudly rather than falling back. Adding a new agent = one file + one registry entry, with no other code in the framework touching agent-specific concerns.
 
-Design: [ADR-004 — Agent adapter pattern](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/004-agent-adapter-pattern.md).
+Two adapters carry state of their own beyond the protocol. `agents/codex_trust.py` reads the trust records Codex writes for a deployed `hooks.json`, which `lh doctor` reports; `agents/session_paths.py` and `agents/launch.py` hold the per-profile resolution that decides *whose* transcript directory and *whose* binary a command is talking about.
+
+Design: [ADR-004 — Agent adapter pattern](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/004-agent-adapter-pattern.md), extended by [ADR-041 — the multi-agent hook contract](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/041-multi-agent-hook-contract.md). What each adapter does and does not support: [supported agents](../agents/index.md).
 
 ## Hook engine — `hooks/`
 

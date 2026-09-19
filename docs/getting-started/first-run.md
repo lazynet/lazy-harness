@@ -6,7 +6,7 @@ This guide walks through `lh init` from a clean machine. If you are migrating an
 
 1. Refuses to run if you have existing Claude Code state (`~/.claude/`, `~/.claude-*/`, or an existing `~/.config/lazy-harness/config.toml`).
 2. Asks for a profile name (default: `personal`).
-3. Asks for the agent (default: `claude-code` — the only option today).
+3. Asks for the agent (default: `claude-code`; `codex` and `copilot` are the other registered answers — see [supported agents](../agents/index.md)).
 4. Asks for the billing model (`per_token` or `flat_rate`, default: `per_token` — ADR-050 rejects a per-agent default, so this stays `per_token` for every agent unless you answer `flat_rate`).
 5. Asks for a knowledge directory path (default: `~/Documents/lazy-harness-knowledge`).
 6. Detects QMD if present and offers to configure a knowledge collection.
