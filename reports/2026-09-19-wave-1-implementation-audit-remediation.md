@@ -117,6 +117,8 @@ and moderate alerts until this branch reaches `main`.
 
 ## Residuals
 
+- The next iteration is scripted in
+  `reports/2026-09-19-wave-1-next-prompt.md`.
 - Deleting the repository root `CLAUDE.md` and keeping Claude-specific guidance
   in canonical `AGENTS.md` was explicitly approved on 2026-09-19 after the
   installed-binary nested-discovery risk was presented.
