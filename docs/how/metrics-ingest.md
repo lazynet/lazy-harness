@@ -19,7 +19,15 @@ Two pieces are needed on either side of the pipeline:
 2. Asks the agent for its transcripts (`locate_sessions`), which for Claude Code means every `*.jsonl` under the directory **recursively**, including nested subagent files at `<session-uuid>/subagents/agent-*.jsonl`, and for Codex means `sessions/YYYY/MM/DD/rollout-*.jsonl`. Paths that sit under a `memory/` ancestor are excluded **here rather than in the reader** — those are this harness's own episodic logs (`decisions.jsonl`, `failures.jsonl`), so what to do with them is the consumer's business and not the agent's.
 3. Sorts the collected files by `st_mtime_ns` ascending. `locate_sessions` promises no order, and dedup needs one: older files attribute their messages first, so the canonical ownership is stable across runs.
 4. Iterates the files in order, maintaining a `seen_msg_ids: set[str]` across the whole profile. Each event's `message_id` is checked against the set; novel events bump an in-memory aggregator keyed by `(session_id, model)`; already-seen ones are counted as deduped and dropped. An event whose provider gives no stable id is counted every time it is seen — there is nothing to match on, and losing real tokens is worse than double-counting a resume's shared prefix.
-5. After the walk, the in-memory aggregator is priced via `calculate_cost()` (per model × per token bucket, rates from `DEFAULT_PRICING` plus any `[monitoring.pricing]` override) and handed to `upsert_stats(entries)`. Each `(session, model)` row is inserted or overwritten with its freshly-computed total. Sessions whose transcripts no longer exist on disk are **not** re-scanned, so their rows are left in place rather than deleted — the table accumulates beyond Claude Code's transcript retention window.
+5. Each response is offered independently to API-equivalent pricing before its
+   money is aggregated; this preserves context-class and effective-date
+   differences. Billed pricing still uses `calculate_cost()` with
+   `DEFAULT_PRICING` plus any `[monitoring.pricing]` override. If a provider
+   does not expose an explicit short/long context class, equivalent pricing
+   fails closed instead of inferring the unpublished boundary. The resulting
+   `(session, model)` totals are handed to `upsert_stats(entries)`. Sessions
+   whose transcripts no longer exist on disk are not re-scanned, so their rows
+   remain beyond transcript retention.
 
 The whole pass is summarized as an `IngestReport` with the following counters: `sessions_scanned`, `sessions_updated`, `sessions_skipped`, `messages_total`, `messages_deduped`, and any per-file `errors`. `lh metrics ingest` prints the headline counters as the last line of output.
 
@@ -39,8 +47,9 @@ flowchart LR
   H --> I{message_id in seen?}
   I -- yes --> J[drop - deduped]
   I -- no --> K[aggregate by session, model]
-  K --> L[calculate_cost]
-  L --> M[upsert_stats per session,model]
+  K --> L[price each response]
+  L --> L2[aggregate tokens and priced money]
+  L2 --> M[upsert_stats per session,model]
   J --> H
   M --> D
 ```
@@ -126,7 +135,8 @@ What you do see is a genuine gap:
   Add rates under [monitoring.pricing] in config.toml.
 ```
 
-This is not gated behind `--verbose`: an unpriced model means the cost column is wrong, and that should be impossible to miss.
+This is not gated behind `--verbose`: an unpriced model means billed-cost
+coverage is incomplete, and that should be impossible to miss.
 
 ### Overrides
 

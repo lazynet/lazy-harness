@@ -73,6 +73,11 @@ class MetricsDB:
                 workload TEXT NOT NULL DEFAULT '',
                 agent TEXT NOT NULL DEFAULT '',
                 billing_model TEXT NOT NULL DEFAULT 'per_token',
+                billed_cost REAL,
+                billed_cost_source TEXT NOT NULL DEFAULT 'unknown',
+                api_equivalent_cost REAL,
+                api_equivalent_status TEXT,
+                api_price_basis TEXT,
                 UNIQUE(session, model)
             )
         """)
@@ -206,15 +211,51 @@ class MetricsDB:
                     "UPDATE session_stats SET event_id = ? WHERE rowid = ?",
                     (eid, row["rowid"]),
                 )
+        if "billed_cost" not in cols:
+            self._conn.execute("ALTER TABLE session_stats ADD COLUMN billed_cost REAL")
+            self._conn.execute(
+                "UPDATE session_stats SET billed_cost = cost WHERE billing_model <> 'flat_rate'"
+            )
+        if "billed_cost_source" not in cols:
+            self._conn.execute(
+                "ALTER TABLE session_stats ADD COLUMN billed_cost_source "
+                "TEXT NOT NULL DEFAULT 'unknown'"
+            )
+            self._conn.execute(
+                "UPDATE session_stats SET billed_cost_source = 'subscription' "
+                "WHERE billing_model = 'flat_rate'"
+            )
+        if "api_equivalent_cost" not in cols:
+            self._conn.execute("ALTER TABLE session_stats ADD COLUMN api_equivalent_cost REAL")
+        if "api_equivalent_status" not in cols:
+            self._conn.execute("ALTER TABLE session_stats ADD COLUMN api_equivalent_status TEXT")
+        if "api_price_basis" not in cols:
+            self._conn.execute("ALTER TABLE session_stats ADD COLUMN api_price_basis TEXT")
 
     def upsert_stats(self, entries: list[dict[str, Any]]) -> int:
         affected = 0
         for entry in entries:
+            billing_model = str(entry.get("billing_model", "per_token"))
+            billed_cost = (
+                entry["billed_cost"]
+                if "billed_cost" in entry
+                else (None if billing_model == "flat_rate" else entry.get("cost", 0.0))
+            )
+            billed_source = str(
+                entry.get(
+                    "billed_cost_source",
+                    "subscription" if billing_model == "flat_rate" else "unknown",
+                )
+            )
+            basis = entry.get("api_price_basis")
+            basis_json = json.dumps(basis, sort_keys=True) if isinstance(basis, dict) else basis
             self._conn.execute(
                 """INSERT INTO session_stats
                 (session, date, model, profile, project, input_tokens, output_tokens,
-                 cache_read, cache_create, cost, agent, billing_model)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 cache_read, cache_create, cost, agent, billing_model, billed_cost,
+                 billed_cost_source, api_equivalent_cost, api_equivalent_status,
+                 api_price_basis)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(session, model) DO UPDATE SET
                     date=excluded.date,
                     profile=excluded.profile,
@@ -225,7 +266,12 @@ class MetricsDB:
                     cache_create=excluded.cache_create,
                     cost=excluded.cost,
                     agent=excluded.agent,
-                    billing_model=excluded.billing_model""",
+                    billing_model=excluded.billing_model,
+                    billed_cost=excluded.billed_cost,
+                    billed_cost_source=excluded.billed_cost_source,
+                    api_equivalent_cost=excluded.api_equivalent_cost,
+                    api_equivalent_status=excluded.api_equivalent_status,
+                    api_price_basis=excluded.api_price_basis""",
                 (
                     entry["session"],
                     entry["date"],
@@ -238,7 +284,12 @@ class MetricsDB:
                     entry.get("cache_create", 0),
                     entry.get("cost", 0.0),
                     entry.get("agent", ""),
-                    entry.get("billing_model", "per_token"),
+                    billing_model,
+                    billed_cost,
+                    billed_source,
+                    entry.get("api_equivalent_cost"),
+                    entry.get("api_equivalent_status"),
+                    basis_json,
                 ),
             )
             affected += 1
@@ -246,13 +297,34 @@ class MetricsDB:
         return affected
 
     def upsert_event(self, event: MetricEvent) -> None:
+        # A receiver can see a v3 event and later the enriched v4 replay.  The
+        # event id, not arrival order, identifies that one logical row.
+        self._conn.execute(
+            "DELETE FROM session_stats WHERE event_id = ? AND event_id <> '' "
+            "AND (session <> ? OR model <> ?)",
+            (event.event_id, event.session, event.model),
+        )
+        basis_json = (
+            json.dumps(event.api_price_basis, sort_keys=True)
+            if event.api_price_basis is not None
+            else None
+        )
+        if event.schema_version < 4:
+            flat_rate = event.billing_model == "flat_rate"
+            billed_cost = None if flat_rate else event.cost
+            billed_cost_source = "subscription" if flat_rate else event.cost_source or "unknown"
+        else:
+            billed_cost = event.billed_cost
+            billed_cost_source = event.billed_cost_source
         self._conn.execute(
             """
             INSERT INTO session_stats
                 (session, date, model, profile, project,
                  input_tokens, output_tokens, cache_read, cache_create, cost,
-                 user_id, tenant_id, event_id, host, workload, agent, billing_model)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 user_id, tenant_id, event_id, host, workload, agent, billing_model,
+                 billed_cost, billed_cost_source, api_equivalent_cost,
+                 api_equivalent_status, api_price_basis)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(session, model) DO UPDATE SET
                 date=excluded.date,
                 profile=excluded.profile,
@@ -268,7 +340,12 @@ class MetricsDB:
                 host=excluded.host,
                 workload=excluded.workload,
                 agent=excluded.agent,
-                billing_model=excluded.billing_model
+                billing_model=excluded.billing_model,
+                billed_cost=excluded.billed_cost,
+                billed_cost_source=excluded.billed_cost_source,
+                api_equivalent_cost=excluded.api_equivalent_cost,
+                api_equivalent_status=excluded.api_equivalent_status,
+                api_price_basis=excluded.api_price_basis
             """,
             (
                 event.session,
@@ -288,6 +365,11 @@ class MetricsDB:
                 event.workload,
                 event.agent,
                 event.billing_model,
+                billed_cost,
+                billed_cost_source,
+                event.api_equivalent_cost,
+                event.api_equivalent_status,
+                basis_json,
             ),
         )
         self._conn.commit()
@@ -417,12 +499,28 @@ class MetricsDB:
     def insert_stats(self, entries: list[dict[str, Any]]) -> int:
         inserted = 0
         for entry in entries:
+            billing_model = str(entry.get("billing_model", "per_token"))
+            billed_cost = (
+                entry["billed_cost"]
+                if "billed_cost" in entry
+                else (None if billing_model == "flat_rate" else entry.get("cost", 0.0))
+            )
+            billed_source = str(
+                entry.get(
+                    "billed_cost_source",
+                    "subscription" if billing_model == "flat_rate" else "unknown",
+                )
+            )
+            basis = entry.get("api_price_basis")
+            basis_json = json.dumps(basis, sort_keys=True) if isinstance(basis, dict) else basis
             try:
                 self._conn.execute(
                     """INSERT OR IGNORE INTO session_stats
                     (session, date, model, profile, project, input_tokens, output_tokens,
-                     cache_read, cache_create, cost, agent, billing_model)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                     cache_read, cache_create, cost, agent, billing_model, billed_cost,
+                     billed_cost_source, api_equivalent_cost, api_equivalent_status,
+                     api_price_basis)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         entry["session"],
                         entry["date"],
@@ -435,7 +533,12 @@ class MetricsDB:
                         entry.get("cache_create", 0),
                         entry.get("cost", 0.0),
                         entry.get("agent", ""),
-                        entry.get("billing_model", "per_token"),
+                        billing_model,
+                        billed_cost,
+                        billed_source,
+                        entry.get("api_equivalent_cost"),
+                        entry.get("api_equivalent_status"),
+                        basis_json,
                     ),
                 )
                 inserted += 1
@@ -472,6 +575,11 @@ class MetricsDB:
                 "workload": r["workload"],
                 "agent": r["agent"],
                 "billing_model": r["billing_model"],
+                "billed_cost": r["billed_cost"],
+                "billed_cost_source": r["billed_cost_source"],
+                "api_equivalent_cost": r["api_equivalent_cost"],
+                "api_equivalent_status": r["api_equivalent_status"],
+                "api_price_basis": r["api_price_basis"],
             }
             for r in rows
         ]
@@ -481,6 +589,10 @@ class MetricsDB:
             row = self._conn.execute(
                 """
                 SELECT COALESCE(SUM(cost), 0) as total_cost,
+                       COALESCE(SUM(billed_cost), 0) as billed_cost,
+                       SUM(api_equivalent_cost) as api_equivalent_cost,
+                       COUNT(billed_cost) as billed_coverage,
+                       COUNT(api_equivalent_cost) as api_equivalent_coverage,
                        COALESCE(SUM(input_tokens), 0) as total_input,
                        COALESCE(SUM(output_tokens), 0) as total_output,
                        COUNT(DISTINCT session) as session_count
@@ -490,6 +602,10 @@ class MetricsDB:
         elif period == "all":
             row = self._conn.execute("""
                 SELECT COALESCE(SUM(cost), 0) as total_cost,
+                       COALESCE(SUM(billed_cost), 0) as billed_cost,
+                       SUM(api_equivalent_cost) as api_equivalent_cost,
+                       COUNT(billed_cost) as billed_coverage,
+                       COUNT(api_equivalent_cost) as api_equivalent_coverage,
                        COALESCE(SUM(input_tokens), 0) as total_input,
                        COALESCE(SUM(output_tokens), 0) as total_output,
                        COUNT(DISTINCT session) as session_count
@@ -498,6 +614,10 @@ class MetricsDB:
             row = self._conn.execute(
                 """
                 SELECT COALESCE(SUM(cost), 0) as total_cost,
+                       COALESCE(SUM(billed_cost), 0) as billed_cost,
+                       SUM(api_equivalent_cost) as api_equivalent_cost,
+                       COUNT(billed_cost) as billed_coverage,
+                       COUNT(api_equivalent_cost) as api_equivalent_coverage,
                        COALESCE(SUM(input_tokens), 0) as total_input,
                        COALESCE(SUM(output_tokens), 0) as total_output,
                        COUNT(DISTINCT session) as session_count
@@ -507,6 +627,14 @@ class MetricsDB:
 
         return {
             "total_cost": round(row["total_cost"], 2),
+            "billed_cost": round(row["billed_cost"], 2),
+            "api_equivalent_cost": (
+                round(row["api_equivalent_cost"], 2)
+                if row["api_equivalent_cost"] is not None
+                else None
+            ),
+            "billed_coverage": row["billed_coverage"],
+            "api_equivalent_coverage": row["api_equivalent_coverage"],
             "total_input": row["total_input"],
             "total_output": row["total_output"],
             "session_count": row["session_count"],

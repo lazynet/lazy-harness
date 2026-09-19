@@ -23,7 +23,10 @@ def _query_for_period(db: MetricsDB, period: str) -> list[dict[str, Any]]:
 
 
 def render(db: MetricsDB, period: str) -> RenderableType:
-    header = f"[bold]Period: {_period_label(period)}[/bold]\n"
+    header = (
+        f"[bold]Period: {_period_label(period)}[/bold]\n"
+        "Measures: Billed cost · API-equivalent cost\n"
+    )
     rows = _query_for_period(db, period)
     if not rows:
         return Group(header, "[dim]No data. Run a session first.[/dim]")
@@ -35,7 +38,11 @@ def render(db: MetricsDB, period: str) -> RenderableType:
             "input": 0,
             "output": 0,
             "cost": 0.0,
-            "billing_models": set(),
+            "billed_cost": 0.0,
+            "billed_covered": 0,
+            "api_equivalent_cost": 0.0,
+            "api_equivalent_covered": 0,
+            "rows": 0,
         }
     )
     for r in rows:
@@ -46,7 +53,13 @@ def render(db: MetricsDB, period: str) -> RenderableType:
         g["input"] += r["input"] + r["cache_read"] + r["cache_create"]
         g["output"] += r["output"]
         g["cost"] += r["cost"]
-        g["billing_models"].add(r.get("billing_model") or "per_token")
+        g["rows"] += 1
+        if r.get("billed_cost") is not None:
+            g["billed_cost"] += r["billed_cost"]
+            g["billed_covered"] += 1
+        if r.get("api_equivalent_cost") is not None:
+            g["api_equivalent_cost"] += r["api_equivalent_cost"]
+            g["api_equivalent_covered"] += 1
 
     table = Table(show_header=True, pad_edge=False)
     table.add_column("Date")
@@ -54,45 +67,60 @@ def render(db: MetricsDB, period: str) -> RenderableType:
     table.add_column("Projects")
     table.add_column("In", justify="right")
     table.add_column("Out", justify="right")
-    table.add_column("Cost", justify="right")
+    table.add_column("Billed cost", justify="right")
+    table.add_column("API-equivalent cost", justify="right")
 
     total_sessions = 0
     total_in = 0
     total_out = 0
-    total_cost = 0.0
-    total_billing_models: set[str] = set()
+    total_billed = 0.0
+    total_api_equivalent = 0.0
+    total_rows = 0
+    total_billed_covered = 0
+    total_api_covered = 0
     for date in sorted(by_date, reverse=True):
         g = by_date[date]
         projects = ", ".join(sorted(p for p in g["projects"] if p))
         if len(projects) > 30:
             projects = projects[:27] + "..."
         sess_count = len({s for s in g["sessions"] if s})
-        cost = round(g["cost"], 2)
         total_sessions += sess_count
         total_in += g["input"]
         total_out += g["output"]
-        total_cost += cost
-        total_billing_models |= g["billing_models"]
-        cost_cell = "—" if g["billing_models"] == {"flat_rate"} else f"${cost}"
+        total_billed += g["billed_cost"]
+        total_api_equivalent += g["api_equivalent_cost"]
+        total_rows += g["rows"]
+        total_billed_covered += g["billed_covered"]
+        total_api_covered += g["api_equivalent_covered"]
+        billed_cell = _money_cell(g["billed_cost"], g["billed_covered"], g["rows"])
+        api_cell = _money_cell(g["api_equivalent_cost"], g["api_equivalent_covered"], g["rows"])
         table.add_row(
             date,
             str(sess_count),
             projects,
             format_tokens(g["input"]),
             format_tokens(g["output"]),
-            cost_cell,
+            billed_cell,
+            api_cell,
         )
 
     table.add_section()
-    priced_only = "flat_rate" in total_billing_models and "per_token" in total_billing_models
-    total_cost_cell = "—" if total_billing_models == {"flat_rate"} else f"${round(total_cost, 2)}"
+    total_label = "Total (priced only)" if 0 < total_billed_covered < total_rows else "Total"
     table.add_row(
-        "Total (priced only)" if priced_only else "Total",
+        total_label,
         str(total_sessions),
         "",
         format_tokens(total_in),
         format_tokens(total_out),
-        total_cost_cell,
+        _money_cell(total_billed, total_billed_covered, total_rows),
+        _money_cell(total_api_equivalent, total_api_covered, total_rows),
         style="bold",
     )
     return Group(header, table)
+
+
+def _money_cell(amount: float, covered: int, rows: int) -> str:
+    if covered == 0:
+        return "—"
+    rendered = f"${round(amount, 2)}"
+    return rendered if covered == rows else f"{rendered} ({covered}/{rows})"

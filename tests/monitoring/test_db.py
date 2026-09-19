@@ -571,6 +571,93 @@ def test_new_db_has_agent_and_billing_model_columns(tmp_path: Path) -> None:
     assert "billing_model" in cols
 
 
+def test_new_db_has_separate_billed_and_api_equivalent_columns(tmp_path: Path) -> None:
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        cols = {row[1] for row in db._conn.execute("PRAGMA table_info(session_stats)")}
+    finally:
+        db.close()
+    assert {
+        "billed_cost",
+        "billed_cost_source",
+        "api_equivalent_cost",
+        "api_equivalent_status",
+        "api_price_basis",
+    } <= cols
+
+
+def test_v4_migration_backfills_only_legacy_billed_semantics(tmp_path: Path) -> None:
+    path = tmp_path / "v3.db"
+    legacy = sqlite3.connect(str(path))
+    legacy.execute(
+        """
+        CREATE TABLE session_stats (
+            session TEXT NOT NULL, date TEXT NOT NULL, model TEXT NOT NULL,
+            profile TEXT NOT NULL DEFAULT '', project TEXT NOT NULL DEFAULT '',
+            input_tokens INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_read INTEGER NOT NULL DEFAULT 0,
+            cache_create INTEGER NOT NULL DEFAULT 0,
+            cost REAL NOT NULL DEFAULT 0.0,
+            user_id TEXT NOT NULL DEFAULT 'local',
+            tenant_id TEXT NOT NULL DEFAULT 'local',
+            event_id TEXT NOT NULL DEFAULT '', host TEXT NOT NULL DEFAULT '',
+            workload TEXT NOT NULL DEFAULT '', agent TEXT NOT NULL DEFAULT '',
+            billing_model TEXT NOT NULL DEFAULT 'per_token',
+            UNIQUE(session, model)
+        )
+        """
+    )
+    legacy.executemany(
+        "INSERT INTO session_stats (session, date, model, cost, billing_model) "
+        "VALUES (?, ?, ?, ?, ?)",
+        [
+            ("metered", "2026-09-19", "known", 1.25, "per_token"),
+            ("sub", "2026-09-19", "gpt-5.6-sol", 0.0, "flat_rate"),
+        ],
+    )
+    legacy.commit()
+    legacy.close()
+
+    db = MetricsDB(path)
+    try:
+        rows = {row["session"]: row for row in db.query_stats(period="all")}
+    finally:
+        db.close()
+
+    assert rows["metered"]["billed_cost"] == 1.25
+    assert rows["metered"]["billed_cost_source"] == "unknown"
+    assert rows["sub"]["billed_cost"] is None
+    assert rows["sub"]["billed_cost_source"] == "subscription"
+    assert rows["sub"]["api_equivalent_cost"] is None
+    assert rows["sub"]["api_equivalent_status"] is None
+
+
+def test_same_event_id_replay_enriches_v3_row_without_duplication(tmp_path: Path) -> None:
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.upsert_event(_event(schema_version=3, event_id="stable", cost=1.0))
+        db.upsert_event(
+            _event(
+                schema_version=4,
+                event_id="stable",
+                cost=1.0,
+                billed_cost=1.0,
+                billed_cost_source="pricing",
+                api_equivalent_cost=2.0,
+                api_equivalent_status="priced",
+                api_price_basis={"provider": "openai"},
+            )
+        )
+        rows = db.query_stats(period="all")
+    finally:
+        db.close()
+    assert len(rows) == 1
+    assert rows[0]["billed_cost"] == 1.0
+    assert rows[0]["api_equivalent_cost"] == 2.0
+    assert rows[0]["api_equivalent_status"] == "priced"
+
+
 def test_migration_adds_agent_and_billing_model_to_a_pre_v3_db(tmp_path: Path) -> None:
     """A DB created after host/workload (ADR-037) but before ADR-050."""
     path = tmp_path / "mid.db"

@@ -441,6 +441,12 @@ class TranscriptEvent:
     """tool_calls: the provider's own id, which pairs a call with its result."""
     usage: TokenUsage | None = None
     """token_usage."""
+    context_class: str | None = None
+    """token_usage: an explicit provider pricing class such as short or long.
+
+    Readers leave this absent when the provider reports only token counts or a
+    context-window size.  Consumers must not infer an unpublished boundary.
+    """
     model: str | None = None
     """token_usage / messages: the model that produced the turn, as the provider
     names it. `None` where the transcript does not disclose it — which is a

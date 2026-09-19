@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any, ClassVar, Protocol, runtime_checkable
 
-METRIC_EVENT_SCHEMA_VERSION: int = 3
+METRIC_EVENT_SCHEMA_VERSION: int = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,13 +50,28 @@ class MetricEvent:
     agent: str = ""
     billing_model: str = "per_token"
     cost_source: str | None = None
+    billed_cost: float | None = None
+    billed_cost_source: str = "unknown"
+    api_equivalent_cost: float | None = None
+    api_equivalent_status: str | None = None
+    api_price_basis: dict[str, str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> MetricEvent:
-        return cls(**data)
+        migrated = dict(data)
+        if "billed_cost" not in migrated:
+            flat_rate = migrated.get("billing_model") == "flat_rate"
+            migrated["billed_cost"] = None if flat_rate else migrated.get("cost")
+            migrated["billed_cost_source"] = (
+                "subscription" if flat_rate else migrated.get("cost_source") or "unknown"
+            )
+        migrated.setdefault("api_equivalent_cost", None)
+        migrated.setdefault("api_equivalent_status", None)
+        migrated.setdefault("api_price_basis", None)
+        return cls(**migrated)
 
 
 @dataclass(frozen=True, slots=True)

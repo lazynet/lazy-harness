@@ -192,9 +192,13 @@ def metrics_status() -> None:
     db = MetricsDB(Path(db_path))
     try:
         totals = db.aggregate_costs(period="all")
+        equivalent = totals["api_equivalent_cost"]
+        equivalent_cell = f"${equivalent}" if equivalent is not None else "—"
         console.print(
             f"[bold]sqlite_local[/bold]  {totals['session_count']} sessions  "
-            f"${totals['total_cost']}  {db_path}"
+            f"billed ${totals['billed_cost']}  "
+            f"API-equivalent {equivalent_cell}  "
+            f"{db_path}"
         )
 
         remote_sinks = [name for name in cfg.metrics.sinks if name != "sqlite_local"]

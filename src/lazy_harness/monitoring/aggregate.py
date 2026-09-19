@@ -78,6 +78,13 @@ class Bucket:
     cache_read: int = 0
     cache_create: int = 0
     cost: float = 0.0
+    billed_cost: float = 0.0
+    api_equivalent_cost: float = 0.0
+    row_count: int = 0
+    billed_covered: int = 0
+    api_equivalent_covered: int = 0
+    billed_cost_sources: set[str] = field(default_factory=set)
+    api_equivalent_statuses: set[str] = field(default_factory=set)
     sessions: set[str] = field(default_factory=set)
     billing_models: set[str] = field(default_factory=set)
 
@@ -87,6 +94,22 @@ class Bucket:
         self.cache_read += int(row.get("cache_read", 0) or 0)
         self.cache_create += int(row.get("cache_create", 0) or 0)
         self.cost += float(row.get("cost", 0.0) or 0.0)
+        self.row_count += 1
+        if "billed_cost" in row:
+            billed = row.get("billed_cost")
+        else:
+            billed = None if row.get("billing_model") == "flat_rate" else row.get("cost", 0.0)
+        if billed is not None:
+            self.billed_cost += float(billed)
+            self.billed_covered += 1
+        self.billed_cost_sources.add(str(row.get("billed_cost_source") or "unknown"))
+        equivalent = row.get("api_equivalent_cost")
+        if equivalent is not None:
+            self.api_equivalent_cost += float(equivalent)
+            self.api_equivalent_covered += 1
+        status = row.get("api_equivalent_status")
+        if status:
+            self.api_equivalent_statuses.add(str(status))
         session = str(row.get("session") or "")
         if session:
             self.sessions.add(session)

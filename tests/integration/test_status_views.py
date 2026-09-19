@@ -248,6 +248,52 @@ def test_status_tokens_total_is_not_degraded_by_per_group_rounding(home_dir: Pat
     assert "$0.08" in result.output
 
 
+def test_status_tokens_labels_billed_and_api_equivalent_separately(home_dir: Path) -> None:
+    _setup(home_dir)
+    _seed_db(
+        home_dir,
+        [
+            _entry(
+                billing_model="flat_rate",
+                cost=0.0,
+                billed_cost=None,
+                billed_cost_source="subscription",
+                api_equivalent_cost=1.25,
+                api_equivalent_status="priced",
+                api_price_basis='{"provider":"openai"}',
+            )
+        ],
+    )
+    result = CliRunner().invoke(cli, ["status", "tokens", "--by", "model", "--period", "all"])
+    assert result.exit_code == 0, result.output
+    assert "Billed cost" in result.output
+    assert "API-equivalent cost" in result.output
+    assert "$1.25" in result.output
+    assert "$0.0" not in result.output
+
+
+def test_status_sessions_labels_billed_and_api_equivalent_separately(home_dir: Path) -> None:
+    _setup(home_dir)
+    _seed_db(
+        home_dir,
+        [
+            _entry(
+                billing_model="flat_rate",
+                cost=0.0,
+                billed_cost=None,
+                billed_cost_source="subscription",
+                api_equivalent_cost=1.25,
+                api_equivalent_status="priced",
+            )
+        ],
+    )
+    result = CliRunner().invoke(cli, ["status", "sessions", "--period", "all"])
+    assert result.exit_code == 0, result.output
+    assert "Billed cost" in result.output
+    assert "API-equivalent cost" in result.output
+    assert "$1.25" in result.output
+
+
 def test_status_tokens_groups_by_each_requested_dimension(home_dir: Path) -> None:
     _setup(home_dir)
     _seed_db(
