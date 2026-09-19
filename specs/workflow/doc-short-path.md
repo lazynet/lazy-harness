@@ -12,6 +12,7 @@ A change qualifies for the short-path only when **every** item below is true:
 
 1. **Paths touched are a subset of the allowlist:**
    - `docs/**` (published MkDocs site, excluding `mkdocs.yml`)
+   - `reports/**` (point-in-time analysis and verification reports)
    - `specs/**` except the exclusions below
    - `README.md` (repo root)
 2. **No excluded path is touched:**
