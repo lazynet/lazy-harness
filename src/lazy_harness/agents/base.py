@@ -635,6 +635,16 @@ class AgentAdapter(Protocol):
         """
         ...
 
+    def skill_root(self, profile_config_dir: str) -> Path | None:
+        """Native directory where this agent discovers skill directories.
+
+        The capability is deliberately narrower than a generic asset mapping:
+        commands and subagent definitions keep their native formats and stay
+        in their agent segment.  Return ``None`` when no discovery root has
+        been measured or when the runtime has disabled it.
+        """
+        ...
+
     def mcp_config_file(self) -> str:
         """Filename inside the config dir that holds MCP server config.
 

@@ -18,10 +18,10 @@ from lazy_harness.deploy.snapshot import snapshot_targets
 
 def _segmented(home: Path) -> Config:
     src = config_dir() / "profiles" / "gate"
-    (src / "shared" / "skills").mkdir(parents=True)
-    (src / "shared" / "skills" / "a.md").write_text("a")
-    (src / "codex" / "skills").mkdir(parents=True)
-    (src / "codex" / "skills" / "b.md").write_text("b")
+    (src / "shared" / "skills" / "a").mkdir(parents=True)
+    (src / "shared" / "skills" / "a" / "SKILL.md").write_text("a")
+    (src / "codex" / "skills" / "b").mkdir(parents=True)
+    (src / "codex" / "skills" / "b" / "SKILL.md").write_text("b")
     (src / "claude-code").mkdir(parents=True)
     (src / "claude-code" / "settings.json").write_text("{}")
     (src / "AGENTS.md").write_text("doc")
@@ -68,6 +68,16 @@ def test_the_snapshot_covers_the_ownership_ledger(home_dir: Path) -> None:
     cfg = _segmented(home_dir)
 
     assert home_dir / "codex-home" / LEDGER_RELATIVE in set(snapshot_targets(cfg))
+
+
+def test_the_snapshot_covers_native_skill_links_and_their_ledger(home_dir: Path) -> None:
+    from lazy_harness.deploy.skills import SKILL_LEDGER_RELATIVE
+
+    cfg = _segmented(home_dir)
+    root = home_dir / ".agents" / "skills"
+    targets = set(snapshot_targets(cfg))
+
+    assert {root / "a", root / "b", root.parent / SKILL_LEDGER_RELATIVE} <= targets
 
 
 def test_the_snapshot_does_not_target_segment_directories(home_dir: Path) -> None:

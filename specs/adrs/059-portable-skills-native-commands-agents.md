@@ -1,7 +1,10 @@
 # ADR-059: Portable skills are projected; commands and agents remain native
 
-**Status:** accepted-deferred
+**Status:** accepted
 **Date:** 2026-09-19
+**Implemented:** 2026-09-19 — adapters declare `skill_root()`, deploy plans native-root
+projections across the selected profiles before writing, and
+`deploy/skills.py` owns per-skill links and their cleanup ledger.
 **Supersedes:** —
 **Superseded by:** —
 **Related:** ADR-043 (system docs by role), ADR-052 (profile assets per agent)

@@ -108,27 +108,46 @@ def snapshot_targets(cfg: Config, *, only: str | None = None) -> list[Path]:
     from lazy_harness.deploy.engine import deploys_global_link, selected_profiles
     from lazy_harness.deploy.ledger import LEDGER_RELATIVE
     from lazy_harness.deploy.segments import resolve_segments
+    from lazy_harness.deploy.skills import SKILL_LEDGER_RELATIVE, plan_skill_projections
 
     profiles_src = config_dir() / "profiles"
+    selected = selected_profiles(cfg, only)
+    adapters = {name: agent_for_profile(cfg, name) for name in selected}
+    agent_names = list_agents()
 
     targets: list[Path] = []
-    for name, entry in selected_profiles(cfg, only).items():
+    for name, entry in selected.items():
         target_dir = expand_path(entry.config_dir)
         src_dir = profiles_src / name
-        agent = agent_for_profile(cfg, name)
+        agent = adapters[name]
         if src_dir.is_dir():
             # Resolved through the same function the deploy uses, not by listing
             # the source again: a mirror that lists root names targets `shared`
             # and `codex` — directories the deploy never links — while missing
             # every file link it does write inside them.
-            plan = resolve_segments(src_dir, agent.name, agent_names=list_agents())
-            targets.extend(target_dir / link.relative for link in plan.links)
+            plan = resolve_segments(src_dir, agent.name, agent_names=agent_names)
+            targets.extend(
+                target_dir / link.relative
+                for link in plan.links
+                if link.relative.parts[0] != "skills"
+            )
             targets.append(target_dir / LEDGER_RELATIVE)
         # An adapter that cannot plan writes no config document, so it owns
         # none. The deploy refuses such a profile outright; the snapshot only
         # has to not invent targets for it.
         if isinstance(agent, ConfigPlanner):
             targets.extend(target_dir / relative for relative in agent.config_targets())
+
+    skill_plan = plan_skill_projections(
+        selected,
+        profiles_src,
+        adapters,
+        narrowed=only is not None,
+    )
+    for root_plan in skill_plan.roots:
+        targets.extend(root_plan.root / name for name in root_plan.links)
+        targets.extend(root_plan.root / name for name in root_plan.owned_before)
+        targets.append(root_plan.root.parent / SKILL_LEDGER_RELATIVE)
 
     default_agent = agent_for_profile(cfg, cfg.profiles.default)
     link_path = default_agent.global_config_link()

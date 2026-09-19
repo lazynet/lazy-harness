@@ -181,6 +181,10 @@ class CopilotAdapter:
     def config_dir(self, profile_config_dir: str) -> Path:
         return expand_path(profile_config_dir)
 
+    def skill_root(self, profile_config_dir: str) -> Path | None:
+        """No root until a positive-and-negative discovery probe exists."""
+        return None
+
     def env_var(self) -> str:
         """`COPILOT_HOME`, honoured end to end ([run], 1.0.83)."""
         return "COPILOT_HOME"

@@ -382,6 +382,9 @@ class ClaudeCodeAdapter:
     def config_dir(self, profile_config_dir: str) -> Path:
         return expand_path(profile_config_dir)
 
+    def skill_root(self, profile_config_dir: str) -> Path | None:
+        return self.config_dir(profile_config_dir) / "skills"
+
     def env_var(self) -> str:
         return "CLAUDE_CONFIG_DIR"
 

@@ -192,12 +192,12 @@ def test_deploy_removes_a_link_it_no_longer_generates(home_dir: Path) -> None:
 def test_deploy_writes_a_ledger_naming_what_it_linked(home_dir: Path) -> None:
     from lazy_harness.deploy.engine import deploy_profiles
 
-    _seed(home_dir, {"shared": {"skills": {"a.md": "a"}}, "codex": {"skills": {"b.md": "b"}}})
+    _seed(home_dir, {"shared": {"docs": {"a.md": "a"}}, "codex": {"docs": {"b.md": "b"}}})
     deploy_profiles(_codex_profile(home_dir), only="gate")
 
     ledger = home_dir / "codex-home" / LEDGER_RELATIVE
     assert ledger.is_file()
-    assert set(json.loads(ledger.read_text())["links"]) == {"skills/a.md", "skills/b.md"}
+    assert set(json.loads(ledger.read_text())["links"]) == {"docs/a.md", "docs/b.md"}
 
 
 def test_deploy_with_the_ledger_deleted_by_hand_re_adopts_and_still_prunes(

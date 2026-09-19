@@ -208,3 +208,31 @@ def test_an_adapter_that_cannot_plan_config_exits_nonzero(
     assert result.exit_code != 0
     assert "plannerless" in result.output
     assert "Traceback" not in result.output
+
+
+def test_a_skill_collision_exits_nonzero_without_a_traceback(home_dir: Path) -> None:
+    from click.testing import CliRunner
+
+    from lazy_harness.cli.main import cli
+    from lazy_harness.core.config import Config, ProfileEntry, save_config
+    from lazy_harness.core.paths import config_dir
+
+    profiles = config_dir() / "profiles"
+    for name, body in (("one", "one"), ("two", "two")):
+        skill = profiles / name / "codex" / "skills" / "same"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text(body)
+    cfg = Config()
+    cfg.profiles.default = "one"
+    cfg.profiles.items = {
+        name: ProfileEntry(config_dir=str(home_dir / f".{name}"), agent="codex")
+        for name in ("one", "two")
+    }
+    save_config(cfg, config_dir() / "config.toml")
+
+    result = CliRunner().invoke(cli, ["deploy"])
+
+    assert result.exit_code != 0
+    assert "same" in result.output
+    assert "different content" in result.output
+    assert "Traceback" not in result.output
