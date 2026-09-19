@@ -96,7 +96,7 @@ def test_sync_claude_regenerates_the_tree_a_patched_segment_belongs_to(
 ) -> None:
     from lazy_harness.hooks.builtins import post_tool_use_sync_system_doc as mod
 
-    segment = tmp_path / "profiles" / "lazy" / "CLAUDE.head.md"
+    segment = tmp_path / "profiles" / "lazy" / "head.md"
     segment.parent.mkdir(parents=True)
     segment.write_text("head\n")
     fake_sync = MagicMock()
@@ -112,7 +112,7 @@ def test_sync_claude_regenerates_the_tree_a_patched_role_named_segment_belongs_t
 ) -> None:
     """The other half of decision 5: the gate is the operation now, so
     `apply_patch` reaches a role-named segment (`_common/common.md`) exactly as
-    it already reached the legacy-named one above -- previously untested
+    it already reached the profile head above -- previously untested
     through the shipped `CodexAdapter`, not previously broken."""
     from lazy_harness.hooks.builtins import post_tool_use_sync_system_doc as mod
 

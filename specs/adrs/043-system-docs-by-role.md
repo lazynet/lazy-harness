@@ -121,6 +121,9 @@ success.
 The fallback is a migration window, not a second permanent answer. It comes out
 with the chezmoi rename.
 
+**Evolution, 2026-09-19.** The rename and kill criterion closed on 2026-09-18;
+the fallback was retired as recorded in [ADR-055's Evolution](055-segment-rename-and-the-agent-segment.md#evolution).
+
 ### 4. The sync hook's trigger set is derived from the roles
 
 `post_tool_use_sync_claude.SEGMENT_FILES` was a literal

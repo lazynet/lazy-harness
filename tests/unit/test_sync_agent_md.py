@@ -21,16 +21,16 @@ def _seed_profile(
     p = profiles_dir / name
     p.mkdir(parents=True)
     if head is not None:
-        (p / "CLAUDE.head.md").write_text(head)
+        (p / "head.md").write_text(head)
     if tail is not None:
-        (p / "CLAUDE.tail.md").write_text(tail)
+        (p / "tail.md").write_text(tail)
     return p
 
 
 def _seed_common(profiles_dir: Path, body: str = "# common\n") -> None:
     common = profiles_dir / "_common"
     common.mkdir(parents=True, exist_ok=True)
-    (common / "CLAUDE.common.md").write_text(body)
+    (common / "common.md").write_text(body)
 
 
 def test_sync_profiles_writes_concatenation(tmp_path: Path) -> None:
@@ -98,7 +98,7 @@ def test_sync_profiles_raises_when_common_missing(tmp_path: Path) -> None:
     profiles_dir.mkdir()
     _seed_profile(profiles_dir, "lazy")
 
-    with pytest.raises(SyncError, match="CLAUDE.common.md"):
+    with pytest.raises(SyncError, match="common.md"):
         sync_profiles(profiles_dir, _adapter())
 
 
@@ -136,9 +136,9 @@ def test_generated_header_carries_the_writing_version(tmp_path: Path) -> None:
     """Decision 9: a generated doc declares the lazy-harness version that
     wrote it, so a stale CLAUDE.md can be told apart from a fresh one."""
     from lazy_harness import __version__
-    from lazy_harness.core.sync_agent_md import legacy_segment_names, render_agent_md
+    from lazy_harness.core.sync_agent_md import ROLE_SEGMENT_NAMES, render_agent_md
 
-    out = render_agent_md("head", "common", "tail", names=legacy_segment_names("CLAUDE"))
+    out = render_agent_md("head", "common", "tail", names=ROLE_SEGMENT_NAMES)
     assert f"lazy-harness {__version__}" in out
 
 
@@ -198,13 +198,12 @@ def test_sync_profiles_writes_each_profiles_own_system_doc(tmp_path: Path) -> No
     profiles_dir = tmp_path / "profiles"
     profiles_dir.mkdir()
     _seed_common(profiles_dir)
-    (profiles_dir / "_common" / "AGENTS.common.md").write_text("# shared\n")
 
     _seed_profile(profiles_dir, "lazy")
     work = profiles_dir / "work"
     work.mkdir()
-    (work / "AGENTS.head.md").write_text("# head\n")
-    (work / "AGENTS.tail.md").write_text("# tail\n")
+    (work / "head.md").write_text("# head\n")
+    (work / "tail.md").write_text("# tail\n")
 
     cfg = Config(
         harness=HarnessConfig(version="1"),
@@ -227,13 +226,11 @@ def test_sync_profiles_writes_each_profiles_own_system_doc(tmp_path: Path) -> No
     assert not (work / "CLAUDE.md").exists()
 
 
-def test_sync_profiles_writes_nothing_when_one_profiles_common_is_missing(tmp_path: Path) -> None:
+def test_sync_profiles_writes_nothing_when_the_role_common_is_missing(tmp_path: Path) -> None:
     """The refusal stays ahead of the first write.
 
-    Making the `_common` lookup per stem made it reachable mid-loop, so a tree
-    whose second profile had no shared segment would leave the first one
-    rewritten and then raise — a half-synced tree from a command that reports
-    only the failure.
+    Every profile is preflighted before the first write, so a missing shared
+    role segment cannot leave the tree half-synced.
     """
     import pytest
 
@@ -248,13 +245,13 @@ def test_sync_profiles_writes_nothing_when_one_profiles_common_is_missing(tmp_pa
 
     profiles_dir = tmp_path / "profiles"
     profiles_dir.mkdir()
-    _seed_common(profiles_dir)  # CLAUDE.common.md only — AGENTS.common.md is absent
+    (profiles_dir / "_common").mkdir()
 
     _seed_profile(profiles_dir, "lazy")
     work = profiles_dir / "work"
     work.mkdir()
-    (work / "AGENTS.head.md").write_text("# head\n")
-    (work / "AGENTS.tail.md").write_text("# tail\n")
+    (work / "head.md").write_text("# head\n")
+    (work / "tail.md").write_text("# tail\n")
 
     cfg = Config(
         harness=HarnessConfig(version="1"),
@@ -268,7 +265,7 @@ def test_sync_profiles_writes_nothing_when_one_profiles_common_is_missing(tmp_pa
         ),
     )
 
-    with pytest.raises(SyncError, match="AGENTS.common.md"):
+    with pytest.raises(SyncError, match="common.md"):
         sync_profiles(profiles_dir, _adapter(), cfg=cfg)
 
     assert not (profiles_dir / "lazy" / "CLAUDE.md").exists()
@@ -312,14 +309,13 @@ def test_sync_claude_md_command_writes_each_profiles_own_system_doc(tmp_path: Pa
     monkeypatch = pytest.MonkeyPatch()
     profiles_dir = tmp_path / "profiles"
     (profiles_dir / "_common").mkdir(parents=True)
-    (profiles_dir / "_common" / "CLAUDE.common.md").write_text("# shared\n")
-    (profiles_dir / "_common" / "AGENTS.common.md").write_text("# shared\n")
+    (profiles_dir / "_common" / "common.md").write_text("# shared\n")
 
     _seed_profile(profiles_dir, "lazy")
     work = profiles_dir / "work"
     work.mkdir()
-    (work / "AGENTS.head.md").write_text("# head\n")
-    (work / "AGENTS.tail.md").write_text("# tail\n")
+    (work / "head.md").write_text("# head\n")
+    (work / "tail.md").write_text("# tail\n")
 
     cfg_file = tmp_path / "config.toml"
     cfg_file.write_text(
@@ -507,22 +503,26 @@ def test_an_agent_with_no_segment_renders_without_one(tmp_path: Path) -> None:
     assert "claude-code" not in (profiles_dir / "lazy" / "CLAUDE.md").read_text()
 
 
-def test_the_legacy_stem_keyed_layout_is_named_in_the_result(tmp_path: Path) -> None:
-    """A deployed tree predates the rename, and the chezmoi source rename is a
-    separate change in another repository. The fallback keeps that tree syncing
-    and says which layout it used, so `lh profile sync-system-doc` reports the
-    migration instead of silently doing nothing."""
+def test_the_legacy_stem_keyed_layout_is_skipped_and_named(tmp_path: Path) -> None:
+    """A legacy-only tree must not silently keep the retired reader alive."""
     from lazy_harness.core.sync_agent_md import sync_profiles
 
     profiles_dir = tmp_path / "profiles"
     profiles_dir.mkdir()
-    _seed_common(profiles_dir)
-    _seed_profile(profiles_dir, "lazy")
+    common = profiles_dir / "_common"
+    common.mkdir()
+    (common / "CLAUDE.common.md").write_text("# common\n")
+    profile = profiles_dir / "lazy"
+    profile.mkdir()
+    (profile / "CLAUDE.head.md").write_text("# head\n")
+    (profile / "CLAUDE.tail.md").write_text("# tail\n")
 
     results = sync_profiles(profiles_dir, _adapter())
 
-    assert [r.action for r in results] == ["written"]
-    assert "legacy" in results[0].reason
+    assert [r.action for r in results] == ["skipped"]
+    assert "CLAUDE.head.md" in results[0].reason
+    assert "lh profile migrate lazy" in results[0].reason
+    assert not (profiles_dir / "lazy" / "CLAUDE.md").exists()
 
 
 def test_the_role_layout_wins_over_a_legacy_layout_left_beside_it(tmp_path: Path) -> None:
@@ -536,15 +536,14 @@ def test_the_role_layout_wins_over_a_legacy_layout_left_beside_it(tmp_path: Path
     (profiles_dir / "_common" / "common.md").write_text("# new common\n")
     (profiles_dir / "_common" / "CLAUDE.common.md").write_text("# old common\n")
     p = _seed_role_profile(profiles_dir, "lazy", head="# new head\n", tail="# new tail\n")
-    (p / "CLAUDE.head.md").write_text("# old head\n")
+    (p / "CLAUDE.head.md").write_text("# LEGACY MARKER\n")
     (p / "CLAUDE.tail.md").write_text("# old tail\n")
 
-    results = sync_profiles(profiles_dir, _adapter())
+    sync_profiles(profiles_dir, _adapter())
 
-    assert results[0].reason == ""
     out = (p / "CLAUDE.md").read_text()
     assert "# new head" in out
-    assert "# old head" not in out
+    assert "# LEGACY MARKER" not in out
 
 
 def test_segment_filenames_is_derived_from_the_registry(tmp_path: Path) -> None:
@@ -563,8 +562,24 @@ def test_segment_filenames_is_derived_from_the_registry(tmp_path: Path) -> None:
         if not docs:
             continue
         assert f"{agent_type}.md" in names, f"{agent_type} has no agent segment name"
-        stem = docs[0].name.removesuffix(".md")
-        assert f"{stem}.head.md" in names, f"legacy {stem}.head.md dropped from the trigger set"
+    assert "CLAUDE.head.md" not in names
+    assert "CLAUDE.tail.md" not in names
+    assert "CLAUDE.common.md" not in names
+
+
+def test_sync_profiles_only_walks_the_named_profile(tmp_path: Path) -> None:
+    from lazy_harness.core.sync_agent_md import sync_profiles
+
+    profiles_dir = tmp_path / "profiles"
+    profiles_dir.mkdir()
+    _seed_common(profiles_dir)
+    _seed_profile(profiles_dir, "lazy")
+    _seed_profile(profiles_dir, "flex")
+
+    results = sync_profiles(profiles_dir, _adapter(), only="flex")
+
+    assert {r.profile for r in results} == {"flex"}
+    assert not (profiles_dir / "lazy" / "CLAUDE.md").exists()
 
 
 def test_one_agents_segment_never_reaches_another_agents_document(tmp_path: Path) -> None:

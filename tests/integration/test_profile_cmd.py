@@ -288,11 +288,11 @@ def _seed_segmented_profile(home_dir: Path, name: str = "personal") -> Path:
     profiles_dir = home_dir / ".config" / "lazy-harness" / "profiles"
     common = profiles_dir / "_common"
     common.mkdir(parents=True)
-    (common / "CLAUDE.common.md").write_text("# common rules\n")
+    (common / "common.md").write_text("# common rules\n")
     p = profiles_dir / name
     p.mkdir()
-    (p / "CLAUDE.head.md").write_text("# head\n")
-    (p / "CLAUDE.tail.md").write_text("# tail\n")
+    (p / "head.md").write_text("# head\n")
+    (p / "tail.md").write_text("# tail\n")
     return p
 
 
@@ -320,8 +320,8 @@ def test_profile_sync_claude_md_missing_common_errors(home_dir: Path) -> None:
     profiles_dir = home_dir / ".config" / "lazy-harness" / "profiles"
     p = profiles_dir / "personal"
     p.mkdir(parents=True)
-    (p / "CLAUDE.head.md").write_text("# head\n")
-    (p / "CLAUDE.tail.md").write_text("# tail\n")
+    (p / "head.md").write_text("# head\n")
+    (p / "tail.md").write_text("# tail\n")
     runner = CliRunner()
     result = runner.invoke(cli, ["profile", "sync-claude-md"])
     assert result.exit_code != 0
@@ -373,16 +373,15 @@ def test_sync_system_doc_writes_each_profiles_own_agent_file(home_dir: Path) -> 
     profiles_dir = home_dir / ".config" / "lazy-harness" / "profiles"
     common = profiles_dir / "_common"
     common.mkdir(parents=True)
-    (common / "CLAUDE.common.md").write_text("# common\n")
-    (common / "AGENTS.common.md").write_text("# common\n")
+    (common / "common.md").write_text("# common\n")
     personal = profiles_dir / "personal"
     personal.mkdir()
-    (personal / "CLAUDE.head.md").write_text("# head\n")
-    (personal / "CLAUDE.tail.md").write_text("# tail\n")
+    (personal / "head.md").write_text("# head\n")
+    (personal / "tail.md").write_text("# tail\n")
     work = profiles_dir / "work"
     work.mkdir()
-    (work / "AGENTS.head.md").write_text("# head\n")
-    (work / "AGENTS.tail.md").write_text("# tail\n")
+    (work / "head.md").write_text("# head\n")
+    (work / "tail.md").write_text("# tail\n")
 
     result = CliRunner().invoke(cli, ["profile", "sync-system-doc"])
 

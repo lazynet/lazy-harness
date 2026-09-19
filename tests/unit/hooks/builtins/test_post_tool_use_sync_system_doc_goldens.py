@@ -18,7 +18,7 @@ Two branches carry the traps this wave was warned about:
   `Operation.MODIFY_FILE` alongside `Edit` and `Write` (`claude_code.py:97`),
   and `_FILE_PATH_KEYS` folds `notebook_path` into the same `FileEdit.path`.
   This hook's second gate is a *filename* match, not an extension, so a
-  `NotebookEdit` whose path is named `CLAUDE.head.md` clears it once the
+  `NotebookEdit` whose path is named `head.md` clears it once the
   tool-name gate becomes the operation — an accepted, documented cost of the
   widening, not a real path any agent produces: Claude Code's `NotebookEdit`
   only ever carries a `.ipynb` path, which is
@@ -81,10 +81,10 @@ class Case:
     tool: str | None = "Edit"
     #: Path relative to the fixture root, as the payload declares it.
     #: `None` declares a tool call carrying no path.
-    path: str | None = "profiles/alpha/CLAUDE.head.md"
+    path: str | None = "profiles/alpha/head.md"
     #: The payload key the path goes under, which is the tool's own spelling.
     path_key: str = "file_path"
-    #: `True` removes `_common/CLAUDE.common.md` before the hook runs.
+    #: `True` removes `_common/common.md` before the hook runs.
     drop_common: bool = False
     #: Raw stdin, bypassing the payload builder entirely.
     raw_stdin: str | None = None
@@ -103,12 +103,12 @@ CASES: list[Case] = [
     Case(
         id="a-tail-write-regenerates-every-profile-in-the-tree",
         tool="Write",
-        path="profiles/beta/CLAUDE.tail.md",
+        path="profiles/beta/tail.md",
         regenerates=PROFILES,
     ),
     Case(
         id="a-common-edit-regenerates-every-profile-in-the-tree",
-        path="profiles/_common/CLAUDE.common.md",
+        path="profiles/_common/common.md",
         regenerates=PROFILES,
     ),
     # --- the filename gate, which is this hook's whole discriminator -------- #
@@ -122,8 +122,8 @@ CASES: list[Case] = [
     Case(id="the-generated-doc-is-not-a-segment", path="profiles/alpha/CLAUDE.md"),
     Case(
         id="a-segment-outside-a-profiles-tree-regenerates-nothing",
-        path="elsewhere/CLAUDE.head.md",
-        extra_files=("elsewhere/CLAUDE.head.md",),
+        path="elsewhere/head.md",
+        extra_files=("elsewhere/head.md",),
     ),
     # --- the tool gate ------------------------------------------------------ #
     Case(id="a-read-regenerates-nothing", tool="Read"),
@@ -185,14 +185,14 @@ def _build(tmp_path: Path, case: Case) -> World:
         d.mkdir(parents=True, exist_ok=True)
 
     profiles = root / "profiles"
-    common = profiles / "_common" / "CLAUDE.common.md"
+    common = profiles / "_common" / "common.md"
     common.parent.mkdir(parents=True, exist_ok=True)
     if not case.drop_common:
         common.write_text("SHARED RULES\n", encoding="utf-8")
     for name in PROFILES:
         (profiles / name).mkdir(parents=True, exist_ok=True)
-        (profiles / name / "CLAUDE.head.md").write_text(f"{name} HEAD\n", encoding="utf-8")
-        (profiles / name / "CLAUDE.tail.md").write_text(f"{name} TAIL\n", encoding="utf-8")
+        (profiles / name / "head.md").write_text(f"{name} HEAD\n", encoding="utf-8")
+        (profiles / name / "tail.md").write_text(f"{name} TAIL\n", encoding="utf-8")
         (profiles / name / "CLAUDE.md").write_text(STALE, encoding="utf-8")
     for extra in case.extra_files:
         target = root / extra
@@ -267,7 +267,7 @@ def test_what_it_writes_is_the_segments_joined_by_the_shipped_generator(tmp_path
     Without it every positive case above would pass against a hook that
     truncated the doc, and the gate tests would read as green.
     """
-    from lazy_harness.core.sync_agent_md import legacy_segment_names, render_agent_md
+    from lazy_harness.core.sync_agent_md import ROLE_SEGMENT_NAMES, render_agent_md
 
     case = next(c for c in CASES if c.id == "a-head-edit-regenerates-every-profile-in-the-tree")
     world = _build(tmp_path, case)
@@ -279,7 +279,7 @@ def test_what_it_writes_is_the_segments_joined_by_the_shipped_generator(tmp_path
             f"{name} HEAD\n",
             "SHARED RULES\n",
             f"{name} TAIL\n",
-            names=legacy_segment_names("CLAUDE"),
+            names=ROLE_SEGMENT_NAMES,
         )
         assert (world.root / "profiles" / name / "CLAUDE.md").read_text(
             encoding="utf-8"

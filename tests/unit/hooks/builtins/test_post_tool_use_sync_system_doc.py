@@ -49,13 +49,27 @@ def _no_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path / "config"))
 
 
-def test_triggers_on_head_edit_under_profiles(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_legacy_head_edit_under_profiles_does_not_trigger(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from lazy_harness.hooks.builtins import post_tool_use_sync_system_doc as mod
 
     fake_sync = MagicMock(return_value=[])
     monkeypatch.setattr(mod, "sync_profiles", fake_sync)
 
     decision = mod.main(_event("Edit", "/x/.config/lazy-harness/profiles/lazy/CLAUDE.head.md"))
+
+    assert decision.verdict is None
+    fake_sync.assert_not_called()
+
+
+def test_triggers_on_head_edit_under_profiles(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lazy_harness.hooks.builtins import post_tool_use_sync_system_doc as mod
+
+    fake_sync = MagicMock(return_value=[])
+    monkeypatch.setattr(mod, "sync_profiles", fake_sync)
+
+    decision = mod.main(_event("Edit", "/x/.config/lazy-harness/profiles/lazy/head.md"))
 
     assert decision.verdict is None
     fake_sync.assert_called_once()
@@ -71,7 +85,7 @@ def test_triggers_on_tail_write_under_profiles(monkeypatch: pytest.MonkeyPatch) 
     fake_sync = MagicMock(return_value=[])
     monkeypatch.setattr(mod, "sync_profiles", fake_sync)
 
-    mod.main(_event("Write", "/x/.config/lazy-harness/profiles/flex/CLAUDE.tail.md"))
+    mod.main(_event("Write", "/x/.config/lazy-harness/profiles/flex/tail.md"))
 
     fake_sync.assert_called_once()
 
@@ -82,7 +96,7 @@ def test_triggers_on_common_edit(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_sync = MagicMock(return_value=[])
     monkeypatch.setattr(mod, "sync_profiles", fake_sync)
 
-    mod.main(_event("Edit", "/x/.config/lazy-harness/profiles/_common/CLAUDE.common.md"))
+    mod.main(_event("Edit", "/x/.config/lazy-harness/profiles/_common/common.md"))
 
     fake_sync.assert_called_once()
 
@@ -117,7 +131,7 @@ def test_a_notebook_edit_named_like_a_segment_now_regenerates(
 
     The gate is `event.tool.operation is Operation.MODIFY_FILE` now, not a tool
     name, so a `NotebookEdit` whose declared path is literally named
-    `CLAUDE.head.md` clears both gates and regenerates. That is a synthetic
+    `head.md` clears both gates and regenerates. That is a synthetic
     adversarial fixture, not a real one: Claude Code's `NotebookEdit` only ever
     carries a `.ipynb` path (`test_skips_a_notebook_edit_on_a_realistic_ipynb_path`
     below is the case that actually occurs), so this is the accepted, documented
@@ -128,7 +142,7 @@ def test_a_notebook_edit_named_like_a_segment_now_regenerates(
     fake_sync = MagicMock(return_value=[])
     monkeypatch.setattr(mod, "sync_profiles", fake_sync)
 
-    event = _event("NotebookEdit", "/x/.config/lazy-harness/profiles/lazy/CLAUDE.head.md")
+    event = _event("NotebookEdit", "/x/.config/lazy-harness/profiles/lazy/head.md")
     assert event.tool is not None
     assert event.tool.operation is Operation.MODIFY_FILE, "fixture must reach the widened gate"
 
@@ -214,9 +228,9 @@ def test_syncs_every_distinct_tree_a_multi_file_edit_touched(
         native_name="Edit",
         operation=Operation.MODIFY_FILE,
         edits=(
-            FileEdit(path=Path("/a/profiles/lazy/CLAUDE.head.md")),
-            FileEdit(path=Path("/a/profiles/flex/CLAUDE.tail.md")),
-            FileEdit(path=Path("/b/profiles/lazy/CLAUDE.head.md")),
+            FileEdit(path=Path("/a/profiles/lazy/head.md")),
+            FileEdit(path=Path("/a/profiles/flex/tail.md")),
+            FileEdit(path=Path("/b/profiles/lazy/head.md")),
             FileEdit(path=Path("/b/profiles/lazy/README.md")),
         ),
     )
@@ -312,7 +326,7 @@ def test_one_call_editing_and_deleting_syncs_both_trees(
     call = ToolCall(
         native_name="apply_patch",
         operation=Operation.MODIFY_FILE,
-        edits=(FileEdit(path=Path("/a/profiles/lazy/CLAUDE.head.md")),),
+        edits=(FileEdit(path=Path("/a/profiles/lazy/head.md")),),
         deletes=(Path("/b/profiles/_common/codex.md"),),
     )
     mod.main(
@@ -372,8 +386,6 @@ def test_resolves_the_adapter_of_the_invoked_profile(
     fake_sync = MagicMock(return_value=[])
     monkeypatch.setattr(mod, "sync_profiles", fake_sync)
 
-    mod.main(
-        _event("Edit", "/x/.config/lazy-harness/profiles/lazy/CLAUDE.head.md", profile="other")
-    )
+    mod.main(_event("Edit", "/x/.config/lazy-harness/profiles/lazy/head.md", profile="other"))
 
     assert fake_sync.call_args[0][1].name == "codex"

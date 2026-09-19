@@ -187,3 +187,19 @@ stops regenerating.
 If the rename has not been run on the deployed tree by the release after this
 one, the migration is not happening on its own and the fallback should be
 promoted to the permanent answer rather than left as a window nobody closes.
+
+## Evolution
+
+**2026-09-18 — kill criterion closed.** The rename landed in the dotfiles
+source, all three deployed profiles carried only role-named segments, and
+`lh profile sync-system-doc` reported no `legacy segment layout` line. The read
+fallback was therefore retired in the following PR: a legacy-only directory is
+skipped and names `lh profile migrate`, while a role-named layout ignores any
+legacy leftover beside it.
+
+The sentence in §5 saying that the first `lh deploy` runs the sync was not true
+when this ADR was accepted. The deploy path never called `sync_profiles`; during
+the 0.73.0 upgrade all three profile documents stayed stamped 0.72.1 until a
+manual `lh profile sync-system-doc` run. From this PR, deploy assembles the
+documents before linking profile content, and a narrowed deploy assembles only
+the selected profile.

@@ -26,7 +26,7 @@ from lazy_harness.core.profile_migrate import (
     plan_migration,
 )
 from lazy_harness.core.profiles import ProfileError, add_profile, list_profiles, remove_profile
-from lazy_harness.core.sync_agent_md import SyncError, sync_profiles
+from lazy_harness.core.sync_agent_md import SyncError, SyncResult, sync_profiles
 
 
 def deploy_envrc_for_all_profiles(cfg: Config) -> list[EnvrcResult]:
@@ -305,15 +305,25 @@ def profile_envrc(dry_run: bool) -> None:
             console.print(f"  cd {contract_path(r.path.parent)} && direnv allow")
 
 
+def render_sync_results(results: list[SyncResult], console: Console) -> None:
+    """Render system-doc sync results identically for sync and deploy."""
+    for result in results:
+        style = {"written": "green", "unchanged": "dim", "skipped": "yellow"}.get(result.action, "")
+        suffix = f" ({result.reason})" if result.reason else ""
+        console.print(
+            f"[{style}]{result.action:9}[/{style}] {result.profile} → {result.path.name}{suffix}"
+        )
+
+
 def _profile_sync_system_doc() -> None:
     """Regenerate each profile's system doc from its segmented sources.
 
     Concatenates `<profile>/head.md` + `_common/common.md` +
     `_common/<agent>.md` + `<profile>/tail.md` for every profile dir under
     `~/.config/lazy-harness/profiles/` that carries them, and writes the result
-    to every destination the profile's agent loads. The legacy stem-keyed
-    spellings (`CLAUDE.head.md` and friends) still render, and the line says so.
-    Profile dirs without segments (flat layout) are skipped, not erased.
+    to every destination the profile's agent loads. Legacy-only and flat
+    profile dirs are skipped, not erased; legacy-only results name the migrate
+    command that restores them to the supported layout.
     """
     console = Console()
     profiles_dir = config_dir() / "profiles"
@@ -340,13 +350,7 @@ def _profile_sync_system_doc() -> None:
         console.print("[dim]No profile dirs found.[/dim]")
         return
 
-    for r in results:
-        style = {"written": "green", "unchanged": "dim", "skipped": "yellow"}.get(r.action, "")
-        suffix = f" ({r.reason})" if r.reason else ""
-        # The destination, not only the profile: one profile can now yield one
-        # line per file its agent loads, and the profile name alone repeated
-        # the same word without saying which file changed.
-        console.print(f"[{style}]{r.action:9}[/{style}] {r.profile} → {r.path.name}{suffix}")
+    render_sync_results(results, console)
 
 
 # Renamed from `sync-claude-md` (decision 5, blast-radius design): the
@@ -374,10 +378,9 @@ def profile_migrate(name: str, dry_run: bool) -> None:
     `CLAUDE.tail.md` becomes `tail.md`, and `_common/CLAUDE.common.md` becomes
     `_common/common.md` once no other profile still reads it (ADR-055).
 
-    Migrating is optional: an unmigrated profile still deploys its root to
-    every agent, and the assembler still reads the legacy names. What it buys
-    is that a Codex profile stops receiving Claude Code's assets, and the
-    reverse.
+    An unmigrated profile still deploys its root to every agent, but its legacy
+    segments are not assembled. Migration also stops a Codex profile receiving
+    Claude Code's assets, and the reverse.
     """
     console = Console()
     profile_dir = config_dir() / "profiles" / name

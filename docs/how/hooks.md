@@ -478,11 +478,11 @@ over time.
 
 Source: `src/lazy_harness/hooks/builtins/post_tool_use_sync_system_doc.py`.
 
-Responsibility: keep a profile's composed `CLAUDE.md` in sync with its segmented sources. The framework lets a profile split its agent-facing memory across `CLAUDE.head.md`, `CLAUDE.tail.md`, and `CLAUDE.common.md` (shared via `_common/`); on every edit to one of those segments the composed `CLAUDE.md` would drift unless something re-stitched it.
+Responsibility: keep a profile's composed system doc in sync with its role-named sources. The framework splits agent-facing instructions across `head.md`, `tail.md`, `common.md` (shared via `_common/`), and `_common/<agent>.md`; on every edit to one of those segments the composed document would drift unless something re-stitched it.
 
 Mechanics:
 
-1. Scope check — the hook only acts on `Edit` / `Write` tool calls whose edited path's basename is one of `CLAUDE.head.md`, `CLAUDE.tail.md`, or `CLAUDE.common.md`. Every other tool / path: it abstains without doing anything.
+1. Scope check — the hook only acts on file-modification operations whose edited basename is `head.md`, `tail.md`, `common.md`, or a registered `<agent>.md`. Every other operation or path makes it abstain.
 2. Walk parent dirs of the edited file to find the enclosing `profiles/` root.
 3. Call `sync_profiles(<profiles_dir>, <adapter>)` to regenerate every profile's composed system doc from its segments.
 4. Fail-soft: any exception is swallowed and the hook still abstains. A sync failure must never block the agent's turn.
@@ -491,9 +491,9 @@ Mechanics:
 
 **Which destinations it writes.** Those of the agent the hook was invoked under: the adapter is resolved from `--profile`, and `system_docs()` is read off it (`CLAUDE.md` for Claude Code, `AGENTS.md` for Codex). An adapter may name more than one destination, and each receives the identical rendered bytes. Before that it read the global `[agent].type`, so on a machine whose profiles run different agents a segment edit regenerated the wrong agent's contract file and left the right one stale.
 
-The segment *filenames* it watches are named by role — `head.md`, `_common/common.md`, `_common/<agent>.md`, `tail.md` — and the trigger set is derived from those roles rather than listed in the hook, so a rename cannot leave it watching names nobody edits. The legacy `CLAUDE.*` spellings still trigger it while a tree is mid-migration. Only the hook's own name is still Claude Code's.
+The segment *filenames* it watches are named by role — `head.md`, `tail.md`, `common.md`, `<agent>.md` — and the trigger set is derived from those roles rather than listed in the hook, so adding an adapter cannot leave its segment unwatched. Legacy destination-keyed spellings are not inputs and do not trigger a resync.
 
-**Tool scope, deliberately narrower than the event.** `PostToolUse` delivers `NotebookEdit` as a file modification alongside `Edit` and `Write`, and this hook matches on the *filename* rather than an extension — so a notebook named `CLAUDE.head.md` would clear the second gate. The tool-name check is kept for that reason and is not a redundant restatement of the operation.
+**Tool scope, deliberately narrower than the event.** `PostToolUse` delivers `NotebookEdit` as a file modification alongside `Edit` and `Write`, and this hook matches on the *filename* rather than an extension — so a notebook named `head.md` would clear the second gate. This is an accepted synthetic collision; real notebook edits carry `.ipynb` paths.
 
 ### `engram-persist` — runs on `Stop`
 

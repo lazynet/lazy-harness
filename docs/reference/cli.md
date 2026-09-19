@@ -6,6 +6,8 @@ For canonical flag lists, run `lh <command> --help` — this page is context, no
 
 Deploys profiles, hooks, skills, and MCP server entries from your config to the agent's config directories. Run it after editing `config.toml`, after adding a new profile, after installing/uninstalling an MCP-backed memory tool (QMD, Engram), or after pulling repo changes that touch profile contents.
 
+Its first deploy step assembles each profile's generated system doc from the role-named segments, before the profile symlinks are created. This also restamps the document with the running harness version after an upgrade; a sync error stops the deploy rather than linking stale content.
+
 The MCP wiring step ([ADR-024](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/024-mcp-server-orchestration.md)) probes each detected tool and merges an `mcpServers` block into every profile's `.claude.json` — the agent's own MCP file, not `settings.json`, which carries only `hooks`. Tools that are not installed get no entry. The merge is additive, so an entry for a tool you have since uninstalled is **not** pruned by a later deploy; remove it by hand.
 
 It is idempotent: re-running on a clean tree is a no-op.
@@ -39,8 +41,8 @@ for example `· copilot/mcp: 3 detected servers not placed — adapter exposes n
 MCP document (qmd, engram, graphify)`. This is informational and does not change
 the deploy exit code.
 
-`--profile` narrows the run to one profile: its symlinks, its `settings.json`
-and its MCP config are written, and no other profile is touched. The agent's
+`--profile` narrows the run to one profile: its system doc, its symlinks, its
+`settings.json` and its MCP config are written, and no other profile is touched. The agent's
 global config link (`~/.claude`) points at the **default** profile, so it is
 rewritten only when the named profile *is* the default — deploying any other
 profile leaves it alone. An unknown name fails without writing anything. The
@@ -656,7 +658,7 @@ Manages agent profiles.
 
 `lh profile migrate <name> [--dry-run]` moves a profile's root assets into segments. `shared/` is deployed to every agent; `<agent>/` — named by the registry, e.g. `claude-code/`, `codex/` — only to a profile running that agent. An entry an adapter names in its config targets goes to that agent's segment (`settings.json` to `claude-code/`, `hooks.json` and `config.toml` to `codex/`); everything the registry does not claim goes to `shared/`. The assembled system docs and the segments they are built from stay at the profile root, where `sync-system-doc` writes them — but the same run **renames** the segments to their roles: `CLAUDE.head.md` → `head.md`, `CLAUDE.tail.md` → `tail.md`, and `_common/CLAUDE.common.md` → `_common/common.md` (ADR-055). Renames print their own `rename` / `would rename` lines and their own count. `_common/` is the one thing outside the profile directory this touches, and only for that rename: the shared segment waits until no sibling profile still carries a legacy `<stem>.head.md`, printing `keep _common/CLAUDE.common.md (still read by profile 'work')` while it waits. A legacy file sitting beside its role-named replacement is reported as a leftover rather than renamed over it, and two legacy spellings that would claim one role are refused by name before anything moves. The plan is printed either way; `--dry-run` moves nothing, and a move that would overwrite an existing file is refused before anything moves. Migrating is optional — an unmigrated profile still deploys its root to every agent — and running it twice is a no-op.
 
-`lh profile sync-system-doc` recomposes every profile's system doc from its segments, concatenating `<profile>/head.md` + `_common/common.md` + `_common/<agent>.md` + `<profile>/tail.md` in that order (the legacy stem-keyed spellings, e.g. `CLAUDE.head.md`, still render). Only profile dirs carrying the segments are touched; a profile with a flat, hand-written system doc is skipped, never erased. The `post-tool-use-sync-system-doc` hook runs the same code on every edit to a segment, so this is the manual path — after a bulk edit, after pulling the profiles dir on another machine, or where that hook is not deployed. Renamed from `lh profile sync-claude-md` (decision 5, blast-radius design); the old name still works as a hidden alias.
+`lh profile sync-system-doc` recomposes every profile's system doc from its segments, concatenating `<profile>/head.md` + `_common/common.md` + `_common/<agent>.md` + `<profile>/tail.md` in that order. A legacy-only profile is skipped and the result names its legacy head plus `lh profile migrate <name>`; a flat, hand-written system doc is also skipped, never erased. The `post-tool-use-sync-system-doc` hook runs the same code on every edit to a role-named segment, so this is the manual path — after a bulk edit, after pulling the profiles dir on another machine, or where that hook is not deployed. Renamed from `lh profile sync-claude-md` (decision 5, blast-radius design); the old name still works as a hidden alias.
 
 ```bash
 lh profile list
