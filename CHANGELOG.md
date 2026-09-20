@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.76.2](https://github.com/lazynet/lazy-harness/compare/v0.76.1...v0.76.2) (2026-09-20)
+
+
+### Bug Fixes
+
+* preserve indirect profile skill links ([#415](https://github.com/lazynet/lazy-harness/issues/415)) ([df3148a](https://github.com/lazynet/lazy-harness/commit/df3148a5ee91140f61085c2a642fdca93b6ca027))
+
 ## [0.76.1](https://github.com/lazynet/lazy-harness/compare/v0.76.0...v0.76.1) (2026-09-20)
 
 
