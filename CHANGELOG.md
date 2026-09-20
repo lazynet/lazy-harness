@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.76.0](https://github.com/lazynet/lazy-harness/compare/v0.75.0...v0.76.0) (2026-09-20)
+
+
+### Features
+
+* preserve externally owned hooks ([#412](https://github.com/lazynet/lazy-harness/issues/412)) ([bf96597](https://github.com/lazynet/lazy-harness/commit/bf965971c6a148eeb1dc28288111649be6012aff))
+
+
+### Documentation
+
+* document the multi-agent surface and fix the Claude-only front door ([#410](https://github.com/lazynet/lazy-harness/issues/410)) ([76edfed](https://github.com/lazynet/lazy-harness/commit/76edfedc48b1c78d1810100ad8fdb319a0a86657))
+
 ## [0.75.0](https://github.com/lazynet/lazy-harness/compare/v0.74.1...v0.75.0) (2026-09-19)
 
 
