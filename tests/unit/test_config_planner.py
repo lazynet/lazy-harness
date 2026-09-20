@@ -287,6 +287,34 @@ def test_claude_json_bytes_match_deploy_mcp_servers_over_an_existing_document(
     assert op.artifact.content == expected
 
 
+def test_settings_serialization_keeps_non_ascii_text_literal() -> None:
+    existing = json.dumps({"note": "ejecución — activa", "hooks": {}}, indent=2, ensure_ascii=False)
+
+    ops = ClaudeCodeAdapter().plan_config(
+        {"session_start": [HookEntry(command="lh hook context-inject --profile personal")]},
+        {},
+        {SETTINGS: existing},
+    )
+
+    op = _op_for(ops, SETTINGS)
+    assert op is not None and op.artifact is not None
+    assert "ejecución — activa" in op.artifact.content
+    assert "\\u00f3" not in op.artifact.content
+    assert "\\u2014" not in op.artifact.content
+
+
+def test_claude_json_serialization_keeps_non_ascii_text_literal() -> None:
+    existing = json.dumps({"note": "ejecución — activa"}, indent=2, ensure_ascii=False)
+
+    ops = ClaudeCodeAdapter().plan_config({}, MCP_SERVERS, {CLAUDE_JSON: existing})
+
+    op = _op_for(ops, CLAUDE_JSON)
+    assert op is not None and op.artifact is not None
+    assert "ejecución — activa" in op.artifact.content
+    assert "\\u00f3" not in op.artifact.content
+    assert "\\u2014" not in op.artifact.content
+
+
 def test_both_targets_planned_in_one_call(tmp_path: Path) -> None:
     cfg = _cfg_with_profile(tmp_path / "profile")
 
