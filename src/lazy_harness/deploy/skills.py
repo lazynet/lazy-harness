@@ -134,7 +134,9 @@ def _points_into(link: Path, source_root: Path) -> bool:
     try:
         target = link.readlink()
         absolute = target if target.is_absolute() else link.parent / target
-        absolute.resolve().relative_to(source_root.resolve())
+        normalized = Path(os.path.abspath(absolute))
+        immediate = normalized.parent.resolve() / normalized.name
+        immediate.relative_to(source_root.resolve())
     except (OSError, ValueError):
         return False
     return True
