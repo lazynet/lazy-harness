@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.76.4](https://github.com/lazynet/lazy-harness/compare/v0.76.3...v0.76.4) (2026-09-20)
+
+
+### Bug Fixes
+
+* move lh_hook_ownership ledger to a sidecar file ([#421](https://github.com/lazynet/lazy-harness/issues/421)) ([139ca77](https://github.com/lazynet/lazy-harness/commit/139ca776f91961ac4fd79bb0a480ddaa46cb9a69))
+
+
+### Documentation
+
+* close wave 1 rollout ([#419](https://github.com/lazynet/lazy-harness/issues/419)) ([f7bd530](https://github.com/lazynet/lazy-harness/commit/f7bd530556f4aa7509d8f79fb98d7a9362f287e0))
+
 ## [0.76.3](https://github.com/lazynet/lazy-harness/compare/v0.76.2...v0.76.3) (2026-09-20)
 
 
