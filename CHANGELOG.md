@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.76.1](https://github.com/lazynet/lazy-harness/compare/v0.76.0...v0.76.1) (2026-09-20)
+
+
+### Bug Fixes
+
+* harden wave 1 rollout paths ([#413](https://github.com/lazynet/lazy-harness/issues/413)) ([3884064](https://github.com/lazynet/lazy-harness/commit/38840644227bb78a388ce363536e0645a91f2387))
+
 ## [0.76.0](https://github.com/lazynet/lazy-harness/compare/v0.75.0...v0.76.0) (2026-09-20)
 
 
