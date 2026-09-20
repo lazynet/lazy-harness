@@ -1,13 +1,10 @@
 {
-  "model": "opus",
-  "permissions": {
-    "allow": [
-      "Bash(ls:*)"
-    ]
-  },
-  "hooks": {
-    "SessionStart": [
-      {
+  "version": 1,
+  "managed": [
+    {
+      "event": "SessionStart",
+      "index": 0,
+      "group": {
         "matcher": "",
         "hooks": [
           {
@@ -15,8 +12,12 @@
             "command": "lh hook context-inject --profile personal"
           }
         ]
-      },
-      {
+      }
+    },
+    {
+      "event": "SessionStart",
+      "index": 1,
+      "group": {
         "matcher": "",
         "hooks": [
           {
@@ -25,9 +26,11 @@
           }
         ]
       }
-    ],
-    "Stop": [
-      {
+    },
+    {
+      "event": "Stop",
+      "index": 0,
+      "group": {
         "matcher": "",
         "hooks": [
           {
@@ -35,8 +38,12 @@
             "command": "lh hook session-export --profile personal"
           }
         ]
-      },
-      {
+      }
+    },
+    {
+      "event": "Stop",
+      "index": 1,
+      "group": {
         "matcher": "",
         "hooks": [
           {
@@ -44,8 +51,12 @@
             "command": "lh hook compound-loop --profile personal"
           }
         ]
-      },
-      {
+      }
+    },
+    {
+      "event": "Stop",
+      "index": 2,
+      "group": {
         "matcher": "",
         "hooks": [
           {
@@ -53,8 +64,12 @@
             "command": "lh hook engram-persist --profile personal"
           }
         ]
-      },
-      {
+      }
+    },
+    {
+      "event": "Stop",
+      "index": 3,
+      "group": {
         "matcher": "",
         "hooks": [
           {
@@ -63,9 +78,11 @@
           }
         ]
       }
-    ],
-    "SessionEnd": [
-      {
+    },
+    {
+      "event": "SessionEnd",
+      "index": 0,
+      "group": {
         "matcher": "",
         "hooks": [
           {
@@ -74,9 +91,11 @@
           }
         ]
       }
-    ],
-    "PreCompact": [
-      {
+    },
+    {
+      "event": "PreCompact",
+      "index": 0,
+      "group": {
         "matcher": "",
         "hooks": [
           {
@@ -85,9 +104,11 @@
           }
         ]
       }
-    ],
-    "PreToolUse": [
-      {
+    },
+    {
+      "event": "PreToolUse",
+      "index": 0,
+      "group": {
         "matcher": "Bash|Read|Edit|Write|NotebookEdit",
         "hooks": [
           {
@@ -95,8 +116,12 @@
             "command": "lh hook pre-tool-use-security --profile personal"
           }
         ]
-      },
-      {
+      }
+    },
+    {
+      "event": "PreToolUse",
+      "index": 1,
+      "group": {
         "matcher": "Bash",
         "hooks": [
           {
@@ -104,8 +129,12 @@
             "command": "lh hook pre-tool-use-git-scope --profile personal"
           }
         ]
-      },
-      {
+      }
+    },
+    {
+      "event": "PreToolUse",
+      "index": 2,
+      "group": {
         "matcher": "Edit|Write",
         "hooks": [
           {
@@ -113,8 +142,12 @@
             "command": "lh hook pre-tool-use-memory-size --profile personal"
           }
         ]
-      },
-      {
+      }
+    },
+    {
+      "event": "PreToolUse",
+      "index": 3,
+      "group": {
         "matcher": "Read",
         "hooks": [
           {
@@ -122,28 +155,12 @@
             "command": "lh hook pre-tool-use-read-size --profile personal"
           }
         ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "other-tool guard"
-          }
-        ]
-      },
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "broken-tool check"
-          }
-        ]
       }
-    ],
-    "PostToolUse": [
-      {
+    },
+    {
+      "event": "PostToolUse",
+      "index": 0,
+      "group": {
         "matcher": "Edit|Write",
         "hooks": [
           {
@@ -151,8 +168,12 @@
             "command": "lh hook post-tool-use-format --profile personal"
           }
         ]
-      },
-      {
+      }
+    },
+    {
+      "event": "PostToolUse",
+      "index": 1,
+      "group": {
         "matcher": "Edit|Write",
         "hooks": [
           {
@@ -161,19 +182,6 @@
           }
         ]
       }
-    ],
-    "Notification": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "notifier send"
-          }
-        ]
-      }
-    ]
-  },
-  "lh_version": "@VERSION@",
-  "lh_harness_binary": "lh"
+    }
+  ]
 }
