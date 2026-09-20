@@ -117,6 +117,30 @@ def test_agent_skill_wins_over_shared_skill_as_one_directory(home_dir: Path) -> 
     assert (link / "SKILL.md").read_text() == "agent"
 
 
+def test_deploy_converges_when_profile_skill_is_a_symlink_to_an_external_catalog(
+    home_dir: Path,
+) -> None:
+    from lazy_harness.core.paths import config_dir
+
+    external = home_dir / "catalog" / "portable"
+    external.mkdir(parents=True)
+    (external / "SKILL.md").write_text("external")
+    profile_skill = config_dir() / "profiles" / "one" / "shared" / "skills" / "portable"
+    profile_skill.parent.mkdir(parents=True)
+    profile_skill.symlink_to(external, target_is_directory=True)
+    cfg = _config(home_dir, {"one": "claude-code"})
+
+    deploy_profiles(cfg)
+    deploy_profiles(cfg)
+
+    deployed = home_dir / ".one" / "skills" / "portable"
+    assert deployed.is_symlink()
+    assert deployed.readlink() == profile_skill
+    assert deployed.resolve() == external.resolve()
+    ledger = deployed.parent.parent / SKILL_LEDGER_RELATIVE
+    assert json.loads(ledger.read_text())["links"] == ["portable"]
+
+
 def test_user_owned_entry_is_never_adopted_or_replaced(home_dir: Path) -> None:
     from lazy_harness.core.paths import config_dir
 
