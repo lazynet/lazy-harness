@@ -107,6 +107,20 @@ def test_mcp_bytes_match_the_golden(seeded_profile: Path, servers: None) -> None
     assert (seeded_profile / ".claude.json").read_text() == _golden("claude.json")
 
 
+def test_ownership_ledger_bytes_match_the_golden(seeded_profile: Path, servers: None) -> None:
+    """The ledger lives beside settings.json, not inside it — a top-level
+    `lh_hook_ownership` key is itself hook-group shaped and Claude Code
+    2.1.278 discards the whole settings file over it."""
+    from lazy_harness.deploy.engine import deploy_config
+
+    deploy_config(_cfg(seeded_profile))
+
+    assert (seeded_profile / "lh-hook-ownership.json").read_text() == _golden(
+        "lh-hook-ownership.json"
+    )
+    assert "lh_hook_ownership" not in (seeded_profile / "settings.json").read_text()
+
+
 def test_a_second_deploy_changes_no_bytes(seeded_profile: Path, servers: None) -> None:
     """Idempotence is what makes a chezmoi-managed profile converge."""
     from lazy_harness.deploy.engine import deploy_config
@@ -115,6 +129,7 @@ def test_a_second_deploy_changes_no_bytes(seeded_profile: Path, servers: None) -
     first = {
         "settings.json": (seeded_profile / "settings.json").read_text(),
         ".claude.json": (seeded_profile / ".claude.json").read_text(),
+        "lh-hook-ownership.json": (seeded_profile / "lh-hook-ownership.json").read_text(),
     }
 
     deploy_config(_cfg(seeded_profile))

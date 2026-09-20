@@ -26,6 +26,7 @@ from lazy_harness.core.config import (
 )
 
 SETTINGS = Path("settings.json")
+OWNERSHIP = Path("lh-hook-ownership.json")
 CLAUDE_JSON = Path(".claude.json")
 PROFILE = "personal"
 
@@ -94,6 +95,14 @@ def _op_for(ops: list, path: Path):
     return matching[0] if matching else None
 
 
+def _redeploy_over(ops: list) -> dict[Path, str]:
+    """The `existing` a second `plan_config` call would see, carrying every
+    file the first call wrote forward — the settings.json and its ownership
+    sidecar are two separate reads/writes now, and a test simulating a second
+    deploy must thread both or the sidecar looks like it was never written."""
+    return {op.relative_path: op.artifact.content for op in ops if op.artifact is not None}
+
+
 # --- the protocol itself -------------------------------------------------
 
 
@@ -101,11 +110,11 @@ def test_adapter_satisfies_config_planner_protocol() -> None:
     assert isinstance(ClaudeCodeAdapter(), ConfigPlanner)
 
 
-def test_config_targets_names_settings_and_the_mcp_file() -> None:
+def test_config_targets_names_settings_the_ownership_ledger_and_the_mcp_file() -> None:
     adapter = ClaudeCodeAdapter()
     targets = adapter.config_targets()
 
-    assert targets == [SETTINGS, Path(adapter.mcp_config_file())]
+    assert targets == [SETTINGS, OWNERSHIP, Path(adapter.mcp_config_file())]
     assert all(not t.is_absolute() for t in targets), "targets are relative to the config dir"
 
 
@@ -320,7 +329,7 @@ def test_both_targets_planned_in_one_call(tmp_path: Path) -> None:
 
     ops = ClaudeCodeAdapter().plan_config(_entries_for(cfg, PROFILE, "lh"), MCP_SERVERS, {})
 
-    assert [op.relative_path for op in ops] == [SETTINGS, CLAUDE_JSON]
+    assert [op.relative_path for op in ops] == [SETTINGS, OWNERSHIP, CLAUDE_JSON]
 
 
 # --- when nothing is planned ---------------------------------------------
@@ -480,13 +489,14 @@ def test_claude_null_ownership_cannot_adopt_an_external_builtin_on_omission() ->
         ]
     }
     first = ClaudeCodeAdapter().plan_config(desired, {}, {}, binary="lh")
-    first_op = _op_for(first, SETTINGS)
-    assert first_op is not None and first_op.artifact is not None
-    installed = json.loads(first_op.artifact.content)
-    installed["lh_hook_ownership"] = None
+    first_settings = _op_for(first, SETTINGS)
+    assert first_settings is not None and first_settings.artifact is not None
 
     omitted = ClaudeCodeAdapter().plan_config(
-        {}, {}, {SETTINGS: json.dumps(installed)}, binary="lh"
+        {},
+        {},
+        {SETTINGS: first_settings.artifact.content, OWNERSHIP: "null"},
+        binary="lh",
     )
 
     assert _op_for(omitted, SETTINGS) is None
@@ -500,9 +510,14 @@ def test_claude_present_invalid_ownership_never_enables_legacy_adoption(
         "matcher": "",
         "hooks": [{"type": "command", "command": "lh hook context-inject --profile p"}],
     }
-    existing = json.dumps({"hooks": {"SessionStart": [group]}, "lh_hook_ownership": envelope})
+    existing = json.dumps({"hooks": {"SessionStart": [group]}})
 
-    assert ClaudeCodeAdapter().plan_config({}, {}, {SETTINGS: existing}, binary="lh") == []
+    assert (
+        ClaudeCodeAdapter().plan_config(
+            {}, {}, {SETTINGS: existing, OWNERSHIP: json.dumps(envelope)}, binary="lh"
+        )
+        == []
+    )
 
 
 @pytest.mark.parametrize("version", [True, 1.0, False, None, 2, "1"])
@@ -517,9 +532,14 @@ def test_claude_non_integer_version_cannot_authorize_an_exact_recorded_group(
         "version": version,
         "managed": [{"event": "SessionStart", "index": 0, "group": group}],
     }
-    existing = json.dumps({"hooks": {"SessionStart": [group]}, "lh_hook_ownership": envelope})
+    existing = json.dumps({"hooks": {"SessionStart": [group]}})
 
-    assert ClaudeCodeAdapter().plan_config({}, {}, {SETTINGS: existing}, binary="lh") == []
+    assert (
+        ClaudeCodeAdapter().plan_config(
+            {}, {}, {SETTINGS: existing, OWNERSHIP: json.dumps(envelope)}, binary="lh"
+        )
+        == []
+    )
 
 
 def test_claude_absent_ownership_still_enables_exact_legacy_migration() -> None:
@@ -534,6 +554,51 @@ def test_claude_absent_ownership_still_enables_exact_legacy_migration() -> None:
     op = _op_for(ops, SETTINGS)
     assert op is not None and op.artifact is not None
     assert json.loads(op.artifact.content)["hooks"] == {}
+
+
+def test_claude_settings_json_ledger_migrates_to_the_sidecar_once() -> None:
+    """A `lh_hook_ownership` key still embedded in settings.json — what a pre-fix
+    deploy wrote — is read once as this deploy's ledger, moved to the sidecar,
+    and never appears back in settings.json: that key shape is what Claude Code
+    2.1.278 classifies as a fatal settings error and discards the whole file
+    for."""
+    managed_group = {
+        "matcher": "",
+        "hooks": [{"type": "command", "command": "lh hook context-inject --profile p"}],
+    }
+    stale_group = {
+        "matcher": "",
+        "hooks": [{"type": "command", "command": "lh hook retired-hook --profile p"}],
+    }
+    legacy_envelope = {
+        "version": 1,
+        "managed": [
+            {"event": "SessionStart", "index": 0, "group": managed_group},
+            {"event": "SessionStart", "index": 1, "group": stale_group},
+        ],
+    }
+    existing = json.dumps(
+        {
+            "hooks": {"SessionStart": [managed_group, stale_group]},
+            "lh_hook_ownership": legacy_envelope,
+        }
+    )
+    desired = {"session_start": [HookEntry(command="lh hook context-inject --profile p")]}
+
+    ops = ClaudeCodeAdapter().plan_config(desired, {}, {SETTINGS: existing}, binary="lh")
+
+    settings_op = _op_for(ops, SETTINGS)
+    assert settings_op is not None and settings_op.artifact is not None
+    written_settings = json.loads(settings_op.artifact.content)
+    assert "lh_hook_ownership" not in written_settings
+    assert written_settings["hooks"]["SessionStart"] == [managed_group]
+
+    ownership_op = _op_for(ops, OWNERSHIP)
+    assert ownership_op is not None and ownership_op.artifact is not None
+    assert json.loads(ownership_op.artifact.content) == {
+        "version": 1,
+        "managed": [{"event": "SessionStart", "index": 0, "group": managed_group}],
+    }
 
 
 def test_claude_preserves_prompt_only_and_mixed_foreign_groups() -> None:
@@ -572,7 +637,7 @@ def test_claude_external_builtin_text_never_transfers_lifecycle_ownership() -> N
     second = ClaudeCodeAdapter().plan_config(
         {"session_start": [HookEntry(command="lh hook session-start-preflight --profile p")]},
         {},
-        {SETTINGS: first_op.artifact.content},
+        _redeploy_over(first),
         binary="lh",
     )
 
@@ -599,9 +664,7 @@ def test_claude_external_only_builtin_text_survives_omission() -> None:
     first_op = _op_for(first, SETTINGS)
     assert first_op is not None and first_op.artifact is not None
 
-    second = ClaudeCodeAdapter().plan_config(
-        {}, {}, {SETTINGS: first_op.artifact.content}, binary="lh"
-    )
+    second = ClaudeCodeAdapter().plan_config({}, {}, _redeploy_over(first), binary="lh")
 
     assert _op_for(second, SETTINGS) is None
 
@@ -651,9 +714,7 @@ def test_claude_can_retire_the_last_recorded_builtin() -> None:
     first_op = _op_for(first, SETTINGS)
     assert first_op is not None and first_op.artifact is not None
 
-    second = ClaudeCodeAdapter().plan_config(
-        {}, {}, {SETTINGS: first_op.artifact.content}, binary="lh"
-    )
+    second = ClaudeCodeAdapter().plan_config({}, {}, _redeploy_over(first), binary="lh")
 
     second_op = _op_for(second, SETTINGS)
     assert second_op is not None and second_op.artifact is not None

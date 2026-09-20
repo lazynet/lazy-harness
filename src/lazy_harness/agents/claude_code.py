@@ -174,6 +174,13 @@ def _message_text(content: object) -> str:
 
 _SETTINGS_FILE = "settings.json"
 
+# A top-level `lh_hook_ownership` key in settings.json is itself hook-group
+# shaped three levels down (`managed[i].group` has `matcher`+`hooks`), which
+# Claude Code's own settings validator treats as a malformed hook declaration
+# and rejects the *entire file* for. The ledger lives in its own document to
+# stay outside that scan; `_HOOK_OWNERSHIP_KEY` survives only to recognise and
+# strip a ledger a pre-fix deploy left embedded in settings.json.
+_HOOK_OWNERSHIP_FILE = "lh-hook-ownership.json"
 _HOOK_OWNERSHIP_KEY = "lh_hook_ownership"
 _HOOK_OWNERSHIP_VERSION = 1
 
@@ -294,10 +301,13 @@ def _group_is_exact_builtin(event: str, entry: dict, *, binaries: Collection[str
     return entry.get("matcher") == (spec.matcher_for(canonical) or default_matcher)
 
 
-def _recorded_hook_positions(settings: dict) -> dict[tuple[str, int], dict] | None:
-    if _HOOK_OWNERSHIP_KEY not in settings:
-        return None
-    envelope = settings[_HOOK_OWNERSHIP_KEY]
+def _validate_hook_ownership_envelope(envelope: object) -> dict[tuple[str, int], dict]:
+    """Ledger positions the envelope proves, or `{}` when it claims nothing.
+
+    `{}` covers every shape that is not a usable ledger — wrong version, wrong
+    field types, duplicate positions — so a malformed ledger is silently
+    powerless rather than raising mid-deploy.
+    """
     if (
         not isinstance(envelope, dict)
         or type(envelope.get("version")) is not int
@@ -327,12 +337,19 @@ def _recorded_hook_positions(settings: dict) -> dict[tuple[str, int], dict] | No
     return recorded
 
 
+def _recorded_hook_positions(ledger_raw: str | None) -> dict[tuple[str, int], dict] | None:
+    """The sidecar ledger's tri-state: absent (`None`), present but malformed or
+    the wrong version (`{}`), or populated positions."""
+    if ledger_raw is None:
+        return None
+    return _validate_hook_ownership_envelope(_as_document(ledger_raw))
+
+
 def _owned_hook_positions(
-    settings: dict, existing: object, *, binaries: Collection[str]
+    recorded: dict[tuple[str, int], dict] | None, existing: object, *, binaries: Collection[str]
 ) -> set[tuple[str, int]]:
     if not isinstance(existing, dict):
         return set()
-    recorded = _recorded_hook_positions(settings)
     if recorded is None:
         return {
             (event, index)
@@ -347,7 +364,6 @@ def _owned_hook_positions(
         if isinstance(existing.get(event), list)
         and index < len(existing[event])
         and existing[event][index] == group
-        and _group_is_exact_builtin(event, existing[event][index], binaries=binaries)
     }
 
 
@@ -1118,7 +1134,7 @@ class ClaudeCodeAdapter:
 
     def config_targets(self) -> list[Path]:
         """Every file this adapter may read or write, relative to the config dir."""
-        return [Path(_SETTINGS_FILE), Path(self.mcp_config_file())]
+        return [Path(_SETTINGS_FILE), Path(_HOOK_OWNERSHIP_FILE), Path(self.mcp_config_file())]
 
     def plan_config(
         self,
@@ -1141,26 +1157,35 @@ class ClaudeCodeAdapter:
         from lazy_harness.agents.registry import DEFAULT_HARNESS_BINARY
 
         ops: list[WriteOp] = []
-        settings_op = self._plan_settings(
+        settings_op, ownership_op = self._plan_settings(
             hooks,
             existing.get(Path(_SETTINGS_FILE)),
+            existing.get(Path(_HOOK_OWNERSHIP_FILE)),
             binary=binary or DEFAULT_HARNESS_BINARY,
         )
         if settings_op is not None:
             ops.append(settings_op)
+        if ownership_op is not None:
+            ops.append(ownership_op)
         mcp_op = self._plan_mcp(servers, existing.get(Path(self.mcp_config_file())))
         if mcp_op is not None:
             ops.append(mcp_op)
         return ops
 
     def _plan_settings(
-        self, hooks: dict[str, list[HookEntry]], existing_raw: str | None, *, binary: str
-    ) -> WriteOp | None:
+        self,
+        hooks: dict[str, list[HookEntry]],
+        existing_raw: str | None,
+        ledger_raw: str | None,
+        *,
+        binary: str,
+    ) -> tuple[WriteOp | None, WriteOp | None]:
         """Merge the generated hooks over an existing settings.json.
 
-        Returns `None` when there is nothing to deploy. An empty plan is not the
-        same as a plan to write an empty hooks block: the latter would uninstall
-        every foreign entry on a profile that configures no harness hooks.
+        Returns `(None, None)` when there is nothing to deploy. An empty plan is
+        not the same as a plan to write an empty hooks block: the latter would
+        uninstall every foreign entry on a profile that configures no harness
+        hooks.
         """
         from lazy_harness.core.artifact_version import SETTINGS_BINARY_KEY
 
@@ -1209,9 +1234,22 @@ class ClaudeCodeAdapter:
         settings = _as_document(existing_raw)
         existing_hooks = settings.get("hooks", {})
         binaries = _owned_binaries(settings, binary)
-        old_owned = _owned_hook_positions(settings, existing_hooks, binaries=binaries)
+
+        # Migration: a ledger a pre-fix deploy embedded in settings.json is
+        # popped unconditionally, so it is never written back regardless of what
+        # follows, and read as this deploy's ledger only when no sidecar has
+        # taken over yet.
+        legacy_envelope = settings.pop(_HOOK_OWNERSHIP_KEY, None)
+        if ledger_raw is not None:
+            recorded = _recorded_hook_positions(ledger_raw)
+        elif legacy_envelope is not None:
+            recorded = _validate_hook_ownership_envelope(legacy_envelope)
+        else:
+            recorded = None
+
+        old_owned = _owned_hook_positions(recorded, existing_hooks, binaries=binaries)
         if not hooks and not old_owned:
-            return None
+            return None, None
 
         merged, new_owned, preserved, repaired, dropped = _merge_hook_blocks(
             existing_hooks,
@@ -1229,7 +1267,8 @@ class ClaudeCodeAdapter:
         settings["lh_version"] = __version__
         settings[SETTINGS_BINARY_KEY] = binary
         settings["hooks"] = merged
-        settings[_HOOK_OWNERSHIP_KEY] = {
+
+        ledger = {
             "version": _HOOK_OWNERSHIP_VERSION,
             "managed": [
                 {"event": event, "index": index, "group": entries[index]}
@@ -1239,7 +1278,7 @@ class ClaudeCodeAdapter:
             ],
         }
 
-        return WriteOp(
+        settings_op = WriteOp(
             artifact=ConfigArtifact(
                 relative_path=Path(_SETTINGS_FILE),
                 content=json.dumps(settings, indent=2, ensure_ascii=False) + "\n",
@@ -1249,6 +1288,14 @@ class ClaudeCodeAdapter:
             dropped=dropped,
             repaired=repaired,
         )
+        ownership_op = WriteOp(
+            artifact=ConfigArtifact(
+                relative_path=Path(_HOOK_OWNERSHIP_FILE),
+                content=json.dumps(ledger, indent=2, ensure_ascii=False) + "\n",
+            ),
+            relative_path=Path(_HOOK_OWNERSHIP_FILE),
+        )
+        return settings_op, ownership_op
 
     def _plan_mcp(self, servers: dict[str, dict], existing_raw: str | None) -> WriteOp | None:
         """Merge the detected MCP servers into the agent's MCP config document."""
