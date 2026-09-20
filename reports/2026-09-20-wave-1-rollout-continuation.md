@@ -83,6 +83,21 @@ push this branch, open and merge its PR, wait for release-please, install the
 new release, verify site-packages, and only then resume the reviewed
 dotfiles/profile rollout and bidirectional ADR-059 probe.
 
-**Question:** after GitHub authentication is restored, authorize the reviewed
-dotfiles source reconciliation, the potentially auto-pushed `chezmoi apply`,
-the binary-first profile deploy and the reversible skill probe?
+## Authorization
+
+Commit `9a3515a` exists locally and the worktree was clean immediately after
+the commit. The subsequent `git push -u origin fix/wave-1-review-findings`
+request was rejected by the permission reviewer because publishing a new remote
+branch requires explicit user approval. The command did not run and no remote
+state changed.
+
+The user explicitly authorized publishing `fix/wave-1-review-findings` to
+`origin`. The same authorization covers, after the corrected release is
+installed, the reviewed dotfiles source reconciliation, the potentially
+auto-pushed `chezmoi apply`, the binary-first profile deploy and the reversible
+ADR-059 skill probe.
+
+A separate medium-priority backlog item now scopes a future quality-gate audit.
+Its measured baseline is 5,241 tests in approximately six minutes; it requires
+at least a 20% wall-time improvement with mutation-backed equivalent signal and
+no new flakes, otherwise the current gate stays unchanged.

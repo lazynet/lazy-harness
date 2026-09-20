@@ -221,6 +221,27 @@ Sin items abiertos — F1 (PR #347) y F2 (PR #351) cerrados; ver §Done.
 
 ## Open — Prioridad MEDIA
 
+### Auditar si el gate necesita más de 5.000 tests y seis minutos por corrida
+
+**Por qué:** el gate de esta rama recolectó y ejecutó **5.241 tests en ~6:05**.
+El conteo solo no demuestra redundancia, pero el costo ya cambia el workflow:
+una edición posterior del reporte obliga a repetir seis minutos de pytest antes
+de cada commit. Borrar tests por cantidad bajaría señal sin saber cuál; mantener
+todo por inercia tampoco prueba que cada caso aporte una falla distinguible.
+
+**Acción:** hacer una sesión separada y acotada a optimizar el gate. Primero
+medir duración por archivo/categoría, concentración del costo, tests duplicados
+por parametrización o fixture y dependencias de orden/estado compartido. Después
+comparar tres alternativas: paralelizar pytest con aislamiento probado,
+consolidar casos sólo cuando una mutación demuestre señal equivalente, o separar
+un gate rápido pre-commit de uno completo en CI sin degradar los no-negociables.
+No cambiar el gate durante la medición.
+
+**Criterio:** propuesta con baseline reproducible, tests concretos afectados,
+riesgo y rollback. Adoptar sólo una opción que reduzca al menos 20% el tiempo de
+pared sin introducir flakes y cuya señal se sostenga con mutaciones en ambas
+direcciones; si ninguna llega al umbral, conservar el gate actual.
+
 ### ADR-060 sigue abierto: faltan lazy-ai-tools, dotfiles y la ventana de siete días
 
 **Por qué:** el piloto de ADR-060 aterrizó **sólo en lazy-harness**: `AGENTS.md`
