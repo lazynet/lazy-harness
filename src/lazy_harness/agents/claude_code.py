@@ -1242,7 +1242,7 @@ class ClaudeCodeAdapter:
         return WriteOp(
             artifact=ConfigArtifact(
                 relative_path=Path(_SETTINGS_FILE),
-                content=json.dumps(settings, indent=2) + "\n",
+                content=json.dumps(settings, indent=2, ensure_ascii=False) + "\n",
             ),
             relative_path=Path(_SETTINGS_FILE),
             preserved=preserved,
@@ -1269,7 +1269,7 @@ class ClaudeCodeAdapter:
         return WriteOp(
             artifact=ConfigArtifact(
                 relative_path=relative,
-                content=json.dumps(document, indent=2) + "\n",
+                content=json.dumps(document, indent=2, ensure_ascii=False) + "\n",
             ),
             relative_path=relative,
             preserved=preserved,
