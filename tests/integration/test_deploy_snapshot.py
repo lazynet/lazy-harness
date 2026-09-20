@@ -423,3 +423,73 @@ def test_a_codex_profile_snapshots_the_config_toml_it_merges_into(home_dir: Path
 
     assert home_dir / ".codex" / "config.toml" in targets
     assert home_dir / ".codex" / "hooks.json" in targets
+
+
+def test_a_copilot_profile_snapshots_managed_and_external_hook_artifacts(
+    home_dir: Path,
+) -> None:
+    profiles_src = config_dir() / "profiles"
+    (profiles_src / "pilot").mkdir(parents=True)
+    (profiles_src / "pilot" / "copilot-instructions.md").write_text("# pilot\n")
+    profile_dir = home_dir / ".copilot"
+    cfg = Config(
+        harness=HarnessConfig(version="1"),
+        profiles=ProfilesConfig(
+            default="pilot",
+            items={"pilot": ProfileEntry(config_dir=str(profile_dir), agent="copilot")},
+        ),
+        hooks={},
+    )
+
+    targets = set(snapshot_targets(cfg))
+
+    assert profile_dir / "hooks" / "lazy-harness.json" in targets
+    assert profile_dir / "hooks" / "lazy-harness-external.json" in targets
+
+
+def test_copilot_legacy_external_migration_is_restored_by_snapshot_rollback(
+    home_dir: Path,
+) -> None:
+    import json
+
+    from lazy_harness.deploy.engine import deploy_config
+    from lazy_harness.deploy.snapshot import take_snapshot
+    from lazy_harness.migrate.rollback import apply_rollback_log
+
+    profile_dir = home_dir / ".copilot"
+    legacy_path = profile_dir / "hooks" / "lazy-harness.json"
+    external_path = profile_dir / "hooks" / "lazy-harness-external.json"
+    legacy_path.parent.mkdir(parents=True)
+    legacy = (
+        json.dumps(
+            {
+                "version": 1,
+                "hooks": {"sessionStart": [{"command": "other-tool session", "timeout": 45}]},
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+    legacy_path.write_text(legacy)
+    cfg = Config(
+        harness=HarnessConfig(version="1"),
+        profiles=ProfilesConfig(
+            default="pilot",
+            items={"pilot": ProfileEntry(config_dir=str(profile_dir), agent="copilot")},
+        ),
+        hooks={},
+    )
+    snapshot_dir = home_dir / "snapshot"
+    take_snapshot(snapshot_targets(cfg), snapshot_dir)
+
+    deploy_config(cfg)
+
+    assert legacy_path.read_text() != legacy
+    assert json.loads(external_path.read_text())["hooks"]["sessionStart"] == [
+        {"command": "other-tool session", "timeout": 45}
+    ]
+
+    apply_rollback_log(snapshot_dir)
+
+    assert legacy_path.read_text() == legacy
+    assert not external_path.exists()

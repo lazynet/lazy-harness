@@ -178,6 +178,23 @@ which cannot work is refused rather than trusted.
 See [ADR-041](041-multi-agent-hook-contract.md) property 2 for the contract this
 implements.
 
+**2026-09-19: defaults still merge, but the native hook block is no longer
+wholly framework-owned.** The effective-set formula above remains the source of
+builtin defaults and per-event overrides. After that merge, each adapter
+recognizes which native entries belong to harness builtins and reconciles only
+those entries; valid external or otherwise foreign entries are preserved rather
+than clobbered. Ownership is therefore attached to individual entries, not to
+the complete `settings.json[hooks]` block or its equivalent native artifact.
+
+External hooks declared through configuration have an ensure-present lifecycle,
+as specified by [ADR-054](054-external-hook-placeholders.md): an adapter ensures
+that an equivalent native declaration exists while retaining richer valid native
+metadata and foreign duplicates. Omitting the declaration on a later deploy only
+stops ensuring it; omission does not transfer ownership to the harness and does
+not authorize deletion. The original rejection of preserving unknown entries and
+the corresponding hand-edit consequence remain above as the historical decision,
+not the current reconciliation contract.
+
 ## Implementation
 
 Tracked in `specs/plans/2026-05-21-deploy-hook-defaults-plan.md` and

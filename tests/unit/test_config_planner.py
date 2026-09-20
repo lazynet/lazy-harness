@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from lazy_harness.agents.base import ConfigPlanner, HookEntry
+from lazy_harness.agents.base import ConfigPlanner, HookEntry, HookOwnership
 from lazy_harness.agents.claude_code import ClaudeCodeAdapter
 from lazy_harness.core.config import (
     Config,
@@ -79,7 +79,11 @@ def _entries_for(cfg: Config, profile: str, binary: str) -> dict[str, list[HookE
     for event_name, event_cfg in cfg.hooks.items():
         for ext in event_cfg.external:
             entries.setdefault(event_name, []).append(
-                HookEntry(command=ext.command, matcher=ext.matcher)
+                HookEntry(
+                    command=ext.command,
+                    matcher=ext.matcher,
+                    ownership=HookOwnership.EXTERNAL,
+                )
             )
     return entries
 
@@ -124,8 +128,8 @@ def test_settings_bytes_match_deploy_hooks_on_a_fresh_profile(tmp_path: Path) ->
 
 
 def test_settings_bytes_match_deploy_hooks_over_an_existing_document(tmp_path: Path) -> None:
-    """The interesting file: foreign entries, a repairable one, a stale harness
-    entry, an event the harness does not model, and unrelated top-level keys."""
+    """Foreign entries, a repairable one, an invented builtin-shaped command,
+    an unmodelled event and unrelated top-level keys survive byte-identically."""
     from lazy_harness.deploy.engine import deploy_hooks
 
     profile_dir = tmp_path / "profile"
@@ -146,7 +150,10 @@ def test_settings_bytes_match_deploy_hooks_over_an_existing_document(tmp_path: P
                 {
                     "matcher": "",
                     "hooks": [
-                        {"type": "command", "command": "lh hook retired_hook --profile personal"}
+                        {
+                            "type": "command",
+                            "command": "lh hook definitely-not-a-builtin --profile personal",
+                        }
                     ],
                 },
             ],
@@ -341,6 +348,290 @@ def test_preserved_reports_foreign_hook_entries() -> None:
     assert op.repaired == []
 
 
+def test_external_equivalent_keeps_richer_native_claude_metadata() -> None:
+    richer = {
+        "matcher": "Write",
+        "hooks": [
+            {
+                "type": "command",
+                "command": "other-tool guard",
+                "timeout": 45,
+                "async": True,
+            }
+        ],
+    }
+    existing = json.dumps({"hooks": {"PreToolUse": [richer]}}, indent=2)
+    desired = {
+        "pre_tool_use": [
+            HookEntry(
+                command="other-tool guard",
+                matcher="Write",
+                ownership=HookOwnership.EXTERNAL,
+            )
+        ]
+    }
+
+    ops = ClaudeCodeAdapter().plan_config(desired, {}, {SETTINGS: existing}, binary="lh")
+
+    op = _op_for(ops, SETTINGS)
+    assert op is not None and op.artifact is not None
+    assert json.loads(op.artifact.content)["hooks"]["PreToolUse"] == [richer]
+    assert op.dropped == []
+
+
+def test_claude_external_identity_includes_matcher_and_keeps_foreign_duplicates() -> None:
+    bash = {
+        "matcher": "Bash",
+        "hooks": [{"type": "command", "command": "other-tool guard"}],
+    }
+    existing = json.dumps({"hooks": {"PreToolUse": [bash, bash]}}, indent=2)
+    desired = {
+        "pre_tool_use": [
+            HookEntry(
+                command="other-tool guard",
+                matcher="Write",
+                ownership=HookOwnership.EXTERNAL,
+            )
+        ]
+    }
+
+    ops = ClaudeCodeAdapter().plan_config(desired, {}, {SETTINGS: existing}, binary="lh")
+
+    op = _op_for(ops, SETTINGS)
+    assert op is not None and op.artifact is not None
+    assert json.loads(op.artifact.content)["hooks"]["PreToolUse"] == [
+        {
+            "matcher": "Write",
+            "hooks": [{"type": "command", "command": "other-tool guard"}],
+        },
+        bash,
+        bash,
+    ]
+
+
+def test_claude_equivalent_external_keeps_all_foreign_duplicates_and_metadata() -> None:
+    first_foreign = {
+        "matcher": "",
+        "hooks": [{"type": "command", "command": "other-tool session", "timeout": 10}],
+    }
+    second_foreign = {
+        "matcher": "",
+        "hooks": [{"type": "command", "command": "other-tool session", "timeout": 45}],
+    }
+    desired = {
+        "session_start": [HookEntry(command="other-tool session", ownership=HookOwnership.EXTERNAL)]
+    }
+    existing = json.dumps({"hooks": {"SessionStart": [first_foreign, second_foreign]}}, indent=2)
+
+    first = ClaudeCodeAdapter().plan_config(desired, {}, {SETTINGS: existing}, binary="lh")
+    first_op = _op_for(first, SETTINGS)
+    assert first_op is not None and first_op.artifact is not None
+    assert json.loads(first_op.artifact.content)["hooks"]["SessionStart"] == [
+        first_foreign,
+        second_foreign,
+    ]
+
+    second = ClaudeCodeAdapter().plan_config(
+        desired, {}, {SETTINGS: first_op.artifact.content}, binary="lh"
+    )
+    second_op = _op_for(second, SETTINGS)
+    assert second_op is not None and second_op.artifact is not None
+    assert json.loads(second_op.artifact.content)["hooks"]["SessionStart"] == [
+        first_foreign,
+        second_foreign,
+    ]
+
+
+def test_claude_null_ownership_cannot_adopt_an_external_builtin_on_omission() -> None:
+    desired = {
+        "session_start": [
+            HookEntry(
+                command="lh hook context-inject --profile p",
+                ownership=HookOwnership.EXTERNAL,
+            )
+        ]
+    }
+    first = ClaudeCodeAdapter().plan_config(desired, {}, {}, binary="lh")
+    first_op = _op_for(first, SETTINGS)
+    assert first_op is not None and first_op.artifact is not None
+    installed = json.loads(first_op.artifact.content)
+    installed["lh_hook_ownership"] = None
+
+    omitted = ClaudeCodeAdapter().plan_config(
+        {}, {}, {SETTINGS: json.dumps(installed)}, binary="lh"
+    )
+
+    assert _op_for(omitted, SETTINGS) is None
+
+
+@pytest.mark.parametrize("envelope", [None, {}, [], 1])
+def test_claude_present_invalid_ownership_never_enables_legacy_adoption(
+    envelope: object,
+) -> None:
+    group = {
+        "matcher": "",
+        "hooks": [{"type": "command", "command": "lh hook context-inject --profile p"}],
+    }
+    existing = json.dumps({"hooks": {"SessionStart": [group]}, "lh_hook_ownership": envelope})
+
+    assert ClaudeCodeAdapter().plan_config({}, {}, {SETTINGS: existing}, binary="lh") == []
+
+
+@pytest.mark.parametrize("version", [True, 1.0, False, None, 2, "1"])
+def test_claude_non_integer_version_cannot_authorize_an_exact_recorded_group(
+    version: object,
+) -> None:
+    group = {
+        "matcher": "",
+        "hooks": [{"type": "command", "command": "lh hook context-inject --profile p"}],
+    }
+    envelope = {
+        "version": version,
+        "managed": [{"event": "SessionStart", "index": 0, "group": group}],
+    }
+    existing = json.dumps({"hooks": {"SessionStart": [group]}, "lh_hook_ownership": envelope})
+
+    assert ClaudeCodeAdapter().plan_config({}, {}, {SETTINGS: existing}, binary="lh") == []
+
+
+def test_claude_absent_ownership_still_enables_exact_legacy_migration() -> None:
+    group = {
+        "matcher": "",
+        "hooks": [{"type": "command", "command": "lh hook context-inject --profile p"}],
+    }
+    existing = json.dumps({"hooks": {"SessionStart": [group]}})
+
+    ops = ClaudeCodeAdapter().plan_config({}, {}, {SETTINGS: existing}, binary="lh")
+
+    op = _op_for(ops, SETTINGS)
+    assert op is not None and op.artifact is not None
+    assert json.loads(op.artifact.content)["hooks"] == {}
+
+
+def test_claude_preserves_prompt_only_and_mixed_foreign_groups() -> None:
+    prompt = {"matcher": "", "hooks": [{"type": "prompt", "prompt": "review it"}]}
+    mixed = {
+        "matcher": "",
+        "hooks": [
+            {"type": "command", "command": "lh hook context-inject --profile p"},
+            {"type": "prompt", "prompt": "also review it"},
+        ],
+    }
+    existing = json.dumps({"hooks": {"SessionStart": [prompt, mixed]}}, indent=2)
+    desired = {"session_start": [HookEntry(command="lh hook session-start-preflight --profile p")]}
+
+    ops = ClaudeCodeAdapter().plan_config(desired, {}, {SETTINGS: existing}, binary="lh")
+
+    op = _op_for(ops, SETTINGS)
+    assert op is not None and op.artifact is not None
+    assert json.loads(op.artifact.content)["hooks"]["SessionStart"][-2:] == [prompt, mixed]
+
+
+def test_claude_external_builtin_text_never_transfers_lifecycle_ownership() -> None:
+    first_desired = {
+        "session_start": [
+            HookEntry(
+                command="lh hook context-inject --profile other",
+                ownership=HookOwnership.EXTERNAL,
+            ),
+            HookEntry(command="lh hook session-start-preflight --profile p"),
+        ]
+    }
+    first = ClaudeCodeAdapter().plan_config(first_desired, {}, {}, binary="lh")
+    first_op = _op_for(first, SETTINGS)
+    assert first_op is not None and first_op.artifact is not None
+
+    second = ClaudeCodeAdapter().plan_config(
+        {"session_start": [HookEntry(command="lh hook session-start-preflight --profile p")]},
+        {},
+        {SETTINGS: first_op.artifact.content},
+        binary="lh",
+    )
+
+    second_op = _op_for(second, SETTINGS)
+    assert second_op is not None and second_op.artifact is not None
+    commands = [
+        group["hooks"][0]["command"]
+        for group in json.loads(second_op.artifact.content)["hooks"]["SessionStart"]
+    ]
+    assert commands.count("lh hook context-inject --profile other") == 1
+    assert commands.count("lh hook session-start-preflight --profile p") == 1
+
+
+def test_claude_external_only_builtin_text_survives_omission() -> None:
+    desired = {
+        "session_start": [
+            HookEntry(
+                command="lh hook context-inject --profile other",
+                ownership=HookOwnership.EXTERNAL,
+            )
+        ]
+    }
+    first = ClaudeCodeAdapter().plan_config(desired, {}, {}, binary="lh")
+    first_op = _op_for(first, SETTINGS)
+    assert first_op is not None and first_op.artifact is not None
+
+    second = ClaudeCodeAdapter().plan_config(
+        {}, {}, {SETTINGS: first_op.artifact.content}, binary="lh"
+    )
+
+    assert _op_for(second, SETTINGS) is None
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("matcher", []),
+        ("type", {}),
+        ("command", []),
+        ("command", None),
+    ],
+)
+def test_claude_invalid_identity_fields_are_preserved_without_traceback(
+    field: str, value: object
+) -> None:
+    malformed = {
+        "matcher": "",
+        "hooks": [
+            {"type": "command", "command": "other-tool session"},
+            {"type": "prompt", "command": "ignored"},
+        ],
+    }
+    if field == "matcher":
+        malformed[field] = value
+    else:
+        malformed["hooks"][1][field] = value
+    existing = json.dumps({"hooks": {"SessionStart": [malformed]}}, indent=2)
+
+    ops = ClaudeCodeAdapter().plan_config(
+        {"session_start": [HookEntry(command="lh hook context-inject --profile p")]},
+        {},
+        {SETTINGS: existing},
+        binary="lh",
+    )
+
+    op = _op_for(ops, SETTINGS)
+    assert op is not None and op.artifact is not None
+    preserved = json.loads(op.artifact.content)["hooks"]["SessionStart"][-1]
+    assert preserved["hooks"] == malformed["hooks"]
+    assert preserved["matcher"] == ("" if field == "matcher" else malformed["matcher"])
+
+
+def test_claude_can_retire_the_last_recorded_builtin() -> None:
+    desired = {"session_start": [HookEntry(command="lh hook context-inject --profile p")]}
+    first = ClaudeCodeAdapter().plan_config(desired, {}, {}, binary="lh")
+    first_op = _op_for(first, SETTINGS)
+    assert first_op is not None and first_op.artifact is not None
+
+    second = ClaudeCodeAdapter().plan_config(
+        {}, {}, {SETTINGS: first_op.artifact.content}, binary="lh"
+    )
+
+    second_op = _op_for(second, SETTINGS)
+    assert second_op is not None and second_op.artifact is not None
+    assert json.loads(second_op.artifact.content)["hooks"] == {}
+
+
 def test_repaired_reports_entries_claude_code_would_reject() -> None:
     cfg = _cfg_with_profile(Path("/nonexistent"))
     existing = json.dumps(
@@ -371,19 +662,18 @@ def test_repaired_reports_entries_claude_code_would_reject() -> None:
 
 
 def test_dropped_reports_harness_entries_no_longer_generated() -> None:
-    """A builtin removed from a release leaves its command behind in every
-    deployed settings.json. It is pruned — silently today — and the plan says so."""
+    """A registered migration alias is still recognizable and retireable."""
     cfg = _cfg_with_profile(Path("/nonexistent"))
     existing = json.dumps(
         {
             "hooks": {
-                "Stop": [
+                "PostToolUse": [
                     {
-                        "matcher": "",
+                        "matcher": "Edit|Write",
                         "hooks": [
                             {
                                 "type": "command",
-                                "command": "lh hook retired_hook --profile personal",
+                                "command": ("lh hook post-tool-use-sync-claude --profile personal"),
                             }
                         ],
                     }
@@ -399,10 +689,10 @@ def test_dropped_reports_harness_entries_no_longer_generated() -> None:
 
     op = _op_for(ops, SETTINGS)
     assert op is not None
-    assert any("retired_hook" in line for line in op.dropped)
-    assert not any("retired_hook" in line for line in op.preserved)
+    assert any("post-tool-use-sync-claude" in line for line in op.dropped)
+    assert not any("post-tool-use-sync-claude" in line for line in op.preserved)
     assert op.artifact is not None
-    assert "retired_hook" not in op.artifact.content
+    assert "post-tool-use-sync-claude" not in op.artifact.content
 
 
 def test_preserved_reports_foreign_mcp_servers() -> None:

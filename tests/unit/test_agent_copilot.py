@@ -24,11 +24,13 @@ from lazy_harness.agents.base import (
     ConfigPlanner,
     HookDecision,
     HookEntry,
+    HookOwnership,
     Operation,
     Verdict,
 )
 
 HOOKS_FILE = Path("hooks/lazy-harness.json")
+EXTERNAL_HOOKS_FILE = Path("hooks/lazy-harness-external.json")
 
 # The literal payload a hook registered at `~/.copilot/hooks/` received on
 # 1.0.83, from `specs/designs/2026-09-13-multi-agent-harness-design.md:445-449`
@@ -409,13 +411,13 @@ def test_the_adapter_is_a_config_planner() -> None:
     assert isinstance(_adapter(), ConfigPlanner)
 
 
-def test_the_single_target_is_a_file_the_harness_owns_outright() -> None:
+def test_hook_targets_separate_managed_lifecycle_from_ensure_present_entries() -> None:
     """Ownership is the FILENAME, not a stamp. Copilot loads
     `$COPILOT_HOME/hooks/*.json` — a glob — so the harness can take one path in
     it and leave every sibling to the user, which is a cleaner boundary than
     `CodexAdapter`'s `description` stamp and does not depend on the document
     tolerating an unknown top-level key (unmeasured, §4 of the evidence file)."""
-    assert _adapter().config_targets() == [HOOKS_FILE]
+    assert _adapter().config_targets() == [HOOKS_FILE, EXTERNAL_HOOKS_FILE]
 
 
 def test_the_document_carries_the_required_version_literal() -> None:
@@ -512,6 +514,205 @@ def test_no_hooks_retires_a_file_the_harness_previously_wrote() -> None:
     assert len(ops) == 1
     assert ops[0].artifact is None
     assert ops[0].relative_path == HOOKS_FILE
+
+
+def test_external_hooks_converge_and_survive_later_omission() -> None:
+    external = HookEntry(
+        command="other-tool session",
+        ownership=HookOwnership.EXTERNAL,
+    )
+
+    first = _adapter().plan_config({"session_start": [external]}, {}, {})
+    assert [op.relative_path for op in first] == [EXTERNAL_HOOKS_FILE]
+    assert first[0].artifact is not None
+    installed = {EXTERNAL_HOOKS_FILE: first[0].artifact.content}
+
+    second = _adapter().plan_config({"session_start": [external]}, {}, installed)
+    assert len(second) == 1
+    assert second[0].relative_path == EXTERNAL_HOOKS_FILE
+    assert second[0].artifact is not None
+    assert second[0].artifact.content == installed[EXTERNAL_HOOKS_FILE]
+
+    assert _adapter().plan_config({}, {}, installed) == []
+
+
+def test_retiring_managed_copilot_hooks_does_not_remove_external_artifact() -> None:
+    hooks = {
+        "session_start": [
+            HookEntry(command="lh hook context-inject --profile p"),
+            HookEntry(command="other-tool session", ownership=HookOwnership.EXTERNAL),
+        ]
+    }
+    first = _adapter().plan_config(hooks, {}, {})
+    existing = {op.relative_path: op.artifact.content for op in first if op.artifact is not None}
+
+    second = _adapter().plan_config({}, {}, existing)
+
+    assert len(second) == 1
+    assert second[0].relative_path == HOOKS_FILE
+    assert second[0].artifact is None
+    assert EXTERNAL_HOOKS_FILE in existing
+
+
+def test_copilot_external_merge_preserves_duplicates_and_native_metadata() -> None:
+    richer = {"command": "other-tool session", "timeout": 10}
+    duplicate = {"command": "other-tool session", "timeout": 45}
+    existing = (
+        json.dumps({"version": 1, "hooks": {"sessionStart": [richer, duplicate]}}, indent=2) + "\n"
+    )
+    desired = {
+        "session_start": [HookEntry(command="other-tool session", ownership=HookOwnership.EXTERNAL)]
+    }
+
+    ops = _adapter().plan_config(desired, {}, {EXTERNAL_HOOKS_FILE: existing})
+
+    assert len(ops) == 1
+    assert ops[0].artifact is not None
+    assert json.loads(ops[0].artifact.content)["hooks"]["sessionStart"] == [
+        richer,
+        duplicate,
+    ]
+
+
+def _head_equivalent_copilot_artifact(*entries: HookEntry) -> str:
+    """Run the unchanged group generator through the pre-split single-file plan."""
+    groups = _adapter()._hook_groups({"session_start": list(entries)})
+    return json.dumps({"version": 1, "hooks": groups}, indent=2) + "\n"
+
+
+def _with_legacy_group_metadata(raw: str, *metadata: dict) -> str:
+    document = json.loads(raw)
+    for group, extra in zip(document["hooks"]["sessionStart"], metadata, strict=True):
+        group.update(extra)
+    return json.dumps(document, indent=2) + "\n"
+
+
+def test_copilot_migrates_omitted_legacy_external_to_the_external_artifact() -> None:
+    legacy_external = {"command": "other-tool session", "timeout": 45}
+    legacy = _head_equivalent_copilot_artifact(
+        HookEntry(command="other-tool session", ownership=HookOwnership.EXTERNAL)
+    )
+    existing = {HOOKS_FILE: _with_legacy_group_metadata(legacy, {"timeout": 45})}
+
+    ops = _adapter().plan_config({}, {}, existing, binary="lh")
+
+    assert [op.relative_path for op in ops] == [HOOKS_FILE, EXTERNAL_HOOKS_FILE]
+    assert ops[0].artifact is None
+    assert ops[1].artifact is not None
+    assert json.loads(ops[1].artifact.content)["hooks"]["sessionStart"] == [legacy_external]
+
+
+def test_copilot_migrates_desired_legacy_external_without_duplication() -> None:
+    legacy_external = {"command": "other-tool session", "timeout": 45}
+    legacy = _head_equivalent_copilot_artifact(
+        HookEntry(command="other-tool session", ownership=HookOwnership.EXTERNAL)
+    )
+    existing = {HOOKS_FILE: _with_legacy_group_metadata(legacy, {"timeout": 45})}
+    desired = {
+        "session_start": [HookEntry(command="other-tool session", ownership=HookOwnership.EXTERNAL)]
+    }
+
+    ops = _adapter().plan_config(desired, {}, existing, binary="lh")
+
+    external_op = next(op for op in ops if op.relative_path == EXTERNAL_HOOKS_FILE)
+    assert external_op.artifact is not None
+    assert json.loads(external_op.artifact.content)["hooks"]["sessionStart"] == [legacy_external]
+
+
+def test_copilot_foreign_builtin_metadata_satisfies_managed_across_redeploys() -> None:
+    command = "lh hook context-inject --profile p"
+    foreign = {"command": command, "timeoutSec": 45}
+    legacy = _head_equivalent_copilot_artifact(HookEntry(command=command))
+    existing = {HOOKS_FILE: _with_legacy_group_metadata(legacy, {"timeoutSec": 45})}
+    desired = {"session_start": [HookEntry(command=command)]}
+
+    declaration_counts = []
+    for _ in range(3):
+        ops = _adapter().plan_config(desired, {}, existing, binary="lh")
+        for op in ops:
+            if op.artifact is None:
+                existing.pop(op.relative_path, None)
+            else:
+                existing[op.relative_path] = op.artifact.content
+        declaration_counts.append(
+            sum(
+                len(groups)
+                for raw in existing.values()
+                for groups in json.loads(raw)["hooks"].values()
+            )
+        )
+
+    assert declaration_counts == [1, 1, 1]
+    assert HOOKS_FILE not in existing
+    assert json.loads(existing[EXTERNAL_HOOKS_FILE])["hooks"]["sessionStart"] == [foreign]
+
+
+def test_copilot_managed_candidate_does_not_collapse_foreign_builtin_duplicates() -> None:
+    command = "lh hook context-inject --profile p"
+    foreign = [
+        {"command": command, "timeoutSec": 10},
+        {"command": command, "timeoutSec": 45},
+    ]
+    existing = {
+        EXTERNAL_HOOKS_FILE: json.dumps(
+            {"version": 1, "hooks": {"sessionStart": foreign}}, indent=2
+        )
+        + "\n"
+    }
+    desired = {"session_start": [HookEntry(command=command)]}
+
+    assert _adapter().plan_config(desired, {}, existing, binary="lh") == []
+    assert json.loads(existing[EXTERNAL_HOOKS_FILE])["hooks"]["sessionStart"] == foreign
+
+
+def test_copilot_migrates_only_foreign_groups_from_a_mixed_legacy_artifact() -> None:
+    managed = {"command": "lh hook context-inject --profile p"}
+    external = {"command": "other-tool session", "timeout": 10}
+    unknown = {"command": "python /tmp/custom.py", "custom": {"keep": True}}
+    legacy = _head_equivalent_copilot_artifact(
+        HookEntry(command=managed["command"]),
+        HookEntry(command=external["command"], ownership=HookOwnership.EXTERNAL),
+        HookEntry(command=external["command"], ownership=HookOwnership.EXTERNAL),
+        HookEntry(command=unknown["command"], ownership=HookOwnership.EXTERNAL),
+    )
+    existing = {
+        HOOKS_FILE: _with_legacy_group_metadata(
+            legacy,
+            {},
+            {"timeout": 10},
+            {"timeout": 10},
+            {"custom": {"keep": True}},
+        )
+    }
+
+    desired = {"session_start": [HookEntry(command=managed["command"])]}
+
+    ops = _adapter().plan_config(desired, {}, existing, binary="lh")
+
+    assert ops[0].relative_path == HOOKS_FILE
+    assert ops[0].artifact is not None
+    assert json.loads(ops[0].artifact.content)["hooks"]["sessionStart"] == [managed]
+    external_op = next(op for op in ops if op.relative_path == EXTERNAL_HOOKS_FILE)
+    assert external_op.artifact is not None
+    assert json.loads(external_op.artifact.content)["hooks"]["sessionStart"] == [
+        external,
+        external,
+        unknown,
+    ]
+
+
+@pytest.mark.parametrize(
+    "legacy",
+    [
+        "not json",
+        "[]",
+        '{"version": 1, "hooks": []}',
+        '{"version": 1, "hooks": {"sessionStart": [1]}}',
+    ],
+)
+def test_copilot_refuses_an_unreadable_legacy_artifact(legacy: str) -> None:
+    with pytest.raises(ValueError, match="hooks/lazy-harness[.]json"):
+        _adapter().plan_config({}, {}, {HOOKS_FILE: legacy}, binary="lh")
 
 
 def test_mcp_servers_are_not_placed_and_the_document_stays_hooks_only() -> None:

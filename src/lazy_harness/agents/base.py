@@ -56,6 +56,17 @@ class Signal(StrEnum):
     GOAL_STATUS = "goal_status"
 
 
+class HookOwnership(StrEnum):
+    """Which lifecycle contract a planned hook entry carries.
+
+    Harness entries may be replaced or retired by the adapter. External entries
+    are only ensured present; omitting one later never grants deletion authority.
+    """
+
+    HARNESS = "harness"
+    EXTERNAL = "external"
+
+
 class Bypass(StrEnum):
     """How far a launch is allowed to step outside the permission prompts.
 
@@ -556,6 +567,7 @@ class HookEntry:
 
     command: str
     matcher: str | None = None
+    ownership: HookOwnership = HookOwnership.HARNESS
 
 
 @runtime_checkable

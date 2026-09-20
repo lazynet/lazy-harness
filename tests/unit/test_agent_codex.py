@@ -18,6 +18,7 @@ from lazy_harness.agents.base import (
     ConfigPlanner,
     HookDecision,
     HookEntry,
+    HookOwnership,
     Operation,
     Verdict,
 )
@@ -277,7 +278,7 @@ def test_config_targets_names_hooks_json_and_config_toml() -> None:
 def test_no_hook_declaration_ever_reaches_config_toml() -> None:
     """The half of the split that the widening must not erode."""
     ops = _adapter().plan_config(
-        {"session_start": [HookEntry(command="lh hook ctx")]},
+        {"session_start": [HookEntry(command="lh hook context-inject --profile p")]},
         {"qmd": {"command": "qmd"}},
         {},
         binary="lh",
@@ -326,10 +327,24 @@ def test_a_declared_matcher_is_emitted_verbatim() -> None:
     """The matcher is part of the hook's **trust identity** — changing it flipped
     the stored `trusted_hash`. Anchored so a redeploy cannot silently re-prompt.
     """
-    ops = _plan({"pre_tool_use": [HookEntry(command="lh hook sec", matcher="Bash")]})
+    ops = _plan(
+        {
+            "pre_tool_use": [
+                HookEntry(command="lh hook pre-tool-use-git-scope --profile p", matcher="Bash")
+            ]
+        }
+    )
     assert ops[0].artifact is not None
     assert json.loads(ops[0].artifact.content)["hooks"]["PreToolUse"] == [
-        {"matcher": "Bash", "hooks": [{"type": "command", "command": "lh hook sec"}]}
+        {
+            "matcher": "Bash",
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": "lh hook pre-tool-use-git-scope --profile p",
+                }
+            ],
+        }
     ]
 
 
@@ -339,21 +354,24 @@ def test_each_entry_gets_its_own_matcher_group_in_declaration_order() -> None:
     ops = _plan(
         {
             "pre_tool_use": [
-                HookEntry(command="lh hook first", matcher="Bash"),
-                HookEntry(command="lh hook second"),
+                HookEntry(command="lh hook pre-tool-use-git-scope --profile p", matcher="Bash"),
+                HookEntry(command="lh hook context-inject --profile p"),
             ]
         }
     )
     assert ops[0].artifact is not None
     groups = json.loads(ops[0].artifact.content)["hooks"]["PreToolUse"]
-    assert [g["hooks"][0]["command"] for g in groups] == ["lh hook first", "lh hook second"]
+    assert [g["hooks"][0]["command"] for g in groups] == [
+        "lh hook pre-tool-use-git-scope --profile p",
+        "lh hook context-inject --profile p",
+    ]
 
 
 def test_an_event_codex_does_not_deliver_is_dropped_from_the_plan() -> None:
     ops = _plan(
         {
             "notification": [HookEntry(command="lh hook notify")],
-            "session_start": [HookEntry(command="lh hook ctx")],
+            "session_start": [HookEntry(command="lh hook context-inject --profile p")],
         }
     )
     assert ops[0].artifact is not None
@@ -366,7 +384,10 @@ def test_every_planned_event_key_is_one_codex_accepts() -> None:
 
     adapter = _adapter()
     ops = adapter.plan_config(
-        {event: [HookEntry(command=f"lh hook {event}")] for event in adapter.supported_hooks()},
+        {
+            event: [HookEntry(command="lh hook context-inject --profile p")]
+            for event in adapter.supported_hooks()
+        },
         {},
         {},
     )
@@ -387,15 +408,530 @@ def test_mcp_config_file_stays_empty_because_the_document_is_not_json() -> None:
     assert _adapter().mcp_config_file() == ""
 
 
-def test_the_plan_replaces_an_existing_hooks_json_wholesale() -> None:
-    """The harness owns this file entirely, which is precisely why it is not
-    `config.toml` — nothing foreign is preserved because nothing foreign belongs."""
-    theirs = [{"hooks": [{"type": "command", "command": "theirs"}]}]
-    existing = json.dumps({"hooks": {"SessionStart": theirs}})
-    ops = _plan({"session_start": [HookEntry(command="ours")]}, {HOOKS_JSON: existing})
+def test_the_plan_preserves_foreign_groups_on_modelled_and_unknown_events() -> None:
+    theirs = {
+        "matcher": "startup",
+        "hooks": [
+            {
+                "type": "command",
+                "command": "other-tool start",
+                "timeoutSec": 17,
+                "async": True,
+                "statusMessage": "starting",
+            }
+        ],
+    }
+    future = {
+        "matcher": "future",
+        "hooks": [{"type": "command", "command": "other-tool future"}],
+    }
+    existing = json.dumps(
+        {
+            "description": "user-owned description",
+            "hooks": {"SessionStart": [theirs], "SomeFutureEvent": [future]},
+        }
+    )
+
+    ops = _plan(
+        {"session_start": [HookEntry(command="lh hook context-inject --profile p")]},
+        {HOOKS_JSON: existing},
+    )
+
     assert ops[0].artifact is not None
-    assert "theirs" not in ops[0].artifact.content
-    assert ops[0].preserved == []
+    document = json.loads(ops[0].artifact.content)
+    assert "user-owned description" in document["description"]
+    assert document["hooks"]["SessionStart"] == [
+        theirs,
+        {
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": "lh hook context-inject --profile p",
+                }
+            ]
+        },
+    ]
+    assert document["hooks"]["SomeFutureEvent"] == [future]
+    assert ops[0].preserved == [
+        "SessionStart[0]: other-tool start",
+        "SomeFutureEvent[0]: other-tool future",
+    ]
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "{broken",
+        "[]",
+        "null",
+        '{"hooks": []}',
+        '{"hooks": {"SessionStart": null}}',
+        '{"hooks": {"SessionStart": [7]}}',
+    ],
+)
+def test_a_malformed_existing_hooks_document_is_refused(raw: str) -> None:
+    from lazy_harness.agents.codex import CodexHooksUnreadableError
+
+    with pytest.raises(CodexHooksUnreadableError, match=r"hooks\.json"):
+        _plan(
+            {"session_start": [HookEntry(command="lh hook context-inject --profile p")]},
+            {HOOKS_JSON: raw},
+        )
+
+
+def test_an_equivalent_richer_foreign_group_satisfies_external_without_adoption() -> None:
+    richer = {
+        "matcher": "Bash",
+        "hooks": [
+            {
+                "type": "command",
+                "command": "other-tool guard",
+                "timeoutSec": 30,
+                "commandWindows": "other-tool.exe guard",
+            }
+        ],
+    }
+    existing = json.dumps({"hooks": {"PreToolUse": [richer]}})
+    external = HookEntry(
+        command="other-tool guard",
+        matcher="Bash",
+        ownership=HookOwnership.EXTERNAL,
+    )
+
+    first = _plan({"pre_tool_use": [external]}, {HOOKS_JSON: existing})
+    assert first[0].artifact is not None
+    assert json.loads(first[0].artifact.content)["hooks"]["PreToolUse"] == [richer]
+    assert first[0].dropped == []
+
+    second = _plan({}, {HOOKS_JSON: first[0].artifact.content})
+    assert second == [] or all(op.artifact is not None for op in second)
+
+
+def test_external_identity_includes_matcher_and_preserves_foreign_duplicates() -> None:
+    group = {
+        "matcher": "Bash",
+        "hooks": [{"type": "command", "command": "other-tool guard"}],
+    }
+    existing = json.dumps({"hooks": {"PreToolUse": [group, group]}})
+    desired = HookEntry(
+        command="other-tool guard",
+        matcher="Edit",
+        ownership=HookOwnership.EXTERNAL,
+    )
+
+    ops = _plan({"pre_tool_use": [desired]}, {HOOKS_JSON: existing})
+
+    assert ops[0].artifact is not None
+    assert json.loads(ops[0].artifact.content)["hooks"]["PreToolUse"] == [
+        group,
+        group,
+        {
+            "matcher": "Edit",
+            "hooks": [{"type": "command", "command": "other-tool guard"}],
+        },
+    ]
+
+
+def _artifacts(ops: list) -> dict[Path, str]:
+    return {op.relative_path: op.artifact.content for op in ops if op.artifact is not None}
+
+
+def test_legacy_interleaved_groups_migrate_without_changing_hook_arrays() -> None:
+    managed_a = {"hooks": [{"type": "command", "command": "lh hook context-inject --profile p"}]}
+    foreign = {
+        "hooks": [
+            {
+                "type": "command",
+                "command": "other-tool session",
+                "additionalContextLimit": 2048,
+            }
+        ],
+    }
+    managed_b = {
+        "hooks": [
+            {
+                "type": "command",
+                "command": "lh hook session-start-preflight --profile p",
+            }
+        ]
+    }
+    existing = (
+        json.dumps(
+            {
+                "description": DESCRIPTION,
+                "hooks": {"SessionStart": [managed_a, foreign, managed_b]},
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+
+    ops = _adapter().plan_config(
+        {
+            "session_start": [
+                HookEntry(command="lh hook context-inject --profile p"),
+                HookEntry(command="lh hook session-start-preflight --profile p"),
+            ]
+        },
+        {},
+        {HOOKS_JSON: existing},
+        binary="lh",
+    )
+
+    hook_op = next(op for op in ops if op.relative_path == HOOKS_JSON)
+    assert hook_op.artifact is not None
+    assert json.loads(hook_op.artifact.content)["hooks"]["SessionStart"] == [
+        managed_a,
+        foreign,
+        managed_b,
+    ]
+    assert hook_op.changed == []
+    assert "hook-ownership" in json.loads(hook_op.artifact.content)["description"]
+
+
+def test_a_mixed_legacy_group_is_foreign_and_never_split_or_adopted() -> None:
+    mixed = {
+        "hooks": [
+            {"type": "command", "command": "lh hook context-inject --profile p"},
+            {"type": "command", "command": "other-tool session"},
+        ]
+    }
+    existing = json.dumps({"description": DESCRIPTION, "hooks": {"SessionStart": [mixed]}})
+
+    ops = _adapter().plan_config(
+        {"session_start": [HookEntry(command="lh hook context-inject --profile p")]},
+        {},
+        {HOOKS_JSON: existing},
+        binary="lh",
+    )
+
+    hook_op = next(op for op in ops if op.relative_path == HOOKS_JSON)
+    assert hook_op.artifact is not None
+    groups = json.loads(hook_op.artifact.content)["hooks"]["SessionStart"]
+    assert groups[0] == mixed
+    assert len(groups) == 2
+    assert hook_op.dropped == []
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "lh hook definitely-not-a-builtin --profile p",
+        "printf lazy_harness/hooks/builtins/context_inject.py",
+        "lh hook context-inject --profile p && other-tool guard",
+        "lh hook context-inject --profile p;true",
+        "lh hook context-inject --profile p&&true",
+        "lh hook context-inject --profile p>log",
+        "lh hook context-inject --profile `true`",
+        "lh hook context-inject --profile $(true)",
+        "env lh hook context-inject --profile p",
+        "lh hook context-inject --profile p --extra value",
+        "python /opt/lib/lazy_harness/hooks/builtins/context_inject.bak",
+        "python /opt/lib/lazy_harness/hooks/builtins/context_inject",
+        "python -u /opt/lib/lazy_harness/hooks/builtins/context_inject.py",
+    ],
+)
+def test_legacy_stamp_does_not_claim_non_generated_builtin_commands(command: str) -> None:
+    group = {"hooks": [{"type": "command", "command": command}]}
+    existing = json.dumps({"description": DESCRIPTION, "hooks": {"SessionStart": [group]}})
+
+    assert _adapter().plan_config({}, {}, {HOOKS_JSON: existing}, binary="lh") == []
+
+
+def test_legacy_exact_builtin_path_is_migrated_and_can_be_retired() -> None:
+    command = (
+        "/opt/venv/bin/python "
+        "/opt/venv/lib/python3.11/site-packages/lazy_harness/hooks/builtins/context_inject.py"
+    )
+    group = {"hooks": [{"type": "command", "command": command}]}
+    existing = json.dumps({"description": DESCRIPTION, "hooks": {"SessionStart": [group]}})
+
+    ops = _adapter().plan_config({}, {}, {HOOKS_JSON: existing}, binary="lh")
+
+    assert len(ops) == 1
+    assert ops[0].artifact is None
+    assert ops[0].dropped == [f"SessionStart[0]: {command}"]
+
+
+def test_legacy_exact_launcher_with_an_emitted_quoted_profile_can_be_retired() -> None:
+    command = "lh hook context-inject --profile 'work laptop'"
+    group = {"hooks": [{"type": "command", "command": command}]}
+    existing = json.dumps({"description": DESCRIPTION, "hooks": {"SessionStart": [group]}})
+
+    ops = _adapter().plan_config({}, {}, {HOOKS_JSON: existing}, binary="lh")
+
+    assert len(ops) == 1
+    assert ops[0].artifact is None
+    assert ops[0].dropped == [f"SessionStart[0]: {command}"]
+
+
+def test_legacy_builtin_on_native_event_the_harness_cannot_emit_stays_foreign() -> None:
+    group = {
+        "hooks": [
+            {
+                "type": "command",
+                "command": "lh hook context-inject --profile p",
+            }
+        ]
+    }
+    existing = json.dumps({"description": DESCRIPTION, "hooks": {"SubagentStart": [group]}})
+
+    assert _adapter().plan_config({}, {}, {HOOKS_JSON: existing}, binary="lh") == []
+
+
+def test_editable_provenance_does_not_authorize_an_invented_builtin() -> None:
+    group = {
+        "hooks": [
+            {
+                "type": "command",
+                "command": "other-tool hook definitely-not-a-builtin --profile p",
+            }
+        ]
+    }
+    first = _adapter().plan_config(
+        {"session_start": [HookEntry(command="lh hook context-inject --profile p")]},
+        {},
+        {},
+        binary="lh",
+    )
+    assert first[0].artifact is not None
+    document = json.loads(first[0].artifact.content)
+    prefix, encoded = document["description"].split(":", 1)
+    envelope = json.loads(encoded)
+    envelope["launchers"] = ["other-tool"]
+    envelope["managed"] = [{"event": "SessionStart", "index": 0, "group": group}]
+    document["description"] = (
+        prefix + ":" + json.dumps(envelope, separators=(",", ":"), sort_keys=True)
+    )
+    document["hooks"] = {"SessionStart": [group]}
+
+    assert _adapter().plan_config({}, {}, {HOOKS_JSON: json.dumps(document)}, binary="lh") == []
+
+
+def test_editable_provenance_authorizes_an_exact_recorded_historical_launcher() -> None:
+    group = {
+        "hooks": [
+            {
+                "type": "command",
+                "command": "other-tool hook context-inject --profile p",
+            }
+        ]
+    }
+    first = _adapter().plan_config(
+        {"session_start": [HookEntry(command="lh hook context-inject --profile p")]},
+        {},
+        {},
+        binary="lh",
+    )
+    assert first[0].artifact is not None
+    document = json.loads(first[0].artifact.content)
+    prefix, encoded = document["description"].split(":", 1)
+    envelope = json.loads(encoded)
+    envelope["launchers"] = ["other-tool"]
+    envelope["managed"] = [{"event": "SessionStart", "index": 0, "group": group}]
+    document["description"] = (
+        prefix + ":" + json.dumps(envelope, separators=(",", ":"), sort_keys=True)
+    )
+    document["hooks"] = {"SessionStart": [group]}
+
+    ops = _adapter().plan_config({}, {}, {HOOKS_JSON: json.dumps(document)}, binary="lh")
+
+    assert len(ops) == 1
+    assert ops[0].artifact is None
+    assert ops[0].dropped == ["SessionStart[0]: other-tool hook context-inject --profile p"]
+
+
+def test_removing_managed_and_external_declarations_drops_only_managed() -> None:
+    managed = HookEntry(command="lh hook context-inject --profile p")
+    external = HookEntry(
+        command="other-tool session",
+        ownership=HookOwnership.EXTERNAL,
+    )
+    first = _adapter().plan_config({"session_start": [managed, external]}, {}, {}, binary="lh")
+
+    second = _adapter().plan_config({}, {}, _artifacts(first), binary="lh")
+
+    hook_op = next(op for op in second if op.relative_path == HOOKS_JSON)
+    assert hook_op.artifact is not None
+    groups = json.loads(hook_op.artifact.content)["hooks"]["SessionStart"]
+    assert groups == [{"hooks": [{"type": "command", "command": "other-tool session"}]}]
+    assert hook_op.preserved == ["SessionStart[1]: other-tool session"]
+    assert hook_op.dropped == ["SessionStart[0]: lh hook context-inject --profile p"]
+
+
+def test_managed_slots_are_replaced_in_place_and_foreign_order_is_stable() -> None:
+    initial = {
+        "session_start": [
+            HookEntry(command="lh hook context-inject --profile p"),
+            HookEntry(command="lh hook session-start-preflight --profile p"),
+            HookEntry(command="other-tool session", ownership=HookOwnership.EXTERNAL),
+        ]
+    }
+    first = _adapter().plan_config(initial, {}, {}, binary="lh")
+    desired = {
+        "session_start": [
+            HookEntry(command="lh hook session-start-preflight --profile p"),
+            HookEntry(command="lh hook context-inject --profile p"),
+        ]
+    }
+
+    second = _adapter().plan_config(desired, {}, _artifacts(first), binary="lh")
+
+    hook_op = next(op for op in second if op.relative_path == HOOKS_JSON)
+    assert hook_op.artifact is not None
+    commands = [
+        group["hooks"][0]["command"]
+        for group in json.loads(hook_op.artifact.content)["hooks"]["SessionStart"]
+    ]
+    assert commands == [
+        "lh hook session-start-preflight --profile p",
+        "lh hook context-inject --profile p",
+        "other-tool session",
+    ]
+    assert hook_op.changed == ["session_start[0]", "session_start[1]"]
+
+
+def test_surplus_managed_groups_append_after_existing_foreign_groups() -> None:
+    initial = {
+        "session_start": [
+            HookEntry(command="lh hook context-inject --profile p"),
+            HookEntry(command="other-tool session", ownership=HookOwnership.EXTERNAL),
+        ]
+    }
+    first = _adapter().plan_config(initial, {}, {}, binary="lh")
+    desired = {
+        "session_start": [
+            HookEntry(command="lh hook context-inject --profile p"),
+            HookEntry(command="lh hook session-start-preflight --profile p"),
+        ]
+    }
+
+    second = _adapter().plan_config(desired, {}, _artifacts(first), binary="lh")
+
+    hook_op = next(op for op in second if op.relative_path == HOOKS_JSON)
+    assert hook_op.artifact is not None
+    commands = [
+        group["hooks"][0]["command"]
+        for group in json.loads(hook_op.artifact.content)["hooks"]["SessionStart"]
+    ]
+    assert commands == [
+        "lh hook context-inject --profile p",
+        "other-tool session",
+        "lh hook session-start-preflight --profile p",
+    ]
+    assert hook_op.changed == ["session_start[2]"]
+
+
+@pytest.mark.parametrize("edit", ["command", "matcher", "metadata", "position"])
+def test_edited_or_moved_recorded_group_is_preserved_as_foreign(edit: str) -> None:
+    desired = {"session_start": [HookEntry(command="lh hook context-inject --profile p")]}
+    first = _adapter().plan_config(desired, {}, {}, binary="lh")
+    assert first[0].artifact is not None
+    document = json.loads(first[0].artifact.content)
+    group = document["hooks"]["SessionStart"][0]
+
+    if edit == "command":
+        group["hooks"][0]["command"] = "lh hook session-start-preflight --profile p"
+    elif edit == "matcher":
+        group["matcher"] = "edited"
+    elif edit == "metadata":
+        group["hooks"][0]["timeoutSec"] = 12
+    else:
+        document["hooks"]["SessionStart"].insert(
+            0,
+            {"hooks": [{"type": "command", "command": "other-tool session"}]},
+        )
+    edited = json.dumps(document, indent=2) + "\n"
+
+    ops = _adapter().plan_config({}, {}, {HOOKS_JSON: edited}, binary="lh")
+
+    assert ops == [], f"{edit} let stale provenance authorize a write or delete"
+
+
+def test_provenance_survives_a_launcher_transition_without_duplication() -> None:
+    first = _adapter().plan_config(
+        {"session_start": [HookEntry(command="lh-beta hook context-inject --profile p")]},
+        {},
+        {},
+        binary="lh-beta",
+    )
+
+    second = _adapter().plan_config(
+        {"session_start": [HookEntry(command="lh hook context-inject --profile p")]},
+        {},
+        _artifacts(first),
+        binary="lh",
+    )
+
+    hook_op = next(op for op in second if op.relative_path == HOOKS_JSON)
+    assert hook_op.artifact is not None
+    groups = json.loads(hook_op.artifact.content)["hooks"]["SessionStart"]
+    assert [group["hooks"][0]["command"] for group in groups] == [
+        "lh hook context-inject --profile p"
+    ]
+
+
+def test_an_unmarked_builtin_shaped_group_stays_foreign_after_provenance_is_added() -> None:
+    lookalike = {"hooks": [{"type": "command", "command": "lh hook user-owned --profile p"}]}
+    existing = json.dumps({"hooks": {"SessionStart": [lookalike]}})
+    desired = {"session_start": [HookEntry(command="lh hook context-inject --profile p")]}
+
+    first = _adapter().plan_config(desired, {}, {HOOKS_JSON: existing}, binary="lh")
+    assert first[0].artifact is not None
+    second = _adapter().plan_config(
+        desired, {}, {HOOKS_JSON: first[0].artifact.content}, binary="lh"
+    )
+
+    hook_op = next(op for op in second if op.relative_path == HOOKS_JSON)
+    assert hook_op.artifact is not None
+    groups = json.loads(hook_op.artifact.content)["hooks"]["SessionStart"]
+    assert groups[0] == lookalike
+    assert [group["hooks"][0]["command"] for group in groups] == [
+        "lh hook user-owned --profile p",
+        "lh hook context-inject --profile p",
+    ]
+    assert hook_op.changed == []
+
+
+def test_a_non_command_handler_is_never_claimed_even_if_it_carries_lh_text() -> None:
+    foreign = {
+        "hooks": [
+            {
+                "type": "prompt",
+                "command": "lh hook context-inject --profile p",
+            }
+        ]
+    }
+    existing = json.dumps({"description": DESCRIPTION, "hooks": {"SessionStart": [foreign]}})
+
+    ops = _adapter().plan_config(
+        {"session_start": [HookEntry(command="lh hook context-inject --profile p")]},
+        {},
+        {HOOKS_JSON: existing},
+        binary="lh",
+    )
+
+    hook_op = next(op for op in ops if op.relative_path == HOOKS_JSON)
+    assert hook_op.artifact is not None
+    assert json.loads(hook_op.artifact.content)["hooks"]["SessionStart"][0] == foreign
+
+
+def test_a_second_plan_is_byte_stable_and_requests_no_retrust() -> None:
+    desired = {
+        "session_start": [
+            HookEntry(command="lh hook context-inject --profile p"),
+            HookEntry(command="other-tool session", ownership=HookOwnership.EXTERNAL),
+        ]
+    }
+    first = _adapter().plan_config(desired, {}, {}, binary="lh")
+    first_artifacts = _artifacts(first)
+
+    second = _adapter().plan_config(desired, {}, first_artifacts, binary="lh")
+
+    assert _artifacts(second) == first_artifacts
+    hook_op = next(op for op in second if op.relative_path == HOOKS_JSON)
+    assert hook_op.changed == []
+    assert hook_op.dropped == []
 
 
 def test_the_document_is_stable_across_redeploys_of_the_same_input() -> None:
@@ -403,7 +939,7 @@ def test_the_document_is_stable_across_redeploys_of_the_same_input() -> None:
     key is scoped to that file. Nothing version-dependent goes in."""
     from lazy_harness import __version__
 
-    ops = _plan({"session_start": [HookEntry(command="lh hook ctx")]})
+    ops = _plan({"session_start": [HookEntry(command="lh hook context-inject --profile p")]})
     assert ops[0].artifact is not None
     assert __version__ not in ops[0].artifact.content
 
@@ -413,12 +949,12 @@ def test_the_document_is_stable_across_redeploys_of_the_same_input() -> None:
 
 def test_first_deploy_marks_every_declared_hook_as_changed() -> None:
     """No existing `hooks.json`: every declared hook is new, hence changed."""
-    ops = _plan({"session_start": [HookEntry(command="lh hook ctx")]})
+    ops = _plan({"session_start": [HookEntry(command="lh hook context-inject --profile p")]})
     assert ops[0].changed == ["session_start[0]"]
 
 
 def test_redeploy_of_the_same_declaration_reports_nothing_changed() -> None:
-    hooks = {"session_start": [HookEntry(command="lh hook ctx")]}
+    hooks = {"session_start": [HookEntry(command="lh hook context-inject --profile p")]}
     first = _plan(hooks)
     assert first[0].artifact is not None
     existing = {HOOKS_JSON: first[0].artifact.content}
@@ -428,15 +964,19 @@ def test_redeploy_of_the_same_declaration_reports_nothing_changed() -> None:
 
 def test_changing_one_matcher_names_only_that_hook_as_changed() -> None:
     hooks = {
-        "session_start": [HookEntry(command="lh hook ctx")],
-        "pre_tool_use": [HookEntry(command="lh hook sec")],
+        "session_start": [HookEntry(command="lh hook context-inject --profile p")],
+        "pre_tool_use": [
+            HookEntry(command="lh hook pre-tool-use-git-scope --profile p", matcher="Bash")
+        ],
     }
     first = _plan(hooks)
     assert first[0].artifact is not None
     existing = {HOOKS_JSON: first[0].artifact.content}
 
     changed_hooks = dict(hooks)
-    changed_hooks["pre_tool_use"] = [HookEntry(command="lh hook sec", matcher="Bash")]
+    changed_hooks["pre_tool_use"] = [
+        HookEntry(command="lh hook pre-tool-use-git-scope --profile p", matcher="Edit")
+    ]
     redeployed = _plan(changed_hooks, existing)
     assert redeployed[0].changed == ["pre_tool_use[0]"]
 
@@ -444,7 +984,7 @@ def test_changing_one_matcher_names_only_that_hook_as_changed() -> None:
 def test_dropping_a_declared_hook_names_it_as_changed() -> None:
     """The delete branch (empty declarations, harness-written file) still
     reports what it is retiring — that is a changed declaration too."""
-    hooks = {"session_start": [HookEntry(command="lh hook ctx")]}
+    hooks = {"session_start": [HookEntry(command="lh hook context-inject --profile p")]}
     first = _plan(hooks)
     assert first[0].artifact is not None
     existing = {HOOKS_JSON: first[0].artifact.content}
@@ -630,7 +1170,7 @@ def test_no_servers_plans_no_config_toml_write() -> None:
     rewrite every trust decision in the file for no reason at all.
     """
     ops = _adapter().plan_config(
-        {"session_start": [HookEntry(command="lh hook ctx")]},
+        {"session_start": [HookEntry(command="lh hook context-inject --profile p")]},
         {},
         {CONFIG_TOML: _LIVE_CONFIG},
         binary="lh",
@@ -652,12 +1192,11 @@ def test_a_config_toml_that_does_not_parse_is_refused_rather_than_replaced() -> 
 # --- retiring hooks.json, in both directions ------------------------------
 
 
-def test_a_harness_written_hooks_json_is_retired_when_no_hooks_remain() -> None:
-    """The delete case. Without it, a profile that stops configuring hooks keeps
-    firing the ones the previous release deployed."""
+def test_a_legacy_description_alone_does_not_authorize_file_deletion() -> None:
+    """The provenance string is editable metadata, not ownership proof."""
     ours = json.dumps({"description": DESCRIPTION, "hooks": {"SessionStart": []}})
     ops = _adapter().plan_config({}, {}, {HOOKS_JSON: ours}, binary="lh")
-    assert [(op.relative_path, op.artifact) for op in ops] == [(HOOKS_JSON, None)]
+    assert ops == []
 
 
 def test_a_hooks_json_the_user_wrote_is_left_alone() -> None:
@@ -677,7 +1216,13 @@ def test_an_absent_hooks_json_plans_no_delete() -> None:
 def test_one_plan_retires_hooks_json_while_writing_config_toml() -> None:
     """Both directions in a single plan: the file that must go and the file that
     must be merged, so neither is asserted in isolation from the other."""
-    ours = json.dumps({"description": DESCRIPTION, "hooks": {}})
+    first = _adapter().plan_config(
+        {"session_start": [HookEntry(command="lh hook context-inject --profile p")]},
+        {},
+        {},
+        binary="lh",
+    )
+    ours = _artifacts(first)[HOOKS_JSON]
     ops = _adapter().plan_config(
         {},
         {"qmd": {"command": "qmd"}},

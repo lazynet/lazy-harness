@@ -175,5 +175,192 @@
     ]
   },
   "lh_version": "@VERSION@",
-  "lh_harness_binary": "lh"
+  "lh_harness_binary": "lh",
+  "lh_hook_ownership": {
+    "version": 1,
+    "managed": [
+      {
+        "event": "SessionStart",
+        "index": 0,
+        "group": {
+          "matcher": "",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "lh hook context-inject --profile personal"
+            }
+          ]
+        }
+      },
+      {
+        "event": "SessionStart",
+        "index": 1,
+        "group": {
+          "matcher": "",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "lh hook session-start-preflight --profile personal"
+            }
+          ]
+        }
+      },
+      {
+        "event": "Stop",
+        "index": 0,
+        "group": {
+          "matcher": "",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "lh hook session-export --profile personal"
+            }
+          ]
+        }
+      },
+      {
+        "event": "Stop",
+        "index": 1,
+        "group": {
+          "matcher": "",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "lh hook compound-loop --profile personal"
+            }
+          ]
+        }
+      },
+      {
+        "event": "Stop",
+        "index": 2,
+        "group": {
+          "matcher": "",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "lh hook engram-persist --profile personal"
+            }
+          ]
+        }
+      },
+      {
+        "event": "Stop",
+        "index": 3,
+        "group": {
+          "matcher": "",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "lh hook stop-context-rotate --profile personal"
+            }
+          ]
+        }
+      },
+      {
+        "event": "SessionEnd",
+        "index": 0,
+        "group": {
+          "matcher": "",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "lh hook session-end --profile personal"
+            }
+          ]
+        }
+      },
+      {
+        "event": "PreCompact",
+        "index": 0,
+        "group": {
+          "matcher": "",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "lh hook pre-compact --profile personal"
+            }
+          ]
+        }
+      },
+      {
+        "event": "PreToolUse",
+        "index": 0,
+        "group": {
+          "matcher": "Bash|Read|Edit|Write|NotebookEdit",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "lh hook pre-tool-use-security --profile personal"
+            }
+          ]
+        }
+      },
+      {
+        "event": "PreToolUse",
+        "index": 1,
+        "group": {
+          "matcher": "Bash",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "lh hook pre-tool-use-git-scope --profile personal"
+            }
+          ]
+        }
+      },
+      {
+        "event": "PreToolUse",
+        "index": 2,
+        "group": {
+          "matcher": "Edit|Write",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "lh hook pre-tool-use-memory-size --profile personal"
+            }
+          ]
+        }
+      },
+      {
+        "event": "PreToolUse",
+        "index": 3,
+        "group": {
+          "matcher": "Read",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "lh hook pre-tool-use-read-size --profile personal"
+            }
+          ]
+        }
+      },
+      {
+        "event": "PostToolUse",
+        "index": 0,
+        "group": {
+          "matcher": "Edit|Write",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "lh hook post-tool-use-format --profile personal"
+            }
+          ]
+        }
+      },
+      {
+        "event": "PostToolUse",
+        "index": 1,
+        "group": {
+          "matcher": "Edit|Write",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "lh hook post-tool-use-sync-system-doc --profile personal"
+            }
+          ]
+        }
+      }
+    ]
+  }
 }

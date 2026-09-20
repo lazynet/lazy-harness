@@ -397,7 +397,7 @@ def test_dropped_entries_are_reported(
 
     out = capsys.readouterr().out
     assert "dropped 1" in out
-    assert "retired_builtin" in out
+    assert "post-tool-use-sync-claude" in out
 
 
 def test_a_long_reported_command_is_truncated_by_the_engine(

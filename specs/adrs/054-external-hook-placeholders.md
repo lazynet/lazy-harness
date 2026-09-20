@@ -143,3 +143,32 @@ hits it, matching how `ConfigTargetChangedError` and
 `ConfigPlannerRequiredError` already surface mid-deploy rather than at parse
 time. A future ADR could move it earlier if a case shows a config-load-time
 check is worth the added validation surface; nothing measured needs that yet.
+
+## Evolution — 2026-09-19: `external` is ensure-present
+
+The phrase “source of truth” in the original consequence overstated the
+lifecycle contract. An `external` entry is optional desired presence: the
+engine marks it as external provenance and each adapter ensures one equivalent
+native declaration exists. Equivalence includes native event, matcher, handler
+type and command. If an installed equivalent has richer valid native metadata,
+the adapter keeps that group rather than replacing it with the narrower shared
+configuration; existing foreign duplicates are never collapsed.
+
+Omitting an `external` entry later only stops re-ensuring it. It does not make
+the harness its owner and does not authorize deletion. Harness builtins remain
+replaceable and removable; all other valid groups are preserved. This keeps the
+placeholder mechanism and its cross-profile expansion unchanged while allowing
+an installation with no external integration, one agent, or any mix of agents
+to use the same schema.
+
+A name under `scripts` that resolves to a user file rather than the builtin
+registry receives the same ensure-present lifecycle; otherwise its
+interpreter-and-path command would be duplicated on every Codex deploy and
+silently become removable. Copilot realizes the ownership split with two files
+under its measured native `hooks/*.json` glob: one replaceable managed artifact
+and one merged ensure-present artifact. Both are adapter targets and therefore
+part of snapshot and rollback. During the format transition, Copilot reads the
+former combined artifact and moves every group it cannot prove is a managed
+builtin into the external artifact before replacing or retiring the managed
+path. The migration preserves full groups, metadata and duplicates, and an
+unreadable legacy artifact refuses the plan.
