@@ -102,6 +102,11 @@ Its measured baseline is 5,241 tests in approximately six minutes; it requires
 at least a 20% wall-time improvement with mutation-backed equivalent signal and
 no new flakes, otherwise the current gate stays unchanged.
 
+A second medium-priority item scopes agent/profile naming and launcher aliases.
+It records the current mixed naming axes and the operational consumers of
+`lcca`, leaves the separator deliberately undecided, and requires a complete
+combination map plus real launch probes before any deprecation.
+
 The first CI run on PR #413 found one test-only compatibility defect. The
 dangling-symlink regression used `Path.exists(follow_symlinks=False)`, which is
 not accepted by Python 3.11 or 3.13. Production behavior had already completed;
