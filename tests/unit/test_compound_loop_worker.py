@@ -163,7 +163,7 @@ def test_worker_archives_a_dangling_task_symlink_without_processing_it(
 
     assert worker_mod._drain_queue(queue_dir, Config(), tmp_path, log_file) is True
     assert processed is False
-    assert not task.exists(follow_symlinks=False)
+    assert not task.is_symlink()
     assert (queue_dir / "done" / task.name).is_symlink()
 
 
