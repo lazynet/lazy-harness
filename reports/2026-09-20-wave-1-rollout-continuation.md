@@ -1,114 +1,176 @@
 # Wave 1 rollout continuation
 
 Date: 2026-09-20
-Branch: `fix/wave-1-review-findings`
+Final report branch: `docs/wave-1-rollout-final`
 
 ## Outcome
 
-Wave 1 was already landed before this continuation. The stale implementation
-branch head `7055f64` and the squash commit on `main`, `57222b4`, have the same
-tree `eece907406b4ffa4fd6a9c673d8f452dd60ff8e1`. Release `v0.76.0` is installed
-from its published tag, and its site-packages tree contains project-state,
-repository-instruction and portable-skill deployment modules.
+Wave 1 is merged, released, installed and deployed. The final installed version
+is `lazy-harness 0.76.3`, built from published tag `v0.76.3` at release commit
+`dc0402031c367d78f850eef3bac9ec6dcd54f19e`.
 
-The rollout did not continue against `v0.76.0`. Independent review found
-concrete defects in the released paths, all reproduced against the installed
-binary before implementation:
+The binary-first rollout completed against the installed package, not a
+worktree. Its `site-packages` tree was read back and contains:
 
-- a valid skill ownership ledger symlink, or a symlinked ledger metadata
-  directory, could overwrite an external file;
-- model text could create Markdown fences or CommonMark H2 forms that made a
-  later sync consume human-authored PRJ sections;
-- a task older than seven days retained its old timestamp when moved to
-  `done/`, so it could be pruned immediately after completion;
-- timestamping symlink tasks followed their external target;
-- archive failures retried the same task indefinitely and `main()` later
-  reported `queue empty` with exit 0;
-- dangling task symlinks caused a tight rescan loop.
+- `knowledge/project_state.py`;
+- `core/repo_instructions.py`;
+- portable skill projection and the indirect-symlink fix in `deploy/skills.py`;
+- literal Unicode serialization for both Claude `settings.json` and
+  `.claude.json`.
 
-The fix rejects ledger paths whose file or metadata directory is a symlink,
-sanitizes all relevant CommonMark H2 and fence forms, refuses legacy generated
-sections containing fences, starts retention at completion without following
-symlinks, archives symlink tasks without processing them, and stops with a
-non-zero result when the queue cannot be drained.
+The final live deploy converges with chezmoi, preserves installer-owned hooks
+and user-selected models, and is byte-stable across consecutive deploys. No
+LazyMind vault file was changed.
 
-## TDD and review evidence
+## Landed changes and releases
 
-- Initial RED: four regressions failed for direct ledger symlinks, unclosed
-  generated fences, indented H2 boundaries and completion timestamps.
-- Review REDs covered symlinked metadata directories, tab and empty H2 forms,
-  legacy closed fences spanning human content, symlink timestamps, archive
-  failures, dangling task symlinks and the worker's final exit diagnostic.
-- Expanded affected suites: **262 passed**.
-- Mutation checks removed the direct and parent ledger guards, fence
-  sanitization/refusal, CommonMark H2 recognition, completion timestamp reset,
-  dangling-symlink handling and the worker result check. Every corresponding
-  regression failed, and each mutation was restored manually.
-- Two independent rereviews were run. The first closed its Markdown and
-  symlink-timestamp findings with no further regression. The adversarial review
-  produced the last four cases above, which were reproduced and remediated.
+### Review remediation
 
-## Final gate
+PR #413 merged as `3884064`. It fixed the review findings found after the
+initial Wave 1 release:
 
-- `uv run --frozen pytest -q`: **5241 passed** in 366.44 seconds.
-- `uv run --frozen ruff check src tests`: passed with no findings.
-- `uv run --frozen ruff format --check src tests`: 502 files already formatted.
-- `uv run --frozen --group docs mkdocs build --strict`: passed. Material's
-  upstream MkDocs 2.0 banner was informational; the strict build had no error.
-- `git diff --check`: passed.
+- reject a skill ledger file or metadata directory that is a symlink;
+- sanitize CommonMark headings and fences before generated project-state text
+  can consume human-authored sections;
+- start done retention at completion without following task symlinks;
+- archive dangling or malicious symlink tasks without processing their target;
+- stop non-zero when the worker cannot drain the queue.
 
-## Rollout state
+The first CI run exposed a Python compatibility error in a test assertion:
+`Path.exists(follow_symlinks=False)` is unavailable on supported Python
+versions. The corrected assertion uses `not task.is_symlink()` and the complete
+matrix passed. Release `v0.76.1` was then published and installed.
 
-Previously gathered evidence remains valid:
+### Indirect profile skill links
 
-- Dependabot alerts #10 and #11 for AnyIO were fixed, not dismissed.
-- The real retention run pruned only completed tasks older than seven days and
-  `lh status queue` retained the `Done total` field.
-- No ADR-059 appearance/disappearance probe has run.
-- No profile deploy, chezmoi apply, vault write or live skill-ledger mutation ran
-  in this continuation.
+The first installed deploy found a second concrete defect. A runtime projection
+pointed into a managed profile, but that profile entry was itself a symlink to
+an external catalog. Resolving the complete chain made the runtime link look
+user-owned and deploy refused it.
 
-The deploy remains pending behind a new release containing this fix and a
-reviewed dotfiles reconciliation. The live lazy settings preserve `model: opus`
-and a `Notification` hook that the current managed source does not reproduce.
-The durable dotfiles change must preserve `model` and reconcile Moshi external
-declarations before `lh deploy`. Chezmoi has `git.autoPush = true`, so its apply
-requires explicit authorization before it may propagate repository changes.
+The regression runs deploy twice with exactly that indirect layout. PR #415
+merged as `df3148a`; release PR #416 published `v0.76.2` at `27586ac`. The
+installed package was read back before the next live deploy, which then accepted
+the existing `grill-me` projection and converged.
 
-## Required next action
+### Unicode convergence
 
-The active GitHub account is still `lazynet`, but `gh auth status` reports its
-token invalid. Re-authenticate that account without switching accounts, then
-push this branch, open and merge its PR, wait for release-please, install the
-new release, verify site-packages, and only then resume the reviewed
-dotfiles/profile rollout and bidirectional ADR-059 probe.
+The next `apply -> deploy` check found that Claude config writes used JSON's
+ASCII escaping while chezmoi rendered literal Unicode. This was the already
+recorded backlog item for `ensure_ascii=True`, and it blocked byte convergence.
 
-## Authorization
+Two RED tests covered `settings.json` and `.claude.json`. Both writers now use
+`ensure_ascii=False`. PR #417 merged as `2a337f6`; release PR #418 published
+`v0.76.3` at `dc04020`. The published package was installed and its two writer
+call sites were verified directly in `site-packages` before deploy.
 
-Commit `9a3515a` exists locally and the worktree was clean immediately after
-the commit. The subsequent `git push -u origin fix/wave-1-review-findings`
-request was rejected by the permission reviewer because publishing a new remote
-branch requires explicit user approval. The command did not run and no remote
-state changed.
+## Verification
 
-The user explicitly authorized publishing `fix/wave-1-review-findings` to
-`origin`. The same authorization covers, after the corrected release is
-installed, the reviewed dotfiles source reconciliation, the potentially
-auto-pushed `chezmoi apply`, the binary-first profile deploy and the reversible
-ADR-059 skill probe.
+### Code gates
 
-A separate medium-priority backlog item now scopes a future quality-gate audit.
-Its measured baseline is 5,241 tests in approximately six minutes; it requires
-at least a 20% wall-time improvement with mutation-backed equivalent signal and
-no new flakes, otherwise the current gate stays unchanged.
+- PR #413 gate: **5,241 passed** in 366.44 seconds; Ruff lint and format clean;
+  MkDocs strict clean; `git diff --check` clean.
+- PR #415 gate: **5,242 passed** in 374.67 seconds; the other three checks
+  clean.
+- PR #417 gate: **5,244 passed** in 369.80 seconds; 502 files formatted; Ruff,
+  MkDocs strict and `git diff --check` clean.
+- PR #417 CI passed docs plus Python 3.11, 3.12, 3.13, 3.14 and macOS 3.13.
+  The same matrix passed on `main` before release PR #418 was merged.
+- Final installed `lh selftest`: 70 passed, 0 failed, with the two expected
+  warnings for Claude-only artifacts absent from `lazy-codex`.
 
-A second medium-priority item scopes agent/profile naming and launcher aliases.
-It records the current mixed naming axes and the operational consumers of
-`lcca`, leaves the separator deliberately undecided, and requires a complete
-combination map plus real launch probes before any deprecation.
+### Profile and config convergence
 
-The first CI run on PR #413 found one test-only compatibility defect. The
-dangling-symlink regression used `Path.exists(follow_symlinks=False)`, which is
-not accepted by Python 3.11 or 3.13. Production behavior had already completed;
-the portable assertion now checks `not task.is_symlink()`, which directly proves
-the link left the pending queue without depending on its missing target.
+The active deploy preserves the intended ownership split:
+
+- lazy model: `opus`; flex model: `opus[1m]`;
+- lazy and flex: 10 Moshi installer-owned hook groups each;
+- Codex: 4 Moshi installer-owned groups;
+- old `/opt/homebrew/bin/moshi` router commands: 0 in every profile;
+- Graphify external hooks remain present;
+- `lh_hook_ownership` survives chezmoi for both Claude profiles.
+
+The first `lh deploy` under `v0.76.3` produced a clean targeted `chezmoi diff`.
+A second deploy reported all system docs unchanged. SHA-256 values before and
+after that second run were identical for `config.toml`, lazy settings, flex
+settings and Codex hooks.
+
+The global chezmoi diff still reports two unrelated pre-existing destination
+drifts: Herdr's `sidebar_collapsed_mode` and two lines in the Flex repos note.
+They were neither applied nor re-added. The three lazy-harness targets modified
+by this rollout have no chezmoi diff.
+
+### Installed ADR-059 probe
+
+The probe used the published `v0.76.3` binary and a temporary, uniquely owned
+profile link for `lazymind-projects`. The real command was
+`codex debug prompt-input` in both directions:
+
+1. Deploy created `~/.agents/skills/lazymind-projects`, pointing into the
+   `lazy-codex` profile, and recorded only that name in the Codex skill ledger.
+2. The model-visible skills catalog contained exactly one line beginning
+   `- lazymind-projects:`.
+3. Only the temporary profile link was removed; the real skill source remained
+   untouched.
+4. Redeploy reported `skills/lazymind-projects (no longer generated)`, removed
+   the owned native projection, and left the ledger with an empty `links` list.
+5. A second prompt-input probe contained zero catalog entries with that name.
+
+The temporary directories and probe outputs were removed. The final deployed
+state matches the pre-probe state, with no `lazymind-projects` entry under the
+global Codex skill root and an empty Codex projection ledger.
+
+### Queue retention and Dependabot
+
+A real installed worker run was executed for `lazy` and `flex`. Neither queue
+contained tasks older than seven days, both workers exited 0, and the completed
+counts remained 1,242 and 1,074. `lh status queue` still renders `Done total`
+for both profiles.
+
+GitHub currently reports Dependabot alerts #10 and #11 for `anyio` as `fixed`,
+not dismissed, with `fixed_at = 2026-09-19T21:26:09Z`. There are no open
+Dependabot alerts, so no additional lockfile change was made.
+
+## Dotfiles
+
+Dotfiles commit `ce43d49` (`fix: reconcile agent config ownership`) is published
+on `main`. It:
+
+- preserves `model` and `lh_hook_ownership` in the modify template;
+- removes the obsolete global Moshi router declarations;
+- documents Moshi as installer-owned and Graphify as the remaining configured
+  external hook family;
+- corrects the system-doc sync hook name and ownership wording.
+
+The modify script passes `bash -n`; both settings templates render as valid
+JSON; the active config template renders and completes a real `load_config`
+cycle; `git diff --check` passes. The dotfiles worktree is clean and matches
+`origin/main`.
+
+## Rollback evidence
+
+Every live deploy created a snapshot. The final convergence snapshots are:
+
+- `2026-09-20T11-56-47.400011`;
+- `2026-09-20T11-58-20.637020`;
+- `2026-09-20T11-59-52.952142` for the positive skill probe;
+- `2026-09-20T12-00-41.434283` for the restored negative state.
+
+An earlier failed deploy was rolled back with `lh deploy --rollback` before any
+further reconciliation. The pre-rollout raw backups remain under
+`/tmp/wave1-rollout.OO4MOc/` for this session.
+
+## Deferred, explicitly out of scope
+
+Two medium-priority backlog items were added without implementing them:
+
+- audit the quality gate measured at 5,241-5,244 tests and roughly six minutes;
+  accept an optimization only with at least 20% wall-time improvement,
+  mutation-backed equivalent signal and no new flakes;
+- standardize agent/profile naming and launcher aliases, inventory every `lcca`
+  consumer, choose one separator, map `(profile, agent, bypass intent)`, and run
+  real launch probes before deprecation.
+
+The ADR-060 pilots, ADR-061 receiver/backfill/Grafana work, ADR-062 archival and
+opt-in, and the historical nested-Claude `pre_compact` bug remain separate
+lanes and were not started.
