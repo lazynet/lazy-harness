@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.76.3](https://github.com/lazynet/lazy-harness/compare/v0.76.2...v0.76.3) (2026-09-20)
+
+
+### Bug Fixes
+
+* preserve unicode in claude config ([#417](https://github.com/lazynet/lazy-harness/issues/417)) ([2a337f6](https://github.com/lazynet/lazy-harness/commit/2a337f661d4e083ea1008e62acad1e53adb9f196))
+
 ## [0.76.2](https://github.com/lazynet/lazy-harness/compare/v0.76.1...v0.76.2) (2026-09-20)
 
 
