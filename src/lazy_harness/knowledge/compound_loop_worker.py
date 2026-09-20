@@ -68,20 +68,29 @@ def _drain_queue(
     cfg: Config,
     learnings_dir: Path,
     log_file: Path,
-) -> None:
+) -> bool:
     while True:
         pending = sorted(queue_dir.glob("*.task"))
         if not pending:
-            break
+            return True
         for task_file in pending:
-            if not task_file.is_file():
+            if task_file.is_symlink():
+                _log(log_file, f"skipped symlink task: {task_file.name}")
+                if not move_to_done(queue_dir, task_file):
+                    _log(log_file, f"failed to archive {task_file.name}; stopping")
+                    return False
                 continue
+            if not task_file.is_file():
+                _log(log_file, f"unsupported queue entry {task_file.name}; stopping")
+                return False
             _log(log_file, f"processing {task_file.name}")
             try:
                 outcome = process_task(task_file, cfg, learnings_dir)
             except Exception as e:  # noqa: BLE001 — worker must not crash the queue
                 _log(log_file, f"error processing {task_file.name}: {e}")
-                move_to_done(queue_dir, task_file)
+                if not move_to_done(queue_dir, task_file):
+                    _log(log_file, f"failed to archive {task_file.name}; stopping")
+                    return False
                 continue
 
             if outcome.skipped:
@@ -92,7 +101,9 @@ def _drain_queue(
                 _log(log_file, "nothing to persist")
             for note in outcome.notes:
                 _log(log_file, f"note: {note}")
-            move_to_done(queue_dir, task_file)
+            if not move_to_done(queue_dir, task_file):
+                _log(log_file, f"failed to archive {task_file.name}; stopping")
+                return False
 
 
 def _prune_done(queue_dir: Path, *, now: float | None = None) -> int:
@@ -100,7 +111,7 @@ def _prune_done(queue_dir: Path, *, now: float | None = None) -> int:
     removed = 0
     for task_file in (queue_dir / "done").glob("*.task"):
         try:
-            if task_file.stat().st_mtime < cutoff:
+            if task_file.lstat().st_mtime < cutoff:
                 task_file.unlink()
                 removed += 1
         except OSError:
@@ -196,7 +207,9 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
         _log(log_file, "started, checking queue")
-        _drain_queue(queue_dir, cfg, learnings_dir, log_file)
+        if not _drain_queue(queue_dir, cfg, learnings_dir, log_file):
+            _log(log_file, "queue not drained, exiting")
+            return 1
         pruned = _prune_done(queue_dir)
         if pruned:
             _log(log_file, f"pruned {pruned} completed task(s) older than 7 days")

@@ -1539,10 +1539,13 @@ def process_task(
     return TaskOutcome(wrote=wrote, notes=notes)
 
 
-def move_to_done(queue_dir: Path, task_file: Path) -> None:
-    done_dir = queue_dir / "done"
-    done_dir.mkdir(parents=True, exist_ok=True)
+def move_to_done(queue_dir: Path, task_file: Path) -> bool:
     try:
-        shutil.move(str(task_file), str(done_dir / task_file.name))
+        os.utime(task_file, None, follow_symlinks=False)
+        done_dir = queue_dir / "done"
+        done_dir.mkdir(parents=True, exist_ok=True)
+        completed = done_dir / task_file.name
+        shutil.move(str(task_file), str(completed))
     except OSError:
-        pass
+        return False
+    return True

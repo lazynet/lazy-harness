@@ -333,6 +333,48 @@ def test_unreadable_skill_ledger_preserves_invalid_bytes_and_dangling_links(
         assert ledger.is_symlink()
 
 
+def test_valid_skill_ledger_symlink_is_rejected_without_overwriting_target(home_dir: Path) -> None:
+    from lazy_harness.core.paths import config_dir
+
+    _skill(config_dir() / "profiles" / "one", "shared", "portable", "body")
+    root = home_dir / ".agents" / "skills"
+    ledger = root.parent / SKILL_LEDGER_RELATIVE
+    ledger.parent.mkdir(parents=True)
+    external = home_dir / "external-ledger.json"
+    payload = '{"version": 1, "links": []}\n'
+    external.write_text(payload)
+    ledger.symlink_to(external)
+
+    with pytest.raises(RuntimeError, match=r"skill-links\.json.*symlink"):
+        deploy_profiles(_config(home_dir, {"one": "codex"}))
+
+    assert external.read_text() == payload
+    assert ledger.is_symlink()
+    assert not root.exists()
+
+
+def test_skill_ledger_in_symlinked_metadata_dir_is_rejected(home_dir: Path) -> None:
+    from lazy_harness.core.paths import config_dir
+
+    _skill(config_dir() / "profiles" / "one", "shared", "portable", "body")
+    root = home_dir / ".agents" / "skills"
+    ledger = root.parent / SKILL_LEDGER_RELATIVE
+    external_dir = home_dir / "external-metadata"
+    external_dir.mkdir()
+    external = external_dir / ledger.name
+    payload = '{"version": 1, "links": []}\n'
+    external.write_text(payload)
+    ledger.parent.parent.mkdir(parents=True)
+    ledger.parent.symlink_to(external_dir, target_is_directory=True)
+
+    with pytest.raises(RuntimeError, match=r"skill-links\.json.*symlink"):
+        deploy_profiles(_config(home_dir, {"one": "codex"}))
+
+    assert external.read_text() == payload
+    assert ledger.parent.is_symlink()
+    assert not root.exists()
+
+
 def test_unreadable_skill_ledger_is_named_before_deploy_writes(home_dir: Path) -> None:
     from lazy_harness.core.paths import config_dir
 

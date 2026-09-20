@@ -32,6 +32,167 @@ def test_done_retention_prunes_only_tasks_older_than_seven_days(tmp_path: Path) 
     assert (queue_dir / "done" / fresh_task.name).is_file()
 
 
+def test_done_retention_starts_when_a_task_moves_to_done(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.compound_loop import move_to_done
+    from lazy_harness.knowledge.compound_loop_worker import _DONE_RETENTION_SECONDS, _prune_done
+
+    queue_dir = tmp_path / "queue"
+    queue_dir.mkdir()
+    task = queue_dir / "stale-pending.task"
+    task.write_text("session_id=old\n")
+    old = time.time() - _DONE_RETENTION_SECONDS - 60
+    os.utime(task, (old, old))
+
+    move_to_done(queue_dir, task)
+    after = time.time()
+
+    completed = queue_dir / "done" / task.name
+    assert completed.stat().st_mtime > old
+    assert _prune_done(queue_dir, now=after + _DONE_RETENTION_SECONDS - 1) == 0
+    assert _prune_done(queue_dir, now=after + _DONE_RETENTION_SECONDS + 1) == 1
+
+
+def test_done_retention_timestamps_a_task_symlink_without_touching_its_target(
+    tmp_path: Path,
+) -> None:
+    from lazy_harness.knowledge.compound_loop import move_to_done
+    from lazy_harness.knowledge.compound_loop_worker import _DONE_RETENTION_SECONDS, _prune_done
+
+    queue_dir = tmp_path / "queue"
+    queue_dir.mkdir()
+    external = tmp_path / "external.task"
+    external.write_text("session_id=external\n")
+    task = queue_dir / "linked.task"
+    task.symlink_to(external)
+    old = time.time() - _DONE_RETENTION_SECONDS - 60
+    os.utime(task, (old, old), follow_symlinks=False)
+    external_mtime = external.stat().st_mtime_ns
+
+    move_to_done(queue_dir, task)
+    after = time.time()
+
+    completed = queue_dir / "done" / task.name
+    assert external.stat().st_mtime_ns == external_mtime
+    assert completed.lstat().st_mtime > old
+    assert _prune_done(queue_dir, now=after + _DONE_RETENTION_SECONDS - 1) == 0
+    assert _prune_done(queue_dir, now=after + _DONE_RETENTION_SECONDS + 1) == 1
+    assert external.is_file()
+
+
+def test_move_to_done_leaves_the_task_pending_when_timestamping_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.knowledge.compound_loop import move_to_done
+
+    queue_dir = tmp_path / "queue"
+    queue_dir.mkdir()
+    task = queue_dir / "pending.task"
+    task.write_text("session_id=pending\n")
+
+    def fail_utime(*args: object, **kwargs: object) -> None:
+        raise OSError("read-only filesystem")
+
+    monkeypatch.setattr(os, "utime", fail_utime)
+
+    assert move_to_done(queue_dir, task) is False
+    assert task.is_file()
+    assert not (queue_dir / "done" / task.name).exists()
+
+
+def test_worker_stops_draining_when_a_task_cannot_be_archived(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.core.config import Config
+    from lazy_harness.knowledge import compound_loop_worker as worker_mod
+    from lazy_harness.knowledge.compound_loop import TaskOutcome
+
+    queue_dir = tmp_path / "queue"
+    queue_dir.mkdir()
+    task = queue_dir / "pending.task"
+    task.write_text("session_id=pending\n")
+    log_file = tmp_path / "worker.log"
+    calls = 0
+
+    def process_once(*args: object) -> TaskOutcome:
+        nonlocal calls
+        calls += 1
+        if calls > 1:
+            raise AssertionError("task was processed more than once")
+        return TaskOutcome(skipped="stubbed")
+
+    monkeypatch.setattr(worker_mod, "process_task", process_once)
+    monkeypatch.setattr(worker_mod, "move_to_done", lambda *args: False)
+
+    drained = worker_mod._drain_queue(queue_dir, Config(), tmp_path / "learnings", log_file)
+
+    assert drained is False
+    assert calls == 1
+    assert task.is_file()
+    assert "failed to archive pending.task; stopping" in log_file.read_text()
+
+
+def test_worker_archives_a_dangling_task_symlink_without_processing_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.core.config import Config
+    from lazy_harness.knowledge import compound_loop_worker as worker_mod
+
+    queue_dir = tmp_path / "queue"
+    queue_dir.mkdir()
+    task = queue_dir / "dangling.task"
+    task.symlink_to(tmp_path / "missing.task")
+    log_file = tmp_path / "worker.log"
+    processed = False
+
+    def unexpected_process(*args: object) -> None:
+        nonlocal processed
+        processed = True
+
+    original_glob = Path.glob
+    scans = 0
+
+    def bounded_glob(path: Path, pattern: str):  # noqa: ANN202
+        nonlocal scans
+        if path == queue_dir and pattern == "*.task":
+            scans += 1
+            return iter([task] if scans == 1 else [])
+        return original_glob(path, pattern)
+
+    monkeypatch.setattr(worker_mod, "process_task", unexpected_process)
+    monkeypatch.setattr(Path, "glob", bounded_glob)
+
+    assert worker_mod._drain_queue(queue_dir, Config(), tmp_path, log_file) is True
+    assert processed is False
+    assert not task.exists(follow_symlinks=False)
+    assert (queue_dir / "done" / task.name).is_symlink()
+
+
+def test_worker_main_reports_archive_failure_instead_of_queue_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.knowledge import compound_loop_worker as worker_mod
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    store = tmp_path / "store"
+    store.mkdir()
+    (store / "knowledge.toml").write_text(
+        '[knowledge]\nversion = 1\nsessions = "sessions"\nlearnings = "learnings"\n'
+    )
+    monkeypatch.setenv("LAZY_KNOWLEDGE_ROOT", str(store))
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        '[harness]\nversion = "1"\n\n[agent]\ntype = "null"\n\n[compound_loop]\nenabled = true\n'
+    )
+    monkeypatch.setattr(worker_mod, "config_file", lambda: cfg_file)
+    monkeypatch.setattr(worker_mod, "_drain_queue", lambda *args: False)
+
+    assert worker_mod.main() == 1
+    log = (home / ".null" / "logs" / "compound-loop.log").read_text()
+    assert "queue empty" not in log
+
+
 def test_worker_routes_dirs_through_agent_adapter(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

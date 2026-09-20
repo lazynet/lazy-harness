@@ -93,11 +93,11 @@ def _ledger_path(root: Path) -> Path:
 
 def _read_ledger(root: Path) -> set[str]:
     path = _ledger_path(root)
+    if path.parent.is_symlink() or path.is_symlink():
+        raise _ledger_error(path, "symlinks are not allowed")
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        if path.is_symlink():
-            raise _ledger_error(path, "dangling symlink") from None
         return set()
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise _ledger_error(path, str(exc)) from exc
