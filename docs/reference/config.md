@@ -347,8 +347,8 @@ The `[hooks]` table is keyed by the `config.toml` event name (`session_start`, `
 
 | Field      | Type                     | Default | Required | Description                                                                                                                          |
 | ---------- | ------------------------ | ------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `scripts`  | list of strings          | `[]`    | no       | Bare built-in hook names to run for this event, in order (e.g. `context-inject`, not `lh hook context-inject`). A name that does not resolve against the built-in registry or a user hook is silently skipped. |
-| `external` | list of strings / tables | `[]`    | no       | Commands owned by a third-party tool, emitted to **every** profile after the built-ins. A bare string inherits the event's default matcher; a table pins its own (`{ command = "...", matcher = "..." }`). The command may name `{profile}` and/or `{config_dir}` ([ADR-054](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/054-external-hook-placeholders.md)); any other `{...}` is rejected at deploy with a diagnostic naming it. |
+| `scripts`  | list of strings          | `[]`    | no       | Bare hook names to run for this event, in order (e.g. `context-inject`, not `lh hook context-inject`). Builtins resolve from the package registry; user scripts resolve from the configured hooks directory. An unresolved name is silently skipped. |
+| `external` | list of strings / tables | `[]`    | no       | Optional third-party commands to ensure are present in **every** profile. A bare string inherits the event's default matcher; a table pins its own (`{ command = "...", matcher = "..." }`). The command may name `{profile}` and/or `{config_dir}` ([ADR-054](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/054-external-hook-placeholders.md)); any other `{...}` is rejected at deploy with a diagnostic naming it. |
 
 Example:
 
@@ -362,7 +362,12 @@ scripts = ["compound-loop"]
 
 ### `external` — hooks owned by another tool
 
-A third-party tool that installs its own Claude Code hooks writes them into whichever profile its installer happened to run against, and rewrites them on every upgrade. Declaring them here makes the harness the source of truth: they deploy to every profile, in a schema Claude Code accepts.
+A third-party tool may install its own native hook groups. Declaring an
+equivalent command here only ensures that at least one matching group exists in
+every profile. It does not transfer lifecycle ownership to the harness: removing
+the declaration stops re-ensuring it, but does not authorize `lh deploy` to
+delete an already installed group. Remove it through the tool or configuration
+that owns it.
 
 ```toml
 [hooks.user_prompt_submit]
@@ -373,7 +378,32 @@ command = "/usr/local/bin/some-tool hook"
 matcher = "AskUserQuestion"
 ```
 
-`lh deploy` also preserves hook entries it finds in a profile but does not manage, on every event — including events the harness has no concept of — and reports each one. If such an entry carries a field Claude Code's schema rejects (a `null` matcher, say), deploy repairs it and says so: the agent skips an invalid settings file **in its entirety**, so one bad field silently disables every hook in that profile. `lh selftest` checks the same schema, since a failure that stops hooks from running cannot be detected by a hook.
+`lh deploy` preserves hook entries it cannot prove are its own, on every event —
+including events the harness has no concept of — and reports each one. An
+equivalent richer native group satisfies an `external` declaration without
+losing native metadata, and pre-existing foreign duplicates remain distinct. In
+Codex, managed groups are replaced in their existing positions so preserved
+foreign groups keep their positional trust identity. Surplus managed groups are
+appended only after every existing group, so an addition never shifts a foreign
+group unnecessarily; removing an earlier managed slot can still shift it.
+Malformed `hooks.json` content is refused rather than overwritten. In Claude Code, a foreign entry
+whose matcher would invalidate the whole settings file is repaired and reported.
+`lh selftest` checks the same schema, since a failure that stops hooks from
+running cannot be detected by a hook.
+
+Copilot stores managed builtins and external declarations in separate native
+hook artifacts. On the first deploy after that split, declarations from the
+former combined artifact that cannot be proven managed are moved intact to the
+external artifact, including metadata and duplicates. The managed replacement
+and external migration are planned together; invalid legacy JSON refuses the
+plan, and deploy snapshots cover both paths for rollback.
+
+A package builtin under `scripts` is managed: later deploys may replace or
+remove it. A user script resolved from the configured hooks directory has the
+same ensure-present lifecycle as `external`: repeated deploys de-duplicate its
+exact native declaration, while later omission does not authorize deletion.
+Remove that declaration explicitly from the owning native configuration when it
+should stop running.
 
 **Per-profile commands via `{profile}` / `{config_dir}`.** A single `external` entry is emitted to every profile with the same command text — for a command that needs to know *which* profile it is running under, or that profile's own directory, `command` may name `{profile}` and/or `{config_dir}` and `lh deploy` expands them per profile before writing:
 

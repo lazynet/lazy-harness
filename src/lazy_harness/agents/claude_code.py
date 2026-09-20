@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import json
 import os
-import shlex
 import shutil
 from collections.abc import Collection, Iterator
 from datetime import datetime
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 from lazy_harness import __version__
 from lazy_harness.agents.base import (
@@ -21,6 +20,7 @@ from lazy_harness.agents.base import (
     HookEntry,
     HookEvent,
     HookOutput,
+    HookOwnership,
     HookSupport,
     Operation,
     SessionIdentity,
@@ -174,17 +174,8 @@ def _message_text(content: object) -> str:
 
 _SETTINGS_FILE = "settings.json"
 
-# The launcher invocation every generated builtin command takes: `<binary> hook
-# <name>`. Ownership is that canonical hook name, never the text of the command
-# as a whole — flags the harness adds later (`--profile <name>`) change the text
-# of every entry, and a classifier keyed on text reads its own previous output
-# as another tool's hook and preserves it beside the new one.
-_HOOK_SUBCOMMAND = "hook"
-
-# Written by harness versions before the launcher existed, when a generated
-# command was `{sys.executable} {path-under-builtins}`. Still recognised so a
-# redeploy prunes those entries instead of preserving them as foreign.
-_LEGACY_BUILTIN_MARKER = "lazy_harness/hooks/builtins/"
+_HOOK_OWNERSHIP_KEY = "lh_hook_ownership"
+_HOOK_OWNERSHIP_VERSION = 1
 
 
 def _as_document(raw: str | None) -> dict:
@@ -226,20 +217,9 @@ def _is_harness_owned(command: str, *, binaries: Collection[str]) -> bool:
     command, or another tool modelling hooks the same way would be adopted and
     then pruned.
     """
-    normalised = command.replace("\\", "/")
-    if _LEGACY_BUILTIN_MARKER in normalised:
-        return True
-    try:
-        argv = shlex.split(normalised)
-    except ValueError:
-        return False
-    if len(argv) < 3:
-        return False
-    if PurePosixPath(argv[0]).name not in binaries:
-        return False
-    if argv[1] != _HOOK_SUBCOMMAND:
-        return False
-    return not argv[2].startswith("-")
+    from lazy_harness.hooks.loader import builtin_name_from_command
+
+    return builtin_name_from_command(command, binaries=set(binaries)) is not None
 
 
 def _normalize_entry(entry: dict) -> tuple[dict, list[str]]:
@@ -260,6 +240,115 @@ def _normalize_entry(entry: dict) -> tuple[dict, list[str]]:
         fixed["matcher"] = ""
         repairs.append(f'matcher: {type(matcher).__name__} -> ""')
     return fixed, repairs
+
+
+def _hook_group_identity(
+    event: str, entry: dict
+) -> tuple[str, str, tuple[tuple[str, str | None], ...]] | None:
+    """The native declaration fields that make one group equivalent to another."""
+    matcher = entry.get("matcher", "")
+    if not isinstance(matcher, str):
+        return None
+    handlers = entry.get("hooks")
+    if not isinstance(handlers, list):
+        return None
+    identity: list[tuple[str, str | None]] = []
+    for handler in handlers:
+        if not isinstance(handler, dict):
+            return None
+        handler_type = handler.get("type")
+        command = handler.get("command")
+        if not isinstance(handler_type, str) or (
+            command is not None and not isinstance(command, str)
+        ):
+            return None
+        identity.append((handler_type, command))
+    return event, matcher, tuple(identity)
+
+
+def _group_is_exact_builtin(event: str, entry: dict, *, binaries: Collection[str]) -> bool:
+    """Whether this whole group is one shape the Claude generator emits."""
+    from lazy_harness.hooks.loader import builtin_name_from_command, resolve_builtin_spec
+
+    canonical = next(
+        (name for name, support in _HOOK_EVENTS.items() if support.native_name == event), None
+    )
+    if canonical is None or set(entry) != {"matcher", "hooks"}:
+        return False
+    handlers = entry.get("hooks")
+    if not isinstance(handlers, list) or len(handlers) != 1:
+        return False
+    handler = handlers[0]
+    if not isinstance(handler, dict) or set(handler) != {"type", "command"}:
+        return False
+    command = handler.get("command")
+    if handler.get("type") != "command" or not isinstance(command, str):
+        return False
+    name = builtin_name_from_command(command, binaries=set(binaries))
+    if name is None:
+        return False
+    spec = resolve_builtin_spec(name)
+    if spec is None:
+        return False
+    default_matcher = {"pre_tool_use": "Bash", "post_tool_use": "Edit|Write"}.get(canonical, "")
+    return entry.get("matcher") == (spec.matcher_for(canonical) or default_matcher)
+
+
+def _recorded_hook_positions(settings: dict) -> dict[tuple[str, int], dict] | None:
+    if _HOOK_OWNERSHIP_KEY not in settings:
+        return None
+    envelope = settings[_HOOK_OWNERSHIP_KEY]
+    if (
+        not isinstance(envelope, dict)
+        or type(envelope.get("version")) is not int
+        or envelope.get("version") != _HOOK_OWNERSHIP_VERSION
+    ):
+        return {}
+    managed = envelope.get("managed")
+    if not isinstance(managed, list):
+        return {}
+    recorded: dict[tuple[str, int], dict] = {}
+    for item in managed:
+        if not isinstance(item, dict):
+            return {}
+        event = item.get("event")
+        index = item.get("index")
+        group = item.get("group")
+        if (
+            not isinstance(event, str)
+            or not isinstance(index, int)
+            or isinstance(index, bool)
+            or index < 0
+            or not isinstance(group, dict)
+            or (event, index) in recorded
+        ):
+            return {}
+        recorded[(event, index)] = group
+    return recorded
+
+
+def _owned_hook_positions(
+    settings: dict, existing: object, *, binaries: Collection[str]
+) -> set[tuple[str, int]]:
+    if not isinstance(existing, dict):
+        return set()
+    recorded = _recorded_hook_positions(settings)
+    if recorded is None:
+        return {
+            (event, index)
+            for event, entries in existing.items()
+            if isinstance(entries, list)
+            for index, entry in enumerate(entries)
+            if isinstance(entry, dict) and _group_is_exact_builtin(event, entry, binaries=binaries)
+        }
+    return {
+        (event, index)
+        for (event, index), group in recorded.items()
+        if isinstance(existing.get(event), list)
+        and index < len(existing[event])
+        and existing[event][index] == group
+        and _group_is_exact_builtin(event, existing[event][index], binaries=binaries)
+    }
 
 
 def _owned_binaries(settings: dict, binary: str) -> set[str]:
@@ -287,8 +376,14 @@ def _owned_binaries(settings: dict, binary: str) -> set[str]:
 
 
 def _merge_hook_blocks(
-    existing: object, generated: dict, *, binaries: Collection[str]
-) -> tuple[dict, list[str], list[str], list[str]]:
+    existing: object,
+    generated: dict,
+    *,
+    old_owned: set[tuple[str, int]],
+    managed_group_ids: set[int],
+    external_group_ids: set[int],
+    external_identities: frozenset[tuple[str, str, tuple[tuple[str, str | None], ...]]],
+) -> tuple[dict, set[tuple[str, int]], list[str], list[str], list[str]]:
     """Merge harness-generated hooks over an existing settings.json hooks block.
 
     Harness-owned entries are replaced by the freshly generated ones; everything
@@ -304,7 +399,13 @@ def _merge_hook_blocks(
     repaired: list[str] = []
     dropped: list[str] = []
     if not isinstance(existing, dict):
-        return merged, preserved, repaired, dropped
+        new_owned = {
+            (event, index)
+            for event, entries in merged.items()
+            for index, entry in enumerate(entries)
+            if id(entry) in managed_group_ids
+        }
+        return merged, new_owned, preserved, repaired, dropped
 
     generated_commands = {
         command
@@ -317,13 +418,11 @@ def _merge_hook_blocks(
     for event, entries in existing.items():
         if not isinstance(entries, list):
             continue
-        for entry in entries:
+        for existing_index, entry in enumerate(entries):
             if not isinstance(entry, dict):
                 continue
             commands = _entry_commands(entry)
-            if not commands:
-                continue
-            if all(_is_harness_owned(command, binaries=binaries) for command in commands):
+            if (event, existing_index) in old_owned:
                 # Ours, and the merged block already carries whatever replaces
                 # it. A command we no longer generate is being pruned, which is
                 # the one thing this loop does that the user cannot otherwise see.
@@ -333,16 +432,33 @@ def _merge_hook_blocks(
                     if command not in generated_commands
                 )
                 continue
-            # Already emitted this run — the tool's own installer wrote it and
-            # config declares it too. Keeping both would run the hook twice.
-            if all(command in generated_commands for command in commands):
-                continue
             fixed, fixes = _normalize_entry(entry)
-            repaired.extend(f"{event}: {fix} ({commands[0]})" for fix in fixes)
+            identity = _hook_group_identity(event, fixed)
+            if identity is not None and identity in external_identities:
+                # `external` means ensure-present, not adopt. Prefer the native
+                # declaration already installed because it may carry valid
+                # fields the cross-agent config deliberately does not model.
+                generated_entries = merged.get(event, [])
+                generated_entries[:] = [
+                    candidate
+                    for candidate in generated_entries
+                    if not (
+                        id(candidate) in external_group_ids
+                        and _hook_group_identity(event, candidate) == identity
+                    )
+                ]
+            detail = commands[0] if commands else "<unrecognized group>"
+            repaired.extend(f"{event}: {fix} ({detail})" for fix in fixes)
             merged.setdefault(event, []).append(fixed)
-            preserved.append(f"{event}: {commands[0]}")
+            preserved.append(f"{event}: {detail}")
 
-    return merged, preserved, repaired, dropped
+    new_owned = {
+        (event, index)
+        for event, entries in merged.items()
+        for index, entry in enumerate(entries)
+        if id(entry) in managed_group_ids
+    }
+    return merged, new_owned, preserved, repaired, dropped
 
 
 def _interpreter_is_present(candidate: Path) -> bool:
@@ -1046,21 +1162,64 @@ class ClaudeCodeAdapter:
         same as a plan to write an empty hooks block: the latter would uninstall
         every foreign entry on a profile that configures no harness hooks.
         """
-        if not hooks:
-            return None
-
         from lazy_harness.core.artifact_version import SETTINGS_BINARY_KEY
 
         widened: dict[str, list[str | HookEntry]] = {
             event: list(entries) for event, entries in hooks.items()
         }
         generated = self._generate_hook_config(widened)
+        managed_group_ids: set[int] = set()
+        external_group_ids: set[int] = set()
+        for event, entries in hooks.items():
+            support = _HOOK_EVENTS.get(event)
+            if support is None:
+                continue
+            native_groups = generated.get(support.native_name, [])
+            for index, entry in enumerate(entries):
+                if index >= len(native_groups):
+                    continue
+                target = (
+                    external_group_ids
+                    if entry.ownership is HookOwnership.EXTERNAL
+                    else managed_group_ids
+                )
+                target.add(id(native_groups[index]))
+        for event, entries in generated.items():
+            seen_external: set[tuple[str, str, tuple[tuple[str, str | None], ...]]] = set()
+            deduplicated: list[dict] = []
+            for entry in entries:
+                identity = _hook_group_identity(event, entry)
+                if (
+                    id(entry) in external_group_ids
+                    and identity is not None
+                    and identity in seen_external
+                ):
+                    continue
+                deduplicated.append(entry)
+                if id(entry) in external_group_ids and identity is not None:
+                    seen_external.add(identity)
+            entries[:] = deduplicated
+        external_identities = frozenset(
+            identity
+            for event, entries in generated.items()
+            for entry in entries
+            if id(entry) in external_group_ids
+            if (identity := _hook_group_identity(event, entry)) is not None
+        )
         settings = _as_document(existing_raw)
+        existing_hooks = settings.get("hooks", {})
+        binaries = _owned_binaries(settings, binary)
+        old_owned = _owned_hook_positions(settings, existing_hooks, binaries=binaries)
+        if not hooks and not old_owned:
+            return None
 
-        merged, preserved, repaired, dropped = _merge_hook_blocks(
-            settings.get("hooks", {}),
+        merged, new_owned, preserved, repaired, dropped = _merge_hook_blocks(
+            existing_hooks,
             generated,
-            binaries=_owned_binaries(settings, binary),
+            old_owned=old_owned,
+            managed_group_ids=managed_group_ids,
+            external_group_ids=external_group_ids,
+            external_identities=external_identities,
         )
 
         # Decision 9: the document declares the version and the launcher that
@@ -1070,6 +1229,15 @@ class ClaudeCodeAdapter:
         settings["lh_version"] = __version__
         settings[SETTINGS_BINARY_KEY] = binary
         settings["hooks"] = merged
+        settings[_HOOK_OWNERSHIP_KEY] = {
+            "version": _HOOK_OWNERSHIP_VERSION,
+            "managed": [
+                {"event": event, "index": index, "group": entries[index]}
+                for event, entries in merged.items()
+                for index in range(len(entries))
+                if (event, index) in new_owned
+            ],
+        }
 
         return WriteOp(
             artifact=ConfigArtifact(

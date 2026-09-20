@@ -36,7 +36,7 @@ import re
 import shutil
 import tomllib
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, NamedTuple
 
 from lazy_harness.agents.base import (
@@ -47,6 +47,7 @@ from lazy_harness.agents.base import (
     HookEntry,
     HookEvent,
     HookOutput,
+    HookOwnership,
     HookSupport,
     Operation,
     SessionIdentity,
@@ -61,22 +62,6 @@ from lazy_harness.core.paths import expand_path
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-
-
-def _is_harness_written(raw: str | None) -> bool:
-    """Whether this `hooks.json` is one the harness produced.
-
-    The `description` stamp is the whole test, because it is the only key
-    Codex's schema leaves free at the top level. A file that does not parse is
-    *not* ours: the harness only ever writes `json.dumps` output.
-    """
-    if raw is None:
-        return False
-    try:
-        document = json.loads(raw)
-    except json.JSONDecodeError:
-        return False
-    return isinstance(document, dict) and document.get("description") == _DESCRIPTION
 
 
 def _as_toml(value: object) -> object:
@@ -110,6 +95,16 @@ class CodexConfigUnreadableError(RuntimeError):
             f"{CONFIG_FILE} does not parse as TOML ({detail}). It carries project "
             f"trust and hook approvals that cannot be reconstructed, so it is left "
             f"untouched. Fix the file and re-run."
+        )
+
+
+class CodexHooksUnreadableError(RuntimeError):
+    """`hooks.json` cannot be merged without risking foreign declarations."""
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(
+            f"{HOOKS_FILE} cannot be merged safely ({detail}), so it is left untouched. "
+            "Fix the file and re-run."
         )
 
 
@@ -452,8 +447,9 @@ def _rollout_text(content: object) -> str:
 # because `config.toml` is not ours: Codex writes the `[hooks.state]` table of
 # `trusted_hash` entries back into it, alongside `[projects.*]` trust levels, so a
 # deploy that owns that file can silently revoke the user's own trust decisions.
-# `hooks.json` holds nothing but hook declarations, which lets this adapter
-# replace it wholesale instead of merging.
+# `hooks.json` holds declarations from the harness, native installers and users.
+# The adapter therefore merges matcher groups and owns only builtins proven by
+# its versioned description envelope (or the legacy whole-file migration stamp).
 #
 # **The choice is frozen at the first deploy.** The trust state key is
 # `<absolute path of the declaring file>:<snake_case of Codex's own event
@@ -473,14 +469,277 @@ HOOKS_FILE = "hooks.json"
 CONFIG_FILE = "config.toml"
 _MCP_SECTION = "mcp_servers"
 
-# The only free-text slot the document has: the top level accepts `description`
-# and `hooks` and nothing else — any other key is a parse error that drops every
-# hook in the file behind one warning. It deliberately carries no version. The
-# trust key is scoped to this file, so a stamp that churns per release rewrites
-# the declaring file on every upgrade, and whether that disturbs the stored
-# hashes was never measured. Nothing is gained by finding out: the harness owns
-# the whole file, so it needs no marker to recognise its own entries.
-_DESCRIPTION = "Managed by lazy-harness. Edits are overwritten on the next deploy."
+# The old stamp proves that a whole-file planner generated the document. New
+# documents carry a versioned provenance envelope. Codex 0.155.1 was probed via
+# `hooks/list`: description-only changes preserve key, currentHash and trust.
+_LEGACY_DESCRIPTION = "Managed by lazy-harness. Edits are overwritten on the next deploy."
+_PROVENANCE_PREFIX = "lazy-harness-hook-ownership:"
+_OWNERSHIP_VERSION = 1
+
+
+def _parse_hooks_document(raw: str | None) -> dict:
+    """Parse the shared Codex document, refusing every lossy shape."""
+    if raw is None:
+        return {}
+    try:
+        document = json.loads(raw)
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise CodexHooksUnreadableError(f"invalid JSON: {exc}") from exc
+    if not isinstance(document, dict):
+        raise CodexHooksUnreadableError(f"top level is {type(document).__name__}, expected object")
+    hooks = document.get("hooks", {})
+    if not isinstance(hooks, dict):
+        raise CodexHooksUnreadableError(f"hooks is {type(hooks).__name__}, expected object")
+    for event, groups in hooks.items():
+        if not isinstance(groups, list):
+            raise CodexHooksUnreadableError(
+                f"hooks.{event} is {type(groups).__name__}, expected array"
+            )
+        for index, group in enumerate(groups):
+            if not isinstance(group, dict):
+                raise CodexHooksUnreadableError(
+                    f"hooks.{event}[{index}] is {type(group).__name__}, expected object"
+                )
+            handlers = group.get("hooks")
+            if not isinstance(handlers, list):
+                raise CodexHooksUnreadableError(
+                    f"hooks.{event}[{index}].hooks is {type(handlers).__name__}, expected array"
+                )
+            if not all(isinstance(handler, dict) for handler in handlers):
+                raise CodexHooksUnreadableError(
+                    f"hooks.{event}[{index}].hooks contains a non-object handler"
+                )
+    return document
+
+
+def _parse_provenance(description: object) -> tuple[set[str], dict[tuple[str, int], dict]]:
+    """Return recorded launchers and exact managed groups from a valid envelope."""
+    if not isinstance(description, str) or not description.startswith(_PROVENANCE_PREFIX):
+        return set(), {}
+    try:
+        envelope = json.loads(description.removeprefix(_PROVENANCE_PREFIX))
+    except (json.JSONDecodeError, ValueError):
+        return set(), {}
+    if not isinstance(envelope, dict) or envelope.get("version") != _OWNERSHIP_VERSION:
+        return set(), {}
+    launchers = envelope.get("launchers")
+    managed = envelope.get("managed")
+    if not isinstance(launchers, list) or not all(
+        isinstance(launcher, str) and launcher for launcher in launchers
+    ):
+        return set(), {}
+    if not isinstance(managed, list):
+        return set(), {}
+    ownership: dict[tuple[str, int], dict] = {}
+    for item in managed:
+        if not isinstance(item, dict):
+            return set(), {}
+        event = item.get("event")
+        index = item.get("index")
+        group = item.get("group")
+        if (
+            not isinstance(event, str)
+            or not isinstance(index, int)
+            or isinstance(index, bool)
+            or index < 0
+            or not isinstance(group, dict)
+            or (event, index) in ownership
+        ):
+            return set(), {}
+        ownership[(event, index)] = group
+    return set(launchers), ownership
+
+
+def _group_commands(group: dict) -> list[str]:
+    handlers = group.get("hooks")
+    if not isinstance(handlers, list):
+        return []
+    return [
+        command
+        for handler in handlers
+        if isinstance(handler, dict) and isinstance((command := handler.get("command")), str)
+    ]
+
+
+def _group_label(event: str, index: int, group: dict) -> str:
+    commands = _group_commands(group)
+    detail = ", ".join(commands) if commands else "<unrecognized group>"
+    return f"{event}[{index}]: {detail}"
+
+
+def _group_identity(
+    event: str, group: dict
+) -> tuple[str, object, tuple[tuple[object, object], ...]] | None:
+    handlers = group.get("hooks")
+    if not isinstance(handlers, list):
+        return None
+    identities: list[tuple[object, object]] = []
+    for handler in handlers:
+        if not isinstance(handler, dict):
+            return None
+        identities.append((handler.get("type"), handler.get("command")))
+    return event, group.get("matcher"), tuple(identities)
+
+
+def _group_is_harness_builtin(event: str, group: dict, *, binaries: set[str]) -> bool:
+    """Recognise exactly one matcher group the Codex generator can emit."""
+    from lazy_harness.hooks.loader import builtin_name_from_command, resolve_builtin_spec
+
+    canonical = next(
+        (name for name, support in _HOOK_EVENTS.items() if support.native_name == event), None
+    )
+    if canonical is None or not set(group) <= {"matcher", "hooks"}:
+        return False
+    handlers = group.get("hooks")
+    if not isinstance(handlers, list) or len(handlers) != 1:
+        return False
+    handler = handlers[0]
+    if (
+        not isinstance(handler, dict)
+        or set(handler) != {"type", "command"}
+        or handler.get("type") != "command"
+    ):
+        return False
+    command = handler.get("command")
+    if not isinstance(command, str):
+        return False
+    name = builtin_name_from_command(command, binaries=binaries)
+    if name is None:
+        return False
+    spec = resolve_builtin_spec(name)
+    if spec is None:
+        return False
+    matcher = spec.matcher_for(canonical)
+    expected = {"hooks": [handler], **({"matcher": matcher} if matcher else {})}
+    return group == expected
+
+
+def _provenance_description(
+    hooks: dict[str, list[dict]],
+    owned: set[tuple[str, int]],
+    *,
+    launchers: set[str],
+    previous: object,
+) -> str:
+    managed = [
+        {"event": event, "index": index, "group": groups[index]}
+        for event, groups in hooks.items()
+        for index in range(len(groups))
+        if (event, index) in owned
+    ]
+    envelope: dict[str, object] = {
+        "version": _OWNERSHIP_VERSION,
+        "launchers": sorted(launchers),
+        "managed": managed,
+    }
+    if (
+        isinstance(previous, str)
+        and previous != _LEGACY_DESCRIPTION
+        and not previous.startswith(_PROVENANCE_PREFIX)
+    ):
+        envelope["previous_description"] = previous
+    elif isinstance(previous, str) and previous.startswith(_PROVENANCE_PREFIX):
+        try:
+            prior_envelope = json.loads(previous.removeprefix(_PROVENANCE_PREFIX))
+        except (json.JSONDecodeError, ValueError):
+            prior_envelope = None
+        if isinstance(prior_envelope, dict) and isinstance(
+            prior_envelope.get("previous_description"), str
+        ):
+            envelope["previous_description"] = prior_envelope["previous_description"]
+    return _PROVENANCE_PREFIX + json.dumps(envelope, separators=(",", ":"), sort_keys=True)
+
+
+def _owned_positions(
+    document: dict, hooks: dict[str, list[dict]], *, binary: str
+) -> tuple[set[tuple[str, int]], set[str]]:
+    """Positions proven managed by provenance plus an all-builtin group."""
+    from lazy_harness.agents.registry import DEFAULT_HARNESS_BINARY
+
+    current = PurePosixPath(binary.replace("\\", "/")).name
+    default = PurePosixPath(DEFAULT_HARNESS_BINARY.replace("\\", "/")).name
+    description = document.get("description")
+    if description == _LEGACY_DESCRIPTION:
+        launchers = {default, current}
+        return (
+            {
+                (event, index)
+                for event, groups in hooks.items()
+                for index, group in enumerate(groups)
+                if _group_is_harness_builtin(event, group, binaries=launchers)
+            },
+            launchers,
+        )
+
+    launchers, recorded = _parse_provenance(description)
+    owned = {
+        (event, index)
+        for (event, index), recorded_group in recorded.items()
+        if event in hooks
+        and index < len(hooks[event])
+        and hooks[event][index] == recorded_group
+        and _group_is_harness_builtin(event, hooks[event][index], binaries=launchers)
+    }
+    return owned, launchers | {current}
+
+
+def _merge_hook_groups(
+    existing: dict[str, list[dict]],
+    managed: dict[str, list[dict]],
+    external: dict[str, list[dict]],
+    *,
+    old_owned: set[tuple[str, int]],
+) -> tuple[dict[str, list[dict]], set[tuple[str, int]], list[str], list[str]]:
+    """Fill managed slots, preserve foreign positions, then ensure externals."""
+    merged: dict[str, list[dict]] = {}
+    new_owned: set[tuple[str, int]] = set()
+    preserved: list[str] = []
+    dropped: list[str] = []
+
+    for event, existing_groups in existing.items():
+        desired = list(managed.get(event, []))
+        desired_index = 0
+        event_owned = {index for name, index in old_owned if name == event}
+        output: list[dict] = []
+
+        for index, group in enumerate(existing_groups):
+            if index in event_owned:
+                if desired_index < len(desired):
+                    output.append(desired[desired_index])
+                    new_owned.add((event, len(output) - 1))
+                    desired_index += 1
+                else:
+                    dropped.append(_group_label(event, index, group))
+            else:
+                output.append(group)
+                preserved.append(_group_label(event, index, group))
+
+        while desired_index < len(desired):
+            output.append(desired[desired_index])
+            new_owned.add((event, len(output) - 1))
+            desired_index += 1
+        if output:
+            merged[event] = output
+
+    for event, desired in managed.items():
+        if event in existing:
+            continue
+        output = merged.setdefault(event, [])
+        for group in desired:
+            output.append(group)
+            new_owned.add((event, len(output) - 1))
+
+    for event, desired in external.items():
+        output = merged.setdefault(event, [])
+        for group in desired:
+            identity = _group_identity(event, group)
+            if identity is not None and any(
+                _group_identity(event, candidate) == identity for candidate in output
+            ):
+                continue
+            output.append(group)
+
+    return merged, new_owned, preserved, dropped
 
 
 def _trust_event_segment(native: str) -> str:
@@ -506,7 +765,9 @@ def _canonical_event_names() -> dict[str, str]:
     is exactly the kind of drift the repo's "one answer, one place" rule
     exists to stop.
     """
-    return {support.native_name: name for name, support in _HOOK_EVENTS.items()}
+    native = {name: name for name in CODEX_EVENT_NAMES}
+    native.update({support.native_name: name for name, support in _HOOK_EVENTS.items()})
+    return native
 
 
 def _changed_hook_labels(existing_raw: str | None, groups: dict[str, list[dict]]) -> list[str]:
@@ -761,12 +1022,11 @@ class CodexAdapter:
     # --- config documents (ConfigPlanner) ---
 
     def config_targets(self) -> list[Path]:
-        """Two files, owned on two different terms.
+        """Two shared files, each merged under its native schema.
 
-        `hooks.json` is the harness's outright — it carries declarations and
-        nothing else, which is what lets it be replaced wholesale and retired
-        when it is no longer generated. `config.toml` is the user's and Codex's,
-        and the adapter merges one section of it.
+        `hooks.json` carries declarations from several owners; the adapter
+        replaces only groups proven to be its builtins. `config.toml` is the
+        user's and Codex's, and the adapter merges one section of it.
 
         Hook declarations never cross that line. Codex persists `[hooks.state]`
         trust hashes into `config.toml` next to `[projects.*]`, and the trust key
@@ -786,21 +1046,15 @@ class CodexAdapter:
         *,
         binary: str | None = None,
     ) -> list[WriteOp]:
-        """One document, replaced wholesale.
+        """Plan the shared hook document and merged MCP/trust document."""
+        from lazy_harness.agents.registry import DEFAULT_HARNESS_BINARY
 
-        `existing` is read for nothing, and that is the point of choosing
-        `hooks.json`: the harness owns the entire file, so there is no foreign
-        entry to preserve and no trust state to clobber. `binary` is ignored —
-        the commands arrive already built, and the stamp that would name the
-        writing launcher has nowhere to live in a document whose top level
-        accepts only `description` and `hooks`.
-
-        `binary` is ignored — the commands arrive already built, and the stamp
-        that would name the writing launcher has nowhere to live in a document
-        whose top level accepts only `description` and `hooks`.
-        """
         ops: list[WriteOp] = []
-        hooks_op = self._plan_hooks(hooks, existing.get(Path(HOOKS_FILE)))
+        hooks_op = self._plan_hooks(
+            hooks,
+            existing.get(Path(HOOKS_FILE)),
+            binary=binary or DEFAULT_HARNESS_BINARY,
+        )
         if hooks_op is not None:
             ops.append(hooks_op)
         mcp_op = self._plan_mcp(servers, existing.get(Path(CONFIG_FILE)))
@@ -809,36 +1063,69 @@ class CodexAdapter:
         return ops
 
     def _plan_hooks(
-        self, hooks: dict[str, list[HookEntry]], existing_raw: str | None
+        self,
+        hooks: dict[str, list[HookEntry]],
+        existing_raw: str | None,
+        *,
+        binary: str,
     ) -> WriteOp | None:
-        """Write the declarations, or retire the file the harness used to write.
+        """Conservatively reconcile only proven harness-owned matcher groups."""
+        document = _parse_hooks_document(existing_raw)
+        existing_hooks = document.get("hooks", {})
+        if not isinstance(existing_hooks, dict):  # guarded by the parser
+            raise AssertionError("parsed hooks document lost its hooks object")
 
-        An empty `hooks` plans no write rather than a write of an empty block:
-        the latter would uninstall whatever the user declared themselves.
+        managed = self._hook_groups(
+            {
+                event: [entry for entry in entries if entry.ownership is HookOwnership.HARNESS]
+                for event, entries in hooks.items()
+            }
+        )
+        external = self._hook_groups(
+            {
+                event: [entry for entry in entries if entry.ownership is HookOwnership.EXTERNAL]
+                for event, entries in hooks.items()
+            }
+        )
+        old_owned, launchers = _owned_positions(document, existing_hooks, binary=binary)
 
-        It does plan a *delete*, but only of a document this harness wrote —
-        recognised by the `description` stamp, which is the only marker the
-        format has room for. Keying the delete on the file merely existing would
-        eat a `hooks.json` the user wrote by hand the first time a profile
-        configured no harness hooks, and that file is exactly where a Codex user
-        declares their own.
-        """
-        groups = self._hook_groups(hooks)
-        if not groups:
-            if _is_harness_written(existing_raw):
-                return WriteOp(
-                    artifact=None,
-                    relative_path=Path(HOOKS_FILE),
-                    changed=_changed_hook_labels(existing_raw, groups),
-                )
+        if not managed and not external and not old_owned:
             return None
-        document = {"description": _DESCRIPTION, "hooks": groups}
+
+        groups, new_owned, preserved, dropped = _merge_hook_groups(
+            existing_hooks,
+            managed,
+            external,
+            old_owned=old_owned,
+        )
+        if not groups:
+            return WriteOp(
+                artifact=None,
+                relative_path=Path(HOOKS_FILE),
+                preserved=preserved,
+                dropped=dropped,
+                changed=_changed_hook_labels(existing_raw, groups),
+            )
+
+        if new_owned or old_owned:
+            current = PurePosixPath(binary.replace("\\", "/")).name
+            document["description"] = _provenance_description(
+                groups,
+                new_owned,
+                launchers=launchers | {current},
+                previous=document.get("description"),
+            )
+        elif existing_raw is None:
+            document.pop("description", None)
+        document["hooks"] = groups
         return WriteOp(
             artifact=ConfigArtifact(
                 relative_path=Path(HOOKS_FILE),
                 content=json.dumps(document, indent=2) + "\n",
             ),
             relative_path=Path(HOOKS_FILE),
+            preserved=preserved,
+            dropped=dropped,
             changed=_changed_hook_labels(existing_raw, groups),
         )
 

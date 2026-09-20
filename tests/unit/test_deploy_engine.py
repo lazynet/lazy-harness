@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import shlex
+import sys
 from pathlib import Path
 
 import pytest
 
+from lazy_harness.agents.base import HookOwnership
 from lazy_harness.core.config import (
     Config,
     ExternalHookConfig,
@@ -200,6 +202,84 @@ def test_deploy_hooks_emits_declared_external_commands(tmp_path: Path) -> None:
     assert pinned[0]["hooks"][0]["command"] == "/bin/notifier hook"
 
 
+def test_engine_marks_builtins_managed_and_external_entries_foreign(tmp_path: Path) -> None:
+    from lazy_harness.deploy.engine import _hook_entries_for
+
+    cfg = _cfg_with_profile(
+        tmp_path / "profile",
+        hooks={
+            "session_start": HookEventConfig(
+                scripts=["context-inject"],
+                external=[ExternalHookConfig(command="other-tool session")],
+            )
+        },
+    )
+
+    entries = _hook_entries_for(cfg, "personal", "lh")["session_start"]
+
+    assert entries[0].ownership is HookOwnership.HARNESS
+    assert entries[-1].ownership is HookOwnership.EXTERNAL
+
+
+def test_codex_user_script_converges_and_omission_preserves_it(home_dir: Path) -> None:
+    """A resolved user script is ensure-present, not a builtin owned by lh."""
+    hooks_dir = home_dir / ".config" / "lazy-harness" / "hooks"
+    hooks_dir.mkdir(parents=True)
+    script = hooks_dir / "custom.py"
+    script.write_text("print('custom')\n")
+    profile_dir = home_dir / ".codex-probe"
+    cfg = _cfg_with_profile(
+        profile_dir,
+        hooks={"session_start": HookEventConfig(scripts=["custom"])},
+    )
+    cfg.profiles.items["personal"].agent = "codex"
+
+    deploy_hooks(cfg)
+    first = (profile_dir / "hooks.json").read_text()
+    deploy_hooks(cfg)
+    second = (profile_dir / "hooks.json").read_text()
+
+    assert second == first
+    groups = json.loads(second)["hooks"]["SessionStart"]
+    command = f"{sys.executable} {script}"
+    assert [group["hooks"][0]["command"] for group in groups].count(command) == 1
+
+    cfg.hooks["session_start"].scripts = []
+    deploy_hooks(cfg)
+
+    after_omission = json.loads((profile_dir / "hooks.json").read_text())
+    assert any(
+        group["hooks"][0]["command"] == command for group in after_omission["hooks"]["SessionStart"]
+    )
+
+
+def test_codex_deploy_preserves_foreign_hooks_and_is_byte_stable(tmp_path: Path) -> None:
+    profile_dir = tmp_path / "codex-profile"
+    profile_dir.mkdir()
+    foreign = {
+        "matcher": "startup",
+        "hooks": [
+            {
+                "type": "command",
+                "command": "other-tool session",
+                "timeoutSec": 45,
+            }
+        ],
+    }
+    hooks_file = profile_dir / "hooks.json"
+    hooks_file.write_text(json.dumps({"hooks": {"SessionStart": [foreign]}}, indent=2))
+    cfg = _cfg_with_profile(profile_dir)
+    cfg.profiles.items["personal"].agent = "codex"
+
+    deploy_hooks(cfg)
+    first = hooks_file.read_text()
+    deploy_hooks(cfg)
+    second = hooks_file.read_text()
+
+    assert json.loads(first)["hooks"]["SessionStart"][0] == foreign
+    assert second == first
+
+
 def test_deploy_hooks_expands_config_dir_placeholder_per_profile(tmp_path: Path) -> None:
     """ADR-054: an external command naming `{config_dir}` resolves to each
     profile's own directory, not one fixed string shared by every profile."""
@@ -369,6 +449,45 @@ def test_deploy_hooks_does_not_duplicate_a_declared_external_already_installed(
     cc_hooks = json.loads((profile_dir / "settings.json").read_text())["hooks"]
     commands = json.dumps(cc_hooks["UserPromptSubmit"])
     assert commands.count("/bin/notifier hook") == 1
+
+
+def test_loaded_duplicate_claude_externals_converge_and_omission_preserves_one(
+    tmp_path: Path,
+) -> None:
+    from lazy_harness.core.config import load_config
+
+    profile_dir = tmp_path / "profile"
+    config_file = tmp_path / "config.toml"
+    config_file.write_text(
+        '[harness]\nversion = "1"\n'
+        '[profiles]\ndefault = "p"\n'
+        "[profiles.p]\n"
+        f'config_dir = "{profile_dir}"\n'
+        "[hooks.session_start]\n"
+        "scripts = []\n"
+        'external = ["other-tool session", "other-tool session"]\n'
+    )
+
+    counts = []
+    for _ in range(3):
+        deploy_hooks(load_config(config_file))
+        groups = json.loads((profile_dir / "settings.json").read_text())["hooks"]["SessionStart"]
+        counts.append(len(groups))
+
+    config_file.write_text(
+        '[harness]\nversion = "1"\n'
+        '[profiles]\ndefault = "p"\n'
+        "[profiles.p]\n"
+        f'config_dir = "{profile_dir}"\n'
+        "[hooks.session_start]\n"
+        "scripts = []\n"
+    )
+    deploy_hooks(load_config(config_file))
+    after_omission = json.loads((profile_dir / "settings.json").read_text())["hooks"]
+
+    assert counts == [1, 1, 1]
+    assert len(after_omission["SessionStart"]) == 1
+    assert after_omission["SessionStart"][0]["hooks"][0]["command"] == "other-tool session"
 
 
 def test_deploy_hooks_empty_existing_hooks_block(tmp_path: Path) -> None:

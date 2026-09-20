@@ -9,7 +9,7 @@ from pathlib import Path
 
 import click
 
-from lazy_harness.agents.base import ConfigPlanner, HookEntry, WriteOp
+from lazy_harness.agents.base import ConfigPlanner, HookEntry, HookOwnership, WriteOp
 from lazy_harness.agents.codex_trust import RETRUST_INSTRUCTION, TRUST_STALE_VERDICT
 from lazy_harness.agents.registry import (
     DEFAULT_HARNESS_BINARY,
@@ -419,6 +419,7 @@ def _hook_entries_for(cfg: Config, profile: str, binary: str) -> dict[str, list[
             HookEntry(
                 command=hook_command(hook, profile=profile, binary=binary),
                 matcher=hook.matcher,
+                ownership=(HookOwnership.HARNESS if hook.is_builtin else HookOwnership.EXTERNAL),
             )
             for hook in hooks
         ]
@@ -430,7 +431,11 @@ def _hook_entries_for(cfg: Config, profile: str, binary: str) -> dict[str, list[
                 ext.command, profile=profile, config_dir=raw_config_dir
             )
             entries.setdefault(event_name, []).append(
-                HookEntry(command=command, matcher=ext.matcher)
+                HookEntry(
+                    command=command,
+                    matcher=ext.matcher,
+                    ownership=HookOwnership.EXTERNAL,
+                )
             )
     return entries
 

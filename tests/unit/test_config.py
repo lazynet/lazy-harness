@@ -820,14 +820,14 @@ def test_hook_event_external_command_string_parses(tmp_path) -> None:
         '[harness]\nversion = "1"\n'
         "[hooks.session_start]\n"
         'scripts = ["context-inject"]\n'
-        'external = ["/opt/homebrew/bin/moshi claude-hook"]\n'
+        'external = ["/usr/local/bin/notifier hook"]\n'
     )
 
     event = load_config(cfg_path).hooks["session_start"]
 
     assert event.scripts == ["context-inject"]
     assert len(event.external) == 1
-    assert event.external[0].command == "/opt/homebrew/bin/moshi claude-hook"
+    assert event.external[0].command == "/usr/local/bin/notifier hook"
     assert event.external[0].matcher is None
 
 
@@ -839,14 +839,14 @@ def test_hook_event_external_table_carries_matcher(tmp_path) -> None:
     cfg_path.write_text(
         '[harness]\nversion = "1"\n'
         "[[hooks.pre_tool_use.external]]\n"
-        'command = "/opt/homebrew/bin/moshi claude-hook"\n'
+        'command = "/usr/local/bin/notifier hook"\n'
         'matcher = "AskUserQuestion"\n'
     )
 
     external = load_config(cfg_path).hooks["pre_tool_use"].external
 
     assert [(e.command, e.matcher) for e in external] == [
-        ("/opt/homebrew/bin/moshi claude-hook", "AskUserQuestion")
+        ("/usr/local/bin/notifier hook", "AskUserQuestion")
     ]
 
 
@@ -858,7 +858,7 @@ def test_external_hooks_survive_a_full_save_load_cycle(tmp_path) -> None:
     cfg_path.write_text(
         '[harness]\nversion = "1"\n'
         "[[hooks.post_tool_use.external]]\n"
-        'command = "/opt/homebrew/bin/moshi claude-hook"\n'
+        'command = "/usr/local/bin/notifier hook"\n'
         'matcher = "ExitPlanMode"\n'
     )
 
@@ -866,7 +866,7 @@ def test_external_hooks_survive_a_full_save_load_cycle(tmp_path) -> None:
     external = load_config(cfg_path).hooks["post_tool_use"].external
 
     assert [(e.command, e.matcher) for e in external] == [
-        ("/opt/homebrew/bin/moshi claude-hook", "ExitPlanMode")
+        ("/usr/local/bin/notifier hook", "ExitPlanMode")
     ]
 
 
@@ -1215,7 +1215,7 @@ def test_shorthand_external_hooks_round_trip_without_reformatting(tmp_path: Path
         '[harness]\nversion = "1"\n\n'
         "[hooks.session_start]\n"
         'scripts = ["context-inject"]\n'
-        'external = ["/opt/homebrew/bin/moshi claude-hook"]\n'
+        'external = ["/usr/local/bin/notifier hook"]\n'
     )
     cfg_path = tmp_path / "config.toml"
     cfg_path.write_text(original)
@@ -1223,7 +1223,7 @@ def test_shorthand_external_hooks_round_trip_without_reformatting(tmp_path: Path
     save_config(load_config(cfg_path), cfg_path)
 
     text = cfg_path.read_text()
-    assert 'external = ["/opt/homebrew/bin/moshi claude-hook"]' in text
+    assert 'external = ["/usr/local/bin/notifier hook"]' in text
     assert "[[hooks.session_start.external]]" not in text
 
 
@@ -1238,13 +1238,13 @@ def test_external_hook_with_a_matcher_still_uses_the_table_form(tmp_path: Path) 
         '[harness]\nversion = "1"\n\n'
         "[hooks.pre_tool_use]\n"
         'scripts = ["pre-tool-use-security"]\n'
-        'external = [{ command = "moshi claude-hook", matcher = "ExitPlanMode" }]\n'
+        'external = [{ command = "notifier hook", matcher = "ExitPlanMode" }]\n'
     )
 
     save_config(load_config(cfg_path), cfg_path)
 
     entry = tomllib.loads(cfg_path.read_text())["hooks"]["pre_tool_use"]["external"][0]
-    assert entry == {"command": "moshi claude-hook", "matcher": "ExitPlanMode"}
+    assert entry == {"command": "notifier hook", "matcher": "ExitPlanMode"}
 
 
 def test_an_event_with_no_scripts_key_does_not_gain_an_empty_one(tmp_path: Path) -> None:
@@ -1255,7 +1255,7 @@ def test_an_event_with_no_scripts_key_does_not_gain_an_empty_one(tmp_path: Path)
 
     cfg_path = tmp_path / "config.toml"
     cfg_path.write_text(
-        '[harness]\nversion = "1"\n\n[hooks.permission_request]\nexternal = ["moshi claude-hook"]\n'
+        '[harness]\nversion = "1"\n\n[hooks.permission_request]\nexternal = ["notifier hook"]\n'
     )
 
     save_config(load_config(cfg_path), cfg_path)

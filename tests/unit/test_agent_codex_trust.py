@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from lazy_harness.agents.base import HookEntry
+from lazy_harness.agents.base import HookEntry, HookOwnership
 from lazy_harness.agents.codex import _HOOK_EVENTS, CodexAdapter, trust_keys
 from lazy_harness.agents.codex_trust import collect_codex_trust, trust_for_profile
 from lazy_harness.core.config import Config, ProfileEntry
@@ -132,6 +132,52 @@ def test_an_event_name_codex_does_not_deliver_is_named_rather_than_dropped(
     assert ignored == ("Nonsense",)
 
 
+def test_every_native_codex_event_is_a_declared_trust_event(tmp_path: Path) -> None:
+    from lazy_harness.agents.codex import CODEX_EVENT_NAMES
+
+    hooks_file = tmp_path / "hooks.json"
+    document = {
+        "hooks": {
+            native: [{"hooks": [{"type": "command", "command": f"probe-{native}"}]}]
+            for native in sorted(CODEX_EVENT_NAMES)
+        }
+    }
+    hooks_file.write_text(json.dumps(document))
+
+    declared, ignored = trust_keys(hooks_file, hooks_file.read_text())
+
+    assert ignored == ()
+    assert len(declared) == len(CODEX_EVENT_NAMES)
+    assert {key.rsplit(":", 3)[1] for key, _ in declared} == {
+        re.sub(r"(?<!^)(?=[A-Z])", "_", native).lower() for native in CODEX_EVENT_NAMES
+    }
+
+
+def test_preserved_native_event_with_stored_hash_is_not_orphaned(tmp_path: Path) -> None:
+    hooks_file = tmp_path / "hooks.json"
+    hooks_file.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SubagentStart": [
+                        {"hooks": [{"type": "command", "command": "other-tool subagent"}]}
+                    ]
+                }
+            }
+        )
+    )
+    key = f"{hooks_file.resolve()}:subagent_start:0:0"
+    _config_toml(tmp_path, {key: _HASH})
+
+    report = trust_for_profile(_profile(tmp_path), "probe")
+
+    assert report is not None
+    assert report.declared == 1
+    assert report.ignored_events == ()
+    assert report.unknown == ("SubagentStart[0]",)
+    assert report.orphaned == ()
+
+
 @pytest.mark.parametrize(
     "raw",
     ["not json", "[]", '"a string"', "7", "null", '{"hooks": 7}', '{"hooks": {"PreToolUse": 7}}'],
@@ -205,7 +251,11 @@ def test_a_changed_declaration_since_the_last_snapshot_reads_stale(home_dir: Pat
 
     profile_dir = home_dir / ".codex"
     profile_dir.mkdir()
-    old_hooks = {"pre_tool_use": [HookEntry(command="lh hook sec", matcher="Bash")]}
+    old_hooks = {
+        "pre_tool_use": [
+            HookEntry(command="lh hook pre-tool-use-git-scope --profile probe", matcher="Bash")
+        ]
+    }
     hooks_file = _deploy(profile_dir, old_hooks)
     declared, _ = trust_keys(hooks_file, hooks_file.read_text())
     _config_toml(profile_dir, {key: _HASH for key, _ in declared})
@@ -213,7 +263,11 @@ def test_a_changed_declaration_since_the_last_snapshot_reads_stale(home_dir: Pat
     snapshot_dir = namespace_dir(backups_root(), DEPLOY_NAMESPACE) / "20260101-000000.000000"
     take_snapshot([hooks_file], snapshot_dir)
 
-    new_hooks = {"pre_tool_use": [HookEntry(command="lh hook sec", matcher="Edit")]}
+    new_hooks = {
+        "pre_tool_use": [
+            HookEntry(command="lh hook pre-tool-use-git-scope --profile probe", matcher="Edit")
+        ]
+    }
     _deploy(profile_dir, new_hooks)
 
     report = trust_for_profile(_profile(profile_dir), "probe")
@@ -231,7 +285,11 @@ def test_an_unchanged_redeploy_after_a_snapshot_still_reads_unknown(home_dir: Pa
 
     profile_dir = home_dir / ".codex"
     profile_dir.mkdir()
-    hooks = {"pre_tool_use": [HookEntry(command="lh hook sec", matcher="Bash")]}
+    hooks = {
+        "pre_tool_use": [
+            HookEntry(command="lh hook pre-tool-use-git-scope --profile probe", matcher="Bash")
+        ]
+    }
     hooks_file = _deploy(profile_dir, hooks)
     declared, _ = trust_keys(hooks_file, hooks_file.read_text())
     _config_toml(profile_dir, {key: _HASH for key, _ in declared})
@@ -246,6 +304,72 @@ def test_an_unchanged_redeploy_after_a_snapshot_still_reads_unknown(home_dir: Pa
     assert report is not None
     assert report.stale == ()
     assert len(report.unknown) == 1
+
+
+def test_a_description_only_change_does_not_mark_a_hook_stale(home_dir: Path) -> None:
+    from lazy_harness.core.backups import DEPLOY_NAMESPACE, backups_root, namespace_dir
+    from lazy_harness.deploy.snapshot import take_snapshot
+
+    profile_dir = home_dir / ".codex"
+    profile_dir.mkdir()
+    hooks_file = _deploy(
+        profile_dir,
+        {"session_start": [HookEntry(command="lh hook context-inject --profile probe")]},
+    )
+    declared, _ = trust_keys(hooks_file, hooks_file.read_text())
+    _config_toml(profile_dir, {key: _HASH for key, _ in declared})
+    snapshot_dir = namespace_dir(backups_root(), DEPLOY_NAMESPACE) / "20260101-000000.000000"
+    take_snapshot([hooks_file], snapshot_dir)
+
+    document = json.loads(hooks_file.read_text())
+    document["description"] = "a provenance-only change"
+    hooks_file.write_text(json.dumps(document, indent=2) + "\n")
+
+    report = trust_for_profile(_profile(profile_dir), "probe")
+
+    assert report is not None
+    assert report.stale == ()
+    assert report.unknown == ("session_start[0]",)
+
+
+def test_dropping_managed_before_foreign_reports_shifted_trust_identity(
+    home_dir: Path,
+) -> None:
+    from lazy_harness.core.backups import DEPLOY_NAMESPACE, backups_root, namespace_dir
+    from lazy_harness.deploy.snapshot import take_snapshot
+
+    profile_dir = home_dir / ".codex"
+    profile_dir.mkdir()
+    hooks_file = _deploy(
+        profile_dir,
+        {
+            "session_start": [
+                HookEntry(command="lh hook context-inject --profile probe"),
+                HookEntry(
+                    command="other-tool session",
+                    ownership=HookOwnership.EXTERNAL,
+                ),
+            ]
+        },
+    )
+    declared, _ = trust_keys(hooks_file, hooks_file.read_text())
+    _config_toml(profile_dir, {key: _HASH for key, _ in declared})
+    snapshot_dir = namespace_dir(backups_root(), DEPLOY_NAMESPACE) / "20260101-000000.000000"
+    take_snapshot([hooks_file], snapshot_dir)
+
+    ops = CodexAdapter().plan_config(
+        {}, {}, {Path("hooks.json"): hooks_file.read_text()}, binary="lh"
+    )
+    hook_op = next(op for op in ops if op.relative_path == Path("hooks.json"))
+    assert hook_op.artifact is not None
+    assert hook_op.changed == ["session_start[0]", "session_start[1]"]
+    hooks_file.write_text(hook_op.artifact.content)
+
+    report = trust_for_profile(_profile(profile_dir), "probe")
+
+    assert report is not None
+    assert report.stale == ("session_start[0]",)
+    assert report.orphaned == (f"{hooks_file}:session_start:1:0",)
 
 
 def test_a_state_entry_the_file_no_longer_declares_is_orphaned(tmp_path: Path) -> None:

@@ -140,7 +140,7 @@ destination names that one.
 **The F9 12:32 failure is not a matcher, a PATH, a crash, a payload or an
 ignored verdict.** All five are falsified by measurement. What separates the
 12:32 run from the 14:34 probe is down to three deltas — the deployed
-`hooks.json` (8 real groups, including `moshi` and `graphify hook-guard`, against
+`hooks.json` (8 real groups, including third-party and built-in guards, against
 5 hand-rendered ones), the trust store (31 TUI-approved `hooks.state.` entries
 against `--dangerously-bypass-hook-trust`), and the driver (the F9 live path
 against `codex exec`). `specs/gates/probes/codex-hook-probe6.sh` was written to

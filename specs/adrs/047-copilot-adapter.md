@@ -174,6 +174,32 @@ rather than reverse-engineered from event samples. `HeadlessAgent` is unclaimed
 for `CodexAdapter`'s reason — `copilot -p` is known to start a run, and nothing
 here has parsed its output.
 
+## Evolution — 2026-09-19: lifecycle ownership uses two native artifacts
+
+Decision 5's single reserved file remains the managed-builtin artifact, but it
+cannot also carry ensure-present declarations: replacing or retiring that file
+would delete entries whose omission grants no deletion authority. Copilot's
+measured `hooks/*.json` glob provides a schema-compatible ownership boundary,
+so the adapter now uses two ordinary version-1 hook documents:
+`hooks/lazy-harness.json` for replaceable builtins and
+`hooks/lazy-harness-external.json` for external and user-script declarations.
+
+The external artifact is merged by native event, matcher and command identity.
+Equivalent richer installed entries satisfy a declaration without losing
+metadata, duplicates remain distinct, and later omission leaves the artifact
+untouched. Both paths come from `config_targets()`, so deploy snapshots and
+rollback include the added target without a second static path list.
+
+The first plan after this split also reads the former combined artifact before
+replacing or retiring it. Only an exact registry-backed builtin invocation on
+its matching native event and matcher is classified as managed. Every unknown,
+external or user-script group moves intact to the external artifact, including
+native metadata and duplicates; an equivalent desired declaration adds no
+second execution. Both writes are returned in one plan, and an invalid legacy
+document refuses the plan rather than authorizing deletion. This migration is
+derived from the harness registry and native group identity, without naming a
+third-party integration.
+
 ## Consequences
 
 **Every edit-gating builtin is inert on Copilot, and it is an absence rather

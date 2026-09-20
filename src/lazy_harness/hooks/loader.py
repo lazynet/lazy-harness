@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import re
+import shlex
 from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from lazy_harness.agents.base import Operation, Signal
 from lazy_harness.core.config import Config
@@ -302,6 +304,64 @@ def resolve_builtin_spec(name: str) -> BuiltinHookSpec | None:
 
 def list_builtin_hooks() -> list[str]:
     return list(_BUILTIN_HOOKS.keys())
+
+
+def builtin_name_from_command(command: str, *, binaries: set[str]) -> str | None:
+    """Return the registered builtin named by an exactly emitted invocation.
+
+    Current deploys emit ``<launcher> hook <name> --profile <profile>``. Two
+    explicit migrations are accepted: the shipped no-profile launcher form and
+    ``<python> <installed builtin module path>``. Shell wrappers, operators,
+    extra arguments, substring matches and names absent from the registry are
+    not generated forms and therefore prove no ownership.
+    """
+    normalised = command.replace("\\", "/")
+    try:
+        argv = shlex.split(normalised)
+    except ValueError:
+        return None
+
+    if len(argv) in {3, 5}:
+        launcher = PurePosixPath(argv[0]).name
+        name = argv[2]
+        modern = (
+            len(argv) == 5
+            and argv[3] == "--profile"
+            and bool(argv[4])
+            and normalised == f"{argv[0]} hook {name} --profile {shlex.quote(argv[4])}"
+        )
+        legacy_launcher = len(argv) == 3 and normalised == f"{argv[0]} hook {name}"
+        if (
+            launcher in binaries
+            and argv[1] == "hook"
+            and resolve_builtin_spec(name) is not None
+            and (modern or legacy_launcher)
+        ):
+            return name
+        return None
+
+    if len(argv) != 2:
+        return None
+    if normalised != f"{argv[0]} {argv[1]}":
+        return None
+    interpreter = PurePosixPath(argv[0]).name.lower()
+    if re.fullmatch(r"python(?:\d+(?:\.\d+)*)?(?:\.exe)?", interpreter) is None:
+        return None
+    path = PurePosixPath(argv[1])
+    parts = path.parts
+    try:
+        marker = parts.index("lazy_harness")
+    except ValueError:
+        return None
+    suffix = parts[marker:]
+    if len(suffix) != 4 or suffix[:3] != ("lazy_harness", "hooks", "builtins"):
+        return None
+    matches = [
+        name
+        for name, spec in _BUILTIN_HOOKS.items()
+        if suffix[-1] == f"{spec.module.rsplit('.', 1)[-1]}.py"
+    ]
+    return matches[0] if len(matches) == 1 else None
 
 
 def _find_builtin(name: str, event: str | None = None) -> HookInfo | None:

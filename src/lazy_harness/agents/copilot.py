@@ -44,6 +44,7 @@ from lazy_harness.agents.base import (
     HookEntry,
     HookEvent,
     HookOutput,
+    HookOwnership,
     HookSupport,
     Operation,
     ToolCall,
@@ -162,6 +163,7 @@ _TOOL_OPERATIONS: dict[str, Operation] = {
 # document tolerates an unknown top-level key at all is unmeasured
 # (`specs/designs/copilot-evidence.md` §4).
 HOOKS_FILE = "hooks/lazy-harness.json"
+EXTERNAL_HOOKS_FILE = "hooks/lazy-harness-external.json"
 
 # `version: Required` and `version: Invalid literal value, expected 1` are both
 # in the string region belonging to `src/runtime/src/hooks/declarative.rs`
@@ -303,8 +305,8 @@ class CopilotAdapter:
     # --- config documents (ConfigPlanner) ---
 
     def config_targets(self) -> list[Path]:
-        """One file. MCP is deliberately not a target — see `plan_config`."""
-        return [Path(HOOKS_FILE)]
+        """Managed and ensure-present hook files; MCP remains unclaimed."""
+        return [Path(HOOKS_FILE), Path(EXTERNAL_HOOKS_FILE)]
 
     def plan_config(
         self,
@@ -314,7 +316,7 @@ class CopilotAdapter:
         *,
         binary: str | None = None,
     ) -> list[WriteOp]:
-        """One document, replaced wholesale, and no MCP write at all.
+        """Two lifecycle-separated hook documents and no MCP write at all.
 
         `servers` is **ignored**, which is a decision with a cost and it is
         recorded in ADR-047 rather than swallowed. `~/.copilot/mcp-config.json`
@@ -325,30 +327,230 @@ class CopilotAdapter:
         is every permission the user has granted and is not reconstructible. A
         write there is the one the design's own config table warns against.
 
-        `existing` is read only to decide whether a retirement is owed, and
-        `binary` is ignored: the commands arrive already built, and the document
-        has no free slot to stamp a launcher into.
+        Managed builtins replace the reserved managed document. External and
+        user-script declarations merge into a second native document and survive
+        omission. On the first plan after the two-file split, foreign groups in
+        the former combined artifact move intact into the external artifact.
+        `binary` identifies exact builtin commands during that migration; neither
+        resulting document needs a launcher stamp because ownership is the filename.
         """
-        groups = self._hook_groups(hooks)
+        from lazy_harness.agents.registry import DEFAULT_HARNESS_BINARY
+
+        legacy_external = self._legacy_external_groups(
+            existing.get(Path(HOOKS_FILE)),
+            binaries={binary or DEFAULT_HARNESS_BINARY, DEFAULT_HARNESS_BINARY},
+        )
+        managed = self._hook_groups(
+            {
+                event: [entry for entry in entries if entry.ownership is HookOwnership.HARNESS]
+                for event, entries in hooks.items()
+            }
+        )
+        external = self._hook_groups(
+            {
+                event: [entry for entry in entries if entry.ownership is HookOwnership.EXTERNAL]
+                for event, entries in hooks.items()
+            }
+        )
+        external_op = self._plan_external(
+            external,
+            existing.get(Path(EXTERNAL_HOOKS_FILE)),
+            migrated=legacy_external,
+        )
+        reconciled_external = (
+            external_op.artifact.content
+            if external_op is not None and external_op.artifact is not None
+            else existing.get(Path(EXTERNAL_HOOKS_FILE))
+        )
+        satisfied = self._external_identities(reconciled_external)
+        managed = {
+            event: [
+                group for group in groups if self._external_identity(event, group) not in satisfied
+            ]
+            for event, groups in managed.items()
+        }
+        managed = {event: groups for event, groups in managed.items() if groups}
+
         target = Path(HOOKS_FILE)
-        if not groups:
+        ops: list[WriteOp] = []
+        if not managed:
             # A file the harness wrote and no longer generates is retired; one
             # it never wrote is left alone. The distinction is free here because
             # the path is the harness's own — under Copilot's `hooks/*.json`
             # glob a user's file is a sibling, never this one.
             if target in existing:
-                return [WriteOp(artifact=None, relative_path=target)]
-            return []
-        document = {"version": CONFIG_VERSION, "hooks": groups}
-        return [
-            WriteOp(
-                artifact=ConfigArtifact(
+                ops.append(WriteOp(artifact=None, relative_path=target))
+        else:
+            document = {"version": CONFIG_VERSION, "hooks": managed}
+            ops.append(
+                WriteOp(
+                    artifact=ConfigArtifact(
+                        relative_path=target,
+                        content=json.dumps(document, indent=2) + "\n",
+                    ),
                     relative_path=target,
-                    content=json.dumps(document, indent=2) + "\n",
-                ),
-                relative_path=target,
+                )
             )
-        ]
+
+        if external_op is not None:
+            ops.append(external_op)
+        return ops
+
+    @staticmethod
+    def _plan_external(
+        groups: dict[str, list[dict]],
+        existing_raw: str | None,
+        *,
+        migrated: dict[str, list[dict]],
+    ) -> WriteOp | None:
+        """Merge ensure-present entries in a dedicated native hook artifact."""
+        if not groups and not migrated:
+            return None
+        if existing_raw is None:
+            document: dict = {"version": CONFIG_VERSION, "hooks": {}}
+        else:
+            document = CopilotAdapter._parse_hook_document(existing_raw, EXTERNAL_HOOKS_FILE)
+
+        current = document.get("hooks", {})
+        if not isinstance(current, dict):  # guarded above
+            raise AssertionError("parsed Copilot external hooks lost their hooks object")
+        merged: dict[str, list[dict]] = {}
+        for event, entries in current.items():
+            if not isinstance(entries, list) or not all(
+                isinstance(entry, dict) for entry in entries
+            ):
+                raise ValueError(
+                    f"{EXTERNAL_HOOKS_FILE} cannot be merged safely: {event} is not an array"
+                )
+            merged[event] = list(entries)
+
+        for event, legacy_entries in migrated.items():
+            output = merged.setdefault(event, [])
+            installed_counts: dict[str, int] = {}
+            for entry in output:
+                key = json.dumps(entry, sort_keys=True)
+                installed_counts[key] = installed_counts.get(key, 0) + 1
+            required_counts: dict[str, int] = {}
+            for group in legacy_entries:
+                key = json.dumps(group, sort_keys=True)
+                required_counts[key] = required_counts.get(key, 0) + 1
+                if installed_counts.get(key, 0) < required_counts[key]:
+                    output.append(group)
+
+        for event, desired in groups.items():
+            output = merged.setdefault(event, [])
+            for group in desired:
+                identity = CopilotAdapter._external_identity(event, group)
+                if identity is not None and any(
+                    CopilotAdapter._external_identity(event, candidate) == identity
+                    for candidate in output
+                ):
+                    continue
+                output.append(group)
+
+        document["version"] = CONFIG_VERSION
+        document["hooks"] = merged
+        target = Path(EXTERNAL_HOOKS_FILE)
+        return WriteOp(
+            artifact=ConfigArtifact(
+                relative_path=target,
+                content=json.dumps(document, indent=2) + "\n",
+            ),
+            relative_path=target,
+        )
+
+    @staticmethod
+    def _parse_hook_document(raw: str, filename: str) -> dict:
+        try:
+            parsed = json.loads(raw)
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise ValueError(f"{filename} cannot be merged safely: invalid JSON") from exc
+        if (
+            not isinstance(parsed, dict)
+            or not isinstance(parsed.get("version"), int)
+            or isinstance(parsed.get("version"), bool)
+            or parsed.get("version") != CONFIG_VERSION
+            or not isinstance(parsed.get("hooks"), dict)
+        ):
+            raise ValueError(f"{filename} cannot be merged safely: expected version-1 hooks object")
+        return parsed
+
+    @staticmethod
+    def _legacy_external_groups(
+        existing_raw: str | None, *, binaries: set[str]
+    ) -> dict[str, list[dict]]:
+        if existing_raw is None:
+            return {}
+        document = CopilotAdapter._parse_hook_document(existing_raw, HOOKS_FILE)
+        migrated: dict[str, list[dict]] = {}
+        hooks = document["hooks"]
+        for event, entries in hooks.items():
+            if (
+                not isinstance(event, str)
+                or not isinstance(entries, list)
+                or not all(isinstance(entry, dict) for entry in entries)
+            ):
+                raise ValueError(
+                    f"{HOOKS_FILE} cannot be merged safely: {event} is not an array of objects"
+                )
+            foreign = [
+                entry
+                for entry in entries
+                if not CopilotAdapter._legacy_group_is_managed(event, entry, binaries=binaries)
+            ]
+            if foreign:
+                migrated[event] = foreign
+        return migrated
+
+    @staticmethod
+    def _legacy_group_is_managed(event: str, group: dict, *, binaries: set[str]) -> bool:
+        from lazy_harness.hooks.loader import builtin_name_from_command, resolve_builtin_spec
+
+        canonical = next(
+            (name for name, support in _HOOK_EVENTS.items() if support.native_name == event), None
+        )
+        if canonical is None or not set(group) <= {"matcher", "command"}:
+            return False
+        command = group.get("command")
+        if not isinstance(command, str):
+            return False
+        name = builtin_name_from_command(command, binaries=binaries)
+        if name is None:
+            return False
+        spec = resolve_builtin_spec(name)
+        if spec is None or (spec.event is not None and spec.event != canonical):
+            return False
+        matcher = spec.matcher_for(canonical)
+        expected = {"command": command, **({"matcher": matcher} if matcher else {})}
+        return group == expected
+
+    @staticmethod
+    def _external_identity(event: str, group: dict) -> tuple[str, str | None, str] | None:
+        matcher = group.get("matcher")
+        command = group.get("command")
+        if matcher is not None and not isinstance(matcher, str):
+            return None
+        if not isinstance(command, str):
+            return None
+        return event, matcher, command
+
+    @staticmethod
+    def _external_identities(raw: str | None) -> set[tuple[str, str | None, str]]:
+        if raw is None:
+            return set()
+        document = CopilotAdapter._parse_hook_document(raw, EXTERNAL_HOOKS_FILE)
+        identities: set[tuple[str, str | None, str]] = set()
+        for event, groups in document["hooks"].items():
+            if not isinstance(groups, list) or not all(isinstance(group, dict) for group in groups):
+                raise ValueError(
+                    f"{EXTERNAL_HOOKS_FILE} cannot be merged safely: {event} is not an array"
+                )
+            identities.update(
+                identity
+                for group in groups
+                if (identity := CopilotAdapter._external_identity(event, group)) is not None
+            )
+        return identities
 
     @staticmethod
     def _hook_groups(hooks: dict[str, list[HookEntry]]) -> dict[str, list[dict]]:

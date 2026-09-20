@@ -197,6 +197,45 @@ the unlink, the `artifact is None` condition, each half of the stat pair, and
 the widened `config_targets()`. All four were restored by hand rather than from
 git, which would have reverted the uncommitted implementation with them.
 
+## Evolution — 2026-09-19: ownership is per hook group
+
+The original deletion rule above treated Codex's `hooks.json` description stamp
+as ownership of the whole document. That conclusion is superseded. Native
+installers and users also place declarations in this file, so the adapter now
+merges it and owns only matcher groups it can prove are lazy-harness builtins.
+
+New documents carry a versioned provenance envelope in `description`, including
+launcher history and the exact managed event/position/group records. The legacy
+description remains a migration signal. Neither string is sufficient on its
+own: every handler in a claimed group must also be a recognized `lh hook
+<name>` command (or the legacy builtin-path form), and mixed, malformed or
+unrecorded groups remain foreign. Recognition parses only the exact current
+launcher grammar, its explicit no-profile migration, or a registered builtin's
+exact legacy module path; wrappers, shell operators, extra arguments,
+substrings and invented builtin names remain foreign. A valid envelope's
+launcher list is editable history by design, so it may name a launcher no
+current profile uses; that history grants nothing unless the recorded event,
+position and group still match and the command is an exact registered-builtin
+invocation. A launcher absent from both that history and the current/default
+launcher set remains foreign. Attached operators, substitutions and redirects
+are rejected by comparing the parsed command with the emitter's canonical
+quoting, while an emitter-quoted profile remains valid. The legacy path form
+requires the exact registered module basename plus `.py` in the executable
+argument position.
+Foreign groups, fields, duplicates and event order are preserved. Existing
+managed slots are refilled, then surplus managed groups are appended after all
+existing groups for the event so additions do not shift foreign positional
+trust keys unnecessarily. Removing an earlier managed slot can still shift a
+foreign key. A malformed shared document is refused rather than replaced.
+
+A disposable `codex-cli 0.155.1` app-server probe established that changing
+only `description` changes neither the native positional key, `currentHash` nor
+`trustStatus`. `WriteOp.changed` nevertheless compares only the old and final
+`hooks` arrays, so provenance-only migration never prints a false re-trust
+instruction. File deletion now requires actual recognized managed groups to be
+removed and no foreign group to remain; a stamp on an empty document grants no
+deletion authority.
+
 ## References
 
 - `specs/designs/2026-09-13-multi-agent-harness-design.md` — decision 4 and step 7

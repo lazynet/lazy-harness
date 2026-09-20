@@ -24,13 +24,15 @@
             "command": "broken-tool check"
           }
         ]
-      },
+      }
+    ],
+    "PostToolUse": [
       {
-        "matcher": "",
+        "matcher": "Edit|Write",
         "hooks": [
           {
             "type": "command",
-            "command": "lh hook retired_builtin --profile personal"
+            "command": "lh hook post-tool-use-sync-claude --profile personal"
           }
         ]
       }

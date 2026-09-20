@@ -2,10 +2,10 @@
 changes (lane B3, deploy-retrust; specs/backlog.md, "`lh deploy` no imprime la
 instrucción de re-trust").
 
-Every default builtin hook is suppressed so the fixture controls exactly one
-declared hook — a single `pre_tool_use` external entry whose matcher the
-"changed" test flips — instead of asserting against whichever builtins happen
-to be enabled by default.
+Every default builtin hook is suppressed so the fixture controls one external
+declaration at a time. Changing that declaration ensures a second group rather
+than replacing the first: omission or change does not transfer lifecycle
+ownership to the harness.
 """
 
 from __future__ import annotations
@@ -88,7 +88,9 @@ def test_redeploy_of_the_same_declaration_is_silent(home_dir: Path) -> None:
     assert "trust stale" not in result.output
 
 
-def test_changing_one_matcher_and_redeploying_names_that_hook(home_dir: Path) -> None:
+def test_changing_an_external_matcher_preserves_the_old_group_and_names_the_new_one(
+    home_dir: Path,
+) -> None:
     from lazy_harness.cli.main import cli
 
     _write_codex_config(home_dir, matcher="Bash")
@@ -99,14 +101,15 @@ def test_changing_one_matcher_and_redeploying_names_that_hook(home_dir: Path) ->
     result = runner.invoke(cli, ["deploy", "--profile", "cx"])
 
     assert result.exit_code == 0, result.output
-    assert "pre_tool_use[0]" in result.output
+    assert "pre_tool_use[1]" in result.output
     assert "re-trust" in result.output
 
+    hooks = (home_dir / ".codex" / "hooks.json").read_text()
+    assert hooks.count('"command": "probe"') == 2
 
-def test_a_changed_redeploy_makes_lh_doctor_report_trust_stale(home_dir: Path) -> None:
-    """The design's own acceptance criterion, observed rather than inferred:
-    change one matcher, redeploy, confirm `lh doctor` reports it stale before
-    the next Codex session would silently drop it (design.md:840-843)."""
+
+def test_an_external_change_does_not_call_the_preserved_group_stale(home_dir: Path) -> None:
+    """The old external group keeps index 0; only the new index is untrusted."""
     from lazy_harness.cli.main import cli
 
     _write_codex_config(home_dir, matcher="Bash")
@@ -128,8 +131,8 @@ def test_a_changed_redeploy_makes_lh_doctor_report_trust_stale(home_dir: Path) -
     doctor_result = runner.invoke(cli, ["doctor"])
 
     assert doctor_result.exception is None, doctor_result.output
-    assert "pre_tool_use[0]" in doctor_result.output
-    assert "trust stale" in doctor_result.output
+    assert "pre_tool_use[1]" in doctor_result.output
+    assert "trust stale" not in doctor_result.output
 
 
 def test_a_claude_profile_stays_silent(home_dir: Path) -> None:
