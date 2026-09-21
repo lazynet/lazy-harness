@@ -8,9 +8,9 @@ file* — no hooks, no permissions, no env, no statusLine — the instant one
 matches. `lh_hook_ownership.managed[i].group` matched, because a recorded
 ledger entry is `{"matcher": ..., "hooks": [...]}` by construction.
 
-This is the regression gate: any future top-level harness key must pass
-`fatal_hook_shape(document) is None`, or it kills every profile's settings the
-same way.
+`_plan_settings` runs this over the document it is about to write, so a
+settings.json the agent would discard is refused instead of deployed. The
+regression test over the goldens is the same call at build time.
 """
 
 from __future__ import annotations

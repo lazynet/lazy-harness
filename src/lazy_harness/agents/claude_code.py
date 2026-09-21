@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from lazy_harness import __version__
+from lazy_harness.agents._settings_shape import fatal_hook_shape
 from lazy_harness.agents.base import (
     Bypass,
     ConfigArtifact,
@@ -183,6 +184,30 @@ _SETTINGS_FILE = "settings.json"
 _HOOK_OWNERSHIP_FILE = "lh-hook-ownership.json"
 _HOOK_OWNERSHIP_KEY = "lh_hook_ownership"
 _HOOK_OWNERSHIP_VERSION = 1
+
+
+class SettingsShapeError(RuntimeError):
+    """The planned settings.json carries a key Claude Code rejects the file for.
+
+    Not a merge failure — every key in the artifact is either generated here or
+    copied verbatim from what was already on disk, so the offender is usually
+    another tool's. It is raised rather than repaired because repairing means
+    deleting a document the harness does not own and cannot reconstruct.
+
+    Refusing loses nothing: a file that trips the detector is a file the agent
+    is *already* discarding whole, hooks and permissions and env with it. The
+    deploy would have written it and exited 0, which is how this went unnoticed
+    for nine hours on 2026-09-20.
+    """
+
+    def __init__(self, path: str, relative_path: Path) -> None:
+        super().__init__(
+            f"refusing to write {relative_path}: Claude Code discards the whole "
+            f"settings file when a key is shaped like a hook declaration, and "
+            f"{path} is. Remove that key (it is not the harness's) and re-run."
+        )
+        self.path = path
+        self.relative_path = relative_path
 
 
 def _as_document(raw: str | None) -> dict:
@@ -1267,6 +1292,14 @@ class ClaudeCodeAdapter:
         settings["lh_version"] = __version__
         settings[SETTINGS_BINARY_KEY] = binary
         settings["hooks"] = merged
+
+        # The gate runs here, on the finished document, and not on `existing_raw`:
+        # an input that passes says nothing about the output, and an input that
+        # fails may be one this very merge repairs — the legacy in-settings ledger
+        # is popped above, so a profile still carrying it must be allowed through.
+        fatal = fatal_hook_shape(settings)
+        if fatal is not None:
+            raise SettingsShapeError(fatal, Path(_SETTINGS_FILE))
 
         ledger = {
             "version": _HOOK_OWNERSHIP_VERSION,

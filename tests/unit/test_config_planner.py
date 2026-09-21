@@ -14,8 +14,9 @@ from pathlib import Path
 
 import pytest
 
+from lazy_harness.agents._settings_shape import fatal_hook_shape
 from lazy_harness.agents.base import ConfigPlanner, HookEntry, HookOwnership
-from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+from lazy_harness.agents.claude_code import ClaudeCodeAdapter, SettingsShapeError
 from lazy_harness.core.config import (
     Config,
     ExternalHookConfig,
@@ -802,3 +803,117 @@ def test_mcp_plan_survives_a_document_that_is_not_an_object() -> None:
     op = _op_for(ops, CLAUDE_JSON)
     assert op is not None and op.artifact is not None
     assert json.loads(op.artifact.content)["mcpServers"]["qmd"]["command"] == "qmd"
+
+
+# --- the fatal-shape gate ------------------------------------------------
+
+
+def test_claude_refuses_to_write_settings_the_agent_would_discard_whole() -> None:
+    """The gate the `lh_hook_ownership` incident asked for. A foreign top-level
+    key shaped like a hook declaration makes Claude Code 2.1.278 throw away the
+    entire settings file — no hooks, no permissions, no env. `plan_config`
+    copies every top-level key it does not own into the artifact, so without
+    this check `lh deploy` writes that file and exits 0."""
+    existing = json.dumps(
+        {
+            "hooks": {},
+            "herdr_integration": {
+                "installed": [
+                    {"matcher": "", "hooks": [{"type": "command", "command": "herdr hook"}]}
+                ]
+            },
+        }
+    )
+    desired = {"session_start": [HookEntry(command="lh hook context-inject --profile p")]}
+
+    with pytest.raises(SettingsShapeError) as excinfo:
+        ClaudeCodeAdapter().plan_config(desired, {}, {SETTINGS: existing}, binary="lh")
+
+    assert "$.herdr_integration.installed[0]" in str(excinfo.value)
+
+
+def test_claude_gate_reads_the_document_it_is_about_to_write_not_the_one_it_read() -> None:
+    """The distinction that failed during the incident: an input that is clean
+    is not a guarantee about the output. The legacy in-settings ledger is popped
+    by the migration, so the same bytes that were fatal on disk plan cleanly —
+    and the gate must agree, or every migrating profile is blocked."""
+    group = {
+        "matcher": "",
+        "hooks": [{"type": "command", "command": "lh hook context-inject --profile p"}],
+    }
+    existing = json.dumps(
+        {
+            "hooks": {"SessionStart": [group]},
+            "lh_hook_ownership": {
+                "version": 1,
+                "managed": [{"event": "SessionStart", "index": 0, "group": group}],
+            },
+        }
+    )
+    assert fatal_hook_shape(json.loads(existing)) == "$.lh_hook_ownership.managed[0].group"
+
+    desired = {"session_start": [HookEntry(command="lh hook context-inject --profile p")]}
+    ops = ClaudeCodeAdapter().plan_config(desired, {}, {SETTINGS: existing}, binary="lh")
+
+    op = _op_for(ops, SETTINGS)
+    assert op is not None and op.artifact is not None
+    assert fatal_hook_shape(json.loads(op.artifact.content)) is None
+
+
+def test_claude_gate_leaves_an_ordinary_foreign_top_level_key_alone() -> None:
+    """Preservation is the rule; the gate is the exception. A top-level key that
+    is not hook-shaped must still be copied through untouched."""
+    existing = json.dumps({"hooks": {}, "statusLine": {"type": "command", "command": "lh status"}})
+    desired = {"session_start": [HookEntry(command="lh hook context-inject --profile p")]}
+
+    ops = ClaudeCodeAdapter().plan_config(desired, {}, {SETTINGS: existing}, binary="lh")
+
+    op = _op_for(ops, SETTINGS)
+    assert op is not None and op.artifact is not None
+    assert json.loads(op.artifact.content)["statusLine"] == {
+        "type": "command",
+        "command": "lh status",
+    }
+
+
+def test_claude_gate_does_not_exempt_a_key_for_looking_like_the_harness_s_own() -> None:
+    """`lh_hook_ownership` was the harness's own key, not a foreign tool's, and
+    it was exactly as fatal. Nothing in the gate special-cases a key for being
+    namespaced like the harness: if a future feature ever stores a hook group
+    under a new top-level key, it must be refused the same way."""
+    existing = json.dumps(
+        {
+            "hooks": {},
+            "lh_debug_last_hook_group": {
+                "matcher": "",
+                "hooks": [{"type": "command", "command": "lh hook context-inject --profile p"}],
+            },
+        }
+    )
+    desired = {"session_start": [HookEntry(command="lh hook context-inject --profile p")]}
+
+    with pytest.raises(SettingsShapeError) as excinfo:
+        ClaudeCodeAdapter().plan_config(desired, {}, {SETTINGS: existing}, binary="lh")
+
+    assert "$.lh_debug_last_hook_group" in str(excinfo.value)
+
+
+def test_claude_gate_does_not_run_when_the_plan_writes_nothing() -> None:
+    """`_plan_settings` returns `(None, None)` before the gate runs whenever
+    there is nothing to deploy — no desired hooks and nothing previously owned.
+    A foreign fatal key already on disk must not turn that no-op into a raise:
+    a file the plan never writes is a file the gate has no business judging."""
+    existing = json.dumps(
+        {
+            "hooks": {},
+            "herdr_integration": {
+                "installed": [
+                    {"matcher": "", "hooks": [{"type": "command", "command": "herdr hook"}]}
+                ]
+            },
+        }
+    )
+
+    ops = ClaudeCodeAdapter().plan_config({}, {}, {SETTINGS: existing}, binary="lh")
+
+    assert _op_for(ops, SETTINGS) is None

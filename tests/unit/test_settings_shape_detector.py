@@ -2,7 +2,7 @@
 top-level key that Claude Code 2.1.278's own validator treats as a fatal hook
 declaration, three levels deep.
 
-`_settings_shape_detector` is a faithful port of the shipped binary's
+`_settings_shape` is a faithful port of the shipped binary's
 `gf`/`uW`/`rue`/`r7`/`zs` — this is what actually classifies a settings.json as
 safe, not a description of the bug. A detector that can only ever return
 "clean" is worthless, so the known-bad cases below are load-bearing: they are
@@ -16,8 +16,7 @@ import json
 from pathlib import Path
 
 from lazy_harness import __version__
-
-from ._settings_shape_detector import fatal_hook_shape
+from lazy_harness.agents._settings_shape import fatal_hook_shape
 
 GOLDENS = Path(__file__).parent.parent / "goldens" / "config-deploy"
 
