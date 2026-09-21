@@ -108,6 +108,32 @@ A qmd template that passed every check in the suite indexed zero documents on Li
 
 For a gate script the rule runs in both directions: a `set -e` interaction once made a checker evaluate 1 of 11 views and exit 0 — it needed a case it must fail, not only a case it must pass.
 
+On 2026-09-20 both Claude profiles ran for about nine hours with `settings.json`
+discarded *whole* — no hooks, no permissions, no `env` — and nothing anywhere
+reported it. The deploy that did it exited 0.
+
+The cause was a top-level `lh_hook_ownership` key whose own value is hook-group
+shaped three levels down: a ledger entry is `{"matcher": ..., "hooks": [...]}` by
+construction. Claude Code 2.1.278 scans every unrecognised top-level key to that
+depth and rejects the entire file on one match. Every check that existed passed,
+because every check was ours: the JSON was valid, the goldens matched, the suite
+was green, and reading the file back showed exactly the bytes intended. What no
+check did was ask the consumer, so [ADR-063](adrs/063-hook-ownership-ledger-sidecar-and-identity.md)
+decompiled the consumer's own detector out of the shipped binary and asserted the
+goldens against it.
+
+That fixed the goldens and not the machines. The dangerous document is not one
+this repo authors — it is the *merge* of a generated block with whatever a
+particular profile already had, and no fixture enumerates that. So the detector
+moved onto the shipping path
+([ADR-064](adrs/064-planned-config-is-validated-by-the-agents-own-detector.md)),
+and it runs on the document about to be written rather than the one read. Both
+directions of that choice were load-bearing: an input that passes says nothing
+about an output the merge assembled from it, and an input that *fails* may be one
+the merge repairs — a profile still carrying the embedded ledger has a fatal input
+that `_plan_settings` fixes by popping the key, so gating the input would have
+refused exactly the profiles the fix existed for.
+
 ## A scheduled job is verified by running it through its scheduler
 
 The metrics sink reported inactive for 96 consecutive launchd runs while the identical command worked fine from a terminal. Code inspection plus a file-existence check caught none of it.
@@ -211,3 +237,46 @@ undone at *fixture teardown*, not at the end of the block: the replacement for
 `Popen.communicate` stayed live for the rest of the test and swallowed the ingest's call to
 `gh`, which surfaced as an agent that had "exited 4". A patch this broad is scoped with
 `pytest.MonkeyPatch.context()`.
+
+## A digest or a stat identifies a path's contents, never which file the path is
+
+A deployed `settings.json` is a symlink from the profile's runtime directory into
+the repo layer, and the deploy writes *through* it. That is the ownership
+contract, not an accident: `ADR-009`'s Evolution note says so in as many words —
+"the deploy planner opens the runtime path and intentionally writes through that
+link" — and it landed on 2026-09-19, the day before this.
+
+The verification that failed on 2026-09-20 guaranteed no duplicate hook entries
+by hashing that path. The hash was honest about the file it read and silent about
+which file that was. `Path.read_text`, `Path.stat` and every digest built on them
+follow the link, so the reading describes whichever file the link resolves to at
+that instant — and carries no evidence that the path is still a link at all. An
+`os.replace()` in an emergency patch turned it back into a regular file, the two
+layers then held different lineages of the same hooks block for about eight hours,
+and the merge that re-joined them produced the duplicate the hash had been taken
+to rule out. *(The layer divergence and the patch are the operator's account of
+the day; what is checked in this tree is that `deploy/engine.py::_apply` writes
+with `path.write_text` and so preserves the link, while
+`core/config.py::atomic_write_text` ends in `os.replace` and so does not.)*
+
+The gate is cheap because the shape is already solved twice in this repo.
+`deploy/skills.py::_fingerprint` digests `os.readlink(path)` under an `L` marker
+when the entry is a link and the bytes only otherwise;
+`deploy/snapshot.py::_entry_for` records `kind: "symlink"` plus its target instead
+of copying content. Both branch on the link *before* looking at the file. The
+config-target path does not: `deploy/engine.py::_stamp` calls `path.is_file()` and
+`path.stat()`, both of which follow the link, so its concurrency pair describes
+the target and catches a swapped link only incidentally, when `st_mtime_ns`
+happens to move.
+
+**The same day, the same question was answered wrong from the other side.** A
+correct observation — that `settings.json` had stopped being a symlink — was
+refuted with three true facts: `deploy/symlinks.py` never names `settings.json`,
+chezmoi reports the file `not managed`, and `deploy_config` writes into
+`config_dir`. All three hold. None of them is the write path. `ensure_symlink` is
+name-agnostic and takes whatever the plan hands it, the link is created in
+`deploy/engine.py`, and writing *through* a symlink into `config_dir` is still
+writing into `config_dir` — the third fact is compatible with both answers, which
+is what made it feel like evidence. Every one of the three was a name being read;
+the one command that would have settled it is the check this gate asks for, and
+the answer was also already written down in an ADR in this repo, one day old.
