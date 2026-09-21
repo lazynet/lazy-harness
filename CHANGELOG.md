@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.76.5](https://github.com/lazynet/lazy-harness/compare/v0.76.4...v0.76.5) (2026-09-21)
+
+
+### Bug Fixes
+
+* claim hook ownership by identity instead of ledger position ([#423](https://github.com/lazynet/lazy-harness/issues/423)) ([9d4cfed](https://github.com/lazynet/lazy-harness/commit/9d4cfed856ada8a2aacdfd270ff1a36eefd5e7b9))
+* refuse settings.json writes shaped fatal to claude code ([#422](https://github.com/lazynet/lazy-harness/issues/422)) ([cd583dc](https://github.com/lazynet/lazy-harness/commit/cd583dc5f4e8d2b37fe804494ff6a78580de6e83))
+
 ## [0.76.4](https://github.com/lazynet/lazy-harness/compare/v0.76.3...v0.76.4) (2026-09-20)
 
 
