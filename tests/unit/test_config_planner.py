@@ -602,6 +602,190 @@ def test_claude_settings_json_ledger_migrates_to_the_sidecar_once() -> None:
     }
 
 
+# --- ownership by identity, not position ----------------------------------
+
+
+def test_claude_foreign_entry_inserted_before_ours_does_not_duplicate_the_block() -> None:
+    """An external tool that inserts an entry earlier in the same event's list
+    shifts every index after it. The ledger's recorded index still points at
+    the old position, which now holds the foreign entry, not ours — claiming
+    must fall back to scanning by identity instead of giving up."""
+    managed_group = {
+        "matcher": "",
+        "hooks": [{"type": "command", "command": "lh hook context-inject --profile p"}],
+    }
+    foreign = {"matcher": "", "hooks": [{"type": "command", "command": "other-tool session"}]}
+    envelope = {
+        "version": 1,
+        "managed": [{"event": "SessionStart", "index": 0, "group": managed_group}],
+    }
+    shifted = json.dumps({"hooks": {"SessionStart": [foreign, managed_group]}})
+    desired = {"session_start": [HookEntry(command="lh hook context-inject --profile p")]}
+
+    ops = ClaudeCodeAdapter().plan_config(
+        desired, {}, {SETTINGS: shifted, OWNERSHIP: json.dumps(envelope)}, binary="lh"
+    )
+
+    op = _op_for(ops, SETTINGS)
+    assert op is not None and op.artifact is not None
+    entries = json.loads(op.artifact.content)["hooks"]["SessionStart"]
+    assert entries == [managed_group, foreign]
+
+
+def test_claude_foreign_entry_deleted_from_before_ours_does_not_duplicate_the_block() -> None:
+    """The same shift in the other direction: deleting an earlier foreign entry
+    pulls ours down an index. The recorded index (1) is now out of range for a
+    one-entry list, which used to mean "not owned" and therefore duplicated."""
+    managed_group = {
+        "matcher": "",
+        "hooks": [{"type": "command", "command": "lh hook context-inject --profile p"}],
+    }
+    envelope = {
+        "version": 1,
+        "managed": [{"event": "SessionStart", "index": 1, "group": managed_group}],
+    }
+    shifted = json.dumps({"hooks": {"SessionStart": [managed_group]}})
+    desired = {"session_start": [HookEntry(command="lh hook context-inject --profile p")]}
+
+    ops = ClaudeCodeAdapter().plan_config(
+        desired, {}, {SETTINGS: shifted, OWNERSHIP: json.dumps(envelope)}, binary="lh"
+    )
+
+    op = _op_for(ops, SETTINGS)
+    assert op is not None and op.artifact is not None
+    assert json.loads(op.artifact.content)["hooks"]["SessionStart"] == [managed_group]
+
+
+def test_claude_entry_edited_outside_identity_is_still_claimed() -> None:
+    """A foreign edit to a field the identity does not cover — a `timeout`, say
+    — is still our entry: the harness regenerates it anyway, so exact byte
+    equality against the recorded group would only cause a spurious duplicate."""
+    managed_group = {
+        "matcher": "",
+        "hooks": [{"type": "command", "command": "lh hook context-inject --profile p"}],
+    }
+    edited = {
+        "matcher": "",
+        "hooks": [
+            {"type": "command", "command": "lh hook context-inject --profile p", "timeout": 30}
+        ],
+    }
+    envelope = {
+        "version": 1,
+        "managed": [{"event": "SessionStart", "index": 0, "group": managed_group}],
+    }
+    existing = json.dumps({"hooks": {"SessionStart": [edited]}})
+    desired = {"session_start": [HookEntry(command="lh hook context-inject --profile p")]}
+
+    ops = ClaudeCodeAdapter().plan_config(
+        desired, {}, {SETTINGS: existing, OWNERSHIP: json.dumps(envelope)}, binary="lh"
+    )
+
+    op = _op_for(ops, SETTINGS)
+    assert op is not None and op.artifact is not None
+    assert json.loads(op.artifact.content)["hooks"]["SessionStart"] == [managed_group]
+
+
+def test_claude_duplicate_identity_with_one_ledger_record_claims_exactly_one() -> None:
+    """Two entries share an identity but only one ledger record exists: the scan
+    must claim exactly one of them, leaving the other as a genuine foreign
+    duplicate rather than adopting both or neither."""
+    managed_group = {
+        "matcher": "",
+        "hooks": [{"type": "command", "command": "lh hook context-inject --profile p"}],
+    }
+    envelope = {
+        "version": 1,
+        "managed": [{"event": "SessionStart", "index": 0, "group": managed_group}],
+    }
+    existing = json.dumps({"hooks": {"SessionStart": [managed_group, managed_group]}})
+    desired = {"session_start": [HookEntry(command="lh hook context-inject --profile p")]}
+
+    ops = ClaudeCodeAdapter().plan_config(
+        desired, {}, {SETTINGS: existing, OWNERSHIP: json.dumps(envelope)}, binary="lh"
+    )
+
+    op = _op_for(ops, SETTINGS)
+    assert op is not None and op.artifact is not None
+    assert json.loads(op.artifact.content)["hooks"]["SessionStart"] == [
+        managed_group,
+        managed_group,
+    ]
+
+
+def test_claude_malformed_ledger_group_claims_nothing_without_crashing() -> None:
+    """A ledger record whose stored group has no computable identity (here, a
+    non-string matcher) must not crash the merge — it simply claims nothing,
+    and the entry it describes is carried through like any other foreign one.
+
+    Desired hooks must be non-empty here: with nothing desired and nothing
+    claimed there is genuinely no work, and `plan_config` leaves the file
+    untouched rather than rewriting it — a different, already-covered case."""
+    malformed_group = {
+        "matcher": [],
+        "hooks": [{"type": "command", "command": "other-tool session"}],
+    }
+    envelope = {
+        "version": 1,
+        "managed": [{"event": "SessionStart", "index": 0, "group": malformed_group}],
+    }
+    existing = json.dumps({"hooks": {"SessionStart": [malformed_group]}})
+    desired = {"session_start": [HookEntry(command="lh hook context-inject --profile p")]}
+
+    ops = ClaudeCodeAdapter().plan_config(
+        desired, {}, {SETTINGS: existing, OWNERSHIP: json.dumps(envelope)}, binary="lh"
+    )
+
+    op = _op_for(ops, SETTINGS)
+    assert op is not None and op.artifact is not None
+    entries = json.loads(op.artifact.content)["hooks"]["SessionStart"]
+    assert len(entries) == 2
+    preserved = entries[-1]
+    assert preserved["hooks"] == malformed_group["hooks"]
+    assert preserved["matcher"] == ""
+
+
+def test_claude_shifted_lineages_redeploy_produces_no_duplicate() -> None:
+    """The regression that started this: `settings.json` and the ownership
+    ledger come from different lineages (a symlink restoration merged two
+    histories of the same block), so every recorded index points at a position
+    that has since shifted. A redeploy must not duplicate any managed group."""
+    desired = {
+        "session_start": [
+            HookEntry(command="lh hook context-inject --profile p"),
+            HookEntry(command="lh hook session-start-preflight --profile p"),
+        ]
+    }
+    canonical = ClaudeCodeAdapter().plan_config(desired, {}, {}, binary="lh")
+    canonical_op = _op_for(canonical, SETTINGS)
+    assert canonical_op is not None and canonical_op.artifact is not None
+    group_1, group_2 = json.loads(canonical_op.artifact.content)["hooks"]["SessionStart"]
+
+    foreign_a = {"matcher": "", "hooks": [{"type": "command", "command": "other-tool a"}]}
+    foreign_b = {"matcher": "", "hooks": [{"type": "command", "command": "other-tool b"}]}
+    envelope = {
+        "version": 1,
+        "managed": [
+            {"event": "SessionStart", "index": 0, "group": group_1},
+            {"event": "SessionStart", "index": 1, "group": group_2},
+        ],
+    }
+    shifted = json.dumps({"hooks": {"SessionStart": [foreign_a, group_1, foreign_b, group_2]}})
+
+    ops = ClaudeCodeAdapter().plan_config(
+        desired, {}, {SETTINGS: shifted, OWNERSHIP: json.dumps(envelope)}, binary="lh"
+    )
+
+    op = _op_for(ops, SETTINGS)
+    assert op is not None and op.artifact is not None
+    assert json.loads(op.artifact.content)["hooks"]["SessionStart"] == [
+        group_1,
+        group_2,
+        foreign_a,
+        foreign_b,
+    ]
+
+
 def test_claude_preserves_prompt_only_and_mixed_foreign_groups() -> None:
     prompt = {"matcher": "", "hooks": [{"type": "prompt", "prompt": "review it"}]}
     mixed = {
