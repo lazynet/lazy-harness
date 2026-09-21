@@ -358,13 +358,29 @@ def _owned_hook_positions(
             for index, entry in enumerate(entries)
             if isinstance(entry, dict) and _group_is_exact_builtin(event, entry, binaries=binaries)
         }
-    return {
-        (event, index)
-        for (event, index), group in recorded.items()
-        if isinstance(existing.get(event), list)
-        and index < len(existing[event])
-        and existing[event][index] == group
-    }
+    owned: set[tuple[str, int]] = set()
+    for (event, hint), group in sorted(recorded.items()):
+        identity = _hook_group_identity(event, group)
+        if identity is None:
+            continue
+        entries = existing.get(event)
+        if not isinstance(entries, list):
+            continue
+        # `hint` is the last known position, not a guarantee: an external
+        # writer may have shifted every index after an insert or delete
+        # elsewhere in the same event's list, so it is checked first and
+        # otherwise falls back to a scan for the same identity.
+        candidates = [
+            index
+            for index, candidate in enumerate(entries)
+            if (event, index) not in owned
+            and isinstance(candidate, dict)
+            and _hook_group_identity(event, candidate) == identity
+        ]
+        if not candidates:
+            continue
+        owned.add((event, hint if hint in candidates else candidates[0]))
+    return owned
 
 
 def _owned_binaries(settings: dict, binary: str) -> set[str]:
