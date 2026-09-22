@@ -395,6 +395,13 @@ class TokenUsage:
     Every field is `int | None` for `HeadlessResult`'s reason: a provider that
     reported no cache field and a turn that cached nothing are different facts,
     and a 0 merges them into the second.
+
+    `input_tokens` is the input charged at **full rate**: tokens served from
+    cache are excluded from it and counted in `cache_read_tokens` (ADR-066).
+    The four counters are disjoint, because every priced path adds them after
+    multiplying each by its own rate. A provider that reports input inclusive
+    of its cache — OpenAI does, Anthropic does not — is normalised by its
+    adapter, not by the pricer: this field means one thing at the seam.
     """
 
     input_tokens: int | None = None

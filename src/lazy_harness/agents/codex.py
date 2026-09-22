@@ -375,6 +375,22 @@ def _turn_context_model(entry: dict) -> str | None:
     return model if isinstance(model, str) and model else None
 
 
+def _charged_input(usage: dict) -> int | None:
+    """The input Codex charged at full rate: its `input_tokens` less the cache.
+
+    A record that reported no input keeps `None` — the absent-counter
+    distinction `TokenUsage` exists to preserve — and one that reported input
+    without a cached figure is taken at face value.
+    """
+    reported = _as_int(usage.get("input_tokens"))
+    if reported is None:
+        return None
+    cached = _as_int(usage.get("cached_input_tokens"))
+    if cached is None:
+        return reported
+    return max(reported - cached, 0)
+
+
 def _rollout_timestamp(value: object) -> datetime | None:
     """The envelope's `timestamp`, or None for anything that is not one.
 
@@ -1559,6 +1575,16 @@ class CodexAdapter:
         and `total_tokens` have no field and are not folded into one, since a
         sum that silently includes reasoning is worse than an absent counter.
 
+        `input_tokens` is *inclusive* of the cached half here, where
+        `TokenUsage.input_tokens` is the input charged at full rate (ADR-066),
+        so the cached half is subtracted back out. Measured over 92 rollouts
+        and 5893 usage records: `total_tokens == input_tokens + output_tokens`
+        on every one, and `cached_input_tokens` never exceeded `input_tokens`.
+        Passing the provider's number through counted the cached tokens twice
+        — once at the input rate and once at the read rate — and overstated
+        fresh input 41x on the measured corpus. The clamp is for a record the
+        corpus never produced: a negative charged input is worse than a zero.
+
         `response_id` is the dedup key and `turn_id` is not: measured over 176
         records, `response_id` was a string on every one and unique across all
         15 rollouts, while those same 176 shared 21 `turn_id`s — deduping on the
@@ -1578,7 +1604,7 @@ class CodexAdapter:
             signal=Signal.TOKEN_USAGE,
             timestamp=when,
             usage=TokenUsage(
-                input_tokens=_as_int(usage.get("input_tokens")),
+                input_tokens=_charged_input(usage),
                 output_tokens=_as_int(usage.get("output_tokens")),
                 cache_read_tokens=_as_int(usage.get("cached_input_tokens")),
                 cache_creation_tokens=_as_int(usage.get("cache_write_input_tokens")),
