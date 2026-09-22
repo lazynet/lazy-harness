@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.76.10](https://github.com/lazynet/lazy-harness/compare/v0.76.9...v0.76.10) (2026-09-22)
+
+
+### Bug Fixes
+
+* carry a displaced config target into the deploy merge ([#437](https://github.com/lazynet/lazy-harness/issues/437)) ([e69d99d](https://github.com/lazynet/lazy-harness/commit/e69d99d7e9a40a8eea95d964a0237df25d4d259b))
+
+
+### Documentation
+
+* **backlog:** record lh deploy silently removing moshi's hooks ([9bc6cb2](https://github.com/lazynet/lazy-harness/commit/9bc6cb25c0fc63707f49e5cd64ab59db84f2d316))
+
 ## [0.76.9](https://github.com/lazynet/lazy-harness/compare/v0.76.8...v0.76.9) (2026-09-22)
 
 
