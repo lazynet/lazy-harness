@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -3045,14 +3046,23 @@ def _good_response(**overrides: Any) -> str:
 
 
 def _run_project_state_task(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, response: str, lazymind: Path | None
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    response: str,
+    lazymind: Path | None,
+    task: Path | None = None,
 ) -> Any:
     from lazy_harness.knowledge.compound_loop import process_task
 
-    session = _interactive_session(tmp_path)
-    task = create_task(
-        tmp_path / "queue", Path("/tmp/lazy-harness"), session, "abcd1234-deadbeef", tmp_path / "m"
-    )
+    if task is None:
+        session = _interactive_session(tmp_path)
+        task = create_task(
+            tmp_path / "queue",
+            Path("/tmp/lazy-harness"),
+            session,
+            "abcd1234-deadbeef",
+            tmp_path / "m",
+        )
     cfg = Config(
         compound_loop=CompoundLoopConfig(
             enabled=True,
@@ -3088,10 +3098,21 @@ def test_process_task_second_identical_run_is_byte_identical(
 ) -> None:
     lazymind = _build_lazymind_with_frontmatter(tmp_path, ["LazyHarness"])
     prj = _prj_with_section(lazymind, "LazyHarness")
-    _run_project_state_task(tmp_path, monkeypatch, _good_response(), lazymind)
+    # One task, processed twice. The provenance marker carries the task's
+    # creation time to the second, so a fresh task per run rewrites the PRJ
+    # whenever the two creations straddle a second boundary.
+    task = create_task(
+        tmp_path / "queue",
+        Path("/tmp/lazy-harness"),
+        _interactive_session(tmp_path),
+        "abcd1234-deadbeef",
+        tmp_path / "m",
+    )
+    _run_project_state_task(tmp_path, monkeypatch, _good_response(), lazymind, task)
     first = prj.read_bytes()
+    time.sleep(1.1)
 
-    outcome = _run_project_state_task(tmp_path, monkeypatch, _good_response(), lazymind)
+    outcome = _run_project_state_task(tmp_path, monkeypatch, _good_response(), lazymind, task)
 
     assert outcome.was_processed
     assert "project: PRJ-LazyHarness.md" not in outcome.wrote
