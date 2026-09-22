@@ -57,8 +57,13 @@ def _record_calls(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
     seen: dict[str, object] = {}
 
     def recorder(step: str):
-        def _call(cfg, *, only=None) -> None:
+        # `**_` absorbs the hand-off between steps: `deploy_profiles` returns the
+        # config targets it displaced and `deploy_config` takes them. What this
+        # helper pins is which steps run and how they are narrowed, so the empty
+        # mapping stands in for both halves of that.
+        def _call(cfg, *, only=None, **_) -> dict:
             seen[step] = only
+            return {}
 
         return _call
 
@@ -118,7 +123,7 @@ def test_sync_runs_before_profiles_are_deployed(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(
         deploy_cmd, "deploy_profiles", lambda cfg, *, only=None: calls.append("profiles")
     )
-    monkeypatch.setattr(deploy_cmd, "deploy_config", lambda cfg, *, only=None: None)
+    monkeypatch.setattr(deploy_cmd, "deploy_config", lambda cfg, *, only=None, displaced=None: None)
     monkeypatch.setattr(deploy_cmd, "deploy_claude_symlink", lambda cfg, *, only=None: None)
 
     deploy_cmd._run_deploy(Config())
@@ -174,7 +179,7 @@ def test_deploy_sync_restamps_the_assembled_document(
         "deploy_profiles",
         lambda cfg, *, only=None: seen.append((profile / "CLAUDE.md").read_text()),
     )
-    monkeypatch.setattr(deploy_cmd, "deploy_config", lambda cfg, *, only=None: None)
+    monkeypatch.setattr(deploy_cmd, "deploy_config", lambda cfg, *, only=None, displaced=None: None)
     monkeypatch.setattr(deploy_cmd, "deploy_claude_symlink", lambda cfg, *, only=None: None)
 
     monkeypatch.setattr(sync_agent_md, "__version__", "1.0.0")

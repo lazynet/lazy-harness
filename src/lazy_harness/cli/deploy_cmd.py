@@ -83,14 +83,18 @@ def _run_deploy(cfg: Config, only: str | None = None) -> None:
     click.echo()
 
     click.echo("Deploying profiles:")
-    deploy_profiles(cfg, only=only)
+    # Restoring a link displaces whatever regular file sat in its place, so the
+    # profile half hands the config half the contents it took out of the way.
+    # Without that, the merge reads the freshly re-linked source and another
+    # tool's hooks are gone with no line in `preserved` or `dropped` to say so.
+    displaced = deploy_profiles(cfg, only=only)
     click.echo()
 
     # One step, not two: hooks and MCP servers are planned together so an
     # adapter whose documents overlap writes each of them once (decision 4,
     # 2026-09-13 multi-agent design).
     click.echo("Deploying agent config:")
-    deploy_config(cfg, only=only)
+    deploy_config(cfg, only=only, displaced=displaced)
     click.echo()
 
     click.echo("Setting up ~/.claude symlink:")

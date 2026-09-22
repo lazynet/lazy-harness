@@ -224,7 +224,7 @@ desde `:367-369` cuando el step 3 insertó los helpers de merge arriba de la cla
 
 ## Open — Prioridad ALTA
 
-### `lh deploy` borra los hooks de moshi sin reportarlo, y deja el approval bridge sin invocar
+### `lh deploy` borra los hooks de moshi sin reportarlo — mecanismo determinado, fix en el árbol, rollout al CT pendiente
 
 **Por qué:** moshi-hook es el approval bridge del CT `agents` — el único
 mecanismo que pide autorización antes de que un agente desatendido cruce un
@@ -233,42 +233,73 @@ dos profiles Claude, y no las nombra en ninguna de las dos listas que imprime.
 El servicio queda corriendo sin que nada lo invoque, que es la forma más cara de
 fallar: `systemctl is-active` sigue diciendo `active`.
 
-**Medido el 2026-09-22 sobre `lazy-agents`, tres reproducciones.** Antes del
-deploy, `grep -c moshi` da 10 en `~/.claude-lazy/settings.json` y 10 en
-`~/.claude-flex/settings.json`; después, 0 y 0. El ledger nunca las reclama
-—`grep -c moshi lh-hook-ownership.json` da 0 en todos los estados—, así que no
-es el camino de ownership. Y deploy **sí** preserva otras entries foreign, y las
-lista por nombre: «lazy/settings.json: preserved 3 entries not managed by the
-harness» seguido de `SessionStart sh -c 'h=~/.claude-lazy/hooks/herdr-agent-state.sh…`,
-`PreToolUse graphify hook-guard search` y `PreToolUse graphify hook-guard read`.
-Las de moshi no aparecen ahí ni en `dropped`.
+**El mecanismo, medido el 2026-09-22 y reproducido entero en local.** No era
+`_merge_hook_blocks`, que es donde la revisión anterior de esta entrada mandaba a
+escribir el test. Son tres pasos:
 
-**Dos hipótesis descartadas, las dos por medición.** No es el evento: el
-`SessionStart` de herdr sobrevive al mismo deploy que mata el `SessionStart` de
-moshi. No es `matcher: null`: `agents/claude_code.py:268` existe exactamente para
-esa forma —su docstring dice «an installer writing `null` for "no matcher" makes
-Claude Code reject the entire settings file»— y la repara a `""` antes de
-preservar. El mecanismo real **no está determinado**.
+1. `deploy_profiles` linkea `settings.json` al source del profile
+   (`~/.claude-lazy/settings.json -> ~/.config/lazy-harness/profiles/lazy/claude-code/settings.json`).
+2. `moshi-hook install --target claude` escribe **atómico** —temp file más
+   `os.replace`, que es la forma correcta de no dejar un JSON a medio escribir—,
+   y un rename sobre el target **reemplaza el link** en vez de escribir a través
+   de él. Medido: después del install, el config dir tiene un archivo regular con
+   las diez entries y el source sigue en cero.
+3. El `lh deploy` siguiente corre `deploy_profiles` **antes** que `deploy_config`
+   (`cli/deploy_cmd.py:73`). `ensure_symlink` ve un archivo regular, lo renombra a
+   `settings.json.bak`, rehace el link y devuelve `"created"` — que se imprimía
+   como un `✓ lazy/settings.json` cualquiera. `deploy_config` lee entonces el link
+   → el source, que nunca tuvo las entries, y por eso no caen ni en `preserved` ni
+   en `dropped`.
 
-**La forma que hay que reproducir.** `moshi-hook install --target claude` escribe
-diez entries, todas con comando `'<home>/.local/bin/moshi-hook' claude-hook`, en:
-`Notification` (matcher `permission_prompt`), `PermissionRequest` (sin matcher),
-`PostToolUse` ×2 (`AskUserQuestion`, `ExitPlanMode`), `PreToolUse` ×2 (los
-mismos matchers), `SessionEnd`, `SessionStart`, `Stop` y `UserPromptSubmit` (los
-cuatro sin matcher). Tres de esos eventos —`Notification`, `PermissionRequest` y
-`Stop`— no aparecen entre los que preservan herdr y graphify, que es el único eje
-que las mediciones todavía no separaron.
+**Las dos hipótesis de la revisión anterior quedan descartadas, y una tercera
+explicación aparece.** `_merge_hook_blocks` está bien: se le pasó la forma exacta
+de las diez entries a `_plan_settings` y devolvió las diez en `preserved`, cinco
+con la reparación `matcher: null -> ""`. Y herdr y graphify no sobreviven por ser
+foreign: están declarados `external` en `config.toml` (`[hooks.session_start]` y
+`[hooks.pre_tool_use]`), así que el harness los **regenera** en cada deploy. El
+renglón «preserved 3 entries» era el carry-through de external identity, no
+preservación genuina — por eso el eje evento/matcher nunca separaba nada.
 
-**Acción:** test primero, con la forma de arriba como fixture, contra
-`_merge_hook_blocks`. La pregunta que el test tiene que contestar es por qué una
-entry foreign no cae ni en `preserved` ni en `dropped`, porque hoy desaparece sin
-diagnóstico y eso vale por sí solo aunque el borrado resulte ser correcto.
-Mitigación vigente: ningún job programado corre `lh deploy` en el CT —verificado
-contra `~/.config/systemd/user/*.service` y `/usr/local/bin/lazy-harness-update.sh`—,
-así que el bridge queda arriba hasta que alguien lo corra a mano. Si se corre,
-`moshi-hook install --target claude` lo repone en el profile por defecto y
-`CLAUDE_CONFIG_DIR=~/.claude-flex moshi-hook install --target claude` en el otro.
-Prioridad ALTA: es un control de seguridad que se apaga solo y sin aviso.
+**Evidencia independiente en el Mac:** `~/.claude-lazy/settings.json.bak` y
+`~/.claude-flex/settings.json.bak` existen los dos con `grep -c moshi` = 10, con
+fecha minutos antes de que se crearan los symlinks (20 Sep 20:26 y 20:22 contra
+20:35).
+
+**Lo que ya está hecho, en el árbol y verde.** Primero el test
+(`tests/integration/test_deploy_displaced_symlink.py`, cuatro casos), rojo por la
+razón correcta antes del fix: neutralizando el hand-off, tres de los cuatro
+fallan. Después las dos mitades del arreglo:
+
+- `ensure_symlink` distingue `"replaced"` de `"created"` y `deploy_profiles`
+  imprime un `⚠` nombrando el `.bak` y la causa. Desplazar un archivo con
+  contenido y crear un link en un hueco vacío dejan de ser la misma noticia.
+- `deploy_profiles` devuelve, por profile, el contenido de cada **config target**
+  que tuvo que desplazar —leído antes de que el rename se lo lleve— y
+  `deploy_config` lo toma como `existing` para ese target. Así el documento que
+  llega al merge es el que tenía las entries. Se pasa explícito y no se
+  redescubre del `.bak` en disco, porque `.bak` es también lo que escribe una
+  reparación y un backup viejo no puede confundirse con el de esta corrida.
+
+`/tdd-check` pristino: 5289 passed, ruff check y format limpios,
+`mkdocs build --strict` en 0.
+
+**Lo que falta, y por qué la entrada sigue ALTA.** El fix no está mergeado ni
+releaseado ni desplegado en `lazy-agents`, que es donde el bridge corre. Cerrar
+esto pide: release, `lazy-harness-update.sh` en el CT, `moshi-hook install
+--target claude` para reponer las diez entries en el profile por defecto y
+`CLAUDE_CONFIG_DIR=~/.claude-flex moshi-hook install --target claude` en el otro,
+y después un `lh deploy` que las deje en 10 y las nombre en `preserved`.
+Mitigación vigente hasta entonces: ningún job programado corre `lh deploy` en el
+CT —verificado contra `~/.config/systemd/user/*.service` y
+`/usr/local/bin/lazy-harness-update.sh`—, así que el bridge queda arriba hasta que
+alguien lo corra a mano.
+
+**Residual, fuera del alcance de este fix.** El mismo desplazamiento silencioso
+sigue vivo en los otros dos call sites de `ensure_symlink` —el skill root
+(`deploy/skills.py:267`) y el symlink `~/.claude` (`deploy/engine.py:743`)—, que
+tratan `"replaced"` como éxito. Ahí no hay contenido que cargar hacia adelante
+porque no son config targets, pero la línea que imprimen sigue siendo un `✓`
+sobre un archivo que se movió.
 
 ---
 

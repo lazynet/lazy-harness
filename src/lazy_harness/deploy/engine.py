@@ -25,7 +25,7 @@ from lazy_harness.deploy.skills import (
     apply_skill_projections,
     plan_skill_projections,
 )
-from lazy_harness.deploy.symlinks import ensure_symlink
+from lazy_harness.deploy.symlinks import REPLACED, backup_path, ensure_symlink
 from lazy_harness.hooks.loader import HookInfo
 from lazy_harness.hooks.signal_gaps import HookSignalGap
 
@@ -234,7 +234,7 @@ def _clear_linked_parents(target_dir: Path, relative: Path) -> None:
         current.mkdir(parents=True, exist_ok=True)
 
 
-def deploy_profiles(cfg: Config, *, only: str | None = None) -> None:
+def deploy_profiles(cfg: Config, *, only: str | None = None) -> dict[str, dict[Path, str]]:
     """Deploy profile content as symlinks to agent config dirs.
 
     `only` narrows the loop to one profile; `None` is every profile, which is
@@ -244,15 +244,23 @@ def deploy_profiles(cfg: Config, *, only: str | None = None) -> None:
     `shared/` and the profile agent's own directory, plus the root entries of a
     profile that never migrated. A profile with neither segment deploys exactly
     as it did before segments existed.
+
+    Returns, per profile, the contents of every *config target* this call had to
+    displace to put a link back — read before the link is made, because the file
+    is renamed out from under the path a moment later. `deploy_config` runs
+    second in one `lh deploy` and takes this as its `existing` for those targets:
+    without it, the half of the deploy that knows how to preserve another tool's
+    hooks reads the source this call just re-linked and never sees them.
     """
     profiles_src = config_dir() / "profiles"
     if not profiles_src.is_dir():
         click.echo("No profiles directory found. Run: lh init")
-        return
+        return {}
 
     selected = selected_profiles(cfg, only)
     agent_names = list_agents()
     adapters = {name: agent_for_profile(cfg, name) for name in selected}
+    displaced: dict[str, dict[Path, str]] = {}
     profile_plans = {}
     for name in selected:
         src_dir = profiles_src / name
@@ -308,11 +316,36 @@ def deploy_profiles(cfg: Config, *, only: str | None = None) -> None:
                 f"{_segment_label(collision.shadowed, src_dir)}"
             )
 
+        # An adapter that cannot plan its own config is not refused here — that
+        # is `deploy_config`'s call, made once for every selected profile before
+        # it writes anything. It just has no targets worth carrying forward.
+        adapter = adapters[name]
+        config_targets = (
+            set(adapter.config_targets()) if isinstance(adapter, ConfigPlanner) else set()
+        )
         for link in links:
             _clear_linked_parents(target_dir, link.relative)
-            status = ensure_symlink(link.source, target_dir / link.relative)
+            target = target_dir / link.relative
+            # Read before the link is made: `ensure_symlink` renames the file
+            # out from under this path, and only the caller knows the contents
+            # are worth carrying into the rest of the deploy.
+            carried = (
+                target.read_text()
+                if link.relative in config_targets and target.is_file() and not target.is_symlink()
+                else None
+            )
+            status = ensure_symlink(link.source, target)
             if status == "exists":
                 click.echo(f"  · {name}/{link.relative} (already linked)")
+            elif status == REPLACED:
+                if carried is not None:
+                    displaced.setdefault(name, {})[link.relative] = carried
+                click.echo(
+                    f"  ⚠  {name}/{link.relative}: displaced a regular file to "
+                    f"{backup_path(target).name} to restore the link — a writer that "
+                    f"replaces this path (temp file plus rename) breaks it instead of "
+                    f"writing through it."
+                )
             else:
                 click.echo(f"  ✓ {name}/{link.relative}")
 
@@ -324,6 +357,8 @@ def deploy_profiles(cfg: Config, *, only: str | None = None) -> None:
         )
     for line in apply_skill_projections(skill_plan, profiles_src):
         click.echo(line)
+
+    return displaced
 
 
 def _plural(count: int, singular: str, plural: str) -> str:
@@ -585,7 +620,12 @@ def _print_retrust_instruction(op: WriteOp, label: str) -> None:
     click.echo(f"      trust stale: {TRUST_STALE_VERDICT}")
 
 
-def deploy_config(cfg: Config, *, only: str | None = None) -> None:
+def deploy_config(
+    cfg: Config,
+    *,
+    only: str | None = None,
+    displaced: dict[str, dict[Path, str]] | None = None,
+) -> None:
     """Deploy every profile's native config documents: discover, read, plan, apply.
 
     The cycle decision 4 of the 2026-09-13 multi-agent design prescribes. The
@@ -597,6 +637,16 @@ def deploy_config(cfg: Config, *, only: str | None = None) -> None:
 
     `only` narrows it to one profile through `selected_profiles`, exactly as the
     other deploy steps are narrowed.
+
+    `displaced` is what `deploy_profiles` moved aside earlier in the same
+    `lh deploy`, and it *replaces* the read of those targets. It has to: the
+    target now resolves through a link to the profile source, and the entries
+    another tool wrote are in the file that was renamed away. Reading the link
+    instead is how ten hook entries of an approval bridge disappeared from both
+    Claude profiles without landing in `preserved` or in `dropped` — the merge
+    was correct and was handed the wrong document. Passed in rather than
+    rediscovered from the `.bak` on disk, because a `.bak` is also what a repair
+    writes, and an old one must never be mistaken for this run's.
     """
     profiles = selected_profiles(cfg, only)
     # Resolved for every selected profile before the first write: an adapter that
@@ -611,6 +661,7 @@ def deploy_config(cfg: Config, *, only: str | None = None) -> None:
         binary = binary_for_profile(cfg, name)
 
         existing, stamps = _read_targets(planner, target_dir)
+        existing.update((displaced or {}).get(name, {}))
 
         ops = planner.plan_config(
             _hook_entries_for(cfg, name, binary), servers, existing, binary=binary
