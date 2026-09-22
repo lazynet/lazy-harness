@@ -20,6 +20,8 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 
 Este ledger se escribe en español. Las entradas se appendean en el orden en que se cierran y se agrupan por su marcador «entra en X.Y.Z»: ese marcador es lo que dice a qué release pertenece una entrada, no su posición en el archivo. No hay orden garantizado entre bloques de release, así que para leer una release hay que grepear el marcador, no confiar en la secuencia.
 
+- [x] **`lh deploy` dejó de desinstalar en silencio los hooks de otra herramienta, y el approval bridge del CT quedó repuesto** — la entrada abierta mandaba a escribir el test contra `_merge_hook_blocks`, y ahí no estaba: se le pasó la forma exacta de las diez entries de moshi-hook a `_plan_settings` y devolvió las diez en `preserved`, cinco con la reparación `matcher: null -> ""`. El mecanismo real son tres pasos. `deploy_profiles` linkea `settings.json` al source del profile; `moshi-hook install --target claude` escribe **atómico** —temp file más `os.replace`, que es la forma correcta de no dejar un JSON a medio escribir—, y un rename sobre el target **reemplaza el link** en vez de escribir a través de él; el `lh deploy` siguiente corre `deploy_profiles` **antes** que `deploy_config`, así que `ensure_symlink` ve un archivo regular, lo renombra a `.bak`, rehace el link y devuelve `"created"` —impreso como un `✓` cualquiera— y el merge lee entonces el source recién re-linkeado, que nunca tuvo las entries. Por eso no caían ni en `preserved` ni en `dropped`: el merge era correcto y recibía el documento equivocado. Y herdr/graphify no sobrevivían por ser foreign — están declarados `external` en `config.toml`, así que el harness los regenera en cada corrida; el renglón «preserved 3 entries» era carry-through de external identity, y por eso el eje evento/matcher nunca separaba nada. **El fix son dos mitades.** `ensure_symlink` distingue `"replaced"` de `"created"` y exporta `backup_path()`; `deploy_profiles` imprime un `⚠` nombrando el `.bak` y la causa, porque desplazar un archivo con contenido y crear un link en un hueco vacío no son la misma noticia. Y `deploy_profiles` devuelve, por profile, el contenido de cada **config target** que tuvo que desplazar —leído antes de que el rename se lo lleve— que `deploy_config` toma como `existing` para ese target. Se pasa explícito y no se redescubre del `.bak` en disco, porque `.bak` es también lo que escribe una reparación (`_apply`) y un backup viejo no puede confundirse con el de esta corrida. Test primero (`tests/integration/test_deploy_displaced_symlink.py`, cuatro casos), rojo por la razón correcta: neutralizando sólo el `existing.update`, tres de los cuatro fallan. **Verificado en producción sobre `lazy-agents` el 2026-09-22**, que estaba exactamente en el estado que reproduce el bug —los dos `settings.json` archivos regulares con las diez entries, los dos sources en cero—: tras actualizar a 0.76.10, `lh deploy` imprimió el `⚠ displaced a regular file` en los dos profiles, `preserved 13 entries` (las diez de moshi más las tres externals) con las diez nombradas una por una, y `repaired 5`. Estado final medido: link restaurado, `grep -c moshi` da 10 tanto en el destino como en el **source**, los nueve eventos completos, JSON válido en los dos, y `moshi-hook.service` `active running`. Un segundo `lh deploy` corrió idempotente —`already linked`, sin desplazamiento, sin reparación, sigue en 10—, que es la corrida donde antes se perdían. `/tdd-check` pristino: 5289 passed, ruff check y format limpios, `mkdocs build --strict` en 0. PR #437, mergeado el 2026-09-22; entra en 0.76.10.
+
 - [x] **El ledger de ownership de hooks se muda a un sidecar porque su propia forma mataba el `settings.json` entero** — la key top-level `lh_hook_ownership` es ella misma hook-group shaped tres niveles abajo: `managed[i].group` lleva `matcher` y `hooks`, que es exactamente lo que el validador de Claude Code 2.1.278 busca escaneando cada key top-level, y por lo que descarta el **archivo completo**. Los dos profiles Claude quedaron unas nueve horas sin hooks, sin permissions y sin env, y `lh deploy` salió 0 en cada corrida — el deploy escribía el archivo que mataba al agente y reportaba éxito. El ledger pasa a `lh-hook-ownership.json` al lado del `settings.json`; `_HOOK_OWNERSHIP_KEY` sobrevive sólo para reconocer y sacar un ledger que un deploy pre-fix dejó embebido, leído una vez y nunca reescrito, y el tri-estado (sin ledger / ledger malformado / posiciones registradas) se conserva a través de la mudanza. En la misma pasada se portó el detector del binario shippeado (`gf`→`uW`→`rue`→`r7`) a la suite como gate de regresión: todo `settings.json` que el harness genera, goldens incluidos, se asevera limpio contra él. PR #421, mergeado el 2026-09-20; entra en 0.76.4.
 - [x] **El detector deja de ser sólo un gate de tests y se corre sobre el documento que `lh deploy` va a escribir** — el port de #421 aseveraba sobre los goldens, no sobre la salida real, así que un `settings.json` que llegara fatal por cualquier otra vía se seguía escribiendo. `fatal_hook_shape` se muda a `src/lazy_harness/agents/_settings_shape.py` y `_plan_settings` lo corre sobre el documento **final**, lanzando `SettingsShapeError` con el path JSON del ofensor. Dos decisiones explícitas, las dos anotadas en el código. Gatear la **salida** y no la entrada: un input que pasa no dice nada del output, y un profile que todavía arrastra el ledger viejo tiene un input fatal que ese mismo merge repara —el ledger legacy se popea antes—, así que gatear la entrada lo dejaría afuera justo cuando se lo está arreglando. Y **lanzar en vez de reparar**: reparar es borrar un documento que el harness no posee ni puede reconstruir, y negarse no pierde nada, porque un archivo que dispara el detector es un archivo que el agente ya está descartando entero. PR #422, mergeado el 2026-09-20; entra en 0.76.5.
 - [x] **El ownership de hooks se reclama por identidad y no por posición en el ledger** — `_owned_hook_positions` casaba `(event, index)` más igualdad byte a byte del grupo, así que un writer externo que insertara o borrara una entrada antes de la nuestra corría todos los índices y el harness perdía la propiedad de sus propios hooks, que es como un hook se duplica al redeployar. Ahora `_hook_group_identity` deriva la identidad de los campos nativos de la declaración —`matcher` más la tupla `(type, command)` de cada handler— y el índice registrado queda como **pista**: se chequea primero y, si no matchea, cae a un scan por identidad dentro de la lista de ese evento. Cierra dos deudas de una. La fragilidad por posición, y la de que el ledger y el `settings.json` vivan en capas distintas —el settings es symlink al layer del repo, el sidecar es archivo plano en el destino—: con el índice vuelto inerte, un índice viejo no hace daño y unificar las capas deja de hacer falta. PR #423, mergeado el 2026-09-20; entra en 0.76.5.
@@ -224,86 +226,57 @@ desde `:367-369` cuando el step 3 insertó los helpers de merge arriba de la cla
 
 ## Open — Prioridad ALTA
 
-### `lh deploy` borra los hooks de moshi sin reportarlo — mecanismo determinado, fix en el árbol, rollout al CT pendiente
+Ninguna.
 
-**Por qué:** moshi-hook es el approval bridge del CT `agents` — el único
-mecanismo que pide autorización antes de que un agente desatendido cruce un
-límite. `lh deploy` 0.76.9 elimina sus diez entries de `settings.json` en los
-dos profiles Claude, y no las nombra en ninguna de las dos listas que imprime.
-El servicio queda corriendo sin que nada lo invoque, que es la forma más cara de
-fallar: `systemctl is-active` sigue diciendo `active`.
+## Open — Prioridad MEDIA
 
-**El mecanismo, medido el 2026-09-22 y reproducido entero en local.** No era
-`_merge_hook_blocks`, que es donde la revisión anterior de esta entrada mandaba a
-escribir el test. Son tres pasos:
+### Los otros dos call sites de `ensure_symlink` desplazan un archivo real y lo reportan como éxito
 
-1. `deploy_profiles` linkea `settings.json` al source del profile
-   (`~/.claude-lazy/settings.json -> ~/.config/lazy-harness/profiles/lazy/claude-code/settings.json`).
-2. `moshi-hook install --target claude` escribe **atómico** —temp file más
-   `os.replace`, que es la forma correcta de no dejar un JSON a medio escribir—,
-   y un rename sobre el target **reemplaza el link** en vez de escribir a través
-   de él. Medido: después del install, el config dir tiene un archivo regular con
-   las diez entries y el source sigue en cero.
-3. El `lh deploy` siguiente corre `deploy_profiles` **antes** que `deploy_config`
-   (`cli/deploy_cmd.py:73`). `ensure_symlink` ve un archivo regular, lo renombra a
-   `settings.json.bak`, rehace el link y devuelve `"created"` — que se imprimía
-   como un `✓ lazy/settings.json` cualquiera. `deploy_config` lee entonces el link
-   → el source, que nunca tuvo las entries, y por eso no caen ni en `preserved` ni
-   en `dropped`.
+**Por qué:** el fix de #437 le enseñó a `ensure_symlink` a distinguir `"replaced"`
+de `"created"`, pero sólo `deploy_profiles` lee esa diferencia. El skill root
+(`deploy/skills.py:267`) y el symlink `~/.claude` (`deploy/engine.py:743`)
+siguen ramificando únicamente sobre `== "exists"`, así que un archivo —o un
+directorio— real que el harness mueve a `.bak` se imprime con un `✓`. Es el
+mismo modo de falla que #437 midió: el desplazamiento no es una mentira, pero el
+renglón que lo anuncia sí.
 
-**Las dos hipótesis de la revisión anterior quedan descartadas, y una tercera
-explicación aparece.** `_merge_hook_blocks` está bien: se le pasó la forma exacta
-de las diez entries a `_plan_settings` y devolvió las diez en `preserved`, cinco
-con la reparación `matcher: null -> ""`. Y herdr y graphify no sobreviven por ser
-foreign: están declarados `external` en `config.toml` (`[hooks.session_start]` y
-`[hooks.pre_tool_use]`), así que el harness los **regenera** en cada deploy. El
-renglón «preserved 3 entries» era el carry-through de external identity, no
-preservación genuina — por eso el eje evento/matcher nunca separaba nada.
+**Alcance, y por qué es MEDIA y no ALTA.** Ninguno de los dos es un config
+target, así que no hay contenido que cargar hacia adelante —la mitad cara del fix
+no aplica— y nada se pierde: el `.bak` queda en disco. Lo que falta es la línea
+que lo diga. `deploy/snapshot.py:56` y `agents/codex.py:1236` ya documentan el
+rename en prosa, lo que confirma que se conoce y que nunca llegó a la salida.
 
-**Evidencia independiente en el Mac:** `~/.claude-lazy/settings.json.bak` y
-`~/.claude-flex/settings.json.bak` existen los dos con `grep -c moshi` = 10, con
-fecha minutos antes de que se crearan los symlinks (20 Sep 20:26 y 20:22 contra
-20:35).
-
-**Lo que ya está hecho, en el árbol y verde.** Primero el test
-(`tests/integration/test_deploy_displaced_symlink.py`, cuatro casos), rojo por la
-razón correcta antes del fix: neutralizando el hand-off, tres de los cuatro
-fallan. Después las dos mitades del arreglo:
-
-- `ensure_symlink` distingue `"replaced"` de `"created"` y `deploy_profiles`
-  imprime un `⚠` nombrando el `.bak` y la causa. Desplazar un archivo con
-  contenido y crear un link en un hueco vacío dejan de ser la misma noticia.
-- `deploy_profiles` devuelve, por profile, el contenido de cada **config target**
-  que tuvo que desplazar —leído antes de que el rename se lo lleve— y
-  `deploy_config` lo toma como `existing` para ese target. Así el documento que
-  llega al merge es el que tenía las entries. Se pasa explícito y no se
-  redescubre del `.bak` en disco, porque `.bak` es también lo que escribe una
-  reparación y un backup viejo no puede confundirse con el de esta corrida.
-
-`/tdd-check` pristino: 5289 passed, ruff check y format limpios,
-`mkdocs build --strict` en 0.
-
-**Lo que falta, y por qué la entrada sigue ALTA.** El fix no está mergeado ni
-releaseado ni desplegado en `lazy-agents`, que es donde el bridge corre. Cerrar
-esto pide: release, `lazy-harness-update.sh` en el CT, `moshi-hook install
---target claude` para reponer las diez entries en el profile por defecto y
-`CLAUDE_CONFIG_DIR=~/.claude-flex moshi-hook install --target claude` en el otro,
-y después un `lh deploy` que las deje en 10 y las nombre en `preserved`.
-Mitigación vigente hasta entonces: ningún job programado corre `lh deploy` en el
-CT —verificado contra `~/.config/systemd/user/*.service` y
-`/usr/local/bin/lazy-harness-update.sh`—, así que el bridge queda arriba hasta que
-alguien lo corra a mano.
-
-**Residual, fuera del alcance de este fix.** El mismo desplazamiento silencioso
-sigue vivo en los otros dos call sites de `ensure_symlink` —el skill root
-(`deploy/skills.py:267`) y el symlink `~/.claude` (`deploy/engine.py:743`)—, que
-tratan `"replaced"` como éxito. Ahí no hay contenido que cargar hacia adelante
-porque no son config targets, pero la línea que imprimen sigue siendo un `✓`
-sobre un archivo que se movió.
+**Acción:** que los tres call sites compartan el reporte, o que `ensure_symlink`
+deje de ser el lugar donde se decide qué es noticia. Un test por call site, con
+un archivo real en el destino.
 
 ---
 
-## Open — Prioridad MEDIA
+### `test_process_task_second_identical_run_is_byte_identical` es flaky por orden de tests
+
+**Por qué:** un test que falla en CI sin relación con el diff quema una corrida
+entera y entrena a leer el rojo como ruido, que es cómo un rojo real pasa
+inadvertido.
+
+**Medido el 2026-09-22, dos corridas independientes.** Falla con
+`AssertionError: assert 'project: PRJ-LazyHarness.md' not in ['grade: good',
+'project: PRJ-LazyHarness.md']` en `tests/unit/test_compound_loop.py:3097`.
+Cayó en `ubuntu-latest 3.13` sobre **`main`** (run `35744690313`, el push de
+`chore(main): release 0.76.9 (#435)`, 15:09) y en `macos-latest 3.13` sobre la
+rama de #437 (run `35754736601`, 16:37). Leg distinto cada vez, los otros cuatro
+verdes en la misma corrida, y un `gh run rerun --failed` lo puso verde. Eso es
+dependencia de orden, no plataforma y no el diff.
+
+**La trampa que lo tapa.** El loop local rápido corre con `-p no:randomly`, que
+es exactamente el plugin que en CI lo expone: una suite verde en local no dice
+nada sobre estado compartido entre tests. Para reproducir hay que correr sin ese
+flag y anotar el seed que imprime el header.
+
+**Acción:** reproducir con el seed, y aislar qué deja `project: PRJ-LazyHarness.md`
+en `outcome.wrote` de la segunda corrida — el test asevera idempotencia, así que
+lo que sobra es estado que la primera corrida dejó y la segunda leyó.
+
+---
 
 ### La cola de proposals del compound loop está frenada en 13 proyectos y no tiene forma de drenarse sola
 
