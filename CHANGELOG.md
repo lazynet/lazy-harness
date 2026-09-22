@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.76.7](https://github.com/lazynet/lazy-harness/compare/v0.76.6...v0.76.7) (2026-09-22)
+
+
+### Bug Fixes
+
+* subtract Codex's cached half from the charged input ([#430](https://github.com/lazynet/lazy-harness/issues/430)) ([1f24285](https://github.com/lazynet/lazy-harness/commit/1f2428598dd33f299589a6b984b877e738f646e4))
+
 ## [0.76.6](https://github.com/lazynet/lazy-harness/compare/v0.76.5...v0.76.6) (2026-09-22)
 
 
