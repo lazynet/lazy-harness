@@ -382,26 +382,74 @@ def test_the_executed_command_record_is_not_a_second_tool_call(tmp_path: Path) -
 
 
 def test_a_usage_record_yields_the_four_counters(tmp_path: Path) -> None:
+    """Counters from a record shaped like the ones the provider actually writes.
+
+    The numbers below are a measured record: `total_tokens` is
+    `input_tokens + output_tokens`, and `cached_input_tokens` is a subset of
+    `input_tokens` rather than a sibling. `cache_write_input_tokens` is the one
+    field the corpus never exercised — 0 on all 5893 records — so a non-zero
+    value here only pins that the key is read, not a shape it was seen in.
+    """
     from lazy_harness.agents.base import Signal
 
     path = _write(
         tmp_path,
         _usage_record(
-            input_tokens=11,
-            output_tokens=22,
-            cached_input_tokens=33,
+            input_tokens=21512,
+            output_tokens=433,
+            cached_input_tokens=11008,
             cache_write_input_tokens=44,
-            reasoning_output_tokens=55,
-            total_tokens=165,
+            reasoning_output_tokens=116,
+            total_tokens=21945,
         ),
     )
 
     (event,) = _by_signal(path, Signal.TOKEN_USAGE)
     assert event.usage is not None
-    assert event.usage.input_tokens == 11
-    assert event.usage.output_tokens == 22
-    assert event.usage.cache_read_tokens == 33
+    # ADR-066: the field is the input charged at full rate, so the cached
+    # half the provider folded into its own `input_tokens` comes back out.
+    assert event.usage.input_tokens == 21512 - 11008
+    assert event.usage.output_tokens == 433
+    assert event.usage.cache_read_tokens == 11008
     assert event.usage.cache_creation_tokens == 44
+
+
+def test_a_cached_half_larger_than_the_input_clamps_at_zero(tmp_path: Path) -> None:
+    """Never seen in 5893 records; a negative charged input would be worse."""
+    from lazy_harness.agents.base import Signal
+
+    path = _write(
+        tmp_path,
+        _usage_record(input_tokens=10, output_tokens=5, cached_input_tokens=99),
+    )
+
+    (event,) = _by_signal(path, Signal.TOKEN_USAGE)
+    assert event.usage is not None
+    assert event.usage.input_tokens == 0
+    assert event.usage.cache_read_tokens == 99
+
+
+def test_shipped_codex_fixtures_satisfy_the_inclusive_input_invariant() -> None:
+    """The premise ADR-066's subtraction rests on, asserted not assumed.
+
+    If a future Codex release reports input exclusive of cache, this fails
+    rather than letting the adapter quietly under-count instead of over.
+    """
+    import json
+
+    paths = sorted(Path("specs/gates/fixtures/codex-pricing").glob("*.jsonl"))
+    assert paths, "no codex pricing fixtures to check"
+    checked = 0
+    for path in paths:
+        for line in path.read_text().splitlines():
+            usage = (json.loads(line).get("payload") or {}).get("info", {})
+            usage = usage.get("last_token_usage") if isinstance(usage, dict) else None
+            if not isinstance(usage, dict):
+                continue
+            checked += 1
+            assert usage["cached_input_tokens"] <= usage["input_tokens"]
+            assert usage["total_tokens"] == usage["input_tokens"] + usage["output_tokens"]
+    assert checked
 
 
 def test_a_counter_the_record_omitted_is_none_and_not_zero(tmp_path: Path) -> None:
