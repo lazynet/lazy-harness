@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from typing import Literal
+from typing import Any, Literal
 
 ApiEquivalentStatus = Literal["priced", "unknown_model", "unknown_tier", "no_usage"]
 
@@ -25,6 +25,7 @@ class ApiEquivalentPrice:
 
 
 _OPENAI_API_RATE_VERSION = "openai-2026-09-19"
+_ANTHROPIC_API_RATE_VERSION = "anthropic-2026-09-22"
 _OPENAI_API_RATE_WINDOWS = {
     "gpt-5.6-sol": (date(2026, 9, 19), date(2026, 11, 21)),
     "gpt-6-astra": (date(2026, 9, 19), date(2026, 9, 19)),
@@ -65,10 +66,40 @@ def price_api_response(
     context_class: str | None,
     on: str | None = None,
 ) -> ApiEquivalentPrice:
-    """Price one response only when every pricing dimension is evidenced."""
-    buckets = ("input", "output", "cache_read", "cache_create")
+    """Price one response when every dimension *its table keys on* is evidenced.
+
+    The bar is per provider, not per function (ADR-065). OpenAI rates key on
+    `(model, service_tier, context_class)` inside a dated window, so pricing
+    one without a context class would pick between two rates that differ 2x.
+    Anthropic publishes one rate per model, so the same demand would refuse a
+    figure it has everything it needs to produce. `API_RATE_TABLES` carries
+    each table's declared dimensions and a test holds that declaration to the
+    arity of the table's own keys.
+    """
+    buckets = ("input", "output", "cache_read", "cache_create", "cache_create_1h")
     if not any(int(tokens.get(name, 0) or 0) for name in buckets):
         return ApiEquivalentPrice(None, "no_usage")
+    anthropic = API_RATE_TABLES["anthropic"]
+    if model in anthropic.rates:
+        evidence = {"service_tier": service_tier, "context_class": context_class}
+        if any(evidence[dimension] is None for dimension in anthropic.dimensions):
+            return ApiEquivalentPrice(None, "unknown_tier")
+        # `calculate_cost` is the same function `cost_for_billing_model`
+        # calls, so the comparison figure and the per-token figure can never
+        # drift apart into two answers for one published rate. The tier slot
+        # is filled from the declaration rather than from the argument: while
+        # Anthropic does not bill by tier the caller's "standard" is an
+        # assumption, and recording it would invent the evidence.
+        return ApiEquivalentPrice(
+            calculate_cost(model, tokens, DEFAULT_PRICING, on=on),
+            "priced",
+            ApiPriceBasis(
+                "anthropic",
+                service_tier if "service_tier" in anthropic.dimensions else "n/a",
+                "USD",
+                anthropic.version,
+            ),
+        )
     if model not in {key[0] for key in _OPENAI_API_RATES}:
         return ApiEquivalentPrice(None, "unknown_model")
     if service_tier is None or context_class is None:
@@ -190,6 +221,39 @@ DEFAULT_PRICING: dict[str, dict[str, float]] = {
         "cache_create": 1.25,
         "cache_create_1h": 2.0,
     },
+}
+
+
+@dataclass(frozen=True, slots=True)
+class ApiRateTable:
+    """One provider's published rates and the evidence its keys demand.
+
+    `dimensions` names what a caller must supply beyond the model. It is a
+    claim about `rates`, not a description of it: the gate test compares it
+    against the arity of the table's own keys, so a provider that starts
+    billing by tier or context cannot keep an empty declaration and go on
+    being priced at whichever row happened to be first.
+    """
+
+    provider: str
+    version: str
+    dimensions: tuple[str, ...]
+    rates: dict[Any, dict[str, float]]
+
+
+API_RATE_TABLES: dict[str, ApiRateTable] = {
+    "openai": ApiRateTable(
+        provider="openai",
+        version=_OPENAI_API_RATE_VERSION,
+        dimensions=("service_tier", "context_class"),
+        rates=_OPENAI_API_RATES,
+    ),
+    "anthropic": ApiRateTable(
+        provider="anthropic",
+        version=_ANTHROPIC_API_RATE_VERSION,
+        dimensions=(),
+        rates=DEFAULT_PRICING,
+    ),
 }
 
 

@@ -135,6 +135,105 @@ def test_codex_auto_review_is_not_aliased_for_api_equivalent_pricing() -> None:
     assert result.basis is None
 
 
+def test_api_equivalent_prices_an_anthropic_response() -> None:
+    from lazy_harness.monitoring.pricing import price_api_response
+
+    result = price_api_response(
+        "claude-opus-5",
+        {"input": 1000, "output": 100, "cache_read": 10000, "cache_create": 2000},
+        service_tier="standard",
+        context_class="short",
+        on="2026-09-21",
+    )
+
+    assert result.status == "priced"
+    assert result.amount == pytest.approx(0.025)
+    assert result.basis is not None
+    assert result.basis.provider == "anthropic"
+
+
+def test_api_equivalent_prices_anthropic_without_tier_or_context_evidence() -> None:
+    """Anthropic keys rates on the model alone, so neither dimension is demanded."""
+    from lazy_harness.monitoring.pricing import price_api_response
+
+    result = price_api_response(
+        "claude-sonnet-5",
+        {"input": 1_000_000},
+        service_tier=None,
+        context_class=None,
+        on=None,
+    )
+
+    assert result.status == "priced"
+    assert result.amount == pytest.approx(2.0)
+
+
+def test_anthropic_cache_write_ttls_price_at_their_own_rates() -> None:
+    """A 1-hour write bills at 2x input, a 5-minute write at 1.25x.
+
+    Summing the two buckets prices the 1-hour half at 62.5% of its rate, so
+    this asserts the split survives as far as the equivalent figure.
+    """
+    from lazy_harness.monitoring.pricing import price_api_response
+
+    result = price_api_response(
+        "claude-opus-5",
+        {"cache_create": 1_000_000, "cache_create_1h": 1_000_000},
+        service_tier="standard",
+        context_class="short",
+        on="2026-09-21",
+    )
+
+    assert result.status == "priced"
+    assert result.amount == pytest.approx(16.25)
+
+
+def test_a_declared_dimension_is_demanded_of_anthropic_too(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`dimensions` drives the gate; it does not merely describe it.
+
+    Without this, the empty Anthropic declaration is a comment — someone can
+    widen it the day Anthropic starts billing by context and every row keeps
+    pricing at the single rate that is no longer the only one.
+    """
+    from dataclasses import replace
+
+    from lazy_harness.monitoring import pricing
+
+    widened = replace(pricing.API_RATE_TABLES["anthropic"], dimensions=("context_class",))
+    monkeypatch.setitem(pricing.API_RATE_TABLES, "anthropic", widened)
+
+    result = pricing.price_api_response(
+        "claude-opus-5",
+        {"input": 1000},
+        service_tier="standard",
+        context_class=None,
+        on="2026-09-21",
+    )
+
+    assert result.status == "unknown_tier"
+    assert result.amount is None
+
+
+def test_each_rate_table_declares_the_dimensions_its_keys_carry() -> None:
+    """The evidence gate is derived from the tables, never asserted about them.
+
+    A provider whose rates gain a service tier or a context class widens its
+    key, and this fails until the declaration widens with it — the carve-out
+    cannot outlive the assumption that justified it.
+    """
+    from lazy_harness.monitoring.pricing import API_RATE_TABLES
+
+    for provider, table in API_RATE_TABLES.items():
+        for key in table.rates:
+            carried = len(key) - 1 if isinstance(key, tuple) else 0
+            assert carried == len(table.dimensions), (
+                f"{provider} key {key!r} carries {carried} dimension(s), "
+                f"but the table declares {table.dimensions!r}"
+            )
+
+
 def test_default_pricing_matches_litellm() -> None:
     """Defaults must mirror LiteLLM's model_prices_and_context_window.json.
 

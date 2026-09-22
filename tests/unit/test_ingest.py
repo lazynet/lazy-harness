@@ -632,6 +632,55 @@ def test_ingest_prices_one_hour_writes_and_stores_the_token_total(tmp_path: Path
     db.close()
 
 
+def test_api_equivalent_keeps_the_cache_write_ttl_split(tmp_path: Path) -> None:
+    """One published rate must yield one answer in both columns.
+
+    Ingest summed the 5-minute and 1-hour write buckets before handing them
+    to the equivalent pricer, which bills every 1-hour write at 62.5% of its
+    rate. The transcript below is all 1-hour writes, so a surviving merge
+    shows up as a comparison figure below the per-token one.
+    """
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.ingest import ingest_profile
+    from lazy_harness.monitoring.pricing import load_pricing
+
+    prof = _profile(tmp_path, "lazy")
+    _write_session(
+        prof.config_dir / "projects",
+        "-Users-x-repo",
+        "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        [
+            {
+                "type": "assistant",
+                "message": {
+                    "id": "msg_ttl",
+                    "model": "claude-opus-5",
+                    "usage": {
+                        "input_tokens": 10,
+                        "output_tokens": 14607,
+                        "cache_read_input_tokens": 267362,
+                        "cache_creation_input_tokens": 55875,
+                        "cache_creation": {
+                            "ephemeral_5m_input_tokens": 0,
+                            "ephemeral_1h_input_tokens": 55875,
+                        },
+                    },
+                },
+                "timestamp": "2026-08-31T10:00:00Z",
+            }
+        ],
+    )
+
+    db = MetricsDB(tmp_path / "metrics.db")
+    ingest_profile(prof, db, load_pricing())
+
+    (row,) = db.query_stats(period="all")
+    assert row["api_equivalent_status"] == "priced"
+    assert row["api_equivalent_cost"] == pytest.approx(1.057656)
+    assert row["api_equivalent_cost"] == pytest.approx(row["cost"])
+    db.close()
+
+
 def test_ingest_bills_a_legacy_transcript_at_the_five_minute_rate(tmp_path: Path) -> None:
     """No breakdown recorded means no evidence of a 1-hour write."""
     from lazy_harness.monitoring.db import MetricsDB
