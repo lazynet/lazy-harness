@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.76.8](https://github.com/lazynet/lazy-harness/compare/v0.76.7...v0.76.8) (2026-09-22)
+
+
+### Bug Fixes
+
+* derive the OpenAI context class from the prompt size ([#432](https://github.com/lazynet/lazy-harness/issues/432)) ([9c1cf9d](https://github.com/lazynet/lazy-harness/commit/9c1cf9d3a8795c1f959de05b513d8c81792c90c6))
+
 ## [0.76.7](https://github.com/lazynet/lazy-harness/compare/v0.76.6...v0.76.7) (2026-09-22)
 
 
