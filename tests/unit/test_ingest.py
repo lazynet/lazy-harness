@@ -1239,7 +1239,14 @@ def test_codex_ingest_fails_closed_when_equivalent_cannot_be_priced(
     from lazy_harness.monitoring.pricing import load_pricing
 
     prof = _codex_profile(tmp_path)
-    _write_rollout(prof, "unpriced", _codex_turn(model), _codex_usage("r1", 10, 5))
+    # Dated before Sol's rates took effect, so the tier case stays unpriced for
+    # the reason it is testing rather than for the model being unknown.
+    _write_rollout(
+        prof,
+        "unpriced",
+        _codex_turn(model),
+        _codex_usage("r1", 10, 5, timestamp="2026-08-20T12:00:00Z"),
+    )
     db = MetricsDB(tmp_path / "m.db")
     ingest_profile(prof, db, load_pricing(), agent=CodexAdapter(), billing_model="flat_rate")
     row = db.query_stats(period="all")[0]

@@ -92,7 +92,9 @@ def test_api_equivalent_fails_closed_with_no_threshold_to_classify_by(
     assert result.basis is None
 
 
-@pytest.mark.parametrize("on", [None, "2026-09-18", "2026-11-22", "not-a-date"])
+# 2026-08-20 is the day before Sol's reduction took effect; 2026-11-22 the
+# day after the period the vendor committed to.
+@pytest.mark.parametrize("on", [None, "2026-08-20", "2026-11-22", "not-a-date"])
 def test_api_equivalent_fails_closed_outside_the_evidenced_rate_window(
     on: str | None,
 ) -> None:
@@ -111,27 +113,43 @@ def test_api_equivalent_fails_closed_outside_the_evidenced_rate_window(
     assert result.basis is None
 
 
-def test_astra_rates_are_only_valid_on_the_observation_date() -> None:
+@pytest.mark.parametrize(
+    ("model", "on", "expected"),
+    [
+        # Sol's reduction took effect 2026-08-21, "at least through
+        # November 21, 2026". The day before it is a rate we have no record of.
+        ("gpt-5.6-sol", "2026-08-20", "unknown_tier"),
+        ("gpt-5.6-sol", "2026-08-21", "priced"),
+        ("gpt-5.6-sol", "2026-11-21", "priced"),
+        ("gpt-5.6-sol", "2026-11-22", "unknown_tier"),
+        # Astra was released 2026-09-03 and the changelog records no price
+        # change since, so its rates stand with no announced end.
+        ("gpt-6-astra", "2026-09-02", "unknown_tier"),
+        ("gpt-6-astra", "2026-09-03", "priced"),
+        ("gpt-6-astra", "2027-06-01", "priced"),
+    ],
+)
+def test_a_rate_window_spans_the_dates_the_vendor_published(
+    model: str, on: str, expected: str
+) -> None:
+    """Windows carry the published effective dates, not the observation date.
+
+    `gpt-6-astra` previously opened and closed on 2026-09-19, the day its
+    rates were first read off the page. That withheld a figure for every other
+    date on the evidence that nobody had looked, which is not the same as the
+    rate being unknown.
+    """
     from lazy_harness.monitoring.pricing import price_api_response
 
-    observed = price_api_response(
-        "gpt-6-astra",
+    result = price_api_response(
+        model,
         {"input": 100},
         service_tier="standard",
         context_class="short",
-        on="2026-09-19",
-    )
-    later = price_api_response(
-        "gpt-6-astra",
-        {"input": 100},
-        service_tier="standard",
-        context_class="short",
-        on="2026-09-20",
+        on=on,
     )
 
-    assert observed.status == "priced"
-    assert later.status == "unknown_tier"
-    assert later.amount is None
+    assert result.status == expected
 
 
 def test_api_equivalent_keeps_sub_micro_response_costs() -> None:

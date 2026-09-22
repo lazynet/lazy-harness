@@ -26,9 +26,19 @@ class ApiEquivalentPrice:
 
 _OPENAI_API_RATE_VERSION = "openai-2026-09-19"
 _ANTHROPIC_API_RATE_VERSION = "anthropic-2026-09-22"
-_OPENAI_API_RATE_WINDOWS = {
-    "gpt-5.6-sol": (date(2026, 9, 19), date(2026, 11, 21)),
-    "gpt-6-astra": (date(2026, 9, 19), date(2026, 9, 19)),
+# The dates each rate was published for, not the date it was read off the page.
+# A `None` end is a rate with no announced expiry — the window is open, which
+# is a different fact from a rate whose last covered day is known.
+_OPENAI_API_RATE_WINDOWS: dict[str, tuple[date, date | None]] = {
+    # "GPT-5.6 Sol now costs $4 per million input tokens and $20 per million
+    # output tokens [...] available at least through November 21, 2026",
+    # changelog entry dated 2026-08-21. The end is a floor the vendor
+    # committed to, so it is kept as the last covered day rather than opened:
+    # past it the rate may revert and nothing published says it does not.
+    "gpt-5.6-sol": (date(2026, 8, 21), date(2026, 11, 21)),
+    # Released 2026-09-03; the changelog records no price change since, so the
+    # rates on the pricing page stand from launch with no announced end.
+    "gpt-6-astra": (date(2026, 9, 3), None),
 }
 _OPENAI_API_RATES: dict[tuple[str, str, str], dict[str, float]] = {
     ("gpt-5.6-sol", "standard", "short"): {
@@ -133,7 +143,9 @@ def price_api_response(
     except ValueError:
         return ApiEquivalentPrice(None, "unknown_tier")
     valid_from, valid_through = _OPENAI_API_RATE_WINDOWS[model]
-    if effective_on is None or not (valid_from <= effective_on <= valid_through):
+    if effective_on is None or effective_on < valid_from:
+        return ApiEquivalentPrice(None, "unknown_tier")
+    if valid_through is not None and effective_on > valid_through:
         return ApiEquivalentPrice(None, "unknown_tier")
     rates = _OPENAI_API_RATES.get((model, service_tier, context_class))
     if rates is None:
