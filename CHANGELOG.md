@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.76.6](https://github.com/lazynet/lazy-harness/compare/v0.76.5...v0.76.6) (2026-09-22)
+
+
+### Bug Fixes
+
+* price Anthropic responses in the API-equivalent path ([#429](https://github.com/lazynet/lazy-harness/issues/429)) ([2ad8264](https://github.com/lazynet/lazy-harness/commit/2ad82647e4af06ddd69041f8cdce47fe07d596c8))
+
+
+### Documentation
+
+* prune reports/ and declare its retention policy ([#425](https://github.com/lazynet/lazy-harness/issues/425)) ([63fdaf9](https://github.com/lazynet/lazy-harness/commit/63fdaf9de6628189b29c4dea1ac3ca4ce3199c6f))
+* record the settings.json incident as ADR-063, ADR-064 and one gate ([#427](https://github.com/lazynet/lazy-harness/issues/427)) ([b3d41ec](https://github.com/lazynet/lazy-harness/commit/b3d41ec8614fa0e003082ad3a2170c01c2eda71a))
+* refresh the backlog against the tree at 0.76.5 ([#426](https://github.com/lazynet/lazy-harness/issues/426)) ([bf99d8e](https://github.com/lazynet/lazy-harness/commit/bf99d8e62205f5c37eab35bd518989890eb6abd3))
+
 ## [0.76.5](https://github.com/lazynet/lazy-harness/compare/v0.76.4...v0.76.5) (2026-09-21)
 
 
