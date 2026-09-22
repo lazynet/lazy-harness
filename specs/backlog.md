@@ -224,7 +224,51 @@ desde `:367-369` cuando el step 3 insertó los helpers de merge arriba de la cla
 
 ## Open — Prioridad ALTA
 
-Sin items abiertos — F1 (PR #347) y F2 (PR #351) cerrados; ver §Done.
+### `lh deploy` borra los hooks de moshi sin reportarlo, y deja el approval bridge sin invocar
+
+**Por qué:** moshi-hook es el approval bridge del CT `agents` — el único
+mecanismo que pide autorización antes de que un agente desatendido cruce un
+límite. `lh deploy` 0.76.9 elimina sus diez entries de `settings.json` en los
+dos profiles Claude, y no las nombra en ninguna de las dos listas que imprime.
+El servicio queda corriendo sin que nada lo invoque, que es la forma más cara de
+fallar: `systemctl is-active` sigue diciendo `active`.
+
+**Medido el 2026-09-22 sobre `lazy-agents`, tres reproducciones.** Antes del
+deploy, `grep -c moshi` da 10 en `~/.claude-lazy/settings.json` y 10 en
+`~/.claude-flex/settings.json`; después, 0 y 0. El ledger nunca las reclama
+—`grep -c moshi lh-hook-ownership.json` da 0 en todos los estados—, así que no
+es el camino de ownership. Y deploy **sí** preserva otras entries foreign, y las
+lista por nombre: «lazy/settings.json: preserved 3 entries not managed by the
+harness» seguido de `SessionStart sh -c 'h=~/.claude-lazy/hooks/herdr-agent-state.sh…`,
+`PreToolUse graphify hook-guard search` y `PreToolUse graphify hook-guard read`.
+Las de moshi no aparecen ahí ni en `dropped`.
+
+**Dos hipótesis descartadas, las dos por medición.** No es el evento: el
+`SessionStart` de herdr sobrevive al mismo deploy que mata el `SessionStart` de
+moshi. No es `matcher: null`: `agents/claude_code.py:268` existe exactamente para
+esa forma —su docstring dice «an installer writing `null` for "no matcher" makes
+Claude Code reject the entire settings file»— y la repara a `""` antes de
+preservar. El mecanismo real **no está determinado**.
+
+**La forma que hay que reproducir.** `moshi-hook install --target claude` escribe
+diez entries, todas con comando `'<home>/.local/bin/moshi-hook' claude-hook`, en:
+`Notification` (matcher `permission_prompt`), `PermissionRequest` (sin matcher),
+`PostToolUse` ×2 (`AskUserQuestion`, `ExitPlanMode`), `PreToolUse` ×2 (los
+mismos matchers), `SessionEnd`, `SessionStart`, `Stop` y `UserPromptSubmit` (los
+cuatro sin matcher). Tres de esos eventos —`Notification`, `PermissionRequest` y
+`Stop`— no aparecen entre los que preservan herdr y graphify, que es el único eje
+que las mediciones todavía no separaron.
+
+**Acción:** test primero, con la forma de arriba como fixture, contra
+`_merge_hook_blocks`. La pregunta que el test tiene que contestar es por qué una
+entry foreign no cae ni en `preserved` ni en `dropped`, porque hoy desaparece sin
+diagnóstico y eso vale por sí solo aunque el borrado resulte ser correcto.
+Mitigación vigente: ningún job programado corre `lh deploy` en el CT —verificado
+contra `~/.config/systemd/user/*.service` y `/usr/local/bin/lazy-harness-update.sh`—,
+así que el bridge queda arriba hasta que alguien lo corra a mano. Si se corre,
+`moshi-hook install --target claude` lo repone en el profile por defecto y
+`CLAUDE_CONFIG_DIR=~/.claude-flex moshi-hook install --target claude` en el otro.
+Prioridad ALTA: es un control de seguridad que se apaga solo y sin aviso.
 
 ---
 
