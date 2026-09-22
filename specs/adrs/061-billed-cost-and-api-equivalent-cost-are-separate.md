@@ -10,6 +10,9 @@ do not supply `context_class`: locally ingested `api_equivalent_cost` is
 uniformly null today (zero priced coverage).
 **Supersedes:** —
 **Superseded by:** —
+**Amended by:** ADR-065 — the reader-evidence requirement below is
+scoped to the dimensions each provider's rate table is keyed on, and
+Anthropic rates reach the equivalent path.
 **Related:** ADR-050 (agent and billing model in MetricEvent v3)
 
 ## Context

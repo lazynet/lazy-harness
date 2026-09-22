@@ -229,12 +229,17 @@ def ingest_profile(
                 agg["cache_read"] += usage.cache_read_tokens or 0
                 agg["cache_create"] += usage.cache_creation_tokens or 0
                 agg["cache_create_1h"] += usage.cache_creation_1h_tokens or 0
+                # The two cache-write TTLs stay split here. The *stored* row
+                # keeps one total (see the note by `cache_create_total`
+                # below), but a 1-hour write bills at 2x base input against
+                # the 5-minute write's 1.25x, so summing them before pricing
+                # charges the 1-hour half 62.5% of its rate (ADR-065).
                 response_tokens = {
                     "input": usage.input_tokens or 0,
                     "output": usage.output_tokens or 0,
                     "cache_read": usage.cache_read_tokens or 0,
-                    "cache_create": (usage.cache_creation_tokens or 0)
-                    + (usage.cache_creation_1h_tokens or 0),
+                    "cache_create": usage.cache_creation_tokens or 0,
+                    "cache_create_1h": usage.cache_creation_1h_tokens or 0,
                 }
                 equivalent = price_api_response(
                     event.model or "unknown",
