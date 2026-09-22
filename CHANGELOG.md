@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.76.9](https://github.com/lazynet/lazy-harness/compare/v0.76.8...v0.76.9) (2026-09-22)
+
+
+### Bug Fixes
+
+* widen the OpenAI rate windows to their published effective dates ([#434](https://github.com/lazynet/lazy-harness/issues/434)) ([1009501](https://github.com/lazynet/lazy-harness/commit/1009501d0e1e5a2e96e41d8f034b82dba436dc56))
+
 ## [0.76.8](https://github.com/lazynet/lazy-harness/compare/v0.76.7...v0.76.8) (2026-09-22)
 
 
