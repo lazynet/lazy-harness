@@ -46,10 +46,40 @@ def test_api_equivalent_prices_one_observed_response(
     assert result.basis.rate_table_version == "openai-2026-09-19"
 
 
-def test_api_equivalent_fails_closed_without_official_context_class() -> None:
+def test_api_equivalent_fails_closed_without_an_evidenced_service_tier() -> None:
+    """The tier is still awaited: nothing in a response reveals it."""
     from lazy_harness.monitoring.pricing import price_api_response
 
     result = price_api_response(
+        "gpt-5.6-sol",
+        {"input": 100, "output": 10},
+        service_tier=None,
+        context_class="short",
+        on="2026-09-19",
+    )
+
+    assert result.amount is None
+    assert result.status == "unknown_tier"
+    assert result.basis is None
+
+
+def test_api_equivalent_fails_closed_with_no_threshold_to_classify_by(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Deriving the class needs a published boundary; absent one, refuse.
+
+    ADR-067 replaced the demand for a caller-supplied class with a derivation.
+    The fail-closed path it replaced has to survive for a table that carries
+    long rows without the threshold that selects them.
+    """
+    from dataclasses import replace
+
+    from lazy_harness.monitoring import pricing
+
+    blind = replace(pricing.API_RATE_TABLES["openai"], long_context_threshold=None)
+    monkeypatch.setitem(pricing.API_RATE_TABLES, "openai", blind)
+
+    result = pricing.price_api_response(
         "gpt-5.6-sol",
         {"input": 100, "output": 10},
         service_tier="standard",
@@ -201,7 +231,7 @@ def test_a_declared_dimension_is_demanded_of_anthropic_too(
 
     from lazy_harness.monitoring import pricing
 
-    widened = replace(pricing.API_RATE_TABLES["anthropic"], dimensions=("context_class",))
+    widened = replace(pricing.API_RATE_TABLES["anthropic"], required=("context_class",))
     monkeypatch.setitem(pricing.API_RATE_TABLES, "anthropic", widened)
 
     result = pricing.price_api_response(
@@ -214,6 +244,78 @@ def test_a_declared_dimension_is_demanded_of_anthropic_too(
 
     assert result.status == "unknown_tier"
     assert result.amount is None
+
+
+def test_openai_context_class_is_derived_from_the_gross_prompt() -> None:
+    """272K is the published boundary; the caller need not restate it."""
+    from lazy_harness.monitoring.pricing import price_api_response
+
+    short = price_api_response(
+        "gpt-5.6-sol",
+        {"input": 100_000},
+        service_tier="standard",
+        context_class=None,
+        on="2026-09-19",
+    )
+    long = price_api_response(
+        "gpt-5.6-sol",
+        {"input": 1_000_000, "cache_read": 272_000},
+        service_tier="standard",
+        context_class=None,
+        on="2026-09-19",
+    )
+
+    assert short.status == "priced"
+    assert short.amount == pytest.approx(0.4)
+    assert long.status == "priced"
+    # 1_000_000 charged input at the long rate plus 272_000 cache reads at its.
+    assert long.amount == pytest.approx(8.0 + 272_000 * 0.8 / 1_000_000)
+
+
+def test_a_cache_heavy_prompt_is_classified_on_its_gross_size() -> None:
+    """The trap ADR-067 names: 97% cache-read is this harness's common case.
+
+    Charged input is 30K, but the provider counted a 300K prompt and prices
+    the whole request at 2x. Classifying on the charged half calls it short.
+    """
+    from lazy_harness.monitoring.pricing import price_api_response
+
+    result = price_api_response(
+        "gpt-5.6-sol",
+        {"input": 30_000, "cache_read": 270_000},
+        service_tier="standard",
+        context_class=None,
+        on="2026-09-19",
+    )
+
+    assert result.status == "priced"
+    assert result.amount == pytest.approx((30_000 * 8.0 + 270_000 * 0.8) / 1_000_000)
+
+
+def test_an_explicit_context_class_beats_the_derivation() -> None:
+    """A reader that observes the class is better evidence than a threshold."""
+    from lazy_harness.monitoring.pricing import price_api_response
+
+    result = price_api_response(
+        "gpt-5.6-sol",
+        {"input": 1_000_000, "cache_read": 500_000},
+        service_tier="standard",
+        context_class="short",
+        on="2026-09-19",
+    )
+
+    assert result.amount == pytest.approx((1_000_000 * 4.0 + 500_000 * 0.4) / 1_000_000)
+
+
+def test_every_openai_model_carries_its_published_threshold() -> None:
+    """A long row without a boundary is a rate nothing can ever select."""
+    from lazy_harness.monitoring.pricing import API_RATE_TABLES
+
+    table = API_RATE_TABLES["openai"]
+    long_models = {key[0] for key in table.rates if key[2] == "long"}
+    assert long_models
+    for model in long_models:
+        assert table.long_context_threshold is not None
 
 
 def test_each_rate_table_declares_the_dimensions_its_keys_carry() -> None:

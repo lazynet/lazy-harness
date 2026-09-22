@@ -58,6 +58,25 @@ _OPENAI_API_RATES: dict[tuple[str, str, str], dict[str, float]] = {
 }
 
 
+def _derived_context_class(tokens: dict[str, int], threshold: int | None) -> str | None:
+    """Classify a response by the prompt the provider counted, not by the charge.
+
+    The boundary applies to the whole prompt, cached half included, so the
+    gross is reconstructed as `input + cache_read` — the exact inverse of the
+    subtraction `CodexAdapter` applies (ADR-066). A cache *write* is prompt
+    content the provider already counted inside its own input figure, so
+    adding it here would count it twice.
+
+    Classifying on the charged input instead would call a 300K prompt served
+    90% from cache a short one. At the 97% cache-read rate this harness runs,
+    that is the common case rather than the corner.
+    """
+    if threshold is None:
+        return None
+    gross = int(tokens.get("input", 0) or 0) + int(tokens.get("cache_read", 0) or 0)
+    return "long" if gross > threshold else "short"
+
+
 def price_api_response(
     model: str,
     tokens: dict[str, int],
@@ -79,10 +98,10 @@ def price_api_response(
     buckets = ("input", "output", "cache_read", "cache_create", "cache_create_1h")
     if not any(int(tokens.get(name, 0) or 0) for name in buckets):
         return ApiEquivalentPrice(None, "no_usage")
+    evidence = {"service_tier": service_tier, "context_class": context_class}
     anthropic = API_RATE_TABLES["anthropic"]
     if model in anthropic.rates:
-        evidence = {"service_tier": service_tier, "context_class": context_class}
-        if any(evidence[dimension] is None for dimension in anthropic.dimensions):
+        if any(evidence[dimension] is None for dimension in anthropic.required):
             return ApiEquivalentPrice(None, "unknown_tier")
         # `calculate_cost` is the same function `cost_for_billing_model`
         # calls, so the comparison figure and the per-token figure can never
@@ -95,14 +114,19 @@ def price_api_response(
             "priced",
             ApiPriceBasis(
                 "anthropic",
-                service_tier if "service_tier" in anthropic.dimensions else "n/a",
+                service_tier if "service_tier" in anthropic.required else "n/a",
                 "USD",
                 anthropic.version,
             ),
         )
     if model not in {key[0] for key in _OPENAI_API_RATES}:
         return ApiEquivalentPrice(None, "unknown_model")
-    if service_tier is None or context_class is None:
+    openai = API_RATE_TABLES["openai"]
+    if any(evidence[dimension] is None for dimension in openai.required):
+        return ApiEquivalentPrice(None, "unknown_tier")
+    if context_class is None:
+        context_class = _derived_context_class(tokens, openai.long_context_threshold)
+    if context_class is None:
         return ApiEquivalentPrice(None, "unknown_tier")
     try:
         effective_on = date.fromisoformat(on) if on is not None else None
@@ -238,7 +262,12 @@ class ApiRateTable:
     provider: str
     version: str
     dimensions: tuple[str, ...]
+    """Every dimension this table's keys carry, beyond the model."""
     rates: dict[Any, dict[str, float]]
+    required: tuple[str, ...] = ()
+    """The subset a caller must evidence. The rest the table derives."""
+    long_context_threshold: int | None = None
+    """Prompt size above which the provider charges its long-context rates."""
 
 
 API_RATE_TABLES: dict[str, ApiRateTable] = {
@@ -247,6 +276,13 @@ API_RATE_TABLES: dict[str, ApiRateTable] = {
         version=_OPENAI_API_RATE_VERSION,
         dimensions=("service_tier", "context_class"),
         rates=_OPENAI_API_RATES,
+        # The context class is a function of the prompt size, which the usage
+        # record reports, so it is derived rather than awaited (ADR-067).
+        required=("service_tier",),
+        # "Prompts with >272K input tokens are priced at 2x input and 1.5x
+        # output for the full request" — published on both models' pages, and
+        # already encoded in the long rows above.
+        long_context_threshold=272_000,
     ),
     "anthropic": ApiRateTable(
         provider="anthropic",
