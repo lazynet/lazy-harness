@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.76.11](https://github.com/lazynet/lazy-harness/compare/v0.76.10...v0.76.11) (2026-09-22)
+
+
+### Bug Fixes
+
+* price claude-opus-5-5, gpt-6-sol and gpt-5.6-luna ([#439](https://github.com/lazynet/lazy-harness/issues/439)) ([ce8c74f](https://github.com/lazynet/lazy-harness/commit/ce8c74f29dccee389246e4908e25ddb0d02a40f5))
+* price gpt-6-luna ([#441](https://github.com/lazynet/lazy-harness/issues/441)) ([34b37d2](https://github.com/lazynet/lazy-harness/commit/34b37d2f62dd81c5b19464e62b2ae73080af02e9))
+
+
+### Documentation
+
+* **backlog:** close the displaced-symlink item against the CT rollout ([053b46d](https://github.com/lazynet/lazy-harness/commit/053b46d31fb09c186c1ce59010e085750a3d00d8))
+
 ## [0.76.10](https://github.com/lazynet/lazy-harness/compare/v0.76.9...v0.76.10) (2026-09-22)
 
 
