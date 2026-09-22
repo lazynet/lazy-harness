@@ -15,6 +15,7 @@ import pytest
         ("gpt-6-astra.jsonl", "short", "2026-09-19", 0.21051),
         ("gpt-6-sol.jsonl", "short", "2026-09-22", 0.0447672),
         ("gpt-5.6-luna.jsonl", "short", "2026-09-19", 0.00419224),
+        ("gpt-6-luna.jsonl", "short", "2026-09-22", 0.00205468),
     ],
 )
 def test_api_equivalent_prices_one_observed_response(
@@ -135,6 +136,9 @@ def test_api_equivalent_fails_closed_outside_the_evidenced_rate_window(
         # Luna's 80% cut took effect 2026-07-30; nothing since changes it.
         ("gpt-5.6-luna", "2026-07-29", "unknown_tier"),
         ("gpt-5.6-luna", "2026-07-30", "priced"),
+        # Luna 6 was released alongside Sol 6, with no announced end.
+        ("gpt-6-luna", "2026-09-21", "unknown_tier"),
+        ("gpt-6-luna", "2026-09-22", "priced"),
     ],
 )
 def test_a_rate_window_spans_the_dates_the_vendor_published(

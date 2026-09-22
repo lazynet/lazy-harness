@@ -39,8 +39,10 @@ _OPENAI_API_RATE_WINDOWS: dict[str, tuple[date, date | None]] = {
     # Released 2026-09-03; the changelog records no price change since, so the
     # rates on the pricing page stand from launch with no announced end.
     "gpt-6-astra": (date(2026, 9, 3), None),
-    # Released 2026-09-22 at these rates, with no announced end.
+    # Sol 6 and Luna 6 were released 2026-09-22 at these rates, with no
+    # announced end.
     "gpt-6-sol": (date(2026, 9, 22), None),
+    "gpt-6-luna": (date(2026, 9, 22), None),
     # "Starting July 30, GPT-5.6 Luna costs 80% less" — the changelog records
     # no change since, so the window opens on the cut and stays open.
     "gpt-5.6-luna": (date(2026, 7, 30), None),
@@ -81,6 +83,18 @@ _OPENAI_API_RATES: dict[tuple[str, str, str], dict[str, float]] = {
         "cache_read": 0.4,
         "cache_create": 5.0,
         "output": 15.0,
+    },
+    ("gpt-6-luna", "standard", "short"): {
+        "input": 0.1,
+        "cache_read": 0.01,
+        "cache_create": 0.125,
+        "output": 0.5,
+    },
+    ("gpt-6-luna", "standard", "long"): {
+        "input": 0.2,
+        "cache_read": 0.02,
+        "cache_create": 0.25,
+        "output": 0.75,
     },
     ("gpt-5.6-luna", "standard", "short"): {
         "input": 0.2,
