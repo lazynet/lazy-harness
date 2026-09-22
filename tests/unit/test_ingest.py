@@ -1053,7 +1053,16 @@ def test_a_codex_session_with_two_models_becomes_two_rows(tmp_path: Path) -> Non
     db.close()
 
 
-def test_shipped_reader_shape_has_no_api_equivalent_context_class(tmp_path: Path) -> None:
+def test_shipped_reader_shape_prices_without_supplying_a_context_class(
+    tmp_path: Path,
+) -> None:
+    """The reader still supplies no class; the row prices regardless.
+
+    ADR-067: the class is derived from the prompt the usage record reports, so
+    the gap ADR-061 recorded is closed without a new reader signal. The legacy
+    replay below is the half this test has always been about — a v3 event must
+    not clobber the v4 measures, whatever their status.
+    """
     from lazy_harness.agents.codex import CodexAdapter
     from lazy_harness.monitoring.db import MetricsDB
     from lazy_harness.monitoring.ingest import ingest_profile
@@ -1071,8 +1080,9 @@ def test_shipped_reader_shape_has_no_api_equivalent_context_class(tmp_path: Path
     try:
         ingest_profile(prof, db, load_pricing(), agent=CodexAdapter(), billing_model="flat_rate")
         row = db.query_stats()[0]
-        assert row["api_equivalent_cost"] is None
-        assert row["api_equivalent_status"] == "unknown_tier"
+        # 10 input + 5 output, short tier: (10 * $4 + 5 * $20) / 1M.
+        assert row["api_equivalent_cost"] == pytest.approx(0.00014)
+        assert row["api_equivalent_status"] == "priced"
         db.upsert_event(
             MetricEvent(
                 event_id="legacy",
@@ -1095,7 +1105,8 @@ def test_shipped_reader_shape_has_no_api_equivalent_context_class(tmp_path: Path
         assert replayed["cost"] == row["cost"] == 0.0
         assert replayed["billing_model"] == "flat_rate"
         assert replayed["billed_cost"] is None
-        assert replayed["api_equivalent_status"] == "unknown_tier"
+        assert replayed["api_equivalent_status"] == "priced"
+        assert replayed["api_equivalent_cost"] == pytest.approx(0.00014)
     finally:
         db.close()
 
