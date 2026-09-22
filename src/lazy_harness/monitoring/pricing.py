@@ -24,7 +24,7 @@ class ApiEquivalentPrice:
     basis: ApiPriceBasis | None = None
 
 
-_OPENAI_API_RATE_VERSION = "openai-2026-09-19"
+_OPENAI_API_RATE_VERSION = "openai-2026-09-22"
 _ANTHROPIC_API_RATE_VERSION = "anthropic-2026-09-22"
 # The dates each rate was published for, not the date it was read off the page.
 # A `None` end is a rate with no announced expiry — the window is open, which
@@ -39,6 +39,11 @@ _OPENAI_API_RATE_WINDOWS: dict[str, tuple[date, date | None]] = {
     # Released 2026-09-03; the changelog records no price change since, so the
     # rates on the pricing page stand from launch with no announced end.
     "gpt-6-astra": (date(2026, 9, 3), None),
+    # Released 2026-09-22 at these rates, with no announced end.
+    "gpt-6-sol": (date(2026, 9, 22), None),
+    # "Starting July 30, GPT-5.6 Luna costs 80% less" — the changelog records
+    # no change since, so the window opens on the cut and stays open.
+    "gpt-5.6-luna": (date(2026, 7, 30), None),
 }
 _OPENAI_API_RATES: dict[tuple[str, str, str], dict[str, float]] = {
     ("gpt-5.6-sol", "standard", "short"): {
@@ -64,6 +69,30 @@ _OPENAI_API_RATES: dict[tuple[str, str, str], dict[str, float]] = {
         "cache_read": 2.0,
         "cache_create": 25.0,
         "output": 75.0,
+    },
+    ("gpt-6-sol", "standard", "short"): {
+        "input": 2.0,
+        "cache_read": 0.2,
+        "cache_create": 2.5,
+        "output": 10.0,
+    },
+    ("gpt-6-sol", "standard", "long"): {
+        "input": 4.0,
+        "cache_read": 0.4,
+        "cache_create": 5.0,
+        "output": 15.0,
+    },
+    ("gpt-5.6-luna", "standard", "short"): {
+        "input": 0.2,
+        "cache_read": 0.02,
+        "cache_create": 0.25,
+        "output": 1.2,
+    },
+    ("gpt-5.6-luna", "standard", "long"): {
+        "input": 0.4,
+        "cache_read": 0.04,
+        "cache_create": 0.5,
+        "output": 1.8,
     },
 }
 
@@ -191,6 +220,15 @@ DEFAULT_PRICING: dict[str, dict[str, float]] = {
         "cache_read": 0.5,
         "cache_create": 6.25,
         "cache_create_1h": 10.0,
+    },
+    # Opus 5.5 undercuts Opus 5 and reads bill at 0.05x base input ($0.20),
+    # not 0.1x. Copying the opus-5 row would over-charge reads 2.5x.
+    "claude-opus-5-5": {
+        "input": 4.0,
+        "output": 20.0,
+        "cache_read": 0.2,
+        "cache_create": 5.0,
+        "cache_create_1h": 8.0,
     },
     "claude-fable-5": {
         "input": 10.0,

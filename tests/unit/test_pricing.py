@@ -9,14 +9,16 @@ import pytest
 
 
 @pytest.mark.parametrize(
-    ("fixture", "context_class", "expected"),
+    ("fixture", "context_class", "on", "expected"),
     [
-        ("gpt-5.6-sol.jsonl", "short", 0.0991112),
-        ("gpt-6-astra.jsonl", "short", 0.21051),
+        ("gpt-5.6-sol.jsonl", "short", "2026-09-19", 0.0991112),
+        ("gpt-6-astra.jsonl", "short", "2026-09-19", 0.21051),
+        ("gpt-6-sol.jsonl", "short", "2026-09-22", 0.0447672),
+        ("gpt-5.6-luna.jsonl", "short", "2026-09-19", 0.00419224),
     ],
 )
 def test_api_equivalent_prices_one_observed_response(
-    fixture: str, context_class: str, expected: float
+    fixture: str, context_class: str, on: str, expected: float
 ) -> None:
     from lazy_harness.monitoring.pricing import price_api_response
 
@@ -37,13 +39,13 @@ def test_api_equivalent_prices_one_observed_response(
         },
         service_tier="standard",
         context_class=context_class,
-        on="2026-09-19",
+        on=on,
     )
 
     assert result.amount == pytest.approx(expected)
     assert result.status == "priced"
     assert result.basis is not None
-    assert result.basis.rate_table_version == "openai-2026-09-19"
+    assert result.basis.rate_table_version == "openai-2026-09-22"
 
 
 def test_api_equivalent_fails_closed_without_an_evidenced_service_tier() -> None:
@@ -127,6 +129,12 @@ def test_api_equivalent_fails_closed_outside_the_evidenced_rate_window(
         ("gpt-6-astra", "2026-09-02", "unknown_tier"),
         ("gpt-6-astra", "2026-09-03", "priced"),
         ("gpt-6-astra", "2027-06-01", "priced"),
+        # Sol 6 was released 2026-09-22 with no announced end.
+        ("gpt-6-sol", "2026-09-21", "unknown_tier"),
+        ("gpt-6-sol", "2026-09-22", "priced"),
+        # Luna's 80% cut took effect 2026-07-30; nothing since changes it.
+        ("gpt-5.6-luna", "2026-07-29", "unknown_tier"),
+        ("gpt-5.6-luna", "2026-07-30", "priced"),
     ],
 )
 def test_a_rate_window_spans_the_dates_the_vendor_published(
@@ -596,6 +604,23 @@ def test_default_pricing_includes_opus_5() -> None:
         "cache_read": 0.5,
         "cache_create": 6.25,
         "cache_create_1h": 10.0,
+    }
+
+
+def test_default_pricing_includes_opus_5_5() -> None:
+    """Opus 5.5 is cheaper than Opus 5 and breaks the cache-read convention.
+
+    Reads bill at 0.05x base input ($0.20), not the 0.1x the Opus 5 row
+    carries. Copying that row would over-charge reads 2.5x.
+    """
+    from lazy_harness.monitoring.pricing import default_pricing
+
+    assert default_pricing()["claude-opus-5-5"] == {
+        "input": 4.0,
+        "output": 20.0,
+        "cache_read": 0.2,
+        "cache_create": 5.0,
+        "cache_create_1h": 8.0,
     }
 
 
