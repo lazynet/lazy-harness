@@ -20,15 +20,12 @@ plist/unit, which would put the token on disk in a chezmoi-tracked file.
 from __future__ import annotations
 
 import os
-import stat
-import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
 from lazy_harness.core.config import MetricsConfig
-from lazy_harness.core.paths import metrics_secrets_file
-from lazy_harness.core.secrets import parse_env_file
+from lazy_harness.core.secrets import read_metrics_secret
 from lazy_harness.monitoring.db import MetricsDB
 from lazy_harness.monitoring.sinks.http_remote import HttpRemoteSink
 from lazy_harness.monitoring.sinks.sqlite_local import SqliteLocalSink
@@ -52,45 +49,6 @@ class SinkPlan:
     url_env: str = ""
 
 
-def _warn(message: str) -> None:
-    print(f"lh: {message}", file=sys.stderr)
-
-
-def _read_url_from_secrets_file(url_env: str) -> str:
-    """Fall back to `metrics_secrets_file()` for `url_env`.
-
-    Every failure here — missing file, unreadable file, key absent — degrades
-    to `""` (inactive, local-only), matching an unset environment variable.
-    A file that is not owner-only is refused outright rather than read: a
-    secrets file the whole machine can read must not be silently trusted,
-    and un-reading it later would not un-leak it, so the check has to happen
-    before the value is ever parsed out.
-    """
-    path = metrics_secrets_file()
-    if not path.is_file():
-        return ""
-
-    try:
-        mode = path.stat().st_mode
-    except OSError:
-        return ""
-
-    if mode & (stat.S_IRWXG | stat.S_IRWXO):
-        _warn(
-            f"{path} is mode {mode & 0o777:04o}; refusing to read it for "
-            f"{url_env} (secrets files must be owner-only, e.g. chmod 600)"
-        )
-        return ""
-
-    try:
-        text = path.read_text()
-    except OSError:
-        return ""
-
-    values = parse_env_file(text, source=path.name)
-    return values.get(url_env, "").strip()
-
-
 def _resolve_remote(name: str, options: dict[str, Any], env: Mapping[str, str]) -> tuple[str, str]:
     """Return `(url, url_env)` for a remote sink; url empty means inactive.
 
@@ -103,7 +61,7 @@ def _resolve_remote(name: str, options: dict[str, Any], env: Mapping[str, str]) 
     if isinstance(url_env, str) and url_env:
         value = env.get(url_env, "").strip()
         if not value:
-            value = _read_url_from_secrets_file(url_env)
+            value = read_metrics_secret(url_env)
         return value, url_env
     url = options.get("url")
     if not isinstance(url, str) or not url:

@@ -13,7 +13,7 @@ from lazy_harness.agents.base import AgentAdapter
 from lazy_harness.core.config import ProfileEntry
 from lazy_harness.core.paths import expand_path
 from lazy_harness.deploy.ledger import read_ledger
-from lazy_harness.deploy.symlinks import ensure_symlink
+from lazy_harness.deploy.symlinks import REPLACED, displaced_link_message, ensure_symlink
 
 SKILL_LEDGER_RELATIVE = Path(".lazy-harness/skill-links.json")
 _LEDGER_VERSION = 1
@@ -264,9 +264,13 @@ def apply_skill_projections(plan: SkillProjectionPlan, profiles_src: Path) -> li
         if generated:
             root.mkdir(parents=True, exist_ok=True)
         for name, claim in root_plan.links.items():
-            status = ensure_symlink(claim.source, root / name)
-            suffix = " (already linked)" if status == "exists" else ""
-            output.append(f"  ✓ {claim.profile}/skills/{name}{suffix}")
+            target = root / name
+            status = ensure_symlink(claim.source, target)
+            if status == REPLACED:
+                output.append(displaced_link_message(f"{claim.profile}/skills/{name}", target))
+            else:
+                suffix = " (already linked)" if status == "exists" else ""
+                output.append(f"  ✓ {claim.profile}/skills/{name}{suffix}")
 
         ledger = _ledger_path(root)
         final = sorted((set(root_plan.owned_before) - removed) & (generated | retained) | generated)

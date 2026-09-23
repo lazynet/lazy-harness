@@ -14,6 +14,7 @@ import time
 from dataclasses import dataclass
 
 from lazy_harness.core.config import Config
+from lazy_harness.core.secrets import read_metrics_secret
 from lazy_harness.llm.base import LLMBackendError, LLMTimeoutError
 from lazy_harness.llm.registry import build_backend
 from lazy_harness.llm.roles import RoleNotFoundError, resolve_role
@@ -75,14 +76,9 @@ def _validate(payload: object, schema: dict) -> str:
 
 
 def _resolve_api_key(resolved_api_key: str, api_key_env: str) -> str:
-    """Read the key at call time so the value never reaches disk.
-
-    A scheduler job inherits no interactive shell, so `api_key_env` must be
-    set in the job definition itself — launchd `EnvironmentVariables`, systemd
-    `EnvironmentFile` — not in shell init, which no scheduler reads.
-    """
+    """Read the key at call time, with the owner-only secrets-file fallback."""
     if api_key_env:
-        return os.environ.get(api_key_env, "")
+        return os.environ.get(api_key_env, "").strip() or read_metrics_secret(api_key_env)
     return resolved_api_key
 
 

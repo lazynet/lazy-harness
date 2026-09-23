@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import stat
 import subprocess
@@ -55,6 +54,7 @@ from lazy_harness.hooks.event_surface import (
 from lazy_harness.hooks.runner import resolve_profile
 from lazy_harness.hooks.signal_gaps import HookSignalGap, collect_hook_signal_gaps
 from lazy_harness.llm import LLMBackendError, LLMBackendNotFoundError
+from lazy_harness.llm.invoke import _resolve_api_key
 from lazy_harness.llm.openai_compat import OpenAICompatibleBackend
 from lazy_harness.llm.registry import build_backend
 from lazy_harness.monitoring.db import MetricsDB
@@ -374,8 +374,13 @@ def _render_one_role(console: Console, cfg: Config, role: str) -> bool:
         console.print(f"  [red]✗[/red] {escape(role)}: {escape(str(e))}")
         return False
 
+    api_key = _resolve_api_key(target.api_key, target.api_key_env)
     try:
-        backend = build_backend(type=target.type, base_url=target.base_url, api_key=target.api_key)
+        backend = build_backend(
+            type=target.type,
+            base_url=target.base_url,
+            api_key=api_key,
+        )
     except (LLMBackendError, LLMBackendNotFoundError) as e:
         console.print(f"  [red]✗[/red] {escape(role)}: {escape(str(e))}")
         return False
@@ -383,7 +388,7 @@ def _render_one_role(console: Console, cfg: Config, role: str) -> bool:
     suffix = ""
     if target.api_key_env:
         # Names the variable and whether it resolves, never the value.
-        resolved = "resolves" if os.environ.get(target.api_key_env) else "NOT SET"
+        resolved = "resolves" if api_key else "NOT SET"
         suffix = f" (key from ${target.api_key_env}: {resolved})"
 
     if isinstance(backend, OpenAICompatibleBackend):
@@ -1008,6 +1013,56 @@ def _render_settings_shape(console: Console, cfg: Config) -> bool:
     return ok
 
 
+def _render_halted_proposals(console: Console, cfg: Config) -> None:
+    """Proposal queues at or above the cap, across every project on the machine.
+
+    The session-start notice names a halted queue only inside that project, so
+    a queue in a project nobody opens stays halted unseen. Reporting, not
+    failing: a halted producer degrades memory capture, the machine still works.
+    """
+    import shlex
+
+    from lazy_harness.core.memory_store import all_memory_dirs
+    from lazy_harness.core.proposals import rule_lines
+    from lazy_harness.hooks.builtins._shared import knowledge_root_for
+    from lazy_harness.hooks.builtins.context_inject import _pending_summary
+
+    cap = cfg.compound_loop.max_pending_proposals
+    profile_dirs = [expand_path(e.config_dir) for e in cfg.profiles.items.values()]
+    # Two profiles can claim one config_dir; resolved so its queues count once.
+    dirs: dict[Path, Path] = {}
+    for d in all_memory_dirs(profile_dirs, knowledge_root_for(cfg)):
+        dirs.setdefault(d.resolve(), d)
+    halted = []
+    for memory_dir in dirs.values():
+        proposal_file = memory_dir / "claude-md.proposal.md"
+        try:
+            text = proposal_file.read_text() if proposal_file.is_file() else ""
+        except OSError:
+            text = ""
+        # Counted the way the producer counts toward its cap; `_pending_summary`
+        # reports 0 for a queue with no dated header, which the producer still
+        # counts as full.
+        count = len(rule_lines(text))
+        if count and count >= cap:
+            oldest = _pending_summary(memory_dir)[1] or "unknown"
+            halted.append((count, oldest, memory_dir))
+    if not halted:
+        return
+
+    console.print("\n[bold]Halted proposal queues[/bold]")
+    for count, oldest, memory_dir in sorted(halted, key=lambda h: -h[0]):
+        console.print(
+            f"  [yellow]![/yellow] {count} pending (oldest {oldest}) — {contract_path(memory_dir)}"
+        )
+        console.print(f"      lh memory proposals list --memory-dir {shlex.quote(str(memory_dir))}")
+    total = sum(h[0] for h in halted)
+    console.print(
+        f"  {len(halted)} queue(s) halted at the cap of {cap}, {total} proposal(s) pending "
+        "in them: the compound loop records no new proposals there until each is drained."
+    )
+
+
 @click.command("doctor")
 @click.option(
     "--json",
@@ -1140,6 +1195,7 @@ def doctor(as_json: bool) -> None:
 
     if not _render_memory_hygiene(console, _project_memory_dir(agent, cfg, active_profile)):
         ok = False
+    _render_halted_proposals(console, cfg)
 
     from lazy_harness.core.artifact_version import collect_artifact_version_reports
 

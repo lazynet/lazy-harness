@@ -53,3 +53,12 @@ the same repository opened under two profiles shares one
 `pre-compact-summary.md`. Scoping is per profile and per cwd only on the
 fallback path, taken when there is no usable store or the checkout has no
 remote.
+
+## Evolution — 2026-09-23: parse Claude Code's transcript records
+
+PR #451 corrected `parse_transcript` to read
+`role` and `content` from each record's `message`. The parser now extracts
+human turns from string or `text` block content, excludes `tool_result`
+records, and reads file paths from assistant `tool_use` blocks. Before this
+change, the top-level reads in point 2 returned no tasks or files for real
+Claude Code transcripts; only memory tails reached the summary.

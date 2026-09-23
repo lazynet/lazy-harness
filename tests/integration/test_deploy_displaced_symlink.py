@@ -178,6 +178,23 @@ def test_the_displacement_is_reported_rather_than_silent(
     assert "settings.json.bak" in out, out
 
 
+def test_deploy_profiles_displacement_report_explains_atomic_replacement(
+    deployed: tuple[Config, Path, Path], capsys: pytest.CaptureFixture[str]
+) -> None:
+    from lazy_harness.deploy.engine import deploy_profiles
+
+    cfg, _, _ = deployed
+    capsys.readouterr()
+
+    deploy_profiles(cfg, only="bridge")
+
+    out = capsys.readouterr().out
+    assert (
+        "a writer that replaces this path (temp file plus rename) breaks it "
+        "instead of writing through it."
+    ) in out
+
+
 def test_the_entries_are_named_as_preserved_by_the_config_half(
     deployed: tuple[Config, Path, Path], capsys: pytest.CaptureFixture[str]
 ) -> None:

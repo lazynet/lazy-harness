@@ -210,7 +210,13 @@ def test_pre_compact_routes_paths_through_agent_adapter(tmp_path, monkeypatch) -
 
     transcript = tmp_path / "transcript.jsonl"
     transcript.write_text(
-        _json.dumps({"role": "user", "content": "please refactor the auth module"}) + "\n"
+        _json.dumps(
+            {
+                "type": "user",
+                "message": {"role": "user", "content": "please refactor the auth module"},
+            }
+        )
+        + "\n"
     )
 
     cfg_file = tmp_path / "config.toml"
