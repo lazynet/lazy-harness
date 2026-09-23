@@ -298,3 +298,36 @@ def test_rightsize_with_no_config_file_reports_nothing_and_does_not_crash(
 
     assert result.exit_code == 0, result.output
     assert "No CLAUDE.md" in result.output
+
+
+def test_rightsize_lists_a_project_agents_md_under_a_configured_root(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """ADR-060 repos carry only AGENTS.md; the contract ceiling still applies."""
+    repos = tmp_path / "repos"
+    repos.mkdir()
+    _store, _profile = _setup(tmp_path, monkeypatch, roots=[repos])
+    repo = _repo(repos, "portable")
+    (repo / "AGENTS.md").write_text("line\n" * 260)
+
+    result = CliRunner().invoke(memory, ["rightsize"])
+
+    assert result.exit_code == 0, result.output
+    assert "project:github.com/o/portable" in result.output
+    assert "260" in result.output
+
+
+def test_rightsize_reads_a_codex_profiles_system_doc(tmp_path: Path, monkeypatch) -> None:
+    """A Codex profile's always-loaded contract is AGENTS.md, not CLAUDE.md."""
+    _store, _profile = _setup(tmp_path, monkeypatch)
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    (codex_home / "AGENTS.md").write_text("line\n" * 230)
+    with (tmp_path / "config.toml").open("a") as fh:
+        fh.write(f'\n[profiles.lazy-codex]\nconfig_dir = "{codex_home}"\nagent = "codex"\n')
+
+    result = CliRunner().invoke(memory, ["rightsize"])
+
+    assert result.exit_code == 0, result.output
+    assert "profile:lazy-codex" in result.output
+    assert "230" in result.output

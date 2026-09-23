@@ -94,7 +94,9 @@ grep missed two sites written as conditional expressions.
 (`supported_hooks`, `hook_events`, `parse_hook_input`, `format_hook_output`),
 launch (`bypass_argv`), and the places the harness reads or writes
 (`system_docs`, `skill_root`, `mcp_config_file`, `session_dirs`,
-`credentials_file`, `global_config_link`).
+`credentials_file`, `global_config_link`, `default_home`). `default_home` is
+where the agent keeps state with no profile — the last resort of runtime-dir
+resolution — and is deliberately separate from the deploy's global link.
 
 Five optional Protocols sit beside it, and an adapter is tested for each with
 `isinstance` rather than by name — a capability test, never a hardcoded list:

@@ -126,18 +126,21 @@ goes in a labelled section *inside* `AGENTS.md`, so a root session and a nested
 one receive the same contract under either agent.
 
 ```bash
-lh repo instructions            # the current repository
-lh repo instructions ../other   # any path
+lh repo instructions                 # the current repository
+lh repo instructions ../a ../b ../c  # any number of repositories, one verdict each
 ```
 
-Two findings, each naming the file to change:
+Three findings, each naming the file to change:
 
 | Code | Meaning |
 |---|---|
 | `missing-agents-md` | No root `AGENTS.md`, so repository rules are not portable |
-| `claude-md-shadows-agents` | A `CLAUDE.md` blocks parent-chain `AGENTS.md` discovery |
+| `claude-md-shadows-agents` | A `CLAUDE.md` inside the tree blocks parent-chain `AGENTS.md` discovery |
+| `ancestor-claude-md-shadows-agents` | A `CLAUDE.md` or `.claude/CLAUDE.md` in a directory *above* the repository — measured on Claude Code 2.1.280, it stops the repository's `AGENTS.md` loading at all |
 
-Exit 0 when clean, 1 with one line per finding — so it works as a CI step, not
+Nested checkouts (a `.git` entry below the root, such as Claude Code's `.claude/worktrees/*`) are skipped: their files belong to another branch. `lh doctor` runs the ancestor check on `$HOME`, the one ancestor every repository shares.
+
+Exit 0 when every repository is clean, 1 with one line per finding — so it works as a CI step, not
 only a local convenience.
 
 Design: [ADR-060](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/060-agents-md-is-the-portable-repository-contract.md).

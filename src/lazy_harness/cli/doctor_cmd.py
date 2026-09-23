@@ -42,6 +42,7 @@ from lazy_harness.core.paths import (
     expand_path,
 )
 from lazy_harness.core.profiles import SharedRootInfo, collect_shared_roots, list_profiles
+from lazy_harness.core.repo_instructions import shadows_in
 from lazy_harness.core.secrets import secrets_dir_for
 from lazy_harness.deploy.mcp_gaps import McpServerGap, collect_mcp_gaps
 from lazy_harness.hooks.event_surface import (
@@ -899,6 +900,27 @@ def _doctor_json(cfg: Config) -> dict:
     }
 
 
+def _render_home_instruction_shadows(console: Console) -> bool:
+    """A `CLAUDE.md` in `$HOME` or `~/.claude/` hides every repo's AGENTS.md.
+
+    Claude Code stops loading a repository `AGENTS.md` when any ancestor carries
+    one (ADR-060), and `$HOME` is the ancestor every repository shares. The usual
+    source is the `~/.claude -> <profile>` link older deploys created.
+    """
+    findings = shadows_in(Path.home())
+    for finding in findings:
+        console.print(
+            f"\n[red]✗[/red] {contract_path(finding.path)}: {finding.code} — "
+            f"{escape(finding.detail)}"
+        )
+        link = Path.home() / ".claude"
+        if link.is_symlink():
+            console.print(f"  Legacy profile link. Run: rm {contract_path(link)}")
+        else:
+            console.print("  Move it into a profile's config_dir.")
+    return not findings
+
+
 @click.command("doctor")
 @click.option(
     "--json",
@@ -956,6 +978,8 @@ def doctor(as_json: bool) -> None:
 
     _render_transcripts(console, cfg)
     _render_profile_secrets(console, cfg)
+    if not _render_home_instruction_shadows(console):
+        ok = False
 
     if cfg.knowledge.root:
         kp = expand_path(cfg.knowledge.root)

@@ -1693,3 +1693,38 @@ def test_doctor_json_does_not_change_a_single_text_line(
 
     with pytest.raises(json.JSONDecodeError):
         json.loads(result.output)
+
+
+def test_doctor_fails_on_a_legacy_claude_link(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, home_dir: Path
+) -> None:
+    """`~/.claude/CLAUDE.md` hides every repository AGENTS.md from Claude Code (ADR-060)."""
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    profile = home_dir / ".claude-lazy"
+    profile.mkdir()
+    (profile / "CLAUDE.md").write_text("# profile doc\n")
+    (home_dir / ".claude").symlink_to(profile)
+    cfg = _write_config(tmp_path)
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
+
+    result = CliRunner().invoke(doctor, [])
+
+    assert result.exit_code == 1, result.output
+    assert "ancestor-claude-md-shadows-agents" in result.output
+    assert "~/.claude/CLAUDE.md" in result.output
+    assert "rm ~/.claude" in result.output
+
+
+def test_doctor_is_silent_without_a_home_claude_md(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, home_dir: Path
+) -> None:
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    (home_dir / ".claude").mkdir()
+    cfg = _write_config(tmp_path)
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
+
+    result = CliRunner().invoke(doctor, [])
+
+    assert "ancestor-claude-md-shadows-agents" not in result.output

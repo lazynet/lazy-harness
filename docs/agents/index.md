@@ -47,7 +47,7 @@ Identification and launch:
 | Config-dir env var | `CLAUDE_CONFIG_DIR` | `CODEX_HOME` | `COPILOT_HOME` |
 | Binary | `claude` | `codex` | `copilot` |
 | Default config dir | `~/.claude-<profile>` | `~/.codex-<profile>` | `~/.copilot-<profile>` |
-| `~/.claude`-style global link | ✅ | ❌ | ❌ |
+| `~/.claude`-style global link | ❌ | ❌ | ❌ |
 
 What the harness writes into the config dir:
 
