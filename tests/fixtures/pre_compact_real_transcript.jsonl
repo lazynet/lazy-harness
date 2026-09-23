@@ -1,0 +1,4 @@
+{"type":"user","uuid":"user-1","message":{"role":"user","content":"Review the parser and preserve the current work."}}
+{"type":"assistant","uuid":"assistant-1","message":{"role":"assistant","content":[{"type":"tool_use","id":"tool-1","name":"Write","input":{"file_path":"/srv/app/pre_compact.py","content":"redacted"}},{"type":"tool_use","id":"tool-2","name":"Read","input":{"path":"/srv/app/loader.py"}}]}}
+{"type":"user","uuid":"result-1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"Tool output must not become a task."}]}}
+{"type":"user","uuid":"user-2","message":{"role":"user","content":[{"type":"text","text":"Finish the transcript shape regression tests."}]}}

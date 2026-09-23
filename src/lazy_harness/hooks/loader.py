@@ -182,15 +182,10 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
     "pre-compact": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.pre_compact",
         event="pre_compact",
-        # No `signals`, and not because this hook never opens the transcript —
-        # it does. `parse_transcript` reads `role` and `content` at the *top
-        # level* of each JSONL line and Claude Code nests both under `message`,
-        # so both loops have always yielded nothing (measured: zero top-level
-        # `role` across 3215 production lines; `specs/backlog.md:125` owns the
-        # repair). Declaring `MESSAGES` or `TOOL_CALLS` would name reads that do
-        # not happen and let `deploy` omit the hook on an agent whose reader
-        # lacks them — losing `build_memory_tails`, the part that works, over a
-        # transcript read that does not.
+        # No `signals`: `parse_transcript` reads messages and tool calls from
+        # the raw transcript, but `build_memory_tails` works independently.
+        # Declaring `MESSAGES` or `TOOL_CALLS` would let deploy omit the whole
+        # hook on an agent whose reader lacks either signal, losing those tails.
     ),
     "pre-tool-use-git-scope": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.pre_tool_use_git_scope",
