@@ -30,7 +30,7 @@ import sys
 from pathlib import Path
 
 from lazy_harness.core.config import Config
-from lazy_harness.core.paths import default_secrets_dir, expand_path
+from lazy_harness.core.paths import default_secrets_dir, expand_path, metrics_secrets_file
 
 
 def secrets_dir_for(cfg: Config) -> Path:
@@ -82,6 +82,33 @@ def parse_env_file(text: str, *, source: str = "") -> dict[str, str]:
             value = value[1:-1]
         values[key.strip()] = value
     return values
+
+
+def read_metrics_secret(name: str) -> str:
+    """Read one name from the owner-only metrics secrets file, or return empty."""
+    path = metrics_secrets_file()
+    if not path.is_file():
+        return ""
+
+    try:
+        mode = path.stat().st_mode
+    except OSError:
+        return ""
+
+    if mode & (stat.S_IRWXG | stat.S_IRWXO):
+        _warn(
+            f"{path} is mode {mode & 0o777:04o}; refusing to read it for "
+            f"{name} (secrets files must be owner-only, e.g. chmod 600)"
+        )
+        return ""
+
+    try:
+        text = path.read_text()
+    except OSError:
+        return ""
+
+    values = parse_env_file(text, source=path.name)
+    return values.get(name, "").strip()
 
 
 def overlay_profile_secrets(

@@ -573,6 +573,35 @@ def test_doctor_names_the_key_variable_never_its_value(
     assert "sk-secret" not in out
 
 
+def test_doctor_reports_key_from_owner_only_secrets_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.core.config import LLMBackendConfig
+
+    secrets_dir = tmp_path / "secrets"
+    secrets_dir.mkdir()
+    secrets_file = secrets_dir / "metrics.env"
+    secrets_file.write_text("SOME_LLM_KEY=sk-from-file\n")
+    secrets_file.chmod(0o600)
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.delenv("SOME_LLM_KEY", raising=False)
+    cfg = _cfg_with_roles(
+        {"classify": "remote"},
+        {
+            "remote": LLMBackendConfig(
+                type="openai-compatible",
+                base_url="http://x/v1",
+                api_key_env="SOME_LLM_KEY",
+            )
+        },
+    )
+
+    out, _ = _render(cfg, monkeypatch)
+
+    assert "SOME_LLM_KEY: resolves" in out
+    assert "sk-from-file" not in out
+
+
 def test_doctor_still_reports_the_deprecated_single_backend_form(
     monkeypatch: pytest.MonkeyPatch, expects_deprecated_compound_loop: None
 ) -> None:

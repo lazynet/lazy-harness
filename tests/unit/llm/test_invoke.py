@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from lazy_harness.core.config import Config, LLMBackendConfig, LLMConfig
@@ -243,6 +245,86 @@ def test_api_key_env_is_resolved_at_call_time(monkeypatch: pytest.MonkeyPatch) -
     built = _patch_backend(monkeypatch, _StubBackend("ok"))
     run_inference("p", role="classify", cfg=cfg, timeout=5)
     assert built[0]["api_key"] == "sk-secret"
+
+
+def _write_metrics_secrets(tmp_path: Path, *, mode: int = 0o600) -> None:
+    secrets_dir = tmp_path / "secrets"
+    secrets_dir.mkdir()
+    path = secrets_dir / "metrics.env"
+    path.write_text("SOME_LLM_KEY=sk-from-file\n")
+    path.chmod(mode)
+
+
+def test_api_key_env_wins_over_secrets_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.llm.invoke import _resolve_api_key
+
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("SOME_LLM_KEY", "sk-from-env")
+    _write_metrics_secrets(tmp_path)
+
+    assert _resolve_api_key("", "SOME_LLM_KEY") == "sk-from-env"
+
+
+def test_api_key_falls_back_to_same_file_as_metrics_sink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.core.config import MetricsConfig, SinkDefinition
+    from lazy_harness.llm.invoke import _resolve_api_key
+    from lazy_harness.monitoring.sink_setup import plan_sinks
+
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.delenv("SOME_LLM_KEY", raising=False)
+    _write_metrics_secrets(tmp_path)
+
+    assert _resolve_api_key("", "SOME_LLM_KEY") == "sk-from-file"
+    cfg = MetricsConfig(
+        sinks=["http_remote"],
+        sink_configs={"http_remote": SinkDefinition(options={"url_env": "SOME_LLM_KEY"})},
+    )
+    assert plan_sinks(cfg)[0].url == "sk-from-file"
+
+
+def test_api_key_env_with_only_whitespace_uses_secrets_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.llm.invoke import _resolve_api_key
+
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("SOME_LLM_KEY", "   ")
+    _write_metrics_secrets(tmp_path)
+
+    assert _resolve_api_key("", "SOME_LLM_KEY") == "sk-from-file"
+
+
+def test_api_key_refuses_non_owner_only_secrets_file_without_logging_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from lazy_harness.llm.invoke import _resolve_api_key
+
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.delenv("SOME_LLM_KEY", raising=False)
+    _write_metrics_secrets(tmp_path, mode=0o644)
+
+    assert _resolve_api_key("", "SOME_LLM_KEY") == ""
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "metrics.env" in captured.err
+    assert "SOME_LLM_KEY" in captured.err
+    assert "sk-from-file" not in captured.err
+
+
+def test_api_key_with_missing_secrets_file_is_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from lazy_harness.llm.invoke import _resolve_api_key
+
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.delenv("SOME_LLM_KEY", raising=False)
+
+    assert _resolve_api_key("", "SOME_LLM_KEY") == ""
+    assert capsys.readouterr().err == ""
 
 
 def test_missing_api_key_env_does_not_leak_the_variable_value(
