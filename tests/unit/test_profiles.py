@@ -452,3 +452,22 @@ def test_agent_filter_is_a_no_op_smoke_test(tmp_path: Path) -> None:
     cfg, _ = _make_config(tmp_path)
 
     assert resolve_profile_with_source(cfg).name == "personal"
+
+
+def test_agent_filter_skips_a_profile_whose_agent_has_no_prefix(tmp_path: Path) -> None:
+    """A profile with a typo'd or deregistered agent cannot match any `--agent`,
+    so it must not blow up the candidate filter for everyone else."""
+    from lazy_harness.core.profiles import resolve_profile_with_source
+
+    cfg, _ = _make_config(
+        tmp_path,
+        {
+            "claude-x": ProfileEntry(config_dir=str(tmp_path / ".claude-x"), roots=["~"]),
+            "broken": ProfileEntry(config_dir=str(tmp_path / ".broken"), agent="claud"),
+        },
+    )
+    cfg.profiles.default = "claude-x"
+
+    resolution = resolve_profile_with_source(cfg, agent="claude")
+
+    assert resolution.name == "claude-x"

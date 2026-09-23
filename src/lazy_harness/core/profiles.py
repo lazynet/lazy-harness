@@ -120,11 +120,15 @@ def resolve_profile_with_source(
 
     candidates = cfg.profiles.items
     if agent is not None:
-        candidates = {
-            name: entry
-            for name, entry in candidates.items()
-            if _profile_agent_prefix(cfg, name) == agent
-        }
+        matched: dict[str, ProfileEntry] = {}
+        for name, entry in candidates.items():
+            try:
+                prefix = _profile_agent_prefix(cfg, name)
+            except ValueError:
+                continue
+            if prefix == agent:
+                matched[name] = entry
+        candidates = matched
 
     cwd_str = str(cwd.resolve())
     best_len = 0
