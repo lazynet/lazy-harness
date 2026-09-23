@@ -84,19 +84,28 @@ def _ancestor_findings(root: Path) -> list[Finding]:
     """
     findings: list[Finding] = []
     for ancestor in root.resolve().parents:
-        for candidate in (ancestor / APPENDIX_NAME, ancestor / ".claude" / APPENDIX_NAME):
-            if candidate.is_file():
-                findings.append(
-                    Finding(
-                        path=candidate,
-                        code="ancestor-claude-md-shadows-agents",
-                        detail=(
-                            f"an ancestor {APPENDIX_NAME} stops Claude Code loading "
-                            f"this repository's {CANONICAL_NAME}"
-                        ),
-                    )
-                )
+        findings.extend(shadows_in(ancestor))
     return findings
+
+
+def shadows_in(directory: Path) -> list[Finding]:
+    """The `CLAUDE.md` files `directory` would impose on every repo below it.
+
+    `lh doctor` calls this on `$HOME`, the one ancestor every repository shares,
+    so a machine is flagged even when no repository gate runs on it.
+    """
+    return [
+        Finding(
+            path=candidate,
+            code="ancestor-claude-md-shadows-agents",
+            detail=(
+                f"an ancestor {APPENDIX_NAME} stops Claude Code loading "
+                f"the repository {CANONICAL_NAME} below it"
+            ),
+        )
+        for candidate in (directory / APPENDIX_NAME, directory / ".claude" / APPENDIX_NAME)
+        if candidate.is_file()
+    ]
 
 
 def _walk(root: Path) -> list[Path]:

@@ -41,3 +41,31 @@ def test_the_path_argument_defaults_to_the_working_directory(tmp_path: Path) -> 
         result = _invoke()
 
     assert result.exit_code == 0, result.output
+
+
+def test_several_repositories_are_checked_in_one_run(tmp_path: Path) -> None:
+    clean = tmp_path / "clean"
+    shadowed = tmp_path / "shadowed"
+    for repo in (clean, shadowed):
+        repo.mkdir()
+        (repo / "AGENTS.md").write_text(AGENTS_BODY)
+    (shadowed / "CLAUDE.md").write_text("# Claude-only rules\n")
+
+    result = _invoke(str(clean), str(shadowed))
+
+    assert result.exit_code == 1, result.output
+    assert f"✓ {clean}" in result.output
+    assert f"✗ {shadowed}" in result.output
+    assert "claude-md-shadows-agents" in result.output
+
+
+def test_several_clean_repositories_exit_zero(tmp_path: Path) -> None:
+    repos = [tmp_path / "a", tmp_path / "b"]
+    for repo in repos:
+        repo.mkdir()
+        (repo / "AGENTS.md").write_text(AGENTS_BODY)
+
+    result = _invoke(*(str(r) for r in repos))
+
+    assert result.exit_code == 0, result.output
+    assert result.output.count("✓") == 2
