@@ -337,10 +337,53 @@ def test_sync_claude_md_command_writes_each_profiles_own_system_doc(tmp_path: Pa
     assert not (work / "CLAUDE.md").exists()
 
 
+def test_sync_profiles_keeps_the_callers_adapter_for_an_undeclared_directory(
+    tmp_path: Path,
+) -> None:
+    """A leftover directory keeps the caller's answer, not the global default,
+    for as long as no profile in the config declares `identity` (design
+    section 3 / M3): the old directory-driven fallback stays exact.
+
+    `agent_for_profile` resolves an unknown name to `[agent].type`, so routing
+    every directory through it would hand a profile since removed from
+    `config.toml` the global agent's doc — which is not what the caller passed
+    and not what the directory last held.
+    """
+    from lazy_harness.core.config import (
+        AgentConfig,
+        Config,
+        HarnessConfig,
+        ProfileEntry,
+        ProfilesConfig,
+    )
+    from lazy_harness.core.sync_agent_md import sync_profiles
+
+    profiles_dir = tmp_path / "profiles"
+    profiles_dir.mkdir()
+    _seed_common(profiles_dir)
+    _seed_profile(profiles_dir, "leftover")
+
+    cfg = Config(
+        harness=HarnessConfig(version="1"),
+        agent=AgentConfig(type="codex"),
+        profiles=ProfilesConfig(
+            default="work",
+            items={"work": ProfileEntry(config_dir="~/.codex-work")},
+        ),
+    )
+
+    sync_profiles(profiles_dir, _adapter(), cfg=cfg)
+
+    assert (profiles_dir / "leftover" / "CLAUDE.md").is_file()
+    assert not (profiles_dir / "leftover" / "AGENTS.md").exists()
+
+
 def test_sync_profiles_reports_an_undeclared_directory_as_orphaned(
     tmp_path: Path,
 ) -> None:
-    """A directory the config no longer names is reported, never written.
+    """A directory the config no longer names is reported, never written —
+    but only once at least one profile in the config declares `identity`
+    (M3): before that, the directory-driven fallback above applies instead.
 
     The old fallback — sync an unknown directory with the caller's adapter —
     existed for a tree that outlived its config. With identities the directory
@@ -366,8 +409,10 @@ def test_sync_profiles_reports_an_undeclared_directory_as_orphaned(
         harness=HarnessConfig(version="1"),
         agent=AgentConfig(type="codex"),
         profiles=ProfilesConfig(
-            default="work",
-            items={"work": ProfileEntry(config_dir="~/.codex-work")},
+            default="codex-work",
+            items={
+                "codex-work": ProfileEntry(config_dir="~/.codex-work", identity="work"),
+            },
         ),
     )
 
@@ -378,6 +423,30 @@ def test_sync_profiles_reports_an_undeclared_directory_as_orphaned(
     assert not (leftover / "CLAUDE.md").exists()
     assert not (leftover / "AGENTS.md").exists()
     assert (leftover / "head.md").stat().st_mtime == before
+
+
+def test_only_naming_an_unknown_profile_in_an_identity_config_is_refused(
+    tmp_path: Path,
+) -> None:
+    """`only=` picking a name no configured profile carries used to return
+    `[]` silently once any profile in the config declares `identity` — a
+    caller (CLI, hook) can't tell that from "nothing to do" (M3)."""
+    import pytest
+
+    from lazy_harness.core.config import ProfileEntry
+    from lazy_harness.core.sync_agent_md import SyncError, sync_profiles
+
+    profiles_dir = tmp_path / "profiles"
+    profiles_dir.mkdir()
+    _seed_common(profiles_dir)
+    _seed_role_profile(profiles_dir, "personal", head="# id\n", tail="# ctx\n")
+
+    cfg = _identity_cfg(
+        **{"claude-personal": ProfileEntry(config_dir="~/.claude-personal", identity="personal")}
+    )
+
+    with pytest.raises(SyncError, match="ghost"):
+        sync_profiles(profiles_dir, _adapter(), cfg=cfg, only="ghost")
 
 
 def test_one_rendered_document_lands_at_every_destination(tmp_path: Path) -> None:

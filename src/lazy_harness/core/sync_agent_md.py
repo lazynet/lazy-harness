@@ -273,20 +273,32 @@ def _sync_directory_driven(
     return _render_jobs(profiles_dir, jobs)
 
 
-def _sync_config_driven(profiles_dir: Path, cfg: Config, *, only: str | None) -> list[SyncResult]:
+def _sync_config_driven(
+    profiles_dir: Path, cfg: Config, adapter: AgentAdapter, *, only: str | None
+) -> list[SyncResult]:
     """Iterates configured profiles rather than directories (design section 3).
 
     Two profiles that share `(identity, agent)` resolve to one job — one
     write, not a race or a duplicate. A directory under `profiles_dir` no
-    configured profile resolves to is reported `orphaned` and never touched:
-    the old fallback (sync it with the caller's adapter) existed for a tree
-    that outlived its config, and an identity dir no longer tells which
-    agents it serves.
+    configured profile resolves to is reported `orphaned` and never touched,
+    but only once at least one profile in `cfg` declares `identity`: until
+    then an identity-less config can't tell an orphan from a directory that
+    simply predates `identity` as a concept, so it keeps the pre-identity
+    fallback — synced with `adapter`, the caller's own (M3). The same split
+    applies to `only` naming a directory `cfg` does not carry: it raises once
+    identity is declared anywhere, and is synced with `adapter` until then —
+    never silently returning `[]`.
     """
     from lazy_harness.agents.registry import agent_for_profile
     from lazy_harness.core.profile_identity import profile_identity, profile_source_dir
 
+    has_identity = any(entry.identity for entry in cfg.profiles.items.values())
     claimed = {profile_source_dir(cfg, name, profiles_dir).resolve() for name in cfg.profiles.items}
+
+    if only is not None and only not in cfg.profiles.items:
+        if has_identity:
+            raise SyncError(f"no configured profile named {only!r}")
+        return _sync_directory_driven(profiles_dir, adapter, only=only)
 
     selected_names = [only] if only is not None else list(cfg.profiles.items)
     seen: set[tuple[Path, str]] = set()
@@ -309,13 +321,19 @@ def _sync_config_driven(profiles_dir: Path, cfg: Config, *, only: str | None) ->
     results = _render_jobs(profiles_dir, jobs)
 
     if only is None:
+        fallback_docs = tuple(adapter.system_docs())
         for entry_dir in sorted(profiles_dir.iterdir()):
             if not entry_dir.is_dir() or entry_dir.name.startswith("_"):
                 continue
-            if entry_dir.resolve() not in claimed:
+            if entry_dir.resolve() in claimed:
+                continue
+            if has_identity:
                 results.append(
                     SyncResult(profile=entry_dir.name, action="orphaned", path=entry_dir)
                 )
+            else:
+                fallback_job = _SyncJob(entry_dir.name, entry_dir, fallback_docs, adapter.name)
+                results.extend(_render_jobs(profiles_dir, [fallback_job]))
     return results
 
 
@@ -333,9 +351,11 @@ def sync_profiles(
     identity existed. With `cfg`, profiles are iterated instead of
     directories: destinations are per profile's own agent
     (`agent_for_profile`), two profiles sharing an identity and agent write
-    once, and a directory no configured profile resolves to is reported
-    `orphaned` rather than synced. `only` narrows either mode to one profile;
-    no sibling profile is read or written.
+    once. A directory no configured profile resolves to is reported
+    `orphaned` and left untouched once at least one profile in `cfg` declares
+    `identity`; until then it keeps the pre-identity fallback of being synced
+    with `adapter`, the caller's own (design section 3 / M3). `only` narrows
+    either mode to one profile; no sibling profile is read or written.
 
     Skips a profile whose adapter declares no system doc, and one that
     carries no role-named segments. A profile carrying head and tail without
@@ -343,4 +363,4 @@ def sync_profiles(
     """
     if cfg is None:
         return _sync_directory_driven(profiles_dir, adapter, only=only)
-    return _sync_config_driven(profiles_dir, cfg, only=only)
+    return _sync_config_driven(profiles_dir, cfg, adapter, only=only)

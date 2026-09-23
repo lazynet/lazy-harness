@@ -146,9 +146,13 @@ profiles, resolves each to `(identity dir, adapter)`, and writes each distinct
 agent (`codex-lazy`, `codex-lazy-alt`) produce byte-identical input and one
 write. `only=<profile>` selects that profile's pair. A directory under
 `profiles/` that no configured profile names is reported as orphaned and never
-written: the old fallback — sync an unknown directory with the caller's
-adapter — existed for a tree that outlived its config, and with identities the
-directory no longer tells which agents it serves.
+written — but only once at least one profile in the config declares
+`identity`: until then (decision 1's "nothing changes"), an unnamed directory
+keeps the old fallback of being synced with the caller's adapter, and
+`only=<undeclared dir>` still syncs it the same way. The orphan report exists
+for a tree that outlived its config: with identities the directory no longer
+tells which agents it serves, but an identity-less config has no way to draw
+that distinction in the first place.
 
 **Generated docs never name a concrete profile.** The Codex head today says
 "you are running in profile `lazy-codex`". Agent-specific prose moves to

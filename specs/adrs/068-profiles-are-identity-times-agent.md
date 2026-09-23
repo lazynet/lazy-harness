@@ -47,8 +47,11 @@ Design: [`2026-09-23-profile-identity-design.md`](../designs/2026-09-23-profile-
 
 - Several profiles per (agent, identity) are legal and share their context by
   construction.
-- `sync_profiles` becomes profile-driven; a source directory no configured
-  profile names is reported, not synced.
+- `sync_profiles` becomes profile-driven once at least one profile in the
+  config declares `identity`; from then on a source directory no configured
+  profile names is reported, not synced. Until then — decision 1's "nothing
+  changes" — an unnamed directory keeps the pre-identity fallback of being
+  synced with the caller's own adapter.
 - Every consumer passing an old `--profile` value breaks at the cutover and is
   migrated in the same window.
 
