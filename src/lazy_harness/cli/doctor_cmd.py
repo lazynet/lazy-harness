@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import stat
 from dataclasses import asdict, dataclass
@@ -54,6 +53,7 @@ from lazy_harness.hooks.event_surface import (
 from lazy_harness.hooks.runner import resolve_profile
 from lazy_harness.hooks.signal_gaps import HookSignalGap, collect_hook_signal_gaps
 from lazy_harness.llm import LLMBackendError, LLMBackendNotFoundError
+from lazy_harness.llm.invoke import _resolve_api_key
 from lazy_harness.llm.openai_compat import OpenAICompatibleBackend
 from lazy_harness.llm.registry import build_backend
 from lazy_harness.monitoring.db import MetricsDB
@@ -373,8 +373,13 @@ def _render_one_role(console: Console, cfg: Config, role: str) -> bool:
         console.print(f"  [red]✗[/red] {escape(role)}: {escape(str(e))}")
         return False
 
+    api_key = _resolve_api_key(target.api_key, target.api_key_env)
     try:
-        backend = build_backend(type=target.type, base_url=target.base_url, api_key=target.api_key)
+        backend = build_backend(
+            type=target.type,
+            base_url=target.base_url,
+            api_key=api_key,
+        )
     except (LLMBackendError, LLMBackendNotFoundError) as e:
         console.print(f"  [red]✗[/red] {escape(role)}: {escape(str(e))}")
         return False
@@ -382,7 +387,7 @@ def _render_one_role(console: Console, cfg: Config, role: str) -> bool:
     suffix = ""
     if target.api_key_env:
         # Names the variable and whether it resolves, never the value.
-        resolved = "resolves" if os.environ.get(target.api_key_env) else "NOT SET"
+        resolved = "resolves" if api_key else "NOT SET"
         suffix = f" (key from ${target.api_key_env}: {resolved})"
 
     if isinstance(backend, OpenAICompatibleBackend):

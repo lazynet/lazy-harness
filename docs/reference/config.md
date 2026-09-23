@@ -523,7 +523,7 @@ classify = "local"      # cheap, high-volume work
 | `api_key`     | string | `""`       | no       | Literal key. Mutually exclusive with `api_key_env`.                                                                  |
 | `api_key_env` | string | `""`       | no       | **Preferred.** Names the environment variable holding the key; the value never appears in `config.toml`.             |
 
-`api_key` and `api_key_env` together is a hard configuration error. Prefer `api_key_env`: `config.toml` is often kept in a dotfiles repository, and a literal key committed there is a leak. The variable is read **at call time**, so a scheduled job must set it in the job definition itself — launchd `EnvironmentVariables`, systemd `EnvironmentFile` — because no scheduler reads an interactive shell's init files.
+`api_key` and `api_key_env` together is a hard configuration error. Prefer `api_key_env`: `config.toml` is often kept in a dotfiles repository, and a literal key committed there is a leak. The variable is read **at call time**. If it is unset or empty, resolution falls back to `<lh config dir>/secrets/metrics.env`, using the same `KEY=value` format and owner-only permission rule as `url_env`. The environment wins when it has a value. A scheduled job can use this file or set the variable in its job definition; it does not inherit an interactive shell's environment.
 
 ### Roles in practice
 

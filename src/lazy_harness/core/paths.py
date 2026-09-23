@@ -94,7 +94,7 @@ def default_secrets_dir() -> Path:
 
 
 def metrics_secrets_file() -> Path:
-    """Path to the metrics sink secrets file.
+    """Path to the metrics sink and inference key secrets file.
 
     `[metrics.sink_options.<name>].url_env` names an environment variable
     read at sink-activation time (`monitoring/sink_setup.py`). A scheduler
@@ -102,7 +102,8 @@ def metrics_secrets_file() -> Path:
     environment, so the variable can resolve fine in a terminal and still
     come back empty on a timer running the same config. This file is the
     fallback read in that case: `KEY=value` lines, same format and
-    permission contract (owner-only) as per-profile secrets.
+    permission contract (owner-only) as per-profile secrets. `api_key_env`
+    reads from the same file when its environment variable is empty.
     """
     return default_secrets_dir() / "metrics.env"
 

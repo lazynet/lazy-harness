@@ -43,12 +43,11 @@ Five properties are load-bearing:
 
 3. **No automatic fallback between backends.** A silent fall-through from a local backend to a billed one is how a cost optimisation becomes a cost surprise, and it hides a broken local backend behind an invoice. No safety net is needed in-repo: a failed call already skips the session and writes the deterministic slim handoff.
 
-4. **Secrets are named, never carried.** `api_key_env` reuses the `url_env` mechanism in `monitoring/sink_setup.py` verbatim — resolved at call time so the value never reaches disk, owner-only secrets-file fallback, and the parser rejects the literal and the variable together. This matters because `config.toml` is a chezmoi `.tmpl`.
+4. **Secrets are named, never carried.** `api_key_env` reuses the `url_env` mechanism in `monitoring/sink_setup.py` — resolved at call time so the value never reaches disk, owner-only secrets-file fallback, and the parser rejects the literal and the variable together. Both paths read `<lh config dir>/secrets/metrics.env` through `core/secrets.py:read_metrics_secret`. This matters because `config.toml` is a chezmoi `.tmpl`.
 
-   > **Not implemented (noted 2026-09-23).** `llm/invoke.py:_resolve_api_key`
-   > reads only the environment variable; the owner-only secrets-file fallback
-   > was never built, identical since PR #238. Tracked as F8 in
-   > `specs/backlog.md`.
+   > **Evolution (2026-09-23).** The owner-only secrets-file fallback was missing
+   > from the original implementation. `llm/invoke.py:_resolve_api_key` now uses
+   > the same reader as the metrics sink when the environment variable is empty.
 
 5. **Backwards compatible.** `[compound_loop].backend`/`.model` map to a synthetic `distill` role with a one-time warning. ADR-033's fields are deprecated, not removed.
 
@@ -80,11 +79,11 @@ Because the motivating consumer lives in another repository, `lh exec --role <na
 
 **Positive**
 
-- One implementation of each provider call, instead of two that drift.
-- Compound-loop spend becomes visible in `metrics.db` for the first time, through machinery that already exists.
+- One role-resolution seam serves in-repo callers and `lh exec --role`.
+- The resolution seam makes per-role inference possible. Compound-loop spend remains absent from `metrics.db`.
 
-  > **Not implemented (noted 2026-09-23).** Neither of the two bullets above
-  > holds. The seam unified *resolution*, not the provider call: `llm/claude.py`
+  > **Not implemented (noted 2026-09-23).** Shared Claude provider calls and
+  > inference spend accounting remain open. `llm/claude.py`
   > (`-p --model M --output-format text`) and `ClaudeCodeAdapter.headless_argv`
   > (`-p --output-format json [--model M]`) still build two `claude -p` argv
   > lists. And `run_inference` records nothing: the text output format carries
