@@ -26,6 +26,12 @@ from lazy_harness.monitoring.launches import record_launch
     },
 )
 @click.option("--profile", "profile_override", default=None, help="Force a specific profile")
+@click.option(
+    "--agent",
+    "agent_filter",
+    default=None,
+    help="Only consider profiles of this agent (claude, codex, copilot)",
+)
 @click.option("--list", "list_profiles_flag", is_flag=True, help="List profiles and exit")
 @click.option("--dry-run", is_flag=True, help="Print the resolved exec invocation without running")
 @click.option(
@@ -42,6 +48,7 @@ from lazy_harness.monitoring.launches import record_launch
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def run(
     profile_override: str | None,
+    agent_filter: str | None,
     list_profiles_flag: bool,
     dry_run: bool,
     bypass_level: str | None,
@@ -69,7 +76,7 @@ def run(
         return
 
     try:
-        plan = resolve_launch(cfg, Path.cwd(), profile_override)
+        plan = resolve_launch(cfg, Path.cwd(), profile_override, agent=agent_filter)
     except LaunchError as e:
         console.print(f"[red]Error:[/red] {escape(str(e))}")
         raise SystemExit(1)

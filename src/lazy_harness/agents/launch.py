@@ -42,17 +42,21 @@ def resolve_launch(
     profile_override: str | None = None,
     *,
     require_headless: bool = False,
+    agent: str | None = None,
 ) -> LaunchPlan:
     """Resolve everything needed to start the agent, or raise `LaunchError`.
 
     `require_headless` is checked before the binary is located: an agent that
     cannot be driven non-interactively is the more useful error to report.
+    `agent` is a profile prefix (`"claude"`, `"codex"`, `"copilot"`) that
+    narrows candidate profiles before root resolution; see
+    `core.profiles.resolve_profile_with_source`.
     """
     if not cfg.profiles.items:
         raise LaunchError("no-profiles", "No profiles configured. Run `lh init`.")
 
     try:
-        resolution = resolve_profile_with_source(cfg, cwd, profile_override)
+        resolution = resolve_profile_with_source(cfg, cwd, profile_override, agent=agent)
     except ProfileError as e:
         raise LaunchError("unknown-profile", str(e)) from e
 

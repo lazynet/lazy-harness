@@ -303,6 +303,12 @@ def _emit_inference_plan(cfg: Config, role: str) -> None:
 @click.command("exec")
 @click.option("--profile", "profile_override", default=None, help="Force a specific profile")
 @click.option(
+    "--agent",
+    "agent_filter",
+    default=None,
+    help="Only consider profiles of this agent (claude, codex, copilot)",
+)
+@click.option(
     "--role",
     default=None,
     help="Inference role from [llm.roles]; runs a single completion instead of the agent",
@@ -333,6 +339,7 @@ def _emit_inference_plan(cfg: Config, role: str) -> None:
 @click.argument("agent_args", nargs=-1, type=click.UNPROCESSED)
 def exec_cmd(
     profile_override: str | None,
+    agent_filter: str | None,
     role: str | None,
     tier: str | None,
     model: str | None,
@@ -379,7 +386,9 @@ def exec_cmd(
         _fail("config", str(e))
 
     try:
-        plan = resolve_launch(cfg, Path.cwd(), profile_override, require_headless=True)
+        plan = resolve_launch(
+            cfg, Path.cwd(), profile_override, require_headless=True, agent=agent_filter
+        )
     except LaunchError as e:
         _fail(e.kind, str(e))
 

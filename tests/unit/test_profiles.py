@@ -342,3 +342,113 @@ def test_an_explicit_override_short_circuits_the_shared_root_refusal(tmp_path: P
 
     assert resolution.name == "experiment"
     assert resolution.source == "explicit"
+
+
+# --- --agent filtering (Task 4) --------------------------------------------- #
+
+
+def test_agent_filter_on_a_shared_root_picks_that_agents_root_default(tmp_path: Path) -> None:
+    from lazy_harness.core.profiles import resolve_profile_with_source
+
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    cfg, _ = _make_config(
+        tmp_path,
+        {
+            "claude-x": ProfileEntry(
+                config_dir=str(tmp_path / ".claude-x"), roots=[str(shared)], root_default=True
+            ),
+            "codex-x": ProfileEntry(
+                config_dir=str(tmp_path / ".codex-x"), roots=[str(shared)], agent="codex"
+            ),
+        },
+    )
+
+    assert resolve_profile_with_source(cfg, cwd=shared).name == "claude-x"
+    assert resolve_profile_with_source(cfg, cwd=shared, agent="codex").name == "codex-x"
+
+
+def test_agent_filter_with_no_root_match_never_falls_back_to_another_agents_default(
+    tmp_path: Path,
+) -> None:
+    """The default profile runs Claude Code; `--agent codex` must never launch it."""
+    from lazy_harness.core.profiles import resolve_profile_with_source
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    cfg, _ = _make_config(
+        tmp_path,
+        {
+            "claude-x": ProfileEntry(config_dir=str(tmp_path / ".claude-x"), roots=["~"]),
+            "codex-x": ProfileEntry(config_dir=str(tmp_path / ".codex-x"), agent="codex"),
+        },
+    )
+    cfg.profiles.default = "claude-x"
+
+    resolution = resolve_profile_with_source(cfg, cwd=outside, agent="codex")
+
+    assert resolution.name == "codex-x"
+    assert resolution.source == "default-fallback"
+
+
+def test_agent_filter_with_two_candidates_and_no_root_match_refuses(tmp_path: Path) -> None:
+    from lazy_harness.core.profiles import ProfileError, resolve_profile_with_source
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    cfg, _ = _make_config(
+        tmp_path,
+        {
+            "claude-x": ProfileEntry(config_dir=str(tmp_path / ".claude-x"), roots=["~"]),
+            "codex-x": ProfileEntry(config_dir=str(tmp_path / ".codex-x"), agent="codex"),
+            "codex-y": ProfileEntry(config_dir=str(tmp_path / ".codex-y"), agent="codex"),
+        },
+    )
+    cfg.profiles.default = "claude-x"
+
+    with pytest.raises(ProfileError, match="codex"):
+        resolve_profile_with_source(cfg, cwd=outside, agent="codex")
+
+
+def test_override_and_agent_agreeing_resolves_explicit(tmp_path: Path) -> None:
+    from lazy_harness.core.profiles import resolve_profile_with_source
+
+    cfg, _ = _make_config(
+        tmp_path,
+        {"codex-x": ProfileEntry(config_dir=str(tmp_path / ".codex-x"), agent="codex")},
+    )
+
+    resolution = resolve_profile_with_source(cfg, override="codex-x", agent="codex")
+
+    assert resolution.name == "codex-x"
+    assert resolution.source == "explicit"
+
+
+def test_override_and_agent_disagreeing_is_refused(tmp_path: Path) -> None:
+    from lazy_harness.core.profiles import ProfileError, resolve_profile_with_source
+
+    cfg, _ = _make_config(
+        tmp_path,
+        {"claude-x": ProfileEntry(config_dir=str(tmp_path / ".claude-x"))},
+    )
+
+    with pytest.raises(ProfileError, match="claude-x"):
+        resolve_profile_with_source(cfg, override="claude-x", agent="codex")
+
+
+def test_unknown_agent_prefix_is_refused(tmp_path: Path) -> None:
+    from lazy_harness.core.profiles import ProfileError, resolve_profile_with_source
+
+    cfg, _ = _make_config(tmp_path)
+
+    with pytest.raises(ProfileError, match="nope"):
+        resolve_profile_with_source(cfg, agent="nope")
+
+
+def test_agent_filter_is_a_no_op_smoke_test(tmp_path: Path) -> None:
+    """The parameter-less call must resolve exactly as it always has."""
+    from lazy_harness.core.profiles import resolve_profile_with_source
+
+    cfg, _ = _make_config(tmp_path)
+
+    assert resolve_profile_with_source(cfg).name == "personal"
