@@ -44,6 +44,10 @@ Two claims above no longer describe the code. The decision stands; its mechanism
 
 - **The `~/.claude` symlink step is a no-op for Claude Code.** `deploy_cmd.py` still runs it after `deploy_mcp_servers`, but since #442 `ClaudeCodeAdapter.global_config_link()` returns `None`, so no link is created (ADR-009 and ADR-060, Evolution).
 
+### Evolution — 2026-09-23
+
+- **Codex now places MCP servers.** The 2026-09-15 Evolution note is outdated: since #341, `CodexAdapter.plan_config` calls `_plan_mcp(servers, ...)`, which merges detected servers as `[mcp_servers.<id>]` tables in `config.toml`. Its `mcp_config_file()` still returns `""`; Codex uses the config planner rather than a standalone MCP config file.
+
 ## Alternatives considered
 
 - **Hand-edited `mcpServers` in profile templates.** Reproducible until a tool is uninstalled — the entry stays, the agent fails to start the missing server, and the user has to remember to clean up. Rejected because the install-uninstall cycle has no obvious trigger to keep the file in sync.
