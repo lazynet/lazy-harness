@@ -362,3 +362,17 @@ def test_every_breached_edit_in_one_call_is_reported(tmp_path: Path) -> None:
 
     assert "MEMORY.md at" in message
     assert "CLAUDE.md at /repo/CLAUDE.md" in message
+
+
+def test_main_warns_when_write_pushes_agents_md_over_threshold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AGENTS.md is the repository contract under ADR-060; same ceiling."""
+    from lazy_harness.hooks.builtins import pre_tool_use_memory_size as mod
+
+    monkeypatch.delenv("LH_CONFIG_DIR", raising=False)
+
+    decision = mod.main(_event("/repo/AGENTS.md", content="line\n" * 250))
+
+    assert "AGENTS.md" in decision.system_message
+    assert "200" in decision.system_message

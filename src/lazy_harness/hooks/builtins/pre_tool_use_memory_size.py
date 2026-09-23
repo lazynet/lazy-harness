@@ -1,15 +1,15 @@
-"""PreToolUse hook: warn when MEMORY.md or CLAUDE.md edits push past ceiling.
+"""PreToolUse hook: warn when MEMORY.md or a contract edit pushes past ceiling.
 
 ADR-030 G2 — non-blocking. Returns a top-level `system_message` as a warning
 banner so the write goes through and the user sees a hint to trim. The verdict
 stays `None`: `pre_tool_use` honours `DENY`, and an abstention that reads as
 approval is exactly what `HookDecision.verdict` defaults to `None` to prevent.
 
-CLAUDE.md gets its own threshold pair (1a of the September 2026 harness
-improvements design), separate from MEMORY.md's: the two files have different
-jobs — MEMORY.md is a curated index, CLAUDE.md is a contract that loads on
-every session in every profile. `lh memory rightsize` surfaces the same
-thresholds across every CLAUDE.md the harness can reach.
+Contracts — CLAUDE.md, and AGENTS.md since ADR-060 — get their own threshold
+pair (1a of the September 2026 harness improvements design), separate from
+MEMORY.md's: MEMORY.md is a curated index, a contract loads on every session.
+`lh memory rightsize` surfaces the same thresholds across every contract the
+harness can reach.
 
 Bypass with `LH_MEMORY_SIZE_BYPASS=1` (used by the consolidator pathway).
 """
@@ -72,11 +72,20 @@ def _is_memory_md_path(file_path: str) -> bool:
     return normalized.endswith("/memory/MEMORY.md")
 
 
-def _is_claude_md_path(file_path: str) -> bool:
+# Both names are always-loaded contracts: CLAUDE.md for Claude Code profiles
+# and repos still on it, AGENTS.md for Codex profiles and ADR-060 repos.
+_CONTRACT_NAMES = ("CLAUDE.md", "AGENTS.md")
+
+
+def _contract_name(file_path: str) -> str | None:
+    """The contract file name `file_path` ends in, or None."""
     if not file_path:
-        return False
+        return None
     normalized = file_path.replace("\\", "/")
-    return normalized == "CLAUDE.md" or normalized.endswith("/CLAUDE.md")
+    for name in _CONTRACT_NAMES:
+        if normalized == name or normalized.endswith(f"/{name}"):
+            return name
+    return None
 
 
 def load_claude_md_thresholds(cfg_path: Path | None = None) -> tuple[int, int]:
@@ -197,8 +206,8 @@ def _warning_for(edit: FileEdit, tool_name: str) -> _Warning | None:
     if _is_memory_md_path(file_path):
         kind = "MEMORY.md"
         max_lines, max_bytes = MAX_LINES, MAX_BYTES
-    elif _is_claude_md_path(file_path):
-        kind = "CLAUDE.md"
+    elif contract := _contract_name(file_path):
+        kind = contract
         max_lines, max_bytes = load_claude_md_thresholds()
     else:
         return None
@@ -235,7 +244,7 @@ def _format_warning(file_path: str, breach: str, kind: str) -> str:
         hint = (
             "Consider whether each line is a fact the agent needs or a "
             "procedure it would already follow. `lh memory rightsize` shows "
-            "every CLAUDE.md the harness can reach and which ceiling it breaches."
+            "every contract (CLAUDE.md or AGENTS.md) the harness can reach and which ceiling it breaches."
         )
     return f"WARN: {kind} at {file_path} would be {breach}. {hint}"
 
