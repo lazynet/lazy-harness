@@ -1146,6 +1146,98 @@ def test_rename_profile_proceeds_once_the_outbox_row_is_no_longer_pending(
         db.close()
 
 
+def test_rename_profile_blocks_on_a_pending_row_whose_session_stats_row_was_rekeyed(
+    tmp_path: Path,
+) -> None:
+    """The re-keyed-row sequence from the review report: `upsert_event` moves a
+    row's `event_id` in place (`ON CONFLICT(session, model) DO UPDATE`), so a
+    pending outbox row enqueued under the old event_id no longer joins to any
+    `session_stats` row at all — the JOIN-only guard misses it. The payload
+    still carries the old profile, so the guard must check that too."""
+    from lazy_harness.monitoring.db import RenameProfileError
+
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.upsert_event(_event(event_id="e-old", profile="lazy", session="s1", model="sonnet"))
+        db.outbox_enqueue(
+            sink_name="http_remote",
+            event_id="e-old",
+            payload_json=json.dumps({"profile": "lazy"}),
+        )
+        # A later ingest re-keys the same (session, model) row in place —
+        # session_stats no longer has an "e-old" row at all.
+        db.upsert_event(
+            _event(event_id="e-new", profile="claude-lazy", session="s1", model="sonnet")
+        )
+
+        with pytest.raises(RenameProfileError, match="1"):
+            db.rename_profile("lazy", "claude-lazy")
+    finally:
+        db.close()
+
+
+def test_rename_profile_blocks_on_a_pending_row_whose_event_id_no_longer_exists(
+    tmp_path: Path,
+) -> None:
+    """A pending row whose event_id matches no local `session_stats` row at
+    all — payload profile unknown or already renamed — is still unsafe to let
+    through: the guard cannot prove it does not belong to `old`."""
+    from lazy_harness.monitoring.db import RenameProfileError
+
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.upsert_event(_event(event_id="e-1", profile="lazy", session="s1", model="sonnet"))
+        db.outbox_enqueue(sink_name="http_remote", event_id="e-orphan", payload_json="{}")
+
+        with pytest.raises(RenameProfileError, match="1"):
+            db.rename_profile("lazy", "claude-lazy")
+    finally:
+        db.close()
+
+
+def test_rename_profile_acquires_write_lock_before_the_guard(tmp_path: Path) -> None:
+    """The pending-outbox guard SELECT and the rename UPDATEs must run in one
+    transaction, or a concurrent ingest can enqueue a pending row for an `old`
+    event_id between the guard and the commit."""
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.upsert_event(_event(event_id="e-1", profile="lazy", session="s1", model="sonnet"))
+        seen: list[str] = []
+        db._conn.set_trace_callback(seen.append)
+        db.rename_profile("lazy", "claude-lazy")
+    finally:
+        db._conn.set_trace_callback(None)
+        db.close()
+
+    upper = [s.upper() for s in seen]
+    begin_idx = next(i for i, s in enumerate(upper) if "BEGIN IMMEDIATE" in s)
+    guard_idx = next(i for i, s in enumerate(upper) if "SELECT" in s and "SINK_OUTBOX" in s)
+    assert begin_idx < guard_idx
+
+
+def test_rename_profile_rolls_back_when_the_rename_fails(tmp_path: Path) -> None:
+    """A failure partway through must not leave a half-applied rename
+    committed on the connection's next `commit()`, nor a dangling RESERVED
+    lock that blocks the next rename attempt."""
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.upsert_event(_event(event_id="e-1", profile="lazy", session="s1", model="sonnet"))
+        db._conn.execute(
+            "CREATE TRIGGER fail_rename BEFORE UPDATE ON session_stats "
+            "BEGIN SELECT RAISE(ABORT, 'injected rename failure'); END"
+        )
+        db._conn.commit()
+
+        with pytest.raises(sqlite3.DatabaseError):
+            db.rename_profile("lazy", "claude-lazy")
+
+        assert db._conn.in_transaction is False
+        row = db._conn.execute("SELECT profile FROM session_stats WHERE session = 's1'").fetchone()
+        assert row["profile"] == "lazy"
+    finally:
+        db.close()
+
+
 def test_a_reingest_after_rename_produces_no_second_row_for_the_session(tmp_path: Path) -> None:
     """The point of recomputing `event_id`: a re-ingest under the new profile
     name must upsert the same row, not mint a duplicate."""
