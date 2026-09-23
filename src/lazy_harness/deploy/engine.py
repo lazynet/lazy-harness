@@ -796,3 +796,20 @@ def deploy_claude_symlink(cfg: Config, *, only: str | None = None) -> None:
         click.echo(f"  · {link_path} → {entry.config_dir} (already linked)")
     else:
         click.echo(f"  ✓ {link_path} → {entry.config_dir}")
+
+
+def repair_plugin_registries(cfg: Config, *, only: str | None = None) -> None:
+    """Repoint Claude Code plugin paths that dangle outside each profile.
+
+    Paths recorded through the removed `~/.claude` link leave every plugin of
+    their marketplace unloadable (`cache-miss`); the data sits in the profile
+    under the same relative path. Only Claude Code profiles carry the registry.
+    """
+    from lazy_harness.agents.registry import agent_for_profile
+    from lazy_harness.core.plugin_registry import REGISTRY_AGENT, repair_plugin_paths
+
+    for name, entry in selected_profiles(cfg, only).items():
+        if agent_for_profile(cfg, name).name != REGISTRY_AGENT:
+            continue
+        for drift in repair_plugin_paths(expand_path(entry.config_dir)):
+            click.echo(f"  ✓ {name}: {drift.entry} → {drift.repair}")

@@ -1728,3 +1728,65 @@ def test_doctor_is_silent_without_a_home_claude_md(
     result = CliRunner().invoke(doctor, [])
 
     assert "ancestor-claude-md-shadows-agents" not in result.output
+
+
+# --- Plugin registry paths ---
+
+
+def _plugin_cfg(tmp_path: Path, missing: str) -> object:
+    from lazy_harness.core.config import Config, ProfileEntry
+
+    profile = tmp_path / ".claude-lazy"
+    plugins = profile / "plugins"
+    (plugins / "marketplaces" / "official").mkdir(parents=True)
+    (plugins / "known_marketplaces.json").write_text(
+        json.dumps(
+            {
+                "official": {
+                    "installLocation": str(tmp_path / ".claude/plugins/marketplaces" / missing)
+                }
+            }
+        )
+    )
+    cfg = Config()
+    cfg.profiles.default = "lazy"
+    cfg.profiles.items = {"lazy": ProfileEntry(config_dir=str(profile))}
+    return cfg
+
+
+def test_render_plugin_registry_fails_on_a_dangling_path_and_names_the_repair(
+    tmp_path: Path,
+) -> None:
+    from lazy_harness.cli.doctor_cmd import _render_plugin_registry
+
+    console, buf = _recording_console()
+
+    ok = _render_plugin_registry(console, _plugin_cfg(tmp_path, "official"))
+
+    out = buf.getvalue()
+    assert ok is False
+    assert "lazy" in out and "official" in out
+    assert "lh deploy" in out
+
+
+def test_render_plugin_registry_without_a_repair_says_to_reinstall(tmp_path: Path) -> None:
+    from lazy_harness.cli.doctor_cmd import _render_plugin_registry
+
+    console, buf = _recording_console()
+
+    ok = _render_plugin_registry(console, _plugin_cfg(tmp_path, "vanished"))
+
+    assert ok is False
+    assert "reinstall" in buf.getvalue()
+
+
+def test_render_plugin_registry_is_silent_when_every_path_resolves(tmp_path: Path) -> None:
+    from lazy_harness.cli.doctor_cmd import _render_plugin_registry
+    from lazy_harness.core.config import Config, ProfileEntry
+
+    cfg = Config()
+    cfg.profiles.items = {"lazy": ProfileEntry(config_dir=str(tmp_path))}
+    console, buf = _recording_console()
+
+    assert _render_plugin_registry(console, cfg) is True
+    assert buf.getvalue() == ""

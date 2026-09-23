@@ -241,3 +241,83 @@ def test_a_claude_code_default_profile_gets_no_link(home_dir: Path) -> None:
     deploy_claude_symlink(cfg, only="lazy")
 
     assert not (home_dir / ".claude").exists()
+
+
+def _dangling_marketplace(home: Path, profile: str) -> Path:
+    plugins = home / profile / "plugins"
+    (plugins / "marketplaces" / "official").mkdir(parents=True)
+    registry = plugins / "known_marketplaces.json"
+    registry.write_text(
+        json.dumps(
+            {"official": {"installLocation": str(home / ".claude/plugins/marketplaces/official")}}
+        )
+    )
+    return registry
+
+
+def test_deploy_repairs_plugin_paths_left_on_the_removed_global_link(home_dir: Path) -> None:
+    from lazy_harness.deploy.engine import repair_plugin_registries
+
+    registry = _dangling_marketplace(home_dir, ".claude-lazy")
+
+    repair_plugin_registries(_two_profiles(home_dir))
+
+    location = json.loads(registry.read_text())["official"]["installLocation"]
+    assert location == str(home_dir / ".claude-lazy/plugins/marketplaces/official")
+
+
+def test_plugin_repair_honours_the_profile_narrowing(home_dir: Path) -> None:
+    from lazy_harness.deploy.engine import repair_plugin_registries
+
+    registry = _dangling_marketplace(home_dir, ".claude-lazy")
+    before = registry.read_text()
+
+    repair_plugin_registries(_two_profiles(home_dir), only="flex")
+
+    assert registry.read_text() == before
+
+
+def test_plugin_repair_skips_a_profile_running_another_agent(home_dir: Path) -> None:
+    from lazy_harness.deploy.engine import repair_plugin_registries
+
+    registry = _dangling_marketplace(home_dir, ".claude-lazy")
+    before = registry.read_text()
+    cfg = _two_profiles(home_dir)
+    cfg.profiles.items["lazy"].agent = "codex"
+
+    repair_plugin_registries(cfg)
+
+    assert registry.read_text() == before
+
+
+def test_snapshot_targets_cover_the_plugin_registries_the_deploy_repairs(
+    home_dir: Path,
+) -> None:
+    """The deploy rewrites them, so a rollback has to be able to restore them."""
+    from lazy_harness.core.plugin_registry import REGISTRY_FILES
+    from lazy_harness.deploy.snapshot import snapshot_targets
+
+    cfg = _two_profiles(home_dir)
+    cfg.profiles.items["flex"].agent = "codex"
+    for profile in (".claude-lazy", ".claude-flex"):
+        for relative in REGISTRY_FILES:
+            (home_dir / profile / relative).parent.mkdir(parents=True, exist_ok=True)
+            (home_dir / profile / relative).write_text("{}")
+
+    targets = snapshot_targets(cfg)
+
+    for relative in REGISTRY_FILES:
+        assert home_dir / ".claude-lazy" / relative in targets
+        assert home_dir / ".claude-flex" / relative not in targets
+
+
+def test_snapshot_leaves_out_a_registry_the_agent_has_not_created(home_dir: Path) -> None:
+    """Rollback deletes a target recorded as absent, and Claude Code may create
+    the registry after the deploy; the deploy itself never does."""
+    from lazy_harness.core.plugin_registry import REGISTRY_FILES
+    from lazy_harness.deploy.snapshot import snapshot_targets
+
+    targets = snapshot_targets(_two_profiles(home_dir))
+
+    for relative in REGISTRY_FILES:
+        assert home_dir / ".claude-lazy" / relative not in targets

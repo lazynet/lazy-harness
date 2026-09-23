@@ -105,6 +105,7 @@ def snapshot_targets(cfg: Config, *, only: str | None = None) -> list[Path]:
     from lazy_harness.agents.base import ConfigPlanner
     from lazy_harness.agents.registry import agent_for_profile, list_agents
     from lazy_harness.core.paths import config_dir, expand_path
+    from lazy_harness.core.plugin_registry import REGISTRY_AGENT, REGISTRY_FILES
     from lazy_harness.deploy.engine import deploys_global_link, selected_profiles
     from lazy_harness.deploy.ledger import LEDGER_RELATIVE
     from lazy_harness.deploy.segments import resolve_segments
@@ -137,6 +138,14 @@ def snapshot_targets(cfg: Config, *, only: str | None = None) -> list[Path]:
         # has to not invent targets for it.
         if isinstance(agent, ConfigPlanner):
             targets.extend(target_dir / relative for relative in agent.config_targets())
+        # Only an existing registry: rollback deletes a target recorded absent,
+        # the deploy never creates one, and Claude Code may after the snapshot.
+        if agent.name == REGISTRY_AGENT:
+            targets.extend(
+                target_dir / relative
+                for relative in REGISTRY_FILES
+                if (target_dir / relative).is_file()
+            )
 
     skill_plan = plan_skill_projections(
         selected,

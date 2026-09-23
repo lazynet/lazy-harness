@@ -27,6 +27,7 @@ from lazy_harness.deploy.engine import (
     deploy_claude_symlink,
     deploy_config,
     deploy_profiles,
+    repair_plugin_registries,
     selected_profiles,
 )
 from lazy_harness.deploy.skills import SkillCollisionError, SkillLedgerError
@@ -99,6 +100,10 @@ def _run_deploy(cfg: Config, only: str | None = None) -> None:
 
     click.echo("Setting up ~/.claude symlink:")
     deploy_claude_symlink(cfg, only=only)
+    click.echo()
+
+    click.echo("Repairing plugin registry paths:")
+    repair_plugin_registries(cfg, only=only)
     click.echo()
 
     click.echo("Done.")
