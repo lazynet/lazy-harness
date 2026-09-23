@@ -1821,6 +1821,184 @@ def test_render_plugin_registry_is_silent_when_every_path_resolves(tmp_path: Pat
     assert buf.getvalue() == ""
 
 
+# --- Settings shape ---
+
+_FATAL_SETTINGS = {"otherTool": {"entries": [{"matcher": "*", "hooks": [{"type": "command"}]}]}}
+
+
+def _settings_cfg(tmp_path: Path, profiles: dict[str, str]) -> object:
+    from lazy_harness.core.config import Config, ProfileEntry
+
+    cfg = Config()
+    cfg.profiles.default = next(iter(profiles))
+    cfg.profiles.items = {
+        name: ProfileEntry(config_dir=str(tmp_path / name), agent=agent)
+        for name, agent in profiles.items()
+    }
+    for name in profiles:
+        (tmp_path / name).mkdir()
+    return cfg
+
+
+def _probe_claude(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    stdout: str = "",
+    fail: bool = False,
+    binary: Path | None = Path("/opt/claude/versions/2.1.278"),
+):
+    import subprocess
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "lazy_harness.agents.claude_code.ClaudeCodeAdapter.resolve_binary", lambda _self: binary
+    )
+
+    def fake_run(argv, **_kwargs):  # noqa: ANN001, ANN003, ANN202
+        calls.append(list(argv))
+        if fail:
+            raise FileNotFoundError(argv[0])
+        return subprocess.CompletedProcess(argv, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.subprocess.run", fake_run)
+    return calls
+
+
+def test_settings_shape_fails_on_a_fatal_shape_and_names_the_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.cli.doctor_cmd import _render_settings_shape
+
+    cfg = _settings_cfg(tmp_path, {"lazy": "claude-code"})
+    (tmp_path / "lazy/settings.json").write_text(json.dumps(_FATAL_SETTINGS))
+    _probe_claude(monkeypatch, stdout="2.1.300 (Claude Code)\n")
+    console, buf = _recording_console()
+
+    ok = _render_settings_shape(console, cfg)
+
+    out = _unwrapped(buf.getvalue())
+    assert ok is False
+    assert "✗ lazy:" in out
+    assert "$.otherTool.entries[0]" in out
+    assert "ported from Claude Code 2.1.278" in out
+    assert "2.1.300 (Claude Code)" in out
+
+
+def test_settings_shape_says_unknown_when_the_version_probe_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.cli.doctor_cmd import _render_settings_shape
+
+    cfg = _settings_cfg(tmp_path, {"lazy": "claude-code"})
+    (tmp_path / "lazy/settings.json").write_text(json.dumps(_FATAL_SETTINGS))
+    _probe_claude(monkeypatch, fail=True)
+    console, buf = _recording_console()
+
+    assert _render_settings_shape(console, cfg) is False
+    assert "the binary this profile launches reports: unknown" in _unwrapped(buf.getvalue())
+
+
+def test_settings_shape_checks_every_claude_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.cli.doctor_cmd import _render_settings_shape
+
+    cfg = _settings_cfg(tmp_path, {"lazy": "claude-code", "flex": "claude-code"})
+    (tmp_path / "lazy/settings.json").write_text("{}")
+    (tmp_path / "flex/settings.json").write_text(json.dumps(_FATAL_SETTINGS))
+    _probe_claude(monkeypatch, stdout="2.1.278\n")
+    console, buf = _recording_console()
+
+    assert _render_settings_shape(console, cfg) is False
+    out = _unwrapped(buf.getvalue())
+    assert "✗ flex:" in out and "lazy:" not in out
+
+
+def test_settings_shape_is_silent_on_a_clean_file_and_never_probes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.cli.doctor_cmd import _render_settings_shape
+
+    cfg = _settings_cfg(tmp_path, {"lazy": "claude-code"})
+    clean = {"hooks": {"Stop": [{"matcher": "", "hooks": [{"type": "command"}]}]}}
+    (tmp_path / "lazy/settings.json").write_text(json.dumps(clean))
+    calls = _probe_claude(monkeypatch, stdout="2.1.278\n")
+    console, buf = _recording_console()
+
+    assert _render_settings_shape(console, cfg) is True
+    assert buf.getvalue() == ""
+    assert calls == []
+
+
+def test_settings_shape_is_silent_when_settings_json_is_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.cli.doctor_cmd import _render_settings_shape
+
+    cfg = _settings_cfg(tmp_path, {"lazy": "claude-code"})
+    _probe_claude(monkeypatch)
+    console, buf = _recording_console()
+
+    assert _render_settings_shape(console, cfg) is True
+    assert buf.getvalue() == ""
+
+
+@pytest.mark.parametrize(
+    ("raw", "reason"),
+    [
+        ("{not json", "not valid JSON"),
+        ("null", "not a JSON object"),
+        ("7", "not a JSON object"),
+        ('["hooks"]', "not a JSON object"),
+    ],
+)
+def test_settings_shape_warns_without_failing_when_the_file_cannot_be_checked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, raw: str, reason: str
+) -> None:
+    from lazy_harness.cli.doctor_cmd import _render_settings_shape
+
+    cfg = _settings_cfg(tmp_path, {"lazy": "claude-code"})
+    (tmp_path / "lazy/settings.json").write_text(raw)
+    _probe_claude(monkeypatch)
+    console, buf = _recording_console()
+
+    assert _render_settings_shape(console, cfg) is True
+    out = _unwrapped(buf.getvalue())
+    assert "! lazy:" in out and reason in out
+
+
+def test_settings_shape_skips_a_profile_that_does_not_run_claude_code(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.cli.doctor_cmd import _render_settings_shape
+
+    cfg = _settings_cfg(tmp_path, {"lazy": "claude-code", "cx": "codex"})
+    (tmp_path / "cx/settings.json").write_text(json.dumps(_FATAL_SETTINGS))
+    _probe_claude(monkeypatch)
+    console, buf = _recording_console()
+
+    assert _render_settings_shape(console, cfg) is True
+    assert buf.getvalue() == ""
+
+
+def test_doctor_fails_on_a_fatal_settings_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    profile = Path.home() / ".claude-p1"
+    profile.mkdir()
+    (profile / "settings.json").write_text(json.dumps(_FATAL_SETTINGS))
+    cfg = _write_config(tmp_path)
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
+    _probe_claude(monkeypatch, stdout="2.1.278\n")
+
+    result = CliRunner().invoke(doctor, [])
+
+    assert "✗ p1:" in _unwrapped(result.output)
+    assert result.exit_code == 1
+
+
 # --- Halted proposal queues ---
 
 
@@ -2014,3 +2192,34 @@ def test_halted_queues_drain_command_survives_a_path_with_spaces(tmp_path: Path)
     line = next(ln for ln in buf.getvalue().splitlines() if "--memory-dir" in ln)
     argv = shlex.split(line.strip())
     assert argv[argv.index("--memory-dir") + 1] == str(queue)
+
+
+def test_settings_shape_probes_the_binary_the_profile_launches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.cli.doctor_cmd import _render_settings_shape
+
+    cfg = _settings_cfg(tmp_path, {"lazy": "claude-code"})
+    (tmp_path / "lazy/settings.json").write_text(json.dumps(_FATAL_SETTINGS))
+    launched = tmp_path / "versions/2.1.278"
+    calls = _probe_claude(monkeypatch, stdout="2.1.278 (Claude Code)\n", binary=launched)
+    console, buf = _recording_console()
+
+    _render_settings_shape(console, cfg)
+
+    assert calls == [[str(launched), "--version"]]
+
+
+def test_settings_shape_says_unknown_when_no_binary_resolves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.cli.doctor_cmd import _render_settings_shape
+
+    cfg = _settings_cfg(tmp_path, {"lazy": "claude-code"})
+    (tmp_path / "lazy/settings.json").write_text(json.dumps(_FATAL_SETTINGS))
+    calls = _probe_claude(monkeypatch, stdout="2.1.300\n", binary=None)
+    console, buf = _recording_console()
+
+    assert _render_settings_shape(console, cfg) is False
+    assert "unknown" in _unwrapped(buf.getvalue())
+    assert calls == []
