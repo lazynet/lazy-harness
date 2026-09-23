@@ -337,15 +337,15 @@ def test_sync_claude_md_command_writes_each_profiles_own_system_doc(tmp_path: Pa
     assert not (work / "CLAUDE.md").exists()
 
 
-def test_sync_profiles_keeps_the_callers_adapter_for_an_undeclared_directory(
+def test_sync_profiles_reports_an_undeclared_directory_as_orphaned(
     tmp_path: Path,
 ) -> None:
-    """A leftover directory keeps the caller's answer, not the global default.
+    """A directory the config no longer names is reported, never written.
 
-    `agent_for_profile` resolves an unknown name to `[agent].type`, so routing
-    every directory through it would hand a profile since removed from
-    `config.toml` the global agent's doc — which is not what the caller passed
-    and not what the directory last held.
+    The old fallback — sync an unknown directory with the caller's adapter —
+    existed for a tree that outlived its config. With identities the directory
+    no longer tells which agents it serves, so it is reported `orphaned`
+    instead (design section 3).
     """
     from lazy_harness.core.config import (
         AgentConfig,
@@ -359,7 +359,8 @@ def test_sync_profiles_keeps_the_callers_adapter_for_an_undeclared_directory(
     profiles_dir = tmp_path / "profiles"
     profiles_dir.mkdir()
     _seed_common(profiles_dir)
-    _seed_profile(profiles_dir, "leftover")
+    leftover = _seed_profile(profiles_dir, "leftover")
+    before = (leftover / "head.md").stat().st_mtime
 
     cfg = Config(
         harness=HarnessConfig(version="1"),
@@ -370,10 +371,13 @@ def test_sync_profiles_keeps_the_callers_adapter_for_an_undeclared_directory(
         ),
     )
 
-    sync_profiles(profiles_dir, _adapter(), cfg=cfg)
+    results = sync_profiles(profiles_dir, _adapter(), cfg=cfg)
 
-    assert (profiles_dir / "leftover" / "CLAUDE.md").is_file()
-    assert not (profiles_dir / "leftover" / "AGENTS.md").exists()
+    orphan = next(r for r in results if r.profile == "leftover")
+    assert orphan.action == "orphaned"
+    assert not (leftover / "CLAUDE.md").exists()
+    assert not (leftover / "AGENTS.md").exists()
+    assert (leftover / "head.md").stat().st_mtime == before
 
 
 def test_one_rendered_document_lands_at_every_destination(tmp_path: Path) -> None:
@@ -680,3 +684,91 @@ def test_the_codex_document_is_composed_head_common_codex_tail(tmp_path: Path) -
     assert "_common/codex.md" in header, (
         f"the header must name the agent segment a reader should edit: {header!r}"
     )
+
+
+def _identity_cfg(**profiles):
+    from lazy_harness.core.config import AgentConfig, Config, HarnessConfig, ProfilesConfig
+
+    return Config(
+        harness=HarnessConfig(version="1"),
+        agent=AgentConfig(type="claude-code"),
+        profiles=ProfilesConfig(default=next(iter(profiles)), items=profiles),
+    )
+
+
+def test_two_agents_sharing_an_identity_each_get_their_own_doc(tmp_path: Path) -> None:
+    """Two profiles, one identity dir, two destinations — both written."""
+    from lazy_harness.core.config import ProfileEntry
+    from lazy_harness.core.sync_agent_md import sync_profiles
+
+    profiles_dir = tmp_path / "profiles"
+    (profiles_dir / "_common").mkdir(parents=True)
+    (profiles_dir / "_common" / "common.md").write_text("# shared\n")
+    _seed_role_profile(profiles_dir, "personal", head="# id\n", tail="# ctx\n")
+
+    cfg = _identity_cfg(
+        **{
+            "claude-personal": ProfileEntry(config_dir="~/.claude-personal", identity="personal"),
+            "codex-personal": ProfileEntry(
+                config_dir="~/.codex-personal", agent="codex", identity="personal"
+            ),
+        }
+    )
+
+    results = sync_profiles(profiles_dir, _adapter(), cfg=cfg)
+
+    assert {r.action for r in results} == {"written"}
+    assert (profiles_dir / "personal" / "CLAUDE.md").is_file()
+    assert (profiles_dir / "personal" / "AGENTS.md").is_file()
+
+
+def test_two_profiles_sharing_identity_and_agent_write_once(tmp_path: Path) -> None:
+    """Two Codex subscriptions of one identity produce one write, not two."""
+    from lazy_harness.core.config import ProfileEntry
+    from lazy_harness.core.sync_agent_md import sync_profiles
+
+    profiles_dir = tmp_path / "profiles"
+    (profiles_dir / "_common").mkdir(parents=True)
+    (profiles_dir / "_common" / "common.md").write_text("# shared\n")
+    _seed_role_profile(profiles_dir, "personal", head="# id\n", tail="# ctx\n")
+
+    cfg = _identity_cfg(
+        **{
+            "codex-personal": ProfileEntry(
+                config_dir="~/.codex-personal", agent="codex", identity="personal"
+            ),
+            "codex-personal-alt": ProfileEntry(
+                config_dir="~/.codex-personal-alt", agent="codex", identity="personal"
+            ),
+        }
+    )
+
+    results = sync_profiles(profiles_dir, _adapter(), cfg=cfg)
+
+    written = [r for r in results if r.path.name == "AGENTS.md"]
+    assert len(written) == 1
+    assert written[0].action == "written"
+
+
+def test_only_selects_one_profiles_pair_by_shared_identity(tmp_path: Path) -> None:
+    from lazy_harness.core.config import ProfileEntry
+    from lazy_harness.core.sync_agent_md import sync_profiles
+
+    profiles_dir = tmp_path / "profiles"
+    (profiles_dir / "_common").mkdir(parents=True)
+    (profiles_dir / "_common" / "common.md").write_text("# shared\n")
+    _seed_role_profile(profiles_dir, "personal", head="# id\n", tail="# ctx\n")
+
+    cfg = _identity_cfg(
+        **{
+            "claude-personal": ProfileEntry(config_dir="~/.claude-personal", identity="personal"),
+            "codex-personal": ProfileEntry(
+                config_dir="~/.codex-personal", agent="codex", identity="personal"
+            ),
+        }
+    )
+
+    results = sync_profiles(profiles_dir, _adapter(), cfg=cfg, only="codex-personal")
+
+    assert {r.path.name for r in results} == {"AGENTS.md"}
+    assert not (profiles_dir / "personal" / "CLAUDE.md").exists()

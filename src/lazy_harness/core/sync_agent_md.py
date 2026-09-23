@@ -94,7 +94,7 @@ class SyncError(Exception):
 @dataclass
 class SyncResult:
     profile: str
-    action: str  # "written", "unchanged", "skipped"
+    action: str  # "written", "unchanged", "skipped", "orphaned"
     path: Path
     reason: str = ""
 
@@ -137,51 +137,47 @@ class _Layout:
         return tuple(parts)
 
 
-def sync_profiles(
-    profiles_dir: Path,
-    adapter: AgentAdapter,
-    *,
-    cfg: Config | None = None,
-    only: str | None = None,
-) -> list[SyncResult]:
-    """Regenerate the system doc for every profile under `profiles_dir`.
+def _layout_for(entry: Path, stem: str) -> _Layout | None:
+    if (entry / HEAD_SEGMENT).is_file():
+        return _Layout(
+            head=entry / HEAD_SEGMENT,
+            tail=entry / TAIL_SEGMENT,
+            common_name=COMMON_SEGMENT,
+        )
+    return None
 
-    Skips a profile whose adapter declares no system doc (the adapter does not
-    use a file-based system instruction doc), and one that carries no role-named
-    segments. When `only` is set, no sibling profile is read or written.
 
-    `cfg` resolves each directory's adapter through `agent_for_profile`, which
-    is what makes the destinations per profile. Without it every directory in
-    the tree got one agent's contract file — `adapter` was read once, above this
-    loop, so a profile running an agent that loads `AGENTS.md` was handed a
-    `CLAUDE.md` and the file it actually reads was never written. `adapter`
-    stays as the answer for a directory the config does not name: the tree can
-    hold profiles that were removed from `config.toml` but not from disk.
+def _agent_segment(profiles_dir: Path, agent_name: str) -> Path | None:
+    """`_common/<agent>.md`, shared across profiles, absent for most agents.
 
-    A profile carrying head and tail without the shared segment is still the
-    loud failure it always was.
+    Shared rather than per profile because that is what the deployed tree
+    measures: every agent-specific line already lives in the shared segment
+    and none in any profile's head or tail. A per-profile override is
+    additive to this layout and costs nothing to add when a second profile
+    needs to say something different about the same agent.
     """
-    resolved: dict[str, tuple[list[Path], str, str]] = {}
+    path = profiles_dir / "_common" / f"{agent_name}.md"
+    return path if path.is_file() else None
 
-    def _agent_for(profile: str) -> tuple[list[Path], str, str]:
-        """(destinations, stem, agent name) for one profile dir, resolved once."""
-        if profile not in resolved:
-            agent = adapter
-            # Only a directory the config actually declares resolves through
-            # `agent_for_profile`: that call falls back to `[agent].type` for an
-            # unknown name, which would hand a leftover directory the *global*
-            # agent rather than the caller's. The hook fires under one profile
-            # and walks a tree that may hold directories for profiles since
-            # removed from `config.toml`; those keep the caller's answer.
-            if cfg is not None and profile in cfg.profiles.items:
-                from lazy_harness.agents.registry import agent_for_profile
 
-                agent = agent_for_profile(cfg, profile)
-            docs = agent.system_docs()
-            stem = docs[0].name.removesuffix(".md") if docs else ""
-            resolved[profile] = (docs, stem, agent.name)
-        return resolved[profile]
+@dataclass(frozen=True)
+class _SyncJob:
+    """One (source dir, agent) pair to render and write — the unit a profile
+    or a group of profiles sharing an identity and agent resolves to."""
 
+    label: str
+    source_dir: Path
+    docs: tuple[Path, ...]
+    agent_name: str
+
+
+def _render_jobs(profiles_dir: Path, jobs: list[_SyncJob]) -> list[SyncResult]:
+    """Render and write each job's document once, atomically across `jobs`.
+
+    Every shared segment this scope needs is loaded before the first write, so
+    a missing common segment refuses the whole selected scope rather than
+    leaving it half-synced.
+    """
     commons: dict[str, str] = {}
 
     def _common_for(name: str) -> str:
@@ -192,67 +188,33 @@ def sync_profiles(
             commons[name] = common_path.read_text()
         return commons[name]
 
-    def _layout_for(entry: Path, stem: str) -> _Layout | None:
-        if (entry / HEAD_SEGMENT).is_file():
-            return _Layout(
-                head=entry / HEAD_SEGMENT,
-                tail=entry / TAIL_SEGMENT,
-                common_name=COMMON_SEGMENT,
-            )
-        return None
-
-    def _entries() -> list[Path]:
-        return [
-            entry
-            for entry in sorted(profiles_dir.iterdir())
-            if entry.is_dir()
-            and not entry.name.startswith("_")
-            and (only is None or entry.name == only)
-        ]
-
-    def _agent_segment(agent_name: str) -> Path | None:
-        """`_common/<agent>.md`, shared across profiles, absent for most agents.
-
-        Shared rather than per profile because that is what the deployed tree
-        measures: every agent-specific line already lives in the shared segment
-        and none in any profile's head or tail. A per-profile override is
-        additive to this layout and costs nothing to add when a second profile
-        needs to say something different about the same agent.
-        """
-        path = profiles_dir / "_common" / f"{agent_name}.md"
-        return path if path.is_file() else None
-
-    # Every shared segment this tree needs is loaded before the first write, so
-    # a missing common segment refuses the whole selected scope atomically.
-    entries = _entries()
-    for entry in entries:
-        docs, stem, _ = _agent_for(entry.name)
-        if not docs:
+    prepared: list[tuple[_SyncJob, str, _Layout | None]] = []
+    for job in jobs:
+        if not job.docs or not job.source_dir.is_dir():
             continue
-        layout = _layout_for(entry, stem)
+        stem = job.docs[0].name.removesuffix(".md")
+        prepared.append((job, stem, _layout_for(job.source_dir, stem)))
+
+    for _job, _stem, layout in prepared:
         if layout is not None:
             _common_for(layout.common_name)
 
     results: list[SyncResult] = []
-    for entry in entries:
-        docs, stem, agent_name = _agent_for(entry.name)
-        if not docs:
-            continue
-        layout = _layout_for(entry, stem)
+    for job, stem, layout in prepared:
         if layout is None:
             # Flat profile: a hand-written doc the generator must not erase.
             # Reported rather than passed over, because "no segments" and "not
             # a profile dir" look the same to a reader of the command's output.
             legacy_head = legacy_segment_names(stem)[0] if stem else ""
-            if legacy_head and (entry / legacy_head).is_file():
-                reason = f"legacy segments ({legacy_head}) — run lh profile migrate {entry.name}"
+            if legacy_head and (job.source_dir / legacy_head).is_file():
+                reason = f"legacy segments ({legacy_head}) — run lh profile migrate {job.label}"
             else:
                 reason = f"missing {HEAD_SEGMENT}"
             results.append(
                 SyncResult(
-                    profile=entry.name,
+                    profile=job.label,
                     action="skipped",
-                    path=entry / docs[0],
+                    path=job.source_dir / job.docs[0],
                     reason=reason,
                 )
             )
@@ -260,15 +222,15 @@ def sync_profiles(
         if not layout.tail.is_file():
             results.append(
                 SyncResult(
-                    profile=entry.name,
+                    profile=job.label,
                     action="skipped",
-                    path=entry / docs[0],
+                    path=job.source_dir / job.docs[0],
                     reason=f"missing {layout.tail.name}",
                 )
             )
             continue
 
-        agent_path = _agent_segment(agent_name)
+        agent_path = _agent_segment(profiles_dir, job.agent_name)
         new_content = render_agent_md(
             layout.head.read_text(),
             _common_for(layout.common_name),
@@ -276,16 +238,109 @@ def sync_profiles(
             agent=agent_path.read_text() if agent_path is not None else "",
             names=layout.names(agent_path),
         )
-        # One rendered document, N destinations (ADR-043). Every entry gets the
+        # One rendered document, N destinations (ADR-043). Every job gets the
         # identical bytes: a destination is where the agent looks, not a variant
         # of the content. A nested destination brings its own directory, which
         # the deployer would otherwise have to guess at.
-        for rel in docs:
-            out = entry / rel
+        for rel in job.docs:
+            out = job.source_dir / rel
             out.parent.mkdir(parents=True, exist_ok=True)
             if out.is_file() and out.read_text() == new_content:
-                results.append(SyncResult(profile=entry.name, action="unchanged", path=out))
+                results.append(SyncResult(profile=job.label, action="unchanged", path=out))
                 continue
             out.write_text(new_content)
-            results.append(SyncResult(profile=entry.name, action="written", path=out))
+            results.append(SyncResult(profile=job.label, action="written", path=out))
     return results
+
+
+def _sync_directory_driven(
+    profiles_dir: Path, adapter: AgentAdapter, *, only: str | None
+) -> list[SyncResult]:
+    """Pre-identity behaviour: one directory is one profile is one agent.
+
+    `adapter` answers for every directory alike, including ones a config no
+    longer names — the only mode available without a `cfg` to resolve one.
+    """
+    docs = tuple(adapter.system_docs())
+    entries = [
+        entry
+        for entry in sorted(profiles_dir.iterdir())
+        if entry.is_dir()
+        and not entry.name.startswith("_")
+        and (only is None or entry.name == only)
+    ]
+    jobs = [_SyncJob(entry.name, entry, docs, adapter.name) for entry in entries]
+    return _render_jobs(profiles_dir, jobs)
+
+
+def _sync_config_driven(profiles_dir: Path, cfg: Config, *, only: str | None) -> list[SyncResult]:
+    """Iterates configured profiles rather than directories (design section 3).
+
+    Two profiles that share `(identity, agent)` resolve to one job — one
+    write, not a race or a duplicate. A directory under `profiles_dir` no
+    configured profile resolves to is reported `orphaned` and never touched:
+    the old fallback (sync it with the caller's adapter) existed for a tree
+    that outlived its config, and an identity dir no longer tells which
+    agents it serves.
+    """
+    from lazy_harness.agents.registry import agent_for_profile
+    from lazy_harness.core.profile_identity import profile_identity, profile_source_dir
+
+    claimed = {profile_source_dir(cfg, name, profiles_dir).resolve() for name in cfg.profiles.items}
+
+    selected_names = [only] if only is not None else list(cfg.profiles.items)
+    seen: set[tuple[Path, str]] = set()
+    jobs: list[_SyncJob] = []
+    for name in selected_names:
+        entry = cfg.profiles.items.get(name)
+        if entry is None:
+            continue
+        agent = agent_for_profile(cfg, name)
+        docs = tuple(agent.system_docs())
+        if not docs:
+            continue
+        source_dir = profile_source_dir(cfg, name, profiles_dir)
+        key = (source_dir, agent.name)
+        if key in seen:
+            continue
+        seen.add(key)
+        jobs.append(_SyncJob(profile_identity(name, entry), source_dir, docs, agent.name))
+
+    results = _render_jobs(profiles_dir, jobs)
+
+    if only is None:
+        for entry_dir in sorted(profiles_dir.iterdir()):
+            if not entry_dir.is_dir() or entry_dir.name.startswith("_"):
+                continue
+            if entry_dir.resolve() not in claimed:
+                results.append(
+                    SyncResult(profile=entry_dir.name, action="orphaned", path=entry_dir)
+                )
+    return results
+
+
+def sync_profiles(
+    profiles_dir: Path,
+    adapter: AgentAdapter,
+    *,
+    cfg: Config | None = None,
+    only: str | None = None,
+) -> list[SyncResult]:
+    """Regenerate the system doc for every profile `profiles_dir` holds.
+
+    Without `cfg`, one directory is one profile is one agent (`adapter`
+    answers for all of them) — the behaviour every caller had before profile
+    identity existed. With `cfg`, profiles are iterated instead of
+    directories: destinations are per profile's own agent
+    (`agent_for_profile`), two profiles sharing an identity and agent write
+    once, and a directory no configured profile resolves to is reported
+    `orphaned` rather than synced. `only` narrows either mode to one profile;
+    no sibling profile is read or written.
+
+    Skips a profile whose adapter declares no system doc, and one that
+    carries no role-named segments. A profile carrying head and tail without
+    the shared segment is still the loud failure it always was.
+    """
+    if cfg is None:
+        return _sync_directory_driven(profiles_dir, adapter, only=only)
+    return _sync_config_driven(profiles_dir, cfg, only=only)

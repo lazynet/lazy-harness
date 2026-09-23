@@ -24,9 +24,10 @@ Two branches carry the traps this wave was warned about:
   only ever carries a `.ipynb` path, which is
   `a-notebook-edit-on-a-realistic-ipynb-path-regenerates-nothing` below.
 * `a-head-edit-regenerates-every-profile-in-the-tree` records what
-  `sync_profiles` actually does: it walks the whole `profiles/` tree
-  (`sync_agent_md.py:73`) rather than the one profile whose segment was
-  touched. The tree is chosen by the *edited path*, never by `event.profile`.
+  `sync_profiles` actually does: it regenerates every profile `cfg` declares
+  under the touched `profiles/` tree (`sync_agent_md.py::_sync_config_driven`),
+  not just the one whose segment was touched. The tree is chosen by the
+  *edited path*, never by `event.profile`.
 """
 
 from __future__ import annotations
@@ -65,10 +66,13 @@ version = "1"
 type = "claude-code"
 
 [profiles]
-default = "p"
+default = "alpha"
 
-[profiles.p]
-config_dir = "{agent_dir}"
+[profiles.alpha]
+config_dir = "{agent_dir}/alpha"
+
+[profiles.beta]
+config_dir = "{agent_dir}/beta"
 """
 
 

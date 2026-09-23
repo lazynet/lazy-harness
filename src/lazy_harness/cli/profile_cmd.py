@@ -309,7 +309,12 @@ def profile_envrc(dry_run: bool) -> None:
 def render_sync_results(results: list[SyncResult], console: Console) -> None:
     """Render system-doc sync results identically for sync and deploy."""
     for result in results:
-        style = {"written": "green", "unchanged": "dim", "skipped": "yellow"}.get(result.action, "")
+        style = {
+            "written": "green",
+            "unchanged": "dim",
+            "skipped": "yellow",
+            "orphaned": "yellow",
+        }.get(result.action, "")
         suffix = f" ({result.reason})" if result.reason else ""
         console.print(
             f"[{style}]{result.action:9}[/{style}] {result.profile} → {result.path.name}{suffix}"
