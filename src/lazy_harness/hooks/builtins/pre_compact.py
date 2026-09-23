@@ -44,17 +44,34 @@ def parse_transcript(path: Path) -> tuple[list[str], list[str]]:
             except json.JSONDecodeError:
                 continue
 
-            role = obj.get("role", "")
-            content = obj.get("content", "")
+            if not isinstance(obj, dict):
+                continue
+            message = obj.get("message")
+            if not isinstance(message, dict):
+                continue
+            role = message.get("role")
+            content = message.get("content")
 
-            if role == "user" and isinstance(content, str) and len(content.strip()) > 15:
-                user_msgs.append(content.strip()[:200])
+            if role == "user":
+                user_text = ""
+                if isinstance(content, str):
+                    user_text = content
+                elif isinstance(content, list) and all(
+                    isinstance(block, dict) and block.get("type") == "text" for block in content
+                ):
+                    user_text = "\n".join(
+                        block["text"] for block in content if isinstance(block.get("text"), str)
+                    )
+                if len(user_text.strip()) > 15:
+                    user_msgs.append(user_text.strip()[:200])
 
             if role == "assistant" and isinstance(content, list):
                 for block in content:
                     if not isinstance(block, dict) or block.get("type") != "tool_use":
                         continue
                     inp = block.get("input", {})
+                    if not isinstance(inp, dict):
+                        continue
                     for key in ("file_path", "path"):
                         val = inp.get(key, "")
                         if isinstance(val, str) and "/" in val:
@@ -131,15 +148,6 @@ def main(event: HookEvent) -> HookDecision:
     `_bootstrap_log`, `_bootstrap_project_dir`, and the `shared_memory_dir is
     None` branch that computed a project dir without `_shared`.
 
-    `parse_transcript` is left exactly as it is. Both of its loops read `role`
-    and `content` at the top level of a JSONL line and Claude Code nests both
-    under `message`, so they have never matched — measured at zero across 3215
-    production lines. Repairing that changes what this hook emits and every
-    golden captured before it, so it is its own commit; `specs/backlog.md:125`
-    owns it. That dead read is also why the registry declares **no** signals
-    here: naming `MESSAGES` would let `deploy` omit the hook on an agent whose
-    reader lacks it, losing `build_memory_tails` — the part that works — over a
-    transcript read that does not.
     """
     from lazy_harness.core.config import Config, ConfigError, load_config
     from lazy_harness.core.paths import config_file

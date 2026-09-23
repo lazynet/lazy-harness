@@ -56,12 +56,8 @@ _DECISIONS = (
 )
 _FAILURES = ({"ts": "2026-09-03T00:00:00Z", "summary": "the reader stayed global"},)
 
-#: A transcript line in the shape `parse_transcript` was written against:
-#: `role` and `content` at the *top level*. No Claude Code release emits this
-#: (`specs/backlog.md:125`), so this fixture is the only thing on the machine
-#: that makes those two loops produce anything at all. Literal paths, never
-#: `tmp_path`: `parse_transcript` puts `file_path` on stdout, and a temp path
-#: there would encode the capturing machine into the golden.
+#: Keep the old shape as a regression case: records without `message` are not
+#: Claude Code turns and must not create tasks or file entries.
 _LEGACY_TRANSCRIPT = (
     {"role": "user", "content": "migrate the pre-compact hook onto the event contract"},
     {
@@ -73,19 +69,12 @@ _LEGACY_TRANSCRIPT = (
     },
 )
 
-#: The same content in the shape Claude Code actually emits — both keys nested
-#: under `message`. `parse_transcript` reads the top level, so this yields
-#: nothing, and the golden for it is the measurement rather than an assertion
-#: about it. Repairing the parser is out of scope (`specs/backlog.md:125`).
-_REAL_TRANSCRIPT = (
-    {"type": "user", "message": {"role": "user", "content": "migrate the pre-compact hook"}},
-    {
-        "type": "assistant",
-        "message": {
-            "role": "assistant",
-            "content": [{"type": "tool_use", "input": {"file_path": "/srv/app/pre_compact.py"}}],
-        },
-    },
+#: An anonymised slice of observed Claude Code records, shared with the parser test.
+_REAL_TRANSCRIPT = tuple(
+    json.loads(line)
+    for line in (Path(__file__).parents[3] / "fixtures" / "pre_compact_real_transcript.jsonl")
+    .read_text()
+    .splitlines()
 )
 
 
@@ -455,49 +444,32 @@ def test_a_declared_transcript_that_is_not_on_disk_is_not_backed_up(tmp_path: Pa
     assert "## Tasks in progress" not in run.stdout
 
 
-def test_the_parser_reads_nothing_from_the_shape_claude_code_emits(tmp_path: Path) -> None:
-    """The dead-code measurement, executable rather than asserted in prose.
-
-    `parse_transcript` reads `role` and `content` at the top level of each
-    JSONL line; Claude Code nests both under `message`. This is the branch the
-    hook takes in production, and it is why row 8 of the migration plan
-    declares **no** signals — a `MESSAGES` declaration would name a read that
-    does not happen and let `deploy` omit the hook, losing the memory tails
-    over a transcript read that never worked. The repair is out of scope and
-    owned by `specs/backlog.md:125`; this test pins the current behaviour so
-    that repair cannot land silently.
-    """
+def test_the_parser_reads_the_shape_claude_code_emits(tmp_path: Path) -> None:
     case = next(c for c in CASES if c.id == "transcript-in-the-shape-claude-code-emits")
     world = _build(tmp_path, case)
 
     run = _run(world)
 
     assert run.exit_code == 0, run.stderr
-    # Backed up, so the transcript was found and read — the parser is what
-    # yields nothing, not the file handling.
     assert len(world.backups()) == 1
-    assert "## Tasks in progress" not in run.stdout
-    assert "## Files worked on" not in run.stdout
-    assert "/srv/app/pre_compact.py" not in run.stdout
+    assert "## Tasks in progress" in run.stdout
+    assert "Review the parser and preserve the current work." in run.stdout
+    assert "Finish the transcript shape regression tests." in run.stdout
+    assert "Tool output must not become a task." not in run.stdout
+    assert "## Files worked on" in run.stdout
+    assert "/srv/app/pre_compact.py" in run.stdout
     assert "## Recent decisions" in run.stdout
 
 
-def test_the_legacy_shape_is_the_only_one_that_reaches_the_summary(tmp_path: Path) -> None:
-    """The contrast that makes the test above a measurement rather than a tautology.
-
-    Without it, `parse_transcript` returning nothing would be indistinguishable
-    from a fixture the hook never opened.
-    """
+def test_the_legacy_shape_does_not_reach_the_summary(tmp_path: Path) -> None:
     case = next(c for c in CASES if c.id == "transcript-in-the-legacy-shape")
     world = _build(tmp_path, case)
 
     run = _run(world)
 
-    assert "## Tasks in progress" in run.stdout
-    assert "migrate the pre-compact hook onto the event contract" in run.stdout
-    assert "## Files worked on" in run.stdout
-    assert "/srv/app/pre_compact.py" in run.stdout
-    assert "/srv/app/loader.py" in run.stdout
+    assert "## Tasks in progress" not in run.stdout
+    assert "## Files worked on" not in run.stdout
+    assert "## Recent decisions" in run.stdout
 
 
 def test_a_payload_without_cwd_falls_back_to_the_hooks_own_directory(tmp_path: Path) -> None:
