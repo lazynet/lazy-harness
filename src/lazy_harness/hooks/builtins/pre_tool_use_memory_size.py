@@ -244,7 +244,8 @@ def _format_warning(file_path: str, breach: str, kind: str) -> str:
         hint = (
             "Consider whether each line is a fact the agent needs or a "
             "procedure it would already follow. `lh memory rightsize` shows "
-            "every contract (CLAUDE.md or AGENTS.md) the harness can reach and which ceiling it breaches."
+            "every contract (CLAUDE.md or AGENTS.md) the harness can reach and "
+            "which ceiling it breaches."
         )
     return f"WARN: {kind} at {file_path} would be {breach}. {hint}"
 
