@@ -239,7 +239,9 @@ Strict order; each step verified before the next.
 5. **lazy-ansible.** Workload templates, `scripts/test_lhexec.sh`, sink
    `UPDATE`, dashboard `CASE`.
 6. **Per host, Mac first:** `chezmoi apply`; `lh deploy`; `lh metrics
-   rename-profile` for the three pairs; `find ~/.claude-* ~/.codex-* -xtype l`
+   rename-profile` for the three pairs; rename each `<secrets dir>/<old>.env`
+   to `<new>.env` (ADR-045 D1 keys the file by profile name, and a missing one
+   fails open onto the ambient account); `find ~/.claude-* ~/.codex-* -xtype l`
    and remove the dangling links into the removed source dir; re-add to chezmoi.
 7. Resume the agent station timers.
 
@@ -278,6 +280,8 @@ Verified on both hosts after step 7:
 - `lh doctor` clean; one real `lh exec` workload fired through `systemctl
   start` on the agent station exits 0.
 - `find ~/.claude-* ~/.codex-* -xtype l` is empty.
+- `lh doctor` lists no non-default profile as inheriting the ambient
+  environment's credentials (ADR-045 D3), on either host.
 
 ## Risks
 

@@ -595,7 +595,7 @@ lh metrics rename-profile lazy claude-lazy
 
 `new` must already be a profile `config.toml` declares — this command renames rows that exist, it does not declare a profile the config has never heard of. Idempotent: a second run finds no rows left carrying the old name and reports `0` everywhere.
 
-Refuses when a `sink_outbox` row is still `pending` for one of the affected event_ids: renaming out from under it would leave that row referencing an id the remote will no longer recognise. Drain the outbox first with `lh metrics drain`.
+Refuses when a `sink_outbox` row is still `pending` for one of the affected event_ids, when a pending row's own payload still names the old profile, or when a pending row's `event_id` matches no `session_stats` row at all, whatever its profile — a row already re-keyed in place is invisible to a join on `event_id`. Renaming out from under any of them would leave that row referencing an id the remote will no longer recognise. Drain the outbox first with `lh metrics drain`.
 
 ### `lh metrics status`
 

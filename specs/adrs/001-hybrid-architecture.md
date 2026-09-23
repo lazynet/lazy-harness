@@ -35,3 +35,7 @@ The framework **reads from** that directory but never writes to it outside expli
 - Framework upgrades are independent and reversible (`uv tool upgrade` / `uv tool install lazy-harness==X.Y.Z`).
 - Every feature must pick a side: does this belong in the package, or in `~/.config/lazy-harness/`? If the answer is "it depends on the user", it goes in the config dir.
 - The public docs site never assumes a specific personal setup. The user-facing surface is what the framework itself does; profiles are examples, not product.
+
+## Evolution — 2026-09-23
+
+- `profiles/<name>/` above is `profiles/<identity>/` for a profile that declares `identity` ([ADR-068](068-profiles-are-identity-times-agent.md)); see the matching Evolution note in [ADR-009](009-profile-symlink-deploy.md).

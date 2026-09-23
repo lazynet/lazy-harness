@@ -144,7 +144,7 @@ the blast radius when a new adapter is tried out.
 
 ### Profiles sharing an identity
 
-Two profiles of different agents can declare the same `identity` — `claude-personal` and `codex-personal` both `identity = "personal"` — and both then read and write `profiles/personal/` instead of a directory per profile name. `lh profile sync-system-doc` writes each distinct `(identity, agent)` pair once: two profiles sharing both an identity and an agent (a second Codex subscription, `codex-personal-alt`) produce one write, not two. A directory under `profiles/` that no configured profile resolves to — by name when no profile declares `identity`, by identity when one does — is reported `orphaned` and never synced.
+Two profiles of different agents can declare the same `identity` — `claude-personal` and `codex-personal` both `identity = "personal"` — and both then read and write `profiles/personal/` instead of a directory per profile name. `lh profile sync-system-doc` writes each distinct `(identity, agent)` pair once: two profiles sharing both an identity and an agent (a second Codex subscription, `codex-personal-alt`) produce one write, not two. A directory under `profiles/` that no configured profile resolves to is handled by whether the config has opted into identity: while no profile declares `identity`, such a directory keeps the pre-identity behaviour and is synced with the calling command's own agent; once at least one profile declares `identity`, it is reported `orphaned` and left untouched.
 
 ## `[knowledge]` and sub-tables
 

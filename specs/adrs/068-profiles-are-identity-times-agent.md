@@ -54,6 +54,12 @@ Design: [`2026-09-23-profile-identity-design.md`](../designs/2026-09-23-profile-
   synced with the caller's own adapter.
 - Every consumer passing an old `--profile` value breaks at the cutover and is
   migrated in the same window.
+- State keyed by the profile name moves with it. ADR-045 D1 keys a profile's
+  own account by `<secrets dir>/<profile>.env`, and `overlay_profile_secrets`
+  fails open on a missing file: a renamed profile whose secrets file keeps the
+  old name launches silently on the ambient credentials. The cutover renames
+  each secrets file on every host, and is not done while `lh doctor` still
+  lists a non-default profile as inheriting the ambient environment.
 
 ## Alternatives considered
 
