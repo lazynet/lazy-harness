@@ -1536,6 +1536,89 @@ def test_doctor_reports_the_shared_root_line(
     assert "no default" in result.output
 
 
+# --- Mixed profile identity (Task 6) ---------------------------------------- #
+
+
+def _identity_mix_output(cfg) -> str:  # noqa: ANN001
+    import io
+
+    from rich.console import Console
+
+    from lazy_harness.cli.doctor_cmd import _render_identity_mix
+
+    buf = io.StringIO()
+    _render_identity_mix(Console(file=buf, width=140, force_terminal=False, no_color=True), cfg)
+    return buf.getvalue()
+
+
+def test_render_identity_mix_silent_when_no_profile_declares_identity(tmp_path: Path) -> None:
+    from lazy_harness.core.config import Config, HarnessConfig, ProfileEntry
+
+    cfg = Config(harness=HarnessConfig(version="1"))
+    cfg.profiles.items = {
+        "p1": ProfileEntry(config_dir=str(tmp_path / "p1")),
+        "p2": ProfileEntry(config_dir=str(tmp_path / "p2")),
+    }
+
+    assert _identity_mix_output(cfg) == ""
+
+
+def test_render_identity_mix_silent_when_every_profile_declares_identity(tmp_path: Path) -> None:
+    from lazy_harness.core.config import Config, HarnessConfig, ProfileEntry
+
+    cfg = Config(harness=HarnessConfig(version="1"))
+    cfg.profiles.items = {
+        "claude-p1": ProfileEntry(config_dir=str(tmp_path / "p1"), identity="p1"),
+        "codex-p1": ProfileEntry(config_dir=str(tmp_path / "p2"), identity="p1", agent="codex"),
+    }
+
+    assert _identity_mix_output(cfg) == ""
+
+
+def test_render_identity_mix_names_the_profile_without_identity(tmp_path: Path) -> None:
+    from lazy_harness.core.config import Config, HarnessConfig, ProfileEntry
+
+    cfg = Config(harness=HarnessConfig(version="1"))
+    cfg.profiles.items = {
+        "claude-p1": ProfileEntry(config_dir=str(tmp_path / "p1"), identity="p1"),
+        "legacy": ProfileEntry(config_dir=str(tmp_path / "p2")),
+    }
+
+    out = _identity_mix_output(cfg)
+
+    assert "legacy" in out
+    assert "claude-p1" not in out
+
+
+def test_doctor_mixed_identity_warns_without_failing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Wired into the command, and a warning — not an `lh doctor` failure."""
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    (tmp_path / "claude-p1").mkdir()
+    (tmp_path / "claude-legacy").mkdir()
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        '[harness]\nversion = "1"\n'
+        '[agent]\ntype = "claude-code"\n'
+        '[profiles]\ndefault = "claude-p1"\n\n'
+        f'[profiles.claude-p1]\nconfig_dir = "{tmp_path / "claude-p1"}"\nidentity = "p1"\n\n'
+        f'[profiles.legacy]\nconfig_dir = "{tmp_path / "claude-legacy"}"\n'
+        '[knowledge]\nroot = ""\n'
+    )
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
+
+    result = CliRunner().invoke(doctor, [])
+
+    assert result.exit_code == 0, result.output
+    assert "identity" in result.output.lower()
+    warning_lines = [ln for ln in result.output.splitlines() if "declare no" in ln.lower()]
+    assert warning_lines, result.output
+    assert "legacy" in warning_lines[0]
+    assert "claude-p1" not in warning_lines[0]
+
+
 def test_doctor_reports_one_line_per_profile(tmp_path: Path) -> None:
     """Four profiles, four agents, four verdicts, one run."""
     (tmp_path / "lazy" / "projects" / "-r").mkdir(parents=True)

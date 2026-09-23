@@ -44,7 +44,9 @@ def check_existing_setup(*, home: Path, lh_config: Path) -> None:
 
 @dataclass
 class WizardAnswers:
-    profile_name: str
+    # Agent-neutral persona (`personal`, `work`) — the profile name is derived
+    # from it, never typed directly (design section 1).
+    identity: str
     agent: str
     knowledge_path: Path
     enable_qmd: bool
@@ -60,15 +62,19 @@ class WizardAnswers:
 _DEFAULT_AGENT = "claude-code"
 
 
-def _config_dir_for(agent: str, profile_name: str) -> str:
-    prefix = PROFILE_PREFIXES.get(agent, agent)
-    return f"~/.{prefix}-{profile_name}"
+def run_wizard(answers: WizardAnswers, *, config_path: Path) -> str:
+    """Write config.toml and create knowledge directory based on wizard answers.
 
+    Returns the derived profile name (`{prefix}-{identity}`), matching what
+    `_validate_profile_identities` requires of a profile that declares
+    `identity` — the wizard never lets the two disagree.
+    """
+    prefix = PROFILE_PREFIXES.get(answers.agent, answers.agent)
+    profile_name = f"{prefix}-{answers.identity}"
 
-def run_wizard(answers: WizardAnswers, *, config_path: Path) -> None:
-    """Write config.toml and create knowledge directory based on wizard answers."""
     profile_entry: dict = {
-        "config_dir": _config_dir_for(answers.agent, answers.profile_name),
+        "identity": answers.identity,
+        "config_dir": f"~/.{profile_name}",
     }
     if answers.agent != _DEFAULT_AGENT:
         profile_entry["agent"] = answers.agent
@@ -79,8 +85,8 @@ def run_wizard(answers: WizardAnswers, *, config_path: Path) -> None:
         "harness": {"version": "1"},
         "agent": {"type": answers.agent},
         "profiles": {
-            "default": answers.profile_name,
-            answers.profile_name: profile_entry,
+            "default": profile_name,
+            profile_name: profile_entry,
         },
         "knowledge": {"root": contract_path(answers.knowledge_path)},
         "monitoring": {"enabled": True},
@@ -98,3 +104,4 @@ def run_wizard(answers: WizardAnswers, *, config_path: Path) -> None:
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_bytes(tomli_w.dumps(data).encode())
     ensure_knowledge_dir(answers.knowledge_path)
+    return profile_name

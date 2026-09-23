@@ -39,7 +39,7 @@ def init(force: bool) -> None:
             console.print(f"[red]Error:[/red] {escape(str(e))}")
             raise SystemExit(1) from e
 
-    profile_name = click.prompt("Profile name", default="personal")
+    identity = click.prompt("Identity", default="personal")
     agent = click.prompt("Agent", default="claude-code")
     billing_model = click.prompt(
         "Billing model",
@@ -54,13 +54,13 @@ def init(force: bool) -> None:
         enable_qmd = click.confirm("QMD detected. Enable knowledge indexing?", default=True)
 
     answers = WizardAnswers(
-        profile_name=profile_name,
+        identity=identity,
         agent=agent,
         knowledge_path=Path(knowledge_path).expanduser(),
         enable_qmd=enable_qmd,
         billing_model=billing_model,
     )
-    run_wizard(answers, config_path=cfg)
+    profile_name = run_wizard(answers, config_path=cfg)
 
     console.print(f"[green]✓[/green] Config created at {cfg}")
     console.print(f"[green]✓[/green] Profile '{profile_name}' created")
