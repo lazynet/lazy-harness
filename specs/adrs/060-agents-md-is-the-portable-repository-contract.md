@@ -47,6 +47,10 @@ one source and preserve nested discovery.
   Code now owns no global link (`default_home()` keeps unprofiled resolution on
   `~/.claude`), and the gate reports `ancestor-claude-md-shadows-agents`.
   Probes: [the rollout plan](../plans/2026-09-22-agent-neutral-instructions-rollout-plan.md) §Phase 0.
+- **Evolution (2026-09-22, Phase 2):** the gate takes any number of
+  repositories, `lh doctor` runs the ancestor check on `$HOME`, and
+  `lh memory rightsize` plus the memory-size hook treat `AGENTS.md` as a
+  contract under the same 200-line / 12 KB ceiling as `CLAUDE.md`.
 
 ## Status of the pilots
 

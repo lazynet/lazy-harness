@@ -528,8 +528,10 @@ El gate estático daba verde porque sólo miraba adentro del árbol.
 **Acción:** (1) la ventana de siete días hábiles corre desde el 2026-09-22 y
 cierra con `lh repo instructions` limpio en los cinco repos; después, Wave 2
 (lazent, lazy-everythingapp, lazy-finance, lazy-hamradio, lazy-hermes,
-lazy-popopen). (2) Los repos de Wave 1 fuera de este no tienen CI: el gate corre
-desde `audit-harness`, todavía no cableado. (3) Pospuesto por decisión del
+lazy-popopen y el vault LazyMind). (2) Cerrado el 2026-09-22: los repos de Wave 1
+fuera de este no tienen CI, así que el gate corre desde `audit-harness` sobre
+todo repo con `AGENTS.md` en la raíz, y `lh doctor` cubre el ancestro `$HOME`.
+(3) Pospuesto por decisión del
 2026-09-22: repos de `~/repos/flex/` (incluido el symlink `CLAUDE.md ->
 AGENTS.md` de ydi-data-layer) y una variante Codex del profile flex.
 

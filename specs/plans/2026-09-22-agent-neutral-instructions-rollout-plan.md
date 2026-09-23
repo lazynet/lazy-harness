@@ -68,10 +68,22 @@ Done 2026-09-22 (dotfiles `0774823`).
 `tests/docs/test_repo_instructions_gate.py` inside `pytest`. The Wave 1
 repositories have no CI, so the gate runs from the operator's side:
 
-- the `audit-harness` skill runs `lh repo instructions <repo>` over the
-  migrated-repository list below and reports any finding (**pending**);
-- each migrated repository names the gate in its own `AGENTS.md`
-  verification section.
+- `lh repo instructions` takes any number of repositories, and the
+  `audit-harness` skill runs it over every repo under `~/repos/lazy/` with a
+  root `AGENTS.md`, listing the `CLAUDE.md`-only ones as the next wave's queue;
+- `lh doctor` runs the ancestor check on `$HOME`, so a machine that still
+  carries the legacy `~/.claude` link fails there even if no gate runs;
+- `lh memory rightsize` and the memory-size hook measure `AGENTS.md`
+  contracts, including a Codex profile's system doc;
+- each migrated repository names the gate in its own `AGENTS.md`.
+
+Done 2026-09-22. Measuring `AGENTS.md` surfaced four contracts over the ceiling:
+the `lazy-codex` system doc (229 lines / 12.7 KB), `lazy` and `flex` (204 / 202,
+pushed over by Phase 1), and the `AGENTS.md` of lazy-desktop-manager and
+lazy-harness. The system docs now share one `tail.md` for `lazy`/`lazy-codex`,
+keep the chezmoi procedure and Codex runtime facts in conditional docs under
+`profiles/_common/docs/`, and cite every conditional doc by absolute path —
+Codex never had the `docs/` link the old relative paths assumed.
 
 ## Phase 3 — Wave 1 (manual)
 
@@ -102,6 +114,7 @@ Per repository, the design's migration algorithm:
 The seven-working-day window opens when the last Wave 1 repository lands.
 It closes with no `CLAUDE.md` restored in any Wave 1 repository (gate output
 from Phase 2). Wave 2 then covers lazent, lazy-everythingapp, lazy-finance,
-lazy-hamradio, lazy-hermes and lazy-popopen. lazy-bookreader already carries
+lazy-hamradio, lazy-hermes, lazy-popopen and the LazyMind vault, whose
+`CLAUDE.md` governs lazy-ai-tools' article processing. lazy-bookreader already carries
 only `AGENTS.md`. JimsGarage, lazy-knowledge and lazynet.github.io carry
 neither file and are inventoried only.
