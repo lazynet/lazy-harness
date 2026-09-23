@@ -20,6 +20,7 @@ from lazy_harness.core.move_projects import (
     move_projects as do_move_projects,
 )
 from lazy_harness.core.paths import config_dir, config_file, contract_path, expand_path
+from lazy_harness.core.profile_identity import profile_source_dir
 from lazy_harness.core.profile_migrate import (
     MigrateError,
     apply_migration,
@@ -308,7 +309,12 @@ def profile_envrc(dry_run: bool) -> None:
 def render_sync_results(results: list[SyncResult], console: Console) -> None:
     """Render system-doc sync results identically for sync and deploy."""
     for result in results:
-        style = {"written": "green", "unchanged": "dim", "skipped": "yellow"}.get(result.action, "")
+        style = {
+            "written": "green",
+            "unchanged": "dim",
+            "skipped": "yellow",
+            "orphaned": "yellow",
+        }.get(result.action, "")
         suffix = f" ({result.reason})" if result.reason else ""
         console.print(
             f"[{style}]{result.action:9}[/{style}] {result.profile} → {result.path.name}{suffix}"
@@ -318,12 +324,16 @@ def render_sync_results(results: list[SyncResult], console: Console) -> None:
 def _profile_sync_system_doc() -> None:
     """Regenerate each profile's system doc from its segmented sources.
 
-    Concatenates `<profile>/head.md` + `_common/common.md` +
-    `_common/<agent>.md` + `<profile>/tail.md` for every profile dir under
-    `~/.config/lazy-harness/profiles/` that carries them, and writes the result
-    to every destination the profile's agent loads. Legacy-only and flat
-    profile dirs are skipped, not erased; legacy-only results name the migrate
-    command that restores them to the supported layout.
+    Concatenates `<identity>/head.md` + `_common/common.md` +
+    `_common/<agent>.md` + `<identity>/tail.md` for every configured profile
+    that carries them, and writes the result to every destination the
+    profile's agent loads. A directory under
+    `~/.config/lazy-harness/profiles/` no configured profile resolves to is
+    reported orphaned and never touched once at least one profile declares
+    `identity`; until then it keeps the pre-identity behaviour of being
+    synced with the running agent's adapter (M3). Legacy-only and flat
+    profile dirs are skipped, not erased; legacy-only results name the
+    migrate command that restores them to the supported layout.
     """
     console = Console()
     profiles_dir = config_dir() / "profiles"
@@ -339,8 +349,10 @@ def _profile_sync_system_doc() -> None:
         raise SystemExit(1)
 
     try:
-        # `cfg` makes the doc name per profile; `agent` stays the answer for a
-        # directory the config no longer names.
+        # `cfg` makes the doc name per profile; `agent` is the fallback for a
+        # directory the config does not name, but only while no profile in
+        # `cfg` declares `identity` — from then on such a directory is
+        # reported orphaned instead (M3).
         results = sync_profiles(profiles_dir, agent, cfg=cfg)
     except SyncError as e:
         console.print(f"[red]Error:[/red] {escape(str(e))}")
@@ -383,7 +395,9 @@ def profile_migrate(name: str, dry_run: bool) -> None:
     Claude Code's assets, and the reverse.
     """
     console = Console()
-    profile_dir = config_dir() / "profiles" / name
+    config_path = config_file()
+    cfg = load_config(config_path) if config_path.is_file() else Config()
+    profile_dir = profile_source_dir(cfg, name, config_dir() / "profiles")
 
     try:
         plan = plan_migration(profile_dir)

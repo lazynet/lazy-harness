@@ -132,6 +132,7 @@ Each `[profiles.<name>]` sub-table:
 | `harness_binary` | string         | `""`    | no       | Launcher this profile's generated hook commands name. Empty inherits `lh`. A bare name resolved from `PATH`, never a path. |
 | `billing_model` | string          | `"per_token"` | no | How this profile's usage is billed: `per_token` or `flat_rate`. Persisted on every `MetricEvent` this profile's ingest produces (ADR-050). A misspelled value is rejected at load with a diagnostic naming it. |
 | `root_default` | boolean | `false` | no | Answers a bare `lh run` when two or more profiles share a root and their agents differ (multi-agent blast-radius design, decision 7). At most one profile per shared root may set this; the loader rejects a second, naming both. |
+| `identity` | string | `""` | no | Agent-neutral persona this profile belongs to (`personal`, `work`) — the source directory under `profiles/` and the destination of generated system docs are keyed by it, not by the profile name (ADR-068). Empty means "this profile is its own identity", today's behaviour exactly. When set, the profile's own name must be `{prefix}-{identity}[-{suffix}]` for its agent's prefix (`claude`, `codex`, `copilot`) — the loader rejects a mismatch, naming the profile key and the expected form. |
 
 \* `config_dir` has no parser-level requirement, but everything downstream (`lh run`, `lh deploy`, `lh profile envrc`) is meaningless without it.
 
@@ -140,6 +141,10 @@ directly: the deploy and run paths resolve them through one function each so the
 cannot drift apart. Setting `agent` on one profile leaves every other profile on
 the global `[agent].type`, which is what makes a profile — not an installation —
 the blast radius when a new adapter is tried out.
+
+### Profiles sharing an identity
+
+Two profiles of different agents can declare the same `identity` — `claude-personal` and `codex-personal` both `identity = "personal"` — and both then read and write `profiles/personal/` instead of a directory per profile name. `lh profile sync-system-doc` writes each distinct `(identity, agent)` pair once: two profiles sharing both an identity and an agent (a second Codex subscription, `codex-personal-alt`) produce one write, not two. A directory under `profiles/` that no configured profile resolves to — by name when no profile declares `identity`, by identity when one does — is reported `orphaned` and never synced.
 
 ## `[knowledge]` and sub-tables
 

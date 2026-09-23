@@ -360,6 +360,27 @@ def _render_shared_roots(console: Console, shared_roots: list[SharedRootInfo]) -
             )
 
 
+def _render_identity_mix(console: Console, cfg: Config) -> None:
+    """Warn when some profiles declare `identity` and others don't — a config
+    mid-migration to identity naming (design section 1, ADR-068).
+
+    Silent on either extreme: no profile with `identity` is today's ordinary
+    config, and every profile with one is a config that finished migrating.
+    Never fails `lh doctor` — a profile without `identity` is fully valid on
+    its own, this is a heads-up, not a broken machine.
+    """
+    with_identity = [name for name, entry in cfg.profiles.items.items() if entry.identity]
+    without_identity = [name for name, entry in cfg.profiles.items.items() if not entry.identity]
+    if not with_identity or not without_identity:
+        return
+    names = ", ".join(escape(n) for n in without_identity)
+    console.print(
+        f"  [yellow]![/yellow] {names} declare no `identity` while others do "
+        f"— see design section 1 of ADR-068",
+        soft_wrap=True,
+    )
+
+
 def _render_one_role(console: Console, cfg: Config, role: str) -> bool:
     """Report one role. Returns False only for a hard failure.
 
@@ -1123,6 +1144,7 @@ def doctor(as_json: bool) -> None:
             ok = False
 
     _render_shared_roots(console, collect_shared_roots(cfg))
+    _render_identity_mix(console, cfg)
 
     _render_transcripts(console, cfg)
     _render_profile_secrets(console, cfg)

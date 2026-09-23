@@ -581,6 +581,22 @@ lh metrics backfill-host
 
 Idempotent: a second run finds nothing left to stamp and reports `0`.
 
+### `lh metrics rename-profile`
+
+Renames a profile in the local metrics store: `session_stats`, `loop_events` and `launches`, in one transaction. `session_stats` rows also get a fresh `event_id`, since the remote sink upserts by that id and leaving it derived from the old name would double-count the next re-ingest or re-send of a continuing session.
+
+```bash
+lh metrics rename-profile lazy claude-lazy
+# renamed 'lazy' -> 'claude-lazy':
+#   session_stats: 214
+#   loop_events: 12
+#   launches: 8
+```
+
+`new` must already be a profile `config.toml` declares — this command renames rows that exist, it does not declare a profile the config has never heard of. Idempotent: a second run finds no rows left carrying the old name and reports `0` everywhere.
+
+Refuses when a `sink_outbox` row is still `pending` for one of the affected event_ids: renaming out from under it would leave that row referencing an id the remote will no longer recognise. Drain the outbox first with `lh metrics drain`.
+
 ### `lh metrics status`
 
 Prints the local database summary (session count, accumulated cost, path), then per-sink outbox counters (`pending`, `sending`, `sent`) for every non-`sqlite_local` sink. Use it to spot a stuck `http_remote` without `sqlite3`-ing the DB.
@@ -711,6 +727,19 @@ lh run                    # launch agent for current cwd's profile
 lh run --profile work
 lh run --dry-run -- --resume
 ```
+
+### `--agent` — narrow resolution to one agent
+
+`--agent <prefix>` (`claude`, `codex`, `copilot`) filters candidate profiles to that agent's *before* root resolution runs, which is what lets one `roots` entry shared by a Claude Code profile and a Codex profile resolve either one depending on which binary the caller wants. Without a root match, `--agent` falls back to `profiles.default` only if that profile runs the named agent; otherwise, if exactly one profile of that agent is configured, it resolves to that; otherwise `lh run` refuses, naming the agent and the directory — it never launches a profile of a different agent than the one asked for.
+
+`--profile` and `--agent` together: `--profile` wins if its own agent matches `--agent`, else `lh run` refuses, naming both.
+
+```bash
+lh run --agent codex               # this cwd's Codex profile, not the Claude default
+lh run --agent codex --dry-run
+```
+
+`lh exec` takes the same flag through the same resolver.
 
 ### `--bypass` — permission bypass as a declared intent
 

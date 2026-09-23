@@ -19,6 +19,7 @@ from lazy_harness.agents.registry import (
 )
 from lazy_harness.core.config import Config, ProfileEntry
 from lazy_harness.core.paths import config_dir, expand_path
+from lazy_harness.core.profile_identity import profile_source_dir
 from lazy_harness.deploy.ledger import owned_links, prune_unowned, write_ledger
 from lazy_harness.deploy.segments import resolve_segments
 from lazy_harness.deploy.skills import (
@@ -263,7 +264,7 @@ def deploy_profiles(cfg: Config, *, only: str | None = None) -> dict[str, dict[P
     displaced: dict[str, dict[Path, str]] = {}
     profile_plans = {}
     for name in selected:
-        src_dir = profiles_src / name
+        src_dir = profile_source_dir(cfg, name, profiles_src)
         if not src_dir.is_dir():
             continue
         profile_plans[name] = resolve_segments(
@@ -275,6 +276,7 @@ def deploy_profiles(cfg: Config, *, only: str | None = None) -> dict[str, dict[P
     # user-owned entries: unlike ADR-052's per-profile first-run migration,
     # the global catalog is never adopted by inference.
     skill_plan = plan_skill_projections(
+        cfg,
         selected,
         profiles_src,
         adapters,
@@ -282,7 +284,7 @@ def deploy_profiles(cfg: Config, *, only: str | None = None) -> dict[str, dict[P
     )
 
     for name, entry in selected.items():
-        src_dir = profiles_src / name
+        src_dir = profile_source_dir(cfg, name, profiles_src)
         if not src_dir.is_dir():
             click.echo(f"  · Profile '{name}' has no content dir at {src_dir}")
             continue

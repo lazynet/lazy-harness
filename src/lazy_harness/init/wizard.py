@@ -5,6 +5,8 @@ from pathlib import Path
 
 import tomli_w
 
+from lazy_harness.agents.registry import profile_prefix
+from lazy_harness.core.config import _IDENTITY_TOKEN_RE
 from lazy_harness.core.paths import contract_path
 from lazy_harness.knowledge.directory import ensure_knowledge_dir
 from lazy_harness.migrate.detector import detect_claude_code, detect_lazy_claudecode
@@ -12,6 +14,11 @@ from lazy_harness.migrate.detector import detect_claude_code, detect_lazy_claude
 
 class ExistingSetupError(Exception):
     """Raised when lh init is run on a system with an existing setup."""
+
+
+class WizardError(Exception):
+    """Raised when the wizard's answers would produce a config its own loader
+    rejects — caught before anything is written, not after."""
 
 
 def check_existing_setup(*, home: Path, lh_config: Path) -> None:
@@ -43,7 +50,9 @@ def check_existing_setup(*, home: Path, lh_config: Path) -> None:
 
 @dataclass
 class WizardAnswers:
-    profile_name: str
+    # Agent-neutral persona (`personal`, `work`) — the profile name is derived
+    # from it, never typed directly (design section 1).
+    identity: str
     agent: str
     knowledge_path: Path
     enable_qmd: bool
@@ -58,27 +67,28 @@ class WizardAnswers:
 # would already touch on both sides.
 _DEFAULT_AGENT = "claude-code"
 
-# `~/.<prefix>-<profile>` per agent, matching the shape `lh profile add`
-# expects a caller to have already chosen (it takes `--config-dir` literally
-# rather than deriving it). Not the adapter's registry key: "claude-code"
-# would give `~/.claude-code-<name>`, and every profile on disk today is
-# `~/.claude-<name>`.
-_CONFIG_DIR_PREFIXES: dict[str, str] = {
-    "claude-code": "claude",
-    "codex": "codex",
-    "copilot": "copilot",
-}
 
+def run_wizard(answers: WizardAnswers, *, config_path: Path) -> str:
+    """Write config.toml and create knowledge directory based on wizard answers.
 
-def _config_dir_for(agent: str, profile_name: str) -> str:
-    prefix = _CONFIG_DIR_PREFIXES.get(agent, agent)
-    return f"~/.{prefix}-{profile_name}"
+    Returns the derived profile name (`{prefix}-{identity}`), matching what
+    `_validate_profile_identities` requires of a profile that declares
+    `identity` — the wizard never lets the two disagree.
+    """
+    try:
+        prefix = profile_prefix(answers.agent)
+    except ValueError as e:
+        raise WizardError(str(e)) from e
+    if not _IDENTITY_TOKEN_RE.match(answers.identity):
+        raise WizardError(
+            f"identity {answers.identity!r} must be a kebab-case token "
+            f"matching {_IDENTITY_TOKEN_RE.pattern!r}"
+        )
+    profile_name = f"{prefix}-{answers.identity}"
 
-
-def run_wizard(answers: WizardAnswers, *, config_path: Path) -> None:
-    """Write config.toml and create knowledge directory based on wizard answers."""
     profile_entry: dict = {
-        "config_dir": _config_dir_for(answers.agent, answers.profile_name),
+        "identity": answers.identity,
+        "config_dir": f"~/.{profile_name}",
     }
     if answers.agent != _DEFAULT_AGENT:
         profile_entry["agent"] = answers.agent
@@ -89,8 +99,8 @@ def run_wizard(answers: WizardAnswers, *, config_path: Path) -> None:
         "harness": {"version": "1"},
         "agent": {"type": answers.agent},
         "profiles": {
-            "default": answers.profile_name,
-            answers.profile_name: profile_entry,
+            "default": profile_name,
+            profile_name: profile_entry,
         },
         "knowledge": {"root": contract_path(answers.knowledge_path)},
         "monitoring": {"enabled": True},
@@ -108,3 +118,4 @@ def run_wizard(answers: WizardAnswers, *, config_path: Path) -> None:
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_bytes(tomli_w.dumps(data).encode())
     ensure_knowledge_dir(answers.knowledge_path)
+    return profile_name

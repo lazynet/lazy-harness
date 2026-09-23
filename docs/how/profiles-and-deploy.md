@@ -11,9 +11,11 @@ Profiles involve two directories per profile, and it is worth seeing them side b
 ```
 Role           Path                                                 Owner
 ─────────────  ──────────────────────────────────────────────────── ──────────
-source         ~/.config/lazy-harness/profiles/<name>/              user
+source         ~/.config/lazy-harness/profiles/<name-or-identity>/  user
 target         ~/.claude-<name>/                                    agent
 ```
+
+The source path is keyed by `<name>` only when the profile declares no `identity`; when it does, the source directory is `profiles/<identity>/` instead (see [Profile identity](#profile-identity-two-agents-one-persona) below) — one Claude Code profile and one Codex profile sharing an identity read and write the same source directory.
 
 - **Source.** The user owns this. It lives in their dotfile-managed config dir. It is where `CLAUDE.md`, `skills/`, and any other profile content live. Most of it is input to deploy. An adapter's config targets are the deliberate exception: if a target such as Claude Code's `settings.json` is present in an agent segment, deploy writes the merged document through the runtime symlink and therefore updates that source file.
 - **Target.** This is the directory Claude Code reads from when `CLAUDE_CONFIG_DIR` is set to it. The framework writes symlinks into this directory during deploy. Claude Code itself also writes into this directory during normal use (session JSONLs, `projects/` state, memory files).
@@ -58,9 +60,32 @@ lh profile remove experimental                            # cannot remove defaul
 
 `list_profiles()` in `core/profiles.py` is the reader; `add_profile` / `remove_profile` are the writers. Removing the current default is refused — you must change the default first.
 
+## Profile identity — two agents, one persona
+
+Declaring `identity` on a profile keys its source directory and generated system doc by that agent-neutral persona rather than by the profile's own name — a Claude Code profile and a Codex profile can both declare `identity = "personal"` and both read `profiles/personal/`. Without `identity`, a profile's identity is its own name: today's behaviour exactly, and `lh doctor` warns (without failing) when a config mixes profiles that declare `identity` with profiles that don't.
+
+When a profile declares `identity`, its own name is validated against `{prefix}-{identity}[-{suffix}]` for its agent — `claude-personal`, `codex-personal`, `codex-personal-alt` for a second Codex subscription of the same identity — and the loader rejects a mismatch, naming the profile key and the expected form.
+
+```toml
+[profiles.claude-personal]
+identity   = "personal"
+config_dir = "~/.claude-personal"
+
+[profiles.codex-personal]
+identity   = "personal"
+agent      = "codex"
+config_dir = "~/.codex-personal"
+```
+
+`lh profile sync-system-doc` writes each distinct `(identity, agent)` pair once — the two profiles above produce `profiles/personal/CLAUDE.md` and `profiles/personal/AGENTS.md`, and a second Codex profile sharing both the identity and the agent produces no second write. `lh run --agent codex` and `lh exec --agent codex` filter profile resolution to one agent before root matching runs, so a shared root between the two profiles above resolves to whichever binary the caller asked for.
+
+`lh init` derives the profile name from the agent and the identity it prompts for (`{prefix}-{identity}`); the identity itself is what it writes into `config.toml`.
+
 ## Profile resolution — which profile am I in?
 
-`resolve_profile_with_source(cfg, cwd=None, override=None)` in `core/profiles.py` is the real resolver; `resolve_profile` is a thin wrapper that drops the `source` field. Longest-matching-root wins, and the rule matters when profiles overlap: if one profile says `roots = ["~/code"]` and another says `roots = ["~/code/work"]`, a session in `~/code/work/project` picks the second because its matching root is longer. This is what decides which `CLAUDE_CONFIG_DIR` (or the equivalent env var for another agent) a newly launched session points at — either via `lh run` or via a shell wrapper the user installs.
+`resolve_profile_with_source(cfg, cwd=None, override=None, agent=None)` in `core/profiles.py` is the real resolver; `resolve_profile` is a thin wrapper that drops the `source` field. Longest-matching-root wins, and the rule matters when profiles overlap: if one profile says `roots = ["~/code"]` and another says `roots = ["~/code/work"]`, a session in `~/code/work/project` picks the second because its matching root is longer. This is what decides which `CLAUDE_CONFIG_DIR` (or the equivalent env var for another agent) a newly launched session points at — either via `lh run` or via a shell wrapper the user installs.
+
+`agent` (a profile prefix: `claude`, `codex`, `copilot`) filters candidates to that agent's profiles before the root match runs; see [Profile identity](#profile-identity-two-agents-one-persona) above and [`lh run --agent`](../reference/cli.md#-agent-narrow-resolution-to-one-agent) for the CLI surface.
 
 **Two profiles claiming the exact same root** is a tie, not a longer/shorter comparison, and it is refused rather than broken by TOML document order: `lh run` exits, naming every profile that claims the root, and tells you to pass `--profile` or set `root_default = true` on one of them:
 

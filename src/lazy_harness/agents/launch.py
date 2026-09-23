@@ -42,17 +42,35 @@ def resolve_launch(
     profile_override: str | None = None,
     *,
     require_headless: bool = False,
+    agent: str | None = None,
 ) -> LaunchPlan:
     """Resolve everything needed to start the agent, or raise `LaunchError`.
 
     `require_headless` is checked before the binary is located: an agent that
     cannot be driven non-interactively is the more useful error to report.
+    `agent` is a profile prefix (`"claude"`, `"codex"`, `"copilot"`) that
+    narrows candidate profiles before root resolution; see
+    `core.profiles.resolve_profile_with_source`. Checked here, before
+    resolution, so a bad `--agent` value reports its own `unknown-agent-flag`
+    kind rather than `unknown-profile` (L4): `resolve_profile_with_source`
+    raises the same `ProfileError` for both, and mapping every `ProfileError`
+    to one kind would tell a caller with a typo'd `--agent` that its
+    `--profile` was the problem.
     """
     if not cfg.profiles.items:
         raise LaunchError("no-profiles", "No profiles configured. Run `lh init`.")
 
+    if agent is not None:
+        from lazy_harness.agents.registry import valid_profile_prefixes
+
+        valid = valid_profile_prefixes()
+        if agent not in valid:
+            raise LaunchError(
+                "unknown-agent-flag", f"unknown agent {agent!r}; expected one of {', '.join(valid)}"
+            )
+
     try:
-        resolution = resolve_profile_with_source(cfg, cwd, profile_override)
+        resolution = resolve_profile_with_source(cfg, cwd, profile_override, agent=agent)
     except ProfileError as e:
         raise LaunchError("unknown-profile", str(e)) from e
 

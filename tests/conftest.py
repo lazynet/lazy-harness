@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import os
 import subprocess
 import time
 from collections.abc import Iterator
@@ -10,6 +11,15 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+
+# Captured at import time — before any test or fixture has had a chance to
+# monkeypatch HOME — so it reflects the real machine's own state, not
+# whatever the first test's fixtures leave behind.
+_REAL_HOME = Path(os.environ.get("HOME", str(Path.home())))
+_REAL_CLAUDE_VERSIONS = _REAL_HOME / ".local" / "share" / "claude" / "versions"
+_REAL_CLAUDE_VERSIONS_BEFORE = (
+    set(_REAL_CLAUDE_VERSIONS.iterdir()) if _REAL_CLAUDE_VERSIONS.is_dir() else set()
+)
 
 
 @dataclass(frozen=True)
@@ -126,6 +136,34 @@ def _isolate_home_dir(
     fake_home = tmp_path_factory.mktemp("isolated-home")
     monkeypatch.setenv("HOME", str(fake_home))
     monkeypatch.setenv("USERPROFILE", str(fake_home))
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _guard_the_real_claude_versions_dir() -> Iterator[None]:
+    """Fail the whole run if any test wrote into the developer's own
+    `~/.local/share/claude/versions/` instead of an isolated `HOME`.
+
+    `ClaudeCodeAdapter.resolve_binary` picks the newest-mtime entry in that
+    directory, so one stray fake binary left there makes every subsequent
+    real `lh run` on the machine silently exec it instead of the real agent
+    — this bit the user once. `_isolate_home_dir` above is the fix; this is
+    the backstop for the case that fix doesn't reach — a script run outside
+    pytest's fixture machinery entirely, or a future test that computes
+    `Path.home()` before any fixture has run. The before/after snapshot is
+    taken at import time (`_REAL_CLAUDE_VERSIONS_BEFORE`, module level) and
+    at session teardown, so it is independent of any one test's own
+    isolation.
+    """
+    yield
+    after = set(_REAL_CLAUDE_VERSIONS.iterdir()) if _REAL_CLAUDE_VERSIONS.is_dir() else set()
+    new = after - _REAL_CLAUDE_VERSIONS_BEFORE
+    assert not new, (
+        f"this test run wrote into the real {_REAL_CLAUDE_VERSIONS} instead of an "
+        f"isolated HOME: {sorted(p.name for p in new)}. This pollutes the developer's "
+        "machine — every `lh run` afterward may silently exec the fake binary left "
+        "behind. Set HOME (via monkeypatch) to an isolated directory before computing "
+        "any Path.home()-derived path."
+    )
 
 
 @pytest.fixture

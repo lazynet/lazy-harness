@@ -42,6 +42,7 @@ def _write_config(lh_config: Path, profiles: str, default: str = "personal") -> 
 @pytest.fixture
 def routed_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Two profiles, `work` owning a root. Anything else falls back."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     lh_config = tmp_path / "lh"
     lh_config.mkdir()
     work_root = tmp_path / "work"
@@ -132,6 +133,7 @@ def test_run_is_quiet_when_no_profile_declares_a_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """With cwd routing unconfigured, the default profile is the design, not a guess."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     _write_agent()
     lh_config = tmp_path / "lh"
     lh_config.mkdir()
@@ -246,6 +248,7 @@ def test_run_refuses_a_shared_root_with_no_default(
 def test_run_uses_the_root_default_among_a_shared_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     _write_agent()
     lh_config = tmp_path / "lh"
     lh_config.mkdir()

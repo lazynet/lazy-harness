@@ -607,11 +607,11 @@ def cross_agent_config(tmp_path: Path, home_dir: Path, monkeypatch: pytest.Monke
     profiles = tmp_path / "tree" / "profiles"
     (profiles / "_common").mkdir(parents=True)
     (profiles / "_common" / "common.md").write_text("SHARED RULES\n")
-    (profiles / "alpha").mkdir()
-    (profiles / "alpha" / "head.md").write_text("alpha HEAD\n")
-    (profiles / "alpha" / "tail.md").write_text("alpha TAIL\n")
+    (profiles / "gate").mkdir()
+    (profiles / "gate" / "head.md").write_text("gate HEAD\n")
+    (profiles / "gate" / "tail.md").write_text("gate TAIL\n")
     for stem in ("CLAUDE", "AGENTS"):
-        (profiles / "alpha" / f"{stem}.md").write_text(_STALE_DOC)
+        (profiles / "gate" / f"{stem}.md").write_text(_STALE_DOC)
     return profiles
 
 
@@ -654,20 +654,20 @@ def test_sync_claude_regenerates_the_doc_of_the_agent_the_invoked_profile_runs(
     exit_code = _run_hook(
         "post-tool-use-sync-claude",
         "gate",
-        _sync_claude_payload(cross_agent_config / "alpha" / "head.md", tmp_path),
+        _sync_claude_payload(cross_agent_config / "gate" / "head.md", tmp_path),
     )
 
     assert exit_code == 0
-    assert (cross_agent_config / "alpha" / "CLAUDE.md").read_text() == render_agent_md(
-        "alpha HEAD\n",
+    assert (cross_agent_config / "gate" / "CLAUDE.md").read_text() == render_agent_md(
+        "gate HEAD\n",
         "SHARED RULES\n",
-        "alpha TAIL\n",
+        "gate TAIL\n",
         names=ROLE_SEGMENT_NAMES,
     )
     # The absence half: the global agent's contract is the file the pre-migration
     # hook wrote, so asserting only on `CLAUDE.md` would pass against a hook that
     # regenerated both.
-    assert (cross_agent_config / "alpha" / "AGENTS.md").read_text() == _STALE_DOC
+    assert (cross_agent_config / "gate" / "AGENTS.md").read_text() == _STALE_DOC
 
 
 def test_sync_claude_writes_nothing_outside_the_profiles_tree_it_was_pointed_at(
@@ -693,7 +693,7 @@ def test_sync_claude_writes_nothing_outside_the_profiles_tree_it_was_pointed_at(
     exit_code = _run_hook(
         "post-tool-use-sync-claude",
         "gate",
-        _sync_claude_payload(cross_agent_config / "alpha" / "head.md", tmp_path),
+        _sync_claude_payload(cross_agent_config / "gate" / "head.md", tmp_path),
     )
 
     assert exit_code == 0

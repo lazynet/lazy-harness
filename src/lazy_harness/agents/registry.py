@@ -103,6 +103,34 @@ _AGENTS: dict[str, type] = {
     "null": NullAdapter,
 }
 
+# The profile-name prefix each agent uses (`~/.<prefix>-<identity>`), one
+# entry per `_AGENTS` key. Not the registry key itself: "claude-code" would
+# give `~/.claude-code-<identity>`, and every profile on disk is `~/.claude-*`.
+PROFILE_PREFIXES: dict[str, str] = {
+    "claude-code": "claude",
+    "codex": "codex",
+    "copilot": "copilot",
+    "null": "null",
+}
+
+
+def profile_prefix(agent_name: str) -> str:
+    """The profile-name prefix for a registered agent, or a `ValueError`."""
+    prefix = PROFILE_PREFIXES.get(agent_name)
+    if prefix is None:
+        raise ValueError(f"agent {agent_name!r} has no profile prefix")
+    return prefix
+
+
+def valid_profile_prefixes() -> list[str]:
+    """Every prefix a `--agent` value can legally name, sorted.
+
+    `"null"` is the test sentinel, never a launchable agent — every caller
+    validating a `--agent` flag (`core.profiles`, `agents.launch`) excludes it
+    the same way, from this one list rather than re-deriving it.
+    """
+    return sorted({p for a, p in PROFILE_PREFIXES.items() if a != "null"})
+
 
 def get_agent(agent_type: str) -> AgentAdapter:
     """Get an agent adapter instance by type name."""

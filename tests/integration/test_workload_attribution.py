@@ -107,6 +107,7 @@ def _write_agent(body: str) -> Path:
 @pytest.fixture
 def channel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
     """A one-profile harness whose metrics DB `lh exec` and the ingest share."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     lh_config = tmp_path / "lh"
     lh_config.mkdir()
     profile_dir = tmp_path / "cfg-personal"

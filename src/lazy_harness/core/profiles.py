@@ -75,27 +75,66 @@ class ProfileResolution:
     source: str
 
 
+def _profile_agent_prefix(cfg: Config, name: str) -> str:
+    from lazy_harness.agents.registry import profile_prefix
+
+    entry = cfg.profiles.items[name]
+    return profile_prefix(entry.agent or cfg.agent.type)
+
+
 def resolve_profile_with_source(
-    cfg: Config, cwd: Path | None = None, override: str | None = None
+    cfg: Config,
+    cwd: Path | None = None,
+    override: str | None = None,
+    agent: str | None = None,
 ) -> ProfileResolution:
     """Resolve the profile and report how it was decided.
 
     Longest matching root wins. An `override` short-circuits the match and is
     validated here so every caller rejects an unknown name the same way.
+
+    `agent` is a profile-prefix (`"claude"`, `"codex"`, `"copilot"`) that
+    filters candidates *before* the root loop, and is checked against
+    `override` rather than combined with it: a `--profile` naming a different
+    agent's profile is a contradiction, not a narrowing.
     """
+    if agent is not None:
+        from lazy_harness.agents.registry import valid_profile_prefixes
+
+        valid = valid_profile_prefixes()
+        if agent not in valid:
+            raise ProfileError(f"unknown agent {agent!r}; expected one of {', '.join(valid)}")
+
     if override is not None:
         if override not in cfg.profiles.items:
             raise ProfileError(f"Unknown profile '{override}'")
+        if agent is not None and _profile_agent_prefix(cfg, override) != agent:
+            raise ProfileError(
+                f"--profile {override!r} runs agent "
+                f"{_profile_agent_prefix(cfg, override)!r}, not {agent!r}"
+            )
         return ProfileResolution(name=override, source=SOURCE_EXPLICIT)
 
     if cwd is None:
         cwd = Path.cwd()
 
+    candidates = cfg.profiles.items
+    if agent is not None:
+        matched: dict[str, ProfileEntry] = {}
+        for name, entry in candidates.items():
+            try:
+                prefix = _profile_agent_prefix(cfg, name)
+            except ValueError:
+                continue
+            if prefix == agent:
+                matched[name] = entry
+        candidates = matched
+
     cwd_str = str(cwd.resolve())
     best_len = 0
     best_matches: list[str] = []
 
-    for name, entry in cfg.profiles.items.items():
+    for name, entry in candidates.items():
         for root in entry.roots:
             root_str = str(expand_path(root))
             if not cwd_str.startswith(root_str):
@@ -107,7 +146,13 @@ def resolve_profile_with_source(
                 best_matches.append(name)
 
     if not best_matches:
-        return ProfileResolution(name=cfg.profiles.default, source=SOURCE_DEFAULT_FALLBACK)
+        if agent is None:
+            return ProfileResolution(name=cfg.profiles.default, source=SOURCE_DEFAULT_FALLBACK)
+        if cfg.profiles.default in candidates:
+            return ProfileResolution(name=cfg.profiles.default, source=SOURCE_DEFAULT_FALLBACK)
+        if len(candidates) == 1:
+            return ProfileResolution(name=next(iter(candidates)), source=SOURCE_DEFAULT_FALLBACK)
+        raise ProfileError(f"no {agent} profile claims {cwd}; pass --profile")
 
     if len(best_matches) == 1:
         return ProfileResolution(name=best_matches[0], source=SOURCE_ROOT_MATCH)
