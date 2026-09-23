@@ -728,6 +728,19 @@ lh run --profile work
 lh run --dry-run -- --resume
 ```
 
+### `--agent` — narrow resolution to one agent
+
+`--agent <prefix>` (`claude`, `codex`, `copilot`) filters candidate profiles to that agent's *before* root resolution runs, which is what lets one `roots` entry shared by a Claude Code profile and a Codex profile resolve either one depending on which binary the caller wants. Without a root match, `--agent` falls back to `profiles.default` only if that profile runs the named agent; otherwise, if exactly one profile of that agent is configured, it resolves to that; otherwise `lh run` refuses, naming the agent and the directory — it never launches a profile of a different agent than the one asked for.
+
+`--profile` and `--agent` together: `--profile` wins if its own agent matches `--agent`, else `lh run` refuses, naming both.
+
+```bash
+lh run --agent codex               # this cwd's Codex profile, not the Claude default
+lh run --agent codex --dry-run
+```
+
+`lh exec` takes the same flag through the same resolver.
+
 ### `--bypass` — permission bypass as a declared intent
 
 Every other argument `lh run` receives is forwarded to the agent untouched.

@@ -1,7 +1,13 @@
 # ADR-068: Profiles are identity × agent
 
-**Status:** proposed
+**Status:** accepted
 **Date:** 2026-09-23
+**Implemented:** 2026-09-23 — `ProfileEntry.identity`, `agents.registry.PROFILE_PREFIXES`,
+`core.profile_identity.{profile_identity,profile_source_dir}`, `sync_profiles`
+iterating configured profiles, `lh run`/`lh exec --agent`, and `lh metrics
+rename-profile` (`specs/plans/2026-09-23-profile-identity-plan.md`, Tasks 1–7).
+The fleet cutover — dotfiles, `lazy-ai-tools`, `lazy-ansible`, per-host deploy —
+is the design's own runbook, steps 2–7, and is out of scope for this change.
 **Supersedes:** —
 **Superseded by:** —
 **Related:** ADR-004 (agent adapter pattern), ADR-049 (permission bypass is a

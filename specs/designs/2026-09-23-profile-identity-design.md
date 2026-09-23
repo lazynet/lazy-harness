@@ -1,6 +1,6 @@
 # Profiles are identity × agent — design
 
-**Status:** proposed\
+**Status:** accepted\
 **Date:** 2026-09-23\
 **Decision:** [ADR-068](../adrs/068-profiles-are-identity-times-agent.md)
 
