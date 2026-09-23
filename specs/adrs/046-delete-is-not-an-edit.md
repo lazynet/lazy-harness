@@ -220,3 +220,11 @@ left stale and nothing on any channel saying so.
   `MEMORY.md` breaches nothing, and the hook's tool-name-keyed projection
   (`_projected_text`, the fourth fix ADR-044 records) is left exactly as it is —
   the delete never reaches it, so no branch was added there to forget.
+
+## Evolution
+
+**2026-09-16 — the one reader that opts in was renamed.** D4's
+`post-tool-use-sync-claude` (`post_tool_use_sync_claude.py`) is
+`post-tool-use-sync-system-doc` (`hooks/builtins/post_tool_use_sync_system_doc.py`)
+since #366 (`4309633`, 2026-09-16); the decision is unchanged and the old name survives as an alias in
+`hooks/loader.py`.

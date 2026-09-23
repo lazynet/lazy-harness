@@ -38,7 +38,7 @@ Split the compound loop into **a fast synchronous producer (the hook) and a slow
 > *It closed with the step 5 migrations (#314→#328), and the entry is `[x]` in
 > `specs/backlog.md`.* Both readers now go through one helper: the producer at
 > `hooks/builtins/compound_loop.py:65` is `agent, agent_dir = agent_dir_for(cfg, event.profile)`,
-> and `knowledge/compound_loop_worker.py:93-125` (`_agent_dir_for_profile`) delegates to the same
+> and `knowledge/compound_loop_worker.py` (`_agent_dir_for_profile`) delegates to the same
 > `_shared.py:agent_dir_for` whenever a profile is present, resolving globally on the
 > empty-profile branch **and** on the error fallback, where a per-profile resolution that
 > raises drops to the default agent's global runtime dir rather than killing the worker. So the chain is now: the *invoked profile* picks the adapter via

@@ -7,9 +7,14 @@ pricing, replay monotonicity and the CLI views ship locally. Receiver and
 Grafana deployment remain a separate rollout lane.
 The API-equivalent data path is implemented, but shipped transcript readers
 do not supply `context_class`: locally ingested `api_equivalent_cost` is
-uniformly null today (zero priced coverage).
+uniformly null today (zero priced coverage). *(State on 2026-09-19; ADR-065
+prices Anthropic rows and ADR-067 derives the context class, so it no longer
+holds.)*
 **Supersedes:** —
 **Superseded by:** —
+**Amended by:** ADR-067 — the context class is derived from the gross prompt
+when a reader supplies none, so a known model no longer stays `unknown_tier`
+for want of reader evidence.
 **Amended by:** ADR-065 — the reader-evidence requirement below is
 scoped to the dimensions each provider's rate table is keyed on, and
 Anthropic rates reach the equivalent path.

@@ -46,7 +46,9 @@ strings were byte-identical — which stops being true the moment the command
 format changes, as it does the moment the runner takes a `--profile` argument.
 Ownership is now the canonical hook name inside a launcher invocation, and the
 function moved with the merge it belongs to: it lives at
-`agents/claude_code.py:191`, not in `deploy/engine.py`.
+`agents/claude_code.py` (`_is_harness_owned`), not in `deploy/engine.py`.
+(Ownership has since moved to the ledger's identity claims — ADR-063 — and
+`_is_harness_owned` has no production caller left.)
 
 ## Decision
 
@@ -123,6 +125,17 @@ Four properties matter more than the type list:
    the item's remaining scope, is left for human review — see
    `docs/roadmap.md`'s "Make agent selection per profile throughout" item,
    reconciled against this same measurement.
+
+   > **Evolution (2026-09-18).** The human review this paragraph deferred to
+   > closed the item: `docs/roadmap.md` ticks "Make agent selection per profile
+   > throughout" with the reasoning. The three fallback sites are the documented
+   > "no profile resolved" path; `cli/doctor_cmd.py` reports the global agent
+   > because its top-line `Agent:` display *is* the global value; and
+   > `cli/profile_cmd.py` passes a default adapter to `sync_profiles`, which
+   > re-resolves per profile through `agent_for_profile` whenever it is handed
+   > `cfg`. #403 (`cc8d545`) added one more reader of the same shape,
+   > `cli/deploy_cmd.py:_sync_system_docs`, which also hands `cfg` over. The
+   > line numbers above are the 2026-09-16 measurement and have since moved.
 4. **Permissions are not unified.** Each agent's permission model is expressed
    in its own terms. Attempting one cross-agent permission language would
    produce a translation that is wrong in exactly the cases that matter.

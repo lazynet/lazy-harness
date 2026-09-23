@@ -56,7 +56,7 @@ src/lazy_harness/
 ├── selftest/        # runner, checks/
 ├── deploy/          # symlink engine, agent config generation, MCP wiring
 ├── wizards/         # `lh config <feature> --init` flows (ADR-026)
-├── plugins/         # extension-point registry (metrics sinks, future surfaces)
+├── plugins/         # capability registry (tools, hooks, metrics sinks, agents, LLM backends)
 └── features.py      # `lh doctor` Features section helper (ADR-025)
 tests/               # mirrors src/lazy_harness/ one-to-one
 templates/           # file templates (profile scaffolds, etc.)

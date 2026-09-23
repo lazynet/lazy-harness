@@ -11,7 +11,7 @@ The framework also has more contributors than just the author, including AI codi
 
 ## Decision
 
-**Strict red-green-refactor TDD is the only way production code is added to this repository.** Documented in `CLAUDE.md` at repo root. The iron law: **no production code exists without a failing test that exercised it first.** This applies to new features, bug fixes, and refactors alike.
+**Strict red-green-refactor TDD is the only way production code is added to this repository.** Documented in `CLAUDE.md` at repo root (now `AGENTS.md`; see Evolution). The iron law: **no production code exists without a failing test that exercised it first.** This applies to new features, bug fixes, and refactors alike.
 
 The cycle, applied every time:
 
@@ -40,3 +40,10 @@ Bug fixes follow the same cycle: reproduce the bug as a failing test first, then
 - The TDD rule is the reason several subsystems are structured as flat pure functions (`knowledge/compound_loop.py`, `knowledge/session_export.py`): pure functions are trivial to test without mocking. Shape follows testability.
 - Docs and ADRs are explicitly out of scope for the rule — they go through human review but not through a test cycle. This ADR itself was written without a test.
 - Speed of development is not sacrificed. For code this size the red-green cost is dominated by typing speed, and the rewrite cost of a bug that escapes to production is an order of magnitude higher. The discipline pays its cost back in the first real regression it prevents.
+
+## Evolution — 2026-09-19: the rule lives in `AGENTS.md`
+
+ADR-060 made `AGENTS.md` the only repository instruction surface and forbids a
+`CLAUDE.md` at the root, so the two references to `CLAUDE.md` above now mean
+`AGENTS.md` — non-negotiable 2 carries the rule, and the Claude-specific
+conditional section names the `superpowers:test-driven-development` skill.

@@ -39,7 +39,17 @@ The `context-inject` hook (see [ADR-006](006-hooks-subprocess-json.md) and the m
 ## Consequences
 
 - Continuity is measurably better. The next session's `## Handoff from last session` block often includes the pre-compact summary verbatim, giving the model the same file list and tasks without requiring the user to re-explain.
-- `~/.claude/compact-backups/` accumulates JSONL files over time. There is no automatic retention policy yet — it will be handled by a scheduler job in a future phase (tracked in `docs/backlog.md`). Manual cleanup is fine in the meantime since JSONL compresses extremely well.
+- `~/.claude/compact-backups/` accumulates JSONL files over time. There is no automatic retention policy yet — it will be handled by a scheduler job in a future phase (tracked in `specs/backlog.md`). Manual cleanup is fine in the meantime since JSONL compresses extremely well.
 - The hook intentionally consumes input from multiple possible field names (`transcript_path`, `transcriptPath`, `input`) to survive Claude Code schema drift between versions.
 - Because the summary lives in the project's memory dir under the deployed profile (`<CLAUDE_CONFIG_DIR>/projects/<encoded-cwd>/memory/`), it is scoped per-profile and per-cwd — a pre-compact from `work` profile in `/repos/flex/foo` does not contaminate the `personal` profile.
 - The combination of pre-compact backup and compound-loop extraction is the reason the framework can recover from catastrophic compaction: even if the in-session summary misses something, the full JSONL is still on disk in `compact-backups/` and the compound-loop worker can be re-run on it.
+
+## Evolution — 2026-09-12: the summary is scoped per project, not per profile
+
+The per-profile scoping in Consequences followed from the path in point 3. The
+2026-09-12 move keys the memory directory by the repository's normalised git
+remote (`core/memory_store.py:memory_dir_for`), with no profile component, so
+the same repository opened under two profiles shares one
+`pre-compact-summary.md`. Scoping is per profile and per cwd only on the
+fallback path, taken when there is no usable store or the checkout has no
+remote.

@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Date:** 2026-04-14
-**Implementation:** accepted in 2026-05 via ADR-025 (`lh doctor` Features section) and ADR-026 (`lh config <feature> --init` wizards). The triple stack (QMD/Engram/Graphify) drove the concrete UX.
+**Implementation:** accepted in 2026-05 via ADR-025 (`lh doctor` Features section) and ADR-026 (`lh config <feature> --init` wizards). The triple stack (QMD/Engram/Graphify) drove the concrete UX. Decision §3, the one-shot post-upgrade notice, was never implemented (noted 2026-09-23); tracked in `specs/backlog.md`.
 
 ## Context
 
@@ -59,6 +59,8 @@ lazy-harness upgraded to v0.7.0 — 2 new features available. Run `lh doctor` fo
 ```
 
 The notice is printed once and suppressed thereafter (tracked via a small state file under `<data_dir>/upgrade-notices.txt` keyed by version). It never runs a wizard, it never prompts, it does not block the command the user actually asked for. If stderr is redirected (e.g. inside a hook), the notice is silently written to the logfile instead of printed.
+
+> **Not implemented (noted 2026-09-23).** Nothing in `src/` prints this notice or writes `upgrade-notices.txt`; the closure recorded in the header covers §1 and §2 only. Tracked in `specs/backlog.md`.
 
 ## Alternatives considered
 

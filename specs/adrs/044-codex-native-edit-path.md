@@ -206,3 +206,16 @@ projection over a removed path cannot reach one by forgetting a check.
 Consequences sentence — widening `FileEdit` "is not taken here" — stands as
 written: the type was not widened, and `_parse_patch` stopped dropping the
 section.
+
+**2026-09-16 — a third doctor verdict, `trust stale`.** #367 (`5f088b3`) added
+it: `lh doctor` compares the current hook declaration against the pre-deploy
+snapshot and, when the harness changed a declaration since it last deployed,
+reports the stored hash as known-stale with `agents/codex_trust.py`'s
+`TRUST_STALE_VERDICT` — the same sentence `lh deploy` prints. It still never
+says `trusted` and never recomputes Codex's hash, so the reasoning above stands;
+"two states and not three" now reads as `untrusted`, `trust unknown` and
+`trust stale`, plus orphaned entries.
+
+**2026-09-16 — `post-tool-use-sync-claude` is `post-tool-use-sync-system-doc`.**
+Renamed by #366 (`4309633`, 2026-09-16); the old name survives only as an alias in `hooks/loader.py`.
+Every mention of the hook above refers to the renamed builtin.

@@ -33,6 +33,16 @@ TOML as the single canonical format. One file: `~/.config/lazy-harness/config.to
 
 - The config path is trivial to explain: one TOML file, one dataclass per section, one `load_config()` entry point. Everything else in the codebase consumes `Config`.
 - No third-party parser on the read path means the CLI starts fast and never fails because of a dependency pin.
-- Writing config is opt-in: only `lh init`, `lh migrate`, and `lh profile add` ever call `save_config`. Normal operation never rewrites the user's file, which means users can trust that their comments and formatting survive.
+- Writing config is opt-in: only explicit user commands write it. `lh init` and `lh migrate` write a new file through `tomli-w` directly; `save_config` is called by `lh profile add`, `lh profile remove`, `lh knowledge graph add` and the selftest's round-trip probe (on a temporary copy); `lh config <feature> --init` merges its block through `wizards/_toml_merge.py`. Normal operation never rewrites the user's file, which means users can trust that their comments and formatting survive.
 - Adding a new feature that needs configuration = adding a dataclass section and a loader branch. No schema file, no JSON schema, no migration system for config shape yet. If config shape changes incompatibly, we bump `[harness].version` and the migration engine handles the transition.
 - The loader explicitly rejects a missing `[harness].version` field. This is the version anchor — without it we cannot safely migrate shape changes in the future.
+
+## Evolution — 2026-08-17: `save_config` writes through `tomlkit`
+
+The **Writing** bullet above names `tomli-w`. Since #167 (`56429ad`),
+`core/config.py:save_config` is a `tomlkit` read-modify-write: it re-reads the
+file and changes only the keys it models, because serializing from scratch
+dropped comments and every key this version did not know. `wizards/_toml_merge.py`
+writes through `tomlkit` for the same reason. `tomli-w` remains for writing a
+brand-new file (`lh init`, the migration executor) and for rendering the preview
+block a `lh config <feature> --init` wizard prints.

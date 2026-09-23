@@ -62,3 +62,11 @@ The `export_session` function is the load-bearing piece:
 - Re-exports are safe. A user running the hook twice on the same session never corrupts the existing file; the idempotence check is by message count, so a resumed session that adds real content does get the updated export.
 - Because classification lives inside the exporter and not inside the config loader, adding a new profile today does not automatically give it its own `session_type` — the heuristics need to be extended. This is a known trade-off between "ship the calibration" and "derive from config". Tracked.
 - The export runs on every `Stop`, adding tens of milliseconds (JSONL parse + one file write). Below the user-perceptible threshold, well under Claude Code's hook budget.
+
+## Evolution — 2026-05-03: classification reads config
+
+Step 3's hardcoded heuristics and the "adding a new profile does not give it its
+own `session_type`" consequence are superseded by ADR-028:
+`knowledge/session_export.py:_classify(cwd, rules)` walks the ordered
+`[knowledge].classify_rules` list, first case-insensitive substring match wins,
+and the heuristics above survive only as the default rule set.

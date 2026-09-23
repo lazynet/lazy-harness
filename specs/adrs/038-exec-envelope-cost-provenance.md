@@ -228,6 +228,12 @@ and the parsed result — and each builds its envelope from the one
 `_base_envelope()` dict, overwriting values and never adding or removing a key.
 `click.echo` in `_emit` is the only writer of stdout in the command.
 
+> **Evolution (2026-09-09, PR #238).** The count is no longer four: ADR-039's
+> inference path added its own `_emit` sites (dry-run plan, failures, result),
+> so `cli/exec_cmd.py` has more than four today. The invariant this section
+> exists for is unchanged — every `_emit` call site still builds from
+> `_base_envelope()`, overwriting values and never adding or removing a key.
+
 So the timeout envelope carries the **identical key set** to the successful one,
 `cost_source` included; a consumer needs no separate code path to read it. That
 property is what makes the recompute in C1 reach the consumer at all, and it is

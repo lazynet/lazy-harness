@@ -22,7 +22,7 @@ Steps live under `migrate/steps/` with one file per kind (`backup.py`, `config_s
 
 `dry_run=True` is a first-class mode. Every step runs its read-side, produces its intended write actions as strings, and reports them without touching disk. This is what `lh migrate --dry-run` exposes to users and is the gate we require before any real migration.
 
-Rollback is also available as `lh migrate --rollback <backup-dir>`, which applies a previously-written rollback log even on a successful migration — a deliberate "undo" button for the user who decides the new layout was wrong.
+Rollback is also available as `lh migrate --rollback`, a flag that takes no path: it applies the rollback log of the **latest** migration backup even on a successful migration — a deliberate "undo" button for the user who decides the new layout was wrong.
 
 ## Alternatives considered
 
@@ -34,9 +34,9 @@ Rollback is also available as `lh migrate --rollback <backup-dir>`, which applie
 
 ## Consequences
 
-- Every migration run produces `<backup_dir>` (under `~/.local/share/lazy-harness/backups/` by default, timestamped) containing a copy of everything that will be touched and a rollback log. Recovery is `lh migrate --rollback <backup_dir>`.
+- Every migration run produces `<backup_dir>` (under `~/.config/lazy-harness/backups/`, timestamped; inside its `migrate/` namespace since #279 on 2026-09-14, with older backups still read from the root) containing a copy of everything that will be touched and a rollback log. Recovery is `lh migrate --rollback`, which replays the latest backup; an older one has no CLI path.
 - The executor's automatic rollback on failure means a broken migration always self-heals. The user sees a failure report and their system is unchanged — no "partial state" to clean up by hand.
 - Adding a new step kind is one file under `steps/` plus a branch in `planner.build_plan`. The executor does not need to know about the step's specifics — it only calls `step.execute`.
 - Dry run is not a flag on the executor; it is threaded through every step. Every step has to answer "what would you do?" as honestly as "do it". This is the constraint that catches bugs before the user hits them.
-- The migration is idempotent in practice: after a successful migration, re-running the detector produces an empty plan (nothing left to migrate) and execution is a no-op. The selftest has a migrate-idempotence check.
+- The migration is idempotent in practice: after a successful migration, re-running the detector produces an empty plan (nothing left to migrate) and execution is a no-op. The selftest has a migrate-idempotence check. **Not implemented (noted 2026-09-23):** no check under `selftest/checks/` exercises the migration detector or planner; tracked in `specs/backlog.md`.
 - Because the backup step collects files before any mutation, it is the reason [ADR-011](011-session-export-and-classification.md) and [ADR-012](012-sqlite-monitoring.md) can be migrated across machines later — the same infrastructure will be reused when we build `lh migrate --from-snapshot` for cross-machine replication.

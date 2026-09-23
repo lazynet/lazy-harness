@@ -161,7 +161,9 @@ drops the `_SYSTEM_DOC_HOOKS` entries when the agent has no file-based instructi
 document (`deploy/defaults.py`), and prints nothing at all:
 `merge_with_defaults({}, get_agent("null"))` gives
 `post_tool_use: ['post-tool-use-format']` against
-`['post-tool-use-format', 'post-tool-use-sync-claude']` for `claude-code`. That
+`['post-tool-use-format', 'post-tool-use-sync-system-doc']` for `claude-code`
+(`post-tool-use-sync-claude` when this was written; renamed by #366 and kept as
+an alias in `hooks/loader.py`). That
 filter predates this section by months and has never been announced. It is a
 narrower hole than the 2026-04-17 one — it removes a hook the agent has no
 instruction file for, rather than one the user asked for — but it is the same
