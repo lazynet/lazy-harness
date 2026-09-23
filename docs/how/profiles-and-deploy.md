@@ -6,19 +6,18 @@ This page explains how the pieces fit. For the reasoning, see [ADR-001](https://
 
 ## Three directories, two roles
 
-Profiles involve three directories per profile, and it is worth seeing them side by side before anything else.
+Profiles involve two directories per profile, and it is worth seeing them side by side before anything else.
 
 ```
 Role           Path                                                 Owner
 ─────────────  ──────────────────────────────────────────────────── ──────────
 source         ~/.config/lazy-harness/profiles/<name>/              user
 target         ~/.claude-<name>/                                    agent
-default link   ~/.claude                → target of default profile agent
 ```
 
 - **Source.** The user owns this. It lives in their dotfile-managed config dir. It is where `CLAUDE.md`, `skills/`, and any other profile content live. Most of it is input to deploy. An adapter's config targets are the deliberate exception: if a target such as Claude Code's `settings.json` is present in an agent segment, deploy writes the merged document through the runtime symlink and therefore updates that source file.
-- **Target.** This is the directory Claude Code reads from when `CLAUDE_CONFIG_DIR` is set to it (or when it is `~/.claude` for the default profile). The framework writes symlinks into this directory during deploy. Claude Code itself also writes into this directory during normal use (session JSONLs, `projects/` state, memory files).
-- **Default link.** A single top-level symlink `~/.claude → <default profile's target>`. This is what makes plain `claude` work without an env var.
+- **Target.** This is the directory Claude Code reads from when `CLAUDE_CONFIG_DIR` is set to it. The framework writes symlinks into this directory during deploy. Claude Code itself also writes into this directory during normal use (session JSONLs, `projects/` state, memory files).
+- **No global link.** Deploy does not point `~/.claude` at a profile. That link put the default profile's `CLAUDE.md` at `~/.claude/CLAUDE.md`, an ancestor of every repository under `$HOME`, and any ancestor `CLAUDE.md` stops Claude Code loading a repository's `AGENTS.md`. Launch through a profile (`lh run`, direnv, or `CLAUDE_CONFIG_DIR`); `lh doctor` flags a link an older deploy left behind.
 
 The source and target are deliberately separated. Profile content is read-only from the agent's perspective, while the target remains write-active for session data and project state. Adapter config targets are shared state between the source and runtime views: their target paths are symlinks, and `lh deploy` intentionally writes through them so the dotfile-managed source converges on the effective merged configuration.
 
@@ -43,7 +42,7 @@ lazynorth_doc = "LazyNorth-work.md"
 
 Fields:
 
-- **`default`** — which profile `~/.claude` symlinks to, and which profile is used when the cwd does not match any profile's roots.
+- **`default`** — which profile is used when the cwd does not match any profile's roots.
 - **`config_dir`** — the target directory for the profile. Can be anything, but the `~/.claude-<name>` convention is what the deploy and selftest assume.
 - **`roots`** — list of directories; any cwd below one of these resolves to this profile. Longest-prefix match wins, so `~/code/work` beats `~/code` if both are declared.
 - **`lazynorth_doc`** — optional. The filename inside the LazyNorth directory (if enabled in `[lazynorth]`) to pull strategic context from for this profile.
@@ -220,9 +219,9 @@ Re-running `lh deploy` is safe and converges: the same config produces the same 
 
 Design: [ADR-024](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/024-mcp-server-orchestration.md) for the MCP half; the adapter/engine split is decision 4 of the 2026-09-13 multi-agent design.
 
-### 4. `deploy_claude_symlink(cfg)` — the default shortcut
+### 4. `deploy_claude_symlink(cfg)` — the global link, owned by no shipped adapter
 
-Creates `~/.claude → <default profile's target>`. This is the fallback that lets `claude` work without any env var. If the default is `personal`, running plain `claude` in a directory outside of any profile root still gets the personal profile.
+Creates `<adapter.global_config_link()> → <default profile's target>` for an adapter that declares one. Claude Code, Codex and Copilot all return `None`: the vendor directory is not the harness's, and for Claude Code a linked `~/.claude` hides every repository's `AGENTS.md` ([ADR-060](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/060-agents-md-is-the-portable-repository-contract.md)).
 
 ## What the target directory looks like after deploy
 
@@ -295,10 +294,10 @@ User-authored content outside the `# >>> lazy-harness >>>` / `# <<< lazy-harness
 ### 3. Plain `claude`
 
 ```bash
-claude                       # uses ~/.claude → default profile
+claude                       # no profile: Claude Code's own ~/.claude
 ```
 
-Works because of `deploy_claude_symlink`. Always points at the default profile regardless of cwd.
+Runs outside every profile — no harness hooks, settings or system doc. Use one of the routes above instead.
 
 ## Observability
 
@@ -327,7 +326,7 @@ lh deploy
 3. `lh deploy` — stale symlinks in the target get relinked.
 
 **Swap the default profile:**
-Edit `[profiles].default` in config, then `lh deploy`. `~/.claude` is relinked to the new default's target.
+Edit `[profiles].default` in config, then `lh deploy`.
 
 **Delete a profile entirely:**
 1. `lh profile remove <name>` (refuses if it is the default).
