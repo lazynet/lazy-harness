@@ -25,7 +25,7 @@ from lazy_harness.deploy.skills import (
     apply_skill_projections,
     plan_skill_projections,
 )
-from lazy_harness.deploy.symlinks import REPLACED, backup_path, ensure_symlink
+from lazy_harness.deploy.symlinks import REPLACED, displaced_link_message, ensure_symlink
 from lazy_harness.hooks.loader import HookInfo
 from lazy_harness.hooks.signal_gaps import HookSignalGap
 
@@ -340,12 +340,7 @@ def deploy_profiles(cfg: Config, *, only: str | None = None) -> dict[str, dict[P
             elif status == REPLACED:
                 if carried is not None:
                     displaced.setdefault(name, {})[link.relative] = carried
-                click.echo(
-                    f"  ⚠  {name}/{link.relative}: displaced a regular file to "
-                    f"{backup_path(target).name} to restore the link — a writer that "
-                    f"replaces this path (temp file plus rename) breaks it instead of "
-                    f"writing through it."
-                )
+                click.echo(displaced_link_message(f"{name}/{link.relative}", target))
             else:
                 click.echo(f"  ✓ {name}/{link.relative}")
 
