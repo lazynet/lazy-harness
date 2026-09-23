@@ -1223,6 +1223,38 @@ def test_dry_run_names_the_key_variable_never_its_value(
     assert envelope["harness"]["api_key_resolves"] is True
 
 
+def test_dry_run_reports_key_from_owner_only_secrets_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lh_config = tmp_path / "lh"
+    lh_config.mkdir()
+    (lh_config / "config.toml").write_text(
+        '[harness]\nversion = "1"\n\n'
+        '[agent]\ntype = "claude-code"\n\n'
+        '[profiles]\ndefault = "personal"\n\n'
+        f'[profiles.personal]\nconfig_dir = "{tmp_path / "cfg"}"\nroots = []\n\n'
+        "[llm.backends.remote]\n"
+        'type = "openai-compatible"\nbase_url = "http://x/v1"\n'
+        'api_key_env = "SOME_LLM_KEY"\n\n'
+        "[llm.roles]\n"
+        'classify = "remote"\n'
+    )
+    secrets_dir = lh_config / "secrets"
+    secrets_dir.mkdir()
+    secrets_file = secrets_dir / "metrics.env"
+    secrets_file.write_text("SOME_LLM_KEY=sk-from-file\n")
+    secrets_file.chmod(0o600)
+    monkeypatch.setenv("LH_CONFIG_DIR", str(lh_config))
+    monkeypatch.setenv("LH_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.delenv("SOME_LLM_KEY", raising=False)
+
+    code, envelope = _invoke(["--role", "classify", "--dry-run"], prompt=None)
+
+    assert code == 0
+    assert envelope["harness"]["api_key_resolves"] is True
+    assert "sk-from-file" not in json.dumps(envelope)
+
+
 def test_unknown_role_reports_a_typed_failure(role_config: Path) -> None:
     """Not a usage error: the flag is well-formed, the config is not."""
     code, envelope = _invoke(["--role", "ghost"])

@@ -28,7 +28,7 @@ from lazy_harness.agents.base import (
 from lazy_harness.agents.launch import LaunchError, LaunchPlan, resolve_launch
 from lazy_harness.core.config import Config, ConfigError, load_config
 from lazy_harness.core.paths import config_file, process_exec_path
-from lazy_harness.llm.invoke import run_inference
+from lazy_harness.llm.invoke import _resolve_api_key, run_inference
 from lazy_harness.llm.registry import _DEFAULT_URLS
 from lazy_harness.llm.roles import RoleNotFoundError, resolve_role
 from lazy_harness.monitoring.launches import record_launch
@@ -295,7 +295,7 @@ def _emit_inference_plan(cfg: Config, role: str) -> None:
     }
     if target.api_key_env:
         harness["api_key_env"] = target.api_key_env
-        harness["api_key_resolves"] = bool(os.environ.get(target.api_key_env, ""))
+        harness["api_key_resolves"] = bool(_resolve_api_key(target.api_key, target.api_key_env))
     envelope.update({"dry_run": True, "success": True, "exit_code": 0, "harness": harness})
     _emit(envelope)
 

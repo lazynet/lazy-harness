@@ -181,10 +181,10 @@ A caller that wants a fallback retries with a different `--role`. Explicit, and 
 
 ### 7. Secrets
 
-`api_key_env` names an environment variable; the value never appears in config. This reuses the `url_env` mechanism in `monitoring/sink_setup.py` verbatim, including its three properties:
+`api_key_env` names an environment variable; the value never appears in config. This shares the `url_env` secrets-file reader in `core/secrets.py`, with the same three properties:
 
 - Resolved **at call time**, never at parse time, so the value is never serialised to disk.
-- Falls back to the secrets file, which must be owner-only (`sink_setup.py:81`).
+- Falls back to `<lh config dir>/secrets/metrics.env`, which must be owner-only (`core/secrets.py:read_metrics_secret`).
 - The parser rejects `api_key` and `api_key_env` together.
 
 `lh doctor` names the variable and reports whether it resolves, never the value.
