@@ -309,6 +309,12 @@ Prioridad MEDIA.
 
 **Por qué:** lo encontró #450. Sin knowledge store, la memoria legacy de un perfil Codex quedaría en `sessions/<encoded>/memory`, pero `core.memory_store.legacy_memory_dirs` hardcodea `projects/`. Afecta a la sección de colas frenadas de `lh doctor` y a `lh status memory` por igual. Hoy no existe ninguna en disco porque el store está en uso. **Acción:** derivar el subdirectorio de `adapter.session_dirs()` en vez de tipearlo. Prioridad BAJA de hecho; va acá para que no se pierda.
 
+### `engram-persist` lleva un cursor por perfil sobre un `decisions.jsonl` compartido: posible doble carga a engram
+
+**Por qué:** medido el 2026-09-23 en el CT, al verificar 0.78.0. La primera corrida de `engram-persist` para lazy-harness en cada perfil subió el historial entero: 405 entradas en `lazy` (63 s) y **930** en `flex` (145 s, con la sesión frenada en el `Stop` todo ese tiempo). Los dos perfiles leen el mismo `decisions.jsonl`/`failures.jsonl` del knowledge store, que se keyea por el remote del repo, pero el cursor vive por perfil (`<config_dir>/engram-cursors/`). Si la base de engram es una sola para los dos perfiles, lazy-harness quedó cargado dos veces. **No verificado:** ni si engram deduplica por contenido o topic key, ni si su store es compartido. La corrida de `flex` la disparó la verificación misma (`lh exec --profile flex` desde lazy-harness), que es justo el caso de un perfil tocando un repo que no es de sus roots.
+
+**Acción:** (1) medir si hay duplicados en engram para `project: lazy-harness` en el CT. (2) Si los hay, el cursor tiene que keyearse como la memoria —por proyecto en el store— y no por perfil; y decidir qué hacer con lo ya duplicado. (3) Aparte del duplicado: una puesta al día de cientos de entradas corre sincrónica en el `Stop` y bloquea la sesión minutos. Evaluar un tope por corrida o moverla al worker. Prioridad MEDIA.
+
 ### `metrics_secrets_file()` ignora `[secrets] dir`
 
 **Por qué:** lo encontró el review de #453, y es anterior a ese PR. `core/paths.py:metrics_secrets_file()` sale de `default_secrets_dir()`, no de `secrets_dir_for(cfg)`, así que mover `[secrets] dir` no mueve `metrics.env`. Desde #453 lo leen el sink **y** la resolución de API keys de inferencia. Los docs nombran `<lh config dir>/secrets/metrics.env` explícito, así que no hay drift entre docs y código, sólo una config que no hace lo que su nombre promete. **Acción:** decidir si `[secrets] dir` gobierna también este archivo; si sí, test de acuerdo entre los dos lectores.
