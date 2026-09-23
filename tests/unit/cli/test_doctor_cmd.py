@@ -1840,10 +1840,19 @@ def _settings_cfg(tmp_path: Path, profiles: dict[str, str]) -> object:
     return cfg
 
 
-def _probe_claude(monkeypatch: pytest.MonkeyPatch, *, stdout: str = "", fail: bool = False):
+def _probe_claude(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    stdout: str = "",
+    fail: bool = False,
+    binary: Path | None = Path("/opt/claude/versions/2.1.278"),
+):
     import subprocess
 
     calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "lazy_harness.agents.claude_code.ClaudeCodeAdapter.resolve_binary", lambda _self: binary
+    )
 
     def fake_run(argv, **_kwargs):  # noqa: ANN001, ANN003, ANN202
         calls.append(list(argv))
@@ -1886,7 +1895,7 @@ def test_settings_shape_says_unknown_when_the_version_probe_fails(
     console, buf = _recording_console()
 
     assert _render_settings_shape(console, cfg) is False
-    assert "installed claude --version: unknown" in _unwrapped(buf.getvalue())
+    assert "the binary this profile launches reports: unknown" in _unwrapped(buf.getvalue())
 
 
 def test_settings_shape_checks_every_claude_profile(
@@ -2183,3 +2192,34 @@ def test_halted_queues_drain_command_survives_a_path_with_spaces(tmp_path: Path)
     line = next(ln for ln in buf.getvalue().splitlines() if "--memory-dir" in ln)
     argv = shlex.split(line.strip())
     assert argv[argv.index("--memory-dir") + 1] == str(queue)
+
+
+def test_settings_shape_probes_the_binary_the_profile_launches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.cli.doctor_cmd import _render_settings_shape
+
+    cfg = _settings_cfg(tmp_path, {"lazy": "claude-code"})
+    (tmp_path / "lazy/settings.json").write_text(json.dumps(_FATAL_SETTINGS))
+    launched = tmp_path / "versions/2.1.278"
+    calls = _probe_claude(monkeypatch, stdout="2.1.278 (Claude Code)\n", binary=launched)
+    console, buf = _recording_console()
+
+    _render_settings_shape(console, cfg)
+
+    assert calls == [[str(launched), "--version"]]
+
+
+def test_settings_shape_says_unknown_when_no_binary_resolves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.cli.doctor_cmd import _render_settings_shape
+
+    cfg = _settings_cfg(tmp_path, {"lazy": "claude-code"})
+    (tmp_path / "lazy/settings.json").write_text(json.dumps(_FATAL_SETTINGS))
+    calls = _probe_claude(monkeypatch, stdout="2.1.300\n", binary=None)
+    console, buf = _recording_console()
+
+    assert _render_settings_shape(console, cfg) is False
+    assert "unknown" in _unwrapped(buf.getvalue())
+    assert calls == []

@@ -953,9 +953,16 @@ def _render_plugin_registry(console: Console, cfg: Config) -> bool:
     return ok
 
 
-def _installed_claude_version() -> str:
+def _installed_claude_version(agent: AgentAdapter) -> str:
+    # The binary the profile launches, which prefers the version-manager dir
+    # over PATH: a bare `claude` can name a different release than the one run.
+    binary = agent.resolve_binary()
+    if binary is None:
+        return "unknown"
     try:
-        result = subprocess.run(["claude", "--version"], capture_output=True, text=True, timeout=10)
+        result = subprocess.run(
+            [str(binary), "--version"], capture_output=True, text=True, timeout=10
+        )
     except (OSError, subprocess.SubprocessError):
         return "unknown"
     version = result.stdout.strip()
@@ -974,9 +981,9 @@ def _render_settings_shape(console: Console, cfg: Config) -> bool:
     from lazy_harness.agents.registry import agent_for_profile
 
     ok = True
-    installed: str | None = None
     for name, entry in cfg.profiles.items.items():
-        if agent_for_profile(cfg, name).name != "claude-code":
+        agent = agent_for_profile(cfg, name)
+        if agent.name != "claude-code":
             continue
         path = expand_path(entry.config_dir) / "settings.json"
         if not path.is_file():
@@ -999,15 +1006,14 @@ def _render_settings_shape(console: Console, cfg: Config) -> bool:
         if fatal is None:
             continue
         ok = False
-        if installed is None:
-            installed = _installed_claude_version()
+        installed = _installed_claude_version(agent)
         console.print(
             f"\n[red]✗[/red] {name}: {contract_path(path)} has a key shaped like a hook "
             f"declaration at {escape(fatal)}; Claude Code 2.1.278 discards such a file "
             "whole, every hook with it"
         )
         console.print(
-            "  Detector ported from Claude Code 2.1.278; installed claude --version: "
+            "  Detector ported from Claude Code 2.1.278; the binary this profile launches reports: "
             f"{escape(installed)}. Remove that key (it is not the harness's)."
         )
     return ok
