@@ -55,6 +55,7 @@ def _write_agent(body: str) -> Path:
 @pytest.fixture
 def harness_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A two-profile config; `work` matches a root, nothing else does."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     lh_config = tmp_path / "lh"
     lh_config.mkdir()
     work_root = tmp_path / "work"

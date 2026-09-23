@@ -28,6 +28,7 @@ def two_profiles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     lh_config = tmp_path / "lh"
     lh_config.mkdir()
 
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     versions = Path.home() / ".local" / "share" / "claude" / "versions"
     _fake_binary(versions, "0.0.1-fake")
 

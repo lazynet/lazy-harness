@@ -42,6 +42,7 @@ HANGING_AGENT = """
 @pytest.fixture
 def harness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A one-profile harness whose metrics DB path this test knows."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     lh_config = tmp_path / "lh"
     lh_config.mkdir()
     profile_dir = tmp_path / "cfg-personal"

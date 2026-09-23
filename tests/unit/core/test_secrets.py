@@ -265,6 +265,7 @@ def test_the_overlay_reaches_the_launched_process(tmp_path: Path, monkeypatch) -
     from lazy_harness.agents.launch import resolve_launch
     from lazy_harness.core.config import Config, ProfileEntry
 
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     versions = Path.home() / ".local" / "share" / "claude" / "versions"
     versions.mkdir(parents=True, exist_ok=True)
     binary = versions / "0.0.1-fake"
@@ -326,6 +327,7 @@ def test_an_unreadable_secrets_file_refuses_the_launch(tmp_path: Path, monkeypat
     from lazy_harness.agents.launch import LaunchError, resolve_launch
     from lazy_harness.core.config import Config, ProfileEntry
 
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     versions = Path.home() / ".local" / "share" / "claude" / "versions"
     versions.mkdir(parents=True, exist_ok=True)
     binary = versions / "0.0.1-fake"
