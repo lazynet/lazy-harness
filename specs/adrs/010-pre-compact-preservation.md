@@ -56,7 +56,7 @@ remote.
 
 ## Evolution — 2026-09-23: parse Claude Code's transcript records
 
-PR `fix/pre-compact-transcript-shape` corrected `parse_transcript` to read
+PR #451 corrected `parse_transcript` to read
 `role` and `content` from each record's `message`. The parser now extracts
 human turns from string or `text` block content, excludes `tool_result`
 records, and reads file paths from assistant `tool_use` blocks. Before this
