@@ -5,7 +5,8 @@ from pathlib import Path
 
 import tomli_w
 
-from lazy_harness.agents.registry import PROFILE_PREFIXES
+from lazy_harness.agents.registry import profile_prefix
+from lazy_harness.core.config import _IDENTITY_TOKEN_RE
 from lazy_harness.core.paths import contract_path
 from lazy_harness.knowledge.directory import ensure_knowledge_dir
 from lazy_harness.migrate.detector import detect_claude_code, detect_lazy_claudecode
@@ -13,6 +14,11 @@ from lazy_harness.migrate.detector import detect_claude_code, detect_lazy_claude
 
 class ExistingSetupError(Exception):
     """Raised when lh init is run on a system with an existing setup."""
+
+
+class WizardError(Exception):
+    """Raised when the wizard's answers would produce a config its own loader
+    rejects — caught before anything is written, not after."""
 
 
 def check_existing_setup(*, home: Path, lh_config: Path) -> None:
@@ -69,7 +75,15 @@ def run_wizard(answers: WizardAnswers, *, config_path: Path) -> str:
     `_validate_profile_identities` requires of a profile that declares
     `identity` — the wizard never lets the two disagree.
     """
-    prefix = PROFILE_PREFIXES.get(answers.agent, answers.agent)
+    try:
+        prefix = profile_prefix(answers.agent)
+    except ValueError as e:
+        raise WizardError(str(e)) from e
+    if not _IDENTITY_TOKEN_RE.match(answers.identity):
+        raise WizardError(
+            f"identity {answers.identity!r} must be a kebab-case token "
+            f"matching {_IDENTITY_TOKEN_RE.pattern!r}"
+        )
     profile_name = f"{prefix}-{answers.identity}"
 
     profile_entry: dict = {

@@ -276,6 +276,42 @@ def test_run_wizard_names_the_profile_by_agent_and_identity(tmp_path: Path) -> N
     assert cfg.profiles.default == "codex-work"
 
 
+def test_run_wizard_rejects_a_non_kebab_identity(tmp_path: Path) -> None:
+    """The wizard must fail loudly instead of writing a config its own loader
+    would later reject."""
+    from lazy_harness.init.wizard import WizardError
+
+    cfg_path = tmp_path / "config.toml"
+    with pytest.raises(WizardError, match="Work"):
+        run_wizard(
+            WizardAnswers(
+                identity="Work",
+                agent="claude-code",
+                knowledge_path=tmp_path / "kb",
+                enable_qmd=False,
+            ),
+            config_path=cfg_path,
+        )
+    assert not cfg_path.exists()
+
+
+def test_run_wizard_rejects_an_unknown_agent(tmp_path: Path) -> None:
+    from lazy_harness.init.wizard import WizardError
+
+    cfg_path = tmp_path / "config.toml"
+    with pytest.raises(WizardError, match="bogus"):
+        run_wizard(
+            WizardAnswers(
+                identity="personal",
+                agent="bogus",
+                knowledge_path=tmp_path / "kb",
+                enable_qmd=False,
+            ),
+            config_path=cfg_path,
+        )
+    assert not cfg_path.exists()
+
+
 def test_run_wizard_written_config_round_trips(tmp_path: Path) -> None:
     """The written file must load back through the real parser, not just parse
     as TOML — the loader also validates the identity/name shape."""
