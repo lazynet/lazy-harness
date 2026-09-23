@@ -276,6 +276,9 @@ class _PlannerlessAdapter:
     def global_config_link(self) -> Path | None:
         return None
 
+    def default_home(self) -> Path:
+        return Path.home() / ".fake"
+
 
 def test_an_adapter_without_config_planner_is_refused(
     tmp_path: Path, servers: None, monkeypatch: pytest.MonkeyPatch

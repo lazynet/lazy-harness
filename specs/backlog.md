@@ -512,49 +512,26 @@ soportada se prueba con un lanzamiento real, todos los consumidores conocidos
 tienen migración o compatibilidad explícita, y `lcca` sólo se retira cuando no
 queden usos hardcodeados o venza una ventana de deprecación documentada.
 
-### ADR-060 sigue abierto: faltan lazy-ai-tools, dotfiles y la ventana de siete días
+### ADR-060: Wave 1 migrada, ventana de siete días abierta el 2026-09-22
 
-**Por qué:** el piloto de ADR-060 aterrizó **sólo en lazy-harness**: `AGENTS.md`
-es el único contrato, las notas específicas viven en secciones condicionales,
-y el gate estático (`lh repo instructions`, `src/lazy_harness/core/repo_instructions.py`)
-corre sobre este árbol desde `tests/docs/test_repo_instructions_gate.py`. Los
-otros dos repos del primer batch (lazy-ai-tools, dotfiles) no se tocaron, y los
-once repos que llevan sólo `CLAUDE.md` siguen como los dejó Wave 0.
+**Por qué:** los cinco repos de Wave 1 (lazy-harness, lazy-ai-tools, dotfiles,
+lazy-ansible, lazy-desktop-manager) cargan sólo `AGENTS.md`, verificado con
+probe centinela desde raíz y un subdirectorio en Claude Code 2.1.280 y Codex. Hasta
+el 2026-09-22 el piloto **no llegaba a ninguna sesión Claude**: el link
+`~/.claude -> ~/.claude-lazy` ponía un `CLAUDE.md` en un ancestro de todo repo
+bajo `$HOME`, y un `CLAUDE.md` ancestro apaga la carga del `AGENTS.md` del repo.
+El gate estático daba verde porque sólo miraba adentro del árbol.
 
-**Fuente:** [ADR-060](adrs/060-agents-md-is-the-portable-repository-contract.md) y
-[el design](designs/2026-09-19-portable-repository-instructions-design.md) §Gates
-and rollout.
+**Fuente:** [ADR-060](adrs/060-agents-md-is-the-portable-repository-contract.md)
+§Evolution y [el plan](plans/2026-09-22-agent-neutral-instructions-rollout-plan.md).
 
-**Corrección medida:** Claude Code `2.1.278` no expande imports de un
-`CLAUDE.md` padre, pero sí descubre `AGENTS.md` directamente desde un
-subdirectorio. Diez corridas en
-[repo-instruction-discovery-evidence.md](designs/repo-instruction-discovery-evidence.md);
-el contrato de archivo único conserva la garantía root+nested.
-
-**Estado medido el 2026-09-20 — las dos mitades, verificadas por separado.** La
-primera cerró: `find . -name CLAUDE.md -not -path './.git/*'` sobre este árbol
-devuelve **cero**, `AGENTS.md` es el único contrato y el gate estático existe
-(`lh repo instructions`, `cli/repo_cmd.py` sobre `core/repo_instructions.py`,
-cubierto por `tests/docs/test_repo_instructions_gate.py`). La segunda **no**: el
-gate sigue sin estar cableado a nada que corra solo. `grep -rn 'lh repo
-instructions' .github/` devuelve cero —los tres workflows (`tests.yml`,
-`docs.yml`, `release-please.yml`) no lo nombran— y `.claude/commands/coherence-audit.md`
-tampoco, así que el único que lo ejecuta es quien se acuerde de tipearlo. Que
-las sesiones Claude hayan empezado a leer `AGENTS.md` desde 2.1.277 **no se
-verificó en esta pasada**: es una observación de runtime del agente, no un hecho
-de este repo, y no hay artefacto acá que la sostenga.
-
-**Acción:** son tres, y la tercera es nueva. (1) Migrar lazy-ai-tools y dotfiles
-con el mismo gate — el checker toma un path, así que no hace falta código nuevo
-para correrlo desde otro repo. (2) Cablear `lh repo instructions .` a algo que
-corra sin que nadie se acuerde: el paso natural es `tests.yml`, al lado de
-`ruff`, porque ya hay un test que lo ejerce y un step de CI lo vuelve
-no-salteable; la alternativa es sumarlo a `/coherence-audit`, que es más barato
-pero sigue dependiendo de que alguien invoque el comando. No está elegido. (3) La
-ventana de siete días hábiles **no está implementada y no debería inventarse
-como automatización**: es una observación con fecha de apertura, y el criterio
-que la cierra («ningún `CLAUDE.md` volvió al árbol») ya es mecánico
-via el gate. Wave 2 recién después de eso.
+**Acción:** (1) la ventana de siete días hábiles corre desde el 2026-09-22 y
+cierra con `lh repo instructions` limpio en los cinco repos; después, Wave 2
+(lazent, lazy-everythingapp, lazy-finance, lazy-hamradio, lazy-hermes,
+lazy-popopen). (2) Los repos de Wave 1 fuera de este no tienen CI: el gate corre
+desde `audit-harness`, todavía no cableado. (3) Pospuesto por decisión del
+2026-09-22: repos de `~/repos/flex/` (incluido el symlink `CLAUDE.md ->
+AGENTS.md` de ydi-data-layer) y una variante Codex del profile flex.
 
 ### El workflow tests falla en startup sobre la rama de release-please
 

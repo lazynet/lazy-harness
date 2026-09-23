@@ -40,7 +40,18 @@ one source and preserve nested discovery.
   from a parent leaves its imports unexpanded. Evidence and the correction:
   [repo-instruction-discovery-evidence.md](../designs/repo-instruction-discovery-evidence.md).
 
+- **Evolution (2026-09-22):** an ancestor `CLAUDE.md` or `.claude/CLAUDE.md`
+  also stops Claude Code 2.1.280 loading the repository `AGENTS.md`. The
+  deploy's `~/.claude -> ~/.claude-<default>` link put one above every
+  repository under `$HOME`, so the pilot never reached Claude sessions. Claude
+  Code now owns no global link (`default_home()` keeps unprofiled resolution on
+  `~/.claude`), and the gate reports `ancestor-claude-md-shadows-agents`.
+  Probes: [the rollout plan](../plans/2026-09-22-agent-neutral-instructions-rollout-plan.md) §Phase 0.
+
 ## Status of the pilots
 
-lazy-harness migrated 2026-09-19, with `lh repo instructions` as the static
-gate. lazy-ai-tools and dotfiles are pending.
+Wave 1 migrated 2026-09-22: lazy-harness, lazy-ai-tools, dotfiles, lazy-ansible
+and lazy-desktop-manager. Each passes `lh repo instructions` and a sentinel
+probe from its root and one nested directory in both Claude Code 2.1.280 and
+Codex. The seven-working-day window restarts on 2026-09-22, since no earlier
+Claude session saw the pilot.

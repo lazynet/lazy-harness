@@ -153,12 +153,11 @@ def test_deploy_writes_per_script_matcher_in_settings(home_dir: Path, monkeypatc
     assert "Bash" in matchers
 
 
-def test_deploy_creates_claude_symlink(home_dir: Path) -> None:
+def test_deploy_creates_no_claude_symlink(home_dir: Path) -> None:
+    """`~/.claude/CLAUDE.md` would shadow every repository AGENTS.md (ADR-060)."""
     _setup_with_profile_content(home_dir)
     runner = CliRunner()
     result = runner.invoke(cli, ["deploy"])
     assert result.exit_code == 0
 
-    claude_link = home_dir / ".claude"
-    assert claude_link.is_symlink()
-    assert str(home_dir / ".claude-personal") in str(claude_link.resolve())
+    assert not (home_dir / ".claude").exists()

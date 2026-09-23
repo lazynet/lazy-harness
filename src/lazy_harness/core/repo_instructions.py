@@ -69,13 +69,46 @@ def check_repository(root: Path) -> list[Finding]:
                 )
             )
 
+    findings.extend(_ancestor_findings(root))
+
     return sorted(findings, key=lambda f: (f.path.as_posix(), f.code))
+
+
+def _ancestor_findings(root: Path) -> list[Finding]:
+    """`CLAUDE.md` files above `root` that switch Claude Code off `AGENTS.md`.
+
+    Measured on 2.1.280: any `CLAUDE.md` or `.claude/CLAUDE.md` in an ancestor
+    of the cwd stops the repository `AGENTS.md` loading, from the root and from
+    nested directories alike. A `~/.claude` link to a profile does this to every
+    repository under `$HOME`. Reported by absolute path: it is outside the tree.
+    """
+    findings: list[Finding] = []
+    for ancestor in root.resolve().parents:
+        for candidate in (ancestor / APPENDIX_NAME, ancestor / ".claude" / APPENDIX_NAME):
+            if candidate.is_file():
+                findings.append(
+                    Finding(
+                        path=candidate,
+                        code="ancestor-claude-md-shadows-agents",
+                        detail=(
+                            f"an ancestor {APPENDIX_NAME} stops Claude Code loading "
+                            f"this repository's {CANONICAL_NAME}"
+                        ),
+                    )
+                )
+    return findings
 
 
 def _walk(root: Path) -> list[Path]:
     """Directories under `root`, skipping hidden and vendored trees."""
     found: list[Path] = []
     for current, dirnames, _ in os.walk(root):
-        dirnames[:] = [name for name in dirnames if name not in _SKIPPED_DIRS]
+        # A `.git` entry below the root marks another checkout (Claude Code's
+        # `.claude/worktrees/*`, a submodule): its files belong to another branch.
+        dirnames[:] = [
+            name
+            for name in dirnames
+            if name not in _SKIPPED_DIRS and not (Path(current) / name / ".git").exists()
+        ]
         found.append(Path(current))
     return found

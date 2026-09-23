@@ -806,6 +806,18 @@ class ClaudeCodeAdapter:
         return HookOutput(stdout=stdout, stderr="", exit_code=0)
 
     def global_config_link(self) -> Path | None:
+        """None — a `~/.claude` link would hide every repository's AGENTS.md.
+
+        The link pointed `~/.claude` at the default profile, which puts that
+        profile's `CLAUDE.md` at `~/.claude/CLAUDE.md`. Claude Code reads
+        `<ancestor>/.claude/CLAUDE.md` for every ancestor of the cwd, and on
+        2.1.280 any such file stops it loading the repository's `AGENTS.md`
+        (ADR-060). Every profile launches with `CLAUDE_CONFIG_DIR`, so nothing
+        needs the link.
+        """
+        return None
+
+    def default_home(self) -> Path:
         return Path.home() / ".claude"
 
     def mcp_config_file(self) -> str:

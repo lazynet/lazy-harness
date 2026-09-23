@@ -653,10 +653,18 @@ class AgentAdapter(Protocol):
         ...
 
     def global_config_link(self) -> Path | None:
-        """Canonical global symlink for this agent (e.g. ~/.claude).
+        """Global symlink `lh deploy` points at the default profile, or None.
 
         Return None if the agent does not use a global symlink convention.
         `lh deploy` only creates the symlink when this is non-None.
+        """
+        ...
+
+    def default_home(self) -> Path:
+        """Where the agent keeps its state when no profile names a directory.
+
+        Path resolution's last resort. Distinct from `global_config_link`: an
+        agent can own no link and still have a vendor home it writes to.
         """
         ...
 

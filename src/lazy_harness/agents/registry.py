@@ -74,6 +74,9 @@ class NullAdapter:
     def global_config_link(self) -> Path | None:
         return None
 
+    def default_home(self) -> Path:
+        return Path.home() / f".{self.name}"
+
     def skill_root(self, profile_config_dir: str) -> Path | None:
         return None
 

@@ -273,11 +273,19 @@ def test_claude_adapter_generate_mcp_config_passes_env() -> None:
     assert result["mcpServers"]["engram"]["env"] == {"ENGRAM_PORT": "7437"}
 
 
-def test_claude_adapter_global_config_link() -> None:
+def test_claude_adapter_owns_no_global_config_link() -> None:
+    # `~/.claude` -> profile dir put the profile's CLAUDE.md at `~/.claude/CLAUDE.md`,
+    # an ancestor of every repo under $HOME, which stops Claude Code loading any
+    # repository AGENTS.md (ADR-060).
     from lazy_harness.agents.claude_code import ClaudeCodeAdapter
 
-    result = ClaudeCodeAdapter().global_config_link()
-    assert result == Path.home() / ".claude"
+    assert ClaudeCodeAdapter().global_config_link() is None
+
+
+def test_claude_adapter_default_home_is_the_vendor_directory() -> None:
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    assert ClaudeCodeAdapter().default_home() == Path.home() / ".claude"
 
 
 def test_claude_adapter_mcp_config_file() -> None:

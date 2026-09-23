@@ -240,6 +240,9 @@ def test_an_adapter_that_cannot_plan_config_exits_nonzero(
         def global_config_link(self):
             return None
 
+        def default_home(self):
+            return Path.home() / ".fake"
+
     monkeypatch.setattr(engine, "agent_for_profile", lambda cfg, name: _Plannerless())
 
     result = CliRunner().invoke(cli, ["deploy"])

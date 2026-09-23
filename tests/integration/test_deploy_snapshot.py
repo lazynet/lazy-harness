@@ -303,7 +303,7 @@ def test_the_snapshot_reads_the_agent_per_profile_like_the_deploy(
 
 
 def test_the_global_link_follows_the_default_profiles_agent(
-    home_dir: Path, mixed_agents: Config
+    home_dir: Path, mixed_agents: Config, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`CodexAdapter.global_config_link()` is `None` — a refusal to own one.
 
@@ -311,8 +311,12 @@ def test_the_global_link_follows_the_default_profiles_agent(
     profile's. Asking `[agent].type` snapshots `~/.claude` on a machine whose
     default profile runs an agent that never touches it.
     """
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
     from lazy_harness.agents.registry import get_agent
 
+    # No shipped adapter owns a link since ADR-060; the resolution is still
+    # the deploy's, so a stand-in link keeps this guard meaningful.
+    monkeypatch.setattr(ClaudeCodeAdapter, "global_config_link", lambda self: home_dir / ".claude")
     global_link = get_agent("claude-code").global_config_link()
     assert global_link is not None, "the global agent must own a link, or this proves nothing"
 

@@ -1223,6 +1223,9 @@ class CodexAdapter:
 
     # --- the rest of the adapter surface ---
 
+    def default_home(self) -> Path:
+        return Path.home() / ".codex"
+
     def global_config_link(self) -> Path | None:
         """None — and the reason is no longer the throwaway's.
 
