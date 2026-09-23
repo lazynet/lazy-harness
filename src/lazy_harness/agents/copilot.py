@@ -583,6 +583,9 @@ class CopilotAdapter:
 
     # --- the rest of the adapter surface ---
 
+    def default_home(self) -> Path:
+        return Path.home() / ".copilot"
+
     def global_config_link(self) -> Path | None:
         """None — `~/.copilot` is the vendor's directory, not the harness's.
 

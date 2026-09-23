@@ -139,12 +139,15 @@ def test_deploy_claude_symlink_skips_a_non_default_profile(home_dir: Path) -> No
     assert not (home_dir / ".claude").exists()
 
 
-def test_deploy_claude_symlink_still_links_the_default_profile(home_dir: Path) -> None:
+def test_deploy_claude_symlink_links_nothing_for_a_claude_default_profile(
+    home_dir: Path,
+) -> None:
+    """`~/.claude/CLAUDE.md` would shadow every repository AGENTS.md (ADR-060)."""
     from lazy_harness.deploy.engine import deploy_claude_symlink
 
     deploy_claude_symlink(_two_profiles(home_dir), only="lazy")
 
-    assert (home_dir / ".claude").is_symlink()
+    assert not (home_dir / ".claude").exists()
 
 
 def test_snapshot_targets_lists_only_the_selected_profile(home_dir: Path) -> None:
@@ -158,16 +161,15 @@ def test_snapshot_targets_lists_only_the_selected_profile(home_dir: Path) -> Non
     )
 
 
-def test_snapshot_targets_for_the_default_profile_keep_the_global_link(
+def test_snapshot_targets_for_a_claude_default_profile_hold_no_global_link(
     home_dir: Path,
 ) -> None:
-    """Narrowed to the default profile, the snapshot must still cover the link —
-    `deploy_claude_symlink` rewrites it on that path."""
+    """No link is written, so none is snapshotted."""
     from lazy_harness.deploy.snapshot import snapshot_targets
 
     targets = snapshot_targets(_two_profiles(home_dir), only="lazy")
 
-    assert home_dir / ".claude" in targets
+    assert home_dir / ".claude" not in targets
 
 
 def test_snapshot_targets_without_a_name_cover_every_profile(home_dir: Path) -> None:
@@ -178,7 +180,7 @@ def test_snapshot_targets_without_a_name_cover_every_profile(home_dir: Path) -> 
 
     assert home_dir / ".claude-lazy" / "settings.json" in targets
     assert home_dir / ".claude-flex" / "settings.json" in targets
-    assert home_dir / ".claude" in targets
+    assert home_dir / ".claude" not in targets
 
 
 def test_manifest_from_a_narrowed_snapshot_carries_no_other_profile(
@@ -230,8 +232,7 @@ def test_a_default_profile_whose_agent_has_no_global_link_moves_no_symlink(
     assert not (home_dir / ".claude").exists()
 
 
-def test_a_claude_code_default_profile_still_gets_its_link(home_dir: Path) -> None:
-    """The guard on the fix: resolving per profile must not stop linking."""
+def test_a_claude_code_default_profile_gets_no_link(home_dir: Path) -> None:
     from lazy_harness.deploy.engine import deploy_claude_symlink
 
     cfg = _codex_default(home_dir)
@@ -239,5 +240,4 @@ def test_a_claude_code_default_profile_still_gets_its_link(home_dir: Path) -> No
 
     deploy_claude_symlink(cfg, only="lazy")
 
-    assert (home_dir / ".claude").is_symlink()
-    assert (home_dir / ".claude").readlink() == home_dir / ".claude-lazy"
+    assert not (home_dir / ".claude").exists()

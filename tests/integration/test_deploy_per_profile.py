@@ -68,7 +68,7 @@ def test_deploy_without_the_flag_still_writes_every_profile(home_dir: Path) -> N
     assert (home_dir / ".claude-flex" / "CLAUDE.md").is_symlink()
     assert (home_dir / ".claude-lazy" / "settings.json").is_file()
     assert (home_dir / ".claude-flex" / "settings.json").is_file()
-    assert (home_dir / ".claude").is_symlink()
+    assert not (home_dir / ".claude").exists()
 
 
 def test_deploy_with_the_flag_writes_only_that_profile(home_dir: Path) -> None:
@@ -95,7 +95,7 @@ def test_deploy_with_the_flag_leaves_the_global_link_alone(home_dir: Path) -> No
     assert not (home_dir / ".claude").exists()
 
 
-def test_deploy_of_the_default_profile_still_sets_the_global_link(
+def test_deploy_of_the_default_profile_sets_no_global_link(
     home_dir: Path,
 ) -> None:
     from lazy_harness.cli.main import cli
@@ -104,8 +104,7 @@ def test_deploy_of_the_default_profile_still_sets_the_global_link(
     result = CliRunner().invoke(cli, ["deploy", "--profile", "lazy"])
 
     assert result.exit_code == 0, result.output
-    assert (home_dir / ".claude").is_symlink()
-    assert (home_dir / ".claude").resolve() == (home_dir / ".claude-lazy").resolve()
+    assert not (home_dir / ".claude").exists()
 
 
 def test_unknown_profile_fails_with_a_clear_error(home_dir: Path) -> None:

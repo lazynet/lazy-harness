@@ -523,6 +523,9 @@ class FakeHeadlessAdapter:
     def global_config_link(self) -> Path | None:
         return None
 
+    def default_home(self) -> Path:
+        return Path.home() / ".fake"
+
     def mcp_config_file(self) -> str:
         return ""
 
