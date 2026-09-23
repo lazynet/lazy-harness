@@ -80,3 +80,13 @@ link put one above every repository under `$HOME` (ADR-060, Evolution). Since
 `deploy_claude_symlink` returns before creating any link. A plain `claude`
 invocation without `CLAUDE_CONFIG_DIR` resolves through `default_home()`, which
 keeps unprofiled resolution on `~/.claude`.
+
+## Evolution — 2026-09-23: the source directory is keyed by identity
+
+The source path `profiles/<name>/` above holds only for a profile that declares
+no `identity`. Since [ADR-068](068-profiles-are-identity-times-agent.md) (#457),
+a profile declaring `identity` reads `profiles/<identity>/`, resolved by
+`core/profile_identity.py:profile_source_dir` at every deploy call site, so two
+profiles of different agents sharing an identity link from one source
+directory. The per-file symlink mechanism and the source/target split are
+unchanged.

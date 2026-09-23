@@ -99,3 +99,12 @@ The last consequence listed above anticipated the shape of this growth: new feat
 would add columns or a table rather than restructure. That is what happened. What it did
 not anticipate is that an embedded schema block goes stale silently — hence this section
 and the pointer to the module.
+
+**2026-09-23 — rows can be renamed.** Since #457 ([ADR-068](068-profiles-are-identity-times-agent.md)),
+`lh metrics rename-profile` (`MetricsDB.rename_profile`) rewrites `profile` in
+`session_stats`, `loop_events` and `launches` in one transaction, and re-derives each
+renamed `session_stats` row's `event_id` from the new name. `launches` is therefore
+append-only for the agent launches it records, not immutable, and `event_id` is stable
+across re-ingest but not across a profile rename. The remote sink is rewritten with the
+equivalent `UPDATE` outside this repository; the rename refuses while a pending
+`sink_outbox` row could still carry an id the remote would not recognise.
