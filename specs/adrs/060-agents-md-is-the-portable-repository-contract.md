@@ -51,6 +51,12 @@ one source and preserve nested discovery.
   repositories, `lh doctor` runs the ancestor check on `$HOME`, and
   `lh memory rightsize` plus the memory-size hook treat `AGENTS.md` as a
   contract under the same 200-line / 12 KB ceiling as `CLAUDE.md`.
+- **Evolution (2026-09-23):** removing the link had a second casualty.
+  Claude Code's plugin registries (`plugins/known_marketplaces.json`,
+  `plugins/installed_plugins.json`) had recorded paths through
+  `~/.claude/plugins/...`, which stopped existing with the link, so every
+  plugin failed to load with `cache-miss`. `lh deploy` now repoints such paths
+  into the profile and `lh doctor` reports any that dangle (#447).
 
 ## Status of the pilots
 

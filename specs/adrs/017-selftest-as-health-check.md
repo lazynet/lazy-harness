@@ -46,3 +46,7 @@ The runner's job is deliberately tiny: iterate, collect, aggregate. All logic li
 - `CheckResult` uses a three-state status (`PASS | WARN | FAIL`). `WARN` is specifically for "the thing is configured but has a known-degraded mode" — e.g. knowledge directory exists but QMD is not installed. This is the axis the tri-state supports that a boolean cannot.
 - Selftest checks are allowed to touch the user's real filesystem — that is the whole point. They must not write to the user's filesystem except in well-scoped locations (they never write outside `LH_*` directories). This is enforced by review, not by sandboxing.
 - The parallel structure between `migrate/` (with `steps/`) and `selftest/` (with `checks/`) is deliberate: two subsystems that each iterate over a list of independent units with a shared result type. Future subsystems that fit the same shape will follow the same layout.
+
+## Evolution — 2026-09-23: `profile_check` asks the profile's own agent
+
+`profile_check` no longer demands `CLAUDE.md` and `settings.json` from every profile. It checks that the config dir exists, that each system doc the profile's adapter declares (`system_docs()`) is present, and — only for an agent whose `config_targets()` include `settings.json` — that the file is valid JSON with a hook shape Claude Code accepts. It does not check that symlinks resolve, which the description above implied. A Codex profile is judged by `AGENTS.md` (#446).
