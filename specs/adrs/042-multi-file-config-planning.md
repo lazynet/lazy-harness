@@ -163,12 +163,16 @@ reporting in `lh doctor`, project-layer hook discovery, and the `[projects.*]`
 read that `lh doctor` needs in order not to report a project hook as installed
 that Codex will never load are step 9's.
 
+> **Evolution (2026-09-16).** Closed by ADR-044, which replaced the throwaway with the real `CodexAdapter`.
+
 **Per-agent profile asset segments and the `sync_agent_md.py` layout
 agreement.** Decision 10's half of the same design step, and it touches
 `core/sync_agent_md.py`, which this work does not.
 
 **Copilot's `permissions-config.json`.** The third jointly-owned file, and there
 is no `CopilotAdapter` yet.
+
+> **Evolution (2026-09-16).** ADR-047 added `agents/copilot.py`; this out-of-scope note records the state when ADR-042 was written.
 
 ## Evidence standard
 

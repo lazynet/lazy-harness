@@ -593,8 +593,9 @@ class CopilotAdapter:
         before linking, and this one is not an empty mount point: it holds
         `permissions-config.json`, which Copilot writes as the user approves
         things, plus `settings.json`, `mcp-config.json` and `session-store.db`.
-        None of that is reconstructible. Claude Code can link `~/.claude`
-        because the harness owns what is under it.
+        None of that is reconstructible. Claude Code returns None too, for a
+        different reason: a `~/.claude` link puts a `CLAUDE.md` above every
+        repository under `$HOME` and hides each repository's `AGENTS.md`.
         """
         return None
 

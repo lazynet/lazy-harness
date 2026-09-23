@@ -191,6 +191,11 @@ document that documents this hook's trigger, because the gate requires the prose
 and the mechanism move together and that paragraph is read by a person who acts
 on it.
 
+> **Evolution (2026-09-16).** This half of decision 5 shipped with #366 (`4309633`, 2026-09-16):
+> the builtin is `hooks/builtins/post_tool_use_sync_system_doc.py`, and
+> `lh profile sync-system-doc` is the command, with `sync-claude-md` kept as a
+> hidden alias.
+
 **Retiring MCP entries the harness stopped generating.** Named here only because
 ADR-042 records it against the same design step; it needs an ownership marker in
 `[mcp_servers.<id>]`, which has no free key, and it is `deploy/engine.py`'s.
@@ -216,6 +221,12 @@ parent step 9 — a real `CodexAdapter`. Measured today:
   first line of `agents/launch.py`'s module docstring. The table does not exist.
 - `agents/codex.py:1` still reads "the throwaway that runs step 4's contract
   gate". Step 9 has not happened.
+
+> **Evolution (2026-09-23).** The measurement above is the state on the date
+> of writing. The instrument now exists — `monitoring/launches.py` records
+> launches and `monitoring/db.py` creates the `launches` table — and step 9
+> happened: ADR-044 replaced the throwaway with the real `CodexAdapter`. The
+> clock has started; the horizon opens on 2026-11-11 (`docs/roadmap.md`).
 
 There is therefore no evidence either way, which is a different statement from
 "the criteria are satisfied". The honest reading is that this step was taken

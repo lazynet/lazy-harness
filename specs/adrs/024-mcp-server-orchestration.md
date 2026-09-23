@@ -40,6 +40,10 @@ Two claims above no longer describe the code. The decision stands; its mechanism
 - **`generate_mcp_config` is no longer on the Protocol.** `plan_config` replaced it as the deploy surface (decision 4 of the 2026-09-13 multi-agent harness design): a `dict` return cannot express "N files in two formats". It survives as a private serialiser inside `ClaudeCodeAdapter` (`_generate_mcp_config`), called from `_plan_mcp`. The Decision above is kept as written; a new adapter implements `ConfigPlanner`, not this method.
 - **`ClaudeCodeAdapter` is not the only adapter any more.** The Consequence claiming it is predates `CodexAdapter` (`agents/codex.py`, registered as `codex` at step 4). MCP is out of scope for that throwaway on purpose: its `mcp_config_file()` returns `""` and its `plan_config` ignores `servers`, so nothing in this ADR's pipeline reaches it — the first adapter that has to translate an `mcpServers` entry is still unwritten.
 
+### Evolution — 2026-09-22
+
+- **The `~/.claude` symlink step is a no-op for Claude Code.** `deploy_cmd.py` still runs it after `deploy_mcp_servers`, but since #442 `ClaudeCodeAdapter.global_config_link()` returns `None`, so no link is created (ADR-009 and ADR-060, Evolution).
+
 ## Alternatives considered
 
 - **Hand-edited `mcpServers` in profile templates.** Reproducible until a tool is uninstalled — the entry stays, the agent fails to start the missing server, and the user has to remember to clean up. Rejected because the install-uninstall cycle has no obvious trigger to keep the file in sync.

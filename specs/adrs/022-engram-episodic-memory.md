@@ -31,7 +31,17 @@ Concretely:
 
 ## Consequences
 
-- A user who installs Engram (`brew install engram` or equivalent) and sets `[memory.engram].enabled = true` gets the `engram` MCP server wired into every profile on the next `lh deploy`. Removing Engram and re-running `lh deploy` removes the entry on the next merge — `_collect_mcp_servers` rebuilds the dict from scratch each call.
+- A user who installs Engram (`brew install engram` or equivalent) and sets `[memory.engram].enabled = true` gets the `engram` MCP server wired into every profile on the next `lh deploy`. Removing Engram and re-running `lh deploy` does **not** remove the entry: `_collect_mcp_servers` rebuilds its dict from scratch, but the merge into the agent's MCP file adds and overwrites without removing, so a stale entry is deleted by hand (ADR-024, Evolution 2026-09-12).
 - Pinning the version in config (`version = "1.15.4"`) gives `lh doctor` (future ADR) a single source of truth for compatibility checks. `check_version()` returns the tuple it needs.
 - The wizard step (`enable_engram`) and `lh doctor` reporting are intentionally deferred to the Fase 3 ADR. This PR ships the runtime mechanism only, mirroring how ADR-016 left wizard discovery to ADR-018.
 - The `[memory]` config namespace is new. `MemoryConfig` is intentionally a thin wrapper today — it exists so future episodic backends slot in next to `engram` without breaking the namespace.
+
+## Evolution — 2026-08-18: the pin lives in the module, and the MCP file moved
+
+- **The pin is `memory/engram.py:PINNED_VERSION`, currently `1.20.0`, not
+  `1.15.4`.** Since #192 `EngramConfig.version` imports the module constant
+  instead of restating it, so the two cannot drift; the Decision's `1.15.4` is
+  the value at the time of writing.
+- **The MCP entry does not go to `settings.json`.** ADR-032 L2 put the file
+  name behind the adapter and `ClaudeCodeAdapter.mcp_config_file()` returns
+  `.claude.json` (ADR-024, Evolution 2026-09-12).

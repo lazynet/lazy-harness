@@ -14,7 +14,7 @@ The five-layer memory model (ADR-027) names Engram as the episodic-raw layer and
 
 Add a built-in `engram-persist` hook to the `Stop` chain, after `compound_loop.py`. On every Stop event, the hook reads new entries from `decisions.jsonl` and `failures.jsonl` since the last persisted byte cursor and mirrors each entry into Engram via `engram save` (CLI subprocess, not the MCP server). The cursor advances only on successful save, giving at-least-once semantics with no duplicate emission under normal operation.
 
-The hook forces `--project <basename>` derived from `git rev-parse --show-toplevel` to prevent the project-key fragmentation observed in the audit (`lazy-harness` vs `lazynet/lazy-harness`). It is fail-soft: missing binary is a no-op with one warning, save failures keep the cursor unchanged for retry on the next Stop.
+The hook forces `--project <basename>` derived from `git rev-parse --path-format=absolute --git-common-dir` (the basename of its parent, so a worktree resolves to its main repository) to prevent the project-key fragmentation observed in the audit (`lazy-harness` vs `lazynet/lazy-harness`). It is fail-soft: missing binary is a no-op with one warning, save failures keep the cursor unchanged for retry on the next Stop.
 
 ## Consequences
 

@@ -196,8 +196,8 @@ a timed-out run, which is why attribution has to be resolvable there.
 Corollary worth recording separately: **`lh exec` under-reports cost on every
 timeout.** `cost_usd`, all four token counters and `num_turns` come back `null`
 while the ingest bills $0.066526 for the same run. That is a pre-existing
-accounting gap, independent of this ADR. It is closed by the amendment at the
-end of this document, not by the schema change itself.
+accounting gap, independent of this ADR. It is closed by the amendment recorded in
+[ADR-038](038-exec-envelope-cost-provenance.md), not by the schema change itself.
 
 
 ## Decision
@@ -447,7 +447,7 @@ Whoever picks this up owns the choice of which side fixes it — `lh exec`
 stamping an `error.kind` when the agent fails with nothing on stdout, or the
 consumer treating `success=False` with a null `error_kind` as its own error
 class. Both are defensible; neither is decided here. **Resolved 2026-08-31 —
-see the amendment at the end of this document: `lh exec` stamps
+see the amendment recorded in [ADR-038](038-exec-envelope-cost-provenance.md): `lh exec` stamps
 `error.kind: "no-envelope"`, and the consumer keeps its null-kind fallback
 permanently, for older harnesses.**
 

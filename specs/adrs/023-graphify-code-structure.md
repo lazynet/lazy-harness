@@ -43,7 +43,7 @@ Four details have moved, in the **Decision** bullets above and in **Consequences
 
 ## Consequences
 
-- A user who installs Graphify (`pip install graphify` or equivalent) and sets `[knowledge.structure].enabled = true` gets the `graphify` MCP server wired into every profile on the next `lh deploy`. Removing Graphify and re-running `lh deploy` removes the entry on the next merge — `_collect_mcp_servers` rebuilds the dict from scratch each call.
+- A user who installs Graphify (`pip install graphify` or equivalent) and sets `[knowledge.structure].enabled = true` gets the `graphify` MCP server wired into every profile on the next `lh deploy`. Removing Graphify and re-running `lh deploy` does **not** remove the entry: `_collect_mcp_servers` rebuilds its dict from scratch, but the merge into the agent's MCP file adds and overwrites without removing, so a stale entry is deleted by hand (ADR-024, Evolution 2026-09-12).
 - Pinning the version in config (`version = "0.6.9"`) gives `lh doctor` (future ADR) a single source of truth for compatibility checks. `check_version()` returns the tuple it needs.
 - For multi-repo solutions, the convention is to commit `graphify-out/` per repo and use `graphify merge-graphs *.json` to query across repos. The harness does not orchestrate the merge — that lives at the repo level.
 - The post-commit auto-rebuild hook (Graphify's `graphify hook install`) is intentionally not wired from `lh deploy` in this PR. Doing so is a Fase 3 concern that needs its own design — `lh deploy` writing to `.git/hooks/` of arbitrary repos is a different blast radius from writing to `~/.claude-<profile>/settings.json`.

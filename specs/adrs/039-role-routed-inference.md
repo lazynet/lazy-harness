@@ -45,6 +45,11 @@ Five properties are load-bearing:
 
 4. **Secrets are named, never carried.** `api_key_env` reuses the `url_env` mechanism in `monitoring/sink_setup.py` verbatim — resolved at call time so the value never reaches disk, owner-only secrets-file fallback, and the parser rejects the literal and the variable together. This matters because `config.toml` is a chezmoi `.tmpl`.
 
+   > **Not implemented (noted 2026-09-23).** `llm/invoke.py:_resolve_api_key`
+   > reads only the environment variable; the owner-only secrets-file fallback
+   > was never built, identical since PR #238. Tracked as F8 in
+   > `specs/backlog.md`.
+
 5. **Backwards compatible.** `[compound_loop].backend`/`.model` map to a synthetic `distill` role with a one-time warning. ADR-033's fields are deprecated, not removed.
 
    > **Mechanism note (2026-09-14, PR #274).** The mapping is unconditional; the
@@ -77,6 +82,14 @@ Because the motivating consumer lives in another repository, `lh exec --role <na
 
 - One implementation of each provider call, instead of two that drift.
 - Compound-loop spend becomes visible in `metrics.db` for the first time, through machinery that already exists.
+
+  > **Not implemented (noted 2026-09-23).** Neither of the two bullets above
+  > holds. The seam unified *resolution*, not the provider call: `llm/claude.py`
+  > (`-p --model M --output-format text`) and `ClaudeCodeAdapter.headless_argv`
+  > (`-p --output-format json [--model M]`) still build two `claude -p` argv
+  > lists. And `run_inference` records nothing: the text output format carries
+  > no usage block and no metrics write exists on the inference path. Tracked as
+  > F7 in `specs/backlog.md`.
 - A caller outside this repository can request local inference against a versioned contract, without importing `lazy_harness`.
 - Per-role routing makes "classify locally, distil with Claude" expressible, which the single global backend value could not express.
 - OpenRouter and any other OpenAI-compatible provider become usable without a plaintext key in a chezmoi-managed file.

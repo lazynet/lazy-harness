@@ -70,3 +70,13 @@ runtime copy whose merge order could drift. User-authored content and runtime
 state remain on their original sides of the boundary. Only adapter config
 targets cross it, and their merge rules must preserve fields owned by the
 agent or by another manager.
+
+## Evolution — 2026-09-22: Claude Code owns no `~/.claude` link
+
+Point 4 of the flow above no longer holds. An ancestor `CLAUDE.md` stops Claude
+Code loading a repository's `AGENTS.md`, and the `~/.claude -> <target_dir>`
+link put one above every repository under `$HOME` (ADR-060, Evolution). Since
+#442 `ClaudeCodeAdapter.global_config_link()` returns `None`, so
+`deploy_claude_symlink` returns before creating any link. A plain `claude`
+invocation without `CLAUDE_CONFIG_DIR` resolves through `default_home()`, which
+keeps unprofiled resolution on `~/.claude`.

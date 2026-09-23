@@ -4,7 +4,7 @@
 **Date:** 2026-05-27
 **Implemented:** 2026-06-11 — Protocol gaps (PR #88) and L3/L4 leak closures (PR #96) are merged.
 **Supersedes:** —
-**Superseded by:** —
+**Superseded by:** partially — ADR-043 (`system_doc_name() -> str` became `system_docs() -> list[Path]`) and ADR-055 (role-named segments replace `<system_doc_name>.head.md`/`.tail.md`); see Evolution.
 **Related:** ADR-004 (agent-adapter-pattern), ADR-033 (llm-backend-abstraction)
 
 ## Context
@@ -235,3 +235,26 @@ Since #342 (0.68.0) they resolve per profile through
 `get_agent(cfg.agent.type)` survives as the global fallback for the five call
 sites that same section records — none of them the three functions this
 sentence names.
+
+**2026-09-18 — `system_doc_name()` and stem-keyed segments are gone.** ADR-043
+replaced `system_doc_name() -> str` with `system_docs() -> list[Path]`
+(`agents/base.py`), and ADR-055 retired the `<system_doc_name>.head.md` /
+`.tail.md` segment names in favour of role names (`head.md`, `tail.md`,
+`_common/common.md`). The Protocol block, the L5/L6 mapping and the
+`sync_claude.py` rename above are kept as the decision was made; no
+`system_doc_name` remains in `src/`.
+
+**2026-09-22 — `ClaudeCodeAdapter.global_config_link()` returns `None`.** The
+`Path.home() / ".claude"` body quoted above was removed by #442: an ancestor
+`CLAUDE.md` stops Claude Code loading a repository's `AGENTS.md`, so the adapter
+owns no global link (ADR-009 and ADR-060, Evolution).
+
+**2026-09-23 — the L4 `projects/` layout leaks again outside the adapter.** The
+Consequence that all seven assumptions live in `ClaudeCodeAdapter` no longer
+holds for L4. `cli/exec_cmd.py` passes `config_dir / "projects"` to the
+transcript billing reader, `core/move_projects.py` builds
+`<profile>/projects/<project>` paths directly, and `cli/knowledge_cmd.py` and
+`hooks/builtins/compound_loop.py` keep the `session_dirs().get("sessions") or
+"projects"` fallback that `agents/session_paths.py` documents as a wrong answer.
+Routing them through `agents/session_paths.py` is code work, tracked in
+`specs/backlog.md`.

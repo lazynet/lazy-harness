@@ -8,6 +8,10 @@ own key arity, the two cache-write TTLs stop being merged before pricing, and
 `lazy` and `flex` declare `flat_rate`.
 **Supersedes:** —
 **Superseded by:** —
+**Amended by:** ADR-067 — `ApiRateTable` separates `dimensions` (what the keys
+carry) from `required` (what a caller must evidence); OpenAI now requires only
+`service_tier`, and a missing context class is derived from the gross prompt
+rather than refused. The arity test below checks `dimensions`.
 **Related:** ADR-061 (billed cost and API-equivalent cost are separate),
 ADR-050 (agent and billing model in MetricEvent v3)
 

@@ -131,6 +131,12 @@ This is the missing piece that turns Graphify from "installed but unused" into
 "absorbed into every session". Cost: one JSON read + trivial in-process
 computation. Budget: under 50 ms.
 
+> **Shipped differently (noted 2026-09-23).** `context_inject.graphify_section`
+> emits one totals line (nodes, edges, communities) and the three largest
+> communities by node count, labelled by numeric community id. The top nodes by
+> degree and the file-count/language summary line were never implemented; the
+> gap is tracked in `specs/backlog.md`.
+
 If `graphify-out/graph.json` does not exist, both behaviours are silent
 no-ops. Fail-soft on JSON parse errors with one log line.
 

@@ -67,7 +67,7 @@ The prompt's JSON output gains one field:
 
 ### Backlog escalation (PRJ.md update)
 
-When `grade.quality` is `poor`, **or** `acceptable` with a non-empty `issues` list, the worker locates the matching `PRJ-<Name>/PRJ-<Name>.md` under the user's LazyMind vault and appends a backlog item under `## Pendiente — Alta prioridad`:
+When `grade.quality` is `poor`, **or** `acceptable` with a non-empty `issues` list, the worker locates the matching `PRJ-<Name>/PRJ-<Name>.md` under the user's LazyMind vault and appends a backlog item under `### Pendiente — Alta prioridad` (skipped when the note has no such section):
 
 ```markdown
 - [ ] **Session quality regression — <reasoning>** (graded YYYY-MM-DD, session <short_id>, issues: <list>)
@@ -79,7 +79,7 @@ Resolution `cwd → PRJ-<Name>.md` is best-effort:
 - Match by alias-or-title fuzzy-equal to `os.path.basename(cwd)`, with common prefixes stripped (`lazy-`, `flex-`, `mngt-`)
 - If no match, log and skip — escalation is opportunistic, not required
 
-`lazymind_dir` is a new optional field in `CompoundLoopConfig`. Default: probe `~/Library/Mobile Documents/iCloud~md~obsidian/Documents/LazyMind`, fall back to `~/LazyMind`. Nothing is escalated if the probe fails.
+`lazymind_dir` is a new optional field in `CompoundLoopConfig`. It has no default and no probe: escalation is opt-in, and nothing is escalated while the field is unset.
 
 ## Alternatives considered
 

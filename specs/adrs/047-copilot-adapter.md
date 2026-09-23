@@ -211,6 +211,8 @@ observed editing a file, in a run or in a log. Until probe 1 forces one, a
 Copilot profile has no edit guards at all, and nothing downstream should read
 the deploy's green output as saying otherwise.
 
+> **Evolution (2026-09-16).** `post-tool-use-sync-claude` is `post-tool-use-sync-system-doc` since #366 (`4309633`, 2026-09-16).
+
 **`pre-tool-use-read-size` deploys, runs, exits 0 and guards nothing.** `view`
 maps to `READ_FILE` and `reads` stays `()`, because the argument key that
 carries the path is unmeasured. This is ADR-044's own finding restated for a
