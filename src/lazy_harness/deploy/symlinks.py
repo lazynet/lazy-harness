@@ -13,15 +13,22 @@ REPLACED = "replaced"
 
 
 def backup_path(target: Path) -> Path:
-    """Where `ensure_symlink` moves a regular file it has to displace."""
+    """Where `ensure_symlink` moves a file or directory it has to displace."""
     return target.with_suffix(target.suffix + ".bak")
+
+
+def displaced_link_message(label: str, target: Path) -> str:
+    return (
+        f"  ⚠  {label}: displaced an existing file or directory "
+        f"to {backup_path(target).name} to restore the link."
+    )
 
 
 def ensure_symlink(source: Path, target: Path) -> str:
     """Create or update a symlink.
 
     Returns status: 'created', 'replaced', 'updated', or 'exists'. 'replaced'
-    means a *regular file* was renamed to `backup_path(target)` to make room —
+    means a file or directory was renamed to `backup_path(target)` to make room —
     the case a third-party installer creates every time it writes this path
     atomically, since a temp file renamed over the target replaces the link
     rather than writing through it.

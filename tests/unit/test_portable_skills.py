@@ -13,7 +13,14 @@ from lazy_harness.agents.copilot import CopilotAdapter
 from lazy_harness.core.config import Config, ProfileEntry
 from lazy_harness.deploy.engine import deploy_profiles
 from lazy_harness.deploy.ledger import LEDGER_RELATIVE, write_ledger
-from lazy_harness.deploy.skills import SKILL_LEDGER_RELATIVE, SkillCollisionError
+from lazy_harness.deploy.skills import (
+    SKILL_LEDGER_RELATIVE,
+    SkillClaim,
+    SkillCollisionError,
+    SkillProjectionPlan,
+    SkillRootPlan,
+    apply_skill_projections,
+)
 
 
 def _config(home: Path, profiles: dict[str, str]) -> Config:
@@ -157,6 +164,50 @@ def test_user_owned_entry_is_never_adopted_or_replaced(home_dir: Path) -> None:
     assert not owned.is_symlink()
     assert (owned / "SKILL.md").read_text() == "user"
     assert not (root.parent / SKILL_LEDGER_RELATIVE).exists()
+
+
+@pytest.mark.parametrize("entry_type", ["file", "directory"])
+def test_skill_root_reports_an_entry_displaced_after_planning(
+    home_dir: Path, entry_type: str
+) -> None:
+    source = home_dir / "source" / "portable"
+    source.mkdir(parents=True)
+    (source / "SKILL.md").write_text("managed")
+    root = home_dir / ".agents" / "skills"
+    plan = SkillProjectionPlan(
+        roots=(
+            SkillRootPlan(
+                root=root,
+                links={"portable": SkillClaim(profile="one", source=source)},
+                selected_sources=frozenset({source}),
+                owned_before=frozenset(),
+                replaces_legacy_root=False,
+            ),
+        ),
+        omissions=(),
+        narrowed=False,
+    )
+    root.mkdir(parents=True)
+    target = root / "portable"
+    if entry_type == "file":
+        target.write_text("user content")
+    else:
+        target.mkdir()
+        (target / "SKILL.md").write_text("user content")
+
+    lines = apply_skill_projections(plan, home_dir / "source")
+
+    assert lines == [
+        "  ⚠  one/skills/portable: displaced an existing file or directory "
+        "to portable.bak to restore the link."
+    ]
+    assert target.is_symlink()
+    assert target.resolve() == source.resolve()
+    backup = root / "portable.bak"
+    if entry_type == "file":
+        assert backup.read_text() == "user content"
+    else:
+        assert (backup / "SKILL.md").read_text() == "user content"
 
 
 def test_legacy_claude_skills_link_is_migrated_from_the_general_ledger(home_dir: Path) -> None:
