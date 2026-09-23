@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.77.0](https://github.com/lazynet/lazy-harness/compare/v0.76.11...v0.77.0) (2026-09-23)
+
+
+### Features
+
+* gate the repo fleet, flag a home CLAUDE.md, and measure AGENTS.md contracts ([#444](https://github.com/lazynet/lazy-harness/issues/444)) ([5607a79](https://github.com/lazynet/lazy-harness/commit/5607a79f43fb35c4e71315052a257e5075d25b05))
+
+
+### Bug Fixes
+
+* stop linking ~/.claude, which hid every repo AGENTS.md from Claude Code ([#442](https://github.com/lazynet/lazy-harness/issues/442)) ([f0355f0](https://github.com/lazynet/lazy-harness/commit/f0355f0949feb53fefebf07c0b95211d94e5ecd3))
+
+
+### Documentation
+
+* fix the 0.77.0 coherence-audit findings ([#445](https://github.com/lazynet/lazy-harness/issues/445)) ([70af255](https://github.com/lazynet/lazy-harness/commit/70af2556450e67d7a76786311a8342d0afdb9b5c))
+
 ## [0.76.11](https://github.com/lazynet/lazy-harness/compare/v0.76.10...v0.76.11) (2026-09-22)
 
 
