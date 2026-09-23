@@ -446,6 +446,11 @@ def _parse_profiles(raw: dict[str, Any]) -> ProfilesConfig:
             if not isinstance(root_default, bool):
                 raise ConfigError(f"[profiles.{key}].root_default must be a boolean")
             identity = value.get("identity", "")
+            if "identity" in value and not isinstance(identity, str):
+                raise ConfigError(
+                    f"[profiles.{key}].identity must be a string, got "
+                    f"{type(identity).__name__}: {identity!r}"
+                )
             if "identity" in value and not _IDENTITY_TOKEN_RE.match(identity):
                 raise ConfigError(
                     f"[profiles.{key}].identity={identity!r} must be a kebab-case token "

@@ -80,6 +80,20 @@ def test_invalid_identity_token_is_refused(tmp_path: Path, bad: str) -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "toml_value",
+    ["1", "true", "false", '["personal"]', "{ x = 1 }"],
+    ids=["int", "bool-true", "bool-false", "list", "table"],
+)
+def test_non_string_identity_is_refused(tmp_path: Path, toml_value: str) -> None:
+    with pytest.raises(ConfigError, match=r"\[profiles\.claude-x\]\.identity"):
+        _load(
+            tmp_path,
+            f'[profiles.claude-x]\nidentity = {toml_value}\nconfig_dir = "~/.x"\n',
+            default="claude-x",
+        )
+
+
 def test_identity_round_trips(tmp_path: Path) -> None:
     cfg = _load(
         tmp_path,
