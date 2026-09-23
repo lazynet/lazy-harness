@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.78.0](https://github.com/lazynet/lazy-harness/compare/v0.77.0...v0.78.0) (2026-09-23)
+
+
+### Features
+
+* fail lh doctor on a deployed settings.json Claude Code would discard ([#454](https://github.com/lazynet/lazy-harness/issues/454)) ([b954d13](https://github.com/lazynet/lazy-harness/commit/b954d1381b821f72e4aaeadc2d58c9a4e9473ffc))
+* report halted proposal queues across every project in lh doctor ([#450](https://github.com/lazynet/lazy-harness/issues/450)) ([2457160](https://github.com/lazynet/lazy-harness/commit/24571601723359549072f08e0ccbea95a9caddd1))
+
+
+### Bug Fixes
+
+* check each profile against the files its own agent loads ([#446](https://github.com/lazynet/lazy-harness/issues/446)) ([4dc737c](https://github.com/lazynet/lazy-harness/commit/4dc737c6762199c4b254640b7e2b72dfb601fd22))
+* parse Claude Code pre-compact transcripts ([#451](https://github.com/lazynet/lazy-harness/issues/451)) ([971267e](https://github.com/lazynet/lazy-harness/commit/971267e830789f5d1d19317889e51ccd20f4bfe9))
+* repair and report plugin paths left on the removed ~/.claude link ([#447](https://github.com/lazynet/lazy-harness/issues/447)) ([c7a9b6b](https://github.com/lazynet/lazy-harness/commit/c7a9b6b2bc607dcd5c0a2463f2b72b3ead2a946e))
+* report displaced skill root entries ([#449](https://github.com/lazynet/lazy-harness/issues/449)) ([8a24a28](https://github.com/lazynet/lazy-harness/commit/8a24a282883713ec5a5e629b51cf39dce2f75c6b))
+* resolve LLM API keys from owner-only secrets file ([#453](https://github.com/lazynet/lazy-harness/issues/453)) ([ed97008](https://github.com/lazynet/lazy-harness/commit/ed97008bb7694c81ee38632ed3661c5fc8625215))
+
+
+### Documentation
+
+* correct Codex MCP ADR and exclude Markdown from Ruff ([#452](https://github.com/lazynet/lazy-harness/issues/452)) ([8b3518f](https://github.com/lazynet/lazy-harness/commit/8b3518fd94de978bfd7fe9fe10bd9125dcb19dd9))
+* record the 0.78.0 lanes and audit in the backlog ([#455](https://github.com/lazynet/lazy-harness/issues/455)) ([5ebaac4](https://github.com/lazynet/lazy-harness/commit/5ebaac41793124e971e054902c1ca44a4a34c8df))
+
 ## [0.77.0](https://github.com/lazynet/lazy-harness/compare/v0.76.11...v0.77.0) (2026-09-23)
 
 
