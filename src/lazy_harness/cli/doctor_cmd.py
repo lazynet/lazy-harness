@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import stat
+import subprocess
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -947,6 +948,66 @@ def _render_plugin_registry(console: Console, cfg: Config) -> bool:
     return ok
 
 
+def _installed_claude_version() -> str:
+    try:
+        result = subprocess.run(["claude", "--version"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    version = result.stdout.strip()
+    return version if result.returncode == 0 and version else "unknown"
+
+
+def _render_settings_shape(console: Console, cfg: Config) -> bool:
+    """Deployed settings.json files Claude Code would discard whole.
+
+    `lh deploy` refuses to write such a file, but a profile nobody redeploys
+    keeps one and runs with every hook dead. The detector is a port of one
+    Claude Code release, so the message names that release and the installed
+    one instead of claiming the shape is fatal everywhere.
+    """
+    from lazy_harness.agents._settings_shape import fatal_hook_shape
+    from lazy_harness.agents.registry import agent_for_profile
+
+    ok = True
+    installed: str | None = None
+    for name, entry in cfg.profiles.items.items():
+        if agent_for_profile(cfg, name).name != "claude-code":
+            continue
+        path = expand_path(entry.config_dir) / "settings.json"
+        if not path.is_file():
+            continue
+        try:
+            document = json.loads(path.read_text())
+        except (OSError, UnicodeDecodeError) as e:
+            reason = f"unreadable ({e})"
+        except json.JSONDecodeError as e:
+            reason = f"not valid JSON ({e})"
+        else:
+            reason = "" if isinstance(document, dict) else "not a JSON object"
+        if reason:
+            console.print(
+                f"\n[yellow]![/yellow] {name}: {contract_path(path)} is {escape(reason)}, "
+                "so its hook shape cannot be checked"
+            )
+            continue
+        fatal = fatal_hook_shape(document)
+        if fatal is None:
+            continue
+        ok = False
+        if installed is None:
+            installed = _installed_claude_version()
+        console.print(
+            f"\n[red]✗[/red] {name}: {contract_path(path)} has a key shaped like a hook "
+            f"declaration at {escape(fatal)}; Claude Code 2.1.278 discards such a file "
+            "whole, every hook with it"
+        )
+        console.print(
+            "  Detector ported from Claude Code 2.1.278; installed claude --version: "
+            f"{escape(installed)}. Remove that key (it is not the harness's)."
+        )
+    return ok
+
+
 @click.command("doctor")
 @click.option(
     "--json",
@@ -1007,6 +1068,8 @@ def doctor(as_json: bool) -> None:
     if not _render_home_instruction_shadows(console):
         ok = False
     if not _render_plugin_registry(console, cfg):
+        ok = False
+    if not _render_settings_shape(console, cfg):
         ok = False
 
     if cfg.knowledge.root:
