@@ -1983,3 +1983,34 @@ def test_doctor_prints_halted_proposal_queues(
 
     assert "Halted proposal queues" in result.output
     assert "10 pending" in _unwrapped(result.output)
+
+
+@pytest.mark.usefixtures("_no_ambient_store")
+def test_halted_queues_counts_undated_rules_the_producer_counts(tmp_path: Path) -> None:
+    from lazy_harness.cli.doctor_cmd import _render_halted_proposals
+
+    memory = tmp_path / ".claude-lazy/projects/-repo/memory"
+    memory.mkdir(parents=True)
+    rules = "\n".join(f"- **Rule:** rule {i}" for i in range(3))
+    (memory / "claude-md.proposal.md").write_text(f"{rules}\n")
+    console, buf = _wide_console()
+
+    _render_halted_proposals(console, _queues_cfg(tmp_path))
+
+    assert "3 pending (oldest unknown)" in _unwrapped(buf.getvalue())
+
+
+@pytest.mark.usefixtures("_no_ambient_store")
+def test_halted_queues_drain_command_survives_a_path_with_spaces(tmp_path: Path) -> None:
+    import shlex
+
+    from lazy_harness.cli.doctor_cmd import _render_halted_proposals
+
+    queue = _queue(tmp_path / ".claude-lazy/projects/with space/memory", 3)
+    console, buf = _wide_console()
+
+    _render_halted_proposals(console, _queues_cfg(tmp_path))
+
+    line = next(ln for ln in buf.getvalue().splitlines() if "--memory-dir" in ln)
+    argv = shlex.split(line.strip())
+    assert argv[argv.index("--memory-dir") + 1] == str(queue)

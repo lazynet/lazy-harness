@@ -959,7 +959,10 @@ def _render_halted_proposals(console: Console, cfg: Config) -> None:
     a queue in a project nobody opens stays halted unseen. Reporting, not
     failing: a halted producer degrades memory capture, the machine still works.
     """
+    import shlex
+
     from lazy_harness.core.memory_store import all_memory_dirs
+    from lazy_harness.core.proposals import rule_lines
     from lazy_harness.hooks.builtins._shared import knowledge_root_for
     from lazy_harness.hooks.builtins.context_inject import _pending_summary
 
@@ -971,8 +974,17 @@ def _render_halted_proposals(console: Console, cfg: Config) -> None:
         dirs.setdefault(d.resolve(), d)
     halted = []
     for memory_dir in dirs.values():
-        count, oldest = _pending_summary(memory_dir)
+        proposal_file = memory_dir / "claude-md.proposal.md"
+        try:
+            text = proposal_file.read_text() if proposal_file.is_file() else ""
+        except OSError:
+            text = ""
+        # Counted the way the producer counts toward its cap; `_pending_summary`
+        # reports 0 for a queue with no dated header, which the producer still
+        # counts as full.
+        count = len(rule_lines(text))
         if count and count >= cap:
+            oldest = _pending_summary(memory_dir)[1] or "unknown"
             halted.append((count, oldest, memory_dir))
     if not halted:
         return
@@ -982,7 +994,7 @@ def _render_halted_proposals(console: Console, cfg: Config) -> None:
         console.print(
             f"  [yellow]![/yellow] {count} pending (oldest {oldest}) — {contract_path(memory_dir)}"
         )
-        console.print(f"      lh memory proposals list --memory-dir {memory_dir}")
+        console.print(f"      lh memory proposals list --memory-dir {shlex.quote(str(memory_dir))}")
     total = sum(h[0] for h in halted)
     console.print(
         f"  {len(halted)} queue(s) halted at the cap of {cap}, {total} proposal(s) pending "
