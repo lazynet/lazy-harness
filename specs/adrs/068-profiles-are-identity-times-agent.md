@@ -23,9 +23,10 @@ Design: [`2026-09-23-profile-identity-design.md`](../designs/2026-09-23-profile-
 
 ## Decision
 
-1. `ProfileEntry.identity` is a required field. A profile's name is an explicit
+1. `ProfileEntry.identity` is an optional field; absent, the identity is the
+   profile name and nothing changes. Present, the profile's name is an explicit
    TOML key validated as `{prefix}-{identity}` or `{prefix}-{identity}-{suffix}`,
-   where `prefix` is declared once per adapter (`profile_prefix`).
+   where `prefix` is declared once, in `agents.registry.PROFILE_PREFIXES`.
 2. The profile source tree is organised by identity:
    `profiles/<identity>/`, resolved by a single `profile_source_dir` helper.
    Agent-specific assets live in `<identity>/<agent>/`.
@@ -52,6 +53,8 @@ Design: [`2026-09-23-profile-identity-design.md`](../designs/2026-09-23-profile-
   subscription no home.
 - **Fully derived names** (`{prefix}-{identity}[-{slot}]`, no TOML key). A TOML
   table needs a key regardless, so the name would be written twice.
+- **Required `identity`.** Breaks every existing configuration of the public
+  package on upgrade for no behaviour the optional form lacks.
 - **Compatibility aliases** (`previous_names`). Lets consumers migrate at their
   own pace, at the cost of resolver code and a deprecation window; rejected in
   favour of a single coordinated cutover.

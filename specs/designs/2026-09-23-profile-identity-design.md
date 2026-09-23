@@ -48,6 +48,7 @@ seam:
 |---|---|---|
 | 1 | Plain rename vs identity × agent | Identity × agent |
 | 2 | Name derived vs explicit | Explicit TOML key, validated against `{prefix}-{identity}[-{suffix}]` |
+| 2b | `identity` required vs optional | Optional; declaring it opts the profile into the new model (decided during planning: a required field breaks every existing user of the public package and 102 test fixtures, for no behaviour the optional form lacks) |
 | 3 | Old names during transition | None — big-bang cutover across all consumers |
 | 4 | Metrics history | Rewritten to the new names, locally and in the sink |
 | 5 | Default Codex launch | `activate` (`--approve-for-me`) |
@@ -56,7 +57,12 @@ seam:
 
 ### 1. Config schema
 
-`ProfileEntry` gains `identity: str`, required.
+`ProfileEntry` gains `identity: str = ""`, **optional**. One helper,
+`profile_identity(name, entry) -> str`, returns `entry.identity or name`, so a
+profile without `identity` keeps today's behaviour exactly: its identity is its
+name, its source is `profiles/<name>/`, and its name is not validated. The
+fleet's `config.toml` declares `identity` on every profile; `lh doctor` warns
+when a config mixes profiles with and without it.
 
 ```toml
 [profiles]
@@ -85,24 +91,26 @@ roots = ["~/repos/lazy"]
 Loader validation, each diagnostic naming the profile key and the offending
 field:
 
-- `identity` missing or empty → error.
-- `identity` not a kebab-case token (`[a-z0-9]+(-[a-z0-9]+)*`), or starting with
+- `identity` present but not a kebab-case token (`[a-z0-9]+(-[a-z0-9]+)*`), or starting with
   `_` → error. `_` is reserved for `profiles/_common`.
-- Profile name not equal to `{prefix}-{identity}` and not starting with
+- When `identity` is present: profile name not equal to `{prefix}-{identity}` and not starting with
   `{prefix}-{identity}-` followed by a non-empty kebab suffix → error that
   shows the expected form.
-- Agent with no declared prefix → error naming the agent.
+- When `identity` is present and the agent has no declared prefix → error
+  naming the agent.
 
 `config_dir` stays explicit. The wizard proposes `~/.{profile_name}` and stops
 concatenating the agent itself.
 
 ### 2. Agent prefix — one place
 
-Each adapter declares `profile_prefix: str` (`claude-code` → `claude`,
-`codex` → `codex`, `copilot` → `copilot`). The loader, the wizard and
-`lh run --agent` read it from the adapter; nothing else spells the mapping. A
-test iterates the registry and asserts every adapter declares a non-empty,
-unique prefix.
+`agents/registry.py` declares `PROFILE_PREFIXES` beside `_AGENTS`
+(`claude-code` → `claude`, `codex` → `codex`, `copilot` → `copilot`) and
+exposes `profile_prefix(agent_name) -> str`. The loader, the wizard and
+`lh run --agent` read it there; nothing else spells the mapping. A registry map
+rather than a Protocol attribute, because widening `AgentAdapter` would touch
+`NullAdapter` and every test fake for one string. A test asserts
+`PROFILE_PREFIXES.keys() == _AGENTS.keys()` and that the values are unique.
 
 ### 3. Source tree by identity
 
@@ -120,7 +128,7 @@ profiles/
 ```
 
 One function, `profile_source_dir(cfg, name) -> Path`, returns
-`config_dir() / "profiles" / entry.identity`. Every path that builds
+`config_dir() / "profiles" / profile_identity(name, entry)`. Every path that builds
 `profiles / <name>` today goes through it:
 
 - `deploy/engine.py` (link plan), `deploy/snapshot.py` (backup targets),
@@ -162,8 +170,9 @@ resolution. With it:
 
 - one candidate for the cwd → that profile;
 - several → `root_default` among them, else the existing ambiguity error;
-- none → exit 1 naming the agent and the cwd. It never falls back to a profile
-  of another agent.
+- no root match → `profiles.default` if it runs that agent, else the only
+  profile of that agent if there is exactly one, else exit 1 naming the agent
+  and the cwd. It never falls back to a profile of another agent.
 
 Without `--agent`, resolution is unchanged (`root_default` decides a shared
 root). `--agent` and `--profile` together: `--profile` wins if its agent
@@ -228,7 +237,8 @@ Strict order; each step verified before the next.
 
 ## Testing
 
-- Loader: missing `identity`; invalid identity token; name not matching the
+- Loader: no `identity` keeps today's behaviour (name unvalidated, source by
+  name); invalid identity token; name not matching the
   prefix; valid suffix (`codex-lazy-alt`); agent without prefix. Each asserts
   the diagnostic names the key (`pytest.raises(match=...)` anchored on the
   literal key).
