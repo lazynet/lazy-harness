@@ -109,3 +109,39 @@ def test_check_profiles_settings_schema_passes_on_valid_hooks(tmp_path: Path):
 
     schema = [r for r in results if r.name == "p1:settings-schema"]
     assert schema and schema[0].status == CheckStatus.PASSED
+
+
+def test_check_profiles_codex_profile_checks_its_own_system_doc(tmp_path: Path):
+    """A Codex profile loads AGENTS.md and has no settings.json; demanding the
+    Claude Code files warned on every healthy Codex profile."""
+    profile_dir = tmp_path / "codex-p1"
+    profile_dir.mkdir()
+    (profile_dir / "AGENTS.md").write_text("# Profile")
+
+    cfg = _make_cfg(
+        tmp_path,
+        f'[profiles]\ndefault = "p1"\n\n[profiles.p1]\nconfig_dir = "{profile_dir}"\n'
+        'agent = "codex"\n',
+    )
+    results = check_profiles(config_path=cfg)
+    statuses = {r.name: r.status for r in results}
+    assert statuses["p1:agents-md"] == CheckStatus.PASSED
+    assert "p1:claude-md" not in statuses
+    assert "p1:settings-json" not in statuses
+    assert all(r.status == CheckStatus.PASSED for r in results)
+
+
+def test_check_profiles_codex_profile_missing_agents_md(tmp_path: Path):
+    profile_dir = tmp_path / "codex-p1"
+    profile_dir.mkdir()
+
+    cfg = _make_cfg(
+        tmp_path,
+        f'[profiles]\ndefault = "p1"\n\n[profiles.p1]\nconfig_dir = "{profile_dir}"\n'
+        'agent = "codex"\n',
+    )
+    results = check_profiles(config_path=cfg)
+    assert any(
+        r.name == "p1:agents-md" and r.status == CheckStatus.WARNING and "AGENTS.md" in r.message
+        for r in results
+    )

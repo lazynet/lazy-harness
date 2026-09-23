@@ -82,7 +82,9 @@ def check_profiles(*, config_path: Path) -> list[CheckResult]:
         for doc in adapter.system_docs():
             check_name = f"{name}:{doc.stem.lower()}-md"
             if (expanded / doc).is_file():
-                results.append(CheckResult(group=group, name=check_name, status=CheckStatus.PASSED))
+                results.append(
+                    CheckResult(group=group, name=check_name, status=CheckStatus.PASSED)
+                )
             else:
                 results.append(
                     CheckResult(
@@ -95,7 +97,6 @@ def check_profiles(*, config_path: Path) -> list[CheckResult]:
 
         if Path("settings.json") not in adapter.config_targets():
             continue
-
         settings = expanded / "settings.json"
         if settings.is_file():
             try:
