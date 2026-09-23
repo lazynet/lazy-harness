@@ -1790,3 +1790,167 @@ def test_render_plugin_registry_is_silent_when_every_path_resolves(tmp_path: Pat
 
     assert _render_plugin_registry(console, cfg) is True
     assert buf.getvalue() == ""
+
+
+# --- Halted proposal queues ---
+
+
+def _queue(memory_dir: Path, pending: int, *, day: str = "2026-09-01") -> Path:
+    memory_dir.mkdir(parents=True, exist_ok=True)
+    rules = "\n".join(f"- **Rule:** rule {i}" for i in range(pending))
+    (memory_dir / "claude-md.proposal.md").write_text(f"## {day}T10:00:00Z\n\n{rules}\n")
+    return memory_dir
+
+
+def _queues_cfg(tmp_path: Path, *, cap: int = 3, store: bool = False) -> object:
+    from lazy_harness.core.config import Config, ProfileEntry
+
+    cfg = Config()
+    cfg.compound_loop.max_pending_proposals = cap
+    cfg.profiles.default = "lazy"
+    cfg.profiles.items = {"lazy": ProfileEntry(config_dir=str(tmp_path / ".claude-lazy"))}
+    if store:
+        from lazy_harness.knowledge.marker import write_marker
+
+        write_marker(tmp_path / "knowledge")
+        cfg.knowledge.root = str(tmp_path / "knowledge")
+    return cfg
+
+
+def _wide_console():
+    """Long tmp paths must not be hard-wrapped mid-token."""
+    import io
+
+    from rich.console import Console
+
+    buf = io.StringIO()
+    return Console(file=buf, force_terminal=False, width=1000), buf
+
+
+@pytest.fixture
+def _no_ambient_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("LAZY_KNOWLEDGE_ROOT", raising=False)
+
+
+@pytest.mark.usefixtures("_no_ambient_store")
+def test_halted_queues_reports_a_profile_queue_at_the_cap_with_its_drain_command(
+    tmp_path: Path,
+) -> None:
+    from lazy_harness.cli.doctor_cmd import _render_halted_proposals
+
+    queue = _queue(tmp_path / ".claude-lazy/projects/-repo/memory", 3, day="2026-08-13")
+    console, buf = _wide_console()
+
+    _render_halted_proposals(console, _queues_cfg(tmp_path))
+
+    out = _unwrapped(buf.getvalue())
+    assert "3 pending" in out
+    assert "oldest 2026-08-13" in out
+    assert f"lh memory proposals list --memory-dir {queue}" in out
+
+
+@pytest.mark.usefixtures("_no_ambient_store")
+def test_halted_queues_reports_a_knowledge_store_queue(tmp_path: Path) -> None:
+    from lazy_harness.cli.doctor_cmd import _render_halted_proposals
+
+    queue = _queue(tmp_path / "knowledge/memory/github.com/acme/widget", 4)
+    console, buf = _wide_console()
+
+    _render_halted_proposals(console, _queues_cfg(tmp_path, store=True))
+
+    out = _unwrapped(buf.getvalue())
+    assert "4 pending" in out
+    assert str(queue) in out
+
+
+@pytest.mark.usefixtures("_no_ambient_store")
+def test_halted_queues_uses_the_configured_cap(tmp_path: Path) -> None:
+    from lazy_harness.cli.doctor_cmd import _render_halted_proposals
+
+    _queue(tmp_path / ".claude-lazy/projects/-repo/memory", 5)
+    below, at = _recording_console(), _recording_console()
+
+    _render_halted_proposals(below[0], _queues_cfg(tmp_path, cap=6))
+    _render_halted_proposals(at[0], _queues_cfg(tmp_path, cap=5))
+
+    assert below[1].getvalue() == ""
+    assert "5 pending" in at[1].getvalue()
+
+
+@pytest.mark.usefixtures("_no_ambient_store")
+def test_halted_queues_totals_every_halted_queue(tmp_path: Path) -> None:
+    from lazy_harness.cli.doctor_cmd import _render_halted_proposals
+
+    _queue(tmp_path / ".claude-lazy/projects/-a/memory", 3)
+    _queue(tmp_path / ".claude-lazy/projects/-b/memory", 7)
+    _queue(tmp_path / ".claude-lazy/projects/-c/memory", 2)
+    console, buf = _recording_console()
+
+    _render_halted_proposals(console, _queues_cfg(tmp_path))
+
+    out = _unwrapped(buf.getvalue())
+    assert "2 queue(s) halted at the cap of 3, 10 proposal(s) pending in them" in out
+    assert out.index("7 pending") < out.index("3 pending")
+    assert "2 pending" not in out
+
+
+@pytest.mark.usefixtures("_no_ambient_store")
+def test_halted_queues_counts_a_queue_once_when_two_profiles_share_a_dir(
+    tmp_path: Path,
+) -> None:
+    from lazy_harness.cli.doctor_cmd import _render_halted_proposals
+    from lazy_harness.core.config import ProfileEntry
+
+    _queue(tmp_path / ".claude-lazy/projects/-repo/memory", 3)
+    cfg = _queues_cfg(tmp_path)
+    cfg.profiles.items["twin"] = ProfileEntry(config_dir=str(tmp_path / ".claude-lazy"))
+    console, buf = _recording_console()
+
+    _render_halted_proposals(console, cfg)
+
+    assert "1 queue(s) halted" in _unwrapped(buf.getvalue())
+
+
+@pytest.mark.usefixtures("_no_ambient_store")
+def test_halted_queues_ignores_archived_proposals(tmp_path: Path) -> None:
+    from lazy_harness.cli.doctor_cmd import _render_halted_proposals
+
+    memory = tmp_path / ".claude-lazy/projects/-repo/memory"
+    memory.mkdir(parents=True)
+    rules = "\n".join(f"- **Rule:** rule {i}" for i in range(5))
+    (memory / "claude-md.proposal.md").write_text(f"<!--\n## 2026-09-01\n\n{rules}\n-->\n")
+    console, buf = _recording_console()
+
+    _render_halted_proposals(console, _queues_cfg(tmp_path))
+
+    assert buf.getvalue() == ""
+
+
+@pytest.mark.usefixtures("_no_ambient_store")
+def test_halted_queues_warn_and_never_fail(tmp_path: Path) -> None:
+    from lazy_harness.cli.doctor_cmd import _render_halted_proposals
+
+    _queue(tmp_path / ".claude-lazy/projects/-repo/memory", 9)
+    console, buf = _recording_console()
+
+    result = _render_halted_proposals(console, _queues_cfg(tmp_path))
+
+    assert result is None
+    assert "!" in buf.getvalue() and "✗" not in buf.getvalue()
+
+
+@pytest.mark.usefixtures("_no_ambient_store")
+def test_doctor_prints_halted_proposal_queues(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    home = Path.home()
+    _queue(home / ".claude-p1/projects/-repo/memory", 10)
+    cfg = _write_config(tmp_path)
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg)
+
+    result = CliRunner().invoke(doctor, [])
+
+    assert "Halted proposal queues" in result.output
+    assert "10 pending" in _unwrapped(result.output)

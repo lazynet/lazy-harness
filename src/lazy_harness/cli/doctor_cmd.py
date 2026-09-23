@@ -947,6 +947,44 @@ def _render_plugin_registry(console: Console, cfg: Config) -> bool:
     return ok
 
 
+def _render_halted_proposals(console: Console, cfg: Config) -> None:
+    """Proposal queues at or above the cap, across every project on the machine.
+
+    The session-start notice names a halted queue only inside that project, so
+    a queue in a project nobody opens stays halted unseen. Reporting, not
+    failing: a halted producer degrades memory capture, the machine still works.
+    """
+    from lazy_harness.core.memory_store import all_memory_dirs
+    from lazy_harness.hooks.builtins._shared import knowledge_root_for
+    from lazy_harness.hooks.builtins.context_inject import _pending_summary
+
+    cap = cfg.compound_loop.max_pending_proposals
+    profile_dirs = [expand_path(e.config_dir) for e in cfg.profiles.items.values()]
+    # Two profiles can claim one config_dir; resolved so its queues count once.
+    dirs: dict[Path, Path] = {}
+    for d in all_memory_dirs(profile_dirs, knowledge_root_for(cfg)):
+        dirs.setdefault(d.resolve(), d)
+    halted = []
+    for memory_dir in dirs.values():
+        count, oldest = _pending_summary(memory_dir)
+        if count and count >= cap:
+            halted.append((count, oldest, memory_dir))
+    if not halted:
+        return
+
+    console.print("\n[bold]Halted proposal queues[/bold]")
+    for count, oldest, memory_dir in sorted(halted, key=lambda h: -h[0]):
+        console.print(
+            f"  [yellow]![/yellow] {count} pending (oldest {oldest}) — {contract_path(memory_dir)}"
+        )
+        console.print(f"      lh memory proposals list --memory-dir {memory_dir}")
+    total = sum(h[0] for h in halted)
+    console.print(
+        f"  {len(halted)} queue(s) halted at the cap of {cap}, {total} proposal(s) pending "
+        "in them: the compound loop records no new proposals there until each is drained."
+    )
+
+
 @click.command("doctor")
 @click.option(
     "--json",
@@ -1077,6 +1115,7 @@ def doctor(as_json: bool) -> None:
 
     if not _render_memory_hygiene(console, _project_memory_dir(agent, cfg, active_profile)):
         ok = False
+    _render_halted_proposals(console, cfg)
 
     from lazy_harness.core.artifact_version import collect_artifact_version_reports
 
