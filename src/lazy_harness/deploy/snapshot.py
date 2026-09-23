@@ -106,6 +106,7 @@ def snapshot_targets(cfg: Config, *, only: str | None = None) -> list[Path]:
     from lazy_harness.agents.registry import agent_for_profile, list_agents
     from lazy_harness.core.paths import config_dir, expand_path
     from lazy_harness.core.plugin_registry import REGISTRY_AGENT, REGISTRY_FILES
+    from lazy_harness.core.profile_identity import profile_source_dir
     from lazy_harness.deploy.engine import deploys_global_link, selected_profiles
     from lazy_harness.deploy.ledger import LEDGER_RELATIVE
     from lazy_harness.deploy.segments import resolve_segments
@@ -119,7 +120,7 @@ def snapshot_targets(cfg: Config, *, only: str | None = None) -> list[Path]:
     targets: list[Path] = []
     for name, entry in selected.items():
         target_dir = expand_path(entry.config_dir)
-        src_dir = profiles_src / name
+        src_dir = profile_source_dir(cfg, name, profiles_src)
         agent = adapters[name]
         if src_dir.is_dir():
             # Resolved through the same function the deploy uses, not by listing

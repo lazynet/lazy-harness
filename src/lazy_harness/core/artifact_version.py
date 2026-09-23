@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 
 from lazy_harness.agents.registry import agent_for_profile
 from lazy_harness.core.paths import expand_path
+from lazy_harness.core.profile_identity import profile_source_dir
 
 if TYPE_CHECKING:
     from lazy_harness.core.config import Config
@@ -150,7 +151,7 @@ def _envrc_reports(profile: str, roots: list[str]) -> list[ArtifactVersionReport
     return reports
 
 
-def _doc_reports(profile: str, profiles_dir: Path, docs: list[Path]) -> list[ArtifactVersionReport]:
+def _doc_reports(profile: str, profile_dir: Path, docs: list[Path]) -> list[ArtifactVersionReport]:
     """One report per destination the agent loads (ADR-043).
 
     `system_docs()` can name more than one path, and each is separately
@@ -161,7 +162,7 @@ def _doc_reports(profile: str, profiles_dir: Path, docs: list[Path]) -> list[Art
     """
     reports: list[ArtifactVersionReport] = []
     for rel in docs:
-        doc = profiles_dir / profile / rel
+        doc = profile_dir / rel
         if not doc.is_file():
             continue
         reports.append(
@@ -197,5 +198,7 @@ def collect_artifact_version_reports(
         if settings_report is not None:
             reports.append(settings_report)
         reports.extend(_envrc_reports(name, entry.roots))
-        reports.extend(_doc_reports(name, profiles_dir, agent.system_docs()))
+        reports.extend(
+            _doc_reports(name, profile_source_dir(cfg, name, profiles_dir), agent.system_docs())
+        )
     return reports

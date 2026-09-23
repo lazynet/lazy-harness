@@ -12,6 +12,7 @@ from pathlib import Path
 from lazy_harness.agents.base import AgentAdapter
 from lazy_harness.core.config import ProfileEntry
 from lazy_harness.core.paths import expand_path
+from lazy_harness.core.profile_identity import profile_identity
 from lazy_harness.deploy.ledger import read_ledger
 from lazy_harness.deploy.symlinks import REPLACED, displaced_link_message, ensure_symlink
 
@@ -159,7 +160,7 @@ def plan_skill_projections(
     omissions: list[tuple[str, str]] = []
 
     for profile, entry in profiles.items():
-        source_dir = profiles_src / profile
+        source_dir = profiles_src / profile_identity(profile, entry)
         adapter = adapters[profile]
         skills = _skills_for_profile(source_dir, adapter.name)
         skill_root = getattr(adapter, "skill_root", None)

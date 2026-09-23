@@ -20,6 +20,7 @@ from lazy_harness.core.move_projects import (
     move_projects as do_move_projects,
 )
 from lazy_harness.core.paths import config_dir, config_file, contract_path, expand_path
+from lazy_harness.core.profile_identity import profile_source_dir
 from lazy_harness.core.profile_migrate import (
     MigrateError,
     apply_migration,
@@ -383,7 +384,9 @@ def profile_migrate(name: str, dry_run: bool) -> None:
     Claude Code's assets, and the reverse.
     """
     console = Console()
-    profile_dir = config_dir() / "profiles" / name
+    config_path = config_file()
+    cfg = load_config(config_path) if config_path.is_file() else Config()
+    profile_dir = profile_source_dir(cfg, name, config_dir() / "profiles")
 
     try:
         plan = plan_migration(profile_dir)
