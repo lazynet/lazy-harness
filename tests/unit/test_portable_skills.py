@@ -199,7 +199,8 @@ def test_skill_root_reports_an_entry_displaced_after_planning(
 
     assert lines == [
         "  ⚠  one/skills/portable: displaced an existing file or directory "
-        "to portable.bak to restore the link."
+        "to portable.bak to restore the link — a writer that replaces this path "
+        "(temp file plus rename) breaks it instead of writing through it."
     ]
     assert target.is_symlink()
     assert target.resolve() == source.resolve()

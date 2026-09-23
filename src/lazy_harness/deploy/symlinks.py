@@ -5,10 +5,9 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-# `ensure_symlink` found a regular file where the link belongs and moved it
-# aside. Distinct from 'created' because the two are not the same news: one
-# added a link to an empty slot, the other took a file with contents out of the
-# way, and only the caller knows whether those contents mattered.
+# `ensure_symlink` found a file or directory where the link belongs and moved
+# it aside. Distinct from 'created' because only the caller knows whether its
+# contents mattered.
 REPLACED = "replaced"
 
 
@@ -20,7 +19,9 @@ def backup_path(target: Path) -> Path:
 def displaced_link_message(label: str, target: Path) -> str:
     return (
         f"  ⚠  {label}: displaced an existing file or directory "
-        f"to {backup_path(target).name} to restore the link."
+        f"to {backup_path(target).name} to restore the link — a writer that "
+        "replaces this path (temp file plus rename) breaks it instead of "
+        "writing through it."
     )
 
 
