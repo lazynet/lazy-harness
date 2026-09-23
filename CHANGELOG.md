@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.79.0](https://github.com/lazynet/lazy-harness/compare/v0.78.0...v0.79.0) (2026-09-23)
+
+
+### Features
+
+* profiles are identity × agent (ADR-068) ([#457](https://github.com/lazynet/lazy-harness/issues/457)) ([753679e](https://github.com/lazynet/lazy-harness/commit/753679e4fef49242f44dff5809af771d79c38cc9))
+
+
+### Documentation
+
+* close the 0.79.0 coherence audit drift ([#458](https://github.com/lazynet/lazy-harness/issues/458)) ([f4e45a5](https://github.com/lazynet/lazy-harness/commit/f4e45a568abc54f6bb64108d5632064b3f7af57f))
+* record the engram-persist per-profile cursor finding ([21d6904](https://github.com/lazynet/lazy-harness/commit/21d690421e0a9cdfb79efd1407b1c8513fd92042))
+
 ## [0.78.0](https://github.com/lazynet/lazy-harness/compare/v0.77.0...v0.78.0) (2026-09-23)
 
 
