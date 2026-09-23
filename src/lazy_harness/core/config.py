@@ -5,6 +5,7 @@ Config lives at ~/.config/lazy-harness/config.toml (or LH_CONFIG_DIR override).
 
 from __future__ import annotations
 
+import re
 import tomllib
 from dataclasses import dataclass, field, fields
 from pathlib import Path
@@ -48,6 +49,13 @@ class ProfileEntry:
     # document order. At most one profile per shared root may set this — the
     # loader refuses a second, naming both (`_validate_root_defaults`).
     root_default: bool = False
+    # Optional. Empty means "this profile is its own identity" — today's
+    # behaviour exactly. Resolve it through
+    # `core.profile_identity.profile_identity`, never by reading this field
+    # directly. When set, the profile name must be
+    # `{prefix}-{identity}[-{suffix}]` for the profile's agent
+    # (`_validate_profile_identities`).
+    identity: str = ""
 
 
 BILLING_MODELS: tuple[str, ...] = ("per_token", "flat_rate")
@@ -61,8 +69,14 @@ _PROFILE_ENTRY_KEYS: frozenset[str] = frozenset(
         "harness_binary",
         "billing_model",
         "root_default",
+        "identity",
     }
 )
+
+# Identity token shape (design section 1): kebab-case, lowercase alphanumeric
+# segments. `_` is reserved for `profiles/_common` and is excluded by this
+# character class already.
+_IDENTITY_TOKEN_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 
 @dataclass
@@ -431,6 +445,12 @@ def _parse_profiles(raw: dict[str, Any]) -> ProfilesConfig:
             root_default = value.get("root_default", False)
             if not isinstance(root_default, bool):
                 raise ConfigError(f"[profiles.{key}].root_default must be a boolean")
+            identity = value.get("identity", "")
+            if "identity" in value and not _IDENTITY_TOKEN_RE.match(identity):
+                raise ConfigError(
+                    f"[profiles.{key}].identity={identity!r} must be a kebab-case token "
+                    f"matching {_IDENTITY_TOKEN_RE.pattern!r}"
+                )
             items[key] = ProfileEntry(
                 config_dir=value.get("config_dir", ""),
                 roots=value.get("roots", []),
@@ -439,6 +459,7 @@ def _parse_profiles(raw: dict[str, Any]) -> ProfilesConfig:
                 harness_binary=value.get("harness_binary", ""),
                 billing_model=billing_model,
                 root_default=root_default,
+                identity=identity,
             )
     _validate_root_defaults(items)
     return ProfilesConfig(default=default, items=items)
@@ -469,6 +490,41 @@ def _validate_root_defaults(items: dict[str, ProfileEntry]) -> None:
                 f"root {root_str!r} is shared by {', '.join(names)}, and more than one "
                 f"declares root_default=true: {', '.join(defaulters)} — at most one may"
             )
+
+
+def _validate_profile_identities(cfg: Config) -> None:
+    """A profile declaring `identity` must be named `{prefix}-{identity}[-{suffix}]`
+    for its own agent (design section 1). Runs from `load_config`, not
+    `_parse_profiles`, because the agent falls back to `[agent].type`, which
+    `_parse_profiles` does not see. Import is local to avoid a module-level
+    cycle between `core.config` and `agents.registry`.
+    """
+    from lazy_harness.agents.registry import profile_prefix
+
+    for name, entry in cfg.profiles.items.items():
+        if not entry.identity:
+            continue
+        agent_name = entry.agent or cfg.agent.type
+        try:
+            prefix = profile_prefix(agent_name)
+        except ValueError as e:
+            raise ConfigError(
+                f"[profiles.{name}] declares identity {entry.identity!r} for agent "
+                f"{agent_name!r}, which has no profile prefix: {e}"
+            ) from e
+        expected = f"{prefix}-{entry.identity}"
+        if name != expected:
+            if not name.startswith(f"{expected}-") or len(name) == len(expected) + 1:
+                raise ConfigError(
+                    f"[profiles.{name}] with identity {entry.identity!r} must be named "
+                    f"{expected!r} or {expected!r}-<suffix>"
+                )
+            suffix = name[len(expected) + 1 :]
+            if not _IDENTITY_TOKEN_RE.match(suffix):
+                raise ConfigError(
+                    f"[profiles.{name}] has an invalid suffix after {expected!r}: {suffix!r} "
+                    f"must match {_IDENTITY_TOKEN_RE.pattern!r}"
+                )
 
 
 def _validate_url_source(name: str, block: dict[str, Any]) -> None:
@@ -639,6 +695,7 @@ def load_config(path: Path) -> Config:
 
     profiles_raw = raw.get("profiles", {})
     cfg.profiles = _parse_profiles(profiles_raw)
+    _validate_profile_identities(cfg)
 
     knowledge_raw = raw.get("knowledge", {})
     if "classify_rules" in knowledge_raw:
@@ -806,6 +863,11 @@ def _config_to_dict(cfg: Config) -> dict[str, Any]:
             "billing_model": entry.billing_model,
             "root_default": entry.root_default,
         }
+        # Omitted rather than written empty: a profile that never declared
+        # `identity` must round-trip without gaining the key, so the presence
+        # of the key in a saved file always means something was set.
+        if entry.identity:
+            profiles_dict[name]["identity"] = entry.identity
 
     result: dict[str, Any] = {
         "harness": {"version": cfg.harness.version},

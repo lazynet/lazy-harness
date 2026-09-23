@@ -5,6 +5,7 @@ from pathlib import Path
 
 import tomli_w
 
+from lazy_harness.agents.registry import PROFILE_PREFIXES
 from lazy_harness.core.paths import contract_path
 from lazy_harness.knowledge.directory import ensure_knowledge_dir
 from lazy_harness.migrate.detector import detect_claude_code, detect_lazy_claudecode
@@ -58,20 +59,9 @@ class WizardAnswers:
 # would already touch on both sides.
 _DEFAULT_AGENT = "claude-code"
 
-# `~/.<prefix>-<profile>` per agent, matching the shape `lh profile add`
-# expects a caller to have already chosen (it takes `--config-dir` literally
-# rather than deriving it). Not the adapter's registry key: "claude-code"
-# would give `~/.claude-code-<name>`, and every profile on disk today is
-# `~/.claude-<name>`.
-_CONFIG_DIR_PREFIXES: dict[str, str] = {
-    "claude-code": "claude",
-    "codex": "codex",
-    "copilot": "copilot",
-}
-
 
 def _config_dir_for(agent: str, profile_name: str) -> str:
-    prefix = _CONFIG_DIR_PREFIXES.get(agent, agent)
+    prefix = PROFILE_PREFIXES.get(agent, agent)
     return f"~/.{prefix}-{profile_name}"
 
 
