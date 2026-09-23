@@ -1,13 +1,13 @@
 # lazy-harness backlog
 
-0.76.11 cortado el 2026-09-22 (`d81f4da`); 0.77.0 pendiente en #443 con #442 y
-#444. Entre 0.76.5 y 0.76.11: pricing API-equivalente para Anthropic, la clase de
-contexto de OpenAI derivada del prompt y cuatro modelos más con tarifa
-(ADR-065 a ADR-067), el split cacheado de Codex, el config target desplazado
-(#437) y ADR-063/064 escritos para el incidente del `settings.json`. ADR-060
-Wave 1 migró el 2026-09-22 y su ventana de siete días hábiles corre (ver Open).
-Rollout externo pendiente: Wave 2 de ADR-060, el probe de proyección de skills
-instalada, receiver/Grafana y el opt-in de PRJ-LazyHarness.
+0.77.0 cortado el 2026-09-23 (`56174ac`); 0.78.0 pendiente con #446, #447 y #449–#454:
+el selftest por agente, la reparación de registries de plugins que #442 dejó colgando,
+el fix de `parse_transcript`, el desplazamiento del skill root, el fallback de API keys
+al secrets file (F8), y dos secciones nuevas de `lh doctor` (colas de proposals frenadas y
+`settings.json` que Claude Code descartaría). ADR-060 Wave 1 sigue en su ventana de siete
+días hábiles (ver Open). Rollout externo pendiente: Wave 2 de ADR-060, el push de los
+renames `AGENTS.MD` de flex, el probe de proyección de skills instalada,
+receiver/Grafana y el opt-in de PRJ-LazyHarness.
 
 Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio MkDocs); el roadmap público vive en `docs/roadmap.md` y solo contiene los temas comprometidos a alto nivel.
 
@@ -237,6 +237,16 @@ desde `:367-369` cuando el step 3 insertó los helpers de merge arriba de la cla
 - [x] **ADR-053 — el reader carga lo que la medición necesita, e ingest lee todo agente por el suyo** — ADR-051 midió el hueco, escribió el cambio de Protocol que lo cerraría y dejó tres tripwires `not hasattr(...)` para que la decisión no envejeciera en silencio; saltaron. `TranscriptEvent` suma `model` y `message_id`, `TokenUsage` suma `cache_creation_1h_tokens` — apendeados con default, `None` nunca `0`, y los dos campos de caché son hermanos con precios distintos: donde el desglose contradice al total, gana el desglose (4 registros en 102.464, +2.640 tokens). El reader de Codex saca el modelo de `turn_context`, que vive en una línea anterior, y lo arrastra hacia adelante en el generador de `read()` y nunca en el adapter, porque `registry.py` comparte una instancia entre todos los profiles. Dedup por `response_id` y no por `turn_id` (176 registros, 176 ids únicos, 21 turnos). Ingest cambia `_PARSED_DIALECT` por `isinstance(agent, TranscriptReader)`: misma negativa, ahora capacidad y no nombre, y `lh doctor` vuelve a decir `reads`. Sesión y proyecto salen de un segundo Protocol opcional, `TranscriptIdentity`, separado a propósito porque el `isinstance` del primero es lo que gatilla `transcript_health` y `stop_verify_guard`. El parser a mano se queda: `lh exec` cobra por él, así que un test de integración corre los dos caminos y compara la fila guardada. La exclusión de `memory/` se queda del lado del consumidor, afirmada por las dos puntas. `lh metrics ingest` ya escribe filas con `agent="codex"`. PR #368, mergeado el 2026-09-16; entra en 0.71.0.
 - [x] **Los assets de un perfil se despliegan por agente — decisión 10, ADR-052** — `deploy_profiles` symlinkeaba **cada entrada** de `profiles/<p>/` sin filtrar, así que un perfil Codex recibía el `settings.json` de Claude Code y uno de Claude el `hooks.json` de Codex. El source pasa a leerse como **tres capas ordenadas** — root, `shared/`, `<agent>/` (nombradas por `list_agents()`, nunca tipeadas en el deployer) — y que el root siga siendo una *capa* y no un caso especial es lo que mantiene a un perfil sin migrar desplegando exactamente como antes: una sola capa, cada nombre aparece una vez, todo se linkea entero. Nadie está obligado a migrar. Un nombre que llevan dos capas se camina y se linkea archivo por archivo, porque `ensure_symlink` linkea directorios enteros y el segundo link *reemplaza* al primero en vez de fusionarlo; uno que lleva una sola se sigue linkeando entero (mismo árbol, un inodo). En un archivo homónimo gana el segmento del agente y el deploy nombra las dos fuentes — las colisiones vuelven como **dato** desde el resolver y las imprime el deployer, nunca se resuelven en silencio. El deploy además **registra los links que crea** en `<config_dir>/.lazy-harness/links.json` y retira los que dejó de generar: es el caso delete de [ADR-046](adrs/046-delete-is-not-an-edit.md) aplicado a symlinks, porque un harness que no puede decir *esto ya no lo produzco* sólo puede agregar. La primera corrida no tiene ledger: en vez de no poseer nada y abandonar todo el layout plano, **adopta** cada symlink del config dir que resuelve bajo el source de ese perfil —son del harness por construcción— y lo dice una vez; un ledger ilegible se lee como ausente, porque re-adoptar es la dirección recuperable y leer basura como "no poseo nada" abandona cada link jamás escrito. Nunca toca un nombre que el ledger no registró, ni uno registrado que el usuario repunteó afuera del source. El prune corre **antes** de linkear: `mkdir(exist_ok=True)` tiene éxito sobre un symlink a directorio, así que escribir `skills/a.md` a través de un link viejo de directorio entero lo crearía adentro de `profiles/<p>/` — el deployer editando su propio input. `lh profile migrate <profile> [--dry-run]` es la otra mitad: rutea por el registry (`config_targets()` → el segmento de ese agente, lo no reclamado → `shared/`) y lee `system_docs()` como marcador de **root**, porque `sync_agent_md` escribe el doc ensamblado ahí y moverlo dejaría al assembler escribiendo donde el deploy ya no linkea; rechaza de entrada si un move pisaría un archivo, nunca toca `_common/`, y es idempotente. `snapshot_targets` pasa a derivar del mismo `resolve_segments` en vez de volver a listar el source: apuntaba a `shared` y `codex` —directorios que el deploy nunca linkea— y perdía cada file link adentro; lo encontró el integration test de acuerdo deploy/snapshot del propio repo. PR #369, mergeado el 2026-09-16; entra en 0.71.0.
 
+- [x] **`lh selftest` chequea cada perfil contra los archivos que carga su propio agente** — `profile_check.py` exigía `CLAUDE.md` y `settings.json` a todo perfil, así que el perfil `lazy-codex` sano daba dos warnings y el grupo `profiles` en `✗ (9/11)`. Ahora el system doc esperado sale de `adapter.system_docs()` y los checks de `settings.json` corren sólo si `config_targets()` lo incluye. Medido con `lh selftest` real: `profiles ✓ (10/10)`. PR #446; entra en 0.78.0.
+- [x] **Los paths de plugins que quedaron colgando del link `~/.claude` se reparan en el deploy y los reporta `lh doctor`** — #442 sacó el link `~/.claude -> ~/.claude-lazy` y `plugins/known_marketplaces.json` / `installed_plugins.json` del perfil `lazy` quedaron apuntando a `~/.claude/plugins/...`: Claude Code rechazaba **todos** los plugins con `cache-miss`, sin decir nada en la sesión (los skills de superpowers desaparecieron). `core/plugin_registry.py` detecta paths que no existen y los repunta al mismo path relativo bajo `plugins/` del perfil cuando existe; `lh deploy` lo hace para perfiles Claude Code respetando `--profile`, la snapshot incluye los registries sólo si existen (rollback borra lo `absent`, y Claude Code puede crearlos después), y `lh doctor` falla nombrando `lh deploy --profile <p>` o reinstalar. Verificado contra el perfil real: `claude plugin list` pasó de `failed to load: cache-miss` a `enabled`. PR #447; entra en 0.78.0.
+- [x] **El skill root reporta el desplazamiento de un archivo o directorio real** — el call site de `deploy/skills.py` imprimía `✓` cuando `ensure_symlink` devolvía `"replaced"`. Ahora comparte `displaced_link_message` con `deploy_profiles`, conservando la mitad causal de #437 (un writer que reemplaza el path con temp file + rename rompe el link) que la primera versión del PR había perdido y el review devolvió. PR #449; entra en 0.78.0.
+- [x] **`parse_transcript` lee el shape que Claude Code emite** — lee `role`/`content` bajo `message`, excluye los `user` cuyo `content` es `list[tool_result]` y acepta el turno humano como `str` o `list[text]`. Fixture con el shape real y contenido sintético; goldens nuevos. El comentario de `hooks/loader.py` que decía que los loops nunca rendían nada, y citaba `specs/backlog.md:125` por número, se reescribió en el mismo PR tras el review. ADR-010 lleva su `Evolution`. Cierra también F5. PR #451; entra en 0.78.0.
+- [x] **F4 de ADR-024 y el scope de `ruff format`** — ADR-024 gana un `Evolution` que dice que Codex sí coloca MCP servers desde #341 (`_plan_mcp` en `config.toml`); `pyproject.toml` declara `extend-exclude = ["*.md"]` (opción a), así que `ruff format --check .` tipeado a mano queda verde sin reescribir la evidencia en markdown. PR #452; entra en 0.78.0.
+- [x] **F8 de ADR-039 implementado y F7 corregido en prosa** — `_resolve_api_key` cae al secrets file owner-only con el mismo lector que el sink (`core/secrets.py:read_metrics_secret`, movido, no copiado); `lh exec --dry-run` y `lh doctor` reportan la misma resolución. F7 queda como no implementado en ADR-039: la contabilidad de gasto de inferencia pediría `--output-format json` en el frontend y llevar el usage a `metrics.db`. PR #453; entra en 0.78.0.
+- [x] **`lh doctor` reporta las colas de proposals frenadas en todos los proyectos** — opción (d): sección **Halted proposal queues**, warning y no fail, sobre `all_memory_dirs` con el parser y el cap del propio loop; cuenta reglas sin fecha (`unknown`) y cita el path del drenaje con `shlex.quote`, las dos cosas tras el review de codex. Medido en la Mac: 17 colas y 263 propuestas. PR #450; entra en 0.78.0.
+- [x] **`lh doctor` falla sobre un `settings.json` desplegado que Claude Code descartaría** — contraparte del gate de #422: corre `fatal_hook_shape` sobre el `settings.json` de cada perfil Claude Code, falla nombrando perfil y JSON path, acota el claim a 2.1.278 y muestra la versión del binario que el perfil lanza (resuelto por el adapter, no `claude` del PATH, tras el review). JSON ilegible o de tipo equivocado da `!`, no `✗`. PR #454; entra en 0.78.0.
+- [x] **Residuo del knowledge store borrado** — `lazy-knowledge/memory/local/test_pre_compact_empty_input0`, vacío y fuera de git, removido el 2026-09-23.
+
 ---
 
 ## Open — Prioridad ALTA
@@ -245,93 +255,13 @@ Ninguna.
 
 ## Open — Prioridad MEDIA
 
-### El call site de `ensure_symlink` del skill root desplaza un archivo real y lo reporta como éxito
-
-**Por qué:** el fix de #437 le enseñó a `ensure_symlink` a distinguir `"replaced"`
-de `"created"`, pero sólo `deploy_profiles` lee esa diferencia. El skill root
-(`deploy/skills.py:267`) sigue ramificando únicamente sobre `== "exists"`, así
-que un archivo —o un directorio— real que el harness mueve a `.bak` se imprime
-con un `✓`. El otro call site que nombraba esta entrada, el symlink `~/.claude`
-en `deploy_claude_symlink`, es inalcanzable desde #442: todo adapter devuelve
-`None` en `global_config_link()` y la función retorna antes del `ensure_symlink`. Es el
-mismo modo de falla que #437 midió: el desplazamiento no es una mentira, pero el
-renglón que lo anuncia sí.
-
-**Alcance, y por qué es MEDIA y no ALTA.** No es un config
-target, así que no hay contenido que cargar hacia adelante —la mitad cara del fix
-no aplica— y nada se pierde: el `.bak` queda en disco. Lo que falta es la línea
-que lo diga. `deploy/snapshot.py:56` y `agents/codex.py:1236` ya documentan el
-rename en prosa, lo que confirma que se conoce y que nunca llegó a la salida.
-
-**Acción:** que los dos call sites vivos compartan el reporte, o que `ensure_symlink`
-deje de ser el lugar donde se decide qué es noticia. Un test por call site, con
-un archivo real en el destino.
-
 ---
 
-### La cola de proposals del compound loop está frenada en 13 proyectos y no tiene forma de drenarse sola
+### La cola de proposals: (d) shippeó, queda decidir el drenaje, y el cap **sí** descarta
 
-**Corrección al parte que originó esta entrada: no es silencioso.** El parte decía
-que el cap «apaga la captura del compound loop EN SILENCIO». El código hace lo
-contrario, y a propósito. `knowledge/compound_loop.py:1112-1118` frena la emisión
-con un comentario que lo nombra —«Backpressure, not a discard. Dropping the new
-proposal would lose signal silently; halting emission makes a full queue cost
-something the next session is told about»— y appendea
-`claude_md_proposals: halted (N pending >= cap M)`. Del otro lado,
-`proposals_halt_notice` (`hooks/builtins/context_inject.py:395`) escribe la línea
-en cada SessionStart: «A halted producer has to be visible in the ordinary case
-too — the whole point of the cap is that stopping is noticed». `git log -S` pone
-las tres piezas —el cap, la backpressure y el aviso— en el **mismo** commit,
-`cf46613` (#234, 2026-09-08, 0.54.0). El aviso nació con el cap; nunca hubo una
-ventana silenciosa.
+**Estado:** la opción (d) entró en #450 — `lh doctor` muestra toda cola frenada de la máquina (17 colas, 263 propuestas medidas el 2026-09-23). Siguen sin elegir (a) drenar a mano, (b) subir el cap o (c) expirar por antigüedad fuera del immunity registry; el análisis está en la historia de esta entrada (`git log -S 'immunity registry' -- specs/backlog.md`).
 
-**Lo que sí es cierto, y es peor de lo que decía el parte.** Medido el 2026-09-20
-con el parser del propio harness (`_pending_summary`) sobre los 34
-`claude-md.proposal.md` de los dos profiles y del knowledge store: **260
-propuestas pendientes y 13 colas en el cap o por encima** — trece proyectos con el
-canal de proposals frenado ahora mismo.
-
-| Pendientes | Más vieja | Cola |
-|---:|---|---|
-| 58 | 2026-08-13 | `~/.claude-flex/…/flex-mngt-flex-mgmt` |
-| 41 | 2026-09-07 | `~/.claude-lazy/…/lazy-popopen` |
-| 19 | 2026-09-04 | `~/.claude-flex/…/commercial-mgmt` |
-| 12 | 2026-09-02 | `~/.claude-lazy/…/-Users-lazynet` |
-| 11 | 2026-09-19 | `lazy-knowledge/…/lazynet/lazy-harness` |
-| 11 | 2026-09-11 | `lazy-knowledge/…/FlexibilitySRL/flex-skills` |
-| 10 (×7) | 2026-09-10/11 | `supervielle-mgmt`, `lazy-hermes`, `flex-mambu-spike`, `lazy-ansible`, `lazy-ai-tools`, `dotfiles`, `LazyMind` |
-
-El cap es `CompoundLoopConfig.max_pending_proposals = 10` (`core/config.py:248`),
-sin override en ningún `config.toml`.
-
-**Dos mecanismos que la tabla deja a la vista y que hay que entender antes de
-decidir.** Primero, **el cap se chequea por corrida, no por propuesta**:
-`queued >= cap` se evalúa una sola vez y después se escriben *todas* las
-propuestas de esa corrida, así que una cola en 9 que recibe una tanda de 2
-termina en 11 — por eso hay colas **arriba** del cap sin que nada esté roto.
-Segundo, el cap **no drena**: las cuatro colas más grandes tienen su propuesta más
-vieja entre el 13 de agosto y el 7 de septiembre, o sea entre doce y treinta y
-ocho días frenadas, y ninguna se destraba sola porque el único drenaje es humano.
-
-**Y la salida obvia choca con un diseño explícito.** `lh memory proposals reject`
-**exige** `--reason` (`cli/memory_cmd.py:629`) porque el archivo de rechazos es un
-*immunity registry*: `collect_rejected_proposals` le pasa esas reglas al grader con
-la instrucción de no volver a proponerlas (`knowledge/compound_loop.py:743-753` y
-`:834`). Auto-expirar con una razón sintética no es limpiar la cola, es
-**inmunizar para siempre una regla que nadie juzgó**. Hoy no hay expiry:
-`grep -rn 'expire|expiry'` sobre `memory_cmd.py`, `proposals.py` y
-`compound_loop.py` devuelve cero.
-
-**Acción:** decidir; nada elegido. (a) Drenar las trece colas a mano y no tocar
-código — es lo único que no agrega mecanismo, pero doce días de cola probada
-sugieren que nadie lo hace. (b) Subir el cap: barato, pospone el problema y hace
-la cola menos revisable. (c) Expirar por antigüedad **sin** tocar el immunity
-registry, moviendo lo vencido a un tercer archivo que el grader no lea como
-rechazo — respeta el diseño de #234 y es el que más trabajo pide. (d) Hacer que el
-aviso escale: hoy la línea sale sólo en las sesiones del proyecto afectado, así
-que doce de las trece colas están frenadas en proyectos que nadie abre; una
-sección de `lh doctor` que cuente colas frenadas **en todos los proyectos** es lo
-que volvería visible el agregado. Prioridad MEDIA.
+**Corrección, medida por el review de #450:** la corrección anterior de esta entrada decía que el cap era «backpressure, not a discard». Es falso. `knowledge/compound_loop.py` hace `proposals = []` cuando `queued >= cap`, así que la propuesta que el grader produjo en esa corrida **se pierde**; el comentario del mismo bloque dice lo contrario. Lo único cierto es que el freno se avisa. **Acción:** decidir entre persistir lo frenado (un archivo aparte que el grader no lea como rechazo, que es también la base de la opción c) o corregir el comentario y aceptar la pérdida. Prioridad MEDIA.
 
 ### F2–F9 del coherence-audit del 2026-09-19 siguen siendo drift abierto en `main`
 
@@ -349,14 +279,14 @@ de abrir el archivo, no de confiar en el reporte:
 |---|---|---|
 | F2 | `specs/adrs/022-engram-episodic-memory.md:34` | **Cerrado el 2026-09-23** por el PR del `/coherence-audit` de 0.77.0; lo que sigue es el estado del 2026-09-20. Sigue diciendo «Removing Engram and re-running `lh deploy` removes the entry on the next merge». El contradictor es `ADR-024:35`, que además aclara que la promesa **nunca** fue cierta del merge tal como está escrito. |
 | F3 | `specs/adrs/023-graphify-code-structure.md:46` | **Cerrado el 2026-09-23**, mismo PR. La misma oración, palabra por palabra, con el mismo contradictor. |
-| F4 | `specs/adrs/024-mcp-server-orchestration.md:41` | **Vivo, y a medias — por eso sobrevivió.** Dice que el `plan_config` de Codex «ignores `servers`» y que «the first adapter that has to translate an `mcpServers` entry is still unwritten». Falso desde `7585c7c` (#341, 2026-09-16, 0.68.0): `CodexAdapter.plan_config` llama `self._plan_mcp(servers, …)`, que mergea `[mcp_servers.<id>]` en `config.toml`. La otra mitad de la misma oración —`mcp_config_file()` devuelve `""`— **sigue siendo cierta** (`CodexAdapter.mcp_config_file`), así que quien la releyó chequeó la mitad verdadera y la dio por buena. |
-| F5 | `specs/adrs/010-pre-compact-preservation.md:22` | **Vivo.** El punto 2 sigue prometiendo que `parse_transcript` recolecta intents y file paths. Es la otra punta del item abierto de `parse_transcript` de este mismo archivo; ADR-010 se cierra en el PR de ese fix, que ya lo declara como superficie propia. |
+| F4 | `specs/adrs/024-mcp-server-orchestration.md:41` | **Cerrado el 2026-09-23** por #452. Estado del 2026-09-20: Dice que el `plan_config` de Codex «ignores `servers`» y que «the first adapter that has to translate an `mcpServers` entry is still unwritten». Falso desde `7585c7c` (#341, 2026-09-16, 0.68.0): `CodexAdapter.plan_config` llama `self._plan_mcp(servers, …)`, que mergea `[mcp_servers.<id>]` en `config.toml`. La otra mitad de la misma oración —`mcp_config_file()` devuelve `""`— **sigue siendo cierta** (`CodexAdapter.mcp_config_file`), así que quien la releyó chequeó la mitad verdadera y la dio por buena. |
+| F5 | `specs/adrs/010-pre-compact-preservation.md:22` | **Cerrado el 2026-09-23** por #451. Estado previo: El punto 2 sigue prometiendo que `parse_transcript` recolecta intents y file paths. Es la otra punta del item abierto de `parse_transcript` de este mismo archivo; ADR-010 se cierra en el PR de ese fix, que ya lo declara como superficie propia. |
 | F6 | `specs/adrs/029-engram-persist-deterministic-mirror.md:17` | **Cerrado el 2026-09-23**, mismo PR. Documenta `git rev-parse --show-toplevel`; el hook usa `--git-common-dir` (`hooks/builtins/engram_persist.py:25`, con el porqué en su docstring `:18` — un worktree tiene que resolver al repo canónico). |
-| F7 | `specs/adrs/039-role-routed-inference.md:79` | **Vivo.** «Compound-loop spend becomes visible in `metrics.db` for the first time». `llm/claude.py:31` arma `--output-format text`, que no lleva bloque de usage; la contabilidad vive en el camino del agente, que arma `--output-format json` por separado (`ClaudeCodeAdapter.headless_argv`). Son dos argv distintos y sólo uno mide. Desde el 2026-09-23 ADR-039 lo anota como no implementado; queda la decisión de código. |
-| F8 | `specs/adrs/039-role-routed-inference.md:46` | **Vivo.** Promete que `api_key_env` reusa el mecanismo de `url_env` «verbatim», con «owner-only secrets-file fallback». `_resolve_api_key` (`llm/invoke.py:_resolve_api_key`) hace sólo `os.environ.get(api_key_env, "")`: no hay fallback al secrets file, que del lado del sink sí existe y encima rechaza un archivo que no sea owner-only (`monitoring/sink_setup.py:_read_url_from_secrets_file`). Una key que viva únicamente en el secrets file resuelve a `""`. Desde el 2026-09-23 ADR-039 lo anota como no implementado; queda la decisión de código. |
+| F7 | `specs/adrs/039-role-routed-inference.md:79` | **Cerrado en prosa el 2026-09-23** por #453: ADR-039 lo declara no implementado. Estado previo: «Compound-loop spend becomes visible in `metrics.db` for the first time». `llm/claude.py:31` arma `--output-format text`, que no lleva bloque de usage; la contabilidad vive en el camino del agente, que arma `--output-format json` por separado (`ClaudeCodeAdapter.headless_argv`). Son dos argv distintos y sólo uno mide. Desde el 2026-09-23 ADR-039 lo anota como no implementado; queda la decisión de código. |
+| F8 | `specs/adrs/039-role-routed-inference.md:46` | **Cerrado el 2026-09-23** por #453, implementado. Estado previo: Promete que `api_key_env` reusa el mecanismo de `url_env` «verbatim», con «owner-only secrets-file fallback». `_resolve_api_key` (`llm/invoke.py:_resolve_api_key`) hace sólo `os.environ.get(api_key_env, "")`: no hay fallback al secrets file, que del lado del sink sí existe y encima rechaza un archivo que no sea owner-only (`monitoring/sink_setup.py:_read_url_from_secrets_file`). Una key que viva únicamente en el secrets file resuelve a `""`. Desde el 2026-09-23 ADR-039 lo anota como no implementado; queda la decisión de código. |
 | F9 | `specs/backlog.md:209`, en el árbol auditado | **No reproducible, y se anota así en vez de copiarlo.** El ancla está muerta: el audit corrió sobre `76edfedc`, una rama que ya no existe, con este archivo en 775 líneas; hoy tiene otra longitud y esa línea es otra cosa. El propio audit lo describe como una contradicción **documental** contra ADR-056, no como un defecto de código, y las dos superficies que sí puedo leer hoy —la entrada «La semántica de matchers de Codex está medida» y `ADR-056:35-47`— **coinciden** y pinean las dos `codex-cli 0.154.0`. Hay que re-derivarlo desde `failures.jsonl` antes de tratarlo como abierto. |
 
-**Acción:** F2, F3 y F6 se cerraron el 2026-09-23 en el PR del `/coherence-audit` de 0.77.0; queda F4. F2, F3, F4 y F6 eran cuatro ediciones de prosa de una oración cada una,
+**Acción:** F2, F3 y F6 se cerraron en el PR del `/coherence-audit` de 0.77.0; F4, F5, F7 y F8 en #451, #452 y #453. Queda sólo F9, que primero hay que re-derivar desde `failures.jsonl`. F2, F3, F4 y F6 eran cuatro ediciones de prosa de una oración cada una,
 todas bajo `specs/adrs/**`, que está fuera de la ruta corta de docs — van por
 worktree y **no se hacen en el PR que escribe esta entrada**, porque otra lane
 tiene ese árbol. F5 se cierra con el PR de `parse_transcript`, que ya declara
@@ -367,37 +297,21 @@ inferencia, un fallback al secrets file en `_resolve_api_key`— y bajarla a lo 
 el código hace es gratis; no está elegido. F9 primero hay que re-derivarlo.
 Prioridad MEDIA.
 
-### `ruff format --check .` está rojo sobre 42 markdown, y ningún gate lo mira
+### El clasificador de auto mode frena la orquestación de agentes, y su `environment` describía un solo repo
 
-**Corrección al parte que originó esta entrada, medida antes de escribirla.** El
-parte decía que «el comando que `/tdd-check` manda correr no es un gate útil hoy».
-`/tdd-check` **no** manda correr `ruff format --check .`: su paso 3 dice
-`uv run --frozen ruff format --check src tests`
-(`.claude/commands/tdd-check.md:23,26`) y CI corre exactamente lo mismo
-(`.github/workflows/tests.yml:59`). Los dos están **verdes** —`504 files already
-formatted`, cero rojos—, así que el gate hace lo que dice y nadie tiene que
-scopearlo a mano.
+**Por qué:** el 2026-09-23 el clasificador de auto mode negó lanzar agentes en panes de Herdr con `lh run --bypass=...` («Create Unsafe Agents») y leer o hacer backup de `settings.json` («Self-Modification»), incluso después de aprobarlo en `/permissions`: la aprobación del diálogo no sobrevivió al reintento. Al investigar apareció la causa de fondo: `autoMode.environment` de `lazy` describía sólo lazy-ansible y el de `flex` sólo supervielle-mgmt. Claude Code lo generó desde una sesión en ese repo, y `modify-settings.sh` lo preserva como PRESERVE, así que valía para todo el perfil. Según los docs, `autoMode` sólo se lee a nivel usuario o managed, nunca desde el `.claude/` del repo.
 
-**Lo que sí está rojo es el comando que nadie corre.** `uv run --frozen ruff
-format --check .` sobre este worktree (main limpio, `5a6fd17`) da **42**
-archivos, no 43. Y el dato que cambia la decisión entera: **los 42 son `.md`,
-ninguno es `.py`** — 40 bajo `specs/`, 1 bajo `reports/`, 1 bajo `docs/`
-(`docs/how/hooks.md`). Es ruff 0.16.7 formateando los bloques de código Python
-**embebidos en Markdown**, no fuente sin formatear.
+**Hecho el 2026-09-23 (por el operador, porque el clasificador frena que el agente lo haga):** los dos perfiles tienen `environment` a nivel perfil, con las notas de riesgo de cada repo acotadas a ese repo, y `allow` = `$defaults` más una regla en prosa que permite lanzar agentes en panes de Herdr sobre worktrees para trabajo delegado. `soft_deny` y `hard_deny` quedaron intactos. `chezmoi diff` salió vacío.
 
-**Por qué el detalle importa:** «formatear el repo entero de una» no es un `ruff
-format .` inocuo, es reescribir bloques de código adentro de ADRs, reportes de
-auditoría y evidencia fechada. En este repo esos bloques son **registro**, no
-fuente: varios son repros pegados tal cual de una corrida, y reformatearlos
-rompe justo la propiedad que los hace evidencia.
+**Acción:** (1) verificar en una sesión nueva que el lanzamiento pasa sin aprobación manual. La regla es prosa, no un matcher, así que hay que probarla y no suponerla. (2) Decidir si `lh deploy` es dueño de `autoMode.environment` por perfil en vez de dejarlo como PRESERVE, para que una sesión en un repo no vuelva a reescribirlo para todo el perfil. Prioridad MEDIA.
 
-**Acción:** decidir entre tres; ninguna está elegida. (a) Dejar el scope `src
-tests` como está y **declararlo** en `pyproject.toml` (`[tool.ruff]
-extend-exclude` para `*.md`), para que un `ruff format .` tipeado a mano no
-vuelva a parecer una regresión — es la más barata y no toca ningún artefacto.
-(b) Formatear sólo `docs/`, que es el único de los tres árboles cuyo contenido
-es documentación viva y no registro, y excluir `specs/` y `reports/`. (c)
-Formatear todo y aceptar la reescritura de la evidencia. Prioridad MEDIA.
+### `legacy_memory_dirs` asume `projects/` y no ve la memoria legacy de un perfil Codex
+
+**Por qué:** lo encontró #450. Sin knowledge store, la memoria legacy de un perfil Codex quedaría en `sessions/<encoded>/memory`, pero `core.memory_store.legacy_memory_dirs` hardcodea `projects/`. Afecta a la sección de colas frenadas de `lh doctor` y a `lh status memory` por igual. Hoy no existe ninguna en disco porque el store está en uso. **Acción:** derivar el subdirectorio de `adapter.session_dirs()` en vez de tipearlo. Prioridad BAJA de hecho; va acá para que no se pierda.
+
+### `metrics_secrets_file()` ignora `[secrets] dir`
+
+**Por qué:** lo encontró el review de #453, y es anterior a ese PR. `core/paths.py:metrics_secrets_file()` sale de `default_secrets_dir()`, no de `secrets_dir_for(cfg)`, así que mover `[secrets] dir` no mueve `metrics.env`. Desde #453 lo leen el sink **y** la resolución de API keys de inferencia. Los docs nombran `<lh config dir>/secrets/metrics.env` explícito, así que no hay drift entre docs y código, sólo una config que no hace lo que su nombre promete. **Acción:** decidir si `[secrets] dir` gobierna también este archivo; si sí, test de acuerdo entre los dos lectores.
 
 ### El sync de skills de claude.ai puede abortar `lh deploy` entero
 
@@ -431,30 +345,6 @@ nombre sincronizado que ya exista; o degradar la colisión de skills a un warnin
 que omita esa proyección sin tumbar el deploy completo. La tercera es la que más
 cambia el contrato, porque hoy «nothing was written» es una garantía deliberada
 y no un efecto colateral. Prioridad MEDIA.
-
-### `lh doctor` no tiene contraparte del gate de #422
-
-**Por qué:** #422 puso `fatal_hook_shape` en el camino de **escritura** y en
-ningún otro lado. Verificado el 2026-09-20: `grep -rn 'fatal_hook_shape' src/`
-devuelve el `def` en `agents/_settings_shape.py:153` y dos líneas en
-`agents/claude_code.py` —el import y el `raise` de `_plan_settings`—, con **cero**
-hits bajo `src/lazy_harness/cli/` y `src/lazy_harness/core/`. O sea que un
-`settings.json` fatal se descubre sólo cuando `lh deploy` se niega a escribir
-sobre ese profile.
-
-Eso deja vivo el modo de falla del incidente del 2026-09-20, apenas invertido: un
-profile que nadie redeploya queda muerto en silencio y ningún comando lo dice. El
-lugar existe — `lh doctor` ya está hecho de renderers por sección que leen
-artefactos desplegados, como `_render_artifact_versions` o `_render_hook_signals`.
-
-**Acción:** evaluar, no está diseñado. Tres preguntas abiertas antes de escribir
-una línea. Si la sección corre sobre el `settings.json` desplegado de **cada**
-profile Claude o sólo del invocado. Si un shape fatal es un `fail` de `lh doctor`
-o sólo un warning, dado que el ofensor puede ser una key de otra herramienta y el
-harness no la posee. Y si el detector portado —que es una reimplementación del
-validador de un binario concreto— debería chequear contra la versión de Claude
-Code instalada antes de afirmar «fatal», porque afirmarlo contra otra versión es
-inventar. Prioridad MEDIA.
 
 ### Auditar si el gate necesita más de 5.000 tests y seis minutos por corrida
 
@@ -523,7 +413,14 @@ fuera de este no tienen CI, así que el gate corre desde `audit-harness` sobre
 todo repo con `AGENTS.md` en la raíz, y `lh doctor` cubre el ancestro `$HOME`.
 (3) Pospuesto por decisión del
 2026-09-22: repos de `~/repos/flex/` (incluido el symlink `CLAUDE.md ->
-AGENTS.md` de ydi-data-layer) y una variante Codex del profile flex.
+AGENTS.md` de ydi-data-layer) y una variante Codex del profile flex. Adelanto del
+2026-09-23: `infra/devops-tf-infra` y `ydi-data-layer` tenían el archivo como
+`AGENTS.MD`, invisible en un filesystem case-sensitive (el CT, Codex en Linux); el
+rename a `AGENTS.md` (más las referencias vivas y el manifest del drift check) está
+commiteado **local** en `fix/agents-md-case` de cada repo, sin push: son repos de la
+org FlexibilitySRL. (4) Efecto colateral de sacar el link, medido el 2026-09-23 y
+cerrado en #447: los registries de plugins del perfil `lazy` apuntaban a
+`~/.claude/plugins/...` y ningún plugin cargaba.
 
 ### El workflow tests falla en startup sobre la rama de release-please
 
@@ -573,20 +470,6 @@ pre_compact   -> ctx
 
 **Acción:** `post_compact` **no** se arregla con la misma rama de texto. ADR-036 §Context dice que su ejecutor devuelve `{userDisplayMessage}` y nada más, y que su salida llega a la terminal y nunca al modelo: lo que corresponde ahí es una **negativa**, no un canal. `session_end` hay que medirlo antes de decidir — si su ejecutor no lee stdout, la respuesta también es negarse. Las dos decisiones son distintas de la de `pre_compact` y ninguna está tomada. Precondición barata para las dos: volver a leer la unión contra un binario actual. Los comentarios de `claude_code.py:729` y `:783` (antes `:511-513`) dicen que las claves de `hookSpecificOutput` se verificaron contra **2.1.269** mientras la enumeración de variantes sigue siendo la de **2.1.234**; alguien leyó el bundle nuevo sin re-enumerar la unión. **Re-verificado el 2026-09-20 y sigue igual**, con un dato nuevo que abarata la precondición: #421 portó el validador de `settings.json` del binario **2.1.278** a `agents/_settings_shape.py`, así que alguien ya desarmó un bundle tres versiones más nuevo — pero leyó el validador de settings, no la unión de `hookSpecificOutput`, que es otra tabla del mismo bundle y sigue sin re-enumerarse.
 
-### `parse_transcript` lee un shape de transcript que Claude Code no emite
-
-**Por qué:** `hooks/builtins/pre_compact.py:47-48` hace `obj.get("role")` y `obj.get("content")` sobre el **tope** de cada línea del JSONL (las refs `:63-64`, `:66` y `:69` de la redacción original quedaron viejas; hoy son `:47-48`, `:50` y `:53` — re-verificado el 2026-09-20, el mecanismo es idéntico). Claude Code los anida un nivel adentro, bajo `message`: `{"type": "assistant", "message": {"role": ..., "content": [...]}, ...}`. Los dos guards que siguen (`:50` para el turno de usuario, `:53` para los `tool_use`) comparan contra el default `""`, así que ninguno matchea jamás y `parse_transcript` devuelve `([], [])` para todo transcript real. `build_summary` sobre eso da string vacío, y el summary que sale por el canal de `PreCompact` queda reducido a los tails de memoria.
-
-**Fuente:** medido el 2026-09-15 sobre tres transcripts de producción de tres repos distintos, 3215 líneas útiles: `role` al tope = **0**, `message.role` = **1432**, y `parse_transcript` devuelve cero `user_msgs` y cero archivos en los tres. Corroborado por los artefactos, que es la medición que no depende de leer el código: los cinco `pre-compact-summary.md` del knowledge store —dos hosts de git, cinco repos, fechas de agosto y de septiembre— tienen exactamente dos encabezados, `## Recent decisions` y `## Recent failures`. Ninguno tiene `## Tasks in progress` ni `## Files worked on`.
-
-**Por qué los tests no lo vieron:** las tres fixtures de transcript de `tests/unit/test_builtin_pre_compact.py` (`:28`, `:92`, `:232`) escriben entre las tres cuatro registros (`:30`, `:33`, `:95`, `:233`), todos `{"role": ..., "content": ...}` plano — el shape que el parser espera y que el agente no produce. Y ninguna aserción nombra `Tasks in progress` ni `Files worked on`: el test de `:60`, que es el que corre el hook entero por subprocess, solo afirma sobre los tails de memoria. Ningún test importa `parse_transcript`. Es el gate del `CLAUDE.md` en dos ejes a la vez — un doble con la forma del call site roto, y un test que pasa con y sin lo que dice cubrir.
-
-**Acción:** leer `role`/`content` desde `obj["message"]`, y sostenerlo con una fixture derivada de un transcript real en vez de escrita a mano. Verificación en las dos direcciones, barata y obligatoria acá: con el fix, una fixture anidada produce `## Tasks in progress`; sin él, ese mismo test falla. Dos trampas que la medición deja escritas para que el fix no las descubra tarde. Primera: `message.role == "user"` **no** significa turno humano. De las 512 líneas con `role=user` en la muestra, **456 son `content: list[tool_result]`** — resultados de herramienta — y solo 47 son `str` más 9 `list[text]`. Un fix que no filtre eso convierte el 89% del canal en ruido, que es peor que el vacío de hoy. Segunda: el guard de `:66` exige `isinstance(content, str)`, y el turno humano viene en las dos formas, así que hay que cubrir `list[text]` además del `str`.
-
-**Cuarta superficie, medida el 2026-09-20: el código cita este archivo por número de línea y la cita está muerta.** El docstring de `main` en `hooks/builtins/pre_compact.py:134-142` documenta la no-reparación a propósito —«`parse_transcript` is left exactly as it is»— y cierra con «`specs/backlog.md:125` owns it». La línea 125 de este archivo no es esta sección ni lo fue nunca desde que esa nota se escribió (`git log -S 'left exactly as it is'` la fecha en `75bedaa`, #314). El PR del fix tiene que sacar esa referencia por número, no re-apuntarla: un puntero a una línea de un ledger que crece por arriba se vuelve a romper solo.
-
-**Superficies que corrige el mismo PR.** Son tres y el gate del `CLAUDE.md` pide las tres en el mismo commit: esta entrada, el paso 3 de `docs/how/hooks.md` (corregido el 2026-09-15 por la ruta corta de docs, que describía la extracción como un hecho) y **[ADR-010](adrs/010-pre-compact-preservation.md)**, cuyo punto 2 de §Decision describe `parse_transcript` recolectando intents y archivos y cuyas §Consequences afirman que «the next session's handoff block often includes the pre-compact summary verbatim, giving the model the same file list and tasks». ADR-010 queda sin tocar acá a propósito: `specs/adrs/**` está excluido de la ruta corta de docs, así que gana su nota `Evolution` en el PR del fix, que toca `src/` y va por worktree igual.
-
 ### `project_key` colapsa repos sin `.git` propio en `local/lazynet`
 
 **Por qué:** `core/project_identity.py:project_key` camina hacia arriba buscando cualquier `.git` ancestro. El home **es** un repo (`~/.git`, dotfiles), así que un directorio sin `.git` propio bajo `~` aterriza en `/Users/lazynet` y sale keyeado `local/lazynet`. Todo repo en esa situación comparte una sola identidad de memoria.
@@ -594,16 +477,6 @@ pre_compact   -> ctx
 **Fuente:** detectado el 2026-09-10 al implementar `lh memory rightsize`, que por primera vez alcanza directorios sin `.git` propio. Caso concreto: `flex/apps/repo-falopa` se etiqueta `project:local/lazynet`. `memory/local/` todavía no tiene un directorio `lazynet`, así que no hay daño consumado — pero cualquier hook que escriba memoria desde uno de esos directorios lo crearía.
 
 **Acción:** decidir si `main_repo_root` debe cortar la caminata en `$HOME` en vez de aceptarlo como raíz de repo. Toca el keying de memoria real, así que no es un cambio cosmético: revisar los dos `project_key` (`core/project_identity.py` y `hooks/builtins/_shared.py`) y verificar desde un directorio sin `.git` propio antes y después.
-
-### El residuo de un test en el knowledge store sigue sin borrarse (la causa raíz ya estaba cerrada)
-
-**Corregido el 2026-09-20: la redacción anterior nunca fue cierta en presente.** Decía «algún test resolvió el store real en vez de un `tmp_path`», en presente, el 2026-09-10. El arreglo es de antes: `git log -S "test_pre_compact_empty_input" -- tests/conftest.py` lo fecha en `96ec145` («fix: isolate the test suite from the real home directory»), del **2026-08-24**, que entra en 0.46.0 — diecisiete días **antes** de que la entrada se escribiera. Es el modo de falla que este archivo ya registra al revés: un item que se anota como abierto cuando el código lo había cerrado, y que nadie reclamó porque el síntoma visible (el directorio) sigue ahí.
-
-**El mecanismo, para que no se vuelva a abrir mal:** el fixture autouse `_isolate_home_dir` (`tests/conftest.py:105`) pinea `HOME` y `USERPROFILE` a un tmp por test, y su docstring nombra este caso exacto — `test_pre_compact_empty_input` spawneaba el hook por subprocess sin pinear `HOME` en el `env=` del hijo, así que heredaba el real, y dejó 170 directorios colgados en el profile vivo antes de que el fixture existiera. Hoy el test toma `tmp_path` (`tests/unit/test_builtin_pre_compact.py:137`).
-
-**Lo que sigue abierto es el residuo y nada más.** `~/repos/lazy/lazy-knowledge/memory/local/` tiene un único directorio, `test_pre_compact_empty_input0`, con mtime **17 Aug 23:59** — anterior al fix y sin tocar desde entonces, que es justamente la evidencia de que ningún test lo reescribe. No contiene archivos (`find … -type f` vuelve vacío).
-
-**Acción:** borrarlo. Es un directorio vacío en otro repo, no toca este árbol y no pide PR acá. Mientras exista, cualquier recuento de proyectos del store lo cuenta como uno más.
 
 ### Loop engineering — fases 1 a 4 sin trackear
 
