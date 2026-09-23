@@ -13,6 +13,7 @@ STEPS = (
     ("profiles", "deploy_profiles"),
     ("config", "deploy_config"),
     ("symlink", "deploy_claude_symlink"),
+    ("plugins", "repair_plugin_registries"),
 )
 
 

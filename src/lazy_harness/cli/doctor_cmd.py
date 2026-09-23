@@ -921,6 +921,32 @@ def _render_home_instruction_shadows(console: Console) -> bool:
     return not findings
 
 
+def _render_plugin_registry(console: Console, cfg: Config) -> bool:
+    """Plugin registry paths that dangle, per Claude Code profile.
+
+    Claude Code refuses every plugin of a marketplace whose recorded path is
+    gone (`cache-miss`) and says nothing in the session: the skills just vanish.
+    """
+    from lazy_harness.agents.registry import agent_for_profile
+    from lazy_harness.core.plugin_registry import REGISTRY_AGENT, find_plugin_path_drift
+
+    ok = True
+    for name, entry in cfg.profiles.items.items():
+        if agent_for_profile(cfg, name).name != REGISTRY_AGENT:
+            continue
+        for drift in find_plugin_path_drift(expand_path(entry.config_dir)):
+            ok = False
+            console.print(
+                f"\n[red]✗[/red] {name}: plugin registry entry {escape(drift.entry)} points at "
+                f"{contract_path(drift.stale)}, which does not exist"
+            )
+            if drift.repair is not None:
+                console.print(f"  Found in the profile. Run: lh deploy --profile {name}")
+            else:
+                console.print("  Not in the profile either: reinstall it with `claude plugin`.")
+    return ok
+
+
 @click.command("doctor")
 @click.option(
     "--json",
@@ -979,6 +1005,8 @@ def doctor(as_json: bool) -> None:
     _render_transcripts(console, cfg)
     _render_profile_secrets(console, cfg)
     if not _render_home_instruction_shadows(console):
+        ok = False
+    if not _render_plugin_registry(console, cfg):
         ok = False
 
     if cfg.knowledge.root:

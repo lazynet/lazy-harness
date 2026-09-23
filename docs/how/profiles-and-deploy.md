@@ -78,7 +78,7 @@ At most one profile per shared root may set `root_default`; a second is rejected
 
 ## Deploy flow — what `lh deploy` actually does
 
-Modules: `src/lazy_harness/cli/deploy_cmd.py` and `src/lazy_harness/deploy/engine.py`. The four steps below run in order, preceded by a snapshot.
+Modules: `src/lazy_harness/cli/deploy_cmd.py` and `src/lazy_harness/deploy/engine.py`. The five steps below run in order, preceded by a snapshot.
 
 ### 0. The snapshot — taken before anything is written
 
@@ -222,6 +222,10 @@ Design: [ADR-024](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/0
 ### 4. `deploy_claude_symlink(cfg)` — the global link, owned by no shipped adapter
 
 Creates `<adapter.global_config_link()> → <default profile's target>` for an adapter that declares one. Claude Code, Codex and Copilot all return `None`: the vendor directory is not the harness's, and for Claude Code a linked `~/.claude` hides every repository's `AGENTS.md` ([ADR-060](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/060-agents-md-is-the-portable-repository-contract.md)).
+
+### 5. `repair_plugin_registries(cfg)` — plugin paths left on a removed link
+
+Claude Code records absolute paths in `plugins/known_marketplaces.json` and `plugins/installed_plugins.json`. A path recorded through a `~/.claude` link that has since been removed names nothing, and Claude Code then refuses every plugin of that marketplace (`cache-miss`) without saying so in the session. For each Claude Code profile the deploy repoints a dangling path to the same relative path under the profile's own `plugins/` directory, when that exists, and prints each repair. A path with no in-profile twin is left alone for `lh doctor` to report. Both files are in the snapshot when they exist; the deploy never creates them.
 
 ## What the target directory looks like after deploy
 
