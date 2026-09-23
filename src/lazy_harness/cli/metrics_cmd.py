@@ -14,7 +14,7 @@ from rich.markup import escape
 from lazy_harness.core.config import ConfigError, load_config
 from lazy_harness.core.identity import resolve_host, resolve_identity
 from lazy_harness.core.paths import config_file, data_dir, expand_path
-from lazy_harness.monitoring.db import MetricsDB, resolve_db_path
+from lazy_harness.monitoring.db import MetricsDB, RenameProfileError, resolve_db_path
 from lazy_harness.monitoring.ingest import ingest_all
 from lazy_harness.monitoring.pricing import load_pricing
 from lazy_harness.monitoring.sink_setup import build_sinks, plan_sinks
@@ -176,6 +176,51 @@ def metrics_backfill_host(host: str, dry_run: bool) -> None:
         f"[green]{prefix}[/green] {report.rows_stamped} rows as {escape(resolved_host)} · "
         f"{report.events_requeued} events re-queued for resend"
     )
+
+
+@metrics.command("rename-profile")
+@click.argument("old")
+@click.argument("new")
+@click.option("--db", "db_override", type=click.Path(path_type=Path), default=None)
+def metrics_rename_profile(old: str, new: str, db_override: Path | None) -> None:
+    """Rename a profile in the local metrics store's session_stats, loop_events
+    and launches tables, recomputing session_stats' event_id in the same
+    transaction.
+
+    `new` must already be a configured profile — this command renames rows
+    that exist, it does not declare a profile config.toml has never heard of.
+    A pending remote-sink row for one of the affected event_ids blocks the
+    rename; drain it first with `lh metrics drain`.
+    """
+    console = Console(stderr=True)
+    try:
+        cfg = load_config(config_file())
+    except ConfigError as e:
+        console.print(f"[red]Error:[/red] {escape(str(e))}")
+        raise SystemExit(1)
+
+    if new not in cfg.profiles.items:
+        console.print(f"[red]Error:[/red] {new!r} is not a configured profile")
+        raise SystemExit(1)
+
+    db_path = (
+        db_override
+        if db_override is not None
+        else (expand_path(cfg.monitoring.db) if cfg.monitoring.db else data_dir() / "metrics.db")
+    )
+    db = MetricsDB(Path(db_path))
+    try:
+        counts = db.rename_profile(old, new)
+    except RenameProfileError as e:
+        console.print(f"[red]Error:[/red] {escape(str(e))}")
+        raise SystemExit(1)
+    finally:
+        db.close()
+
+    out = Console()
+    out.print(f"[green]renamed[/green] {escape(old)!r} -> {escape(new)!r}:")
+    for table, count in counts.items():
+        out.print(f"  {table}: {count}")
 
 
 @metrics.command("status")

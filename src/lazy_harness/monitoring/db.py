@@ -49,6 +49,18 @@ def resolve_db_path() -> Path:
 LAUNCH_ENTRIES = ("run", "exec")
 """The entry points that record a launch: `lh run` and `lh exec`."""
 
+# Every table `rename_profile` rewrites, one entry per table carrying a
+# `profile` column. `sink_outbox` is deliberately absent: it carries
+# `event_id`, never `profile`, and the rename blocks on it instead
+# (`rename_profile`'s pending-row guard). A table gaining a `profile` column
+# and not landing here is caught by `test_rename_profile_table_list_is_complete`.
+RENAME_PROFILE_TABLES: tuple[str, ...] = ("session_stats", "loop_events", "launches")
+
+
+class RenameProfileError(Exception):
+    """`rename_profile` refused: `old == new`, or the outbox has pending rows
+    whose `event_id` the rename would change out from under them."""
+
 
 class MetricsDB:
     def __init__(self, path: Path | str) -> None:
@@ -538,6 +550,58 @@ class MetricsDB:
             if isinstance(payload, dict) and not payload.get("host"):
                 requeued += 1
         return BackfillReport(rows_stamped=rows, events_requeued=requeued)
+
+    def rename_profile(self, old: str, new: str) -> dict[str, int]:
+        """Rename `old` to `new` everywhere `RENAME_PROFILE_TABLES` names, in
+        one transaction.
+
+        `session_stats` rows also get a fresh `event_id`
+        (`derive_event_id(profile=new, ...)`): the remote sink upserts by that
+        id, and leaving it derived from `old` means the next re-ingest or
+        re-send of a continuing session mints a second remote row instead of
+        updating the first. Refused up front when a pending `sink_outbox` row
+        still references one of the event_ids about to change — the operator
+        drains it first (`lh metrics drain`), so the row it eventually sends
+        carries an id the remote can still recognise.
+        """
+        if old == new:
+            raise RenameProfileError(f"old and new profile are both {old!r}")
+
+        pending = self._conn.execute(
+            """
+            SELECT COUNT(*) FROM sink_outbox o
+            JOIN session_stats s ON s.event_id = o.event_id
+            WHERE s.profile = ? AND o.status = 'pending'
+            """,
+            (old,),
+        ).fetchone()[0]
+        if pending:
+            raise RenameProfileError(
+                f"{pending} pending outbox row(s) reference event_ids for profile {old!r}; "
+                "drain them first with `lh metrics drain`"
+            )
+
+        from lazy_harness.monitoring.event_id import derive_event_id
+
+        rows = self._conn.execute(
+            "SELECT rowid, session, model FROM session_stats WHERE profile = ?", (old,)
+        ).fetchall()
+        for row in rows:
+            new_event_id = derive_event_id(profile=new, session=row["session"], model=row["model"])
+            self._conn.execute(
+                "UPDATE session_stats SET profile = ?, event_id = ? WHERE rowid = ?",
+                (new, new_event_id, row["rowid"]),
+            )
+
+        counts: dict[str, int] = {"session_stats": len(rows)}
+        for table in ("loop_events", "launches"):
+            cur = self._conn.execute(
+                f"UPDATE {table} SET profile = ? WHERE profile = ?", (new, old)
+            )
+            counts[table] = cur.rowcount
+
+        self._conn.commit()
+        return counts
 
     def get_ingest_mtime(self, session: str) -> int | None:
         row = self._conn.execute(

@@ -581,6 +581,22 @@ lh metrics backfill-host
 
 Idempotent: a second run finds nothing left to stamp and reports `0`.
 
+### `lh metrics rename-profile`
+
+Renames a profile in the local metrics store: `session_stats`, `loop_events` and `launches`, in one transaction. `session_stats` rows also get a fresh `event_id`, since the remote sink upserts by that id and leaving it derived from the old name would double-count the next re-ingest or re-send of a continuing session.
+
+```bash
+lh metrics rename-profile lazy claude-lazy
+# renamed 'lazy' -> 'claude-lazy':
+#   session_stats: 214
+#   loop_events: 12
+#   launches: 8
+```
+
+`new` must already be a profile `config.toml` declares — this command renames rows that exist, it does not declare a profile the config has never heard of. Idempotent: a second run finds no rows left carrying the old name and reports `0` everywhere.
+
+Refuses when a `sink_outbox` row is still `pending` for one of the affected event_ids: renaming out from under it would leave that row referencing an id the remote will no longer recognise. Drain the outbox first with `lh metrics drain`.
+
 ### `lh metrics status`
 
 Prints the local database summary (session count, accumulated cost, path), then per-sink outbox counters (`pending`, `sending`, `sent`) for every non-`sqlite_local` sink. Use it to spot a stuck `http_remote` without `sqlite3`-ing the DB.

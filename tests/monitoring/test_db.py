@@ -995,3 +995,173 @@ def test_backfill_host_leaves_a_stamped_row_with_no_outbox_entry_alone(tmp_path:
         assert db.outbox_list_pending(sink_name="http_remote") == []
     finally:
         db.close()
+
+
+# --- rename_profile (Task 5) ------------------------------------------------- #
+
+
+def test_rename_profile_table_list_is_complete(tmp_path: Path) -> None:
+    """A table gaining a `profile` column must be added to `RENAME_PROFILE_TABLES`
+    or a rename silently stops covering it."""
+    from lazy_harness.monitoring.db import RENAME_PROFILE_TABLES
+
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        tables = {
+            row["name"]
+            for row in db._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        with_profile = {
+            name
+            for name in tables
+            if any(
+                col["name"] == "profile"
+                for col in db._conn.execute(f"PRAGMA table_info({name})").fetchall()
+            )
+        }
+        assert with_profile == set(RENAME_PROFILE_TABLES)
+    finally:
+        db.close()
+
+
+def test_rename_profile_recomputes_event_id_and_renames_all_three_tables(
+    tmp_path: Path,
+) -> None:
+    from lazy_harness.monitoring.event_id import derive_event_id
+
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.upsert_event(_event(event_id="e-old", profile="lazy", session="s1", model="sonnet"))
+        db.record_loop_event(session="s1", kind="verify_ran", project="p", profile="lazy")
+        db._conn.execute(
+            "INSERT INTO launches (ts, profile, agent, host, entry) VALUES (?, ?, ?, ?, ?)",
+            (time.time(), "lazy", "claude-code", "h", "run"),
+        )
+        db._conn.commit()
+
+        counts = db.rename_profile("lazy", "claude-lazy")
+
+        assert counts == {"session_stats": 1, "loop_events": 1, "launches": 1}
+        row = db._conn.execute(
+            "SELECT profile, event_id FROM session_stats WHERE session = 's1'"
+        ).fetchone()
+        assert row["profile"] == "claude-lazy"
+        assert row["event_id"] == derive_event_id(
+            profile="claude-lazy", session="s1", model="sonnet"
+        )
+        assert (
+            db._conn.execute("SELECT profile FROM loop_events WHERE session = 's1'").fetchone()[
+                "profile"
+            ]
+            == "claude-lazy"
+        )
+        assert (
+            db._conn.execute("SELECT profile FROM launches").fetchone()["profile"] == "claude-lazy"
+        )
+    finally:
+        db.close()
+
+
+def test_rename_profile_is_idempotent(tmp_path: Path) -> None:
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.upsert_event(_event(event_id="e-old", profile="lazy", session="s1", model="sonnet"))
+
+        db.rename_profile("lazy", "claude-lazy")
+        second = db.rename_profile("lazy", "claude-lazy")
+
+        assert second == {"session_stats": 0, "loop_events": 0, "launches": 0}
+    finally:
+        db.close()
+
+
+def test_rename_profile_leaves_preexisting_target_rows_untouched(tmp_path: Path) -> None:
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.upsert_event(
+            _event(event_id="e-already-new", profile="claude-lazy", session="s-existing")
+        )
+        db.upsert_event(_event(event_id="e-old", profile="lazy", session="s1"))
+
+        counts = db.rename_profile("lazy", "claude-lazy")
+
+        assert counts["session_stats"] == 1
+        untouched = db._conn.execute(
+            "SELECT event_id FROM session_stats WHERE session = 's-existing'"
+        ).fetchone()
+        assert untouched["event_id"] == "e-already-new"
+    finally:
+        db.close()
+
+
+def test_rename_profile_refuses_when_old_equals_new(tmp_path: Path) -> None:
+    from lazy_harness.monitoring.db import RenameProfileError
+
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        with pytest.raises(RenameProfileError, match="lazy"):
+            db.rename_profile("lazy", "lazy")
+    finally:
+        db.close()
+
+
+def test_rename_profile_blocks_on_a_pending_outbox_row_and_names_the_count(
+    tmp_path: Path,
+) -> None:
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        from lazy_harness.monitoring.db import RenameProfileError
+
+        db.upsert_event(_event(event_id="e-old", profile="lazy", session="s1"))
+        db.outbox_enqueue(sink_name="http_remote", event_id="e-old", payload_json="{}")
+
+        with pytest.raises(RenameProfileError, match="1"):
+            db.rename_profile("lazy", "claude-lazy")
+
+        # Refused before touching anything.
+        row = db._conn.execute(
+            "SELECT profile, event_id FROM session_stats WHERE session = 's1'"
+        ).fetchone()
+        assert row["profile"] == "lazy"
+        assert row["event_id"] == "e-old"
+    finally:
+        db.close()
+
+
+def test_rename_profile_proceeds_once_the_outbox_row_is_no_longer_pending(
+    tmp_path: Path,
+) -> None:
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.upsert_event(_event(event_id="e-old", profile="lazy", session="s1"))
+        db.outbox_enqueue(sink_name="http_remote", event_id="e-old", payload_json="{}")
+        db.outbox_mark_sent("http_remote", "e-old")
+
+        counts = db.rename_profile("lazy", "claude-lazy")
+
+        assert counts["session_stats"] == 1
+    finally:
+        db.close()
+
+
+def test_a_reingest_after_rename_produces_no_second_row_for_the_session(tmp_path: Path) -> None:
+    """The point of recomputing `event_id`: a re-ingest under the new profile
+    name must upsert the same row, not mint a duplicate."""
+    from lazy_harness.monitoring.event_id import derive_event_id
+
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.upsert_event(_event(event_id="e-old", profile="lazy", session="s1", model="sonnet"))
+        db.rename_profile("lazy", "claude-lazy")
+
+        new_event_id = derive_event_id(profile="claude-lazy", session="s1", model="sonnet")
+        db.upsert_event(
+            _event(event_id=new_event_id, profile="claude-lazy", session="s1", model="sonnet")
+        )
+
+        rows = db._conn.execute("SELECT COUNT(*) AS n FROM session_stats").fetchone()
+        assert rows["n"] == 1
+    finally:
+        db.close()
