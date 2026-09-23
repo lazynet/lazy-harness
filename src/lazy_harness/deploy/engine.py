@@ -276,6 +276,7 @@ def deploy_profiles(cfg: Config, *, only: str | None = None) -> dict[str, dict[P
     # user-owned entries: unlike ADR-052's per-profile first-run migration,
     # the global catalog is never adopted by inference.
     skill_plan = plan_skill_projections(
+        cfg,
         selected,
         profiles_src,
         adapters,

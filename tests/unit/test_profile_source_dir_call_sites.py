@@ -50,6 +50,12 @@ def test_deploy_profiles_reads_both_agents_from_one_identity_dir(home_dir: Path)
 
 
 def test_snapshot_targets_reads_both_agents_from_one_identity_dir(home_dir: Path) -> None:
+    """`t.name == "settings.json"` passes whether or not `src_dir` resolves —
+    `ClaudeCodeAdapter.config_targets()` adds it unconditionally. Assert on a
+    segment-only link instead: `codex-home/AGENTS-extra.md` can only come from
+    `resolve_segments(src_dir)` finding the codex profile's own asset inside
+    the *shared* identity dir, so it proves the call site was resolved
+    through `profile_source_dir`, not a plain `profiles_src / name` join."""
     from lazy_harness.deploy.snapshot import snapshot_targets
 
     _seed_shared_source()
@@ -57,7 +63,7 @@ def test_snapshot_targets_reads_both_agents_from_one_identity_dir(home_dir: Path
 
     targets = snapshot_targets(cfg)
 
-    assert any(t.name == "settings.json" for t in targets)
+    assert any(t == home_dir / "codex-home" / "AGENTS-extra.md" for t in targets)
 
 
 def test_artifact_version_reports_read_the_doc_from_the_identity_dir(home_dir: Path) -> None:

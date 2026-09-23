@@ -149,6 +149,7 @@ def snapshot_targets(cfg: Config, *, only: str | None = None) -> list[Path]:
             )
 
     skill_plan = plan_skill_projections(
+        cfg,
         selected,
         profiles_src,
         adapters,

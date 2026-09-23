@@ -324,12 +324,16 @@ def render_sync_results(results: list[SyncResult], console: Console) -> None:
 def _profile_sync_system_doc() -> None:
     """Regenerate each profile's system doc from its segmented sources.
 
-    Concatenates `<profile>/head.md` + `_common/common.md` +
-    `_common/<agent>.md` + `<profile>/tail.md` for every profile dir under
-    `~/.config/lazy-harness/profiles/` that carries them, and writes the result
-    to every destination the profile's agent loads. Legacy-only and flat
-    profile dirs are skipped, not erased; legacy-only results name the migrate
-    command that restores them to the supported layout.
+    Concatenates `<identity>/head.md` + `_common/common.md` +
+    `_common/<agent>.md` + `<identity>/tail.md` for every configured profile
+    that carries them, and writes the result to every destination the
+    profile's agent loads. A directory under
+    `~/.config/lazy-harness/profiles/` no configured profile resolves to is
+    reported orphaned and never touched once at least one profile declares
+    `identity`; until then it keeps the pre-identity behaviour of being
+    synced with the running agent's adapter (M3). Legacy-only and flat
+    profile dirs are skipped, not erased; legacy-only results name the
+    migrate command that restores them to the supported layout.
     """
     console = Console()
     profiles_dir = config_dir() / "profiles"
@@ -345,8 +349,10 @@ def _profile_sync_system_doc() -> None:
         raise SystemExit(1)
 
     try:
-        # `cfg` makes the doc name per profile; `agent` stays the answer for a
-        # directory the config no longer names.
+        # `cfg` makes the doc name per profile; `agent` is the fallback for a
+        # directory the config does not name, but only while no profile in
+        # `cfg` declares `identity` — from then on such a directory is
+        # reported orphaned instead (M3).
         results = sync_profiles(profiles_dir, agent, cfg=cfg)
     except SyncError as e:
         console.print(f"[red]Error:[/red] {escape(str(e))}")

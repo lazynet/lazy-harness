@@ -191,7 +191,11 @@ row count per table, and is idempotent (a second run reports 0). It refuses when
 alone, so the command is safe after a partial run.
 
 The Postgres sink is rewritten by the infrastructure repository with the
-equivalent `UPDATE` and the dashboard `CASE` mappings are reduced to the new
+equivalent `UPDATE`, which must recompute `event_id` with the same formula
+(`derive_event_id`) the local rename does, not only `profile` — otherwise the
+next send of a continuing session mints a second remote row instead of
+updating the first, the same failure mode the local rename exists to avoid.
+The dashboard `CASE` mappings are reduced to the new
 names only.
 
 ### 6. Launch aliases (dotfiles, all hosts)

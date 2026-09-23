@@ -122,6 +122,16 @@ def profile_prefix(agent_name: str) -> str:
     return prefix
 
 
+def valid_profile_prefixes() -> list[str]:
+    """Every prefix a `--agent` value can legally name, sorted.
+
+    `"null"` is the test sentinel, never a launchable agent — every caller
+    validating a `--agent` flag (`core.profiles`, `agents.launch`) excludes it
+    the same way, from this one list rather than re-deriving it.
+    """
+    return sorted({p for a, p in PROFILE_PREFIXES.items() if a != "null"})
+
+
 def get_agent(agent_type: str) -> AgentAdapter:
     """Get an agent adapter instance by type name."""
     cls = _AGENTS.get(agent_type)

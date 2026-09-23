@@ -46,10 +46,18 @@ def test_no_stray_profile_joins_in_src() -> None:
     """Any `"profiles" / <var>`-style join outside the helper is a regression:
     the fix is to resolve through `profile_source_dir` (or `profile_identity`
     when only an `entry` is in scope), never by re-deriving the join.
+
+    The right-hand side matches any identifier (`profile_name`, `prof`, `n`,
+    `entry.name`, `profile_identity(...)`, ...), not just the three literal
+    spellings the original regex anchored on — `\\b` never fires between
+    "profile" and a following "_", so `profile_name` slipped straight past
+    it. The left-hand side stays an explicit allowlist of the known
+    profiles-tree root variables (`profiles_src`, `profiles_dir`,
+    `profiles_root`, the `"profiles"` literal) rather than also matching a
+    bare `root`, which this codebase already uses for a dozen unrelated
+    joins (`knowledge_root`, git roots, skill roots).
     """
-    pattern = re.compile(
-        r'(profiles_src|profiles_dir|"profiles")\s*/\s*(name|profile|entry\.name)\b'
-    )
+    pattern = re.compile(r'(profiles_src|profiles_dir|profiles_root|"profiles")\s*/\s*[\w.]+')
     src = Path(lazy_harness.__file__).parent
     hits = [
         f"{p}:{i}"

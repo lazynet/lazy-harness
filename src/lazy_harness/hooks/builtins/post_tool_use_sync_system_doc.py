@@ -133,9 +133,11 @@ def main(event: HookEvent) -> HookDecision:
         # adapter, so resolving it globally wrote one agent's contract file
         # into a profile running another.
         # The firing profile's adapter is the fallback for a directory the
-        # config does not name. `cfg` is what makes the rest per profile:
-        # handing one adapter to a walk over the whole tree only moved the
-        # defect, from the global agent to whichever profile fired the hook.
+        # config does not name, but only while no profile in `cfg` declares
+        # `identity` — from then on such a directory is reported orphaned
+        # instead (M3). `cfg` is what makes the rest per profile: handing one
+        # adapter to a walk over the whole tree only moved the defect, from
+        # the global agent to whichever profile fired the hook.
         agent = agent_dir_for(cfg, event.profile)[0]
         for tree in trees:
             sync_profiles(tree, agent, cfg=cfg)

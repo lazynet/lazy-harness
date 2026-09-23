@@ -10,9 +10,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from lazy_harness.agents.base import AgentAdapter
-from lazy_harness.core.config import ProfileEntry
+from lazy_harness.core.config import Config, ProfileEntry
 from lazy_harness.core.paths import expand_path
-from lazy_harness.core.profile_identity import profile_identity
+from lazy_harness.core.profile_identity import profile_source_dir
 from lazy_harness.deploy.ledger import read_ledger
 from lazy_harness.deploy.symlinks import REPLACED, displaced_link_message, ensure_symlink
 
@@ -148,6 +148,7 @@ def _points_into_any(link: Path, roots: Collection[Path]) -> bool:
 
 
 def plan_skill_projections(
+    cfg: Config,
     profiles: Mapping[str, ProfileEntry],
     profiles_src: Path,
     adapters: Mapping[str, AgentAdapter],
@@ -160,7 +161,7 @@ def plan_skill_projections(
     omissions: list[tuple[str, str]] = []
 
     for profile, entry in profiles.items():
-        source_dir = profiles_src / profile_identity(profile, entry)
+        source_dir = profile_source_dir(cfg, profile, profiles_src)
         adapter = adapters[profile]
         skills = _skills_for_profile(source_dir, adapter.name)
         skill_root = getattr(adapter, "skill_root", None)

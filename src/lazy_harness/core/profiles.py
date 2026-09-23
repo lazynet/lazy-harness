@@ -99,9 +99,9 @@ def resolve_profile_with_source(
     agent's profile is a contradiction, not a narrowing.
     """
     if agent is not None:
-        from lazy_harness.agents.registry import PROFILE_PREFIXES
+        from lazy_harness.agents.registry import valid_profile_prefixes
 
-        valid = sorted({p for a, p in PROFILE_PREFIXES.items() if a != "null"})
+        valid = valid_profile_prefixes()
         if agent not in valid:
             raise ProfileError(f"unknown agent {agent!r}; expected one of {', '.join(valid)}")
 
