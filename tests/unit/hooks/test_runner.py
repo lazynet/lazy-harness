@@ -240,15 +240,41 @@ def configured_profiles(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("lazy_harness.core.paths.config_file", lambda: cfg)
 
 
-def test_unknown_profile_refuses_for_a_blocking_hook(
+def test_unknown_profile_falls_back_to_default_for_a_benign_command(
     monkeypatch: pytest.MonkeyPatch, configured_profiles: None
 ) -> None:
+    """A blocking hook that abstains must still abstain under the fallback.
+
+    Before this fix, `_adapter_for` raised before the builtin ever ran, so
+    every blocking hook exited 2 on an unknown profile regardless of what the
+    command was -- `ls` and `rm -rf /` got the same diagnostic.
+    """
     register(monkeypatch, "guard", lambda event: HookDecision(), blocking=True)
 
     result = runner.run_hook("guard", profile="ghost", stdin_text=json.dumps(PRE_TOOL_USE))
 
-    assert result.exit_code == 2
+    assert result.exit_code == 0
     assert "ghost" in result.stderr
+    assert "lazy" in result.stderr
+
+
+def test_unknown_profile_still_blocks_a_dangerous_command(
+    monkeypatch: pytest.MonkeyPatch, configured_profiles: None
+) -> None:
+    """The fallback resolves the adapter, not the verdict: a real block still fires."""
+    register(
+        monkeypatch,
+        "guard",
+        lambda event: HookDecision(verdict=Verdict.DENY, reason="blocked"),
+        blocking=True,
+    )
+
+    result = runner.run_hook("guard", profile="ghost", stdin_text=json.dumps(PRE_TOOL_USE))
+
+    assert result.exit_code == 2
+    assert "blocked" in result.stderr
+    assert "ghost" in result.stderr
+    assert "lazy" in result.stderr
 
 
 def test_unknown_profile_lets_an_informational_hook_through(
@@ -260,6 +286,27 @@ def test_unknown_profile_lets_an_informational_hook_through(
 
     assert result.exit_code == 0
     assert "ghost" in result.stderr
+    assert "lazy" in result.stderr
+
+
+def test_unknown_profile_resolves_the_default_s_adapter(
+    monkeypatch: pytest.MonkeyPatch, configured_profiles: None
+) -> None:
+    """The event the builtin sees is threaded through under the default profile,
+    not the unresolved name -- so memory scope and metrics land on a profile
+    that actually exists."""
+    seen: list[HookEvent] = []
+
+    def main(event: HookEvent) -> HookDecision:
+        seen.append(event)
+        return HookDecision()
+
+    register(monkeypatch, "spy", main, blocking=False)
+
+    runner.run_hook("spy", profile="ghost", stdin_text=json.dumps(PRE_TOOL_USE))
+
+    assert len(seen) == 1
+    assert seen[0].profile == "lazy"
 
 
 def test_a_declared_profile_runs(
@@ -292,21 +339,43 @@ def test_an_unresolved_profile_falls_back_to_the_configured_agent(
     assert json.loads(result.stdout or "{}") == {"systemMessage": "ran"}
 
 
-def test_a_named_profile_that_is_not_declared_still_refuses(
-    monkeypatch: pytest.MonkeyPatch, configured_profiles: None
-) -> None:
-    """The fallback must not swallow the typo it was added to name.
+@pytest.fixture
+def profiles_without_a_resolvable_default(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two declared profiles whose configured default names a third that does
+    not exist -- the case decision (b) still must fail closed on."""
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        '[harness]\nversion = "1"\n\n[agent]\ntype = "claude-code"\n\n'
+        '[profiles]\ndefault = "gone"\n\n'
+        f'[profiles.lazy]\nconfig_dir = "{tmp_path / "lazy"}"\nroots = ["~"]\n\n'
+        f'[profiles.flex]\nconfig_dir = "{tmp_path / "flex"}"\nroots = ["~"]\n'
+    )
+    monkeypatch.setattr("lazy_harness.core.paths.config_file", lambda: cfg)
 
-    An empty profile is "nothing resolved"; a non-empty one that no profile
-    declares is a wrong `--profile` in a deployed command, and a hook running
-    under the wrong scope writes memory and metrics to the wrong place.
-    """
+
+def test_no_resolvable_default_still_refuses_for_a_blocking_hook(
+    monkeypatch: pytest.MonkeyPatch, profiles_without_a_resolvable_default: None
+) -> None:
+    """A benign command must not slip through just because a default was
+    configured -- the fallback only helps when that default actually exists."""
     register(monkeypatch, "guard", lambda event: HookDecision(), blocking=True)
 
-    result = runner.run_hook("guard", profile="lazyy", stdin_text=json.dumps(PRE_TOOL_USE))
+    result = runner.run_hook("guard", profile="ghost", stdin_text=json.dumps(PRE_TOOL_USE))
 
     assert result.exit_code == 2
-    assert "lazyy" in result.stderr
+    assert "ghost" in result.stderr
+    assert "no default" in result.stderr.lower()
+
+
+def test_no_resolvable_default_lets_an_informational_hook_through(
+    monkeypatch: pytest.MonkeyPatch, profiles_without_a_resolvable_default: None
+) -> None:
+    register(monkeypatch, "notes", lambda event: HookDecision(), blocking=False)
+
+    result = runner.run_hook("notes", profile="ghost", stdin_text=json.dumps(PRE_TOOL_USE))
+
+    assert result.exit_code == 0
+    assert "ghost" in result.stderr
 
 
 @pytest.fixture

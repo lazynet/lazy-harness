@@ -89,7 +89,7 @@ def _trace_invocation(name: str, profile: str) -> None:
         pass
 
 
-def _adapter_for(profile: str) -> AgentAdapter:
+def _adapter_for(profile: str) -> tuple[AgentAdapter, str, str | None]:
     """Resolve the adapter that owns this profile's wire format.
 
     Resolved through `agent_for_profile()`, which is the same call
@@ -102,9 +102,17 @@ def _adapter_for(profile: str) -> AgentAdapter:
     delivers. `test_the_deploy_and_the_runner_resolve_one_profile_to_the_same_agent`
     holds the two halves together.
 
-    The profile is still validated against the config so that a typo in a
-    deployed command is a named failure rather than a hook that runs under the
-    wrong scope.
+    Returns the adapter, the profile name the hook actually runs under (which
+    changes on the fallback below), and a warning to surface on stderr when it
+    did.
+
+    The profile is still validated against the config, but a typo no longer
+    takes every tool call down with it. Measured 2026-09-24 during the ADR-068
+    cutover: a renamed or removed profile made `pre-tool-use-security` exit 2
+    for `ls` and for a recursive delete alike, because the runner refused
+    before the builtin ever looked at the command. Failing closed is
+    defensible for a security hook; an identical diagnostic for a benign and a
+    dangerous command is not.
     """
     from lazy_harness.agents.registry import agent_for_profile
     from lazy_harness.core.config import Config, ConfigError, load_config
@@ -128,12 +136,26 @@ def _adapter_for(profile: str) -> AgentAdapter:
     # an empty profile against a populated table would take every hook down
     # with it on exactly the machines that did run `lh init`.
     #
-    # A *named* profile absent from the table stays a refusal: that is a typo
-    # in a deployed command, and a hook running under the wrong scope writes
-    # its memory and its metrics somewhere the profile does not own.
+    # A *named* profile absent from the table falls back to the configured
+    # default profile's policy instead of refusing outright -- that default is
+    # the one importable answer `cfg.profiles.default` already gives every
+    # other caller (`run_cmd.py`, `doctor_cmd.py`, `knowledge_cmd.py`). The
+    # fallback still runs under a real, declared profile, so memory and
+    # metrics land where that profile owns them, not where the typo pointed.
+    # Only when the default itself does not resolve to a declared profile does
+    # this stay a refusal: there is nothing left to fail open onto.
     if profile and declared and profile not in declared:
-        raise RunnerError(f"unknown profile {profile!r}; declared: {sorted(declared)}")
-    return agent_for_profile(cfg, profile)
+        default_name = cfg.profiles.default
+        if default_name and default_name in declared:
+            warning = (
+                f"unknown profile {profile!r}; falling back to default profile {default_name!r}"
+            )
+            return agent_for_profile(cfg, default_name), default_name, warning
+        raise RunnerError(
+            f"unknown profile {profile!r}; declared: {sorted(declared)}; "
+            f"no default profile to fall back to"
+        )
+    return agent_for_profile(cfg, profile), profile, None
 
 
 def _canonical_event(adapter: AgentAdapter, payload: dict, declared: str | None) -> str:
@@ -231,13 +253,17 @@ def run_hook(name: str, *, profile: str, stdin_text: str) -> HookOutput:
     _trace_invocation(name, profile)
 
     try:
-        adapter = _adapter_for(profile)
+        adapter, resolved_profile, warning = _adapter_for(profile)
         payload = _parse_payload(stdin_text)
         event = adapter.parse_hook_input(
-            _canonical_event(adapter, payload, spec.event), payload, profile=profile
+            _canonical_event(adapter, payload, spec.event), payload, profile=resolved_profile
         )
         decision = _load_main(spec.module)(event)
-        return adapter.format_hook_output(event, decision)
+        output = adapter.format_hook_output(event, decision)
+        if warning:
+            stderr = f"{warning}\n{output.stderr}" if output.stderr else warning
+            output = HookOutput(stdout=output.stdout, stderr=stderr, exit_code=output.exit_code)
+        return output
     except Exception as exc:  # noqa: BLE001 — the policy below is the whole point
         reason = str(exc) if isinstance(exc, RunnerError) else f"{type(exc).__name__}: {exc}"
         if spec.blocking:

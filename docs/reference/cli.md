@@ -330,7 +330,7 @@ code when the output cannot be parsed — so it carries `error: null`.
 
 Invokes a single built-in hook by name. This is what `settings.json` entries actually call — `lh deploy` writes `lh hook <name> --profile <profile>`, and the command reads the agent's payload on stdin, runs the builtin, and writes the agent's own output format back out.
 
-`--profile` names the profile the hook runs under, which decides its memory scope and its metrics label. It is optional: without it the profile is resolved from the agent's config-dir variable, which is how entries written before the flag existed keep working.
+`--profile` names the profile the hook runs under, which decides its memory scope and its metrics label. It is optional: without it the profile is resolved from the agent's config-dir variable, which is how entries written before the flag existed keep working. A profile name no config declares — a rename or a redeploy the settings file has not caught up with — falls back to the configured default profile with a warning on stderr, rather than refusing every tool call until the session restarts; it still refuses if the default itself does not resolve to a declared profile.
 
 You should rarely run this by hand. It is documented so the entries in `profiles/<name>/settings.json` make sense.
 
