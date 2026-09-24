@@ -1,7 +1,7 @@
 # Engram 1.20.0 → 2.1.0 migration
 
-Status: **in progress** — harness (#464) and the CT `agents` done; the Mac is
-pending (`specs/backlog.md` §Open Prioridad ALTA).
+Status: **done** — harness (#464), the CT `agents` and the Mac all on 2.1.0
+(`specs/backlog.md` §Done). Mac verification record in §5.4.
 Date: 2026-09-24. Scope: the Mac (Homebrew) and the homelab CT `agents`
 (lazy-ansible `agent_station` role).
 
@@ -304,6 +304,34 @@ backups in `~/.engram/`; the new backup adds ~410 MB.
 Then `claude plugin update engram@engram` in claude-lazy and claude-flex
 (target 0.1.3), `lh` release with §5.2 installed via `uv tool install
 --reinstall`, and `version = "2.1.0"` in `config.toml` through chezmoi.
+
+**Gotcha — `claude plugin update` can uninstall instead of updating.** On the
+Mac run (2026-09-24), claude-flex went to 0.1.3, but in claude-lazy the update
+rewrote `installed_plugins.json` with no `engram@engram` entry and removed it from
+`enabledPlugins`. It exited silently. The MCP kept working because it lives in
+`.claude.json`, not in the plugin. So the failure only showed as no `engram serve`
+on `:7437`, no memory context at SessionStart and no `PreToolUse` hook. Read
+both files back per profile after the update. If the entry is missing, run
+`CLAUDE_CONFIG_DIR=<profile dir> claude plugin install engram@engram`, which
+restored 0.1.3 with `enabledPlugins` set.
+
+`config.toml` is a chezmoi template (`config.toml.tmpl`): `chezmoi re-add` is a
+no-op on it. Edit the source and `chezmoi apply`, then commit the dotfiles repo.
+
+**Mac verification record (2026-09-24).**
+
+| Step | Observed |
+| --- | --- |
+| Binary | `engram 2.1.0` (`/opt/homebrew/Cellar/engram/2.1.0`) |
+| Schema stamped | `user_version` = 1 |
+| No data loss | observations 24 466 / live 12 707 / sessions 6 031 / prompts 5 685, identical to the pre-upgrade snapshot (`~/.engram/pre-v2/*-counts-*.txt`) |
+| Doctor delta | same five non-ok checks from the first 2.1.0 open onward. `sync_mutation_required_fields` stays blocking, at 841 instead of 423 because 2.x counts observation sources, not queued mutations. `sync_target_closed_space` is a new 2.x error at 79. Both concern Cloud, which is off |
+| Server identity | `/health` `instance_id` = `engram instance-id` |
+| Menu gone | post-upgrade SessionStarts in claude-lazy and claude-flex: plugin hook exit 0, empty stderr, memory context injected, no menu, no `ownership mismatch`, no `conflict` |
+| MCP registration | both profiles: `/opt/homebrew/bin/engram mcp --tools=agent` |
+| MCP works | `mem_search` returns hits |
+| engram-persist | runs from claude-lazy, claude-flex and codex-lazy record `engram_version 2.1.0`, `saved_failed 0`; one run saved two pending entries that read back from the DB |
+| lh doctor | `engram v2.1.0` with no pin drift; persist failure rate 0% |
 
 ### 5.5 Verification (per host, in this order)
 

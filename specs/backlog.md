@@ -36,7 +36,7 @@ cerrarlas.
 **Estado al 2026-09-24:** las tres iteraciones mergearon en #460 (ver §Done).
 La ronda siguiente, el mismo día, cerró la ALTA y las tres MEDIA que #460 dejó
 abiertas (#462, #463) y migró engram a 2.1.0 del lado del harness y en el CT
-(#464); la Mac queda como ALTA.
+(#464); la Mac migró después, fuera de un PR (§Done).
 
 Hallazgos de la pasada de #460, ya resueltos o movidos a su propia entrada:
 
@@ -301,23 +301,11 @@ desde `:367-369` cuando el step 3 insertó los helpers de merge arriba de la cla
 - [x] **El exit 2 fail-closed bloquea bajo Codex, medido con un runner real** — probe contra `codex-cli 0.155.1` con el profile `codex-lazy`: el hook con `--profile` desconocido sale exit 2 y Codex no ejecuta el comando (`specs/designs/codex-evidence.md` §8). No hizo falta fix; un test de regresión pinnea el contrato y dos mutaciones a mano prueban que carga. Se corrigieron los docstrings que decían que Codex nunca había honrado exit 2. PR #462, mergeado el 2026-09-24; entra en 0.80.0.
 - [x] **Tres MEDIA de la resaca de #460** — (1) ADR-032 L4: los seis builtins y `_shared` ya no caen a `or "projects"`; un test por glob sobre los builtins falla si vuelve el literal. (2) `lh memory proposals accept/reject/apply` toman `memory_dir_lock` durante todo el read-modify-write. (3) `lh doctor` reporta `warn` «catching up» cuando la corrida llegó al tope de 25 saves y el cursor avanzó en disco; un cursor trabado sigue en `fail`. PR #463, mergeado el 2026-09-24; entra en 0.80.0.
 - [x] **engram 2.1.0 del lado del harness, y el CT `agents` migrado como canary** — `PINNED_VERSION` = 2.1.0 y `mcp_server_config()` con path absoluto y `mcp --tools=agent`, para no disparar el ownership check de 2.x. Probe sobre una copia de la DB de la Mac en `specs/designs/engram-evidence.md`; plan en `specs/designs/2026-09-24-engram-2-migration.md`. El CT subió por lazy-ansible (`1cc41b6`, pin + sha256 + handler que mata el `serve` viejo) y pasó las once filas de verificación del plan; el marketplace del plugin queda pinneado a `v2.1.0` con `owner/repo@ref`. El menú de `engram setup` en SessionStart era skew plugin 0.1.2 / binario 1.20. PR #464, mergeado el 2026-09-24; entra en 0.80.0.
+- [x] **La Mac en engram 2.1.0 con el plugin 0.1.3** — backup en `~/.engram/pre-v2/`, `brew upgrade`, conteos idénticos al snapshot previo, `user_version` = 1, doctor sin hallazgos nuevos respecto del primer arranque en 2.1.0. `claude plugin update` desinstaló el plugin en claude-lazy en vez de actualizarlo; se reinstaló con `claude plugin install`. El pin de `config.toml` pasó a 2.1.0 por el template de chezmoi. Verificado en claude-lazy, claude-flex y codex-lazy; registro y gotcha en el plan §5.4. Operación de entorno, 2026-09-24.
 
 ## Open — Prioridad ALTA
 
-### La Mac sigue en engram 1.20.0 con el plugin 0.1.2
-
-**Por qué:** #464 subió el pin a 2.1.0 y el CT ya migró; la Mac no, porque la
-migración exige cerrar todas las sesiones de Claude y Codex (cada una tiene su
-`engram mcp` abierto sobre la DB). Mientras tanto cada SessionStart imprime el
-menú interactivo de `engram setup` (skew plugin/binario, plan §3) y `lh doctor`
-muestra drift de pin. Además, 2.1.0 rechaza el `save` cuando la sesión
-`manual-save-<project>` tiene otro `project`: la Mac tiene cuatro filas así,
-`lazy-harness` incluida, y el arreglo probado es un `UPDATE sessions SET
-project` (`specs/designs/engram-evidence.md`).
-**Acción:** correr desde una terminal Aqua, con todas las sesiones cerradas, el
-runbook de upgrade (backup, `brew upgrade`, fix de ownership, pin del
-marketplace, plugin 0.1.3) y verificar con la tabla §5.5 del plan; bump de
-`[memory.engram] version` en `config.toml` por chezmoi. Prioridad ALTA.
+Ninguna.
 
 ## Open — Prioridad MEDIA
 
@@ -695,8 +683,10 @@ esas formas. Prioridad BAJA.
 ### Colas de Cloud dormidas en los stores de engram de los dos hosts
 
 **Por qué:** engram 2.1.0 suma el check `sync_target_closed_space`, que en el CT
-marca siete filas `cloud:*` de `sync_state` fechadas antes de la migración; la
-Mac tiene además 423 mutaciones sin título bloqueadas. Cloud está apagado en
+marca siete filas `cloud:*` de `sync_state` fechadas antes de la migración, y en
+la Mac 79. La Mac tiene además el bloqueo `sync_mutation_required_fields`: eran
+423 mutaciones sin título en 1.20.0, y en 2.1.0 son 841 porque cuenta las
+observaciones de origen. Cloud está apagado en
 los dos hosts y nada consume esas colas; se aceptaron como falso positivo el
 2026-09-24. **Acción:** limpiarlas si Cloud se activa alguna vez, o si el ruido
 en `engram doctor` empieza a tapar hallazgos reales. Prioridad BAJA.
