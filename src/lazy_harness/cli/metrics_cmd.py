@@ -27,7 +27,11 @@ def metrics() -> None:
 
 
 @metrics.command("ingest")
-@click.option("--dry-run", is_flag=True, help="Parse sessions but do not write to the DB.")
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Parse sessions without writing the DB, enqueuing events, or contacting remote sinks.",
+)
 @click.option("--verbose", "-v", is_flag=True, help="Show per-profile counters.")
 def metrics_ingest(dry_run: bool, verbose: bool) -> None:
     """Scan every profile's projects/*.jsonl and upsert token stats."""
@@ -43,8 +47,11 @@ def metrics_ingest(dry_run: bool, verbose: bool) -> None:
         console.print("[yellow]monitoring disabled in config; nothing to do.[/yellow]")
         return
 
-    identity = resolve_identity(explicit=cfg.metrics.user_id or None)
-    _print_active_sinks(stderr, cfg, identity)
+    if dry_run:
+        stderr.print("[dim]dry-run: sink delivery disabled[/dim]")
+    else:
+        identity = resolve_identity(explicit=cfg.metrics.user_id or None)
+        _print_active_sinks(stderr, cfg, identity)
 
     db_path = expand_path(cfg.monitoring.db) if cfg.monitoring.db else data_dir() / "metrics.db"
 
@@ -56,15 +63,22 @@ def metrics_ingest(dry_run: bool, verbose: bool) -> None:
 
     try:
         pricing = load_pricing(cfg.monitoring.pricing or None)
-        sinks = build_sinks(cfg.metrics, db=db)
+        sinks = [] if dry_run else build_sinks(cfg.metrics, db=db)
         report = ingest_all(cfg, db, pricing, sinks=sinks)
 
         for sink in sinks:
             if isinstance(sink, HttpRemoteSink):
                 try:
-                    sink.drain(batch_size=0)
-                except Exception:
-                    pass
+                    result = sink.drain(batch_size=0)
+                    if result.failed:
+                        stderr.print(
+                            f"[yellow]Warning:[/yellow] {sink.name} drain: "
+                            f"{result.failed} delivery failure(s)"
+                        )
+                except Exception as exc:
+                    stderr.print(
+                        f"[yellow]Warning:[/yellow] {sink.name} drain failed: {escape(str(exc))}"
+                    )
     finally:
         db.close()
 

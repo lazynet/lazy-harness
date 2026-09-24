@@ -544,9 +544,9 @@ Manages the metrics pipeline: session-rollup ingestion plus per-event sink fanou
 
 Walks every profile's `<config_dir>/projects/**/*.jsonl`, aggregates token usage per `(session, model)`, prices it with `[monitoring.pricing]` overrides (falling back to `DEFAULT_PRICING`), and UPSERTs into `session_stats`. The pipeline is safe to run repeatedly — it tracks each session's file mtime in a separate `ingest_meta` table and skips files that haven't changed since the previous run. Re-ingesting the same file is idempotent: totals are re-computed from the full (append-only) JSONL and overwrite prior rows, so token counts never accumulate double.
 
-After the SQL upsert, every active sink declared in `[metrics].sinks` writes the resulting events. With the default `["sqlite_local"]`, that is a no-op write into the same DB. With `http_remote` added, ingest also opportunistically drains the outbox in the same process, so a single `lh metrics ingest` tick covers both write and ship.
+After the SQL upsert, every active sink declared in `[metrics].sinks` writes the resulting events. With the default `["sqlite_local"]`, that is a no-op write into the same DB. With `http_remote` added, a normal ingest also opportunistically drains the outbox in the same process, so a single `lh metrics ingest` tick covers both write and ship. Failed deliveries and drain exceptions print a warning on stderr without changing the exit code.
 
-`--dry-run` parses everything but writes to an in-memory DB so you can preview the scan without touching the real one. `-v/--verbose` surfaces any per-file errors the walk hit.
+`--dry-run` parses everything into an in-memory DB so you can preview the scan without touching the real one. It does not write to sinks, enqueue events, or contact remote collectors. `-v/--verbose` surfaces any per-file errors the walk hit.
 
 Pair with `lh scheduler` to keep the DB fresh — add a job under `[scheduler.jobs.metrics-ingest]` with a cron expression (e.g. `*/15 * * * *`) calling `lh metrics ingest`.
 
