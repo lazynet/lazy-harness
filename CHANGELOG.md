@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.79.1](https://github.com/lazynet/lazy-harness/compare/v0.79.0...v0.79.1) (2026-09-24)
+
+
+### Bug Fixes
+
+* backlog iterations 1-3 — hook fallback, metrics dry-run, memory integrity, agent-neutral paths ([#460](https://github.com/lazynet/lazy-harness/issues/460)) ([1c6dd8c](https://github.com/lazynet/lazy-harness/commit/1c6dd8c6d9412373c27bfca2f2e0629d42b0cf0d))
+
+
+### Documentation
+
+* close the 0.79.1 coherence-audit drift (13 findings) ([#461](https://github.com/lazynet/lazy-harness/issues/461)) ([d431830](https://github.com/lazynet/lazy-harness/commit/d4318308f5c01fc6d53d0cba6a93a6fb1d85cc11))
+* close the iteration 1-3 backlog entries after [#460](https://github.com/lazynet/lazy-harness/issues/460) ([06c60c5](https://github.com/lazynet/lazy-harness/commit/06c60c5e70f4502b6004aa827b3241c9584378ba))
+* record the ADR-068 fleet cutover and its findings in the backlog ([58d3ef5](https://github.com/lazynet/lazy-harness/commit/58d3ef5a9c838667a5d5783ff2ce7669e5def966))
+* record the attack order for the next three iterations in the backlog ([82bf5aa](https://github.com/lazynet/lazy-harness/commit/82bf5aa6a539e9aa7768a6beffa9aea514f82d61))
+* record the iteration branches and their findings in the backlog ([a2cad93](https://github.com/lazynet/lazy-harness/commit/a2cad932acb39fa260f680ccf848183e330d730c))
+
 ## [0.79.0](https://github.com/lazynet/lazy-harness/compare/v0.78.0...v0.79.0) (2026-09-23)
 
 
