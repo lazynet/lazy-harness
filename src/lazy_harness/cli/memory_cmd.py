@@ -192,7 +192,13 @@ def consolidate(memory_dir: Path | None, last: int, model: str | None, timeout: 
 
 
 def _atomic_write(path: Path, content: str) -> None:
-    """Atomic write via tempfile + os.replace (mirrors knowledge.compound_loop)."""
+    """Atomic write via tempfile + os.replace.
+
+    A separate copy from `knowledge.compound_loop._atomic_write`, not a mirror
+    of it: this one uses a fixed temp name and takes no lock, so it is not
+    safe against a concurrent writer to the same path (specs/backlog.md
+    §Open).
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.tmp")
     with open(tmp, "w") as f:

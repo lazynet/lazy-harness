@@ -34,7 +34,7 @@ def metrics() -> None:
 )
 @click.option("--verbose", "-v", is_flag=True, help="Show per-profile counters.")
 def metrics_ingest(dry_run: bool, verbose: bool) -> None:
-    """Scan every profile's projects/*.jsonl and upsert token stats."""
+    """Scan each profile's agent-declared sessions directory and upsert token stats."""
     console = Console()
     stderr = Console(stderr=True)
     try:

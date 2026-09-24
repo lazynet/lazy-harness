@@ -70,3 +70,12 @@ own `session_type`" consequence are superseded by ADR-028:
 `knowledge/session_export.py:_classify(cwd, rules)` walks the ordered
 `[knowledge].classify_rules` list, first case-insensitive substring match wins,
 and the heuristics above survive only as the default rule set.
+
+## Evolution — 2026-09-24: the `_atomic_write` copies diverged
+
+Point 8's "same as the compound-loop persistence" no longer holds. `#460` gave
+the compound loop's own `_atomic_write` a uuid-named temp file opened with
+`"x"`, unlinked on failure; `session_export.py:140` still writes to a fixed
+`.name.tmp`. The two functions share a name and a purpose, not an
+implementation. Tracked in `specs/backlog.md` §Open (five `_atomic_write`
+copies, Prioridad BAJA).

@@ -259,10 +259,21 @@ transcript billing reader, `core/move_projects.py` builds
 Routing them through `agents/session_paths.py` is code work, tracked in
 `specs/backlog.md`.
 
-**2026-09-24 — the remaining L4 session-path leaks are closed.** Transcript
-billing, profile moves, handoff lookup, compound-loop lookup, and legacy memory
-enumeration now resolve session roots through `agents/session_paths.py`. Readers
-that have a profile resolve its adapter per profile; an adapter declaring no
-sessions location causes the reader to skip that location. The old path-only
-core APIs retain a Claude Code adapter default for existing callers, while the
-CLI supplies each profile's adapter explicitly.
+**2026-09-24 — five L4 session-path leaks are closed, others remain.**
+Transcript billing (`cli/exec_cmd.py`), profile moves
+(`core/move_projects.py`), handoff lookup and legacy memory enumeration
+(`cli/knowledge_cmd.py`), and compound-loop lookup
+(`hooks/builtins/compound_loop.py`, `knowledge/compound_loop.py`) now resolve
+session roots through `agents/session_paths.py`. Readers that have a profile
+resolve its adapter per profile; an adapter declaring no sessions location
+causes the reader to skip that location. The old path-only core APIs retain a
+Claude Code adapter default for existing callers, while the CLI supplies each
+profile's adapter explicitly.
+
+The `session_dirs().get("sessions") or "projects"` fallback survives outside
+those five readers: `hooks/builtins/engram_persist.py:117`,
+`session_end.py:120,148`, `session_export.py:93`, `pre_compact.py:197`, and
+`context_inject.py:789,797`, plus `_shared.resolve_project_dir` /
+`resolve_memory_dir` (`sessions_subdir or "projects"`, `_shared.py:121,218`) —
+which `hooks/builtins/compound_loop.py:121` now feeds with a possibly-empty
+`session_subdir()`. Tracked in `specs/backlog.md` §Open.

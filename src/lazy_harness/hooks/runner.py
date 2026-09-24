@@ -100,8 +100,9 @@ Claude Code 2.1.281 sends `prompt_id` on `PreToolUse` and no `turn_id` or
 The payload, not the environment: a Codex session started from a Claude Code
 pane inherits `CLAUDECODE` and `CLAUDE_PROJECT_DIR`, and the probe's own hook
 env carried both because it ran nested. Nor the event name: both agents send
-`hook_event_name: PreToolUse`. Only the markers were measured on `PreToolUse`,
-so other events identify no caller, which on an unknown profile is a refusal.
+`hook_event_name: PreToolUse`. Only `PreToolUse` was measured; other events
+were not measured, so `_caller_agent` cannot tell a caller apart on them
+either, which on an unknown profile is a refusal.
 """
 
 

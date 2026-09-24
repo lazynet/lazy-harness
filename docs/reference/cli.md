@@ -542,7 +542,7 @@ Manages the metrics pipeline: session-rollup ingestion plus per-event sink fanou
 
 ### `lh metrics ingest`
 
-Walks every profile's `<config_dir>/projects/**/*.jsonl`, aggregates token usage per `(session, model)`, prices it with `[monitoring.pricing]` overrides (falling back to `DEFAULT_PRICING`), and UPSERTs into `session_stats`. The pipeline is safe to run repeatedly — it tracks each session's file mtime in a separate `ingest_meta` table and skips files that haven't changed since the previous run. Re-ingesting the same file is idempotent: totals are re-computed from the full (append-only) JSONL and overwrite prior rows, so token counts never accumulate double.
+Walks each profile's agent-declared sessions directory (`session_path(agent, config_dir, "sessions")`), aggregates token usage per `(session, model)`, prices it with `[monitoring.pricing]` overrides (falling back to `DEFAULT_PRICING`), and UPSERTs into `session_stats`. The pipeline is safe to run repeatedly — it tracks each session's file mtime in a separate `ingest_meta` table and skips files that haven't changed since the previous run. Re-ingesting the same file is idempotent: totals are re-computed from the full (append-only) JSONL and overwrite prior rows, so token counts never accumulate double.
 
 After the SQL upsert, every active sink declared in `[metrics].sinks` writes the resulting events. With the default `["sqlite_local"]`, that is a no-op write into the same DB. With `http_remote` added, a normal ingest also opportunistically drains the outbox in the same process, so a single `lh metrics ingest` tick covers both write and ship. Failed deliveries and drain exceptions print a warning on stderr without changing the exit code.
 
