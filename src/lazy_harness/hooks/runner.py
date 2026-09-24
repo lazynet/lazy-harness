@@ -125,12 +125,14 @@ def _fallback_profile(cfg: Config, profile: str, caller: str | None) -> str:
     """The declared profile an unknown `profile` falls back to, or a refusal.
 
     Profiles are identity x agent (ADR-068), and the adapter the fallback
-    resolves decides the wire format of the refusal. A stale name from a Codex
-    `hooks.json` falling back to a Claude Code default answered Codex with exit
-    2 and an empty stdout -- a channel Codex was never observed honouring -- so
-    a blocking hook failed open. The fallback therefore never crosses agents:
-    the default when it runs the caller's agent, else the caller's only
-    declared profile, else the refusal the runner gave before any fallback.
+    resolves decides the wire format of every answer. A stale name from a
+    Codex `hooks.json` falling back to a Claude Code default answered Codex in
+    Claude Code's format, and ran it under a profile -- memory scope, metrics
+    label -- that belongs to the other agent. The fallback therefore never
+    crosses agents: the default when it runs the caller's agent, else the
+    caller's only declared profile, else the refusal the runner gave before any
+    fallback. That refusal is exit 2 with the reason on stderr, which Codex
+    0.155.1 was run honouring (`specs/designs/codex-evidence.md` §8).
     """
     from lazy_harness.agents.registry import agent_for_profile
 
