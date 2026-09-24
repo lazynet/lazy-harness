@@ -64,3 +64,7 @@ rows were ~15 minutes apart), so it does not absorb a re-upload.
 - **Cap.** A run attempts at most `MAX_SAVES_PER_RUN` (25) saves across both
   files; the cursor advances only over what was saved, and the rest drains on
   later `Stop` events. The existing duplicate rows are left in place.
+
+`lh doctor` reports lag of at least 64 KiB as `warn` with `catching up` only
+when the latest run reached the cap and the cursor file advanced on disk. A
+stalled cursor remains `fail` even if `engram save` returned success.
