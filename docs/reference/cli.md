@@ -223,13 +223,13 @@ These five are exhaustive for `mode: "inference"`; the agent-mode kinds `no-enve
 `--workload <label>` records a free-form label against the session id `lh exec`
 pins before it spawns the agent, so the cost the ingest later derives from that
 session carries the label. It also reads `LH_WORKLOAD`, which is what lets a
-caller configured as a plain binary string — `lh exec --profile lazy` — supply
+caller configured as a plain binary string — `lh exec --profile claude-personal` — supply
 one without changing its invocation.
 
 The harness never interprets the label. Omitting it records nothing.
 
 ```bash
-echo "$PROMPT" | lh exec --profile lazy --workload nightly-index
+echo "$PROMPT" | lh exec --profile claude-personal --workload nightly-index
 LH_WORKLOAD=nightly-index; export LH_WORKLOAD   # same effect
 lh status tokens --by workload --period all     # what each caller cost
 ```
