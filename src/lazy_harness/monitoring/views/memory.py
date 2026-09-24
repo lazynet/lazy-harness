@@ -70,11 +70,13 @@ def render(ctx: StatusContext) -> RenderableType:
     # store; anything not yet migrated — or deliberately unshared — is still
     # under the agent's project dir, and a view that showed only one of them
     # would look like the other half had been deleted.
+    from lazy_harness.agents.registry import agent_for_profile
     from lazy_harness.core.memory_store import all_memory_dirs
     from lazy_harness.hooks.builtins._shared import knowledge_root_for
 
     for memory_dir in all_memory_dirs(
-        [p.config_dir for p in ctx.profiles], knowledge_root_for(ctx.cfg)
+        [(p.config_dir, agent_for_profile(ctx.cfg, p.name)) for p in ctx.profiles],
+        knowledge_root_for(ctx.cfg),
     ):
         # A legacy directory is `<encoded-cwd>/memory`; a migrated one is
         # `<host>/<owner>/<name>` and names itself.

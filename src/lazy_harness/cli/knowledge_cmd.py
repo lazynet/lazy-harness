@@ -219,12 +219,17 @@ def knowledge_handoff_now() -> None:
     # is run from a shell, not from a hook, and the default profile is the best
     # available answer to "whose session".
     agent, agent_dir = agent_dir_for(cfg, resolve_profile(None) or cfg.profiles.default)
-    subdirs = agent.session_dirs()
+    from lazy_harness.agents.session_paths import session_path, session_subdir
+
     cwd = Path.cwd()
     encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
-    sessions_dir = agent_dir / (subdirs.get("sessions") or "projects") / encoded
-    queue_dir = agent_dir / (subdirs.get("queue") or "queue")
-    log_dir = agent_dir / (subdirs.get("logs") or "logs")
+    sessions_root = session_path(agent, agent_dir, "sessions")
+    if sessions_root is None:
+        console.print("[red]Agent declares no sessions directory[/red]")
+        raise SystemExit(1)
+    sessions_dir = sessions_root / encoded
+    queue_dir = agent_dir / (session_subdir(agent, "queue") or "queue")
+    log_dir = agent_dir / (session_subdir(agent, "logs") or "logs")
 
     jsonl_files = (
         [p for p in sessions_dir.glob("*.jsonl") if p.is_file()] if sessions_dir.is_dir() else []

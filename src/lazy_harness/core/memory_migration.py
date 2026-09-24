@@ -78,7 +78,9 @@ def _checkout_for(encoded: str) -> Path | None:
     return descend(Path("/"), tokens)
 
 
-def plan_migration(profile_dirs: list[Path], *, knowledge_root: Path | None) -> list[Move]:
+def plan_migration(
+    profile_dirs: list[Path | tuple[Path, object]], *, knowledge_root: Path | None
+) -> list[Move]:
     """What would move, and why anything would not. Touches nothing."""
     from lazy_harness.knowledge.marker import read_marker
 
@@ -146,7 +148,7 @@ class LegacyStatus:
 
 
 def classify_legacy_memory(
-    profile_dirs: list[Path], *, knowledge_root: Path | None
+    profile_dirs: list[Path | tuple[Path, object]], *, knowledge_root: Path | None
 ) -> list[LegacyStatus]:
     """Sort legacy memory into leftover, lost, and unmovable. Touches nothing.
 

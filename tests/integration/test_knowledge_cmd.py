@@ -174,9 +174,14 @@ def test_knowledge_status_reports_a_store_without_a_marker(home_dir: Path, monke
 def test_knowledge_handoff_now_routes_paths_through_agent_adapter(
     home_dir: Path, monkeypatch, tmp_path: Path
 ) -> None:
-    """ADR-032 L3: when no profile entry resolves the agent dir, the fallback
-    must come from the agent adapter (~/.null for the null agent), not from a
-    hardcoded ~/.claude."""
+    """ADR-032 L3/L4: the agent supplies the root and session subdirectory."""
+    from lazy_harness.agents import registry
+
+    monkeypatch.setattr(
+        registry.NullAdapter,
+        "session_dirs",
+        lambda self: {"sessions": "threads", "logs": "", "queue": ""},
+    )
     config_path = home_dir / ".config" / "lazy-harness" / "config.toml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
@@ -196,7 +201,7 @@ enabled = true
     cwd = tmp_path / "proj"
     cwd.mkdir()
     encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
-    sessions_dir = agent_dir / "projects" / encoded
+    sessions_dir = agent_dir / "threads" / encoded
     sessions_dir.mkdir(parents=True)
     _write_session_jsonl(
         sessions_dir / "deadbeef-feed-cafe-babe-1234abcd0002.jsonl",
