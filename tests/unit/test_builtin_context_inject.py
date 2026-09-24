@@ -1048,7 +1048,7 @@ def test_episodic_context_tail(tmp_path: Path) -> None:
 
 
 def test_context_inject_routes_memory_dir_through_agent_adapter(
-    tmp_path: Path, monkeypatch, capsys
+    tmp_path: Path, monkeypatch, capsys, declared_null_sessions: None
 ) -> None:
     """ADR-032 L3/L4: the memory dir must come from the configured agent
     adapter. With agent.type = "null" the handoff must be read from under

@@ -277,3 +277,8 @@ those five readers: `hooks/builtins/engram_persist.py:117`,
 `resolve_memory_dir` (`sessions_subdir or "projects"`, `_shared.py:121,218`) —
 which `hooks/builtins/compound_loop.py:121` now feeds with a possibly-empty
 `session_subdir()`. Tracked in `specs/backlog.md` §Open.
+
+**2026-09-24 — remaining builtin L4 fallbacks are removed.** Session-reading
+builtins skip agents without a declared sessions directory. The shared project
+and memory directory resolvers return `None` for that case instead of deriving
+a Claude Code `projects/` path.

@@ -15,7 +15,9 @@ def _git(cwd: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
 
 
-def test_hook_passes_a_cursor_dir_under_the_agent_runtime_dir(tmp_path: Path, monkeypatch) -> None:
+def test_hook_passes_a_cursor_dir_under_the_agent_runtime_dir(
+    tmp_path: Path, monkeypatch, declared_null_sessions: None
+) -> None:
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
@@ -66,7 +68,9 @@ def test_hook_passes_a_cursor_dir_under_the_agent_runtime_dir(tmp_path: Path, mo
     assert cursor_dir != memory_dir
 
 
-def test_two_repos_of_the_same_name_get_different_cursor_dirs(tmp_path: Path, monkeypatch) -> None:
+def test_two_repos_of_the_same_name_get_different_cursor_dirs(
+    tmp_path: Path, monkeypatch, declared_null_sessions: None
+) -> None:
     """The key must carry the remote, not just the directory basename."""
     home = tmp_path / "home"
     home.mkdir()
@@ -151,7 +155,7 @@ def _capture(monkeypatch) -> list[dict[str, object]]:
 
 
 def test_profiles_sharing_a_store_share_one_machine_local_cursor(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, declared_null_sessions: None
 ) -> None:
     from lazy_harness.hooks.builtins import engram_persist as hook_mod
 
@@ -172,7 +176,9 @@ def test_profiles_sharing_a_store_share_one_machine_local_cursor(
     assert alpha.parts[-3:] == memory_dir.parts[-3:] == ("github.com", "lazynet", "proj")
 
 
-def test_the_shared_cursor_adopts_every_profiles_old_cursor(tmp_path: Path, monkeypatch) -> None:
+def test_the_shared_cursor_adopts_every_profiles_old_cursor(
+    tmp_path: Path, monkeypatch, declared_null_sessions: None
+) -> None:
     from lazy_harness.hooks.builtins import engram_persist as hook_mod
 
     cwd, _, _ = _two_profile_setup(tmp_path, monkeypatch)
@@ -186,7 +192,9 @@ def test_the_shared_cursor_adopts_every_profiles_old_cursor(tmp_path: Path, monk
     assert adopt == {home / ".null-alpha" / suffix, home / ".null-beta" / suffix}
 
 
-def test_without_a_store_the_cursor_stays_per_profile(tmp_path: Path, monkeypatch) -> None:
+def test_without_a_store_the_cursor_stays_per_profile(
+    tmp_path: Path, monkeypatch, declared_null_sessions: None
+) -> None:
     """Memory outside the store is itself per profile, so its cursor must be too."""
     from lazy_harness.hooks.builtins import engram_persist as hook_mod
 

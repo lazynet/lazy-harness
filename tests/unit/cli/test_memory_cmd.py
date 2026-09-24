@@ -916,3 +916,15 @@ def test_memory_cmd_legacy_dir_uses_the_profiles_own_agent(tmp_path: Path, monke
 
     encoded = "-" + str(repo).replace("/", "-").lstrip("-")
     assert _legacy_memory_dir() == tmp_path / "alpha-home" / "threads" / encoded / "memory"
+
+
+def test_memory_cmd_has_no_legacy_dir_without_declared_sessions(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from lazy_harness.agents.registry import NullAdapter
+    from lazy_harness.cli import memory_cmd
+
+    monkeypatch.setattr(
+        memory_cmd, "_agent_for_active_profile", lambda: (None, NullAdapter(), tmp_path)
+    )
+    assert memory_cmd._legacy_memory_dir() is None

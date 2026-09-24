@@ -283,7 +283,7 @@ def _project_memory_dir() -> Path:
     )
 
 
-def _legacy_memory_dir() -> Path:
+def _legacy_memory_dir() -> Path | None:
     """The pre-store location: memory inside the agent's own project directory.
 
     Resolved through the same helper the store path falls back to, so the two
@@ -293,15 +293,13 @@ def _legacy_memory_dir() -> Path:
     from lazy_harness.hooks.builtins._shared import resolve_memory_dir
 
     _cfg, agent, agent_dir = _agent_for_active_profile()
-    return (
-        resolve_memory_dir(
-            None,
-            agent_dir=agent_dir,
-            sessions_subdir=session_subdir(agent, "sessions"),
-            cwd=Path.cwd(),
-        )
-        / "memory"
+    resolved = resolve_memory_dir(
+        None,
+        agent_dir=agent_dir,
+        sessions_subdir=session_subdir(agent, "sessions"),
+        cwd=Path.cwd(),
     )
+    return resolved / "memory" if resolved is not None else None
 
 
 def _load_pending(memory_dir: Path | None) -> tuple[Path, str, list[PendingProposal]]:
@@ -441,7 +439,7 @@ def status(memory_dir: Path | None) -> None:
     if memory_dir is not None:
         return
     legacy = _legacy_memory_dir()
-    if legacy == target or not any(legacy.glob("*")):
+    if legacy is None or legacy == target or not any(legacy.glob("*")):
         return
     index = legacy / "MEMORY.md"
     lines = len(index.read_text().splitlines()) if index.is_file() else 0

@@ -170,7 +170,7 @@ enabled = false
 
 
 def test_session_end_routes_paths_through_agent_adapter(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, declared_null_sessions: None
 ) -> None:
     """ADR-032 L3/L4: dirs must come from the configured agent adapter, not
     from a hardcoded CLAUDE_CONFIG_DIR read. With agent.type = "null" (no env
@@ -217,7 +217,7 @@ enabled = true
 
 
 def test_session_end_keeps_the_declared_project_dir_when_the_transcript_is_unwritten(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, declared_null_sessions: None
 ) -> None:
     """The declared path reaches `resolve_project_dir` un-stat'd, and must.
 

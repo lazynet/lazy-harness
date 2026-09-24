@@ -193,7 +193,9 @@ def test_pre_compact_subprocess_cannot_leak_into_real_machine_home(tmp_path: Pat
     assert leaked == [], leaked
 
 
-def test_pre_compact_routes_paths_through_agent_adapter(tmp_path, monkeypatch) -> None:
+def test_pre_compact_routes_paths_through_agent_adapter(
+    tmp_path, monkeypatch, declared_null_sessions: None
+) -> None:
     """ADR-032 L3/L4: memory/backup dirs must come from the configured agent
     adapter. With agent.type = "null" the summary must land under ~/.null even
     when CLAUDE_CONFIG_DIR points elsewhere."""

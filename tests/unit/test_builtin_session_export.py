@@ -90,7 +90,9 @@ root = "{knowledge_dir}"
     return cfg_file
 
 
-def test_session_export_routes_paths_through_agent_adapter(tmp_path: Path, monkeypatch) -> None:
+def test_session_export_routes_paths_through_agent_adapter(
+    tmp_path: Path, monkeypatch, declared_null_sessions: None
+) -> None:
     """ADR-032 L3/L4: the sessions dir must come from the configured agent
     adapter, not from a hardcoded CLAUDE_CONFIG_DIR read. With agent.type =
     "null" resolution must land under ~/.null even when CLAUDE_CONFIG_DIR
@@ -125,7 +127,7 @@ def test_session_export_routes_paths_through_agent_adapter(tmp_path: Path, monke
 
 
 def test_session_export_keeps_the_declared_project_dir_when_the_transcript_is_unwritten(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, declared_null_sessions: None
 ) -> None:
     """The declared path reaches `resolve_project_dir` un-stat'd, and must.
 

@@ -177,6 +177,10 @@ def main(event: HookEvent) -> HookDecision:
     # config-derived path differently is how one of them ends up writing where
     # nothing reads.
     agent, agent_dir = agent_dir_for(cfg, event.profile)
+    from lazy_harness.agents.session_paths import session_path, session_subdir
+
+    if session_path(agent, agent_dir, "sessions") is None:
+        return HookDecision()
     subdirs = agent.session_dirs()
     log_file = agent_dir / (subdirs.get("logs") or "logs") / "hooks.log"
 
@@ -194,7 +198,7 @@ def main(event: HookEvent) -> HookDecision:
     memory_dir = shared_memory_dir(
         event.transcript_path,
         agent_dir=agent_dir,
-        sessions_subdir=subdirs.get("sessions") or "projects",
+        sessions_subdir=session_subdir(agent, "sessions"),
         cwd=cwd,
         knowledge_root=knowledge_root_for(cfg),
     )
