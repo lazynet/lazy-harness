@@ -23,6 +23,7 @@ from lazy_harness.core.paths import config_dir, config_file
 from lazy_harness.core.sync_agent_md import SyncError, sync_profiles
 from lazy_harness.deploy.engine import (
     ConfigPlannerRequiredError,
+    ExternalHookPlaceholderError,
     UnknownProfileError,
     deploy_claude_symlink,
     deploy_config,
@@ -178,6 +179,11 @@ def deploy(snapshot_only: bool, rollback: bool, profile: str | None) -> None:
         if snapshot_only:
             return
         _run_deploy(cfg, profile)
-    except (ConfigPlannerRequiredError, SkillCollisionError, SkillLedgerError) as e:
+    except (
+        ConfigPlannerRequiredError,
+        ExternalHookPlaceholderError,
+        SkillCollisionError,
+        SkillLedgerError,
+    ) as e:
         click.echo(f"Error: {e}", err=True)
         raise SystemExit(1) from e

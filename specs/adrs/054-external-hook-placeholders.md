@@ -172,3 +172,16 @@ former combined artifact and moves every group it cannot prove is a managed
 builtin into the external artifact before replacing or retiring the managed
 path. The migration preserves full groups, metadata and duplicates, and an
 unreadable legacy artifact refuses the plan.
+
+## Correction — 2026-09-24: malformed fields and literal braces
+
+The original "no migration" claim applies only to commands without braces.
+`str.format` interprets shell text such as `echo ${HOME}` and
+`awk "{print $1}"` as placeholders. Such commands must escape literal braces:
+`echo ${{HOME}}` and `awk "{{print $1}}"` deploy as the original shell commands.
+The same escape works alongside `{profile}` and `{config_dir}`.
+
+The original exception handling also missed unmatched braces, conversions such
+as `{profile!z}`, and attribute access such as `{profile.x}`. Deploy now checks
+the parsed fields and reports each invalid command through
+`ExternalHookPlaceholderError`; `lh deploy` prints the diagnostic and exits 1.

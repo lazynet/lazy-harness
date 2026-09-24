@@ -6,6 +6,7 @@ import shlex
 import sys
 from collections.abc import Collection
 from pathlib import Path
+from string import Formatter
 
 import click
 
@@ -85,20 +86,18 @@ class ConfigTargetChangedError(RuntimeError):
 
 
 class ExternalHookPlaceholderError(ValueError):
-    """An `[hooks.*].external` command names a placeholder deploy does not know.
+    """An `[hooks.*].external` command has an invalid placeholder."""
 
-    Raised from `_hook_entries_for`'s per-profile expansion (ADR-054): the only
-    two recognised placeholders are `{profile}` and `{config_dir}`, and naming
-    anything else is a typo the config author needs to see, not a bare
-    Python `KeyError` surfacing through `lh deploy`.
-    """
-
-    def __init__(self, command: str, cause: KeyError | IndexError) -> None:
+    def __init__(self, command: str, placeholder: str, *, malformed: bool = False) -> None:
         self.command = command
-        placeholder = cause.args[0] if cause.args else cause
+        if malformed:
+            detail = f"has invalid placeholder syntax at {placeholder!r}"
+        else:
+            detail = f"names unknown placeholder {placeholder!r}"
         super().__init__(
-            f"external hook command {command!r} names unknown placeholder "
-            f"{{{placeholder}}} — only {{profile}} and {{config_dir}} are recognised"
+            f"external hook command {command!r} {detail} — "
+            "only {profile} and {config_dir} are recognised; "
+            "escape literal braces as {{ and }}"
         )
 
 
@@ -106,14 +105,26 @@ def _expand_external_command(command: str, *, profile: str, config_dir: str) -> 
     """Expand `{profile}` / `{config_dir}` in an `external` hook's command.
 
     `{config_dir}` is the profile's raw `config_dir` field, not its expanded
-    absolute path — see ADR-054 for why. A command with no `{...}` in it is
-    unchanged: `str.format` is a no-op on a string with no fields, so every
-    `external` entry declared before this existed keeps working.
+    absolute path — see ADR-054 for why. Literal braces use `{{` and `}}`.
     """
     try:
-        return command.format(profile=profile, config_dir=config_dir)
-    except (KeyError, IndexError) as exc:
-        raise ExternalHookPlaceholderError(command, exc) from exc
+        fields = list(Formatter().parse(command))
+    except ValueError as exc:
+        raise ExternalHookPlaceholderError(command, "{", malformed=True) from exc
+    for _, field, format_spec, conversion in fields:
+        if field is None:
+            continue
+        placeholder = "{" + field
+        if conversion is not None:
+            placeholder += "!" + conversion
+        if format_spec:
+            placeholder += ":" + format_spec
+        placeholder += "}"
+        if field not in {"profile", "config_dir"}:
+            raise ExternalHookPlaceholderError(command, placeholder)
+        if conversion is not None or format_spec:
+            raise ExternalHookPlaceholderError(command, placeholder, malformed=True)
+    return command.format(profile=profile, config_dir=config_dir)
 
 
 class UnknownProfileError(ValueError):

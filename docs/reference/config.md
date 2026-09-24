@@ -383,6 +383,12 @@ command = "/usr/local/bin/some-tool hook"
 matcher = "AskUserQuestion"
 ```
 
+`{profile}` and `{config_dir}` are expanded for each profile. Escape literal
+braces as `{{` and `}}`: `echo ${{HOME}}` deploys as `echo ${HOME}`, and
+`awk "{{print $1}}"` deploys as `awk "{print $1}"`. Commands with no braces need
+no changes. Invalid placeholders make `lh deploy` exit with a diagnostic naming
+the command and field.
+
 `lh deploy` preserves hook entries it cannot prove are its own, on every event —
 including events the harness has no concept of — and reports each one. An
 equivalent richer native group satisfies an `external` declaration without

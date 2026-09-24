@@ -9,6 +9,7 @@ from click.testing import CliRunner
 from lazy_harness.cli.main import cli
 from lazy_harness.core.config import (
     Config,
+    ExternalHookConfig,
     HarnessConfig,
     HookEventConfig,
     ProfileEntry,
@@ -54,6 +55,33 @@ def test_deploy_creates_profile_symlinks(home_dir: Path) -> None:
     claude_md = target / "CLAUDE.md"
     assert claude_md.exists()
     assert claude_md.is_symlink()
+
+
+def test_deploy_reports_malformed_external_hook_without_traceback(home_dir: Path) -> None:
+    config_path = _setup_with_profile_content(home_dir)
+    cfg = Config(
+        harness=HarnessConfig(version="1"),
+        profiles=ProfilesConfig(
+            default="personal",
+            items={
+                "personal": ProfileEntry(config_dir=str(home_dir / ".claude-personal"), roots=["~"])
+            },
+        ),
+        hooks={
+            "session_start": HookEventConfig(
+                external=[ExternalHookConfig(command="notify {profile!z}")]
+            )
+        },
+    )
+    save_config(cfg, config_path)
+
+    result = CliRunner().invoke(cli, ["deploy"])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "notify {profile!z}" in result.output
+    assert "{profile!z}" in result.output
+    assert "Traceback" not in result.output
 
 
 def test_deploy_idempotent(home_dir: Path) -> None:
