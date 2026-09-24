@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
+from contextlib import contextmanager
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from lazy_harness.core.proposals import parse_proposals
@@ -328,6 +331,62 @@ def _write_proposals(memory_dir: Path, text: str = PROPOSALS_TEXT) -> Path:
     path = memory_dir / "claude-md.proposal.md"
     path.write_text(text)
     return path
+
+
+@pytest.mark.parametrize("command", ["accept", "reject", "apply"])
+def test_proposal_mutations_hold_memory_lock_across_read_and_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+    from lazy_harness.cli import memory_cmd
+    from lazy_harness.core.memory_store import memory_dir_lock
+
+    memory_dir = tmp_path / "memory"
+    _write_proposals(memory_dir)
+    active = False
+    observed: list[tuple[str, bool]] = []
+    acquired: list[Path] = []
+
+    @contextmanager
+    def observed_lock(path: Path):
+        nonlocal active
+        acquired.append(path)
+        with memory_dir_lock(path):
+            active = True
+            try:
+                yield
+            finally:
+                active = False
+
+    original_load = memory_cmd._load_pending
+    original_write = memory_cmd._atomic_write
+
+    def load_pending(path):
+        observed.append(("read", active))
+        return original_load(path)
+
+    def atomic_write(path, content):
+        observed.append(("write", active))
+        return original_write(path, content)
+
+    monkeypatch.setattr(memory_cmd, "memory_dir_lock", observed_lock, raising=False)
+    monkeypatch.setattr(memory_cmd, "_load_pending", load_pending)
+    monkeypatch.setattr(memory_cmd, "_atomic_write", atomic_write)
+
+    args = ["proposals", command]
+    if command == "apply":
+        verdicts = tmp_path / "verdicts.json"
+        verdicts.write_text(json.dumps([{"index": 1, "verdict": "accept"}]))
+        args.extend(["--verdicts", str(verdicts)])
+    else:
+        args.append("1")
+        if command == "reject":
+            args.extend(["--reason", "duplicate"])
+    args.extend(["--memory-dir", str(memory_dir)])
+
+    result = CliRunner().invoke(memory_cmd.memory, args)
+    assert result.exit_code == 0, result.output
+    assert acquired == [memory_dir]
+    assert observed == [("read", True), ("write", True), ("write", True)]
 
 
 def test_parse_proposals_extracts_rules_with_timestamps() -> None:
