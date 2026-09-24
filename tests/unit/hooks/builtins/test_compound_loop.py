@@ -180,7 +180,14 @@ def test_memory_dir_points_at_the_main_repo_when_running_in_a_worktree(
 
     fake_create_task = MagicMock(return_value=Path("task-1.task"))
     monkeypatch.setattr(knowledge, "create_task", fake_create_task)
-    monkeypatch.setattr(mod.subprocess, "Popen", MagicMock())
+    real_popen = sp.Popen
+
+    def spawn(command, **kwargs):  # noqa: ANN001, ANN003
+        if command[0] == "git":
+            return real_popen(command, **kwargs)
+        return MagicMock()
+
+    monkeypatch.setattr(mod.subprocess, "Popen", spawn)
 
     mod.main(_event(cwd=worktree, transcript=transcript))
 

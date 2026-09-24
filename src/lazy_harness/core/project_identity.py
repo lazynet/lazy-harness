@@ -10,9 +10,8 @@ The key here is the repository's own identity: its normalised remote. A
 checkout with no remote has nothing to be shared against, and says so with a
 `local/` prefix rather than pretending.
 
-Nothing in this module spawns a subprocess. It is called from hooks on the
-Stop path, where the surrounding code already reads `.git` directly for the
-same reason.
+Git is called only after a `.git` marker is found. Direct marker reads remain
+the fallback for incomplete checkouts and missing Git binaries.
 """
 
 from __future__ import annotations
@@ -20,6 +19,7 @@ from __future__ import annotations
 import configparser
 import ipaddress
 import re
+import subprocess
 from pathlib import Path
 
 LOCAL_PREFIX = "local"
@@ -74,22 +74,42 @@ def _common_git_dir(git_dir: Path) -> Path:
 def main_repo_root(cwd: Path) -> Path | None:
     """Working tree root for `cwd`, or None outside a repository.
 
+    The walk stops before HOME: its dotfiles repository does not own every
+    directory below it that lacks a closer `.git`.
+
     A linked worktree's `.git` is a file pointing at
-    `<repo>/.git/worktrees/<name>`, so the main checkout is recoverable
-    without asking git — memory written from a worktree then lands under the
-    repository that outlives it.
+    `<repo>/.git/worktrees/<name>`. Git's common directory identifies the
+    main checkout that outlives the worktree.
 
     A checkout made with `--separate-git-dir` also has a `.git` file, but it
     names a directory under no `.git/` at all and nothing on disk leads back
     from there to a checkout. That checkout is its own root; the shared
     identity is still reached, through the git directory rather than the path.
     """
+    home = Path.home().resolve()
     for directory in (cwd, *cwd.parents):
+        if directory.resolve() == home:
+            break
         if not (directory / ".git").exists():
             continue
         git_dir = _git_dir(directory)
         if git_dir is None:
             return None
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                cwd=directory,
+                capture_output=True,
+                text=True,
+                timeout=2,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            result = None
+        if result is not None and result.returncode == 0:
+            common_git = Path(result.stdout.strip())
+            if common_git.name == ".git":
+                return common_git.parent
         # `<repo>/.git/worktrees/<name>` -> `<repo>`
         for parent in git_dir.parents:
             if parent.name == ".git":

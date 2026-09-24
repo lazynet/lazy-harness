@@ -396,6 +396,80 @@ def test_the_two_project_key_resolvers_agree_on_the_repo_root_for_a_worktree(
     assert Path(shared_project_key(worktree)) == main_repo_root(worktree).resolve()
 
 
+def test_project_identity_stops_at_home_with_git_repo_and_worktree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+
+    from lazy_harness.core.project_identity import main_repo_root
+    from lazy_harness.core.project_identity import project_key as identity_project_key
+    from lazy_harness.hooks.builtins._shared import project_key as shared_project_key
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    base = ["git", "-c", "user.email=t@t", "-c", "user.name=t"]
+    subprocess.run([*base, "init", "-q"], cwd=home, check=True)
+    subprocess.run(
+        [*base, "remote", "add", "origin", "https://github.com/example/home.git"],
+        cwd=home,
+        check=True,
+    )
+    plain = home / "plain"
+    plain.mkdir()
+    repo, worktree = _init_repo_with_worktree(home)
+    subprocess.run(
+        [*base, "remote", "add", "origin", "https://github.com/example/myrepo.git"],
+        cwd=repo,
+        check=True,
+    )
+
+    for directory, root, identity in (
+        (plain, None, "local/plain"),
+        (repo, repo, "github.com/example/myrepo"),
+        (worktree, repo, "github.com/example/myrepo"),
+        (home, None, "local/home"),
+    ):
+        assert main_repo_root(directory) == root
+        assert identity_project_key(directory) == identity
+        assert shared_project_key(directory) == str((root or directory).resolve())
+
+    for directory in (repo, worktree):
+        common_dir = subprocess.run(
+            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            cwd=directory,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        assert Path(common_dir).parent == repo
+
+
+def test_project_identity_uses_git_common_dir_for_a_real_worktree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+
+    from lazy_harness.core.project_identity import main_repo_root
+
+    repo, worktree = _init_repo_with_worktree(tmp_path)
+    real_run = subprocess.run
+    commands: list[list[str]] = []
+
+    def record_run(command: list[str], **kwargs):
+        commands.append(command)
+        return real_run(command, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", record_run)
+
+    assert main_repo_root(repo) == repo
+    assert main_repo_root(worktree) == repo
+    assert commands == [
+        ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+        ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+    ]
+
+
 def _write_profiles_config(tmp_path: Path, **profiles: Path) -> Path:
     """Config declaring one `[profiles.<name>]` per keyword argument."""
     entries = "\n".join(

@@ -227,9 +227,8 @@ def test_an_unreadable_git_config_falls_back_to_local(tmp_path: Path) -> None:
     assert project_key(root).startswith("local/")
 
 
-def test_the_key_does_not_shell_out(tmp_path: Path, monkeypatch) -> None:
-    """`project_key` runs inside hooks on the Stop path, where the existing
-    code deliberately reads `.git` rather than spawning git."""
+def test_the_key_does_not_shell_out_outside_a_repo(tmp_path: Path, monkeypatch) -> None:
+    """A directory with no `.git` should use its local fallback immediately."""
     import subprocess
 
     from lazy_harness.core.project_identity import project_key
@@ -240,7 +239,7 @@ def test_the_key_does_not_shell_out(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(subprocess, "run", forbidden)
     monkeypatch.setattr(subprocess, "check_output", forbidden)
 
-    assert project_key(_repo(tmp_path, "git@github.com:lazynet/x.git"))
+    assert project_key(tmp_path / "plain") == "local/plain"
 
 
 def _ssh_config(tmp_path: Path, text: str) -> Path:
