@@ -219,10 +219,12 @@ The outbox solves (3) with a **claim-with-lease** protocol: when a worker drains
 
 Two triggers fire `drain_http_remote`:
 
-1. **Opportunistic.** Every `lh metrics ingest` drains after it ingests, in the same process. This means the cron-driven ingest cadence is also the drain cadence, with no extra wiring.
+1. **Opportunistic.** Every normal `lh metrics ingest` drains after it ingests, in the same process. This means the cron-driven ingest cadence is also the drain cadence, with no extra wiring. `--dry-run` parses into an in-memory database without writing to the configured database, enqueuing events, or contacting remote sinks.
 2. **Explicit.** `lh metrics drain` runs only the drain phase. Useful for catching up after a backend outage without re-running the full ingest.
 
 The drainer iterates the claimed batch, POSTs each event, and writes back per-row state:
+
+If an ingest drain raises an exception or reports failed deliveries, the command warns on stderr and keeps its usual exit code. The outbox retains failed rows for retry.
 
 | Outcome | Action |
 |---|---|

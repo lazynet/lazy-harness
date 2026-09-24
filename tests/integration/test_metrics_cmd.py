@@ -4,18 +4,24 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import Mock
 
+import pytest
 from click.testing import CliRunner
 
 from lazy_harness.cli.main import cli
 from lazy_harness.core.config import (
     Config,
     HarnessConfig,
+    MetricsConfig,
     MonitoringConfig,
     ProfileEntry,
     ProfilesConfig,
+    SinkDefinition,
+    load_config,
     save_config,
 )
+from lazy_harness.monitoring.sinks.http_remote import HttpRemoteSink
 
 
 def _write_session(profile_dir: Path, project_slug: str, uuid: str) -> None:
@@ -60,6 +66,16 @@ def _setup(home_dir: Path) -> Path:
     return db_path
 
 
+def _enable_remote_sink(home_dir: Path) -> None:
+    config_path = home_dir / ".config" / "lazy-harness" / "config.toml"
+    cfg = load_config(config_path)
+    cfg.metrics = MetricsConfig(
+        sinks=["sqlite_local", "http_remote"],
+        sink_configs={"http_remote": SinkDefinition(options={"url": "https://example.invalid/"})},
+    )
+    save_config(cfg, config_path)
+
+
 def test_metrics_ingest_populates_db(home_dir: Path) -> None:
     db_path = _setup(home_dir)
     _write_session(
@@ -98,6 +114,67 @@ def test_metrics_ingest_dry_run_writes_nothing(home_dir: Path) -> None:
     rows = db.query_stats(period="all")
     db.close()
     assert rows == []
+
+
+def test_metrics_ingest_dry_run_never_uses_remote_sink(
+    home_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _setup(home_dir)
+    _enable_remote_sink(home_dir)
+    _write_session(
+        home_dir / ".claude-lazy",
+        "-tmp-proj",
+        "33333333-3333-3333-3333-333333333333",
+    )
+    post = Mock(return_value=Mock(status_code=200))
+    original_write = HttpRemoteSink.write
+    writes: list[object] = []
+
+    def track_write(sink: HttpRemoteSink, event: object) -> object:
+        writes.append(event)
+        return original_write(sink, event)
+
+    monkeypatch.setattr("httpx.Client.post", post)
+    monkeypatch.setattr(HttpRemoteSink, "write", track_write)
+
+    result = CliRunner().invoke(cli, ["metrics", "ingest", "--dry-run"])
+
+    assert result.exit_code == 0, result.output
+    assert writes == []
+    post.assert_not_called()
+
+
+def test_metrics_ingest_warns_when_remote_drain_raises(
+    home_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _setup(home_dir)
+    _enable_remote_sink(home_dir)
+    monkeypatch.setattr(HttpRemoteSink, "drain", Mock(side_effect=RuntimeError("collector failed")))
+
+    result = CliRunner().invoke(cli, ["metrics", "ingest"])
+
+    assert result.exit_code == 0, result.output
+    assert "http_remote" in result.stderr
+    assert "collector failed" in result.stderr
+
+
+def test_metrics_ingest_warns_when_remote_delivery_fails(
+    home_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _setup(home_dir)
+    _enable_remote_sink(home_dir)
+    _write_session(
+        home_dir / ".claude-lazy",
+        "-tmp-proj",
+        "44444444-4444-4444-4444-444444444444",
+    )
+    monkeypatch.setattr("httpx.Client.post", Mock(return_value=Mock(status_code=503)))
+
+    result = CliRunner().invoke(cli, ["metrics", "ingest"])
+
+    assert result.exit_code == 0, result.output
+    assert "http_remote" in result.stderr
+    assert "1 delivery failure" in result.stderr
 
 
 # --- backfill-host ----------------------------------------------------------
