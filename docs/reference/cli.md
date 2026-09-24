@@ -330,7 +330,7 @@ code when the output cannot be parsed — so it carries `error: null`.
 
 Invokes a single built-in hook by name. This is what `settings.json` entries actually call — `lh deploy` writes `lh hook <name> --profile <profile>`, and the command reads the agent's payload on stdin, runs the builtin, and writes the agent's own output format back out.
 
-`--profile` names the profile the hook runs under, which decides its memory scope and its metrics label. It is optional: without it the profile is resolved from the agent's config-dir variable, which is how entries written before the flag existed keep working.
+`--profile` names the profile the hook runs under, which decides its memory scope and its metrics label. It is optional: without it the profile is resolved from the agent's config-dir variable, which is how entries written before the flag existed keep working. A profile name no config declares — a rename or a redeploy the settings file has not caught up with — falls back to a declared profile running the same agent as the caller, with a warning on stderr, rather than refusing every tool call until the session restarts. The caller is read off the payload — Claude Code sends `prompt_id`, Codex sends `turn_id` — and the fallback is the configured default when it runs that agent, otherwise that agent's only declared profile. It never falls back across agents, because the refusal would then arrive in a format the caller does not enforce: when the caller cannot be identified, or no single profile of its agent exists, the hook still refuses.
 
 You should rarely run this by hand. It is documented so the entries in `profiles/<name>/settings.json` make sense.
 
