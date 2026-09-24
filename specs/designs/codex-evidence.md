@@ -1255,6 +1255,144 @@ hooks sin la aprobación manual en la TUI, y por lo tanto es lo primero que
 alguien va a querer usar para automatizar el gate — decidirlo pide una medición
 y una entrada de backlog, no una inferencia desde el `--help`.
 
+## 8. Exit 2 as a refusal channel
+
+Measured 2026-09-24 12:43 (-03) against `codex-cli 0.155.1`, model `gpt-6-sol`,
+from an agent pane, with `CODEX_HOME=~/.codex-lazy` — the real profile and its
+own `auth.json`, nothing copied out of it. The question: #460 made the
+unknown-`--profile` fallback refuse a Codex caller that has no Codex profile to
+fall back to, and that refusal is the runner's blocking-failure row — exit 2,
+nothing on stdout, the reason on stderr. §3 had only ever measured the JSON
+`deny` envelope on exit 0; Codex's exit-code path had never been run, so the
+refusal could have been failing open.
+
+**Spec.** Codex's hooks are Claude-compatible, and Claude Code documents exit
+2 as a blocking error whose stderr is fed back as the reason. Nothing in this
+repository had observed Codex doing the same; `CodexAdapter.format_hook_output`
+and `_fallback_profile` both said so in their docstrings.
+
+**Fixture.** Three `codex exec` turns, one per variant, each in a fresh work
+dir, each told to run exactly `touch marker.txt`. The probe hook is injected
+with `-c hooks.PreToolUse=[...]` under `--dangerously-bypass-hook-trust`, so the
+profile's own `hooks.json` and trust store are not edited; its deployed groups
+still ran alongside and allow a `touch`. Every probe hook writes the payload it
+received and its own exit code before answering.
+
+* `control` — exits 0, nothing on stdout.
+* `raw-exit2` — a bare script: reason on stderr, exit 2.
+* `lh-refuse` — the installed `lh` 0.79.1 (which carries #460):
+  `lh hook pre-tool-use-security --profile no-such-profile`, under an
+  `LH_CONFIG_DIR` declaring one Claude Code profile and no Codex profile, so
+  `_fallback_profile` refuses. Dry-run first with a hand-built Codex payload
+  (`turn_id`, no `prompt_id`): exit 2, empty stdout, stderr `pre-tool-use-security:
+  unknown profile 'no-such-profile'; declared: ['claude-probe']; no default
+  profile to fall back to for a codex caller (0 declared codex profiles: [])`.
+
+```bash
+#!/usr/bin/env bash
+# Probe: does Codex block a PreToolUse tool call when the hook exits 2 with an
+# empty stdout (Claude Code's fail-closed channel)?
+# Variants, one codex exec turn each, in a fresh WORK dir:
+#   control   - hook exits 0, no stdout            -> marker must be created
+#   raw-exit2 - hook exits 2, reason on stderr     -> ?
+#   lh-refuse - real `lh hook pre-tool-use-security --profile no-such-profile`
+#               under an LH_CONFIG_DIR that declares no codex profile, so
+#               _fallback_profile refuses (exit 2)  -> ?
+set -euo pipefail
+OUT="${1:?out dir}"
+mkdir -p "$OUT"
+LHCFG="$OUT/lh-config"
+mkdir -p "$LHCFG"
+cat > "$LHCFG/config.toml" <<'TOML'
+[harness]
+version = "1"
+
+[profiles]
+default = "claude-probe"
+
+[profiles.claude-probe]
+identity = "probe"
+config_dir = "~/.claude-probe-nonexistent"
+TOML
+
+mk_hook() {  # $1 label, $2 body
+  local label="$1" dir="$OUT/$1"
+  mkdir -p "$dir"
+  cat > "$dir/hook.sh" <<EOF
+#!/usr/bin/env bash
+cat > "$dir/stdin.json"
+$2
+EOF
+  chmod +x "$dir/hook.sh"
+}
+mk_hook control   'echo 0 > "'"$OUT"'/control/exit"; exit 0'
+mk_hook raw-exit2 'echo "codex-exit2 probe: raw refusal via exit 2" >&2; echo 2 > "'"$OUT"'/raw-exit2/exit"; exit 2'
+mk_hook lh-refuse 'set +e
+LH_CONFIG_DIR="'"$LHCFG"'" lh hook pre-tool-use-security --profile no-such-profile < "'"$OUT"'/lh-refuse/stdin.json" > "'"$OUT"'/lh-refuse/stdout" 2> "'"$OUT"'/lh-refuse/stderr"
+rc=$?
+echo $rc > "'"$OUT"'/lh-refuse/exit"
+cat "'"$OUT"'/lh-refuse/stdout"; cat "'"$OUT"'/lh-refuse/stderr" >&2
+exit $rc'
+
+for label in control raw-exit2 lh-refuse; do
+  WORK="$OUT/$label/work"
+  mkdir -p "$WORK"
+  hook="$OUT/$label/hook.sh"
+  set +e
+  codex exec \
+    --dangerously-bypass-hook-trust \
+    --sandbox workspace-write \
+    --skip-git-repo-check \
+    -C "$WORK" \
+    -c "hooks.PreToolUse=[{matcher=\"Bash|Read|Edit|Write|NotebookEdit\",hooks=[{type=\"command\",command=\"$hook\"}]}]" \
+    --json \
+    "Run exactly this one shell command and nothing else: touch marker.txt" \
+    > "$OUT/$label/stream.jsonl" 2> "$OUT/$label/stream.stderr" < /dev/null
+  echo "$?" > "$OUT/$label/codex-exit"
+  set -e
+  if [ -e "$WORK/marker.txt" ]; then m=present; else m=absent; fi
+  echo "$label: codex-exit=$(cat "$OUT/$label/codex-exit") hook-exit=$(cat "$OUT/$label/exit" 2>/dev/null || echo never-ran) marker=$m"
+done
+```
+
+Invoked as `CODEX_HOME=$HOME/.codex-lazy ./codex-exit2-probe.sh "$PWD/run1"`.
+
+**Observed.**
+
+| Variant | hook exit | hook stdout | `marker.txt` | `codex exec` exit | router line on stderr |
+|---|---|---|---|---|---|
+| `control` | 0 | empty | **created** | 0 | — (`command_execution` item, `exit_code: 0`) |
+| `raw-exit2` | 2 | empty | **absent** | 0 | `ERROR codex_core::tools::router: error=Command blocked by PreToolUse hook: codex-exit2 probe: raw refusal via exit 2. Command: touch marker.txt` |
+| `lh-refuse` | 2 | empty (0 bytes) | **absent** | 0 | `ERROR codex_core::tools::router: error=Command blocked by PreToolUse hook: pre-tool-use-security: unknown profile 'no-such-profile'; declared: ['claude-probe']; no default profile to fall back to for a codex caller (0 declared codex profiles: []). Command: touch marker.txt` |
+
+Every captured payload was `hook_event_name: PreToolUse`, `tool_name: Bash`,
+`tool_input.command: "touch marker.txt"`, a `turn_id`, `model: gpt-6-sol`,
+`permission_mode: bypassPermissions`, and no `prompt_id` — the marker
+`_caller_agent` reads still holds on 0.155.1. In both blocked turns the `--json`
+stream carries no `command_execution` item, only the model's prose about the
+block (`agent_message`), the same shape §6.4 recorded for an envelope deny. The
+two `error` items every turn opens with are Codex's own warning about
+`--dangerously-bypass-hook-trust`, not hook output.
+
+**Reading.** Codex honours exit 2 as a refusal, and — like Claude Code — takes
+the hook's stderr as the reason it reports. The fallback's refusal fails closed
+under Codex. The spec and the observation agree; what changes is this
+repository's own prose, which said the channel was unobserved and, in
+`_fallback_profile`, that a cross-agent exit 2 made the hook fail open.
+
+**Not measured.** Exit 2 *with* something on stdout (the runner never emits
+that), exit codes other than 0 and 2, `apply_patch` rather than `Bash` (§3 shows
+the envelope deny treating both paths alike, but this run did not repeat that
+for exit 2), and events other than `PreToolUse`. The adapter keeps refusing with
+the envelope on exit 0: it is the channel measured on both edit paths, and
+nothing here is a reason to switch.
+
+**Pinned by** `tests/unit/cli/test_hook_invoke.py::test_a_codex_caller_with_no_codex_profile_is_refused_on_exit_2`,
+which drives the same `lh hook` invocation with the same payload shape and
+asserts exit 2, empty stdout and the reason on stderr. Removing the final
+`raise` in `_fallback_profile`, or turning the runner's blocking-failure exit 2
+into 0, each makes it fail.
+
 ## Pendiente
 
 Cerrado 2026-09-16 contra el binario real (`codex-cli 0.154.0`, modelo

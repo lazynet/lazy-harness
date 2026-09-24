@@ -436,7 +436,7 @@ def test_a_profile_declaring_an_agent_gets_that_agent_s_wire_format(
 
     result = runner.run_hook("guard", profile=codex_profile, stdin_text=json.dumps(PRE_TOOL_USE))
 
-    assert result.exit_code == 0, "exit 2 is Claude Code's refusal channel, not Codex's"
+    assert result.exit_code == 0, "a Codex profile's deny is the envelope on exit 0"
     body = json.loads(result.stdout or "{}")
     assert body["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert "systemMessage" not in body
@@ -474,15 +474,14 @@ def test_a_codex_caller_on_an_unknown_profile_is_blocked_in_codex_s_format(
     """The fallback must never change the wire format the caller speaks.
 
     The default here is a Claude Code profile. Falling back to it answered a
-    Codex session with exit 2 and an empty stdout -- a refusal channel Codex
-    was never observed honouring, so the security hook failed open. The one
-    declared Codex profile is the only fallback that keeps Codex's envelope.
+    Codex session in Claude Code's format and under Claude Code's profile. The
+    one declared Codex profile is the only fallback that keeps Codex's envelope.
     """
     _deny(monkeypatch)
 
     result = runner.run_hook("guard", profile="ghost", stdin_text=json.dumps(CODEX_PRE_TOOL_USE))
 
-    assert result.exit_code == 0, "exit 2 is Claude Code's refusal channel, not Codex's"
+    assert result.exit_code == 0, "a Codex profile's deny is the envelope on exit 0"
     body = json.loads(result.stdout or "{}")
     assert body["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert "ghost" in result.stderr

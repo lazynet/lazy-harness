@@ -234,8 +234,8 @@ def test_the_envelope_is_nested_and_never_flattened() -> None:
 
 
 def test_exit_two_is_never_used_to_refuse() -> None:
-    """Claude Code refuses with stderr + exit 2. Codex's exit-2 channel was never
-    exercised, so the adapter refuses the way it was observed refusing."""
+    """Codex honours exit 2 too (`codex-evidence.md` §8, `Bash` only), but a
+    builtin's deny goes out as the envelope measured on both edit paths."""
     adapter = _adapter()
     event = adapter.parse_hook_input("pre_tool_use", _PRE_TOOL_USE, profile="probe")
     out = adapter.format_hook_output(event, HookDecision(verdict=Verdict.DENY, reason="r"))
