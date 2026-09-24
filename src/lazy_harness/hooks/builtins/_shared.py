@@ -14,6 +14,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from lazy_harness.core.project_identity import main_repo_root as _main_repo_root
+
 if TYPE_CHECKING:  # pragma: no cover - imported for typing only
     from lazy_harness.agents.base import AgentAdapter, TranscriptReader
     from lazy_harness.core.config import Config
@@ -124,43 +126,14 @@ def resolve_project_dir(
     return sessions_root / encoded
 
 
-def _main_repo_root(cwd: Path) -> Path | None:
-    """Main working tree for `cwd`, or None outside a repo.
-
-    Read from `.git` rather than shelling out to git: a linked worktree's
-    `.git` is a file pointing at `<repo>/.git/worktrees/<name>`, so the main
-    checkout is recoverable without a subprocess on the Stop path.
-    """
-    for directory in (cwd, *cwd.parents):
-        dot_git = directory / ".git"
-        if dot_git.is_dir():
-            return directory
-        if not dot_git.is_file():
-            continue
-        try:
-            pointer = dot_git.read_text(encoding="utf-8").strip()
-        except OSError:
-            return None
-        if not pointer.startswith("gitdir:"):
-            return None
-        gitdir = Path(pointer.split(":", 1)[1].strip())
-        if not gitdir.is_absolute():
-            gitdir = (directory / gitdir).resolve()
-        for parent in gitdir.parents:
-            if parent.name == ".git":
-                return parent.parent
-        return directory
-    return None
-
-
 def project_key(cwd: Path) -> str:
     """Canonical project identity for `cwd`: the repo that owns it.
 
     Artifact subdirectories and linked worktrees both collapse onto the main
     checkout, so events raised from `<repo>/graphify-out` or
     `<repo>/.worktrees/<name>` group under `<repo>` instead of fragmenting
-    into keys nothing joins back together. Outside a repo the cwd stands in
-    for itself.
+    into keys nothing joins back together. The shared root resolver stops at
+    HOME, and outside a repo the cwd stands in for itself.
 
     Symlinks are resolved because only one of those two branches would do it
     otherwise: a worktree is found through the absolute gitdir git reports,
