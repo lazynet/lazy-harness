@@ -7,7 +7,9 @@ deny probe used a malformed envelope and produced a misleading reading (a
 native edit path that looked unhooked); the second round, probes 4b and 4c,
 used a validated envelope and corrected it — see §3 and the F8 section for what
 changed and why. §4 (state keying) was not exercised by either round and stays
-as originally scoped.
+as originally scoped. §8 (exit 2 as a refusal channel) was run 2026-09-24
+against `codex-cli 0.155.1`, closed for `Bash` on `PreToolUse` with empty
+stdout; `apply_patch` and other exit codes/events not run — see §Pendiente.
 **Binary:** `codex-cli 0.154.0` (local: confirmed via `codex --version`, 2026-09-16).
 **Scope:** step 9's `CodexAdapter` implements `system_docs()` on its own lane. This
 document owns one thing only, per ADR-041's evidence standard — *"a name in a
@@ -1423,6 +1425,11 @@ probes tocó trust ni matchers, y queda con el alcance original documentado ahí
 `allow`/`ask` sobre un edit tampoco se corrió — de menor prioridad ahora que el
 contrato de `deny` quedó confirmado en los dos paths, y sin usarse hoy en el
 harness para Codex.
+
+**§8 cerrada 2026-09-24** contra `codex-cli 0.155.1`: exit 2 con stderr bloquea
+`PreToolUse` sobre `Bash` con stdout vacío. Sin medir: exit 2 sobre
+`apply_patch`, exit 2 con stdout no vacío, exit codes distintos de 0/2, y
+eventos distintos de `PreToolUse` (`specs/backlog.md` §Open Prioridad BAJA).
 
 §4 cerró el 2026-09-17 con §4.1/§4.2 y sumó la medición cross-release de §4.3
 el 2026-09-18.

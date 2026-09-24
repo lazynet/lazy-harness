@@ -66,5 +66,6 @@ rows were ~15 minutes apart), so it does not absorb a re-upload.
   later `Stop` events. The existing duplicate rows are left in place.
 
 `lh doctor` reports lag of at least 64 KiB as `warn` with `catching up` only
-when the latest run reached the cap and the cursor file advanced on disk. A
-stalled cursor remains `fail` even if `engram save` returned success.
+when the latest run reached the cap, the cursor file advanced on disk, and no
+save failed in that run. A stalled cursor remains `fail` even if `engram save`
+returned success.

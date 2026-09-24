@@ -38,7 +38,7 @@ Concretely:
 
 ## Evolution — 2026-08-18: the pin lives in the module, and the MCP file moved
 
-- **The pin is `memory/engram.py:PINNED_VERSION`, currently `1.20.0`, not
+- **The pin is `memory/engram.py:PINNED_VERSION`, then `1.20.0`, not
   `1.15.4`.** Since #192 `EngramConfig.version` imports the module constant
   instead of restating it, so the two cannot drift; the Decision's `1.15.4` is
   the value at the time of writing.

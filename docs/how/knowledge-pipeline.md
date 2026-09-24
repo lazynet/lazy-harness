@@ -313,7 +313,7 @@ This produces three things on disk besides the Engram DB itself:
 
 - `engram_cursor.json` — offsets per kind, atomically updated, in the location above.
 - `~/.claude/logs/engram_persist.log` — append-only error log (subprocess failures, missing binary).
-- `~/.claude/logs/engram_persist_metrics.jsonl` — one record per run (run summary) plus one per slow `engram save` (≥ 500 ms). Run records include whether the save cap was reached and whether the cursor file advanced. `lh doctor` reads these with age, failure rate, and cursor lag; a capped run with persisted progress reports `catching up` instead of failing for large lag.
+- `~/.claude/logs/engram_persist_metrics.jsonl` — one record per run (run summary) plus one per slow `engram save` (≥ 500 ms). Run records include whether the save cap was reached and whether the cursor file advanced. `lh doctor` reads these with age, failure rate, and cursor lag; a capped run with persisted progress and no failed save reports `catching up` instead of failing for large lag.
 
 If `engram` is not on `PATH`, the loop logs a no-op and exits cleanly. Like every other external integration in the framework, this layer is opt-in: install `engram`, declare `[memory.engram].enabled = true`, the rest of the pipeline keeps working unchanged.
 

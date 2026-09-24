@@ -1,6 +1,7 @@
 # Engram 1.20.0 → 2.1.0 migration
 
-Status: **proposed** (phase 1, research and plan only — nothing upgraded).
+Status: **in progress** — harness (#464) and the CT `agents` done; the Mac is
+pending (`specs/backlog.md` §Open Prioridad ALTA).
 Date: 2026-09-24. Scope: the Mac (Homebrew) and the homelab CT `agents`
 (lazy-ansible `agent_station` role).
 
@@ -350,15 +351,16 @@ CT failing any criterion blocks the Mac step.
 
 ## 6. Decisions for the user
 
-1. **Order** — CT canary then Mac (recommended), or Mac first because that is
-   where the menu bug lives.
+1. **Order** — **Resolved: CT canary then Mac.** The CT `agents` migrated
+   first (`specs/backlog.md` §Done); the Mac is the remaining §Open Prioridad
+   ALTA item.
 2. **Mac's 423 blocked `sync_mutations`** (titleless observation upserts in
-   the Cloud queue; Cloud unused) — leave them, or run 2.x `engram doctor`
-   repair / `engram cloud upgrade doctor` after the upgrade. Recommend leave:
-   nothing consumes the queue.
-3. **Plugin source** — keep the marketplace on the default branch (the source
-   of today's skew), or pin it to the `v2.1.0` tag. Pinning needs a check that
-   Claude Code's marketplace `github` source honours a `ref`; not verified here.
-4. **CT MCP** — accept that the 2.x plugin will register engram MCP in both CT
-   Claude profiles on first start (new capability there), or suppress it.
-5. **Target** — 2.1.0 (recommended: stable, SQLite WAL fix) vs 2.0.0.
+   the Cloud queue; Cloud unused) — **Resolved: leave them.** Nothing
+   consumes the queue.
+3. **Plugin source** — **Resolved: pin it to the `v2.1.0` tag.** Claude
+   Code's marketplace `github` source does honour `owner/repo@ref`; verified
+   working on the CT.
+4. **CT MCP** — **Resolved: accept it.** The 2.x plugin registers engram MCP
+   in both CT Claude profiles on first start.
+5. **Target** — **Resolved: 2.1.0** (stable, SQLite WAL fix), taken over
+   2.0.0.
