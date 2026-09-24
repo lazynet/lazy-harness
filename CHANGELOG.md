@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.80.0](https://github.com/lazynet/lazy-harness/compare/v0.79.1...v0.80.0) (2026-09-24)
+
+
+### Features
+
+* pin engram 2.1.0 and match its MCP entry to the 2.x ownership check ([375fc95](https://github.com/lazynet/lazy-harness/commit/375fc9558001e56f6560bbfc554bb6c768b2a2cf))
+
+
+### Bug Fixes
+
+* resolve media backlog session and memory issues ([#463](https://github.com/lazynet/lazy-harness/issues/463)) ([f1b2dd4](https://github.com/lazynet/lazy-harness/commit/f1b2dd41f8fe87011d2516af36bdc17ac3c7151e))
+
+
+### Documentation
+
+* close the 0.80.0 coherence-audit drift (8 findings) ([#466](https://github.com/lazynet/lazy-harness/issues/466)) ([ccfe3af](https://github.com/lazynet/lazy-harness/commit/ccfe3af1f5e44011abf7e46abe83110de9f6ce7b))
+* close the ALTA and three MEDIA entries after [#462](https://github.com/lazynet/lazy-harness/issues/462)-[#464](https://github.com/lazynet/lazy-harness/issues/464), record the follow-ups ([17a8249](https://github.com/lazynet/lazy-harness/commit/17a8249c41168bab261fc108f5dbe00a8c0dfa72))
+
 ## [0.79.1](https://github.com/lazynet/lazy-harness/compare/v0.79.0...v0.79.1) (2026-09-24)
 
 
