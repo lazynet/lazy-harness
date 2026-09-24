@@ -49,15 +49,16 @@ def test_engram_run_handles_missing_binary() -> None:
 def test_engram_mcp_server_config_shape() -> None:
     from lazy_harness.memory.engram import mcp_server_config
 
-    entry = mcp_server_config()
-    assert entry["command"] == "engram"
-    assert entry["args"] == ["mcp"]
+    with patch("shutil.which", return_value="/opt/homebrew/bin/engram"):
+        entry = mcp_server_config()
+    assert entry["command"] == "/opt/homebrew/bin/engram"
+    assert entry["args"] == ["mcp", "--tools=agent"]
 
 
 def test_engram_pinned_version_constant() -> None:
     from lazy_harness.memory import engram
 
-    assert engram.PINNED_VERSION == "1.20.0"
+    assert engram.PINNED_VERSION == "2.1.0"
 
 
 def test_engram_check_version_matches_pin() -> None:
@@ -65,11 +66,11 @@ def test_engram_check_version_matches_pin() -> None:
 
     with patch("subprocess.run") as mock_run:
         mock_run.return_value = type(
-            "R", (), {"returncode": 0, "stdout": "engram 1.20.0\n", "stderr": ""}
+            "R", (), {"returncode": 0, "stdout": "engram 2.1.0\n", "stderr": ""}
         )()
         matches, current = check_version()
         assert matches is True
-        assert current == "1.20.0"
+        assert current == "2.1.0"
 
 
 def test_engram_check_version_mismatch() -> None:
