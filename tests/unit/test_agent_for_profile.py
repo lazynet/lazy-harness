@@ -234,7 +234,7 @@ def test_the_deploy_and_the_runner_resolve_one_profile_to_the_same_agent(
     cfg = load_config(cfg_file)
 
     deploy_side = _planner_for(cfg, profile)
-    runner_side, _resolved_profile, _warning = _adapter_for(profile)
+    runner_side, _resolved_profile, _warning = _adapter_for(profile, {})
 
     assert runner_side.name == deploy_side.name
 

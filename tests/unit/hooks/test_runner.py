@@ -27,6 +27,25 @@ PRE_TOOL_USE = {
     "tool_input": {"command": "rm -rf /"},
 }
 
+# The keys that tell the two callers apart, each as measured rather than
+# assumed. Claude Code 2.1.281 sends `prompt_id` on PreToolUse and no
+# `turn_id` or `model` (dump-hook probe, 2026-09-24). Codex 0.154.0 sends
+# `turn_id` and `model` and no `prompt_id` (`specs/designs/codex-evidence.md`
+# §1 and probe 5).
+CLAUDE_PRE_TOOL_USE = {
+    **PRE_TOOL_USE,
+    "permission_mode": "default",
+    "prompt_id": "p1",
+    "tool_use_id": "u1",
+}
+CODEX_PRE_TOOL_USE = {
+    **PRE_TOOL_USE,
+    "permission_mode": "bypassPermissions",
+    "turn_id": "01a0a301-0db8-70a2-89b7-7d55840aeba3",
+    "model": "gpt-6-astra",
+    "tool_use_id": "u1",
+}
+
 
 def register(
     monkeypatch: pytest.MonkeyPatch,
@@ -251,7 +270,7 @@ def test_unknown_profile_falls_back_to_default_for_a_benign_command(
     """
     register(monkeypatch, "guard", lambda event: HookDecision(), blocking=True)
 
-    result = runner.run_hook("guard", profile="ghost", stdin_text=json.dumps(PRE_TOOL_USE))
+    result = runner.run_hook("guard", profile="ghost", stdin_text=json.dumps(CLAUDE_PRE_TOOL_USE))
 
     assert result.exit_code == 0
     assert "ghost" in result.stderr
@@ -269,7 +288,7 @@ def test_unknown_profile_still_blocks_a_dangerous_command(
         blocking=True,
     )
 
-    result = runner.run_hook("guard", profile="ghost", stdin_text=json.dumps(PRE_TOOL_USE))
+    result = runner.run_hook("guard", profile="ghost", stdin_text=json.dumps(CLAUDE_PRE_TOOL_USE))
 
     assert result.exit_code == 2
     assert "blocked" in result.stderr
@@ -282,7 +301,7 @@ def test_unknown_profile_lets_an_informational_hook_through(
 ) -> None:
     register(monkeypatch, "notes", lambda event: HookDecision(), blocking=False)
 
-    result = runner.run_hook("notes", profile="ghost", stdin_text=json.dumps(PRE_TOOL_USE))
+    result = runner.run_hook("notes", profile="ghost", stdin_text=json.dumps(CLAUDE_PRE_TOOL_USE))
 
     assert result.exit_code == 0
     assert "ghost" in result.stderr
@@ -303,7 +322,7 @@ def test_unknown_profile_resolves_the_default_s_adapter(
 
     register(monkeypatch, "spy", main, blocking=False)
 
-    runner.run_hook("spy", profile="ghost", stdin_text=json.dumps(PRE_TOOL_USE))
+    runner.run_hook("spy", profile="ghost", stdin_text=json.dumps(CLAUDE_PRE_TOOL_USE))
 
     assert len(seen) == 1
     assert seen[0].profile == "lazy"
@@ -360,7 +379,7 @@ def test_no_resolvable_default_still_refuses_for_a_blocking_hook(
     configured -- the fallback only helps when that default actually exists."""
     register(monkeypatch, "guard", lambda event: HookDecision(), blocking=True)
 
-    result = runner.run_hook("guard", profile="ghost", stdin_text=json.dumps(PRE_TOOL_USE))
+    result = runner.run_hook("guard", profile="ghost", stdin_text=json.dumps(CLAUDE_PRE_TOOL_USE))
 
     assert result.exit_code == 2
     assert "ghost" in result.stderr
@@ -372,7 +391,7 @@ def test_no_resolvable_default_lets_an_informational_hook_through(
 ) -> None:
     register(monkeypatch, "notes", lambda event: HookDecision(), blocking=False)
 
-    result = runner.run_hook("notes", profile="ghost", stdin_text=json.dumps(PRE_TOOL_USE))
+    result = runner.run_hook("notes", profile="ghost", stdin_text=json.dumps(CLAUDE_PRE_TOOL_USE))
 
     assert result.exit_code == 0
     assert "ghost" in result.stderr
@@ -438,3 +457,147 @@ def test_a_profile_inheriting_the_global_agent_still_gets_it(
 
     assert result.exit_code == 2
     assert result.stderr == "no"
+
+
+def _deny(monkeypatch: pytest.MonkeyPatch) -> None:
+    register(
+        monkeypatch,
+        "guard",
+        lambda event: HookDecision(verdict=Verdict.DENY, reason="blocked"),
+        blocking=True,
+    )
+
+
+def test_a_codex_caller_on_an_unknown_profile_is_blocked_in_codex_s_format(
+    monkeypatch: pytest.MonkeyPatch, codex_profile: str
+) -> None:
+    """The fallback must never change the wire format the caller speaks.
+
+    The default here is a Claude Code profile. Falling back to it answered a
+    Codex session with exit 2 and an empty stdout -- a refusal channel Codex
+    was never observed honouring, so the security hook failed open. The one
+    declared Codex profile is the only fallback that keeps Codex's envelope.
+    """
+    _deny(monkeypatch)
+
+    result = runner.run_hook("guard", profile="ghost", stdin_text=json.dumps(CODEX_PRE_TOOL_USE))
+
+    assert result.exit_code == 0, "exit 2 is Claude Code's refusal channel, not Codex's"
+    body = json.loads(result.stdout or "{}")
+    assert body["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "ghost" in result.stderr
+    assert codex_profile in result.stderr
+
+
+def test_a_codex_caller_runs_under_the_codex_profile_it_fell_back_to(
+    monkeypatch: pytest.MonkeyPatch, codex_profile: str
+) -> None:
+    seen: list[HookEvent] = []
+
+    def main(event: HookEvent) -> HookDecision:
+        seen.append(event)
+        return HookDecision()
+
+    register(monkeypatch, "spy", main, blocking=False)
+
+    runner.run_hook("spy", profile="ghost", stdin_text=json.dumps(CODEX_PRE_TOOL_USE))
+
+    assert [event.profile for event in seen] == [codex_profile]
+
+
+def test_a_claude_caller_still_falls_back_to_a_claude_default(
+    monkeypatch: pytest.MonkeyPatch, codex_profile: str
+) -> None:
+    """The Codex profile in the table must not capture a Claude caller."""
+    _deny(monkeypatch)
+
+    result = runner.run_hook("guard", profile="ghost", stdin_text=json.dumps(CLAUDE_PRE_TOOL_USE))
+
+    assert result.exit_code == 2
+    assert "blocked" in result.stderr
+    assert "'lazy'" in result.stderr
+
+
+def test_a_codex_caller_with_no_codex_profile_refuses(
+    monkeypatch: pytest.MonkeyPatch, configured_profiles: None
+) -> None:
+    """Every declared profile is Claude Code's: nothing left speaks Codex."""
+    register(monkeypatch, "guard", lambda event: HookDecision(), blocking=True)
+
+    result = runner.run_hook("guard", profile="ghost", stdin_text=json.dumps(CODEX_PRE_TOOL_USE))
+
+    assert result.exit_code == 2
+    assert "ghost" in result.stderr
+    assert "codex" in result.stderr
+
+
+@pytest.fixture
+def two_codex_profiles(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        '[harness]\nversion = "1"\n\n[agent]\ntype = "claude-code"\n\n'
+        '[profiles]\ndefault = "lazy"\n\n'
+        f'[profiles.lazy]\nconfig_dir = "{tmp_path / "lazy"}"\nroots = ["~"]\n\n'
+        f'[profiles.cx1]\nconfig_dir = "{tmp_path / "cx1"}"\nroots = ["~"]\nagent = "codex"\n\n'
+        f'[profiles.cx2]\nconfig_dir = "{tmp_path / "cx2"}"\nroots = ["~"]\nagent = "codex"\n'
+    )
+    monkeypatch.setattr("lazy_harness.core.paths.config_file", lambda: cfg)
+
+
+def test_a_codex_caller_with_two_codex_profiles_refuses(
+    monkeypatch: pytest.MonkeyPatch, two_codex_profiles: None
+) -> None:
+    """Picking one of two would pick a memory scope; the brief allows exactly one."""
+    register(monkeypatch, "guard", lambda event: HookDecision(), blocking=True)
+
+    result = runner.run_hook("guard", profile="ghost", stdin_text=json.dumps(CODEX_PRE_TOOL_USE))
+
+    assert result.exit_code == 2
+    assert "cx1" in result.stderr
+    assert "cx2" in result.stderr
+
+
+@pytest.fixture
+def codex_default(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        '[harness]\nversion = "1"\n\n[agent]\ntype = "codex"\n\n'
+        '[profiles]\ndefault = "cx1"\n\n'
+        f'[profiles.cx1]\nconfig_dir = "{tmp_path / "cx1"}"\nroots = ["~"]\n\n'
+        f'[profiles.cx2]\nconfig_dir = "{tmp_path / "cx2"}"\nroots = ["~"]\n'
+    )
+    monkeypatch.setattr("lazy_harness.core.paths.config_file", lambda: cfg)
+
+
+def test_a_codex_caller_prefers_a_codex_default_over_counting(
+    monkeypatch: pytest.MonkeyPatch, codex_default: None
+) -> None:
+    _deny(monkeypatch)
+
+    result = runner.run_hook("guard", profile="ghost", stdin_text=json.dumps(CODEX_PRE_TOOL_USE))
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout or "{}")["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "'cx1'" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param(PRE_TOOL_USE, id="neither-marker"),
+        pytest.param({**CODEX_PRE_TOOL_USE, "prompt_id": "p1"}, id="both-markers"),
+        pytest.param({**CODEX_PRE_TOOL_USE, "turn_id": None}, id="turn-id-null"),
+        pytest.param({**CLAUDE_PRE_TOOL_USE, "prompt_id": 7}, id="prompt-id-int"),
+    ],
+)
+def test_an_unidentifiable_caller_on_an_unknown_profile_refuses(
+    monkeypatch: pytest.MonkeyPatch, configured_profiles: None, payload: dict
+) -> None:
+    """No guessing: a caller the payload does not name keeps the old refusal,
+    even for a benign command and even with a resolvable default."""
+    register(monkeypatch, "guard", lambda event: HookDecision(), blocking=True)
+
+    result = runner.run_hook("guard", profile="ghost", stdin_text=json.dumps(payload))
+
+    assert result.exit_code == 2
+    assert "ghost" in result.stderr

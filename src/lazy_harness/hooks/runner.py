@@ -27,6 +27,7 @@ if TYPE_CHECKING:  # pragma: no cover - imported for typing only
     from collections.abc import Callable
 
     from lazy_harness.agents.base import AgentAdapter, HookDecision, HookEvent
+    from lazy_harness.core.config import Config
 
 
 class RunnerError(Exception):
@@ -89,7 +90,69 @@ def _trace_invocation(name: str, profile: str) -> None:
         pass
 
 
-def _adapter_for(profile: str) -> tuple[AgentAdapter, str, str | None]:
+_CALLER_MARKERS = {"claude-code": "prompt_id", "codex": "turn_id"}
+"""The one payload key each agent sends and the other does not, as measured.
+
+Claude Code 2.1.281 sends `prompt_id` on `PreToolUse` and no `turn_id` or
+`model` (dump-hook probe, 2026-09-24). Codex 0.154.0 sends `turn_id` and
+`model` and no `prompt_id` (`specs/designs/codex-evidence.md` §1, probe 5).
+
+The payload, not the environment: a Codex session started from a Claude Code
+pane inherits `CLAUDECODE` and `CLAUDE_PROJECT_DIR`, and the probe's own hook
+env carried both because it ran nested. Nor the event name: both agents send
+`hook_event_name: PreToolUse`. Only the markers were measured on `PreToolUse`,
+so other events identify no caller, which on an unknown profile is a refusal.
+"""
+
+
+def _caller_agent(payload: dict) -> str | None:
+    """The agent that sent this payload, or `None` when it cannot be told apart.
+
+    Exactly one marker, carrying a non-empty string, names a caller. None, both,
+    or a marker of the wrong type is an unidentified caller -- guessing there is
+    how a fallback hands one agent's refusal to the other.
+    """
+    present = [
+        agent
+        for agent, key in _CALLER_MARKERS.items()
+        if isinstance(payload.get(key), str) and payload[key]
+    ]
+    return present[0] if len(present) == 1 else None
+
+
+def _fallback_profile(cfg: Config, profile: str, caller: str | None) -> str:
+    """The declared profile an unknown `profile` falls back to, or a refusal.
+
+    Profiles are identity x agent (ADR-068), and the adapter the fallback
+    resolves decides the wire format of the refusal. A stale name from a Codex
+    `hooks.json` falling back to a Claude Code default answered Codex with exit
+    2 and an empty stdout -- a channel Codex was never observed honouring -- so
+    a blocking hook failed open. The fallback therefore never crosses agents:
+    the default when it runs the caller's agent, else the caller's only
+    declared profile, else the refusal the runner gave before any fallback.
+    """
+    from lazy_harness.agents.registry import agent_for_profile
+
+    declared = cfg.profiles.items
+    if caller is None:
+        raise RunnerError(
+            f"unknown profile {profile!r}; declared: {sorted(declared)}; "
+            f"cannot tell which agent is calling, so no profile to fall back to"
+        )
+    default_name = cfg.profiles.default
+    if default_name in declared and agent_for_profile(cfg, default_name).name == caller:
+        return default_name
+    same_agent = sorted(name for name in declared if agent_for_profile(cfg, name).name == caller)
+    if len(same_agent) == 1:
+        return same_agent[0]
+    raise RunnerError(
+        f"unknown profile {profile!r}; declared: {sorted(declared)}; "
+        f"no default profile to fall back to for a {caller} caller "
+        f"({len(same_agent)} declared {caller} profiles: {same_agent})"
+    )
+
+
+def _adapter_for(profile: str, payload: dict) -> tuple[AgentAdapter, str, str | None]:
     """Resolve the adapter that owns this profile's wire format.
 
     Resolved through `agent_for_profile()`, which is the same call
@@ -136,25 +199,15 @@ def _adapter_for(profile: str) -> tuple[AgentAdapter, str, str | None]:
     # an empty profile against a populated table would take every hook down
     # with it on exactly the machines that did run `lh init`.
     #
-    # A *named* profile absent from the table falls back to the configured
-    # default profile's policy instead of refusing outright -- that default is
-    # the one importable answer `cfg.profiles.default` already gives every
-    # other caller (`run_cmd.py`, `doctor_cmd.py`, `knowledge_cmd.py`). The
-    # fallback still runs under a real, declared profile, so memory and
-    # metrics land where that profile owns them, not where the typo pointed.
-    # Only when the default itself does not resolve to a declared profile does
-    # this stay a refusal: there is nothing left to fail open onto.
+    # A *named* profile absent from the table falls back to a declared profile
+    # running the calling agent -- `_fallback_profile` says which, and why it
+    # must never be another agent's. The fallback still runs under a real,
+    # declared profile, so memory and metrics land where that profile owns
+    # them, not where the typo pointed.
     if profile and declared and profile not in declared:
-        default_name = cfg.profiles.default
-        if default_name and default_name in declared:
-            warning = (
-                f"unknown profile {profile!r}; falling back to default profile {default_name!r}"
-            )
-            return agent_for_profile(cfg, default_name), default_name, warning
-        raise RunnerError(
-            f"unknown profile {profile!r}; declared: {sorted(declared)}; "
-            f"no default profile to fall back to"
-        )
+        fallback = _fallback_profile(cfg, profile, _caller_agent(payload))
+        warning = f"unknown profile {profile!r}; falling back to profile {fallback!r}"
+        return agent_for_profile(cfg, fallback), fallback, warning
     return agent_for_profile(cfg, profile), profile, None
 
 
@@ -253,8 +306,8 @@ def run_hook(name: str, *, profile: str, stdin_text: str) -> HookOutput:
     _trace_invocation(name, profile)
 
     try:
-        adapter, resolved_profile, warning = _adapter_for(profile)
         payload = _parse_payload(stdin_text)
+        adapter, resolved_profile, warning = _adapter_for(profile, payload)
         event = adapter.parse_hook_input(
             _canonical_event(adapter, payload, spec.event), payload, profile=resolved_profile
         )
