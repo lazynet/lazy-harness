@@ -15,9 +15,33 @@ The agent's project directory is left exactly as it is.
 
 from __future__ import annotations
 
+import fcntl
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from lazy_harness.core.project_identity import LOCAL_PREFIX, project_key
+
+#: Lock file serialising read-modify-replace writes into one memory dir.
+MEMORY_LOCK_FILE = ".memory.lock"
+
+
+@contextmanager
+def memory_dir_lock(memory_dir: Path) -> Iterator[None]:
+    """Exclusive lock on one project memory dir, across processes.
+
+    Each worker locks only its own profile's queue, but workers of different
+    profiles converge on the same project here; a read-modify-replace done
+    outside this lock can overwrite the other's update. Blocking: the critical
+    sections are a read and a rename.
+    """
+    memory_dir.mkdir(parents=True, exist_ok=True)
+    with open(memory_dir / MEMORY_LOCK_FILE, "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
 
 
 def memory_dir_for(

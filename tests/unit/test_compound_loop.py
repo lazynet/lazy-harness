@@ -3315,3 +3315,134 @@ def test_repo_revision_is_unknown_outside_a_repo(tmp_path: Path) -> None:
     from lazy_harness.knowledge.compound_loop import repo_revision
 
     assert repo_revision(tmp_path / "nowhere") == "unknown"
+
+
+# --- Concurrent writers on one project memory dir ---
+#
+# Workers of different profiles drain separate queues but converge on the same
+# project directory of the knowledge store. Each test parks both writers at a
+# barrier placed after their read and before their write, so without a
+# destination lock both read the same document and one update is lost. With the
+# lock the second writer never reaches the barrier while the first holds it;
+# the timeout only releases the first, it decides nothing.
+
+
+def _race(monkeypatch: pytest.MonkeyPatch, target: str, *calls: Any) -> list[BaseException]:
+    import threading
+
+    from lazy_harness.knowledge import compound_loop
+
+    barrier = threading.Barrier(len(calls), timeout=1.0)
+    real = getattr(compound_loop, target)
+
+    def parked(*args: Any, **kwargs: Any) -> Any:
+        try:
+            barrier.wait()
+        except threading.BrokenBarrierError:
+            pass
+        return real(*args, **kwargs)
+
+    errors: list[BaseException] = []
+
+    def run(call: Any) -> None:
+        try:
+            call()
+        except BaseException as exc:  # noqa: BLE001 — surfaced by the assertion
+            errors.append(exc)
+
+    with monkeypatch.context() as m:
+        m.setattr(compound_loop, target, parked)
+        threads = [threading.Thread(target=run, args=(c,)) for c in calls]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    return errors
+
+
+def test_concurrent_proposal_writers_on_one_project_both_land(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    memory = tmp_path / "memory"
+    _queue_with(memory, 1)
+
+    def writer(rule: str) -> Any:
+        return lambda: persist_results(
+            _proposal_data(rule),
+            memory,
+            tmp_path / "Learnings",
+            "proj",
+            "2026-09-08T10:00:00-03:00",
+        )
+
+    errors = _race(monkeypatch, "_atomic_write", writer("rule from lazy"), writer("rule from flex"))
+
+    assert errors == []
+    text = (memory / "claude-md.proposal.md").read_text()
+    assert "rule from lazy" in text
+    assert "rule from flex" in text
+    assert "queued rule 0" in text
+
+
+def test_concurrent_insight_cursor_writers_keep_both_sessions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.knowledge.compound_loop import (
+        _read_insight_cursor,
+        _write_insight_cursor,
+    )
+
+    memory = tmp_path / "memory"
+
+    errors = _race(
+        monkeypatch,
+        "_atomic_write",
+        lambda: _write_insight_cursor(memory, "session-a", 3),
+        lambda: _write_insight_cursor(memory, "session-b", 5),
+    )
+
+    assert errors == []
+    assert _read_insight_cursor(memory, "session-a") == 3
+    assert _read_insight_cursor(memory, "session-b") == 5
+
+
+def test_concurrent_atomic_writes_to_one_path_do_not_share_a_temp_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Parked at `os.replace`: both temp files are written, neither renamed.
+
+    A deterministic temp name makes the second writer truncate the first's
+    file and then rename a path the first already moved away.
+    """
+    import os as _os
+    import threading
+
+    from lazy_harness.knowledge import compound_loop
+
+    target = tmp_path / "memory" / "handoff.md"
+    barrier = threading.Barrier(2, timeout=5.0)
+    real_replace = _os.replace
+
+    def parked_replace(src: Any, dst: Any) -> None:
+        barrier.wait()
+        real_replace(src, dst)
+
+    errors: list[BaseException] = []
+
+    def run(content: str) -> None:
+        try:
+            compound_loop._atomic_write(target, content)
+        except BaseException as exc:  # noqa: BLE001 — surfaced by the assertion
+            errors.append(exc)
+
+    with monkeypatch.context() as m:
+        m.setattr(compound_loop.os, "replace", parked_replace)
+        threads = [threading.Thread(target=run, args=(c,)) for c in ("one", "two")]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+    assert errors == []
+    assert target.read_text() in ("one", "two")
+    assert [p.name for p in target.parent.iterdir()] == ["handoff.md"]
