@@ -16,7 +16,9 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 
 Priorizado sobre `main` @ `58d3ef5`, con cada item re-verificado contra el código.
 Criterio: pérdida o fuga de datos primero, después lo que bloquea sesiones o el
-deploy, después deuda de arquitectura. Cada item tiene su entrada abajo.
+deploy, después deuda de arquitectura. Las tres iteraciones cerraron en la
+entrada §Done de #460 (más abajo); 06c60c5 borró las entradas individuales al
+cerrarlas.
 
 1. **Iteración 1 — resaca de ADR-068 y fixes de seguridad chicos.** Hook
    bloqueante con `--profile` desconocido (opción b: caer a la política del
@@ -33,33 +35,21 @@ deploy, después deuda de arquitectura. Cada item tiene su entrada abajo.
 
 **Estado al 2026-09-24:** las tres iteraciones mergearon en #460 (ver §Done).
 
-Hallazgos nuevos de esta pasada, sin entrada propia todavía:
+Hallazgos de la pasada de #460, ya resueltos o movidos a su propia entrada:
 
-- **El fallback por `--profile` desconocido podía cruzar de agente y fallar abierto.**
-  El primer commit caía al profile default aunque fuera de otro agente, y Codex bloquea
-  con un sobre JSON y exit 0: un deny con formato Claude no se aplicaba. Lo corrigió
-  el segundo commit de la branch, que sólo cae a un profile del mismo agente
-  (`prompt_id` identifica a Claude, `turn_id` a Codex) y si no, rechaza.
-  **Queda abierto:** la negativa fail-closed sale como exit 2, que es el canal de Claude;
-  el camino exit 2 de Codex nunca se ejerció, así que bajo Codex "fail closed" podría ser
-  abierto. Misma clase de bug, previo a esta pasada.
-- **`skills/synced` es contenido vivo de claude.ai adentro del source de profiles.**
-  Claude Code 2.1.275+ sincroniza skills por default (`syncClaudeAiSkills`, sin override
-  en ningún profile) en `<config_dir>/skills/synced/<hash>/`. En los dos profiles de Claude
-  ese directorio vive en `profiles/<id>/claude-code/skills/synced`, sin trackear en chezmoi,
-  y `_skills_for_profile` lo adopta como skill propio y lo symlinkea: el sync escribe dentro
-  del source. `lh deploy` hoy **no** colisiona (medido con `plan_skill_projections`). La
-  recomendación es reservar el nombre `synced` en `_skills_for_profile` y sacar las dos copias
-  del source; la alternativa es el opt-out, que apaga el sync también fuera del harness.
-- **Engram tiene duplicados medidos:** 7116 filas de decisiones y fallas de lazy-harness
-  en `~/.engram/engram.db` contra 2048 líneas en el store. La branch de engram-persist
-  corta el origen, pero no limpia lo ya cargado; esa limpieza es una decisión aparte.
-- **Del review de `compound-queue`:** `lh memory proposals accept/reject/apply` leen,
-  modifican y reemplazan la cola sin el lock nuevo; hay cinco copias de `_atomic_write`;
-  lo retenido en `proposals-held.jsonl` no vuelve nunca a la cola; `.memory.lock` no está
-  en el `.gitignore` del knowledge store.
-- **Del review de `engram-cursor`:** con un tope de 25 saves por corrida, el umbral de lag
-  de `lh doctor` (64 KiB) marca `fail` mientras se pone al día.
+- El cruce de agente en el fallback por `--profile` desconocido y el deny de Codex
+  que no se aplicaba están corregidos y cerrados en §Done (#460). Lo que seguía
+  abierto — el camino exit 2 de Codex nunca ejercido — tiene su propia entrada en
+  §Open Prioridad ALTA.
+- `skills/synced` ya no se adopta como skill propio: `RESERVED_SKILL_NAME` lo
+  saltea en `_skills_for_profile` (`deploy/skills.py:67`). Cerrado, sin entrada
+  propia.
+- Los duplicados de Engram ya se limpiaron — ver §Done, "Duplicados de
+  lazy-harness en engram limpiados".
+- El resto del review de `compound-queue` y `engram-cursor` (proposals CLI sin
+  lock, las cinco copias de `_atomic_write`, `.memory.lock` fuera del
+  `.gitignore`, y el umbral de lag de `lh doctor` bajo el tope de 25 saves) tiene
+  su propia entrada en §Open Prioridad MEDIA/BAJA.
 
 Fuera de las iteraciones: las ventanas con fecha (ADR-060 Wave 1, loop
 engineering el 2026-10-08), el `uv` de pyenv (entorno), la auditoría del gate,
@@ -303,18 +293,63 @@ desde `:367-369` cuando el step 3 insertó los helpers de merge arriba de la cla
 
 ---
 
-- [x] **Iteraciones 1–3 del orden de ataque del 2026-09-24** — ocho branches con TDD, mergeadas juntas. (1) Un hook con `--profile` desconocido cae a un profile declarado **del mismo agente** (`prompt_id` identifica a Claude Code, `turn_id` a Codex) y si no hay uno, rechaza; la primera versión cruzaba de agente y dejaba a Codex con un deny que no aplica. (2) `lh metrics ingest --dry-run` ya no entrega a sinks remotos, y un drain fallido avisa. (3) ADR-054: placeholder malformado como diagnóstico, escape `{{`/`}}` documentado. (4) engram-persist con un cursor por proyecto por máquina y tope de 25 saves por corrida. (5) El cap de proposals retiene en `proposals-held.jsonl` en vez de descartar. (6) F7: lock por destino sobre la memoria compartida y `.tmp` únicos. (7) `project_key` se corta antes de `$HOME` y las dos implementaciones son una. (8) ADR-032 L4 y `legacy_memory_dirs` resuelven por el adapter. (9) El nombre de skill `synced` queda reservado para el sync de claude.ai. PR #460, mergeado el 2026-09-24; entra en 0.79.1.
+- [x] **Iteraciones 1–3 del orden de ataque del 2026-09-24** — ocho branches con TDD, mergeadas juntas. (1) Un hook con `--profile` desconocido cae a un profile declarado **del mismo agente** (`prompt_id` identifica a Claude Code, `turn_id` a Codex) y si no hay uno, rechaza; la primera versión cruzaba de agente y dejaba a Codex con un deny que no aplica. (2) `lh metrics ingest --dry-run` ya no entrega a sinks remotos, y un drain fallido avisa. (3) ADR-054: placeholder malformado como diagnóstico, escape `{{`/`}}` documentado. (4) engram-persist con un cursor por proyecto por máquina y tope de 25 saves por corrida. (5) El cap de proposals retiene en `proposals-held.jsonl` en vez de descartar. (6) F7: lock por destino sobre la memoria compartida y `.tmp` únicos. (7) `project_key` se corta antes de `$HOME` y las dos implementaciones son una. (8) ADR-032 L4 y `legacy_memory_dirs` resuelven por el adapter para transcript billing, profile moves, handoff lookup, legacy memory enumeration y compound-loop lookup — los sitios que quedan afuera tienen su propia entrada en §Open (ADR-032, Evolution 2026-09-24). (9) El nombre de skill `synced` queda reservado para el sync de claude.ai. PR #460, mergeado el 2026-09-24; entra en 0.79.1.
 - [x] **Duplicados de lazy-harness en engram limpiados** — 5018 filas `decision`/`failure` duplicadas (mismo tipo, `normalized_hash` y título) borradas en blando con `engram delete`, quedándose con la más vieja de cada grupo o con la pinned o con `topic_key`. Backup previo en `~/.engram/engram-backup-2026-09-24-pre-dedupe.db`. Operación de entorno, sin cambio de código, 2026-09-24.
 
 ## Open — Prioridad ALTA
 
-Ninguna.
+### El camino exit 2 fail-closed del hook bloqueante nunca se ejerció bajo Codex
+
+**Por qué:** #460 corrigió el fallback por `--profile` desconocido para que sólo
+caiga a un profile del mismo agente (`prompt_id` identifica a Claude Code,
+`turn_id` a Codex) y si no hay uno, rechace. La negativa sale como exit 2, que
+es el canal fail-closed de Claude Code — el camino exit 2 bajo Codex nunca se
+ejerció con un profile real, así que no está medido si "fail closed" también lo
+es para Codex o si su runner interpreta ese exit code distinto (Codex ya
+mostró, en el primer commit de la branch, que un deny con sobre JSON y exit 0
+no se aplicaba). Riesgo: un hook bloqueante que falla abierto bajo Codex.
+**Acción:** ejercer el camino exit 2 con un runner Codex real (o el fixture que
+`_caller_agent` usa en tests) y confirmar que bloquea. Prioridad ALTA.
 
 ## Open — Prioridad MEDIA
 
 ---
 
-### La cola de proposals: (d) shippeó, queda decidir el drenaje, y el cap **sí** descarta
+### ADR-032 L4: el fallback `or "projects"` sigue vivo fuera de los cinco readers que #460 migró
+
+**Por qué:** `session_dirs().get("sessions") or "projects"` (una respuesta que
+`agents/session_paths.py` documenta como incorrecta) sigue en
+`hooks/builtins/engram_persist.py:117`, `session_end.py:120,148`,
+`session_export.py:93`, `pre_compact.py:197`, `context_inject.py:789,797`, y en
+`_shared.resolve_project_dir`/`resolve_memory_dir` (`sessions_subdir or
+"projects"`, `_shared.py:121,218`) — que `hooks/builtins/compound_loop.py:121`
+ahora alimenta con un `session_subdir()` posiblemente vacío. Ver ADR-032,
+Evolution 2026-09-24.
+**Acción:** rutear los seis builtins y `_shared` por `agents/session_paths.py`,
+igual que los cinco readers ya migrados. Prioridad MEDIA.
+
+### `lh memory proposals accept/reject/apply` escriben la cola sin el lock nuevo
+
+**Por qué:** del review de `compound-queue` sobre #460 — `cli/memory_cmd.py`
+(`accept`/`reject`/`apply`, líneas 595, 619, 649) leen, modifican y reemplazan
+`claude-md.proposal.md` sin tomar `memory_dir_lock`, a diferencia del worker del
+compound loop que sí lo hace desde esta misma pasada. Riesgo de carrera si un
+`accept`/`reject`/`apply` corre mientras el worker escribe. Ver también
+`docs/how/memory-compound.md:123`, ya acotado a que este camino no tiene lock.
+**Acción:** tomar `memory_dir_lock` en `memory_cmd.py` (TDD). Prioridad MEDIA.
+
+### El umbral de lag de `lh doctor` marca `fail` durante el catch-up normal del tope de 25 saves
+
+**Por qué:** del review de `engram-cursor` sobre #460 — con `MAX_SAVES_PER_RUN`
+= 25, un cursor que arranca lejos del final tarda varias corridas en ponerse al
+día, y mientras tanto el umbral de lag de `lh doctor` (64 KiB) marca `fail`
+aunque el sistema esté funcionando como se diseñó. El ruido entrena a ignorar
+el `fail`, que es justo el modo de falla que enmascara un lag real.
+**Acción:** o subir el umbral para tolerar el catch-up esperado bajo el tope
+actual, o marcar el estado como distinto de `fail` (p.ej. `catching-up`)
+mientras el cursor avanza. Prioridad MEDIA.
+
+### La cola de proposals: (d) shippeó, queda decidir el drenaje, y el cap retiene y nada lo devuelve
 
 **Estado:** la opción (d) entró en #450 — `lh doctor` muestra toda cola frenada de la máquina (17 colas, 263 propuestas medidas el 2026-09-23). Siguen sin elegir (a) drenar a mano, (b) subir el cap o (c) expirar por antigüedad fuera del immunity registry; el análisis está en la historia de esta entrada (`git log -S 'immunity registry' -- specs/backlog.md`).
 
@@ -659,6 +694,26 @@ Cada una mezcla responsabilidades no relacionadas: recolección de contexto y re
 ---
 
 ## Open — Prioridad BAJA
+
+### Cinco copias de `_atomic_write` divergieron después de #460
+
+**Por qué:** del review de `compound-queue` sobre #460 — hay cinco
+implementaciones de `_atomic_write` en el repo (compound loop, session export,
+`memory_cmd.py`, y dos más), y ya no son la misma función: el compound loop
+escribe a un temp con nombre uuid abierto en modo `"x"` y lo unlinkea si falla,
+mientras `session_export.py:140` sigue con un `.name.tmp` fijo. Ver ADR-011:47,
+anotado. **Acción:** consolidar las cinco copias en una sola función
+compartida, o documentar por qué cada una necesita su propio contrato.
+Prioridad BAJA.
+
+### `.memory.lock` no está en el `.gitignore` del knowledge store
+
+**Por qué:** del review de `compound-queue` sobre #460 — el lock file que el
+worker del compound loop toma con `memory_dir_lock` no figura en el
+`.gitignore` de `lazy-knowledge/memory/`. No causa un bug hoy (el lock se
+libera y no queda contenido sensible), pero un `git add -A` corrido con el
+proceso vivo lo trackearía. **Acción:** agregar `.memory.lock` al `.gitignore`
+del store. Prioridad BAJA.
 
 ### `copilot-probe1.sh:165` falló shellcheck — cerrado por #389
 

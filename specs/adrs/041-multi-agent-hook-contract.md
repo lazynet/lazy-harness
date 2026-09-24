@@ -287,6 +287,29 @@ gate can watch, and no single binary has yet passed all four properties in one
 run. The second is not closed here — it needs a released binary, and re-running
 the gate against one is tracked separately.
 
+**2026-09-24 — an unknown hook `--profile` falls back within the caller's
+agent, and caller identification is a payload marker, not `agent_for_profile`.**
+
+§3 makes `agent_for_profile` the single place a profile's agent resolves once
+a profile is declared. `hooks/runner.py:_fallback_profile` (:93-121) adds a
+second resolution for the case a profile is *not* declared: it reads
+`_caller_agent(payload)`, which agent sent the hook payload, from a marker
+each agent's own payload carries and the other does not
+(`_CALLER_MARKERS = {"claude-code": "prompt_id", "codex": "turn_id"}`), then
+falls back to a declared profile of that same agent (its default, else its
+sole profile), refusing when the caller cannot be identified or no such
+profile exists. See ADR-068, Evolution 2026-09-24, for the fallback itself.
+
+Per the Evidence standard above, the two markers are recorded probes, not
+names read off a doc: Codex 0.154.0's `turn_id`/`model` pair is probe 5 of
+`specs/designs/codex-evidence.md` §1. The Claude Code 2.1.281 probe
+(`prompt_id` present, no `turn_id`/`model`, on `PreToolUse`) was run the same
+day but only recorded in the runner docstring (`hooks/runner.py:94-104`) and a
+test comment — no evidence file. It is now also recorded in
+`specs/designs/claude-code-evidence.md`, beside `codex-evidence.md`, stating
+only what the docstring and test already assert: no new probe was run to
+produce it.
+
 ## References
 
 - `specs/designs/2026-09-13-multi-agent-harness-design.md` — the contract, the

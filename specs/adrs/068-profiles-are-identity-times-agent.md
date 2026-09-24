@@ -73,3 +73,16 @@ Design: [`2026-09-23-profile-identity-design.md`](../designs/2026-09-23-profile-
 - **Compatibility aliases** (`previous_names`). Lets consumers migrate at their
   own pace, at the cost of resolver code and a deprecation window; rejected in
   favour of a single coordinated cutover.
+
+## Evolution
+
+**2026-09-24 — hooks tolerate a stale `--profile` within the same agent.**
+Consequence "every consumer passing an old `--profile` value breaks at the
+cutover" no longer holds for the hook runner: `hooks/runner.py:_adapter_for`
+now falls back an unknown profile to a declared profile of the caller's own
+agent (the caller's default profile, else its sole declared profile) with a
+stderr warning, refusing only when no such profile exists or the caller cannot
+be identified. The caller's agent is read from the payload
+(`_CALLER_MARKERS`), never guessed, so the fallback never crosses agents.
+`lh run` and `lh exec` are unchanged: an unknown `--profile` still refuses,
+without any fallback.
