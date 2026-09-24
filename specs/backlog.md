@@ -31,6 +31,42 @@ deploy, después deuda de arquitectura. Cada item tiene su entrada abajo.
    L4, los sitios que asumen `projects/`, junto con `legacy_memory_dirs`; el
    sync de skills de claude.ai que puede abortar `lh deploy` (medir primero).
 
+**Estado al 2026-09-24:** las tres iteraciones tienen branch local con commits y
+gate verde, sin push ni PR. Las siete mergean entre sí sin conflictos de código (sólo
+`docs/reference/cli.md`, resuelto con los dos cambios), y el gate sobre la integración
+dio 5487 passed. Branches: `fix/hook-unknown-profile` (2 commits), `fix/metrics-dry-run-delivery`,
+`fix/adr054-placeholder-diagnostics`, `fix/engram-cursor-per-project`,
+`fix/compound-queue-integrity` (2), `fix/project-key-stops-at-home`,
+`fix/session-paths-adr032-l4`. Las entradas de abajo se mueven a §Done cuando mergee cada una.
+
+Hallazgos nuevos de esta pasada, sin entrada propia todavía:
+
+- **El fallback por `--profile` desconocido podía cruzar de agente y fallar abierto.**
+  El primer commit caía al profile default aunque fuera de otro agente, y Codex bloquea
+  con un sobre JSON y exit 0: un deny con formato Claude no se aplicaba. Lo corrigió
+  el segundo commit de la branch, que sólo cae a un profile del mismo agente
+  (`prompt_id` identifica a Claude, `turn_id` a Codex) y si no, rechaza.
+  **Queda abierto:** la negativa fail-closed sale como exit 2, que es el canal de Claude;
+  el camino exit 2 de Codex nunca se ejerció, así que bajo Codex "fail closed" podría ser
+  abierto. Misma clase de bug, previo a esta pasada.
+- **`skills/synced` es contenido vivo de claude.ai adentro del source de profiles.**
+  Claude Code 2.1.275+ sincroniza skills por default (`syncClaudeAiSkills`, sin override
+  en ningún profile) en `<config_dir>/skills/synced/<hash>/`. En los dos profiles de Claude
+  ese directorio vive en `profiles/<id>/claude-code/skills/synced`, sin trackear en chezmoi,
+  y `_skills_for_profile` lo adopta como skill propio y lo symlinkea: el sync escribe dentro
+  del source. `lh deploy` hoy **no** colisiona (medido con `plan_skill_projections`). La
+  recomendación es reservar el nombre `synced` en `_skills_for_profile` y sacar las dos copias
+  del source; la alternativa es el opt-out, que apaga el sync también fuera del harness.
+- **Engram tiene duplicados medidos:** 7116 filas de decisiones y fallas de lazy-harness
+  en `~/.engram/engram.db` contra 2048 líneas en el store. La branch de engram-persist
+  corta el origen, pero no limpia lo ya cargado; esa limpieza es una decisión aparte.
+- **Del review de `compound-queue`:** `lh memory proposals accept/reject/apply` leen,
+  modifican y reemplazan la cola sin el lock nuevo; hay cinco copias de `_atomic_write`;
+  lo retenido en `proposals-held.jsonl` no vuelve nunca a la cola; `.memory.lock` no está
+  en el `.gitignore` del knowledge store.
+- **Del review de `engram-cursor`:** con un tope de 25 saves por corrida, el umbral de lag
+  de `lh doctor` (64 KiB) marca `fail` mientras se pone al día.
+
 Fuera de las iteraciones: las ventanas con fecha (ADR-060 Wave 1, loop
 engineering el 2026-10-08), el `uv` de pyenv (entorno), la auditoría del gate,
 F3/F5/F6 sin re-verificar y default-deny, que pide 72 h de medición.
