@@ -59,6 +59,7 @@ from lazy_harness.llm.openai_compat import OpenAICompatibleBackend
 from lazy_harness.llm.registry import build_backend
 from lazy_harness.monitoring.db import MetricsDB
 from lazy_harness.monitoring.engram_persist_health import (
+    CURSOR_LAG_FAIL_BYTES,
     EngramPersistHealth,
     collect_engram_persist_health,
 )
@@ -250,8 +251,17 @@ def _render_engram_persist(console: Console, health: EngramPersistHealth) -> boo
         )
 
     lag = health.cursor_lag_bytes or 0
-    lag_state = "fail" if lag >= 64 * 1024 else ("warn" if lag > 0 else "ok")
-    console.print(f"  {icons[lag_state]} Cursor lag {_fmt_bytes(lag)}")
+    lag_state = (
+        "warn"
+        if health.catching_up
+        else "fail"
+        if lag >= CURSOR_LAG_FAIL_BYTES
+        else "warn"
+        if lag > 0
+        else "ok"
+    )
+    suffix = " (catching up; save cap reached)" if health.catching_up else ""
+    console.print(f"  {icons[lag_state]} Cursor lag {_fmt_bytes(lag)}{suffix}")
 
     return health.state != "fail"
 

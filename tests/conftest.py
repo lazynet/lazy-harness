@@ -12,6 +12,14 @@ from pathlib import Path
 
 import pytest
 
+
+@pytest.fixture
+def declared_null_sessions(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lazy_harness.agents.registry import NullAdapter
+
+    monkeypatch.setattr(NullAdapter, "session_dirs", lambda self: {"sessions": "projects"})
+
+
 # Captured at import time — before any test or fixture has had a chance to
 # monkeypatch HOME — so it reflects the real machine's own state, not
 # whatever the first test's fixtures leave behind.

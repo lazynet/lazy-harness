@@ -19,6 +19,8 @@ def _run_event(
     saved_failed: int = 0,
     skipped_malformed: int = 0,
     cursor_lag_bytes: dict[str, int] | None = None,
+    cursor_advanced: bool = False,
+    save_cap_reached: bool = False,
 ) -> dict[str, Any]:
     return {
         "ts": when.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -30,6 +32,8 @@ def _run_event(
         "saved_failed": saved_failed,
         "skipped_malformed": skipped_malformed,
         "cursor_lag_bytes": cursor_lag_bytes or {"decisions": 0, "failures": 0},
+        "cursor_advanced": cursor_advanced,
+        "save_cap_reached": save_cap_reached,
         "project_key": "lazy-harness",
         "engram_version": "1.15.6",
         "hook_version": "0.16.0",
@@ -195,6 +199,63 @@ def test_cursor_lag_at_or_above_64kb_is_fail(tmp_path: Path) -> None:
 
     assert health.cursor_lag_bytes == 64 * 1024
     assert health.state == "fail"
+
+
+def test_capped_run_with_persisted_cursor_progress_reports_catching_up(tmp_path: Path) -> None:
+    metrics_path = tmp_path / "engram_persist_metrics.jsonl"
+    _write(
+        metrics_path,
+        [
+            _run_event(
+                when=NOW - timedelta(minutes=10),
+                saved_ok=25,
+                cursor_lag_bytes={"decisions": 128 * 1024, "failures": 0},
+                cursor_advanced=True,
+                save_cap_reached=True,
+            )
+        ],
+    )
+
+    health = collect_engram_persist_health(metrics_path, now=NOW)
+    assert health.state == "warn"
+    assert health.catching_up is True
+
+
+def test_capped_run_without_persisted_cursor_progress_still_fails(tmp_path: Path) -> None:
+    metrics_path = tmp_path / "engram_persist_metrics.jsonl"
+    _write(
+        metrics_path,
+        [
+            _run_event(
+                when=NOW - timedelta(minutes=10),
+                saved_ok=25,
+                cursor_lag_bytes={"decisions": 128 * 1024, "failures": 0},
+                save_cap_reached=True,
+            )
+        ],
+    )
+
+    health = collect_engram_persist_health(metrics_path, now=NOW)
+    assert health.state == "fail"
+    assert health.catching_up is False
+
+
+def test_cursor_progress_without_cap_does_not_explain_large_lag(tmp_path: Path) -> None:
+    metrics_path = tmp_path / "engram_persist_metrics.jsonl"
+    _write(
+        metrics_path,
+        [
+            _run_event(
+                when=NOW - timedelta(minutes=10),
+                cursor_lag_bytes={"decisions": 128 * 1024, "failures": 0},
+                cursor_advanced=True,
+            )
+        ],
+    )
+
+    health = collect_engram_persist_health(metrics_path, now=NOW)
+    assert health.state == "fail"
+    assert health.catching_up is False
 
 
 def test_failure_rate_aggregates_across_window(tmp_path: Path) -> None:

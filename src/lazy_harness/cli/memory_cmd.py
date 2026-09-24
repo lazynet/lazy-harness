@@ -12,6 +12,7 @@ import click
 from lazy_harness.agents.base import AgentAdapter
 from lazy_harness.core.config import Config, ConfigError, load_config
 from lazy_harness.core.decay import apply_decay, find_decay_candidates
+from lazy_harness.core.memory_store import memory_dir_lock
 from lazy_harness.core.paths import config_file
 from lazy_harness.core.proposals import (
     _RATIONALE_PREFIX,
@@ -283,7 +284,7 @@ def _project_memory_dir() -> Path:
     )
 
 
-def _legacy_memory_dir() -> Path:
+def _legacy_memory_dir() -> Path | None:
     """The pre-store location: memory inside the agent's own project directory.
 
     Resolved through the same helper the store path falls back to, so the two
@@ -293,15 +294,13 @@ def _legacy_memory_dir() -> Path:
     from lazy_harness.hooks.builtins._shared import resolve_memory_dir
 
     _cfg, agent, agent_dir = _agent_for_active_profile()
-    return (
-        resolve_memory_dir(
-            None,
-            agent_dir=agent_dir,
-            sessions_subdir=session_subdir(agent, "sessions"),
-            cwd=Path.cwd(),
-        )
-        / "memory"
+    resolved = resolve_memory_dir(
+        None,
+        agent_dir=agent_dir,
+        sessions_subdir=session_subdir(agent, "sessions"),
+        cwd=Path.cwd(),
     )
+    return resolved / "memory" if resolved is not None else None
 
 
 def _load_pending(memory_dir: Path | None) -> tuple[Path, str, list[PendingProposal]]:
@@ -441,7 +440,7 @@ def status(memory_dir: Path | None) -> None:
     if memory_dir is not None:
         return
     legacy = _legacy_memory_dir()
-    if legacy == target or not any(legacy.glob("*")):
+    if legacy is None or legacy == target or not any(legacy.glob("*")):
         return
     index = legacy / "MEMORY.md"
     lines = len(index.read_text().splitlines()) if index.is_file() else 0
@@ -565,42 +564,43 @@ def proposals_apply(verdicts_file: Path, memory_dir: Path | None) -> None:
     draining 1, 2, 3 in that order silently hits the wrong entries; this applies
     them back-to-front so that footgun is gone.
     """
-    pending_file, text, pending = _load_pending(memory_dir)
     try:
         raw = json.loads(verdicts_file.read_text())
     except ValueError as exc:
         raise click.ClickException(f"{verdicts_file} is not valid JSON: {exc}") from exc
 
-    decisions = _parse_verdicts(raw, len(pending))
-    if not decisions:
-        click.echo("No verdicts — nothing to apply.")
-        return
+    target_dir = memory_dir or _project_memory_dir()
+    with memory_dir_lock(target_dir):
+        pending_file, text, pending = _load_pending(target_dir)
+        decisions = _parse_verdicts(raw, len(pending))
+        if not decisions:
+            click.echo("No verdicts — nothing to apply.")
+            return
 
-    today = date.today().isoformat()
-    accepted_rules: list[str] = []
-    n_accepted = n_rejected = 0
-    # Descending: every removal shifts the positions after it.
-    for index, verdict, reason in sorted(decisions, key=lambda d: -d[0]):
-        target = pending[index - 1]
-        if verdict == "accept":
-            _append_block(
-                pending_file.with_name("claude-md.accepted.md"),
-                "<!-- accepted claude-md proposals (append-only). -->\n\n",
-                _format_entry_block(target, [f"accepted: {today}"]),
-            )
-            accepted_rules.append(target.rule)
-            n_accepted += 1
-        else:
-            _append_block(
-                pending_file.with_name("claude-md.rejected.md"),
-                "<!-- rejected claude-md proposals (append-only immunity registry). -->\n\n",
-                _format_entry_block(target, [f"rejected: {today}", f"reason: {reason}"]),
-            )
-            n_rejected += 1
-        text = _remove_proposal(text, pending, index - 1)
-    _atomic_write(pending_file, text)
-
-    remaining = len(parse_proposals(text))
+        today = date.today().isoformat()
+        accepted_rules: list[str] = []
+        n_accepted = n_rejected = 0
+        # Descending: every removal shifts the positions after it.
+        for index, verdict, reason in sorted(decisions, key=lambda d: -d[0]):
+            target = pending[index - 1]
+            if verdict == "accept":
+                _append_block(
+                    pending_file.with_name("claude-md.accepted.md"),
+                    "<!-- accepted claude-md proposals (append-only). -->\n\n",
+                    _format_entry_block(target, [f"accepted: {today}"]),
+                )
+                accepted_rules.append(target.rule)
+                n_accepted += 1
+            else:
+                _append_block(
+                    pending_file.with_name("claude-md.rejected.md"),
+                    "<!-- rejected claude-md proposals (append-only immunity registry). -->\n\n",
+                    _format_entry_block(target, [f"rejected: {today}", f"reason: {reason}"]),
+                )
+                n_rejected += 1
+            text = _remove_proposal(text, pending, index - 1)
+        _atomic_write(pending_file, text)
+        remaining = len(parse_proposals(text))
     click.echo(f"{n_accepted} accepted · {n_rejected} rejected · {remaining} pending")
     if accepted_rules:
         click.echo("\nAccepted rules were NOT applied automatically — merge them yourself:")
@@ -613,16 +613,18 @@ def proposals_apply(verdicts_file: Path, memory_dir: Path | None) -> None:
 @_MEMORY_DIR_OPTION
 def proposals_accept(index: int, memory_dir: Path | None) -> None:
     """Accept proposal N: archive it and print the rule for manual merge."""
-    pending_file, text, pending = _load_pending(memory_dir)
-    target = _get_proposal_or_fail(pending, index)
+    target_dir = memory_dir or _project_memory_dir()
+    with memory_dir_lock(target_dir):
+        pending_file, text, pending = _load_pending(target_dir)
+        target = _get_proposal_or_fail(pending, index)
 
-    block = _format_entry_block(target, [f"accepted: {date.today().isoformat()}"])
-    _append_block(
-        pending_file.with_name("claude-md.accepted.md"),
-        "<!-- accepted claude-md proposals (append-only). -->\n\n",
-        block,
-    )
-    _atomic_write(pending_file, _remove_proposal(text, pending, index - 1))
+        block = _format_entry_block(target, [f"accepted: {date.today().isoformat()}"])
+        _append_block(
+            pending_file.with_name("claude-md.accepted.md"),
+            "<!-- accepted claude-md proposals (append-only). -->\n\n",
+            block,
+        )
+        _atomic_write(pending_file, _remove_proposal(text, pending, index - 1))
 
     click.echo(f"Accepted proposal #{index}:\n")
     click.echo(f"  {target.rule}")
@@ -640,19 +642,21 @@ def proposals_accept(index: int, memory_dir: Path | None) -> None:
 @_MEMORY_DIR_OPTION
 def proposals_reject(index: int, reason: str, memory_dir: Path | None) -> None:
     """Reject proposal N: move it to the rejected registry with a reason."""
-    pending_file, text, pending = _load_pending(memory_dir)
-    target = _get_proposal_or_fail(pending, index)
+    target_dir = memory_dir or _project_memory_dir()
+    with memory_dir_lock(target_dir):
+        pending_file, text, pending = _load_pending(target_dir)
+        target = _get_proposal_or_fail(pending, index)
 
-    block = _format_entry_block(
-        target,
-        [f"rejected: {date.today().isoformat()}", f"reason: {reason}"],
-    )
-    _append_block(
-        pending_file.with_name("claude-md.rejected.md"),
-        "<!-- rejected claude-md proposals (append-only immunity registry). -->\n\n",
-        block,
-    )
-    _atomic_write(pending_file, _remove_proposal(text, pending, index - 1))
+        block = _format_entry_block(
+            target,
+            [f"rejected: {date.today().isoformat()}", f"reason: {reason}"],
+        )
+        _append_block(
+            pending_file.with_name("claude-md.rejected.md"),
+            "<!-- rejected claude-md proposals (append-only immunity registry). -->\n\n",
+            block,
+        )
+        _atomic_write(pending_file, _remove_proposal(text, pending, index - 1))
     click.echo(f"Rejected proposal #{index}: {target.rule}")
     click.echo("Recorded in claude-md.rejected.md — the grader will be told not to re-propose it.")
 

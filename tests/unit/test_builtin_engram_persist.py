@@ -60,7 +60,9 @@ def _make_engram_shim(shim_dir: Path, exit_code: int = 0) -> Path:
     return shim
 
 
-def test_hook_routes_paths_through_agent_adapter(tmp_path: Path, monkeypatch) -> None:
+def test_hook_routes_paths_through_agent_adapter(
+    tmp_path: Path, monkeypatch, declared_null_sessions: None
+) -> None:
     """ADR-032 L3/L4: memory/logs dirs must come from the configured agent
     adapter. With agent.type = "null" they must land under ~/.null even when
     CLAUDE_CONFIG_DIR points elsewhere."""

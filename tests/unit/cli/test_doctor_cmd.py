@@ -110,6 +110,37 @@ def _recording_console():
     return Console(file=buf, force_terminal=False), buf
 
 
+def test_engram_lag_render_distinguishes_catch_up_from_stall() -> None:
+    from lazy_harness.cli.doctor_cmd import _render_engram_persist
+    from lazy_harness.monitoring.engram_persist_health import EngramPersistHealth
+
+    common = dict(
+        last_run_age_seconds=60.0,
+        failure_rate=0.0,
+        cursor_lag_bytes=128 * 1024,
+        runs_considered=1,
+    )
+    console, output = _recording_console()
+    assert (
+        _render_engram_persist(
+            console, EngramPersistHealth(state="warn", catching_up=True, **common)
+        )
+        is True
+    )
+    assert "catching up" in output.getvalue()
+    assert "✗ Cursor lag" not in output.getvalue()
+
+    console, output = _recording_console()
+    assert (
+        _render_engram_persist(
+            console, EngramPersistHealth(state="fail", catching_up=False, **common)
+        )
+        is False
+    )
+    assert "catching up" not in output.getvalue()
+    assert "✗ Cursor lag" in output.getvalue()
+
+
 def test_render_llm_backend_claude_ok_when_binary_on_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

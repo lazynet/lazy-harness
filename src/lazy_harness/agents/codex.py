@@ -1008,10 +1008,14 @@ class CodexAdapter:
         the reason back verbatim — which is what proves the JSON was parsed as a
         verdict rather than failing closed on a parse error.
 
-        Exit 2 is *not* the refusal channel it is for Claude Code. Codex's
-        exit-code path was never exercised, so the adapter refuses the one way it
-        was seen to refuse. `systemMessage`, `continue` and `suppressOutput` are
-        Claude Code's own top-level keys and are not emitted here at all: none was
+        Exit 2 with the reason on stderr also refuses — run on 0.155.1 for a
+        `Bash` call (`specs/designs/codex-evidence.md` §8), which is what makes
+        the runner's own fail-closed exit 2 safe under Codex. A builtin's verdict
+        still goes out as the envelope: it is the channel measured on both edit
+        paths, and exit 2 was not run against `apply_patch`.
+
+        `systemMessage`, `continue` and `suppressOutput` are Claude Code's own
+        top-level keys and are not emitted here at all: none was
         observed being read, and a key Codex ignores is a channel a builtin
         believes it has.
         """

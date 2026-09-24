@@ -97,6 +97,10 @@ def main(event: HookEvent) -> HookDecision:
         # agent this profile runs, and writing before that resolves is what sent
         # `context-inject`'s log to the global agent's directory (PR #300).
         agent, agent_dir = agent_dir_for(cfg, event.profile)
+        from lazy_harness.agents.session_paths import session_path, session_subdir
+
+        if session_path(agent, agent_dir, "sessions") is None:
+            return HookDecision()
 
         # `parse_hook_input` yields `Path("")` — which is `Path(".")`, and
         # truthy — for a payload that names no cwd, so the `or Path.cwd()` this
@@ -114,7 +118,7 @@ def main(event: HookEvent) -> HookDecision:
         memory_dir = shared_memory_dir(
             event.transcript_path,
             agent_dir=agent_dir,
-            sessions_subdir=subdirs.get("sessions") or "projects",
+            sessions_subdir=session_subdir(agent, "sessions"),
             cwd=cwd,
             knowledge_root=knowledge_root,
         )

@@ -2011,7 +2011,8 @@ ship broken while every test passes.
     `agent = "codex"` profile's config in Codex's shape while the runner spoke
     Claude Code's wire format into it — a top-level `systemMessage` and exit 2,
     both of which `CodexAdapter.format_hook_output` documents it never emits. It
-    failed closed only because Codex happens to honour exit 2; on an agent that
+    failed closed only because Codex happens to honour exit 2 (run on 0.155.1,
+    `codex-evidence.md` §8); on an agent that
     ignores exit codes it is a security guard that reports blocking and does not
     block. Two paths answer one question, so
     `test_the_deploy_and_the_runner_resolve_one_profile_to_the_same_agent`

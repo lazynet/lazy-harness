@@ -31,6 +31,7 @@ class EngramPersistHealth:
     cursor_lag_bytes: int | None
     runs_considered: int
     skips_considered: int = 0
+    catching_up: bool = False
 
 
 def _missing() -> EngramPersistHealth:
@@ -86,9 +87,9 @@ def _failure_rate_state(rate: float) -> HealthState:
     return "ok"
 
 
-def _cursor_lag_state(lag: int) -> HealthState:
+def _cursor_lag_state(lag: int, *, catching_up: bool = False) -> HealthState:
     if lag >= CURSOR_LAG_FAIL_BYTES:
-        return "fail"
+        return "warn" if catching_up else "fail"
     if lag > CURSOR_LAG_WARN_BYTES:
         return "warn"
     return "ok"
@@ -132,6 +133,12 @@ def collect_engram_persist_health(
         )
     else:
         cursor_lag = 0
+    catching_up = (
+        cursor_lag >= CURSOR_LAG_FAIL_BYTES
+        and last.get("cursor_advanced") is True
+        and last.get("save_cap_reached") is True
+        and last.get("saved_failed", 0) == 0
+    )
 
     # A skip writes nothing to Engram, so it is a silent data loss rather than a
     # failure: kept out of the failure rate, but never reported as healthy.
@@ -141,7 +148,7 @@ def collect_engram_persist_health(
         [
             _age_state(age),
             _failure_rate_state(failure_rate),
-            _cursor_lag_state(cursor_lag),
+            _cursor_lag_state(cursor_lag, catching_up=catching_up),
             "warn" if skips else "ok",
         ]
     )
@@ -153,4 +160,5 @@ def collect_engram_persist_health(
         cursor_lag_bytes=cursor_lag,
         runs_considered=len(recent),
         skips_considered=len(skips),
+        catching_up=catching_up,
     )

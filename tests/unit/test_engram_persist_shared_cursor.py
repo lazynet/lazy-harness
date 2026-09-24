@@ -22,14 +22,17 @@ def _entry(i: int) -> dict[str, str]:
     return {"ts": f"2026-09-23T10:{i:02d}:00Z", "type": "decision", "summary": f"entry {i}"}
 
 
-def _seed(memory_dir: Path, count: int) -> list[int]:
+def _seed(memory_dir: Path, count: int, *, padding: int = 0) -> list[int]:
     """Write `count` decisions and return the byte offset after each line."""
     memory_dir.mkdir(parents=True, exist_ok=True)
     offsets: list[int] = []
     total = 0
     lines = []
     for i in range(count):
-        line = json.dumps(_entry(i)) + "\n"
+        entry = _entry(i)
+        if padding:
+            entry["detail"] = "x" * padding
+        line = json.dumps(entry) + "\n"
         lines.append(line)
         total += len(line.encode())
         offsets.append(total)
@@ -73,8 +76,31 @@ def test_a_catch_up_stops_at_the_per_run_cap(tmp_path: Path) -> None:
     result = _run(persister)
 
     assert result.saved_ok == 3
+    assert result.save_cap_reached is True
+    assert result.cursor_advanced is True
     # The cursor covers exactly what was saved, not what was read.
     assert _read_cursor(cursor_dir)["decisions_offset"] == offsets[2]
+
+
+def test_failed_cursor_write_does_not_report_catch_up(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    _seed(memory_dir, 7)
+    persister = EngramPersister(
+        memory_dir=memory_dir,
+        logs_dir=tmp_path / "logs",
+        project_key="repo",
+        engram_bin="/bin/echo",
+        cursor_dir=tmp_path / "cursor",
+        max_saves_per_run=3,
+    )
+
+    with patch("lazy_harness.knowledge.engram_persist._save_cursor", return_value=None):
+        result = _run(persister)
+
+    assert result.saved_ok == 3
+    assert result.save_cap_reached is True
+    assert result.cursor_advanced is False
+    assert result.cursor_lag_bytes["decision"] == (memory_dir / "decisions.jsonl").stat().st_size
 
 
 def test_the_remainder_drains_on_later_runs(tmp_path: Path) -> None:
@@ -129,6 +155,39 @@ def test_the_default_cap_bounds_a_large_backlog(tmp_path: Path) -> None:
     )
 
     assert _run(persister).saved_ok == MAX_SAVES_PER_RUN
+
+
+def test_doctor_classifies_a_real_capped_run_and_a_stalled_cursor(tmp_path: Path) -> None:
+    from datetime import UTC, datetime
+
+    from lazy_harness.knowledge.engram_persist import MAX_SAVES_PER_RUN
+    from lazy_harness.monitoring.engram_persist_health import collect_engram_persist_health
+
+    memory_dir = tmp_path / "memory"
+    _seed(memory_dir, MAX_SAVES_PER_RUN + 5, padding=15_000)
+    persister = EngramPersister(
+        memory_dir=memory_dir,
+        logs_dir=tmp_path / "logs",
+        project_key="repo",
+        engram_bin="/bin/echo",
+        cursor_dir=tmp_path / "cursor",
+    )
+    metrics = persister.logs_dir / "engram_persist_metrics.jsonl"
+
+    _run(persister)
+    progressing = collect_engram_persist_health(metrics, now=datetime.now(UTC))
+    assert progressing.cursor_lag_bytes is not None
+    assert progressing.cursor_lag_bytes >= 64 * 1024
+    assert progressing.state == "warn"
+    assert progressing.catching_up is True
+
+    (persister.cursor_dir / "engram_cursor.json").unlink()
+    with patch("lazy_harness.knowledge.engram_persist._save_cursor", return_value=None):
+        _run(persister)
+    stalled = collect_engram_persist_health(metrics, now=datetime.now(UTC))
+    assert stalled.cursor_lag_bytes == (memory_dir / "decisions.jsonl").stat().st_size
+    assert stalled.state == "fail"
+    assert stalled.catching_up is False
 
 
 # --- Carry-over from per-profile cursors -----------------------------------
