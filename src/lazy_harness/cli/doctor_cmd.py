@@ -1056,7 +1056,12 @@ def _render_halted_proposals(console: Console, cfg: Config) -> None:
     from lazy_harness.knowledge.compound_loop import HELD_PROPOSALS_FILE
 
     cap = cfg.compound_loop.max_pending_proposals
-    profile_dirs = [expand_path(e.config_dir) for e in cfg.profiles.items.values()]
+    from lazy_harness.agents.registry import agent_for_profile
+
+    profile_dirs = [
+        (expand_path(e.config_dir), agent_for_profile(cfg, name))
+        for name, e in cfg.profiles.items.items()
+    ]
     # Two profiles can claim one config_dir; resolved so its queues count once.
     dirs: dict[Path, Path] = {}
     for d in all_memory_dirs(profile_dirs, knowledge_root_for(cfg)):

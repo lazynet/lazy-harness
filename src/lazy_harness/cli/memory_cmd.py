@@ -72,7 +72,11 @@ def legacy_check() -> None:
         click.echo(f"Config invalid: {exc}", err=True)
         raise SystemExit(1) from exc
 
-    profile_dirs = [p.config_dir for p in list_profiles(cfg) if p.exists]
+    from lazy_harness.agents.registry import agent_for_profile
+
+    profile_dirs = [
+        (p.config_dir, agent_for_profile(cfg, p.name)) for p in list_profiles(cfg) if p.exists
+    ]
     statuses = classify_legacy_memory(profile_dirs, knowledge_root=knowledge_root_for(cfg))
     if not statuses:
         click.echo("No legacy memory directories.")
@@ -827,7 +831,11 @@ def memory_migrate(do_apply: bool) -> None:
         click.echo("No knowledge store; nothing to migrate into.", err=True)
         raise SystemExit(1)
 
-    profile_dirs = [p.config_dir for p in list_profiles(cfg) if p.exists]
+    from lazy_harness.agents.registry import agent_for_profile
+
+    profile_dirs = [
+        (p.config_dir, agent_for_profile(cfg, p.name)) for p in list_profiles(cfg) if p.exists
+    ]
     moves = plan_migration(profile_dirs, knowledge_root=root)
     movable = [m for m in moves if m.target is not None]
 

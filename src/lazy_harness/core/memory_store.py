@@ -20,6 +20,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+from lazy_harness.agents.registry import get_agent
+from lazy_harness.agents.session_paths import session_path
 from lazy_harness.core.project_identity import LOCAL_PREFIX, project_key
 
 #: Lock file serialising read-modify-replace writes into one memory dir.
@@ -83,17 +85,20 @@ def memory_dir_for(
     raise ValueError("no knowledge store and no legacy project dir to fall back to")
 
 
-def legacy_memory_dirs(profile_dirs: list[Path]) -> list[Path]:
-    """Every `<profile>/projects/<encoded>/memory` that exists.
+def legacy_memory_dirs(profile_dirs: list[Path | tuple[Path, object]]) -> list[Path]:
+    """Every declared `<profile>/<sessions>/<encoded>/memory` that exists.
 
     The location memory was written to before it had an identity of its own.
     Enumerated separately from the store so nothing disappears from a view
     while a machine is half migrated.
     """
     found: list[Path] = []
-    for profile_dir in profile_dirs:
-        projects = profile_dir / "projects"
-        if not projects.is_dir():
+    for profile in profile_dirs:
+        profile_dir, agent = (
+            profile if isinstance(profile, tuple) else (profile, get_agent("claude-code"))
+        )
+        projects = session_path(agent, profile_dir, "sessions")
+        if projects is None or not projects.is_dir():
             continue
         for entry in sorted(projects.iterdir()):
             candidate = entry / "memory"
@@ -124,6 +129,8 @@ def store_memory_dirs(knowledge_root: Path | None) -> list[Path]:
     )
 
 
-def all_memory_dirs(profile_dirs: list[Path], knowledge_root: Path | None) -> list[Path]:
+def all_memory_dirs(
+    profile_dirs: list[Path | tuple[Path, object]], knowledge_root: Path | None
+) -> list[Path]:
     """Both locations, so a half-migrated machine still shows everything."""
     return store_memory_dirs(knowledge_root) + legacy_memory_dirs(profile_dirs)

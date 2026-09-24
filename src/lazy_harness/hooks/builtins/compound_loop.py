@@ -63,10 +63,11 @@ def main(event: HookEvent) -> HookDecision:
             cfg = None
 
     agent, agent_dir = agent_dir_for(cfg, event.profile)
-    subdirs = agent.session_dirs()
-    log_dir = agent_dir / (subdirs.get("logs") or "logs")
+    from lazy_harness.agents.session_paths import session_path, session_subdir
+
+    log_dir = agent_dir / (session_subdir(agent, "logs") or "logs")
     log_file = log_dir / "hooks.log"
-    queue_dir = agent_dir / (subdirs.get("queue") or "queue")
+    queue_dir = agent_dir / (session_subdir(agent, "queue") or "queue")
 
     # A payload naming no cwd parses as `Path("")`, which is `Path(".")`. This
     # hook cannot take that as given the way its siblings can: it derives the
@@ -82,6 +83,11 @@ def main(event: HookEvent) -> HookDecision:
         _log(log_file, "disabled in config, skipping")
         return HookDecision()
 
+    sessions_root = session_path(agent, agent_dir, "sessions")
+    if sessions_root is None:
+        _log(log_file, "agent declares no sessions directory")
+        return HookDecision()
+
     # The agent names its project dirs with an encoding that has changed across
     # releases, so prefer the transcript it hands us and only derive a path when
     # the payload omits it.
@@ -89,7 +95,7 @@ def main(event: HookEvent) -> HookDecision:
     session_jsonl = existing_transcript(declared)
     if session_jsonl is None:
         encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
-        sessions_dir = agent_dir / (subdirs.get("sessions") or "projects") / encoded
+        sessions_dir = sessions_root / encoded
         session_jsonl = find_latest_session(sessions_dir)
     if session_jsonl is None:
         _log(log_file, "no session JSONL found")
@@ -112,7 +118,7 @@ def main(event: HookEvent) -> HookDecision:
     memory_dir = shared_memory_dir(
         declared,
         agent_dir=agent_dir,
-        sessions_subdir=subdirs.get("sessions") or "projects",
+        sessions_subdir=session_subdir(agent, "sessions"),
         cwd=cwd,
         knowledge_root=knowledge_root_for(cfg),
     )

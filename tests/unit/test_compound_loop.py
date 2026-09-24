@@ -2378,13 +2378,20 @@ def test_stop_hook_routes_paths_through_agent_adapter(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """ADR-032 L3/L4: the Stop hook must resolve dirs via the configured agent
-    adapter. With agent.type = "null" (no env var, no global link) resolution
-    must land under ~/.null even when CLAUDE_CONFIG_DIR points elsewhere.
+    adapter. With a test adapter (no env var, no global link) resolution
+    must land under ~/.null/threads even when CLAUDE_CONFIG_DIR points elsewhere.
 
     The event carries no `cwd`, which is how the payload used to arrive here as
     `{}`: the session lookup then falls back to the process directory, and the
     two halves — the adapter's root and the project encoding under it — have to
     agree for the task to land at all."""
+    from lazy_harness.agents import registry
+
+    monkeypatch.setattr(
+        registry.NullAdapter,
+        "session_dirs",
+        lambda self: {"sessions": "threads", "logs": "", "queue": ""},
+    )
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
@@ -2394,7 +2401,7 @@ def test_stop_hook_routes_paths_through_agent_adapter(
     cwd.mkdir()
     encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
     agent_dir = home / ".null"
-    sessions_dir = agent_dir / "projects" / encoded
+    sessions_dir = agent_dir / "threads" / encoded
     sessions_dir.mkdir(parents=True)
     _write_jsonl(
         sessions_dir / "abcd1234-deadbeef-0001.jsonl",
