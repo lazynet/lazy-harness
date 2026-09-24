@@ -97,3 +97,15 @@ deduplication history for a bounded operational queue. Durable decisions and
 failures remain in their JSONL stores, while a transcript encountered after
 the retention horizon may be processed again.
 - If the backend serving the `distill` role is unreachable, `run_inference` reports a typed failure and the task is marked skipped with a logged reason. This is deliberate — the worker is "best-effort memory enrichment", not a hard requirement. (Originally: `claude -p` absent from PATH and `invoke_claude` returning `None`.)
+
+## Evolution — 2026-09-24
+
+"No locks other than the worker's single-instance `flock`" held only while one
+worker wrote each project. The single-instance lock is per profile queue, and
+workers of different profiles converge on the same project memory dir of the
+knowledge store: two read-modify-replace writes to `claude-md.proposal.md` or
+`insights/.cursor.json` could lose one update, and the deterministic
+`.<name>.tmp` name let one worker truncate the other's temp file. Those writes
+now run under an exclusive `flock` on `<memory_dir>/.memory.lock`
+(`core/memory_store.py::memory_dir_lock`), and the compound loop's atomic write
+uses a unique temp name per call.

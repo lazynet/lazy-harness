@@ -20,11 +20,13 @@ import re
 import shutil
 import subprocess
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
 from lazy_harness.core.config import Config
+from lazy_harness.core.memory_store import memory_dir_lock
 from lazy_harness.core.proposals import rule_lines
 from lazy_harness.knowledge.project_state import (
     ProjectUpdate,
@@ -305,16 +307,17 @@ def _read_insight_cursor(memory_dir: Path, session_id: str) -> int:
 def _write_insight_cursor(memory_dir: Path, session_id: str, last_index: int) -> None:
     path = _insight_cursor_path(memory_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
-    data: dict[str, int] = {}
-    if path.is_file():
-        try:
-            existing = json.loads(path.read_text())
-            if isinstance(existing, dict):
-                data = {k: v for k, v in existing.items() if isinstance(v, int)}
-        except (json.JSONDecodeError, OSError, ValueError):
-            data = {}
-    data[session_id] = last_index
-    _atomic_write(path, json.dumps(data, sort_keys=True) + "\n")
+    with memory_dir_lock(memory_dir):
+        data: dict[str, int] = {}
+        if path.is_file():
+            try:
+                existing = json.loads(path.read_text())
+                if isinstance(existing, dict):
+                    data = {k: v for k, v in existing.items() if isinstance(v, int)}
+            except (json.JSONDecodeError, OSError, ValueError):
+                data = {}
+        data[session_id] = last_index
+        _atomic_write(path, json.dumps(data, sort_keys=True) + "\n")
 
 
 def is_interactive_session(session_jsonl: Path) -> bool:
@@ -783,6 +786,11 @@ PENDING_PROPOSALS_MAX_CHARS = 10_000
 #: Budget that admits any queue — for counting, where truncation would lie.
 _UNBOUNDED = 1 << 30
 
+#: Proposals the cap refused, one JSON record per line, next to the queue. Kept
+#: out of `claude-md.proposal.md` so they do not count toward the cap, and out
+#: of `claude-md.rejected.md` so the grader never reads them as refusals.
+HELD_PROPOSALS_FILE = "proposals-held.jsonl"
+
 
 def collect_pending_proposals(
     memory_dir: Path, max_chars: int = PENDING_PROPOSALS_MAX_CHARS
@@ -980,12 +988,18 @@ def _atomic_write(path: Path, content: str) -> None:
 
     iCloud/Dropbox observe a single rename event instead of an open-write-close
     window. Required whenever LEARNINGS_DIR points into a cloud-synced directory.
+    The temp name is unique per call: workers of two profiles can write the
+    same project memory file, and a shared name let one truncate the other's.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.tmp")
-    with open(tmp, "w") as f:
-        f.write(content)
-    os.replace(tmp, path)
+    tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with open(tmp, "x") as f:
+            f.write(content)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _slugify(title: str, max_len: int = 50) -> str:
@@ -1110,11 +1124,21 @@ deprecated_reason: null
         proposal_file = memory_dir / "claude-md.proposal.md"
         queued = len(collect_pending_proposals(proposal_file.parent, max_chars=_UNBOUNDED))
         if max_pending_proposals is not None and queued >= max_pending_proposals:
-            # Backpressure, not a discard. Dropping the new proposal would lose
-            # signal silently; halting emission makes a full queue cost
-            # something the next session is told about.
+            # Backpressure, not a discard: the queue stops growing so a full one
+            # costs something the next session is told about, and the refused
+            # batch goes to the held file instead of being lost.
+            with open(memory_dir / HELD_PROPOSALS_FILE, "a") as f:
+                for p in proposals:
+                    held = {
+                        "ts": timestamp,
+                        "rule": p.get("rule", ""),
+                        "rationale": p.get("rationale", ""),
+                        "project": project_name,
+                    }
+                    f.write(json.dumps(held, ensure_ascii=False) + "\n")
             wrote.append(
-                f"claude_md_proposals: halted ({queued} pending >= cap {max_pending_proposals})"
+                f"claude_md_proposals: halted ({queued} pending >= cap {max_pending_proposals}),"
+                f" held {len(proposals)}"
             )
             proposals = []
     if proposals:
@@ -1127,15 +1151,16 @@ deprecated_reason: null
                 block_lines.append(f"  - **Rationale:** {rationale}")
         block_lines.append("")
         block = "\n".join(block_lines)
-        if proposal_file.exists():
-            existing = proposal_file.read_text()
-            _atomic_write(proposal_file, existing + "\n" + block)
-        else:
-            header = (
-                "<!-- claude-md proposals (append-only). "
-                "Review and merge into CLAUDE.md or discard. -->\n\n"
-            )
-            _atomic_write(proposal_file, header + block)
+        with memory_dir_lock(memory_dir):
+            if proposal_file.exists():
+                existing = proposal_file.read_text()
+                _atomic_write(proposal_file, existing + "\n" + block)
+            else:
+                header = (
+                    "<!-- claude-md proposals (append-only). "
+                    "Review and merge into CLAUDE.md or discard. -->\n\n"
+                )
+                _atomic_write(proposal_file, header + block)
         wrote.append(f"claude_md_proposals: {len(proposals)}")
 
     handoff_file = memory_dir / "handoff.md"
