@@ -2306,3 +2306,21 @@ def test_settings_shape_says_unknown_when_no_binary_resolves(
     assert _render_settings_shape(console, cfg) is False
     assert "unknown" in _unwrapped(buf.getvalue())
     assert calls == []
+
+
+@pytest.mark.usefixtures("_no_ambient_store")
+def test_halted_queues_report_what_the_cap_held_back(tmp_path: Path) -> None:
+    from lazy_harness.cli.doctor_cmd import _render_halted_proposals
+    from lazy_harness.knowledge.compound_loop import HELD_PROPOSALS_FILE
+
+    held = _queue(tmp_path / ".claude-lazy/projects/-held/memory", 3)
+    (held / HELD_PROPOSALS_FILE).write_text('{"rule": "a"}\n{"rule": "b"}\n')
+    _queue(tmp_path / ".claude-lazy/projects/-bare/memory", 4)
+    console, buf = _wide_console()
+
+    _render_halted_proposals(console, _queues_cfg(tmp_path))
+
+    out = _unwrapped(buf.getvalue())
+    assert "3 pending, 2 held back" in out
+    assert "4 pending (oldest" in out
+    assert "2 held back by the cap" in out

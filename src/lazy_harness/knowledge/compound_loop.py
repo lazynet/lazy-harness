@@ -783,6 +783,11 @@ PENDING_PROPOSALS_MAX_CHARS = 10_000
 #: Budget that admits any queue — for counting, where truncation would lie.
 _UNBOUNDED = 1 << 30
 
+#: Proposals the cap refused, one JSON record per line, next to the queue. Kept
+#: out of `claude-md.proposal.md` so they do not count toward the cap, and out
+#: of `claude-md.rejected.md` so the grader never reads them as refusals.
+HELD_PROPOSALS_FILE = "proposals-held.jsonl"
+
 
 def collect_pending_proposals(
     memory_dir: Path, max_chars: int = PENDING_PROPOSALS_MAX_CHARS
@@ -1110,11 +1115,21 @@ deprecated_reason: null
         proposal_file = memory_dir / "claude-md.proposal.md"
         queued = len(collect_pending_proposals(proposal_file.parent, max_chars=_UNBOUNDED))
         if max_pending_proposals is not None and queued >= max_pending_proposals:
-            # Backpressure, not a discard. Dropping the new proposal would lose
-            # signal silently; halting emission makes a full queue cost
-            # something the next session is told about.
+            # Backpressure, not a discard: the queue stops growing so a full one
+            # costs something the next session is told about, and the refused
+            # batch goes to the held file instead of being lost.
+            with open(memory_dir / HELD_PROPOSALS_FILE, "a") as f:
+                for p in proposals:
+                    held = {
+                        "ts": timestamp,
+                        "rule": p.get("rule", ""),
+                        "rationale": p.get("rationale", ""),
+                        "project": project_name,
+                    }
+                    f.write(json.dumps(held, ensure_ascii=False) + "\n")
             wrote.append(
-                f"claude_md_proposals: halted ({queued} pending >= cap {max_pending_proposals})"
+                f"claude_md_proposals: halted ({queued} pending >= cap {max_pending_proposals}),"
+                f" held {len(proposals)}"
             )
             proposals = []
     if proposals:

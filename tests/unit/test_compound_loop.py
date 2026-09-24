@@ -12,12 +12,15 @@ import pytest
 from lazy_harness.agents.base import HookEvent
 from lazy_harness.core.config import CompoundLoopConfig, Config
 from lazy_harness.knowledge.compound_loop import (
+    HELD_PROPOSALS_FILE,
     AgentDispatch,
     Insight,
     build_prompt,
     collect_existing_decisions,
     collect_existing_failures,
     collect_existing_learnings,
+    collect_pending_proposals,
+    collect_rejected_proposals,
     count_user_chars,
     create_task,
     extract_agent_dispatches,
@@ -1233,6 +1236,55 @@ def test_persist_results_halts_proposal_emission_at_the_cap(tmp_path: Path) -> N
 
     assert (memory / "claude-md.proposal.md").read_text() == before
     assert any("halted" in line and "10" in line for line in wrote)
+
+
+def test_persist_results_holds_back_what_the_cap_refuses(tmp_path: Path) -> None:
+    """The cap defers a proposal, it does not lose it.
+
+    Assigning the refused batch to an empty list dropped the grader's output
+    for that run with nothing on disk to recover it from.
+    """
+    memory = tmp_path / "memory"
+    _queue_with(memory, 10)
+
+    wrote = persist_results(
+        _proposal_data("a rule the cap holds back"),
+        memory,
+        tmp_path / "Learnings",
+        "proj",
+        "2026-09-08T10:00:00-03:00",
+        max_pending_proposals=10,
+    )
+
+    held = [json.loads(line) for line in (memory / HELD_PROPOSALS_FILE).read_text().splitlines()]
+    assert held == [
+        {
+            "ts": "2026-09-08T10:00:00-03:00",
+            "rule": "a rule the cap holds back",
+            "rationale": "why",
+            "project": "proj",
+        }
+    ]
+    assert any("held 1" in line for line in wrote)
+
+
+def test_held_proposals_are_neither_pending_nor_rejected_to_the_grader(
+    tmp_path: Path,
+) -> None:
+    memory = tmp_path / "memory"
+    _queue_with(memory, 10)
+
+    persist_results(
+        _proposal_data("a held rule"),
+        memory,
+        tmp_path / "Learnings",
+        "proj",
+        "2026-09-08T10:00:00-03:00",
+        max_pending_proposals=10,
+    )
+
+    assert "a held rule" not in collect_pending_proposals(memory)
+    assert "a held rule" not in collect_rejected_proposals(memory)
 
 
 def test_persist_results_without_a_cap_still_writes_proposals(tmp_path: Path) -> None:
