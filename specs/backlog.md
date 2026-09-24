@@ -34,6 +34,9 @@ cerrarlas.
    sync de skills de claude.ai que puede abortar `lh deploy` (medir primero).
 
 **Estado al 2026-09-24:** las tres iteraciones mergearon en #460 (ver §Done).
+La ronda siguiente, el mismo día, cerró la ALTA y las tres MEDIA que #460 dejó
+abiertas (#462, #463) y migró engram a 2.1.0 del lado del harness y en el CT
+(#464); la Mac queda como ALTA.
 
 Hallazgos de la pasada de #460, ya resueltos o movidos a su propia entrada:
 
@@ -295,59 +298,40 @@ desde `:367-369` cuando el step 3 insertó los helpers de merge arriba de la cla
 
 - [x] **Iteraciones 1–3 del orden de ataque del 2026-09-24** — ocho branches con TDD, mergeadas juntas. (1) Un hook con `--profile` desconocido cae a un profile declarado **del mismo agente** (`prompt_id` identifica a Claude Code, `turn_id` a Codex) y si no hay uno, rechaza; la primera versión cruzaba de agente y dejaba a Codex con un deny que no aplica. (2) `lh metrics ingest --dry-run` ya no entrega a sinks remotos, y un drain fallido avisa. (3) ADR-054: placeholder malformado como diagnóstico, escape `{{`/`}}` documentado. (4) engram-persist con un cursor por proyecto por máquina y tope de 25 saves por corrida. (5) El cap de proposals retiene en `proposals-held.jsonl` en vez de descartar. (6) F7: lock por destino sobre la memoria compartida y `.tmp` únicos. (7) `project_key` se corta antes de `$HOME` y las dos implementaciones son una. (8) ADR-032 L4 y `legacy_memory_dirs` resuelven por el adapter para transcript billing, profile moves, handoff lookup, legacy memory enumeration y compound-loop lookup — los sitios que quedan afuera tienen su propia entrada en §Open (ADR-032, Evolution 2026-09-24). (9) El nombre de skill `synced` queda reservado para el sync de claude.ai. PR #460, mergeado el 2026-09-24; entra en 0.79.1.
 - [x] **Duplicados de lazy-harness en engram limpiados** — 5018 filas `decision`/`failure` duplicadas (mismo tipo, `normalized_hash` y título) borradas en blando con `engram delete`, quedándose con la más vieja de cada grupo o con la pinned o con `topic_key`. Backup previo en `~/.engram/engram-backup-2026-09-24-pre-dedupe.db`. Operación de entorno, sin cambio de código, 2026-09-24.
+- [x] **El exit 2 fail-closed bloquea bajo Codex, medido con un runner real** — probe contra `codex-cli 0.155.1` con el profile `codex-lazy`: el hook con `--profile` desconocido sale exit 2 y Codex no ejecuta el comando (`specs/designs/codex-evidence.md` §8). No hizo falta fix; un test de regresión pinnea el contrato y dos mutaciones a mano prueban que carga. Se corrigieron los docstrings que decían que Codex nunca había honrado exit 2. PR #462, mergeado el 2026-09-24; entra en 0.80.0.
+- [x] **Tres MEDIA de la resaca de #460** — (1) ADR-032 L4: los seis builtins y `_shared` ya no caen a `or "projects"`; un test por glob sobre los builtins falla si vuelve el literal. (2) `lh memory proposals accept/reject/apply` toman `memory_dir_lock` durante todo el read-modify-write. (3) `lh doctor` reporta `warn` «catching up» cuando la corrida llegó al tope de 25 saves y el cursor avanzó en disco; un cursor trabado sigue en `fail`. PR #463, mergeado el 2026-09-24; entra en 0.80.0.
+- [x] **engram 2.1.0 del lado del harness, y el CT `agents` migrado como canary** — `PINNED_VERSION` = 2.1.0 y `mcp_server_config()` con path absoluto y `mcp --tools=agent`, para no disparar el ownership check de 2.x. Probe sobre una copia de la DB de la Mac en `specs/designs/engram-evidence.md`; plan en `specs/designs/2026-09-24-engram-2-migration.md`. El CT subió por lazy-ansible (`1cc41b6`, pin + sha256 + handler que mata el `serve` viejo) y pasó las once filas de verificación del plan; el marketplace del plugin queda pinneado a `v2.1.0` con `owner/repo@ref`. El menú de `engram setup` en SessionStart era skew plugin 0.1.2 / binario 1.20. PR #464, mergeado el 2026-09-24; entra en 0.80.0.
 
 ## Open — Prioridad ALTA
 
-### El camino exit 2 fail-closed del hook bloqueante nunca se ejerció bajo Codex
+### La Mac sigue en engram 1.20.0 con el plugin 0.1.2
 
-**Por qué:** #460 corrigió el fallback por `--profile` desconocido para que sólo
-caiga a un profile del mismo agente (`prompt_id` identifica a Claude Code,
-`turn_id` a Codex) y si no hay uno, rechace. La negativa sale como exit 2, que
-es el canal fail-closed de Claude Code — el camino exit 2 bajo Codex nunca se
-ejerció con un profile real, así que no está medido si "fail closed" también lo
-es para Codex o si su runner interpreta ese exit code distinto (Codex ya
-mostró, en el primer commit de la branch, que un deny con sobre JSON y exit 0
-no se aplicaba). Riesgo: un hook bloqueante que falla abierto bajo Codex.
-**Acción:** ejercer el camino exit 2 con un runner Codex real (o el fixture que
-`_caller_agent` usa en tests) y confirmar que bloquea. Prioridad ALTA.
+**Por qué:** #464 subió el pin a 2.1.0 y el CT ya migró; la Mac no, porque la
+migración exige cerrar todas las sesiones de Claude y Codex (cada una tiene su
+`engram mcp` abierto sobre la DB). Mientras tanto cada SessionStart imprime el
+menú interactivo de `engram setup` (skew plugin/binario, plan §3) y `lh doctor`
+muestra drift de pin. Además, 2.1.0 rechaza el `save` cuando la sesión
+`manual-save-<project>` tiene otro `project`: la Mac tiene cuatro filas así,
+`lazy-harness` incluida, y el arreglo probado es un `UPDATE sessions SET
+project` (`specs/designs/engram-evidence.md`).
+**Acción:** correr desde una terminal Aqua, con todas las sesiones cerradas, el
+runbook de upgrade (backup, `brew upgrade`, fix de ownership, pin del
+marketplace, plugin 0.1.3) y verificar con la tabla §5.5 del plan; bump de
+`[memory.engram] version` en `config.toml` por chezmoi. Prioridad ALTA.
 
 ## Open — Prioridad MEDIA
 
 ---
 
-### ADR-032 L4: el fallback `or "projects"` sigue vivo fuera de los cinco readers que #460 migró
+### `lh doctor` no detecta skew entre el plugin de engram y su binario
 
-**Por qué:** `session_dirs().get("sessions") or "projects"` (una respuesta que
-`agents/session_paths.py` documenta como incorrecta) sigue en
-`hooks/builtins/engram_persist.py:117`, `session_end.py:120,148`,
-`session_export.py:93`, `pre_compact.py:197`, `context_inject.py:789,797`, y en
-`_shared.resolve_project_dir`/`resolve_memory_dir` (`sessions_subdir or
-"projects"`, `_shared.py:121,218`) — que `hooks/builtins/compound_loop.py:121`
-ahora alimenta con un `session_subdir()` posiblemente vacío. Ver ADR-032,
-Evolution 2026-09-24.
-**Acción:** rutear los seis builtins y `_shared` por `agents/session_paths.py`,
-igual que los cinco readers ya migrados. Prioridad MEDIA.
-
-### `lh memory proposals accept/reject/apply` escriben la cola sin el lock nuevo
-
-**Por qué:** del review de `compound-queue` sobre #460 — `cli/memory_cmd.py`
-(`accept`/`reject`/`apply`, líneas 595, 619, 649) leen, modifican y reemplazan
-`claude-md.proposal.md` sin tomar `memory_dir_lock`, a diferencia del worker del
-compound loop que sí lo hace desde esta misma pasada. Riesgo de carrera si un
-`accept`/`reject`/`apply` corre mientras el worker escribe. Ver también
-`docs/how/memory-compound.md:123`, ya acotado a que este camino no tiene lock.
-**Acción:** tomar `memory_dir_lock` en `memory_cmd.py` (TDD). Prioridad MEDIA.
-
-### El umbral de lag de `lh doctor` marca `fail` durante el catch-up normal del tope de 25 saves
-
-**Por qué:** del review de `engram-cursor` sobre #460 — con `MAX_SAVES_PER_RUN`
-= 25, un cursor que arranca lejos del final tarda varias corridas en ponerse al
-día, y mientras tanto el umbral de lag de `lh doctor` (64 KiB) marca `fail`
-aunque el sistema esté funcionando como se diseñó. El ruido entrena a ignorar
-el `fail`, que es justo el modo de falla que enmascara un lag real.
-**Acción:** o subir el umbral para tolerar el catch-up esperado bajo el tope
-actual, o marcar el estado como distinto de `fail` (p.ej. `catching-up`)
-mientras el cursor avanza. Prioridad MEDIA.
+**Por qué:** el menú de `engram setup` en cada SessionStart vino de un plugin
+(0.1.2, que sigue la rama default del marketplace) más nuevo que el binario
+(1.20.0). Nada lo reportó; se encontró leyendo el output del hook. El pin del
+marketplace a `v2.1.0` evita la causa, no la detección.
+**Acción:** check de `lh doctor` que compare la versión del plugin
+`engram@engram` instalado en cada profile contra la que shippea el tag del
+binario (plan §5.2 ítem 4). Prioridad MEDIA.
 
 ### La cola de proposals: (d) shippeó, queda decidir el drenaje, y el cap retiene y nada lo devuelve
 
@@ -694,6 +678,29 @@ Cada una mezcla responsabilidades no relacionadas: recolección de contexto y re
 ---
 
 ## Open — Prioridad BAJA
+
+### Codex bajo exit 2: las formas que #462 no midió
+
+**Por qué:** §8 de `codex-evidence.md` midió exit 2 en `PreToolUse` sobre
+`Bash`, con stdout vacío. Quedan sin medir: exit 2 en `apply_patch`, exit 2 con
+stdout no vacío, exit codes distintos de 0/2 y eventos distintos de
+`PreToolUse`. **Acción:** extender el probe cuando un hook dependa de alguna de
+esas formas. Prioridad BAJA.
+
+### Colas de Cloud dormidas en los stores de engram de los dos hosts
+
+**Por qué:** engram 2.1.0 suma el check `sync_target_closed_space`, que en el CT
+marca siete filas `cloud:*` de `sync_state` fechadas antes de la migración; la
+Mac tiene además 423 mutaciones sin título bloqueadas. Cloud está apagado en
+los dos hosts y nada consume esas colas; se aceptaron como falso positivo el
+2026-09-24. **Acción:** limpiarlas si Cloud se activa alguna vez, o si el ruido
+en `engram doctor` empieza a tapar hallazgos reales. Prioridad BAJA.
+
+### `memory/engram.py:run_engram()` no tiene callers
+
+**Por qué:** encontrado por el inventario de la migración a 2.1.0; ningún
+módulo de `src/` lo llama. **Acción:** borrarlo con TDD o documentar para qué
+se guarda. Prioridad BAJA.
 
 ### Cinco copias de `_atomic_write` divergieron después de #460
 
