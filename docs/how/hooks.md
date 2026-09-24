@@ -499,7 +499,7 @@ Source: `src/lazy_harness/hooks/builtins/engram_persist.py` (the builtin, which 
 
 Responsibility: deterministically mirror new entries from `decisions.jsonl` and `failures.jsonl` into [Engram](https://github.com/Gentleman-Programming/engram) so the same observation is queryable both via `grep` over the JSONL and via `mem_search` from any future session. Runs after `compound-loop` writes its new entries on the same `Stop` event.
 
-Mechanism: per-file byte cursors in `<memory_dir>/engram_cursor.json`.
+Mechanism: per-file byte cursors in `engram_cursor.json`, one per project per machine. When memory lives in the knowledge store the cursor sits in `<lh data dir>/engram-cursors/<memory dir relative to the store>/` — shared by every profile, because they append to the same JSONL and save into the same Engram database, and outside the store because the store syncs between machines and the database does not. Memory outside the store is per profile, and its cursor stays in `<agent dir>/engram-cursors/<host>/<owner>/<name>/`. A shared cursor's first run adopts the furthest offset any profile's old cursor reached, so the move does not re-upload history.
 
 ```json
 {
@@ -516,7 +516,7 @@ For each kind (`decision`, `failure`):
 2. Read line by line. Partial lines at EOF are deferred to the next run (the producer might still be flushing).
 3. Decode each line as JSON. Malformed lines are counted (`skipped_malformed`) and the cursor advances past them — they are not retried.
 4. For each well-formed entry, invoke `engram save <title> <json> --type <kind> --project <key> --scope project`. The title is the entry's `summary` field truncated to 200 chars; the body is the canonical JSON of the entry.
-5. **On success**, advance the cursor to the new file position and persist `engram_cursor.json` atomically (tempfile + `os.replace`).
+5. **On success**, advance the cursor to the new file position and persist `engram_cursor.json` atomically (tempfile + `os.replace`). A run attempts at most 25 saves across both files (`MAX_SAVES_PER_RUN`), so a large backlog drains over several `Stop` events instead of blocking one.
 6. **On failure**, leave the cursor untouched and stop processing this kind for this run. The next run retries the same offset → at-least-once delivery, with a strict ordering guarantee (no entry skipped over a transient failure).
 
 Project key resolution: `git rev-parse --git-common-dir` so worktrees collapse onto the main repo's basename. This prevents `lazy-harness` and `.worktrees/feat-foo` from showing up as two separate Engram projects.
@@ -525,7 +525,7 @@ If `engram` is not on `PATH`, the run logs `engram binary not on PATH; skipping 
 
 **Where it writes:**
 
-- `<memory_dir>/engram_cursor.json` — the per-kind byte cursors.
+- `engram_cursor.json` — the per-kind byte cursors, in the location described above.
 - `~/.claude/logs/engram_persist.log` — append-only error log (subprocess failures, missing binary).
 - `~/.claude/logs/engram_persist_metrics.jsonl` — one JSONL record per run (run summary) plus one record per slow `engram save` (≥ 500 ms). The `lh doctor` "engram-persist" feature row reads this file via `monitoring/engram_persist_health.py` to classify state as `ok` / `warn` / `fail` based on last-run age, recent failure rate, and cursor lag.
 

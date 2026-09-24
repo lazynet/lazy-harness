@@ -24,6 +24,9 @@ from typing import Literal
 SLOW_SAVE_THRESHOLD_MS: int = 500
 TITLE_MAX_CHARS: int = 200
 SAVE_TIMEOUT_SECONDS: int = 30
+# A catch-up runs inside `Stop`, which the session waits on: 930 entries at
+# ~150 ms each froze one for 145 s. The remainder drains on later runs.
+MAX_SAVES_PER_RUN: int = 25
 
 EntryKind = Literal["decision", "failure"]
 
@@ -80,6 +83,20 @@ def _save_cursor(cursor_path: Path, decisions_offset: int, failures_offset: int)
             pass
         # Fail soft: cursor write failure means at-least-once becomes
         # at-least-twice on the next run, which is acceptable.
+
+
+def _adopt_cursor(candidates: list[Path], *, fallback: Path) -> dict[str, int]:
+    """The furthest offset any of `candidates` reached, per file.
+
+    Every candidate fed the same database, so an entry one of them saved is
+    already there. `fallback` — the copy in the synced store, which may come
+    from another machine — is read only when no candidate exists.
+    """
+    existing = [c for c in candidates if c.is_file()]
+    if not existing:
+        return _load_cursor(fallback)
+    loaded = [_load_cursor(c) for c in existing]
+    return {key: max(c[key] for c in loaded) for key in ("decisions_offset", "failures_offset")}
 
 
 @dataclass
@@ -152,6 +169,8 @@ class EngramPersister:
         engram_bin: str | None = None,
         slow_save_threshold_ms: int = SLOW_SAVE_THRESHOLD_MS,
         cursor_dir: Path | None = None,
+        adopt_cursor_dirs: tuple[Path, ...] = (),
+        max_saves_per_run: int = MAX_SAVES_PER_RUN,
     ) -> None:
         self.memory_dir = memory_dir
         self.logs_dir = logs_dir
@@ -162,6 +181,9 @@ class EngramPersister:
         # between the two. None keeps the old location for callers that have
         # no machine-local directory to offer.
         self.cursor_dir = cursor_dir
+        # Cursors this one replaces. Read once, when `cursor_dir` holds none yet.
+        self.adopt_cursor_dirs = adopt_cursor_dirs
+        self.max_saves_per_run = max_saves_per_run
         self.engram_bin = engram_bin if engram_bin is not None else shutil.which("engram")
         self.slow_save_threshold_ms = slow_save_threshold_ms
 
@@ -185,12 +207,16 @@ class EngramPersister:
         if not cursor_path.is_file():
             # First run after the move: adopt what the old location knew, so a
             # machine that was up to date does not resave its whole history.
-            cursor = _load_cursor(self.memory_dir / _CURSOR_FILENAME)
+            cursor = _adopt_cursor(
+                [d / _CURSOR_FILENAME for d in self.adopt_cursor_dirs],
+                fallback=self.memory_dir / _CURSOR_FILENAME,
+            )
             # Write it through immediately rather than on the next save. The
             # shared copy is on its way out of the store, and a cursor that
             # only ever exists there resets to zero the day it goes.
             _save_cursor(cursor_path, cursor["decisions_offset"], cursor["failures_offset"])
 
+        attempted = 0
         for kind in ("decision", "failure"):
             file_path = self.memory_dir / _FILES[kind]
             offset_key = f"{kind}s_offset"
@@ -212,6 +238,8 @@ class EngramPersister:
                     if not line_bytes.endswith(b"\n"):
                         # Partial line at EOF — not yet finalised by writer.
                         break
+                    if attempted >= self.max_saves_per_run:
+                        break
                     result.entries_seen[kind] += 1
                     raw = line_bytes.decode("utf-8", errors="replace").rstrip("\n")
                     try:
@@ -227,6 +255,7 @@ class EngramPersister:
                         )
                         continue
 
+                    attempted += 1
                     ok, elapsed_ms, stderr, rc = _save_entry(
                         self.engram_bin, entry, kind, self.project_key
                     )
