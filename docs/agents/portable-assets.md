@@ -109,6 +109,13 @@ at `<config_dir>/.lazy-harness/skill-links.json` drives cleanup. Codex can also
 opt out of host discovery entirely via `skip_host_skill_discovery` in its
 `config.toml`, and the adapter then reports no root rather than asserting one.
 
+`synced` is reserved for Claude Code's account skill sync. `lh deploy` skips any
+profile-source skill directory with that name and reports it once so its source
+copy can be removed. An older harness-owned `skills/synced` link into the profile
+source is removed on the next deploy, including a single-profile deploy. Native
+directories and links to other locations are left intact; `synced` is removed
+from the harness ownership ledger.
+
 Slash commands and subagent definitions stay **native**. They are not projected,
 not translated, and not warned about — they are simply each agent's own.
 

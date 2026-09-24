@@ -166,6 +166,79 @@ def test_user_owned_entry_is_never_adopted_or_replaced(home_dir: Path) -> None:
     assert not (root.parent / SKILL_LEDGER_RELATIVE).exists()
 
 
+def test_synced_source_is_reserved_and_reported_once(
+    home_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from lazy_harness.core.paths import config_dir
+
+    profile = config_dir() / "profiles" / "one"
+    _skill(profile, "shared", "synced", "native content")
+    _skill(profile, "claude-code", "synced", "other native content")
+    _skill(profile, "shared", "portable", "managed")
+
+    deploy_profiles(_config(home_dir, {"one": "claude-code"}))
+
+    root = home_dir / ".one" / "skills"
+    assert not (root / "synced").exists()
+    assert (root / "portable").is_symlink()
+    assert json.loads((root.parent / SKILL_LEDGER_RELATIVE).read_text())["links"] == ["portable"]
+    out = capsys.readouterr().out
+    assert out.count("synced is reserved") == 1
+    assert "remove the source copy" in out
+
+
+def test_owned_synced_link_is_released_even_on_narrowed_deploy(home_dir: Path) -> None:
+    from lazy_harness.core.paths import config_dir
+
+    profiles = config_dir() / "profiles"
+    source = _skill(profiles / "one", "claude-code", "synced", "native content")
+    cfg = _config(home_dir, {"one": "claude-code", "two": "claude-code"})
+    root = home_dir / ".two" / "skills"
+    root.mkdir(parents=True)
+    link = root / "synced"
+    link.symlink_to(source, target_is_directory=True)
+    ledger = root.parent / SKILL_LEDGER_RELATIVE
+    ledger.parent.mkdir(parents=True)
+    ledger.write_text('{"version": 1, "links": ["synced"]}\n')
+
+    deploy_profiles(cfg, only="two")
+
+    assert not link.is_symlink()
+    assert not link.exists()
+    assert source.is_dir()
+    assert json.loads(ledger.read_text())["links"] == []
+
+
+@pytest.mark.parametrize("entry_type", ["directory", "foreign_link"])
+def test_native_synced_entry_is_untouched_and_released_from_ledger(
+    home_dir: Path, entry_type: str
+) -> None:
+    from lazy_harness.core.paths import config_dir
+
+    profile = config_dir() / "profiles" / "one"
+    _skill(profile, "shared", "synced", "source content")
+    root = home_dir / ".one" / "skills"
+    root.mkdir(parents=True)
+    target = root / "synced"
+    native = home_dir / "native-synced"
+    if entry_type == "directory":
+        target.mkdir()
+        (target / "manifest.json").write_text("native")
+    else:
+        native.mkdir()
+        (native / "manifest.json").write_text("native")
+        target.symlink_to(native, target_is_directory=True)
+    ledger = root.parent / SKILL_LEDGER_RELATIVE
+    ledger.parent.mkdir(parents=True)
+    ledger.write_text('{"version": 1, "links": ["synced"]}\n')
+
+    deploy_profiles(_config(home_dir, {"one": "claude-code"}))
+
+    assert target.is_symlink() == (entry_type == "foreign_link")
+    assert (target / "manifest.json").read_text() == "native"
+    assert json.loads(ledger.read_text())["links"] == []
+
+
 @pytest.mark.parametrize("entry_type", ["file", "directory"])
 def test_skill_root_reports_an_entry_displaced_after_planning(
     home_dir: Path, entry_type: str

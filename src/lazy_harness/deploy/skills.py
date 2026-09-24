@@ -17,6 +17,7 @@ from lazy_harness.deploy.ledger import read_ledger
 from lazy_harness.deploy.symlinks import REPLACED, displaced_link_message, ensure_symlink
 
 SKILL_LEDGER_RELATIVE = Path(".lazy-harness/skill-links.json")
+RESERVED_SKILL_NAME = "synced"
 _LEDGER_VERSION = 1
 
 
@@ -48,22 +49,27 @@ class SkillProjectionPlan:
     roots: tuple[SkillRootPlan, ...]
     omissions: tuple[tuple[str, str], ...]
     narrowed: bool
+    reserved_source_present: bool = False
 
 
-def _skills_for_profile(profile_dir: Path, agent_name: str) -> dict[str, Path]:
+def _skills_for_profile(profile_dir: Path, agent_name: str) -> tuple[dict[str, Path], bool]:
     """Resolve skill directories at root < shared < agent precedence."""
     if not profile_dir.is_dir():
-        return {}
+        return {}, False
     roots = [profile_dir / "skills"]
     roots.extend(profile_dir / segment / "skills" for segment in ("shared", agent_name))
     resolved: dict[str, Path] = {}
+    reserved_source_present = False
     for root in roots:
         if not root.is_dir():
             continue
         for child in sorted(root.iterdir()):
+            if child.name == RESERVED_SKILL_NAME and child.is_dir():
+                reserved_source_present = True
+                continue
             if child.is_dir():
                 resolved[child.name] = child
-    return resolved
+    return resolved, reserved_source_present
 
 
 def _fingerprint(root: Path) -> str:
@@ -159,11 +165,13 @@ def plan_skill_projections(
     selected_sources: dict[Path, set[Path]] = {}
     legacy_roots: set[Path] = set()
     omissions: list[tuple[str, str]] = []
+    reserved_source_present = False
 
     for profile, entry in profiles.items():
         source_dir = profile_source_dir(cfg, profile, profiles_src)
         adapter = adapters[profile]
-        skills = _skills_for_profile(source_dir, adapter.name)
+        skills, has_reserved_source = _skills_for_profile(source_dir, adapter.name)
+        reserved_source_present |= has_reserved_source
         skill_root = getattr(adapter, "skill_root", None)
         root = skill_root(entry.config_dir) if callable(skill_root) else None
         if root is None:
@@ -239,12 +247,14 @@ def plan_skill_projections(
                 replaces_legacy_root=root in legacy_roots,
             )
         )
-    return SkillProjectionPlan(tuple(plans), tuple(omissions), narrowed)
+    return SkillProjectionPlan(tuple(plans), tuple(omissions), narrowed, reserved_source_present)
 
 
 def apply_skill_projections(plan: SkillProjectionPlan, profiles_src: Path) -> list[str]:
     """Apply a validated plan and return human-readable status lines."""
     output: list[str] = []
+    if plan.reserved_source_present:
+        output.append("  · skills/synced is reserved for native sync; remove the source copy")
     for root_plan in plan.roots:
         root = root_plan.root
         if root_plan.replaces_legacy_root and root.is_symlink():
@@ -256,7 +266,11 @@ def apply_skill_projections(plan: SkillProjectionPlan, profiles_src: Path) -> li
             target = root / name
             if not target.is_symlink() or not _points_into(target, profiles_src):
                 continue
-            if plan.narrowed and not _points_into_any(target, root_plan.selected_sources):
+            if (
+                name != RESERVED_SKILL_NAME
+                and plan.narrowed
+                and not _points_into_any(target, root_plan.selected_sources)
+            ):
                 retained.add(name)
                 continue
             target.unlink()

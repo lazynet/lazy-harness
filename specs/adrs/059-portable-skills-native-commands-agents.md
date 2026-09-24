@@ -59,6 +59,13 @@ created and only while they still point into a managed profile source, matching
 ADR-052's existing rule. A user-owned entry in `~/.agents/skills` is never
 adopted merely because its name collides.
 
+**Evolution (2026-09-24):** Claude Code 2.1.275 introduced account skill sync
+under the native `skills/synced/` directory. The harness reserves the name
+`synced` across skill projections: a profile-source directory with that name is
+ignored and reported once per deploy. Existing ledger ownership is released;
+only a `skills/synced` symlink into the profile source is removed, even during
+a narrowed deploy. A native directory or a symlink elsewhere remains untouched.
+
 ### Commands become skills when their behaviour is portable
 
 A reusable slash command is migrated to a skill rather than copied into every
