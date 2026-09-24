@@ -311,6 +311,46 @@ Ninguna.
 
 ---
 
+### Un job programado falló diez días seguidos y nada lo reportó
+
+**Por qué:** `knowledge-push` en la Mac salió con exit 1 en cada corrida del
+2026-09-14 al 2026-09-24. Hay 765 conflictos en `knowledge-push-stdout.log`,
+y `lazy-knowledge` acumuló 458 commits sin pushear. Ni `lh doctor` ni `lh
+scheduler status` lo mostraron, porque el estado de un job es `loaded` y no mira
+el último exit (`launchctl print` → `last exit code`, `systemctl show` →
+`ExecMainStatus`). Hay además un agravante en `knowledge/git_push.py:96`: `pull
+--rebase` re-aplica cada commit local, así que una vez divergido el ciclo choca
+en el primer commit y aborta, para siempre. Se destrabó a mano con un merge,
+que compara solo las puntas y chocó únicamente en un `handoff.md`.
+**Acción:** `lh doctor` reporta cada job cuyo último exit sea distinto de 0,
+con la ruta de su log. Evaluar que `push_once` caiga a merge cuando el rebase
+conflictúa, en vez de abortar y reintentar lo mismo. Prioridad MEDIA.
+
+### El probe de launchd toma cualquier fallo como `not loaded`
+
+**Por qué:** `scheduler/launchd.py:256` mapea todo exit distinto de 0 de
+`launchctl list <label>` a `JobState.NOT_LOADED`. Bajo el sandbox de Codex,
+`launchctl` no llega a launchd y sale con 1. Reproducido con `sandbox-exec
+-p '(version 1)(allow default)(deny mach-lookup)' lh scheduler status`: los
+seis jobs aparecen `not loaded` mientras están cargados. Un agente le creyó y lo
+reportó como discrepancia real. **Acción:** distinguir «label desconocido» de
+«no pude preguntar», y devolver `UNKNOWN` con la razón en el segundo caso.
+Prioridad BAJA.
+
+### Graphify está disponible y casi no se usa
+
+**Por qué:** medido sobre los transcripts de claude-lazy y claude-flex de los
+siete días al 2026-09-24: 22 de 362 sesiones (6%) llamaron a graphify, con 27
+llamadas contra 6220 greps. El nudge `graphify hook-guard search` salta en
+cada `Bash|Grep`, incluidos `ssh`, `git` y `ls`. El agente se acostumbra y lo
+ignora: una sesión de verificación lo recibió unas 20 veces y no lo siguió
+ninguna. Es automatización de comportamiento sin kill criteria (gate
+«Behavioural automation ships with kill criteria»). **Acción:** decidir la
+dirección con la baseline de arriba: acotar el nudge a búsquedas de
+identificadores en repos con grafo, reemplazarlo por contexto estructural en
+SessionStart, o sacarlo. Declarar el umbral de adopción antes de desplegar.
+Prioridad MEDIA.
+
 ### `lh doctor` no detecta skew entre el plugin de engram y su binario
 
 **Por qué:** el menú de `engram setup` en cada SessionStart vino de un plugin
