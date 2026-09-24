@@ -1,6 +1,6 @@
 """Graphify CLI wrapper — code structure index for AI coding agents.
 
-Pinned version: 0.9.41 (see ADR-023).
+Pinned version: 0.9.67 (see ADR-023).
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from lazy_harness.core.versions import parse_version
 
-PINNED_VERSION = "0.9.41"
+PINNED_VERSION = "0.9.67"
 
 
 @dataclass

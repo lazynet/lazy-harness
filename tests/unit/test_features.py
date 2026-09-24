@@ -135,7 +135,7 @@ def test_graphify_status_active(monkeypatch) -> None:
     monkeypatch.setattr(
         "shutil.which", lambda name: f"/usr/bin/{name}" if name in installed else None
     )
-    monkeypatch.setattr("lazy_harness.features._probe_version", lambda binary: "0.9.41")
+    monkeypatch.setattr("lazy_harness.features._probe_version", lambda binary: "0.9.67")
 
     cfg = Config()
     cfg.knowledge.structure.enabled = True
@@ -143,8 +143,8 @@ def test_graphify_status_active(monkeypatch) -> None:
     statuses = collect_feature_statuses(cfg)
     graphify = next(s for s in statuses if s.name == "graphify")
     assert graphify.state == "active"
-    assert graphify.installed_version == "0.9.41"
-    assert graphify.pinned_version == "0.9.41"
+    assert graphify.installed_version == "0.9.67"
+    assert graphify.pinned_version == "0.9.67"
 
 
 def test_graphify_status_dormant_when_installed_but_disabled(monkeypatch) -> None:
@@ -155,7 +155,7 @@ def test_graphify_status_dormant_when_installed_but_disabled(monkeypatch) -> Non
     monkeypatch.setattr(
         "shutil.which", lambda name: f"/usr/bin/{name}" if name in installed else None
     )
-    monkeypatch.setattr("lazy_harness.features._probe_version", lambda binary: "0.9.41")
+    monkeypatch.setattr("lazy_harness.features._probe_version", lambda binary: "0.9.67")
 
     cfg = Config()
     cfg.knowledge.structure.enabled = False

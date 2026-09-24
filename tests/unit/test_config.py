@@ -531,7 +531,7 @@ def test_config_knowledge_structure_defaults_when_missing() -> None:
     cfg = Config()
     assert cfg.knowledge.structure.engine == "graphify"
     assert cfg.knowledge.structure.enabled is False
-    assert cfg.knowledge.structure.version == "0.9.41"
+    assert cfg.knowledge.structure.version == "0.9.67"
 
 
 def test_config_knowledge_structure_parses_from_toml(config_dir: Path) -> None:
@@ -542,14 +542,14 @@ version = "1"
 
 [knowledge.structure]
 enabled = true
-version = "0.9.41"
+version = "0.9.67"
 """)
     from lazy_harness.core.config import load_config
 
     cfg = load_config(config_file)
     assert cfg.knowledge.structure.enabled is True
     assert cfg.knowledge.structure.engine == "graphify"
-    assert cfg.knowledge.structure.version == "0.9.41"
+    assert cfg.knowledge.structure.version == "0.9.67"
 
 
 def test_compound_loop_max_pending_proposals_defaults() -> None:
@@ -711,13 +711,13 @@ version = "1"
 engine = "graphify"
 enabled = true
 auto_rebuild_on_commit = true
-version = "0.9.41"
+version = "0.9.67"
 """)
     from lazy_harness.core.config import load_config
 
     cfg = load_config(config_file)
     assert cfg.knowledge.structure.enabled is True
-    assert cfg.knowledge.structure.version == "0.9.41"
+    assert cfg.knowledge.structure.version == "0.9.67"
 
 
 def test_knowledge_root_replaces_path(tmp_path: Path) -> None:
@@ -952,7 +952,7 @@ engine = "qmd"
 [knowledge.structure]
 engine = "graphify"
 enabled = true
-version = "0.9.41"
+version = "0.9.67"
 repos = ["~/repos/lazy/lazy-harness"]
 
 [memory.engram]

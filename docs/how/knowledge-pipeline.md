@@ -335,7 +335,7 @@ Configuration lives under `[knowledge.structure]` in `config.toml`:
 [knowledge.structure]
 engine = "graphify"
 enabled = true
-version = "0.9.41"
+version = "0.9.67"
 ```
 
 `enabled = true` is what `lh deploy` reads to wire the Graphify MCP entry into each profile's agent config, provided the `graphify-mcp` binary is present. Rebuilds are demand-driven: run `graphify update <path>` to refresh a graph from the AST without an LLM call, or `graphify check-update <path>` to test whether one is due.
