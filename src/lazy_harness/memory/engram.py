@@ -44,8 +44,16 @@ def run_engram(action: str, project: str | None = None, timeout: int = 300) -> E
 
 
 def mcp_server_config() -> dict:
-    """Declarative MCP entry for Engram (consumed by deploy_mcp_servers)."""
-    return {"command": "engram", "args": ["mcp"]}
+    """Declarative MCP entry for Engram (consumed by deploy_mcp_servers).
+
+    2.x's own `setup claude-code --mcp-only` only leaves an existing
+    `mcpServers.engram` entry alone on an exact match against what it would
+    write itself (`command`, `args`) — an absolute binary path and
+    `--tools=agent`, not the bare `engram` this shipped before. A mismatch
+    prints a conflict on every session's stderr instead of fixing anything.
+    """
+    binary = shutil.which("engram") or "engram"
+    return {"command": binary, "args": ["mcp", "--tools=agent"]}
 
 
 def check_version() -> tuple[bool, str]:

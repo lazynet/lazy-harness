@@ -196,13 +196,15 @@ def test_collect_mcp_servers_includes_engram_when_enabled_and_available(
 
     monkeypatch.setattr(qmd_mod, "is_qmd_available", lambda: False)
     monkeypatch.setattr(engram_mod, "is_engram_available", lambda: True)
+    monkeypatch.setattr("shutil.which", lambda name: "/opt/homebrew/bin/engram")
 
     cfg = Config()
     cfg.memory.engram.enabled = True
 
     result = engine._collect_mcp_servers(cfg)
     assert "engram" in result
-    assert result["engram"]["command"] == "engram"
+    assert result["engram"]["command"] == "/opt/homebrew/bin/engram"
+    assert result["engram"]["args"] == ["mcp", "--tools=agent"]
 
 
 def test_collect_mcp_servers_skips_engram_when_disabled(
