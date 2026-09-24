@@ -31,13 +31,7 @@ deploy, después deuda de arquitectura. Cada item tiene su entrada abajo.
    L4, los sitios que asumen `projects/`, junto con `legacy_memory_dirs`; el
    sync de skills de claude.ai que puede abortar `lh deploy` (medir primero).
 
-**Estado al 2026-09-24:** las tres iteraciones tienen branch local con commits y
-gate verde, sin push ni PR. Las siete mergean entre sí sin conflictos de código (sólo
-`docs/reference/cli.md`, resuelto con los dos cambios), y el gate sobre la integración
-dio 5487 passed. Branches: `fix/hook-unknown-profile` (2 commits), `fix/metrics-dry-run-delivery`,
-`fix/adr054-placeholder-diagnostics`, `fix/engram-cursor-per-project`,
-`fix/compound-queue-integrity` (2), `fix/project-key-stops-at-home`,
-`fix/session-paths-adr032-l4`. Las entradas de abajo se mueven a §Done cuando mergee cada una.
+**Estado al 2026-09-24:** las tres iteraciones mergearon en #460 (ver §Done).
 
 Hallazgos nuevos de esta pasada, sin entrada propia todavía:
 
@@ -309,6 +303,9 @@ desde `:367-369` cuando el step 3 insertó los helpers de merge arriba de la cla
 
 ---
 
+- [x] **Iteraciones 1–3 del orden de ataque del 2026-09-24** — ocho branches con TDD, mergeadas juntas. (1) Un hook con `--profile` desconocido cae a un profile declarado **del mismo agente** (`prompt_id` identifica a Claude Code, `turn_id` a Codex) y si no hay uno, rechaza; la primera versión cruzaba de agente y dejaba a Codex con un deny que no aplica. (2) `lh metrics ingest --dry-run` ya no entrega a sinks remotos, y un drain fallido avisa. (3) ADR-054: placeholder malformado como diagnóstico, escape `{{`/`}}` documentado. (4) engram-persist con un cursor por proyecto por máquina y tope de 25 saves por corrida. (5) El cap de proposals retiene en `proposals-held.jsonl` en vez de descartar. (6) F7: lock por destino sobre la memoria compartida y `.tmp` únicos. (7) `project_key` se corta antes de `$HOME` y las dos implementaciones son una. (8) ADR-032 L4 y `legacy_memory_dirs` resuelven por el adapter. (9) El nombre de skill `synced` queda reservado para el sync de claude.ai. PR #460, mergeado el 2026-09-24; entra en 0.79.1.
+- [x] **Duplicados de lazy-harness en engram limpiados** — 5018 filas `decision`/`failure` duplicadas (mismo tipo, `normalized_hash` y título) borradas en blando con `engram delete`, quedándose con la más vieja de cada grupo o con la pinned o con `topic_key`. Backup previo en `~/.engram/engram-backup-2026-09-24-pre-dedupe.db`. Operación de entorno, sin cambio de código, 2026-09-24.
+
 ## Open — Prioridad ALTA
 
 Ninguna.
@@ -321,7 +318,7 @@ Ninguna.
 
 **Estado:** la opción (d) entró en #450 — `lh doctor` muestra toda cola frenada de la máquina (17 colas, 263 propuestas medidas el 2026-09-23). Siguen sin elegir (a) drenar a mano, (b) subir el cap o (c) expirar por antigüedad fuera del immunity registry; el análisis está en la historia de esta entrada (`git log -S 'immunity registry' -- specs/backlog.md`).
 
-**Corrección, medida por el review de #450:** la corrección anterior de esta entrada decía que el cap era «backpressure, not a discard». Es falso. `knowledge/compound_loop.py` hace `proposals = []` cuando `queued >= cap`, así que la propuesta que el grader produjo en esa corrida **se pierde**; el comentario del mismo bloque dice lo contrario. Lo único cierto es que el freno se avisa. **Acción:** decidir entre persistir lo frenado (un archivo aparte que el grader no lea como rechazo, que es también la base de la opción c) o corregir el comentario y aceptar la pérdida. Prioridad MEDIA.
+**Corrección, medida por el review de #450:** la corrección anterior de esta entrada decía que el cap era «backpressure, not a discard». Es falso. `knowledge/compound_loop.py` hace `proposals = []` cuando `queued >= cap`, así que la propuesta que el grader produjo en esa corrida **se pierde**; el comentario del mismo bloque dice lo contrario. Lo único cierto es que el freno se avisa. **Cerrado en #460 (2026-09-24):** lo frenado se persiste en `proposals-held.jsonl`, que el grader no lee, y `lh doctor` lo cuenta. **Queda abierto:** nada devuelve lo retenido a la cola, y (a)/(b)/(c) siguen sin elegir. Prioridad MEDIA.
 
 ### F2–F9 del coherence-audit del 2026-09-19 siguen siendo drift abierto en `main`
 
@@ -365,43 +362,9 @@ Prioridad MEDIA.
 
 **Acción:** (1) verificar en una sesión nueva que el lanzamiento pasa sin aprobación manual. La regla es prosa, no un matcher, así que hay que probarla y no suponerla. (2) Decidir si `lh deploy` es dueño de `autoMode.environment` por perfil en vez de dejarlo como PRESERVE, para que una sesión en un repo no vuelva a reescribirlo para todo el perfil. Prioridad MEDIA.
 
-### `legacy_memory_dirs` asume `projects/` y no ve la memoria legacy de un perfil Codex
-
-**Por qué:** lo encontró #450. Sin knowledge store, la memoria legacy de un perfil Codex quedaría en `sessions/<encoded>/memory`, pero `core.memory_store.legacy_memory_dirs` hardcodea `projects/`. Afecta a la sección de colas frenadas de `lh doctor` y a `lh status memory` por igual. Hoy no existe ninguna en disco porque el store está en uso. **Acción:** derivar el subdirectorio de `adapter.session_dirs()` en vez de tipearlo. Prioridad BAJA de hecho; va acá para que no se pierda.
-
-### `engram-persist` lleva un cursor por perfil sobre un `decisions.jsonl` compartido: posible doble carga a engram
-
-**Por qué:** medido el 2026-09-23 en el CT, al verificar 0.78.0. La primera corrida de `engram-persist` para lazy-harness en cada perfil subió el historial entero: 405 entradas en `lazy` (63 s) y **930** en `flex` (145 s, con la sesión frenada en el `Stop` todo ese tiempo). Los dos perfiles leen el mismo `decisions.jsonl`/`failures.jsonl` del knowledge store, que se keyea por el remote del repo, pero el cursor vive por perfil (`<config_dir>/engram-cursors/`). Si la base de engram es una sola para los dos perfiles, lazy-harness quedó cargado dos veces. **No verificado:** ni si engram deduplica por contenido o topic key, ni si su store es compartido. La corrida de `flex` la disparó la verificación misma (`lh exec --profile flex` desde lazy-harness), que es justo el caso de un perfil tocando un repo que no es de sus roots.
-
-**Acción:** (1) medir si hay duplicados en engram para `project: lazy-harness` en el CT. (2) Si los hay, el cursor tiene que keyearse como la memoria —por proyecto en el store— y no por perfil; y decidir qué hacer con lo ya duplicado. (3) Aparte del duplicado: una puesta al día de cientos de entradas corre sincrónica en el `Stop` y bloquea la sesión minutos. Evaluar un tope por corrida o moverla al worker. Prioridad MEDIA.
-
 ### `metrics_secrets_file()` ignora `[secrets] dir`
 
 **Por qué:** lo encontró el review de #453, y es anterior a ese PR. `core/paths.py:metrics_secrets_file()` sale de `default_secrets_dir()`, no de `secrets_dir_for(cfg)`, así que mover `[secrets] dir` no mueve `metrics.env`. Desde #453 lo leen el sink **y** la resolución de API keys de inferencia. Los docs nombran `<lh config dir>/secrets/metrics.env` explícito, así que no hay drift entre docs y código, sólo una config que no hace lo que su nombre promete. **Acción:** decidir si `[secrets] dir` gobierna también este archivo; si sí, test de acuerdo entre los dos lectores.
-
-### Un hook bloqueante con `--profile` desconocido bloquea toda tool call
-
-**Por qué:** medido el 2026-09-24 durante el cutover de ADR-068. Con el config nuevo, `lh hook pre-tool-use-security --profile lazy` imprime `unknown profile 'lazy'; declared: [...]` y sale 2 tanto para `ls` como para un borrado recursivo: cualquier sesión cuyo agente no relea los hooks después del `lh deploy` queda sin poder ejecutar nada hasta reiniciarse. Claude Code sí relee `settings.json` (la sesión del cutover siguió andando), así que el caso real es un agente que snapshotea hooks al arrancar, o un config renombrado sin redeploy. Fallar cerrado es defendible en un hook de seguridad; que el diagnóstico sea idéntico para un comando benigno y uno peligroso, no.
-
-**Acción:** decidir entre (a) documentar en el runbook de ADR-068 que toda sesión abierta se reinicia después del deploy, o (b) que un `--profile` desconocido en un hook bloqueante caiga a la política del profile default con un warning, en vez de bloquear. TDD en cualquier caso de (b): el test es el par benigno/peligroso con un profile inexistente.
-
-### `docs/reference/cli.md` usa `--profile lazy` como ejemplo
-
-**Por qué:** `docs/reference/cli.md:226,232` ilustran `lh exec` con `--profile lazy`, un nombre que después de ADR-068 ya no sigue la convención `{prefix}-{identity}`.
-
-**Acción:** cambiar los ejemplos a un nombre con la forma nueva (`claude-personal`).
-
-### ADR-054: un placeholder malformado en `external` sale como traceback, no como diagnóstico
-
-**Por qué:** medido el 2026-09-23 contra `main` @ `753679e` por el `/coherence-audit` de 0.79.0. ADR-054 promete que un placeholder desconocido se rechaza con un diagnóstico que nombra campo y comando, «rather than a bare Python traceback». `deploy/engine.py:_expand_external_command` atrapa sólo `KeyError`/`IndexError`: una `{` suelta y `{profile!z}` levantan `ValueError`, y `{profile.x}` levanta `AttributeError`, las tres sin atrapar a través de `lh deploy`.
-
-**Acción:** TDD — un test por forma malformada, después atrapar `ValueError` y `AttributeError` (o validar los campos con `string.Formatter().parse`) y envolverlos en `ExternalHookPlaceholderError`.
-
-### ADR-054: un comando `external` anterior al ADR con llaves literales ahora se rechaza
-
-**Por qué:** mismo audit y misma medición. ADR-054 y `docs/reference/config.md` dicen que toda entrada `external` declarada antes del ADR sigue funcionando sin migración. Vale sólo para comandos sin llaves: `echo ${HOME}` y `awk "{print $1}"` se rechazan en el deploy como placeholders desconocidos (`{HOME}`, `{print $1}`), porque `str.format` lee cada llave de shell como campo. El escape (`{{`/`}}`) funciona y no está documentado en ningún lado.
-
-**Acción:** documentar el escape en ADR-054 y en `config.md`, corregir la frase de «no migration», y pinear el escape con un test.
 
 ### `mkdocs build --strict` sale 2 sin warning en la primera corrida después de un cambio
 
@@ -409,39 +372,6 @@ Prioridad MEDIA.
 
 
 **Causa raíz (2026-09-24):** el exit 2 no es de mkdocs sino de `uv`: `error: unexpected argument '--group' found`. En el Mac hay dos `uv` en `PATH` y el primero es `~/.pyenv/shims/uv`, que resuelve a **uv 0.4.25** (instalado con pip en pyenv 3.12.3, anterior a `--group`); el de Homebrew es 0.12.16. Cuál gana depende del `PATH` de cada shell, por eso parecía intermitente y «de primera corrida». Con `/opt/homebrew/bin/uv` el comando de `AGENTS.md` pasa tal cual, así que el orden de flags no importa. **Acción:** sacar el `uv` de pip de pyenv 3.12.3 (entorno, no repo) y, del lado del repo, decidir si `/tdd-check` verifica `uv --version` antes de correr el gate.
-### El sync de skills de claude.ai puede abortar `lh deploy` entero
-
-**Por qué:** `lh deploy` rechaza una colisión de skills **antes** de escribir
-nada, y una de las tres condiciones que la disparan es exactamente la forma que
-tiene un skill sincronizado desde claude.ai. `deploy/skills.py:217` lanza
-`SkillCollisionError` —«A user-owned entry already claims skill '<name>' at
-<target>; it was not adopted and nothing was written»— cuando el skill root
-nativo ya tiene una entrada con ese nombre que no está en el ledger de ownership
-o que no apunta al source de los profiles; un skill que el agente escribió por
-su cuenta cumple las dos. `cli/deploy_cmd.py:172` atrapa `SkillCollisionError` y
-sale `SystemExit(1)`, así que lo que no corre es el deploy **entero** —profiles,
-hooks, config, MCP—, no sólo la proyección de skills.
-
-**Las dos mitades, verificadas.** Del lado del harness: los tres sitios de `raise`
-en `deploy/skills.py`, el texto del mensaje, la captura en `deploy_cmd.py:172` y
-el exit 1. Del lado del producto, medido el 2026-09-20 leyendo los dos
-`settings.json` desplegados: **ninguno declara una key de opt-out de sync de
-skills o plugins** —las únicas keys que rozan el tema son `enabledPlugins` y
-`extraKnownMarketplaces`, que son enablement y no un toggle de sync—, así que el
-default nativo de 2.1.275 aplica sin override en los dos profiles. Lo que sigue
-siendo `[inferido del changelog]` y no medido contra el binario es que ese default
-sea «sync encendido»; la fuente de esa lectura es
-`reports/2026-09-20-claude-code-2-1-278-harness-impact.md`, que está en `main`
-desde la poda de reports (PR #425, `63fdaf9`).
-
-**Acción:** medir primero —si el sync está encendido, y qué escribe en el skill
-root de cada profile— y recién después elegir. Las salidas plausibles son tres y
-ninguna está decidida: setear el opt-out en los profiles; adoptar al ledger un
-nombre sincronizado que ya exista; o degradar la colisión de skills a un warning
-que omita esa proyección sin tumbar el deploy completo. La tercera es la que más
-cambia el contrato, porque hoy «nothing was written» es una garantía deliberada
-y no un efecto colateral. Prioridad MEDIA.
-
 ### Auditar si el gate necesita más de 5.000 tests y seis minutos por corrida
 
 **Por qué:** el gate de esta rama recolectó y ejecutó **5.241 tests en ~6:05**.
@@ -540,14 +470,6 @@ pre_compact   -> ctx
 **Ninguno es una regresión viva**, y por eso es una entrada y no un fix: el builtin `post-compact` lo borró ADR-036 D1, y el canal de salida de `session-end` es log y nada más. Los dos son latentes. El mapeo de `post_compact` se mantuvo **a propósito** —«an operator may still attach their own hook to it», ADR-036 D1— así que un hook de operador que devuelva `additional_context` ahí come exactamente la falla que la Task 1 cerró, en silencio.
 
 **Acción:** `post_compact` **no** se arregla con la misma rama de texto. ADR-036 §Context dice que su ejecutor devuelve `{userDisplayMessage}` y nada más, y que su salida llega a la terminal y nunca al modelo: lo que corresponde ahí es una **negativa**, no un canal. `session_end` hay que medirlo antes de decidir — si su ejecutor no lee stdout, la respuesta también es negarse. Las dos decisiones son distintas de la de `pre_compact` y ninguna está tomada. Precondición barata para las dos: volver a leer la unión contra un binario actual. Los comentarios de `claude_code.py:729` y `:783` (antes `:511-513`) dicen que las claves de `hookSpecificOutput` se verificaron contra **2.1.269** mientras la enumeración de variantes sigue siendo la de **2.1.234**; alguien leyó el bundle nuevo sin re-enumerar la unión. **Re-verificado el 2026-09-20 y sigue igual**, con un dato nuevo que abarata la precondición: #421 portó el validador de `settings.json` del binario **2.1.278** a `agents/_settings_shape.py`, así que alguien ya desarmó un bundle tres versiones más nuevo — pero leyó el validador de settings, no la unión de `hookSpecificOutput`, que es otra tabla del mismo bundle y sigue sin re-enumerarse.
-
-### `project_key` colapsa repos sin `.git` propio en `local/lazynet`
-
-**Por qué:** `core/project_identity.py:project_key` camina hacia arriba buscando cualquier `.git` ancestro. El home **es** un repo (`~/.git`, dotfiles), así que un directorio sin `.git` propio bajo `~` aterriza en `/Users/lazynet` y sale keyeado `local/lazynet`. Todo repo en esa situación comparte una sola identidad de memoria.
-
-**Fuente:** detectado el 2026-09-10 al implementar `lh memory rightsize`, que por primera vez alcanza directorios sin `.git` propio. Caso concreto: `flex/apps/repo-falopa` se etiqueta `project:local/lazynet`. `memory/local/` todavía no tiene un directorio `lazynet`, así que no hay daño consumado — pero cualquier hook que escriba memoria desde uno de esos directorios lo crearía.
-
-**Acción:** decidir si `main_repo_root` debe cortar la caminata en `$HOME` en vez de aceptarlo como raíz de repo. Toca el keying de memoria real, así que no es un cambio cosmético: revisar los dos `project_key` (`core/project_identity.py` y `hooks/builtins/_shared.py`) y verificar desde un directorio sin `.git` propio antes y después.
 
 ### Loop engineering — fases 1 a 4 sin trackear
 
@@ -660,14 +582,6 @@ actuales. Si la cola es corta, el allowlist es viable y va como ADR con período
 sombra (registrar lo que *habría* bloqueado, sin bloquear). Si es larga, queda denylist y
 lo que corresponde es el ataque adversarial periódico que el gate ya pide.
 
-### F4 — El dry-run de `lh metrics ingest` igual dispara delivery remoto
-
-**Por qué:** re-verificado hoy. `cli/metrics_cmd.py:50-66`: `dry_run` sólo cambia el DB a `:memory:` (`:52`); los sinks configurados se construyen igual, `ingest_all` corre igual, y por cada `HttpRemoteSink` el comando llama `sink.drain(batch_size=0)` (`:64`) sin ninguna guarda de `dry_run`, adentro de un `except Exception: pass` pelado (`:65-66`) que además silencia un POST remoto fallido. Con un sink HTTP habilitado, un "dry run" transmite metadata (usuario, tenant, profile, project, session, host — `monitoring/ingest.py:205`) y actualiza el colector remoto. El help de la flag promete sólo "no database writes".
-
-**Fuente:** hallazgo F4 de `specs/codebase-audit-2026-09-16.md`, re-verificado a mano el 2026-09-16 leyendo `metrics_cmd.py` directo.
-
-**Acción:** cortar la construcción/drain de sinks remotos cuando `dry_run=True`, y no tapar el POST fallido con un `except` pelado.
-
 ### F3 — El ack de delivery del outbox no identifica la versión del payload reclamado
 
 **Por qué:** medido por la auditoría del 2026-09-16 con una reproducción en SQLite en memoria, no re-verificado en esta pasada. `monitoring/db.py:466` y `:542`: reencolar un payload cambiado reemplaza su contenido y vuelve la fila a `pending`; `outbox_mark_sent` reconoce delivery usando sólo `sink_name` + `event_id`, sin versión. Secuencia reproducida: worker reclama v1 → ingest reemplaza con v2 → worker acknowledgea v1 → la DB queda con v2 en estado `sent`. Una request vieja exitosa puede suprimir la entrega de datos más nuevos, porque el claim transaccional no protege el ack posterior.
@@ -685,12 +599,6 @@ lo que corresponde es el ataque adversarial periódico que el gate ya pide.
 **Por qué:** medido por la auditoría del 2026-09-16 con una probe de rendering puro, no re-verificado en esta pasada. `core/envrc.py:35`: el generador envuelve el path en comillas dobles sin escapar sustituciones de comando ni comillas embebidas. Un segmento de path configurado que contenga `$(...)` o backticks se emite tal cual dentro de la línea `export` entre comillas dobles, y al sourcear el archivo esa sustitución se evalúa en vez de preservarse como string literal. La explotación requiere control sobre el path configurado y ejecución del archivo generado — la CLI ya exige `direnv allow` antes de aplicar un `.envrc` actualizado (`cli/profile_cmd.py:280`).
 
 **Fuente:** hallazgo F6 de `specs/codebase-audit-2026-09-16.md`.
-
-### F7 — Los locks del compound-loop worker no cubren la persistencia compartida de memoria
-
-**Por qué:** medido por la auditoría del 2026-09-16 por inspección de fuente, no reproducido contra un fallo real de filesystem. `knowledge/compound_loop_worker.py:139` y `compound_loop.py:919`: los workers lockean su cola por-perfil, pero los destinos de memoria pueden converger en el mismo directorio de proyecto del knowledge store (`core/memory_store.py:43`). Las escrituras usan un `.tmp` determinístico; las actualizaciones de propuesta leen el documento existente, concatenan y reemplazan sin lock de destino (`compound_loop.py:1071`). Dos workers de distinto perfil procesando el mismo proyecto pueden pisarse cambios o colisionar en el temporal — el reemplazo atómico evita visibilidad parcial, no serializa escrituras concurrentes. Es una race derivada del código fuente, no una falla de filesystem reproducida.
-
-**Fuente:** hallazgo F7 de `specs/codebase-audit-2026-09-16.md`.
 
 ### F9 — Tres funciones de orquestación concentran la complejidad del repo
 
@@ -747,14 +655,6 @@ Cada una mezcla responsabilidades no relacionadas: recolección de contexto y re
 **Acción:** ninguna propuesta en esta entrada — mecanismo registrado, pide quote-awareness que el ancla actual no tiene.
 
 ---
-
-### El layout `projects/` de Claude Code se filtra otra vez fuera del adapter (ADR-032 L4)
-
-**Por qué:** ADR-032 centralizó en `ClaudeCodeAdapter` las siete suposiciones propias de Claude Code, y `agents/session_paths.py` es la respuesta importable para dónde viven las sesiones. Medido el 2026-09-23, cuatro sitios vuelven a asumir `projects/`: `cli/exec_cmd.py` pasa `config_dir / "projects"` al reader de billing del transcript, `core/move_projects.py` arma `<profile>/projects/<project>` a mano, y `cli/knowledge_cmd.py` y `hooks/builtins/compound_loop.py` conservan el fallback `session_dirs().get("sessions") or "projects"` que `session_paths.py` documenta como respuesta incorrecta. En un profile Codex, el primero mide el directorio equivocado.
-
-**Fuente:** `/coherence-audit` de 0.77.0; ADR-032, Evolution 2026-09-23.
-
-**Acción:** rutear los cuatro sitios por `agents/session_paths.py`, con un test por sitio sobre un adapter que no declara `projects`.
 
 ---
 
