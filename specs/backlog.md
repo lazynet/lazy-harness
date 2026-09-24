@@ -1,12 +1,11 @@
 # lazy-harness backlog
 
-0.78.0 cortado el 2026-09-23 (`fd208c5`) con #446, #447 y #449–#454; 0.79.0 pendiente con
-#457: [ADR-068](adrs/068-profiles-are-identity-times-agent.md), profiles como identity ×
-agent (`identity` opcional, `--agent` en `lh run`/`lh exec`, `lh metrics rename-profile`).
-El cutover de la flota que ADR-068 deja afuera sigue abierto (ver Open). ADR-060 Wave 1
-sigue en su ventana de siete días hábiles. Rollout externo pendiente: Wave 2 de ADR-060,
-el push de los renames `AGENTS.MD` de flex, el probe de proyección de skills instalada,
-receiver/Grafana y el opt-in de PRJ-LazyHarness.
+0.79.0 cortado el 2026-09-23 (`f98e99c`) con #457 ([ADR-068](adrs/068-profiles-are-identity-times-agent.md),
+profiles como identity × agent) y #458 (drift del `/coherence-audit` de 0.79.0). El cutover
+de la flota a los nombres de ADR-068 se ejecutó el 2026-09-24 en los dos hosts (ver Done).
+ADR-060 Wave 1 sigue en su ventana de siete días hábiles. Rollout externo pendiente: Wave 2
+de ADR-060, el push de los renames `AGENTS.MD` de flex, el probe de proyección de skills
+instalada, receiver/Grafana y el opt-in de PRJ-LazyHarness.
 
 Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio MkDocs); el roadmap público vive en `docs/roadmap.md` y solo contiene los temas comprometidos a alto nivel.
 
@@ -246,6 +245,7 @@ desde `:367-369` cuando el step 3 insertó los helpers de merge arriba de la cla
 - [x] **`lh doctor` falla sobre un `settings.json` desplegado que Claude Code descartaría** — contraparte del gate de #422: corre `fatal_hook_shape` sobre el `settings.json` de cada perfil Claude Code, falla nombrando perfil y JSON path, acota el claim a 2.1.278 y muestra la versión del binario que el perfil lanza (resuelto por el adapter, no `claude` del PATH, tras el review). JSON ilegible o de tipo equivocado da `!`, no `✗`. PR #454; entra en 0.78.0.
 - [x] **Residuo del knowledge store borrado** — `lazy-knowledge/memory/local/test_pre_compact_empty_input0`, vacío y fuera de git, removido el 2026-09-23.
 - [x] **Profiles como identity × agent (ADR-068)** — #457, mergeado el 2026-09-23; entra en 0.79.0. `[profiles.<name>].identity` es opcional: sin él nada cambia; con él, el nombre se valida como `{prefix}-{identity}[-{suffix}]` contra `agents.registry.PROFILE_PREFIXES`, el source dir pasa a `profiles/<identity>/` vía `profile_source_dir` en todos los call sites, y el system doc se genera una vez por par `(identity, agent)`. `lh run --agent` / `lh exec --agent` filtran candidatos antes de resolver roots y nunca caen a otro agente; `lh metrics rename-profile` reescribe el historial local y re-deriva `event_id`. El cutover de la flota (dotfiles, lazy-ai-tools, lazy-ansible, deploy por host) queda afuera: ver el item de nombres de profiles en Open.
+- [x] **Cutover de la flota a los nombres de ADR-068** — ejecutado el 2026-09-24 sobre 0.79.0, en el Mac y el agent station. Profiles `claude-lazy`, `claude-flex`, `codex-lazy`; `lcca` reemplazado por `lc`/`lcy`/`lx`/`lxn` y un alias por profile (dotfiles `8ff0f7b`); lazy-ai-tools `d1b0ba2`; lazy-ansible `56f2e6f` y `a0b3cd4`. Métricas locales renombradas con `rename-profile` (Mac 9262 filas de `session_stats`, CT 60) y el sink reescrito con `event_id` recalculado (9322 filas, paridad 9322/9322 contra la fórmula del harness antes de aplicar; backup en `events_backup_20260924_adr068`). Verificado: `lh run --list` y los dry-runs de los aliases en los dos hosts, `lh doctor` igual al baseline previo con los nombres nuevos, y un `lh exec --profile claude-lazy` real lanzado por systemd en el CT (`success: true`). **Tres cosas que el runbook no tenía:** (1) lazy-ansible genera `secrets/<profile>.env` desde `agent_station_profile_tokens`, keyeado por nombre de profile — renombrar el archivo a mano no alcanza, la próxima corrida del role lo recrea con el nombre viejo; (2) `chezmoi apply` sin paths en el Mac arrastraba drift ajeno (symlinks de los plists de lazy-vault, que ya corren en el CT), así que se aplicó acotado a los paths del rename; (3) con el config nuevo, un hook bloqueante invocado con `--profile` viejo sale 2 ante cualquier comando (ver Open).
 
 ---
 
@@ -319,6 +319,18 @@ Prioridad MEDIA.
 
 **Por qué:** lo encontró el review de #453, y es anterior a ese PR. `core/paths.py:metrics_secrets_file()` sale de `default_secrets_dir()`, no de `secrets_dir_for(cfg)`, así que mover `[secrets] dir` no mueve `metrics.env`. Desde #453 lo leen el sink **y** la resolución de API keys de inferencia. Los docs nombran `<lh config dir>/secrets/metrics.env` explícito, así que no hay drift entre docs y código, sólo una config que no hace lo que su nombre promete. **Acción:** decidir si `[secrets] dir` gobierna también este archivo; si sí, test de acuerdo entre los dos lectores.
 
+### Un hook bloqueante con `--profile` desconocido bloquea toda tool call
+
+**Por qué:** medido el 2026-09-24 durante el cutover de ADR-068. Con el config nuevo, `lh hook pre-tool-use-security --profile lazy` imprime `unknown profile 'lazy'; declared: [...]` y sale 2 tanto para `ls` como para un borrado recursivo: cualquier sesión cuyo agente no relea los hooks después del `lh deploy` queda sin poder ejecutar nada hasta reiniciarse. Claude Code sí relee `settings.json` (la sesión del cutover siguió andando), así que el caso real es un agente que snapshotea hooks al arrancar, o un config renombrado sin redeploy. Fallar cerrado es defendible en un hook de seguridad; que el diagnóstico sea idéntico para un comando benigno y uno peligroso, no.
+
+**Acción:** decidir entre (a) documentar en el runbook de ADR-068 que toda sesión abierta se reinicia después del deploy, o (b) que un `--profile` desconocido en un hook bloqueante caiga a la política del profile default con un warning, en vez de bloquear. TDD en cualquier caso de (b): el test es el par benigno/peligroso con un profile inexistente.
+
+### `docs/reference/cli.md` usa `--profile lazy` como ejemplo
+
+**Por qué:** `docs/reference/cli.md:226,232` ilustran `lh exec` con `--profile lazy`, un nombre que después de ADR-068 ya no sigue la convención `{prefix}-{identity}`.
+
+**Acción:** cambiar los ejemplos a un nombre con la forma nueva (`claude-personal`).
+
 ### ADR-054: un placeholder malformado en `external` sale como traceback, no como diagnóstico
 
 **Por qué:** medido el 2026-09-23 contra `main` @ `753679e` por el `/coherence-audit` de 0.79.0. ADR-054 promete que un placeholder desconocido se rechaza con un diagnóstico que nombra campo y comando, «rather than a bare Python traceback». `deploy/engine.py:_expand_external_command` atrapa sólo `KeyError`/`IndexError`: una `{` suelta y `{profile!z}` levantan `ValueError`, y `{profile.x}` levanta `AttributeError`, las tres sin atrapar a través de `lh deploy`.
@@ -335,6 +347,8 @@ Prioridad MEDIA.
 
 **Por qué:** medido tres veces el 2026-09-23, en dos worktrees; la tercera, justo después de un `pytest` completo, y seis corridas inmediatas posteriores salieron 0, incluidas tres con la salida a `/dev/null`, lo que descarta esa hipótesis. La primera corrida de `uv run --frozen --group docs mkdocs build --strict` después de editar `docs/` salió con exit 2 sin ninguna línea `WARNING` ni `ERROR` en la salida, y la segunda, sin tocar nada, salió 0. Tres corridas seguidas posteriores salieron 0. No está investigado; la sospecha barata es la sincronización del grupo `docs` de `uv` o el fetch de mermaid desde unpkg. **Acción:** reproducir capturando el output completo de la corrida que falla, porque en las dos veces se descartó. Un gate que falla en silencio y pasa al reintentar entrena a reintentar. Prioridad BAJA.
 
+
+**Causa raíz (2026-09-24):** el exit 2 no es de mkdocs sino de `uv`: `error: unexpected argument '--group' found`. En el Mac hay dos `uv` en `PATH` y el primero es `~/.pyenv/shims/uv`, que resuelve a **uv 0.4.25** (instalado con pip en pyenv 3.12.3, anterior a `--group`); el de Homebrew es 0.12.16. Cuál gana depende del `PATH` de cada shell, por eso parecía intermitente y «de primera corrida». Con `/opt/homebrew/bin/uv` el comando de `AGENTS.md` pasa tal cual, así que el orden de flags no importa. **Acción:** sacar el `uv` de pip de pyenv 3.12.3 (entorno, no repo) y, del lado del repo, decidir si `/tdd-check` verifica `uv --version` antes de correr el gate.
 ### El sync de skills de claude.ai puede abortar `lh deploy` entero
 
 **Por qué:** `lh deploy` rechaza una colisión de skills **antes** de escribir
@@ -388,28 +402,6 @@ No cambiar el gate durante la medición.
 riesgo y rollback. Adoptar sólo una opción que reduzca al menos 20% el tiempo de
 pared sin introducir flakes y cuya señal se sostenga con mutaciones en ambas
 direcciones; si ninguna llega al umbral, conservar el gate actual.
-
-### Cutover de la flota a los nombres de ADR-068
-
-**Por qué:** la gramática ya está elegida y shippeada en el repo:
-[ADR-068](adrs/068-profiles-are-identity-times-agent.md) (#457) nombra los profiles
-`{prefix}-{identity}[-{suffix}]`, keyea el source tree por identity, agrega `--agent` a
-`lh run`/`lh exec` y `lh metrics rename-profile`. Lo que queda es todo lo que vive fuera
-de este repo, y ADR-068 lo dejó explícitamente fuera de alcance: sin nombres de
-compatibilidad, cada consumidor que pasa un `--profile` viejo se rompe en el cutover.
-
-**Acción:** ejecutar el runbook de
-[`2026-09-23-profile-identity-design.md`](designs/2026-09-23-profile-identity-design.md),
-pasos 2–7: freeze de los timers del agent station; dotfiles (config, source tree, prosa,
-aliases); lazy-ai-tools; lazy-ansible (workloads, `UPDATE` del sink, dashboard); por host,
-deploy, `rename-profile`, renombrar cada `<secrets dir>/<profile>.env` (ADR-045 D1 lo
-keyea por nombre y falla abierto) y barrer links colgantes. La ventana de deprecación de
-`lcca` y los aliases por combinación se deciden en el paso de dotfiles; no borrar `lcca`
-por adelantado.
-
-**Criterio:** los criterios de éxito del design, verificados en los dos hosts — incluido
-que `lh doctor` no liste ningún profile no-default heredando las credenciales del
-ambiente.
 
 ### ADR-060: Wave 1 migrada, ventana de siete días abierta el 2026-09-22
 
