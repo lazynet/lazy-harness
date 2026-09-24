@@ -170,6 +170,27 @@ metric here is ≥ baseline (the gap beyond the probe's own 2 successful saves
 is ordinary session activity between the baseline capture and this `.backup`).
 No shrinkage anywhere — consistent with "no data loss" (plan §5.5).
 
+## `lh doctor` smoke — §5.2 item 5
+
+Not run against the real 2.1.0 install (the live Mac binary stays 1.20.0
+until the host migration itself). Simulated instead: the scratch 2.1.0
+binary prepended to `PATH`, and `LH_CONFIG_DIR` pointed at a scratch copy of
+the real `config.toml` with `[memory.engram].version` bumped to `"2.1.0"`
+(everything else, including the real `binary` path and `enabled = false`,
+left as on the Mac) — read-only, no real config or DB touched.
+
+```
+$ PATH=<scratch>/engram-probe:$PATH LH_CONFIG_DIR=<scratch>/lh-doctor-config uv run --frozen lh doctor
+...
+  · engram     (memory.engram) v2.1.0
+      Set [memory.engram].enabled = true to activate.
+```
+
+No `(pin ...)` drift suffix — before this pin bump, the same run reported
+`v2.1.0 (pin 1.20.0)`. `graphify`'s unrelated pin drift (`v0.9.61 (pin
+0.9.41)`) still shows in the same output, confirming the doctor's drift
+logic itself was exercised, not just silenced.
+
 ## Verdict
 
 `engram save <title> <content> --type T --project P --scope project` — the
