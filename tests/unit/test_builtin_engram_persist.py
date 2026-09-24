@@ -99,6 +99,7 @@ type = "null"
             project_key: str,
             engram_bin: str | None = None,
             cursor_dir: Path | None = None,
+            adopt_cursor_dirs: tuple[Path, ...] = (),
         ) -> None:
             captured["memory_dir"] = memory_dir
             captured["logs_dir"] = logs_dir
@@ -150,6 +151,7 @@ binary = "/opt/homebrew/bin/engram"
             project_key: str,
             engram_bin: str | None = None,
             cursor_dir: Path | None = None,
+            adopt_cursor_dirs: tuple[Path, ...] = (),
         ) -> None:
             captured["engram_bin"] = engram_bin
 

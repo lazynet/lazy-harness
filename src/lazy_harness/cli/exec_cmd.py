@@ -140,7 +140,7 @@ def _record_attribution(session_id: str, workload: str, *, replaces: str | None 
 
 
 def _bill_from_transcript(
-    envelope: dict, config_dir: Path, session_id: str, pricing_overrides: dict
+    envelope: dict, agent: object, config_dir: Path, session_id: str, pricing_overrides: dict
 ) -> None:
     """Fill the cost fields from the transcript the agent already wrote.
 
@@ -153,12 +153,14 @@ def _bill_from_transcript(
     run reports. Every field stays `None` if anything here goes wrong.
     """
     try:
+        from lazy_harness.agents.session_paths import session_path
         from lazy_harness.monitoring.collector import session_cost_from_disk
         from lazy_harness.monitoring.pricing import load_pricing
 
-        cost = session_cost_from_disk(
-            config_dir / "projects", session_id, load_pricing(pricing_overrides)
-        )
+        sessions_dir = session_path(agent, config_dir, "sessions")
+        if sessions_dir is None:
+            return
+        cost = session_cost_from_disk(sessions_dir, session_id, load_pricing(pricing_overrides))
         envelope["cost_usd"] = cost.cost_usd
         envelope["cost_source"] = _COST_SOURCE_TRANSCRIPT if cost.cost_usd is not None else None
         envelope["prompt_tokens"] = cost.prompt_tokens
@@ -460,7 +462,9 @@ def exec_cmd(
         envelope["exit_code"] = EXIT_TIMEOUT
         envelope["error"] = {"kind": "timeout", "message": f"Agent exceeded {timeout}s."}
         envelope["harness"] = harness
-        _bill_from_transcript(envelope, plan.config_dir, session_id, cfg.monitoring.pricing)
+        _bill_from_transcript(
+            envelope, adapter, plan.config_dir, session_id, cfg.monitoring.pricing
+        )
         _emit(envelope)
         raise SystemExit(EXIT_TIMEOUT) from None
 

@@ -149,7 +149,7 @@ def profile_move(
 ) -> None:
     """Move project conversation history between profiles.
 
-    Each profile keeps `<config_dir>/projects/<encoded-cwd>/` per project.
+    Each profile keeps `<config_dir>/<sessions>/<encoded-cwd>/` per project.
     Reclassifying a project (e.g. moving from `lazy` to `flex`) means moving
     that directory across profile config dirs without losing JSONL history.
     """
@@ -173,8 +173,10 @@ def profile_move(
 
     src_dir = expand_path(cfg.profiles.items[src_name].config_dir)
     dst_dir = expand_path(cfg.profiles.items[dst_name].config_dir)
+    src_agent = agent_for_profile(cfg, src_name)
+    dst_agent = agent_for_profile(cfg, dst_name)
 
-    available = list_projects(src_dir)
+    available = list_projects(src_dir, src_agent)
     if not available:
         console.print(f"[dim]No projects to move under '{src_name}'.[/dim]")
         return
@@ -204,7 +206,9 @@ def profile_move(
         return
 
     try:
-        results = do_move_projects(src_dir, dst_dir, targets, overwrite=overwrite)
+        results = do_move_projects(
+            src_dir, dst_dir, targets, src_agent, dst_agent, overwrite=overwrite
+        )
     except MoveError as e:
         console.print(f"[red]{escape(str(e))}[/red]")
         raise SystemExit(1)

@@ -252,3 +252,23 @@ def test_handoff_now_looks_where_the_session_end_hook_writes(
     # back split as `thread\ns` on a narrower one.
     rendered = "".join(result.output.split())
     assert f"{profile_home.name}/threads/" in rendered, result.output
+
+
+def test_handoff_now_skips_agent_without_session_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.cli import knowledge_cmd
+    from lazy_harness.hooks.builtins import _shared
+
+    class NoSessionsAgent:
+        pass
+
+    config = tmp_path / "config.toml"
+    config.write_text(
+        '[harness]\nversion = "1"\n[agent]\ntype = "claude-code"\n[compound_loop]\nenabled = true\n'
+    )
+    monkeypatch.setattr(knowledge_cmd, "config_file", lambda: config)
+    monkeypatch.setattr(_shared, "agent_dir_for", lambda *_: (NoSessionsAgent(), tmp_path))
+    result = CliRunner().invoke(knowledge_cmd.knowledge, ["handoff-now"])
+    assert result.exit_code == 1
+    assert "Agent declares no sessions directory" in result.output

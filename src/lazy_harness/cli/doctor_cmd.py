@@ -1053,9 +1053,15 @@ def _render_halted_proposals(console: Console, cfg: Config) -> None:
     from lazy_harness.core.proposals import rule_lines
     from lazy_harness.hooks.builtins._shared import knowledge_root_for
     from lazy_harness.hooks.builtins.context_inject import _pending_summary
+    from lazy_harness.knowledge.compound_loop import HELD_PROPOSALS_FILE
 
     cap = cfg.compound_loop.max_pending_proposals
-    profile_dirs = [expand_path(e.config_dir) for e in cfg.profiles.items.values()]
+    from lazy_harness.agents.registry import agent_for_profile
+
+    profile_dirs = [
+        (expand_path(e.config_dir), agent_for_profile(cfg, name))
+        for name, e in cfg.profiles.items.items()
+    ]
     # Two profiles can claim one config_dir; resolved so its queues count once.
     dirs: dict[Path, Path] = {}
     for d in all_memory_dirs(profile_dirs, knowledge_root_for(cfg)):
@@ -1073,21 +1079,34 @@ def _render_halted_proposals(console: Console, cfg: Config) -> None:
         count = len(rule_lines(text))
         if count and count >= cap:
             oldest = _pending_summary(memory_dir)[1] or "unknown"
-            halted.append((count, oldest, memory_dir))
+            try:
+                held_text = (memory_dir / HELD_PROPOSALS_FILE).read_text()
+            except OSError:
+                held_text = ""
+            held = sum(1 for line in held_text.splitlines() if line.strip())
+            halted.append((count, held, oldest, memory_dir))
     if not halted:
         return
 
     console.print("\n[bold]Halted proposal queues[/bold]")
-    for count, oldest, memory_dir in sorted(halted, key=lambda h: -h[0]):
+    for count, held, oldest, memory_dir in sorted(halted, key=lambda h: -h[0]):
+        held_part = f", {held} held back" if held else ""
         console.print(
-            f"  [yellow]![/yellow] {count} pending (oldest {oldest}) — {contract_path(memory_dir)}"
+            f"  [yellow]![/yellow] {count} pending{held_part} (oldest {oldest}) — "
+            f"{contract_path(memory_dir)}"
         )
         console.print(f"      lh memory proposals list --memory-dir {shlex.quote(str(memory_dir))}")
     total = sum(h[0] for h in halted)
+    total_held = sum(h[1] for h in halted)
     console.print(
         f"  {len(halted)} queue(s) halted at the cap of {cap}, {total} proposal(s) pending "
         "in them: the compound loop records no new proposals there until each is drained."
     )
+    if total_held:
+        console.print(
+            f"  {total_held} held back by the cap, kept in {HELD_PROPOSALS_FILE} next to "
+            "each queue."
+        )
 
 
 @click.command("doctor")

@@ -353,8 +353,6 @@ def test_deploy_hooks_expands_profile_placeholder(tmp_path: Path) -> None:
 
 
 def test_deploy_hooks_plain_external_command_is_unchanged_by_expansion(tmp_path: Path) -> None:
-    """A command with no `{...}` in it is a no-op for `str.format` — every
-    `external` entry declared before ADR-054 keeps working with no migration."""
     from lazy_harness.deploy.engine import _hook_entries_for
 
     cfg = _cfg_with_profile(
@@ -369,6 +367,46 @@ def test_deploy_hooks_plain_external_command_is_unchanged_by_expansion(tmp_path:
     entries = _hook_entries_for(cfg, "personal", "lh")
 
     assert entries["session_start"][0].command == "/bin/notifier hook"
+
+
+def test_deploy_hooks_escaped_braces_are_literal(tmp_path: Path) -> None:
+    from lazy_harness.deploy.engine import _hook_entries_for
+
+    command = 'echo ${{HOME}} && awk "{{print $1}}" && notify {profile}'
+    cfg = _cfg_with_profile(
+        tmp_path / "profile",
+        hooks={"session_start": HookEventConfig(external=[ExternalHookConfig(command=command)])},
+    )
+
+    entries = _hook_entries_for(cfg, "personal", "lh")
+
+    assert entries["session_start"][0].command == (
+        'echo ${HOME} && awk "{print $1}" && notify personal'
+    )
+
+
+@pytest.mark.parametrize(
+    ("command", "field"),
+    [
+        ("notify {", "{"),
+        ("notify {profile!z}", "{profile!z}"),
+        ("notify {profile.x}", "{profile.x}"),
+    ],
+)
+def test_deploy_hooks_malformed_placeholder_is_refused_with_diagnostic(
+    tmp_path: Path, command: str, field: str
+) -> None:
+    from lazy_harness.deploy.engine import ExternalHookPlaceholderError, _hook_entries_for
+
+    cfg = _cfg_with_profile(
+        tmp_path / "profile",
+        hooks={"session_start": HookEventConfig(external=[ExternalHookConfig(command=command)])},
+    )
+
+    with pytest.raises(ExternalHookPlaceholderError) as excinfo:
+        _hook_entries_for(cfg, "personal", "lh")
+    assert command in str(excinfo.value)
+    assert field in str(excinfo.value)
 
 
 def test_deploy_hooks_unknown_placeholder_is_refused_naming_it(tmp_path: Path) -> None:

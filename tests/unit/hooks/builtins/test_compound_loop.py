@@ -73,6 +73,28 @@ def test_queues_task_for_transcript_declared_in_payload(
     assert kwargs["memory_dir"] == harness["project_dir"] / "memory"
 
 
+def test_skips_agent_without_session_directory(
+    harness: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.hooks.builtins import _shared
+    from lazy_harness.hooks.builtins import compound_loop as mod
+    from lazy_harness.knowledge import compound_loop as knowledge
+
+    class NoSessionsAgent:
+        pass
+
+    create_task = MagicMock()
+    monkeypatch.setattr(
+        _shared,
+        "agent_dir_for",
+        lambda *_: (NoSessionsAgent(), harness["project_dir"].parent.parent),
+    )
+    monkeypatch.setattr(knowledge, "create_task", create_task)
+
+    assert mod.main(_event(cwd=harness["cwd"])) == HookDecision()
+    create_task.assert_not_called()
+
+
 def test_falls_back_to_newest_session_when_payload_has_no_transcript(
     harness: dict[str, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -180,7 +202,14 @@ def test_memory_dir_points_at_the_main_repo_when_running_in_a_worktree(
 
     fake_create_task = MagicMock(return_value=Path("task-1.task"))
     monkeypatch.setattr(knowledge, "create_task", fake_create_task)
-    monkeypatch.setattr(mod.subprocess, "Popen", MagicMock())
+    real_popen = sp.Popen
+
+    def spawn(command, **kwargs):  # noqa: ANN001, ANN003
+        if command[0] == "git":
+            return real_popen(command, **kwargs)
+        return MagicMock()
+
+    monkeypatch.setattr(mod.subprocess, "Popen", spawn)
 
     mod.main(_event(cwd=worktree, transcript=transcript))
 

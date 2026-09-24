@@ -289,7 +289,7 @@ Module: `src/lazy_harness/knowledge/engram_persist.py`. Wired as a `Stop` hook (
 
 While the JSONL pair (`decisions.jsonl` / `failures.jsonl`) is the file-of-record, [Engram](https://github.com/Gentleman-Programming/engram) is the agent's MCP-queryable view of the same data. The mirror keeps both views in sync without dual-writing from `compound-loop` itself — `compound-loop` only writes to JSONL, and `engram-persist` reads what is new and ships it to `engram save`.
 
-Determinism comes from a **per-file byte cursor** stored alongside each project's memory dir, in `<memory_dir>/engram_cursor.json`:
+Determinism comes from a **per-file byte cursor**, one per project per machine. With memory in the knowledge store it lives in `<lh data dir>/engram-cursors/<memory dir relative to the store>/engram_cursor.json`, shared by every profile and never synced; memory outside the store keeps a per-profile cursor under `<agent dir>/engram-cursors/`:
 
 ```json
 {
@@ -306,12 +306,12 @@ Each run, for each kind:
 2. Read whole lines until EOF. Partial lines are deferred (the writer might still be flushing the entry).
 3. Decode each line as JSON; malformed lines advance the cursor and are counted as `skipped_malformed` — they are not retried.
 4. Call `engram save <title> <json> --type <kind> --project <project_key> --scope project`. The project key is the parent of `git rev-parse --path-format=absolute --git-common-dir`, taken by name — so a linked worktree collapses onto the repository that owns it rather than registering as its own project.
-5. **On success**, advance the cursor (atomic tempfile + `os.replace`).
+5. **On success**, advance the cursor (atomic tempfile + `os.replace`). At most 25 saves are attempted per run (`MAX_SAVES_PER_RUN`); the rest drains on later runs.
 6. **On failure**, leave the cursor untouched and stop processing this kind. The next run picks up from the same offset → at-least-once delivery, ordering preserved.
 
 This produces three things on disk besides the Engram DB itself:
 
-- `<memory_dir>/engram_cursor.json` — offsets per kind, atomically updated.
+- `engram_cursor.json` — offsets per kind, atomically updated, in the location above.
 - `~/.claude/logs/engram_persist.log` — append-only error log (subprocess failures, missing binary).
 - `~/.claude/logs/engram_persist_metrics.jsonl` — one record per run (run summary) plus one per slow `engram save` (≥ 500 ms). `lh doctor` reads this to classify the loop's health as `ok` / `warn` / `fail` based on age, failure rate, and cursor lag.
 

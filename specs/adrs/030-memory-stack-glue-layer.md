@@ -185,6 +185,9 @@ Add explicit, deterministic observability over what is shared across profiles
 > the old place" half, shipped as `lh memory legacy-check` (`cli/memory_cmd.py`),
 > with `lh memory migrate` to move it. The canonical key comes from
 > `core/project_identity.py:project_key`, not from `git rev-parse --show-toplevel`.
+> Its repository search stops before the home directory. A `.git` in HOME
+> belongs to dotfiles, not to unrelated directories below it; those directories
+> keep their existing `local/<cwd name>` fallback.
 
 - Lists all memory artifacts per profile under `<config_dir>/projects/`.
 - Flags inconsistencies: same project key (canonical via

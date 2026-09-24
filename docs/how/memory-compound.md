@@ -120,6 +120,8 @@ Steps:
 
 `persist_results` takes the parsed JSON from the LLM and writes six categories of output, all using atomic writes where applicable.
 
+The worker lock serialises one profile's queue, not the destination: workers of different profiles converge on the same project memory dir. Every read-modify-replace there — appending to `claude-md.proposal.md`, updating `insights/.cursor.json` — runs under an exclusive `flock` on `<memory_dir>/.memory.lock`, and each atomic write uses its own uniquely named temp file, so two workers can neither overwrite each other's update nor truncate each other's temp file. A knowledge store under git should ignore `.memory.lock` alongside `*.tmp`.
+
 ### `decisions.jsonl` — medium-term episodic store
 
 Each decision from the LLM becomes a single JSON line appended to `<memory_dir>/decisions.jsonl`:

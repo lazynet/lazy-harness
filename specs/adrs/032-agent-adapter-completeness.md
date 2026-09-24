@@ -258,3 +258,11 @@ transcript billing reader, `core/move_projects.py` builds
 "projects"` fallback that `agents/session_paths.py` documents as a wrong answer.
 Routing them through `agents/session_paths.py` is code work, tracked in
 `specs/backlog.md`.
+
+**2026-09-24 — the remaining L4 session-path leaks are closed.** Transcript
+billing, profile moves, handoff lookup, compound-loop lookup, and legacy memory
+enumeration now resolve session roots through `agents/session_paths.py`. Readers
+that have a profile resolve its adapter per profile; an adapter declaring no
+sessions location causes the reader to skip that location. The old path-only
+core APIs retain a Claude Code adapter default for existing callers, while the
+CLI supplies each profile's adapter explicitly.
