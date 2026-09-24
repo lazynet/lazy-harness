@@ -276,7 +276,8 @@ those five readers: `hooks/builtins/engram_persist.py:117`,
 `context_inject.py:789,797`, plus `_shared.resolve_project_dir` /
 `resolve_memory_dir` (`sessions_subdir or "projects"`, `_shared.py:121,218`) —
 which `hooks/builtins/compound_loop.py:121` now feeds with a possibly-empty
-`session_subdir()`. Tracked in `specs/backlog.md` §Open.
+`session_subdir()`. Tracked in `specs/backlog.md` §Open (closed by #463, see
+the note below).
 
 **2026-09-24 — remaining builtin L4 fallbacks are removed.** Session-reading
 builtins skip agents without a declared sessions directory. The shared project

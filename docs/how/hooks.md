@@ -527,7 +527,7 @@ If `engram` is not on `PATH`, the run logs `engram binary not on PATH; skipping 
 
 - `engram_cursor.json` — the per-kind byte cursors, in the location described above.
 - `~/.claude/logs/engram_persist.log` — append-only error log (subprocess failures, missing binary).
-- `~/.claude/logs/engram_persist_metrics.jsonl` — one JSONL record per run (run summary) plus one record per slow `engram save` (≥ 500 ms). The `lh doctor` "engram-persist" feature row reads this file via `monitoring/engram_persist_health.py` to classify state as `ok` / `warn` / `fail` based on last-run age, recent failure rate, and cursor lag. A large lag is `warn` with `catching up` only when the run hit its save cap and the cursor file advanced; otherwise it is `fail`.
+- `~/.claude/logs/engram_persist_metrics.jsonl` — one JSONL record per run (run summary) plus one record per slow `engram save` (≥ 500 ms). The `lh doctor` "engram-persist" feature row reads this file via `monitoring/engram_persist_health.py` to classify state as `ok` / `warn` / `fail` based on last-run age, recent failure rate, and cursor lag. A large lag is `warn` with `catching up` only when the run hit its save cap, the cursor file advanced, and no save failed in that run; otherwise it is `fail`.
 
 ### `herdr-context-gauge` — runs on `Stop`, `SessionStart`, `SessionEnd`, `PostToolUse`
 
