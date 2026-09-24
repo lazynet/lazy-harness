@@ -122,7 +122,7 @@ Steps:
 
 The worker lock serialises one profile's queue, not the destination: workers of different profiles converge on the same project memory dir. Every read-modify-replace the compound-loop worker does there — appending to `claude-md.proposal.md`, updating `insights/.cursor.json` — runs under an exclusive `flock` on `<memory_dir>/.memory.lock`, and each of the worker's atomic writes uses its own uniquely named temp file, so two workers can neither overwrite each other's update nor truncate each other's temp file. A knowledge store under git should ignore `.memory.lock` alongside `*.tmp`.
 
-`lh memory proposals accept/reject/apply` reads and rewrites `claude-md.proposal.md` too, outside the worker: it does not yet take `.memory.lock`, so a CLI call racing the worker is not covered by the guarantee above (tracked in `specs/backlog.md` §Open).
+`lh memory proposals accept/reject/apply` also holds `<memory_dir>/.memory.lock` from reading the pending queue through archiving and replacing it, so CLI review cannot race the worker's updates.
 
 ### `decisions.jsonl` — medium-term episodic store
 

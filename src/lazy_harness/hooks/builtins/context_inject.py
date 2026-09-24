@@ -783,10 +783,15 @@ def main(event: HookEvent) -> HookDecision:
 
     # Sections. Prefer the project dir the agent declared over one derived from
     # cwd — the agent's encoding of cwd has changed across releases.
+    from lazy_harness.agents.session_paths import session_path, session_subdir
+
+    sessions_root = session_path(agent, agent_dir, "sessions")
+    if sessions_root is None:
+        return HookDecision()
     project_dir = _project_dir_of(event.transcript_path)
     if project_dir is None:
         encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
-        project_dir = agent_dir / (subdirs.get("sessions") or "projects") / encoded
+        project_dir = sessions_root / encoded
     # Sessions stay in the agent's project dir; distilled memory does not. That
     # directory is named after the checkout's absolute path, so the same
     # repository on two machines injected two different MEMORY.md files — one
@@ -794,7 +799,7 @@ def main(event: HookEvent) -> HookDecision:
     memory_dir = shared_memory_dir(
         event.transcript_path,
         agent_dir=agent_dir,
-        sessions_subdir=subdirs.get("sessions") or "projects",
+        sessions_subdir=session_subdir(agent, "sessions"),
         cwd=cwd,
         knowledge_root=knowledge_root_for(cfg),
     )

@@ -66,6 +66,10 @@ def main(event: HookEvent) -> HookDecision:
             refusal = f"config error: {e}"
 
     agent, agent_dir = agent_dir_for(cfg, event.profile)
+    from lazy_harness.agents.session_paths import session_path, session_subdir
+
+    if session_path(agent, agent_dir, "sessions") is None:
+        return HookDecision()
     subdirs = agent.session_dirs()
     log_file = agent_dir / (subdirs.get("logs") or "logs") / "hooks.log"
     _log(log_file, f"fired cwd={cwd}")
@@ -90,10 +94,11 @@ def main(event: HookEvent) -> HookDecision:
         sessions_dir = resolve_project_dir(
             declared,
             agent_dir=agent_dir,
-            sessions_subdir=subdirs.get("sessions") or "projects",
+            sessions_subdir=session_subdir(agent, "sessions"),
             cwd=cwd,
         )
-        session_file = find_latest_session(sessions_dir)
+        if sessions_dir is not None:
+            session_file = find_latest_session(sessions_dir)
     if session_file is None:
         _log(log_file, "no session JSONL found")
         return HookDecision()

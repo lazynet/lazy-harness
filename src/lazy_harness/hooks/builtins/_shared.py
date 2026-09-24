@@ -111,14 +111,16 @@ def _project_dir_of(transcript: Path | None) -> Path | None:
 
 def resolve_project_dir(
     transcript: Path | None, *, agent_dir: Path, sessions_subdir: str, cwd: Path
-) -> Path:
+) -> Path | None:
     """Per-project session dir: the agent's own, else one derived from `cwd`.
 
     Only a declared dir inside the adapter's sessions root is honoured, so
     harness artifacts never escape it (ADR-032). The cwd-derived fallback
     matches agents whose encoding is a plain slash-to-dash rewrite.
     """
-    sessions_root = agent_dir / (sessions_subdir or "projects")
+    if not sessions_subdir:
+        return None
+    sessions_root = agent_dir / sessions_subdir
     declared = _project_dir_of(transcript)
     if declared is not None and declared.parent == sessions_root:
         return declared
@@ -203,19 +205,21 @@ def profile_name() -> str:
 
 def resolve_memory_dir(
     transcript: Path | None, *, agent_dir: Path, sessions_subdir: str, cwd: Path
-) -> Path:
+) -> Path | None:
     """Project dir that owns distilled memory, canonicalised across worktrees.
 
     Sessions belong to the checkout they ran in, but `decisions.jsonl` and
     `failures.jsonl` outlive any one worktree — writing them under a
     worktree's project dir strands them when the worktree is removed.
     """
+    if not sessions_subdir:
+        return None
     root = _main_repo_root(cwd)
     if root is None or root == cwd:
         return resolve_project_dir(
             transcript, agent_dir=agent_dir, sessions_subdir=sessions_subdir, cwd=cwd
         )
-    sessions_root = agent_dir / (sessions_subdir or "projects")
+    sessions_root = agent_dir / sessions_subdir
     return sessions_root / ("-" + str(root).replace("/", "-").lstrip("-"))
 
 

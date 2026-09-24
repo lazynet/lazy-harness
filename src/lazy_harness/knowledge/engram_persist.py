@@ -106,6 +106,8 @@ class PersistResult:
     skipped_malformed: int = 0
     entries_seen: dict[str, int] = field(default_factory=lambda: {"decision": 0, "failure": 0})
     cursor_lag_bytes: dict[str, int] = field(default_factory=lambda: {"decision": 0, "failure": 0})
+    cursor_advanced: bool = False
+    save_cap_reached: bool = False
     duration_ms: int = 0
     subprocess_ms: int = 0
 
@@ -216,6 +218,7 @@ class EngramPersister:
             # only ever exists there resets to zero the day it goes.
             _save_cursor(cursor_path, cursor["decisions_offset"], cursor["failures_offset"])
 
+        start_cursor = _load_cursor(cursor_path)
         attempted = 0
         for kind in ("decision", "failure"):
             file_path = self.memory_dir / _FILES[kind]
@@ -286,8 +289,17 @@ class EngramPersister:
                         # Do NOT advance cursor; break to avoid pile-up this run.
                         break
 
-            # Compute lag against final file size for metrics.
-            result.cursor_lag_bytes[kind] = max(0, file_path.stat().st_size - offset)
+        persisted = _load_cursor(cursor_path)
+        result.cursor_advanced = any(
+            persisted[key] > start_cursor[key] for key in ("decisions_offset", "failures_offset")
+        )
+        result.save_cap_reached = attempted >= self.max_saves_per_run
+        for kind in ("decision", "failure"):
+            file_path = self.memory_dir / _FILES[kind]
+            if file_path.is_file():
+                result.cursor_lag_bytes[kind] = max(
+                    0, file_path.stat().st_size - persisted[f"{kind}s_offset"]
+                )
 
         result.duration_ms = int((time.monotonic() - run_start) * 1000)
         _emit_run_metric(self.logs_dir, result, self.project_key, self.engram_bin)
@@ -376,6 +388,8 @@ def _emit_run_metric(
             "decisions": result.cursor_lag_bytes["decision"],
             "failures": result.cursor_lag_bytes["failure"],
         },
+        "cursor_advanced": result.cursor_advanced,
+        "save_cap_reached": result.save_cap_reached,
         "project_key": project_key,
         "engram_version": _engram_version(engram_bin),
         "hook_version": _hook_version(),

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 
 class ThreadsAgent:
@@ -13,6 +16,31 @@ class ThreadsAgent:
 
 class NoSessionsAgent:
     pass
+
+
+def test_builtins_do_not_default_sessions_to_projects() -> None:
+    builtins = Path(__file__).parents[2] / "src" / "lazy_harness" / "hooks" / "builtins"
+    offenders = []
+    for path in builtins.glob("*.py"):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or):
+                if any(
+                    isinstance(value, ast.Constant) and value.value == "projects"
+                    for value in node.values
+                ):
+                    offenders.append(path.name)
+    assert offenders == []
+
+
+@pytest.mark.parametrize("resolver", ["resolve_project_dir", "resolve_memory_dir"])
+def test_shared_resolvers_skip_missing_session_location(tmp_path: Path, resolver: str) -> None:
+    from lazy_harness.hooks.builtins import _shared
+
+    result = getattr(_shared, resolver)(
+        None, agent_dir=tmp_path, sessions_subdir="", cwd=Path("/Users/x/proj")
+    )
+    assert result is None
 
 
 def test_exec_billing_reads_the_adapter_session_directory(tmp_path: Path, monkeypatch) -> None:

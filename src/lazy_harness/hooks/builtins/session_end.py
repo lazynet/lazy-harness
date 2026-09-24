@@ -100,6 +100,10 @@ def _enqueue_compound_loop(event: HookEvent) -> None:
     # `get_agent("claude-code")`, so `fired` landed in whatever directory the
     # global agent named while every line below it landed in the profile's own.
     agent, agent_dir = agent_dir_for(cfg, event.profile)
+    from lazy_harness.agents.session_paths import session_path, session_subdir
+
+    if session_path(agent, agent_dir, "sessions") is None:
+        return
     subdirs = agent.session_dirs()
     log_dir = agent_dir / (subdirs.get("logs") or "logs")
     log_file = log_dir / "hooks.log"
@@ -117,10 +121,11 @@ def _enqueue_compound_loop(event: HookEvent) -> None:
         sessions_dir = resolve_project_dir(
             declared,
             agent_dir=agent_dir,
-            sessions_subdir=subdirs.get("sessions") or "projects",
+            sessions_subdir=session_subdir(agent, "sessions"),
             cwd=cwd,
         )
-        session_jsonl = find_latest_session(sessions_dir)
+        if sessions_dir is not None:
+            session_jsonl = find_latest_session(sessions_dir)
     if session_jsonl is None:
         _log(log_file, "no session JSONL found")
         return
@@ -145,7 +150,7 @@ def _enqueue_compound_loop(event: HookEvent) -> None:
     memory_dir = shared_memory_dir(
         declared,
         agent_dir=agent_dir,
-        sessions_subdir=subdirs.get("sessions") or "projects",
+        sessions_subdir=session_subdir(agent, "sessions"),
         cwd=cwd,
         knowledge_root=knowledge_root_for(cfg),
     )
