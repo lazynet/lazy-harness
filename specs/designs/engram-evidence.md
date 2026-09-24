@@ -80,13 +80,19 @@ three rows block their own projects the same way. This predates the migration
 (these rows exist in the current 1.20.0-written DB) and is **not** a
 lazy-harness code defect — `_resolve_project_key()` correctly returns
 `lazy-harness` for this repo; the mismatch is a legacy data quality issue in
-the store itself. There is no CLI subcommand to fix it (`rescue-ownership` is
-an HTTP-only route: `POST /projects/rescue-ownership`, confirmed via
-`./engram` with no args, not a `case` label in the CLI's command list); the fix
-is renaming/deleting the four session rows or calling that endpoint against a
-running 2.x `serve`, as a step in the Mac host migration (§5.4/§5.6 of the
-plan), before or immediately after the binary swap. Flagged for the user
-rather than assumed away.
+the store itself. `rescue-ownership` does not fix it: both the CLI
+(`engram projects rescue-ownership`) and the HTTP route
+(`POST /projects/rescue-ownership`) call `Store.RescueNullProjectOwnership`,
+which only repairs sessions whose `project` is empty and blocks these four as
+owned by another project. Deleting or renaming the rows is ruled out too:
+`observations.session_id` and `user_prompts.session_id` reference
+`sessions(id)`. The fix, tested on a copy of the migrated Mac DB, is
+`UPDATE sessions SET project = <canonical suffix> WHERE id = <id>` for each
+mismatched `manual-save-*` row; `observations.project` is a separate per-row
+column the update never touches. It runs as a step of the Mac host migration
+(§5.4 of the plan), right after the binary swap. `manual-save-Archon` cannot
+block a save — `cmdSave` lowercases the project before building the id — so
+fixing it is hygiene only.
 
 The CT `agents` DB's baseline `engram doctor` was clean (plan §4, all four
 checks "ok"), so this specific pattern is unlikely there, but it was not
