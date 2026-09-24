@@ -45,3 +45,16 @@ Concretely:
 - **The MCP entry does not go to `settings.json`.** ADR-032 L2 put the file
   name behind the adapter and `ClaudeCodeAdapter.mcp_config_file()` returns
   `.claude.json` (ADR-024, Evolution 2026-09-12).
+
+## Evolution — 2026-09-24: pin bumped to 2.1.0
+
+- **`PINNED_VERSION` moved to `2.1.0`.** Probed the release tarball's `save`
+  behaviour against a copy of the live Mac DB first — same CLI contract
+  (`engram save <title> <content> --type T --project P --scope project`),
+  exit 0, `manual-save-<project>` session with `project_owned` ownership —
+  see `specs/designs/engram-evidence.md` and
+  `specs/designs/2026-09-24-engram-2-migration.md`.
+- **`mcp_server_config()` now mirrors engram's own MCP entry shape** —
+  `{"command": <absolute engram binary>, "args": ["mcp", "--tools=agent"]}` —
+  so enabling `[memory.engram]` does not trip 2.x's exact-match conflict
+  check in `setup claude-code --mcp-only` (plan §1.4, §5.2 item 3).

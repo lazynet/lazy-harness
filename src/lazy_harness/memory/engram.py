@@ -1,6 +1,6 @@
 """Engram CLI wrapper — episodic memory for AI coding agents.
 
-Pinned version: 1.20.0 (see ADR-022).
+Pinned version: 2.1.0 (see ADR-022).
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from lazy_harness.core.versions import parse_version
 
-PINNED_VERSION = "1.20.0"
+PINNED_VERSION = "2.1.0"
 
 
 @dataclass

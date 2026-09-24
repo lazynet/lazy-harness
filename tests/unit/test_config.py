@@ -479,7 +479,7 @@ def test_config_memory_engram_defaults_when_missing() -> None:
     assert cfg.memory.engram.enabled is False
     assert cfg.memory.engram.git_sync is True
     assert cfg.memory.engram.cloud is False
-    assert cfg.memory.engram.version == "1.20.0"
+    assert cfg.memory.engram.version == "2.1.0"
 
 
 def test_config_memory_engram_binary_defaults_to_empty() -> None:
@@ -514,7 +514,7 @@ version = "1"
 [memory.engram]
 enabled = true
 cloud = true
-version = "1.20.0"
+version = "2.1.0"
 """)
     from lazy_harness.core.config import load_config
 
@@ -522,7 +522,7 @@ version = "1.20.0"
     assert cfg.memory.engram.enabled is True
     assert cfg.memory.engram.cloud is True
     assert cfg.memory.engram.git_sync is True
-    assert cfg.memory.engram.version == "1.20.0"
+    assert cfg.memory.engram.version == "2.1.0"
 
 
 def test_config_knowledge_structure_defaults_when_missing() -> None:
@@ -959,7 +959,7 @@ repos = ["~/repos/lazy/lazy-harness"]
 enabled = true
 git_sync = true
 cloud = false
-version = "1.20.0"
+version = "2.1.0"
 binary = "/usr/local/bin/engram"
 
 [monitoring]
