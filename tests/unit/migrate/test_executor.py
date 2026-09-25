@@ -6,6 +6,7 @@ from lazy_harness.migrate.planner import build_plan
 from lazy_harness.migrate.state import (
     DeployedScript,
     DetectedState,
+    StepResult,
     StepStatus,
 )
 
@@ -110,3 +111,94 @@ def test_rollback_restores_symlink(tmp_path: Path):
 
     apply_rollback_log(backup_dir)
     assert link.is_symlink()
+
+
+def test_rollback_restore_file_uses_source_identity_not_basename(tmp_path: Path):
+    """Exercise the real consumer: GenerateConfigStep's `restore_file` rollback
+    op must recover the correct content even when another backed-up source
+    shares the destination's basename elsewhere in the same backup."""
+    from lazy_harness.migrate.rollback import apply_rollback_log, write_rollback_log
+    from lazy_harness.migrate.steps.backup import BackupStep
+    from lazy_harness.migrate.steps.config_step import GenerateConfigStep
+
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+    decoy = other_dir / "cfg.toml"
+    decoy.write_text("decoy content, not the real previous config")
+
+    target = tmp_path / "cfg.toml"
+    target.write_text("original content that must come back")
+
+    backup_dir = tmp_path / "backup"
+    backup_dir.mkdir()
+
+    backup_step = BackupStep(targets=[decoy, target])
+    backup_result = backup_step.execute(backup_dir=backup_dir, dry_run=False)
+    assert backup_result.status == StepStatus.DONE
+
+    config_step = GenerateConfigStep(
+        target=target,
+        lazy_claudecode=None,
+        knowledge_path=tmp_path / "knowledge",
+    )
+    config_result = config_step.execute(backup_dir=backup_dir, dry_run=False)
+    assert config_result.status == StepStatus.DONE
+    assert target.read_text() != "original content that must come back"
+
+    write_rollback_log(backup_dir, [backup_result, config_result])
+    messages = apply_rollback_log(backup_dir)
+
+    assert target.read_text() == "original content that must come back"
+    assert any("restored" in m for m in messages)
+
+
+def test_rollback_restore_file_falls_back_to_legacy_basename_layout(tmp_path: Path):
+    """A backup directory written before this fix has no manifest: flat
+    basename files directly under backup_dir. Restoring from it must still
+    work when there is no ambiguity."""
+    from lazy_harness.migrate.rollback import apply_rollback_log, write_rollback_log
+    from lazy_harness.migrate.state import RollbackOp
+
+    backup_dir = tmp_path / "backup"
+    backup_dir.mkdir()
+    (backup_dir / "cfg.toml").write_text("legacy backed up content")
+
+    target = tmp_path / "cfg.toml"
+    target.write_text("new content written by migration")
+
+    result = StepResult(name="generate-config", status=StepStatus.DONE)
+    result.rollback_ops.append(RollbackOp(kind="restore_file", payload={"path": str(target)}))
+    write_rollback_log(backup_dir, [result])
+
+    messages = apply_rollback_log(backup_dir)
+
+    assert target.read_text() == "legacy backed up content"
+    assert any("restored" in m for m in messages)
+
+
+def test_rollback_restore_file_rejects_ambiguous_missing_entry(tmp_path: Path):
+    """When a manifest exists but has no entry for the exact destination path,
+    the rollback must say so rather than guessing from another entry."""
+    from lazy_harness.migrate.rollback import apply_rollback_log, write_rollback_log
+    from lazy_harness.migrate.state import RollbackOp
+    from lazy_harness.migrate.steps.backup import BackupStep
+
+    unrelated = tmp_path / "unrelated.toml"
+    unrelated.write_text("unrelated content")
+
+    target = tmp_path / "cfg.toml"
+    target.write_text("current content, no backup entry exists for this path")
+
+    backup_dir = tmp_path / "backup"
+    backup_dir.mkdir()
+    backup_step = BackupStep(targets=[unrelated])
+    backup_result = backup_step.execute(backup_dir=backup_dir, dry_run=False)
+
+    result = StepResult(name="generate-config", status=StepStatus.DONE)
+    result.rollback_ops.append(RollbackOp(kind="restore_file", payload={"path": str(target)}))
+    write_rollback_log(backup_dir, [backup_result, result])
+
+    messages = apply_rollback_log(backup_dir)
+
+    assert target.read_text() == "current content, no backup entry exists for this path"
+    assert any("skipped" in m for m in messages)
