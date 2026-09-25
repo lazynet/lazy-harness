@@ -258,8 +258,8 @@ Categories shipped:
 
 | Category | Examples blocked |
 |---|---|
-| `filesystem` | `rm` asked to recurse, in any spelling — a short cluster containing `r` or `R` (`-r`, `-R`, `-rf`, `-fr`, `-rv`, `-rfv`) or `--recursive`. **Recursion alone is the trigger**: force is not required and is not matched at all, so force without recursion (`rm -f`, `rm -fv`, `rm --force`) stays allowed, as does `rm <file>`. `truncate <file>` |
-| `git` | `git push --force` or `-f` in any argument position, forced `+refspec` (a lease alone stays allowed), `git reset --hard`, `git add -f .env`/`*.pem`/`id_rsa`/credentials |
+| `filesystem` | `rm` asked to recurse, in any spelling — a short cluster containing `r` or `R` (`-r`, `-R`, `-rf`, `-fr`, `-rv`, `-rfv`) or `--recursive`; `find -delete`, and a `find -exec`/`-execdir`/`-ok` action that would itself block. **Recursion alone is the trigger**: force is not required and is not matched at all, so force without recursion (`rm -f`, `rm -fv`, `rm --force`) stays allowed, as does `rm <file>`. `truncate <file>` |
+| `git` | `git push --force` or `-f` in any argument position, forced `+refspec` (a lease alone stays allowed), `git reset --hard` — also through any long-option abbreviation git accepts (`--har`, `--forc`), and after a global option the hook does not recognise, which fails closed instead of abstaining — `git add -f .env`/`*.pem`/`id_rsa`/credentials |
 | `sql` | `DROP TABLE`, `DROP DATABASE`, `TRUNCATE TABLE` |
 | `terraform` | `terraform destroy`, `terraform apply -auto-approve`, `terraform apply -replace=…`, `terraform state rm`/`push` |
 | `credentials` | reads of `.env` (excluding `.env.example` / `.sample` / `.template`), `.ssh/id_*` private keys (excluding `*.pub`), `.aws/credentials` & `.aws/config`, any `.pem` / `.key` / `.p12` |

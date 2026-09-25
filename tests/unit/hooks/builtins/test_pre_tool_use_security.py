@@ -194,6 +194,45 @@ def test_should_block_git_rules_survive_global_options(
         assert decision.rule.category == expected_category
 
 
+# Spellings that reached a real deletion through 0.82.1: git accepts any
+# unambiguous prefix of a long option, and an unrecognised global option made
+# the git rules abstain instead of failing closed.
+EVASION_CASES: list[tuple[str, str | None, str]] = [
+    ("git reset --har", "git", "abbreviated --hard"),
+    ("git reset --ha HEAD~1", "git", "shorter --hard prefix"),
+    ("git push --forc origin main", "git", "abbreviated --force"),
+    ("git -P reset --hard", "git", "hard reset after -P"),
+    ("git --no-optional-locks reset --hard", "git", "hard reset after --no-optional-locks"),
+    ("git --namespace=x reset --hard", "git", "hard reset after --namespace="),
+    ("git --unknown-future-flag reset --hard", "git", "unknown global option fails closed"),
+    ("find . -delete", "filesystem", "find -delete"),
+    ("find ~ -exec rm -rf {} +", "filesystem", "find -exec recursive rm"),
+    ("find . -execdir rm -r {} ;", "filesystem", "find -execdir recursive rm"),
+    ("git reset --soft HEAD~1", None, "soft reset stays allowed"),
+    ("git push --force-with-lease origin main", None, "lease stays allowed"),
+    ("git -P log --oneline", None, "pager flag on a safe subcommand"),
+    ("find . -name '*.py' -exec rm {} +", None, "non-recursive rm through find"),
+]
+
+
+@pytest.mark.parametrize(
+    "command,expected_category,label",
+    EVASION_CASES,
+    ids=[c[2] for c in EVASION_CASES],
+)
+def test_should_block_closes_spelling_evasions(
+    command: str, expected_category: str | None, label: str
+) -> None:
+    from lazy_harness.hooks.builtins.pre_tool_use_security import should_block
+
+    decision = should_block(command, allow_patterns=[])
+    if expected_category is None:
+        assert decision is None, f"expected allow for {label}: {command!r}"
+    else:
+        assert decision is not None, f"expected block for {label}: {command!r}"
+        assert decision.rule.category == expected_category
+
+
 def test_should_block_legacy_allowlist_no_longer_rescues_match() -> None:
     from lazy_harness.hooks.builtins.pre_tool_use_security import should_block
 

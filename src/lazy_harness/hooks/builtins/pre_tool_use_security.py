@@ -373,6 +373,8 @@ def _token_rule(words: list[str]) -> BlockRule | None:
     name = Path(words[0]).name
     if name == "rm" and _recursive(words):
         return BLOCK_RULES[0]
+    if name == "find":
+        return _find_rule(words)
     if name != "git":
         return None
     args = words[1:]
@@ -386,18 +388,51 @@ def _token_rule(words: list[str]) -> BlockRule | None:
         ):
             continue
         else:
-            return None
+            # An option this hook cannot parse may take a value, so the
+            # subcommand's position is unknown: judge every later word as a
+            # candidate rather than abstain.
+            return next(
+                (
+                    rule
+                    for index in range(len(args))
+                    if (rule := _git_subcommand_rule(args[index], args[index + 1 :]))
+                ),
+                None,
+            )
     if not args:
         return None
-    subcommand, *operands = args
+    return _git_subcommand_rule(args[0], args[1:])
+
+
+def _is_long_prefix(flag: str, option: str) -> bool:
+    # git's parse-options accepts any unambiguous prefix of a long option.
+    return len(flag) > 2 and option.startswith(flag)
+
+
+def _git_subcommand_rule(subcommand: str, operands: list[str]) -> BlockRule | None:
     flags = operands[: operands.index("--")] if "--" in operands else operands
     if subcommand == "push" and (
-        any(flag == "--force" or re.fullmatch(r"-[a-zA-Z]*f[a-zA-Z]*", flag) for flag in flags)
+        any(
+            _is_long_prefix(flag, "--force") or re.fullmatch(r"-[a-zA-Z]*f[a-zA-Z]*", flag)
+            for flag in flags
+        )
         or any(operand.startswith("+") for operand in operands)
     ):
         return BLOCK_RULES[2]
-    if subcommand == "reset" and "--hard" in flags:
+    if subcommand == "reset" and any(_is_long_prefix(flag, "--hard") for flag in flags):
         return BLOCK_RULES[3]
+    return None
+
+
+def _find_rule(words: list[str]) -> BlockRule | None:
+    if "-delete" in words:
+        return BLOCK_RULES[0]
+    for index, word in enumerate(words):
+        if word in {"-exec", "-execdir", "-ok", "-okdir"} and index + 1 < len(words):
+            action = words[index + 1 :]
+            end = next((i for i, w in enumerate(action) if w in {";", "+"}), len(action))
+            if action[:end] and _token_rule(action[:end]) is not None:
+                return BLOCK_RULES[0]
     return None
 
 
