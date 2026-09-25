@@ -5,9 +5,10 @@ from each profile's transcripts plus the hook's
 `logs/graph_assist_metrics.jsonl`, for every agent, so Codex serves as the
 control group beside Claude Code.
 
-Only sessions whose cwd sits in a repository holding
-`graphify-out/graph.json` count, the same population as the §1 baseline. A
-worktree counts toward its main checkout, which is where the graph lives.
+Only sessions whose cwd sits in a git checkout whose main checkout holds
+`graphify-out/graph.json` count — the population the hook can serve, resolved
+through `main_repo_root` exactly as the hook resolves it, so a worktree counts
+toward its main checkout wherever it lives on disk.
 
 Codex is read in its own dialect: at 0.154.0 its shell calls reach the
 transcript as `exec` programs calling `tools.exec_command({"cmd": ...})`, so
@@ -210,7 +211,7 @@ def compute(sessions: Iterable[SessionRecord], metrics: Iterable[dict]) -> dict[
             claude.latencies.append(latency)
         if line.get("outcome") == "hit":
             claude.hits += 1
-            claude.precise_hits += line.get("symbol_in_output") is True
+            claude.precise_hits += line.get("complete") is True
     return reports
 
 
@@ -294,10 +295,13 @@ def _transcript_cwd(path: Path, max_lines: int = 200) -> Path | None:
 
 
 def _graph_repo(cwd: Path) -> Path | None:
-    for candidate in (cwd, *cwd.parents):
-        if graph_assist.graph_path(candidate).is_file():
-            return candidate
-    return None
+    """The main checkout whose graph serves `cwd`: the hook's rule, via git."""
+    from lazy_harness.core.project_identity import main_repo_root
+
+    root = main_repo_root(cwd)
+    if root is None or not graph_assist.graph_path(root).is_file():
+        return None
+    return root.resolve()
 
 
 def collect(cfg: Config, since: datetime | None) -> tuple[list[SessionRecord], list[dict]]:

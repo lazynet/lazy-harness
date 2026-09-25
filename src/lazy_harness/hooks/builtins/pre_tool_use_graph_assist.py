@@ -7,9 +7,11 @@ the search result — information where the agent is already looking, instead of
 the upstream `graphify hook-guard search` order to go and ask
 (`specs/designs/2026-09-24-graph-assist-design.md`).
 
-The repository is the cwd's own checkout, not the main one: a worktree has no
-`graphify-out/` of its own, and the main checkout's graph may describe code the
-worktree has changed, so a worktree stays silent.
+The search is scoped to the cwd's own checkout, and the graph comes from the
+main checkout (`--git-common-dir`), because a worktree has no `graphify-out/`
+of its own and is where every code change in a worktree-first repo happens.
+The price is line numbers that drift for files the branch has changed; the
+file and the symbol stay right.
 
 Every evaluation of a search call appends one line to
 `<agent dir>/logs/graph_assist_metrics.jsonl`, which
@@ -27,6 +29,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from lazy_harness.agents.base import HookDecision, HookEvent, Operation, ToolCall
+from lazy_harness.core.project_identity import main_repo_root
 from lazy_harness.knowledge import graph_assist
 
 # `tests/unit/test_hook_matcher_coverage.py` holds the deployed matcher to this.
@@ -76,7 +79,7 @@ def _record(event: HookEvent, started: float, **fields: object) -> None:
         "reason": "",
         "latency_ms": int((time.monotonic() - started) * 1000),
         "definitions": 0,
-        "symbol_in_output": False,
+        "complete": False,
         **fields,
     }
     try:
@@ -93,7 +96,10 @@ def _evaluate(event: HookEvent, native_name: str, raw_input: object) -> tuple[st
     toplevel = _git(event.cwd, "rev-parse", "--show-toplevel")
     if toplevel is None:
         return "", {"reason": "no_repo"}
-    root = Path(toplevel)
+    # Two roots: the search is scoped to the checkout the agent is in, and the
+    # graph comes from the main checkout, which a worktree shares.
+    scope = Path(toplevel)
+    root = main_repo_root(scope) or scope
     graph_json = graph_assist.graph_path(root)
     if not graph_json.is_file():
         return "", {"repo": str(root), "reason": "no_graph"}
@@ -101,7 +107,7 @@ def _evaluate(event: HookEvent, native_name: str, raw_input: object) -> tuple[st
     if head is not None and graph_json.stat().st_mtime < float(head):
         return "", {"repo": str(root), "reason": "stale"}
 
-    pattern = graph_assist.search_target(native_name, raw_input, root, event.cwd)
+    pattern = graph_assist.search_target(native_name, raw_input, scope, event.cwd)
     if pattern is None:
         return "", {"repo": str(root), "reason": "not_search"}
     base = {"repo": str(root), "pattern": pattern}
@@ -114,13 +120,14 @@ def _evaluate(event: HookEvent, native_name: str, raw_input: object) -> tuple[st
         return "", {**base, "outcome": "miss", "reason": "miss"}
     label, defs = found
     text = graph_assist.render(label, defs)
-    symbol = graph_assist.normalise(pattern.rsplit(".", 1)[-1])
     return text, {
         **base,
         "outcome": "hit",
         "reason": "hit",
         "definitions": len(defs),
-        "symbol_in_output": symbol in text.lower(),
+        # Hit precision's numerator: every definition made it into the text. A
+        # hit listing three of forty `main()`s is noise, and this can say so.
+        "complete": len(defs) <= graph_assist.MAX_DEFS,
     }
 
 

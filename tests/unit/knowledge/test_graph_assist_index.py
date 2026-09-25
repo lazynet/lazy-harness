@@ -207,8 +207,10 @@ def test_load_gives_up_when_the_build_passes_the_deadline(tmp_path: Path) -> Non
 
     loaded = ga.load_index(root, deadline_s=1.5, clock=lambda: next(ticks))
 
+    # This call answers nothing, and the build it paid for is kept, so the next
+    # search does not pay it again.
     assert loaded is None
-    assert not ga.index_path(root).exists()
+    assert ga.index_path(root).is_file()
 
 
 def test_load_without_a_graph_is_none(tmp_path: Path) -> None:
@@ -253,3 +255,19 @@ def test_index_from_the_real_graph(tmp_path: Path) -> None:
     assert ("src/lazy_harness/memory/engram.py", "L59") in homonyms
     [atomic] = entries["atomic_write_text"]
     assert any(doc.startswith("specs/") for doc in atomic["docs"])
+
+
+def test_a_graph_replaced_by_an_older_file_rebuilds_the_index(tmp_path: Path) -> None:
+    """`cp -p` from a backup or a checkout can put an *older* mtime on a
+    different graph; any change of mtime invalidates, not only a newer one."""
+    root = _repo_with_graph(tmp_path, {"nodes": [], "links": []})
+    graph_json = root / "graphify-out" / "graph.json"
+    os.utime(graph_json, (2_000_000_000, 2_000_000_000))
+    ga.write_index(root)
+    graph_json.write_text(json.dumps(GRAPH))
+    os.utime(graph_json, (1_000_000_000, 1_000_000_000))
+
+    loaded = ga.load_index(root)
+
+    assert loaded is not None
+    assert "check_version" in loaded

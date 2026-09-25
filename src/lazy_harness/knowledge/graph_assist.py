@@ -13,7 +13,6 @@ test against a real 0.9.67 file.
 from __future__ import annotations
 
 import json
-import os
 import re
 import shlex
 import time
@@ -133,9 +132,6 @@ def _persist(repo_root: Path, entries: Entries, graph_mtime: float) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"version": INDEX_VERSION, "graph_mtime": graph_mtime, "entries": entries}
     atomic_write_text(path, json.dumps(payload, separators=(",", ":")))
-    # The index's own mtime is what freshness compares against the graph's, so
-    # it is pinned to the graph it was built from rather than to "now".
-    os.utime(path, (graph_mtime, graph_mtime))
     return path
 
 
@@ -157,7 +153,9 @@ def _read_index(repo_root: Path, graph_mtime: float) -> Entries | None:
         return None
     built_from = payload.get("graph_mtime")
     entries = payload.get("entries")
-    if not isinstance(built_from, int | float) or built_from < graph_mtime:
+    # Any change, not only a newer graph: a copy that keeps an older mtime is
+    # still a different graph.
+    if not isinstance(built_from, int | float) or built_from != graph_mtime:
         return None
     return entries if isinstance(entries, dict) else None
 
@@ -170,10 +168,11 @@ def load_index(
 ) -> Entries | None:
     """The fresh index for `repo_root`, building it when missing or stale.
 
-    A build that passes `deadline_s` is abandoned and nothing is persisted, so
-    the caller answers nothing this time rather than hold up a tool call. The
-    deadline is checked between the parse and the persist, the two phases that
-    scale with the graph.
+    A build that passes `deadline_s` answers nothing for this call, which has
+    already waited for it, but is persisted, so the cost is paid once rather
+    than on every search until something else writes the index. The deadline
+    cannot interrupt the parse; measured on this repository's 15 000-node graph
+    the whole build takes about 0.1 s.
     """
     try:
         graph_mtime = graph_path(repo_root).stat().st_mtime
@@ -189,13 +188,11 @@ def load_index(
         return None
     graph, mtime = read
     entries = build_index(graph)
-    if clock() - start > deadline_s:
-        return None
     try:
         _persist(repo_root, entries, mtime)
     except OSError:
         pass
-    return entries
+    return None if clock() - start > deadline_s else entries
 
 
 def lookup(entries: Entries, pattern: str) -> tuple[str, list[dict]] | None:
@@ -266,25 +263,46 @@ SEARCH_TOOLS = frozenset({"grep", "rg", "ugrep", "egrep"})
 IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*\(?\)?$")
 _DECL_PREFIX = re.compile(r"^(?:def|class|function)\s+")
 
-# Options that consume the next argument. A value mistaken for the pattern would
-# be a wrong hit, which is worse than silence, so each tool's set is its own:
-# `-r` is recursion to grep and a replacement string to rg.
-_GREP_VALUE_FLAGS = frozenset(
+# Option vocabulary per tool. A value mistaken for the pattern is a wrong hit,
+# which is worse than silence, so anything the tables do not cover resolves to
+# None: an unknown long option has unknown arity, and guessing it is how
+# `rg --sort path foo` once reported `path`. Each tool keeps its own tables
+# because `-r` is recursion to grep and a replacement string to rg.
+_GREP_VALUE_SHORT = frozenset("efmABCdD")
+_RG_VALUE_SHORT = frozenset("eftTgmABCrEjM")
+_GREP_VALUE_LONG = frozenset(
     {
-        "-e", "-f", "-m", "-A", "-B", "-C", "-d", "-D",
         "--regexp", "--file", "--max-count", "--context", "--after-context",
-        "--before-context", "--include", "--exclude", "--exclude-dir",
+        "--before-context", "--include", "--exclude", "--exclude-dir", "--devices",
+        "--directories", "--label", "--binary-files",
     }
 )  # fmt: skip
-_RG_VALUE_FLAGS = frozenset(
+_RG_VALUE_LONG = frozenset(
     {
-        "-e", "-f", "-t", "-T", "-g", "-m", "-A", "-B", "-C", "-r", "-E", "-j", "-M",
         "--regexp", "--file", "--type", "--type-not", "--glob", "--iglob", "--max-count",
         "--context", "--after-context", "--before-context", "--replace", "--encoding",
-        "--threads", "--max-columns",
+        "--threads", "--max-columns", "--sort", "--sortr", "--color", "--colors",
+        "--max-depth", "--type-add", "--type-clear", "--pre", "--pre-glob",
+        "--ignore-file", "--path-separator", "--context-separator", "--engine",
+        "--max-filesize", "--dfa-size-limit", "--regex-size-limit",
     }
 )  # fmt: skip
-_PATTERN_FLAGS = frozenset({"-e", "--regexp"})
+_FLAG_LONG = frozenset(
+    {
+        "--recursive", "--dereference-recursive", "--line-number", "--no-line-number",
+        "--ignore-case", "--no-ignore-case", "--smart-case", "--case-sensitive",
+        "--count", "--count-matches", "--files-with-matches", "--files-without-match",
+        "--word-regexp", "--line-regexp", "--fixed-strings", "--extended-regexp",
+        "--perl-regexp", "--basic-regexp", "--invert-match", "--only-matching",
+        "--quiet", "--silent", "--no-messages", "--with-filename", "--no-filename",
+        "--null", "--text", "--byte-offset", "--initial-tab", "--hidden", "--no-ignore",
+        "--no-ignore-vcs", "--follow", "--json", "--vimgrep", "--heading",
+        "--no-heading", "--multiline", "--pcre2", "--trim", "--stats", "--unrestricted",
+        "--no-config", "--column", "--search-zip",
+    }
+)  # fmt: skip
+# Options after which the positionals are not a pattern at all.
+_NO_PATTERN = frozenset({"--file", "--files", "--type-list"})
 _SEPARATORS = frozenset({";", "&&", "||", "&", "|"})
 
 
@@ -324,26 +342,50 @@ def _segments(command: str) -> list[tuple[list[str], bool]] | None:
     return segments
 
 
+def _unresolvable(token: str) -> bool:
+    """A path the shell would expand, which cannot be placed statically."""
+    return token.startswith("~") or "$" in token or "`" in token
+
+
 def _parse_search(argv: list[str]) -> tuple[str, list[str]] | None:
-    """(pattern, paths) from a grep-family argv, or None."""
-    tool = argv[0].rsplit("/", 1)[-1]
-    value_flags = _RG_VALUE_FLAGS if tool == "rg" else _GREP_VALUE_FLAGS
+    """(pattern, paths) from a grep-family argv, or None when unsure."""
+    rg = argv[0].rsplit("/", 1)[-1] == "rg"
+    value_short = _RG_VALUE_SHORT if rg else _GREP_VALUE_SHORT
+    value_long = _RG_VALUE_LONG if rg else _GREP_VALUE_LONG
     pattern: str | None = None
     positionals: list[str] = []
     args = iter(argv[1:])
     options_done = False
     for arg in args:
-        if not options_done and arg == "--":
-            options_done = True
-        elif not options_done and arg.startswith("-") and arg != "-":
-            if arg in value_flags:
-                value = next(args, None)
-                if value is None:
-                    return None
-                if arg in _PATTERN_FLAGS and pattern is None:
-                    pattern = value
-        else:
+        if options_done or arg == "-" or not arg.startswith("-"):
             positionals.append(arg)
+        elif arg == "--":
+            options_done = True
+        elif arg.startswith("--"):
+            name, eq, value = arg.partition("=")
+            if name in _NO_PATTERN:
+                return None
+            if name in value_long:
+                if not eq:
+                    value = next(args, None)
+                    if value is None:
+                        return None
+                if name == "--regexp" and pattern is None:
+                    pattern = value
+            elif name not in _FLAG_LONG:
+                return None
+        else:
+            letters = arg[1:]
+            for i, letter in enumerate(letters):
+                if letter == "f":
+                    return None
+                if letter in value_short:
+                    value = letters[i + 1 :] or next(args, None)
+                    if value is None:
+                        return None
+                    if letter == "e" and pattern is None:
+                        pattern = value
+                    break
     if pattern is None:
         if not positionals:
             return None
@@ -351,18 +393,31 @@ def _parse_search(argv: list[str]) -> tuple[str, list[str]] | None:
     return pattern, positionals
 
 
+def _subshell(tokens: list[str]) -> bool:
+    return any(t.startswith(("(", "{")) or t.endswith((")", "}")) for t in tokens)
+
+
 def bash_search_pattern(command: str, repo_root: Path, cwd: Path) -> str | None:
-    """The raw pattern of the first executed search over the repository, or None."""
+    """The raw pattern of the first executed search over the repository, or None.
+
+    Tracks a plain `cd <dir>` before the search. Anything that moves the shell
+    somewhere this cannot place — a bare `cd`, `cd -`, `~`, a variable, a
+    subshell, `pushd` — makes the whole command unknown, and unknown is silent.
+    """
     segments = _segments(command)
-    if segments is None:
+    if segments is None or _subshell([t for argv, _ in segments for t in argv]):
         return None
     here = cwd
     for argv, piped in segments:
         if not argv:
             continue
         name = argv[0].rsplit("/", 1)[-1]
-        if name == "cd" and len(argv) == 2:
-            here = (here / argv[1]) if not argv[1].startswith("/") else Path(argv[1])
+        if name in {"pushd", "popd"}:
+            return None
+        if name == "cd":
+            if len(argv) != 2 or argv[1] == "-" or _unresolvable(argv[1]):
+                return None
+            here = here / argv[1]
             continue
         if name not in SEARCH_TOOLS:
             continue
@@ -372,6 +427,8 @@ def bash_search_pattern(command: str, repo_root: Path, cwd: Path) -> str | None:
         if parsed is None:
             return None
         pattern, paths = parsed
+        if any(_unresolvable(p) for p in paths):
+            return None
         targets = [here / p for p in paths] if paths else [here]
         if not all(is_inside(t, repo_root) for t in targets):
             return None

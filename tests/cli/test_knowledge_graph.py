@@ -235,3 +235,26 @@ def test_graph_update_does_not_fail_a_repo_whose_index_cannot_build(
 
     assert result.exit_code == 0, result.output
     assert "index" in result.output
+
+
+def test_graph_update_names_the_real_cause_when_the_index_write_fails(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from lazy_harness.knowledge import graph_assist
+
+    repo = _repo(tmp_path, "a")
+    _config(tmp_path, repos=[str(repo)])
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _fake_graphify(monkeypatch, write_graph=True)
+
+    def disk_full(path: Path) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(graph_assist, "write_index", disk_full)
+
+    result = CliRunner().invoke(knowledge, ["graph", "update"])
+
+    assert result.exit_code == 0, result.output
+    assert "disk full" in result.output
+    assert "unreadable" not in result.output

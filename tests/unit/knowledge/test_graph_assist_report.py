@@ -87,7 +87,7 @@ def _call(kind: str, minutes: int = 0, symbol: str | None = None) -> rep.Call:
     return rep.Call(kind=kind, ts=T0 + timedelta(minutes=minutes), symbol=symbol)
 
 
-def _hit(sid: str, minutes: int, pattern: str, in_output: bool = True, ms: int = 10) -> dict:
+def _hit(sid: str, minutes: int, pattern: str, complete: bool = True, ms: int = 10) -> dict:
     return {
         "ts": (T0 + timedelta(minutes=minutes)).isoformat(),
         "session_id": sid,
@@ -95,7 +95,7 @@ def _hit(sid: str, minutes: int, pattern: str, in_output: bool = True, ms: int =
         "outcome": "hit",
         "reason": "hit",
         "latency_ms": ms,
-        "symbol_in_output": in_output,
+        "complete": complete,
     }
 
 
@@ -109,7 +109,7 @@ def test_compute_counts_each_metric_per_agent() -> None:
     ]
     metrics = [
         _hit("c2", 0, "foo", ms=10),
-        _hit("c2", 1, "bar", in_output=False, ms=20),
+        _hit("c2", 1, "bar", complete=False, ms=20),
         {"session_id": "c3", "outcome": "skip", "reason": "stale", "latency_ms": 3000},
     ]
 
@@ -184,9 +184,7 @@ def test_collect_reads_claude_transcripts_in_indexed_repos(
 ) -> None:
     from lazy_harness.core.config import Config, ProfileEntry
 
-    repo = tmp_path / "repo"
-    (repo / "graphify-out").mkdir(parents=True)
-    (repo / "graphify-out" / "graph.json").write_text("{}")
+    repo = _indexed_repo(tmp_path)
     elsewhere = tmp_path / "plain"
     elsewhere.mkdir()
     config_dir = tmp_path / ".claude-cl"
@@ -208,7 +206,7 @@ def test_collect_reads_claude_transcripts_in_indexed_repos(
 
     sessions, _ = rep.collect(cfg, since=now - timedelta(days=1))
 
-    assert [(s.session_id, s.repo) for s in sessions] == [("sess-a", repo)]
+    assert [(s.session_id, s.repo) for s in sessions] == [("sess-a", repo.resolve())]
     assert [c.kind for c in sessions[0].calls] == ["code_grep", "graphify"]
 
 
@@ -238,6 +236,7 @@ def _claude_profile(tmp_path: Path, name: str, repo: Path, sessions: dict[str, l
 
 def _indexed_repo(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
     (repo / "graphify-out").mkdir(parents=True)
     (repo / "graphify-out" / "graph.json").write_text("{}")
     return repo
@@ -322,3 +321,28 @@ def test_collect_skips_sessions_that_made_no_tool_call(tmp_path: Path) -> None:
     sessions, _ = rep.collect(cfg, since=now - timedelta(days=1))
 
     assert [s.session_id for s in sessions] == ["work"]
+
+
+def test_a_worktree_outside_the_main_tree_counts_toward_the_main_checkout(
+    tmp_path: Path,
+) -> None:
+    """The hook answers from the main checkout's graph, so the report's
+    population has to resolve the same way — through git, not a parent walk."""
+    import subprocess
+
+    repo = _indexed_repo(tmp_path)
+    env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+           "GIT_COMMITTER_EMAIL": "t@t", "PATH": "/usr/bin:/bin:/opt/homebrew/bin"}  # fmt: skip
+    for args in (["init", "-q"], ["commit", "-q", "--allow-empty", "-m", "i"]):
+        subprocess.run(["git", *args], cwd=repo, check=True, env=env, capture_output=True)
+    worktree = tmp_path / "elsewhere" / "wt"
+    subprocess.run(
+        ["git", "worktree", "add", "-q", str(worktree), "-b", "wt"],
+        cwd=repo,
+        check=True,
+        env=env,
+        capture_output=True,
+    )
+
+    assert rep._graph_repo(worktree) == repo.resolve()
+    assert rep._graph_repo(tmp_path / "elsewhere") is None

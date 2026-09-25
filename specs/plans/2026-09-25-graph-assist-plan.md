@@ -29,7 +29,7 @@
 2. A Bash command chaining two searches (`grep a x && grep b y`): expect the first executed search to be evaluated, never a crash.
 3. A repository whose `graph.json` is huge and index missing: the hook must answer within the 1.5 s cutoff (skip) and not block the tool call.
 4. A symbol with more than three definitions (`main()` has dozens): expect three listed plus a `(+N more)` count, never an unbounded dump.
-5. `cwd` inside a worktree of an indexed repo: the worktree has no `graphify-out/`; expect silence (the spec keys on the cwd's own root), not a lookup against the main checkout's possibly-mismatched graph.
+5. `cwd` inside a worktree of an indexed repo: the worktree has no `graphify-out/`; expect silence (the spec keys on the cwd's own root), not a lookup against the main checkout's possibly-mismatched graph. *Superseded in review: worktrees now answer from the main checkout's graph (spec §8).*
 
 Each line has a test in the task that owns the code (Tasks 3 and 4).
 

@@ -441,8 +441,8 @@ Responsibility: when an agent searches a repository for a code identifier, put w
 Mechanics:
 
 1. Scope check — only `Grep`, and `Bash` commands that run `grep`, `rg`, `ugrep` or `egrep`. Anything else exits 0 without a trace.
-2. The cwd's own checkout must hold `graphify-out/graph.json`, with an mtime at or after the HEAD commit. A worktree without its own graph stays silent.
-3. The search must target the repository — no pipe feeding it, every path inside the root — and its pattern must be identifier-shaped (`name`, `mod.func`, `Class.method`, optionally `()`, optionally after `def`/`class`/`function`). Regexes and phrases stay silent.
+2. The main checkout behind the cwd (resolved through `git --git-common-dir`, so a worktree uses its main checkout's graph) must hold `graphify-out/graph.json`, with an mtime at or after that checkout's HEAD commit. Line numbers can drift for files a worktree's branch has changed.
+3. The search must target the checkout the agent is in — no pipe feeding it, every path inside it, nothing the shell would expand (`~`, `$`, subshells) — and its pattern must be identifier-shaped (`name`, `mod.func`, `Class.method`, optionally `()`, optionally after `def`/`class`/`function`). Regexes and phrases stay silent.
 4. Look the identifier up in `graphify-out/cache/lh-graph-assist.json`, built from `graph.json` by `lh knowledge graph update` or lazily here. A lazy build that passes 1.5 s is abandoned for this call.
 5. On a match, emit up to three definitions as `additionalContext`, about 600 tokens at most. Homonyms are all listed.
 6. Always exit 0, including on any error.

@@ -101,3 +101,43 @@ def test_is_search_call(tool: str, tool_input: object, expected: bool) -> None:
     from lazy_harness.knowledge.graph_assist import is_search_call
 
     assert is_search_call(tool, tool_input) is expected
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        # Paths the classifier cannot resolve statically: silence, never a guess.
+        ("grep -rn foo ~/other", None),
+        ("grep -rn foo $HOME/x", None),
+        ("cd ~/other && grep -rn foo .", None),
+        ("cd && grep -r foo .", None),
+        ("cd - && grep -r foo .", None),
+        ("cd $X && grep -r foo .", None),
+        ("pushd /tmp && grep -r foo .", None),
+        ("(cd /tmp && grep -r foo .)", None),
+        ("grep -r foo $(pwd)", None),
+        ("grep -r foo `pwd`", None),
+        # The pattern comes from somewhere other than the first positional.
+        ("grep -f pats.txt src", None),
+        ("grep --file=pats.txt src", None),
+        ("grep -rnf patterns.txt src", None),
+        ("rg --files src", None),
+        ("rg --type-list", None),
+        ("grep -r --regexp=check_version src", "check_version"),
+        ("grep -echeck_version src", "check_version"),
+        ("grep -rne check_version src", "check_version"),
+        ("rg -nt py check_version", "check_version"),
+        ("rg -tpy check_version", "check_version"),
+        ("rg -nA3 check_version src", "check_version"),
+        ("rg --sort path check_version", "check_version"),
+        ("rg --color never check_version", "check_version"),
+        ("rg --frobnicate path check_version", None),
+        ("rg --sort=path check_version", "check_version"),
+        ("grep --line-number --recursive check_version src", "check_version"),
+        ("rg --hidden --no-ignore check_version", "check_version"),
+    ],
+)
+def test_search_target_stays_silent_when_it_cannot_be_sure(
+    command: str, expected: str | None
+) -> None:
+    assert search_target("Bash", {"command": command}, ROOT, CWD) == expected

@@ -116,7 +116,8 @@ def test_a_symbol_grep_gets_the_definitions(tmp_path: Path, metrics: Path) -> No
     [line] = _lines(metrics)
     assert line["outcome"] == "hit"
     assert line["definitions"] == 2
-    assert line["symbol_in_output"] is True
+    assert line["complete"] is True
+    assert "symbol_in_output" not in line
     assert line["pattern"] == "check_version"
     assert line["session_id"] == "sess-1"
     assert line["repo"] == str(root)
@@ -188,15 +189,32 @@ def test_a_repo_without_a_graph_stays_silent(tmp_path: Path, metrics: Path) -> N
     assert _lines(metrics)[-1]["reason"] == "no_graph"
 
 
-def test_a_worktree_without_its_own_graph_stays_silent(tmp_path: Path, metrics: Path) -> None:
+def test_a_worktree_answers_from_the_main_checkouts_graph(tmp_path: Path, metrics: Path) -> None:
+    """Worktrees carry no `graphify-out/` of their own, and every code change in
+    a worktree-first repo happens in one: 507 of 1 410 Claude sessions in graph
+    repos between 2026-09-17 and 09-25. The main checkout's graph answers there,
+    resolved through `--git-common-dir` like every other project key."""
     root = _repo(tmp_path)
     worktree = tmp_path / "wt"
     _git(root, "worktree", "add", "-q", str(worktree), "-b", "wt")
 
     decision = hook.main(_event(worktree, "Grep", {"pattern": "check_version"}))
 
+    assert "2 definitions" in decision.additional_context
+    assert _lines(metrics)[-1]["repo"] == str(root.resolve())
+
+
+def test_a_worktree_search_outside_the_worktree_stays_silent(tmp_path: Path, metrics: Path) -> None:
+    """The graph comes from the main checkout; the search scope is still the
+    worktree the agent is in."""
+    root = _repo(tmp_path)
+    worktree = tmp_path / "wt"
+    _git(root, "worktree", "add", "-q", str(worktree), "-b", "wt")
+
+    decision = hook.main(_event(worktree, "Grep", {"pattern": "check_version", "path": str(root)}))
+
     assert decision.additional_context == ""
-    assert _lines(metrics)[-1]["reason"] == "no_graph"
+    assert _lines(metrics)[-1]["reason"] == "not_search"
 
 
 def test_outside_any_repo_stays_silent(tmp_path: Path, metrics: Path) -> None:
@@ -296,3 +314,30 @@ def test_a_shell_command_running_no_search_tool_is_not_logged(
 
     assert decision.additional_context == ""
     assert not metrics.exists()
+
+
+def test_a_symbol_with_more_definitions_than_shown_is_an_incomplete_hit(
+    tmp_path: Path, metrics: Path
+) -> None:
+    """Hit precision's numerator. `symbol_in_output` measured nothing: the
+    rendered header names the symbol by construction, 3 000 of 3 000 lookups."""
+    many = {
+        "nodes": [
+            {
+                "id": f"m{i}",
+                "label": "main()",
+                "source_file": f"src/m{i}.py",
+                "source_location": "L1",
+                "file_type": "code",
+            }
+            for i in range(5)
+        ],
+        "links": [],
+    }
+    root = _repo(tmp_path, graph=many)
+
+    decision = hook.main(_event(root, "Grep", {"pattern": "main"}))
+
+    assert "(+2 more)" in decision.additional_context
+    line = _lines(metrics)[-1]
+    assert (line["outcome"], line["definitions"], line["complete"]) == ("hit", 5, False)

@@ -59,7 +59,8 @@ exit 0. Declared for the `claude-code` agent only.
 
 **Filter.** It acts only when all of these hold, and is silent otherwise:
 
-1. The cwd resolves to a repository root holding `graphify-out/graph.json`.
+1. The cwd's main checkout (`--git-common-dir`) holds `graphify-out/graph.json`
+   (§8: originally the cwd's own root, which silenced every worktree).
 2. The graph is fresh: `graph.json` mtime ≥ HEAD commit time. The same rule as
    `graphify_section`.
 3. The search targets the repository. For the `Grep` tool: `path` absent or
@@ -167,7 +168,7 @@ Each hook evaluation appends one line to
 ```json
 {"ts": "…", "session_id": "…", "repo": "…", "pattern": "…",
  "outcome": "hit|miss|skip", "reason": "…", "latency_ms": 12,
- "definitions": 2, "symbol_in_output": true}
+ "definitions": 2, "complete": true}
 ```
 
 A new read-only report, `lh knowledge graph-assist report [--since DATE]`,
@@ -228,7 +229,7 @@ window.
 | Metric | Definition | Role |
 | --- | --- | --- |
 | (a') graph touch | Claude sessions in indexed repos with ≥ 1 agent graphify call **or** ≥ 1 `hit` injection | **Kill** if < 20% at day 14 |
-| Hit precision | `hit` injections where the searched symbol appears in the injected text / all `hit` injections | **Kill** if < 50% |
+| Hit precision | `hit` injections that show every definition of the symbol (`complete`, ≤ 3) / all `hit` injections (§8) | **Kill** if < 50% |
 | Latency | p95 of `latency_ms` over all evaluations | **Kill** if > 1 500 ms |
 | (a) agent calls | the §1 metric | Informative: does injected context lead to asking the graph |
 | (b) graph vs code grep | the §1 metric | Informative |
@@ -271,13 +272,32 @@ displaces a higher-priority section.
   groups it cannot prove it owns, so the upstream search guard already in the
   Claude profiles' `settings.json` has to be removed once by hand at rollout.
 - **Baseline, re-measured with the shipped report.** `lh knowledge
-  graph-assist report --since 2026-09-17` on 2026-09-25: Claude Code 39/638
-  sessions = 6.1% (a), 1.0% (b) — consistent with §1. Codex 24/60 = 40.0% (a),
-  29.0% (b): (b) matches §1, (a) does not, because this population counts
-  spawned Codex agents as sessions. The report skips sessions with no tool
-  call (about 800 headless evaluations in the Claude window) and reads each
-  profile from its own `config_dir`. Day-0 comparisons use the report, never
-  §1.
+  graph-assist report --since 2026-09-17`, run 2026-09-25 with every fix in
+  this section: Claude Code 39/648 sessions = 6.0% (a), 49/3 336 = 1.5% (b);
+  Codex 24/60 = 40.0% (a), 53/142 = 37.3% (b). Claude's (a) agrees with §1.
+  Codex's does not, because this population counts spawned Codex agents as
+  sessions, and (b) moved on both sides because the classifier now declines
+  commands it cannot place. The report skips sessions with no tool call (about
+  800 headless evaluations in the Claude window) and reads each profile from
+  its own `config_dir`. Day-0 comparisons use the report, never §1.
 - **SessionStart counts `links`.** The old section read `edges`, which graphify
   0.9.67 does not write, and printed `0 edges`. It now reads `links`, falling
   back to `edges`.
+- **Worktrees answer from the main checkout.** Filter rule 1 as first written
+  keyed on the cwd's own root, and a worktree has no `graphify-out/`: 507 of
+  1 410 Claude sessions in graph repos (2026-09-17 to 09-25) ran in one, all
+  silent by construction, and all in the (a') denominator. The graph now comes
+  from `main_repo_root` in both the hook and the report; the search scope stays
+  the worktree. Line numbers can drift for files the branch changed.
+- **Hit precision measures completeness.** "The searched symbol appears in the
+  injected text" held by construction — the header names the matched symbol —
+  for 3 000 of 3 000 lookups on the real graph, so the kill criterion could not
+  trip. `symbol_in_output` became `complete`: every definition of the symbol
+  fits in what was injected. A hit listing three of forty `main()`s is the
+  noise the criterion exists to catch.
+- **The classifier resolves doubt to silence.** Paths with `~`, `$` or
+  backticks, `cd` to anything but a plain path, `pushd`, subshells, `-f`,
+  `--files` and unknown long options all return no pattern. `--regexp=X`,
+  `-eX` and bundled clusters such as `-nt py` are parsed.
+- **An over-deadline build is kept.** It answers nothing for the call that paid
+  for it and is persisted, instead of being rebuilt on every search.

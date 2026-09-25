@@ -520,10 +520,11 @@ def knowledge_graph_update() -> None:
             try:
                 index = graph_assist.write_index(path)
             except OSError as e:
-                index = None
+                console.print(f"[yellow]no index[/yellow] {contract_path(path)}: {escape(str(e))}")
                 log_append(log_path, f"index failed: {path}: {e}")
+                continue
             if index is None:
-                console.print(f"[yellow]no index[/yellow] {contract_path(path)}")
+                console.print(f"[yellow]no index[/yellow] {contract_path(path)} (graph unreadable)")
                 log_append(log_path, f"index skipped: {path} (graph unreadable)")
         else:
             failures += 1
