@@ -30,3 +30,13 @@ We also had existing Python code we did not want to throw away: the monitoring p
 - Windows support is realistic (no bash dependency), though today the CI only exercises macOS and Linux. `core/paths.py` already handles Windows path resolution (see [ADR-005](005-xdg-first-paths.md)).
 - `tomllib` being stdlib means the TOML read path has zero runtime dependencies — a meaningful guarantee when the config loader is the first thing any `lh` command touches.
 - The one-way door: we are committed to Python for this project. If we ever decide to rewrite in Go, it is a new project with a new name.
+
+## Evolution
+
+**2026-09-25 (0.82.1, PR #475): "no C extensions" narrows to "no local
+compilation".** `pyyaml` became a declared runtime dependency, and its wheels
+ship the optional `libyaml` accelerator (`yaml.__with_libyaml__` is `True` on the
+installed 6.0.3). Nothing compiles on install — prebuilt wheels cover the
+supported platforms and PyYAML falls back to pure Python without the extension —
+so the guarantee that holds is that installing `lh` needs no toolchain, not
+that no dependency carries a binary.

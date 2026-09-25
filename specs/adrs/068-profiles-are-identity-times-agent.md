@@ -86,3 +86,11 @@ be identified. The caller's agent is read from the payload
 (`_CALLER_MARKERS`), never guessed, so the fallback never crosses agents.
 `lh run` and `lh exec` are unchanged: an unknown `--profile` still refuses,
 without any fallback.
+
+**2026-09-25 (PR #473) — the same-agent fallback is withdrawn.** The entry above
+no longer describes the runner. A fallback resolved a profile the caller did not
+name, so a stale `claude-flex-old` could read `claude-lazy`'s context: a
+cross-identity read. `_adapter_for` now refuses every unknown named profile
+before any builtin runs (`UnknownProfileError`); only an empty profile table —
+a machine without `lh init` — or an unresolved empty profile name still resolves. Hooks, `lh run` and `lh exec`
+again agree: an unknown `--profile` refuses.
