@@ -1,7 +1,8 @@
 # Graph assist: answer code-symbol searches from the graph
 
-Status: **approved design, not implemented** (2026-09-24). Next step: an
-implementation plan written from this spec.
+Status: **implemented** on branch `feat/graph-assist` (2026-09-25), plan
+`specs/plans/2026-09-25-graph-assist-plan.md`. Rollout (§6) pending. §8 records
+where the implementation departed from or sharpened this text.
 
 ## 1. Problem
 
@@ -250,3 +251,33 @@ displaces a higher-priority section.
 - The upstream `graphify hook-guard read`: it stays for both agents, unchanged.
 - Graphify strict mode.
 - MCP tool loading. The tools stay deferred behind ToolSearch, as today.
+
+## 8. Implementation notes (2026-09-25)
+
+- **`Grep` is normalised, not read raw.** A builtin may not read
+  `ToolCall.raw_input` (`tests/unit/hooks/test_builtin_contract.py`), so
+  `Operation` gained `SEARCH_CODE` and `ToolCall` gained `search_pattern` and
+  `search_path`, filled by the Claude Code adapter for `Grep`. A shell `grep`
+  stays `RUN_COMMAND`.
+- **Builtins can be agent-scoped too.** `BuiltinHookSpec.agents` mirrors the
+  external field: `pre-tool-use-graph-assist` declares `claude-code`, and
+  deploy omits it elsewhere with `· <hook> omitted in '<profile>': declared for
+  agents claude-code`. It is opt-in, not in `DEFAULT_HOOKS`, because removal
+  (§6) is dropping it from `scripts`.
+- **Only search calls are evaluations.** A shell command that runs no search
+  tool returns before any git call and writes no metrics line, so the p95 in §6
+  is over searches, not over every `Bash`.
+- **Narrowing an external entry does not uninstall it.** Deploy preserves hook
+  groups it cannot prove it owns, so the upstream search guard already in the
+  Claude profiles' `settings.json` has to be removed once by hand at rollout.
+- **Baseline, re-measured with the shipped report.** `lh knowledge
+  graph-assist report --since 2026-09-17` on 2026-09-25: Claude Code 39/638
+  sessions = 6.1% (a), 1.0% (b) — consistent with §1. Codex 24/60 = 40.0% (a),
+  29.0% (b): (b) matches §1, (a) does not, because this population counts
+  spawned Codex agents as sessions. The report skips sessions with no tool
+  call (about 800 headless evaluations in the Claude window) and reads each
+  profile from its own `config_dir`. Day-0 comparisons use the report, never
+  §1.
+- **SessionStart counts `links`.** The old section read `edges`, which graphify
+  0.9.67 does not write, and printed `0 edges`. It now reads `links`, falling
+  back to `edges`.

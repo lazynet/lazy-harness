@@ -345,10 +345,12 @@ con el mismo guard y las mismas instrucciones. El nudge `graphify hook-guard
 search` salta solo en comandos de búsqueda, no en `ls`, `git` ni `ssh`
 (probado); en Claude es una orden sin contenido que llega junto al resultado del
 grep, e igual para un grep de logs que para un símbolo de código.
-**Acción:** implementar el diseño aprobado en
-`specs/designs/2026-09-24-graph-assist-design.md`: builtin que responde desde un
-índice del grafo, guard de upstream acotado a Codex y SessionStart con god nodes.
-Los kill criteria a 14 días están declarados en la spec. Prioridad MEDIA.
+**Estado:** implementado en `feat/graph-assist` (2026-09-25) según
+`specs/designs/2026-09-24-graph-assist-design.md`; §8 de la spec registra los
+desvíos. **Acción:** rollout §6 (release, `config.toml.tmpl`, sacar a mano el
+guard de upstream de los `settings.json` de Claude, `lh deploy`) y anotar acá
+el día 0. Kill criteria a 14 días, medidos con `lh knowledge graph-assist
+report`. Prioridad MEDIA.
 
 ### `lh doctor` no detecta skew entre el plugin de engram y su binario
 
