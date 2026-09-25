@@ -353,7 +353,7 @@ The `[hooks]` table is keyed by the `config.toml` event name (`session_start`, `
 | Field      | Type                     | Default | Required | Description                                                                                                                          |
 | ---------- | ------------------------ | ------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | `scripts`  | list of strings          | `[]`    | no       | Bare hook names to run for this event, in order (e.g. `context-inject`, not `lh hook context-inject`). Builtins resolve from the package registry; user scripts resolve from the configured hooks directory. An unresolved name is silently skipped. |
-| `external` | list of strings / tables | `[]`    | no       | Optional third-party commands to ensure are present in **every** profile. A bare string inherits the event's default matcher; a table pins its own (`{ command = "...", matcher = "..." }`). The command may name `{profile}` and/or `{config_dir}` ([ADR-054](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/054-external-hook-placeholders.md)); any other `{...}` is rejected at deploy with a diagnostic naming it. |
+| `external` | list of strings / tables | `[]`    | no       | Optional third-party commands to ensure are present in **every** profile. A bare string inherits the event's default matcher; a table pins its own (`{ command = "...", matcher = "..." }`) and may narrow it to named agents (`agents = ["codex"]`). The command may name `{profile}` and/or `{config_dir}` ([ADR-054](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/054-external-hook-placeholders.md)); any other `{...}` is rejected at deploy with a diagnostic naming it. |
 
 Example:
 
@@ -388,6 +388,21 @@ braces as `{{` and `}}`: `echo ${{HOME}}` deploys as `echo ${HOME}`, and
 `awk "{{print $1}}"` deploys as `awk "{print $1}"`. Commands with no braces need
 no changes. Invalid placeholders make `lh deploy` exit with a diagnostic naming
 the command and field.
+
+`agents` limits an entry to profiles whose resolved agent is listed
+(`claude-code`, `codex`, `copilot`); empty or absent means every agent. An
+unknown name fails `load_config` with a diagnostic naming it and the known
+agents. `lh deploy` names each profile it skips with
+`· <command> omitted in '<profile>': declared for agents <list>`. Narrowing an
+entry stops ensuring it in the other profiles; like removing it, it does not
+delete a group already installed there.
+
+```toml
+[[hooks.pre_tool_use.external]]
+command = "graphify hook-guard search"
+matcher = "Bash|Grep"
+agents = ["codex"]
+```
 
 `lh deploy` preserves hook entries it cannot prove are its own, on every event —
 including events the harness has no concept of — and reports each one. An

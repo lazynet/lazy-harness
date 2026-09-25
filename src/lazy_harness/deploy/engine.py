@@ -470,6 +470,12 @@ def _hook_entries_for(cfg: Config, profile: str, binary: str) -> dict[str, list[
     raw_config_dir = cfg.profiles.items[profile].config_dir
     for event_name, event_cfg in cfg.hooks.items():
         for ext in event_cfg.external:
+            if ext.agents and agent.name not in ext.agents:
+                click.echo(
+                    f"  · {ext.command} omitted in '{profile}': "
+                    f"declared for agents {', '.join(ext.agents)}"
+                )
+                continue
             command = _expand_external_command(
                 ext.command, profile=profile, config_dir=raw_config_dir
             )

@@ -213,6 +213,12 @@ class ExternalHookConfig:
 
     command: str
     matcher: str | None = None
+    agents: list[str] = field(default_factory=list)
+    """Agents whose profiles get this hook; empty means every agent.
+
+    Enforced by `lh deploy` against each profile's resolved agent, because
+    `config.toml` is shared and a tool's hook may belong to one agent only.
+    """
 
 
 @dataclass
@@ -650,6 +656,26 @@ def _parse_memory(raw: dict[str, Any]) -> MemoryConfig:
     return MemoryConfig(engram=engram)
 
 
+def _parse_external_agents(event_name: str, raw: Any) -> list[str]:
+    """Validate an external entry's `agents` against the registered agent names.
+
+    A misspelled name is refused rather than ignored: ignored, it would scope
+    the hook to no profile at all and deploy would drop it everywhere.
+    """
+    from lazy_harness.agents.registry import list_agents
+
+    if not isinstance(raw, list) or not all(isinstance(a, str) for a in raw):
+        raise ConfigError(f"[hooks.{event_name}].external 'agents' must be a list of agent names")
+    known = list_agents()
+    for name in raw:
+        if name not in known:
+            raise ConfigError(
+                f"[hooks.{event_name}].external agent {name!r} is unknown; "
+                f"known agents: {', '.join(known)}"
+            )
+    return list(raw)
+
+
 def _parse_external_hooks(event_name: str, raw: Any) -> list[ExternalHookConfig]:
     """Parse `[hooks.<event>].external` entries.
 
@@ -672,7 +698,8 @@ def _parse_external_hooks(event_name: str, raw: Any) -> list[ExternalHookConfig]
             matcher = item.get("matcher")
             if matcher is not None and not isinstance(matcher, str):
                 raise ConfigError(f"[hooks.{event_name}].external 'matcher' must be a string")
-            entries.append(ExternalHookConfig(command=command, matcher=matcher))
+            agents = _parse_external_agents(event_name, item.get("agents", []))
+            entries.append(ExternalHookConfig(command=command, matcher=matcher, agents=agents))
         else:
             raise ConfigError(f"[hooks.{event_name}].external entries must be a string or a table")
     return entries
@@ -992,10 +1019,7 @@ def _config_to_dict(cfg: Config) -> dict[str, Any]:
         # A matcher-less entry has a shorthand — the bare command string — and
         # `_parse_external_hooks` reads it back identically. Always emitting
         # the table form rewrote every shorthand on every save.
-        event_dict["external"] = [
-            e.command if e.matcher is None else {"command": e.command, "matcher": e.matcher}
-            for e in event_cfg.external
-        ]
+        event_dict["external"] = [_external_to_toml(e) for e in event_cfg.external]
         hooks_dict[event_name] = event_dict
     result["hooks"] = hooks_dict
 
@@ -1143,6 +1167,17 @@ def _prune_owned_sections(doc: Any, overlay: dict[str, Any]) -> None:
                 continue
             if key not in expected:
                 del node[key]
+
+
+def _external_to_toml(entry: ExternalHookConfig) -> str | dict[str, Any]:
+    if entry.matcher is None and not entry.agents:
+        return entry.command
+    table: dict[str, Any] = {"command": entry.command}
+    if entry.matcher is not None:
+        table["matcher"] = entry.matcher
+    if entry.agents:
+        table["agents"] = list(entry.agents)
+    return table
 
 
 def save_config(cfg: Config, path: Path) -> None:
