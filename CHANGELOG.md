@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.82.1](https://github.com/lazynet/lazy-harness/compare/v0.82.0...v0.82.1) (2026-09-25)
+
+
+### Bug Fixes
+
+* declare PyYAML as runtime dependency ([#475](https://github.com/lazynet/lazy-harness/issues/475)) ([f84d6d0](https://github.com/lazynet/lazy-harness/commit/f84d6d040ff03a78b291fca138b934cd69ccddc3))
+
 ## [0.82.0](https://github.com/lazynet/lazy-harness/compare/v0.81.1...v0.82.0) (2026-09-25)
 
 
