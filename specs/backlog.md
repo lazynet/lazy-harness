@@ -339,17 +339,16 @@ Prioridad BAJA.
 
 ### Graphify está disponible y casi no se usa
 
-**Por qué:** medido sobre los transcripts de claude-lazy y claude-flex de los
-siete días al 2026-09-24: 22 de 362 sesiones (6%) llamaron a graphify, con 27
-llamadas contra 6220 greps. El nudge `graphify hook-guard search` salta en
-cada `Bash|Grep`, incluidos `ssh`, `git` y `ls`. El agente se acostumbra y lo
-ignora: una sesión de verificación lo recibió unas 20 veces y no lo siguió
-ninguna. Es automatización de comportamiento sin kill criteria (gate
-«Behavioural automation ships with kill criteria»). **Acción:** decidir la
-dirección con la baseline de arriba: acotar el nudge a búsquedas de
-identificadores en repos con grafo, reemplazarlo por contexto estructural en
-SessionStart, o sacarlo. Declarar el umbral de adopción antes de desplegar.
-Prioridad MEDIA.
+**Por qué:** en repos con grafo, en los siete días al 2026-09-24, 23 de 398
+sesiones de Claude (5,8%) llamaron a graphify, contra 23 de 31 en Codex (74,2%),
+con el mismo guard y las mismas instrucciones. El nudge `graphify hook-guard
+search` salta solo en comandos de búsqueda, no en `ls`, `git` ni `ssh`
+(probado); en Claude es una orden sin contenido que llega junto al resultado del
+grep, e igual para un grep de logs que para un símbolo de código.
+**Acción:** implementar el diseño aprobado en
+`specs/designs/2026-09-24-graph-assist-design.md`: builtin que responde desde un
+índice del grafo, guard de upstream acotado a Codex y SessionStart con god nodes.
+Los kill criteria a 14 días están declarados en la spec. Prioridad MEDIA.
 
 ### `lh doctor` no detecta skew entre el plugin de engram y su binario
 
