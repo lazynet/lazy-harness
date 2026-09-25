@@ -557,10 +557,14 @@ every subsequent turn re-reads the whole thing. Herdr's own agent surface report
 lifecycle state — `idle`, `working`, `blocked` — but never context size, so the
 orchestrator has no signal that the worker is due for a reset and keeps prompting it.
 
-After each turn the hook reads the last assistant entry in the transcript and sums its
-three input channels (`input_tokens`, `cache_read_input_tokens`,
-`cache_creation_input_tokens`). That is the live window, not the session's cumulative
-spend — summing every turn instead would report a number orders of magnitude too large.
+After each turn the hook reads the transcript through the reader the profile's agent
+declares and takes the last token-usage record, summing every input channel: fresh input,
+cache reads and cache writes. In a Claude Code transcript those are `input_tokens`,
+`cache_read_input_tokens` and `cache_creation_input_tokens` on the last assistant entry;
+in a Codex rollout, the last `token_usage_record`, whose `input_tokens` already include
+the cache. That is the live window, not the session's cumulative spend — summing every
+turn instead would report a number orders of magnitude too large. An agent whose
+transcript lh cannot read gets no gauge, and the pane's label is cleared.
 The result becomes a traffic light published as pane metadata:
 
 | Context | Label |

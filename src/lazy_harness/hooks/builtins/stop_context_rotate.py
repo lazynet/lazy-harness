@@ -35,7 +35,7 @@ import tempfile
 from pathlib import Path
 
 from lazy_harness.agents.base import HookDecision, HookEvent
-from lazy_harness.hooks.builtins._shared import existing_transcript
+from lazy_harness.hooks.builtins._shared import existing_transcript, transcript_reader
 from lazy_harness.hooks.builtins.herdr_context_gauge import (
     ROTATE_TOKENS,
     _format_tokens,
@@ -92,8 +92,12 @@ def main(event: HookEvent) -> HookDecision:
     if transcript is None:
         return HookDecision()
 
+    reader = transcript_reader(event.profile)
+    if reader is None:
+        return HookDecision()
+
     try:
-        tokens = context_tokens(transcript)
+        tokens = context_tokens(transcript, reader)
     except Exception:
         return HookDecision()
 

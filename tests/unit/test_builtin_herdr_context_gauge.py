@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from lazy_harness.agents.claude_code import ClaudeCodeAdapter
 from lazy_harness.hooks.builtins import herdr_context_gauge as gauge
 
 
@@ -18,6 +19,12 @@ def _isolated_stamp_dir(
     """Keep throttle stamps out of the real temp dir and out of each other's way."""
     stamps = tmp_path_factory.mktemp("gauge-stamps")
     monkeypatch.setattr(gauge.tempfile, "gettempdir", lambda: str(stamps))
+
+
+@pytest.fixture(autouse=True)
+def _no_real_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Resolve the reader from defaults, never from the operator's config.toml."""
+    monkeypatch.setattr("lazy_harness.core.paths.config_file", lambda: tmp_path / "absent.toml")
 
 
 def _assistant(
@@ -75,7 +82,7 @@ def test_context_tokens_sums_the_three_input_channels(tmp_path: Path) -> None:
         [_assistant(input_tokens=4, cache_read=660_000, cache_creation=13_400)],
     )
 
-    assert gauge.context_tokens(transcript) == 673_404
+    assert gauge.context_tokens(transcript, ClaudeCodeAdapter()) == 673_404
 
 
 def test_context_tokens_reports_the_live_window_not_the_cumulative_spend(
@@ -88,7 +95,7 @@ def test_context_tokens_reports_the_live_window_not_the_cumulative_spend(
         [_assistant(cache_read=100_000), _assistant(cache_read=250_000)],
     )
 
-    assert gauge.context_tokens(transcript) == 250_000
+    assert gauge.context_tokens(transcript, ClaudeCodeAdapter()) == 250_000
 
 
 def test_context_tokens_skips_entries_that_carry_no_usage(tmp_path: Path) -> None:
@@ -101,7 +108,7 @@ def test_context_tokens_skips_entries_that_carry_no_usage(tmp_path: Path) -> Non
         ],
     )
 
-    assert gauge.context_tokens(transcript) == 250_000
+    assert gauge.context_tokens(transcript, ClaudeCodeAdapter()) == 250_000
 
 
 def test_context_tokens_survives_a_corrupt_line(tmp_path: Path) -> None:
@@ -110,17 +117,48 @@ def test_context_tokens_survives_a_corrupt_line(tmp_path: Path) -> None:
         [_assistant(cache_read=250_000), "{not json", _assistant(cache_read=310_000)],
     )
 
-    assert gauge.context_tokens(transcript) == 310_000
+    assert gauge.context_tokens(transcript, ClaudeCodeAdapter()) == 310_000
 
 
 def test_context_tokens_is_none_for_a_missing_transcript(tmp_path: Path) -> None:
-    assert gauge.context_tokens(tmp_path / "absent.jsonl") is None
+    assert gauge.context_tokens(tmp_path / "absent.jsonl", ClaudeCodeAdapter()) is None
 
 
 def test_context_tokens_is_none_when_no_usage_was_ever_recorded(tmp_path: Path) -> None:
     transcript = _write_transcript(tmp_path / "s.jsonl", [{"type": "user"}])
 
-    assert gauge.context_tokens(transcript) is None
+    assert gauge.context_tokens(transcript, ClaudeCodeAdapter()) is None
+
+
+def _codex_usage(*, input_tokens: int, cached: int) -> dict[str, object]:
+    """One Codex `token_usage_record`: its `input_tokens` already include the cache."""
+    return {
+        "timestamp": "2026-09-25T12:16:47.767Z",
+        "type": "token_usage_record",
+        "payload": {
+            "response_id": f"resp_{input_tokens}",
+            "usage": {
+                "input_tokens": input_tokens,
+                "cached_input_tokens": cached,
+                "cache_write_input_tokens": 0,
+                "output_tokens": 298,
+            },
+        },
+    }
+
+
+def test_context_tokens_reads_the_live_window_of_a_codex_rollout(tmp_path: Path) -> None:
+    from lazy_harness.agents.codex import CodexAdapter
+
+    transcript = _write_transcript(
+        tmp_path / "rollout.jsonl",
+        [
+            _codex_usage(input_tokens=90_000, cached=88_000),
+            _codex_usage(input_tokens=130_184, cached=128_128),
+        ],
+    )
+
+    assert gauge.context_tokens(transcript, CodexAdapter()) == 130_184
 
 
 def test_publish_command_targets_the_pane_under_a_dedicated_source() -> None:
@@ -585,3 +623,41 @@ def test_main_exits_zero_when_herdr_hangs(tmp_path: Path, monkeypatch: pytest.Mo
         env={"HERDR_ENV": "1", "HERDR_PANE_ID": "wS:p16"},
         runner=stall,
     )
+
+
+def test_main_publishes_the_gauge_for_a_codex_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A Codex rollout is not a Claude transcript: read through the Claude shape it
+    reports no usage at all, and the gauge retracts on every turn instead of
+    publishing. The reader has to be the one the profile's own agent declares.
+    """
+    from lazy_harness.agents.codex import CodexAdapter
+
+    codex_dir = tmp_path / "codex-work"
+    codex_dir.mkdir()
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        '[harness]\nversion = "1"\n\n[agent]\ntype = "claude-code"\n\n'
+        '[profiles]\ndefault = "work"\n\n'
+        f'[profiles.work]\nconfig_dir = "{codex_dir}"\nroots = ["~"]\nagent = "codex"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("lazy_harness.core.paths.config_file", lambda: cfg)
+    monkeypatch.setenv("HERDR_ENV", "1")
+    monkeypatch.setenv("HERDR_PANE_ID", "wS:p7")
+    monkeypatch.setattr(gauge.time, "time", lambda: 1_000.0)
+    calls, runner = _recorder()
+    monkeypatch.setattr(gauge.subprocess, "run", runner)
+    transcript = _write_transcript(
+        tmp_path / "rollout.jsonl", [_codex_usage(input_tokens=130_184, cached=128_128)]
+    )
+
+    event = CodexAdapter().parse_hook_input(
+        "session_stop",
+        {"hook_event_name": "Stop", "transcript_path": str(transcript)},
+        profile="work",
+    )
+    gauge.main(event)
+
+    assert calls == [gauge.publish_command("wS:p7", "🟢 130k")]
