@@ -1,0 +1,257 @@
+"""Graph assist: answer code-symbol searches from graphify's graph.
+
+Design: `specs/designs/2026-09-24-graph-assist-design.md`. The hook
+`pre-tool-use-graph-assist` is the consumer; this module owns the index built
+from `graphify-out/graph.json` and how an entry is rendered.
+
+An index rather than `graphify explain`: `explain` measured 1.09–1.13 s on this
+repository, half of it process start-up, and a prebuilt lookup costs
+milliseconds. The price is a dependency on the `graph.json` schema, pinned by a
+test against a real 0.9.67 file.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import time
+from collections.abc import Callable
+from pathlib import Path
+
+from lazy_harness.core.config import atomic_write_text
+
+INDEX_NAME = "lh-graph-assist.json"
+INDEX_VERSION = 1
+MAX_DEFS = 3
+MAX_NEIGHBOURS = 5
+MAX_CHARS = 2400  # ~600 tokens at 4 chars per token
+BUILD_DEADLINE_S = 1.5
+
+_CALL_RELATIONS = frozenset({"calls", "indirect_call"})
+_DOC_RELATIONS = frozenset({"references", "uses"})
+
+Entries = dict[str, list[dict]]
+
+
+def normalise(label: str) -> str:
+    """Index key: lowercased, without a trailing `()` or a method's leading `.`."""
+    return label.strip().lower().removesuffix("()").lstrip(".")
+
+
+def _is_document(node: dict) -> bool:
+    return node.get("file_type") == "document" or str(node.get("source_file", "")).endswith(".md")
+
+
+def _is_definition(node: dict) -> bool:
+    """A code symbol with a location, excluding file nodes and external imports."""
+    if node.get("file_type") != "code":
+        return False
+    source_file = node.get("source_file")
+    label = node.get("label")
+    if not isinstance(source_file, str) or not source_file:
+        return False
+    if not isinstance(label, str) or not label:
+        return False
+    if not node.get("source_location"):
+        return False
+    return label != source_file.rsplit("/", 1)[-1]
+
+
+def _unique(items: list[str]) -> list[str]:
+    return sorted(set(items))
+
+
+def build_index(graph: dict) -> Entries:
+    """Key every definition in `graph` by its normalised label."""
+    raw_nodes = graph.get("nodes")
+    raw_links = graph.get("links")
+    nodes = {
+        n["id"]: n
+        for n in (raw_nodes if isinstance(raw_nodes, list) else [])
+        if isinstance(n, dict) and isinstance(n.get("id"), str)
+    }
+    links = [
+        lk for lk in (raw_links if isinstance(raw_links, list) else []) if isinstance(lk, dict)
+    ]
+
+    calls_in: dict[str, list[str]] = {}
+    calls_out: dict[str, list[str]] = {}
+    docs: dict[str, list[str]] = {}
+    for link in links:
+        relation = link.get("relation")
+        source = nodes.get(link.get("source"))  # type: ignore[arg-type]
+        target = nodes.get(link.get("target"))  # type: ignore[arg-type]
+        if source is None or target is None:
+            continue
+        if relation in _CALL_RELATIONS:
+            calls_out.setdefault(source["id"], []).append(str(target.get("label", "")))
+            calls_in.setdefault(target["id"], []).append(str(source.get("label", "")))
+        elif relation in _DOC_RELATIONS:
+            for this, other in ((source, target), (target, source)):
+                if _is_document(other) and not _is_document(this):
+                    docs.setdefault(this["id"], []).append(str(other.get("source_file", "")))
+
+    entries: Entries = {}
+    for nid, node in nodes.items():
+        if not _is_definition(node):
+            continue
+        entries.setdefault(normalise(node["label"]), []).append(
+            {
+                "label": node["label"],
+                "source_file": node["source_file"],
+                "source_location": str(node["source_location"]),
+                "calls_in": _unique(calls_in.get(nid, [])),
+                "calls_out": _unique(calls_out.get(nid, [])),
+                "docs": _unique([d for d in docs.get(nid, []) if d]),
+            }
+        )
+    return entries
+
+
+def graph_path(repo_root: Path) -> Path:
+    return repo_root / "graphify-out" / "graph.json"
+
+
+def index_path(repo_root: Path) -> Path:
+    return repo_root / "graphify-out" / "cache" / INDEX_NAME
+
+
+def _read_graph(repo_root: Path) -> tuple[dict, float] | None:
+    graph_json = graph_path(repo_root)
+    try:
+        mtime = graph_json.stat().st_mtime
+        data = json.loads(graph_json.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return (data, mtime) if isinstance(data, dict) else None
+
+
+def _persist(repo_root: Path, entries: Entries, graph_mtime: float) -> Path:
+    path = index_path(repo_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"version": INDEX_VERSION, "graph_mtime": graph_mtime, "entries": entries}
+    atomic_write_text(path, json.dumps(payload, separators=(",", ":")))
+    # The index's own mtime is what freshness compares against the graph's, so
+    # it is pinned to the graph it was built from rather than to "now".
+    os.utime(path, (graph_mtime, graph_mtime))
+    return path
+
+
+def write_index(repo_root: Path) -> Path | None:
+    """Build and persist the index for `repo_root`. None if the graph is unreadable."""
+    read = _read_graph(repo_root)
+    if read is None:
+        return None
+    graph, mtime = read
+    return _persist(repo_root, build_index(graph), mtime)
+
+
+def _read_index(repo_root: Path, graph_mtime: float) -> Entries | None:
+    try:
+        payload = json.loads(index_path(repo_root).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict) or payload.get("version") != INDEX_VERSION:
+        return None
+    built_from = payload.get("graph_mtime")
+    entries = payload.get("entries")
+    if not isinstance(built_from, int | float) or built_from < graph_mtime:
+        return None
+    return entries if isinstance(entries, dict) else None
+
+
+def load_index(
+    repo_root: Path,
+    *,
+    deadline_s: float = BUILD_DEADLINE_S,
+    clock: Callable[[], float] = time.monotonic,
+) -> Entries | None:
+    """The fresh index for `repo_root`, building it when missing or stale.
+
+    A build that passes `deadline_s` is abandoned and nothing is persisted, so
+    the caller answers nothing this time rather than hold up a tool call. The
+    deadline is checked between the parse and the persist, the two phases that
+    scale with the graph.
+    """
+    try:
+        graph_mtime = graph_path(repo_root).stat().st_mtime
+    except OSError:
+        return None
+    cached = _read_index(repo_root, graph_mtime)
+    if cached is not None:
+        return cached
+
+    start = clock()
+    read = _read_graph(repo_root)
+    if read is None:
+        return None
+    graph, mtime = read
+    entries = build_index(graph)
+    if clock() - start > deadline_s:
+        return None
+    try:
+        _persist(repo_root, entries, mtime)
+    except OSError:
+        pass
+    return entries
+
+
+def lookup(entries: Entries, pattern: str) -> tuple[str, list[dict]] | None:
+    """Definitions for `pattern`: exact key first, then a qualified suffix.
+
+    `mod.func` and `Class.method` resolve to the definitions of `func`/`method`
+    whose file stem or label path carries the qualifier. Every match is
+    returned — homonyms are listed, never picked between silently.
+    """
+    key = normalise(pattern)
+    defs = entries.get(key)
+    if defs:
+        return defs[0]["label"], defs
+    if "." not in key:
+        return None
+    qualifier, _, name = key.rpartition(".")
+    last = qualifier.rsplit(".", 1)[-1]
+    candidates = entries.get(name, [])
+    matched = [d for d in candidates if _qualified_by(d, last, entries)]
+    if not matched:
+        return None
+    return matched[0]["label"], matched
+
+
+def _qualified_by(definition: dict, qualifier: str, entries: Entries) -> bool:
+    source_file = str(definition.get("source_file", ""))
+    stem = source_file.rsplit("/", 1)[-1].removesuffix(".py").lower()
+    if stem == qualifier:
+        return True
+    # `Class.method`: the class is a definition in the same file.
+    return any(d.get("source_file") == source_file for d in entries.get(qualifier, []))
+
+
+def _location(definition: dict) -> str:
+    line = str(definition.get("source_location", "")).removeprefix("L")
+    return f"{definition.get('source_file', '')}:{line}" if line else str(definition["source_file"])
+
+
+def _neighbours(label: str, items: list[str]) -> str:
+    shown = ", ".join(items[:MAX_NEIGHBOURS])
+    extra = len(items) - MAX_NEIGHBOURS
+    return f"  {label}: {shown}" + (f" … (+{extra})" if extra > 0 else "")
+
+
+def render(label: str, defs: list[dict], *, max_defs: int = MAX_DEFS) -> str:
+    """Markdown for the agent: information about the symbol, never an order."""
+    count = len(defs)
+    noun = "definition" if count == 1 else "definitions"
+    lines = [f"Graph: {label} — {count} {noun}"]
+    for definition in defs[:max_defs]:
+        lines.append(f"- {_location(definition)}")
+        for title, key in (("called by", "calls_in"), ("calls", "calls_out"), ("named in", "docs")):
+            items = definition.get(key) or []
+            if items:
+                lines.append(_neighbours(title, items))
+    if count > max_defs:
+        lines.append(f"(+{count - max_defs} more)")
+    text = "\n".join(lines)
+    if len(text) > MAX_CHARS:
+        text = text[: MAX_CHARS - 1].rsplit("\n", 1)[0] + "\n…"
+    return text
