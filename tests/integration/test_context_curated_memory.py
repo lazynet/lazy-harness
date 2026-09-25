@@ -150,14 +150,16 @@ def test_missing_curated_memory_is_an_empty_state(
     assert "unreadable" not in body
 
 
+@pytest.mark.parametrize("long_source", [False, True])
 def test_unreadable_curated_memory_reports_without_exception_path(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, long_source: bool
 ) -> None:
     from lazy_harness.hooks.builtins.context_inject import curated_memory_context
 
-    memory = tmp_path / "memory"
+    memory = tmp_path / ("nested" * 40 if long_source else "memory")
     memory.mkdir()
     source = memory / "MEMORY.md"
+    max_chars = 300 if long_source else 3 * len(str(source)) + 3
     source.write_text("content")
     original_open = Path.open
 
@@ -167,13 +169,15 @@ def test_unreadable_curated_memory_reports_without_exception_path(
         return original_open(path, *args, **kwargs)
 
     monkeypatch.setattr(Path, "open", deny_source)
-    body = curated_memory_context(memory, 300)
+    body = curated_memory_context(memory, max_chars)
     assert "unreadable" in body
     assert body.endswith("[unreadable or invalid MEMORY.md]")
-    assert "…" in body
+    assert ("…" in body) is long_source
+    if not long_source:
+        assert str(source) in body
     assert "MEMORY.md" in body
     assert "SECRET_UNRELATED_PATH" not in body
-    assert len(body) <= 300
+    assert len(body) <= max_chars
 
 
 def test_curated_reader_never_requests_the_full_file(tmp_path: Path, monkeypatch) -> None:

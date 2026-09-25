@@ -49,7 +49,14 @@ def _configure(home_dir: Path, agent: str) -> tuple[str, Path]:
 
 
 @pytest.mark.parametrize("agent", ["claude-code", "codex"])
-def test_inspect_agrees_with_native_temporary_deploy(home_dir: Path, agent: str) -> None:
+@pytest.mark.parametrize("detected_servers", [False, True])
+def test_inspect_agrees_with_native_temporary_deploy(
+    home_dir: Path, monkeypatch: pytest.MonkeyPatch, agent: str, detected_servers: bool
+) -> None:
+    from lazy_harness.deploy import engine
+
+    servers = {"example": {"command": "example-mcp"}} if detected_servers else {}
+    monkeypatch.setattr(engine, "_collect_mcp_servers", lambda cfg: servers)
     name, runtime = _configure(home_dir, agent)
     runner = CliRunner()
     inspected = runner.invoke(cli, ["profile", "inspect", name, "--json"])
@@ -88,7 +95,10 @@ def test_inspect_agrees_with_native_temporary_deploy(home_dir: Path, agent: str)
 
         native = json.loads((runtime / "hooks.json").read_text())
         assert _parse_hooks_document((runtime / "hooks.json").read_text()) == native
-        tomllib.loads((runtime / "config.toml").read_text())
+        config_path = runtime / "config.toml"
+        assert config_path.exists() is detected_servers
+        if detected_servers:
+            assert tomllib.loads(config_path.read_text())["mcp_servers"] == servers
         commands = [
             hook["command"]
             for groups in native["hooks"].values()
