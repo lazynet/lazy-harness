@@ -92,7 +92,11 @@ def test_the_three_any_event_hooks_are_knowingly_absent() -> None:
     event (`Stop`), and the `verify_ran` event it waits for now has a producer
     (`lh metrics record-verify`) — but the procedure that invokes it lives in
     the profile, outside this repo. Until an operator wires that up, a
-    default-on guard blocks once per session while verifying nothing."""
+    default-on guard blocks once per session while verifying nothing.
+
+    `pre-tool-use-graph-assist` is opt-in because it is behavioural
+    automation under kill criteria (graph-assist design §6): removing it is
+    dropping it from `scripts`, which a default-on hook cannot express."""
     from lazy_harness.hooks.loader import list_builtin_hooks
     from lazy_harness.plugins.builtins import builtin_registry
 
@@ -102,6 +106,7 @@ def test_the_three_any_event_hooks_are_knowingly_absent() -> None:
     assert missing == {
         "herdr-context-gauge",
         "post-tool-use-ansible-lint",
+        "pre-tool-use-graph-assist",
         "stop-verify-guard",
         "user-prompt-goal",
     }

@@ -127,7 +127,57 @@ def test_an_agent_that_only_warns_cannot_block() -> None:
 def test_operation_vocabulary_is_what_the_builtins_reason_about() -> None:
     from lazy_harness.agents.base import Operation
 
-    assert {o.value for o in Operation} == {"run_command", "read_file", "modify_file"}
+    assert {o.value for o in Operation} == {
+        "run_command",
+        "read_file",
+        "modify_file",
+        "search_code",
+    }
+
+
+def test_claude_grep_is_normalised_into_a_search() -> None:
+    """`pre-tool-use-graph-assist` reads the pattern and path off the
+    normalised call; reading `raw_input` instead is what
+    `test_builtin_contract.py` forbids."""
+    from lazy_harness.agents.base import Operation
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    event = ClaudeCodeAdapter().parse_hook_input(
+        "pre_tool_use",
+        {
+            "hook_event_name": "PreToolUse",
+            "session_id": "s",
+            "cwd": "/repo",
+            "tool_name": "Grep",
+            "tool_input": {"pattern": "check_version", "path": "/repo/src"},
+        },
+        profile="p",
+    )
+
+    assert event.tool is not None
+    assert event.tool.operation is Operation.SEARCH_CODE
+    assert event.tool.search_pattern == "check_version"
+    assert event.tool.search_path == Path("/repo/src")
+
+
+def test_claude_grep_without_a_path_or_with_a_bad_pattern() -> None:
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    def parse(tool_input: object):
+        return (
+            ClaudeCodeAdapter()
+            .parse_hook_input(
+                "pre_tool_use",
+                {"hook_event_name": "PreToolUse", "tool_name": "Grep", "tool_input": tool_input},
+                profile="p",
+            )
+            .tool
+        )
+
+    no_path = parse({"pattern": "x"})
+    assert no_path is not None and no_path.search_path is None
+    bad = parse({"pattern": 7, "path": ["x"]})
+    assert bad is not None and bad.search_pattern is None and bad.search_path is None
 
 
 def test_signal_vocabulary_names_each_transcript_dependency() -> None:

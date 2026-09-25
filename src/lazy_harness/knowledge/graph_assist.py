@@ -397,3 +397,22 @@ def search_target(tool_name: str, tool_input: object, repo_root: Path, cwd: Path
         command = tool_input.get("command")
         return _bash_target(command, repo_root, cwd) if isinstance(command, str) else None
     return None
+
+
+def is_search_call(tool_name: str, tool_input: object) -> bool:
+    """Whether a call runs a search tool at all, before any repository check.
+
+    The cheap gate in front of the git subprocesses: most shell calls are not
+    searches, and they are neither evaluated nor counted.
+    """
+    if tool_name == "Grep":
+        return True
+    if tool_name != "Bash" or not isinstance(tool_input, dict):
+        return False
+    command = tool_input.get("command")
+    if not isinstance(command, str):
+        return False
+    segments = _segments(command)
+    if segments is None:
+        return False
+    return any(argv and argv[0].rsplit("/", 1)[-1] in SEARCH_TOOLS for argv, _ in segments)

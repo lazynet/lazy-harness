@@ -125,6 +125,7 @@ _TOOL_OPERATIONS: dict[str, Operation] = {
     "Edit": Operation.MODIFY_FILE,
     "Write": Operation.MODIFY_FILE,
     "NotebookEdit": Operation.MODIFY_FILE,
+    "Grep": Operation.SEARCH_CODE,
 }
 
 # Claude Code names the file differently per tool; both spellings are one path.
@@ -705,6 +706,12 @@ class ClaudeCodeAdapter:
                 ),
             )
         command = args.get("command")
+        search_pattern: str | None = None
+        search_path: Path | None = None
+        if operation is Operation.SEARCH_CODE:
+            pattern, where = args.get("pattern"), args.get("path")
+            search_pattern = pattern if isinstance(pattern, str) else None
+            search_path = Path(where) if isinstance(where, str) and where else None
         return ToolCall(
             native_name=str(name),
             operation=operation,
@@ -713,6 +720,8 @@ class ClaudeCodeAdapter:
             offset=_as_int(args.get("offset")),
             limit=_as_int(args.get("limit")),
             edits=edits,
+            search_pattern=search_pattern,
+            search_path=search_path,
             raw_input=args,
         )
 

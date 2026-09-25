@@ -432,6 +432,23 @@ Bypass: set `LH_READ_SIZE_BYPASS=1` in the subprocess environment.
 
 **Where it writes:** nowhere on disk. Only stdout (the warning) and the standard hook log.
 
+### `pre-tool-use-graph-assist` — runs on `PreToolUse`
+
+Source: `src/lazy_harness/hooks/builtins/pre_tool_use_graph_assist.py`.
+
+Responsibility: when an agent searches a repository for a code identifier, put what graphify's graph knows about it — definitions, callers, callees, documents naming it — beside the search result. Information, never an instruction and never a verdict. Opt-in: add it to `[hooks.pre_tool_use].scripts`. Declared for Claude Code only; `lh deploy` omits it from other agents' profiles and says so.
+
+Mechanics:
+
+1. Scope check — only `Grep`, and `Bash` commands that run `grep`, `rg`, `ugrep` or `egrep`. Anything else exits 0 without a trace.
+2. The cwd's own checkout must hold `graphify-out/graph.json`, with an mtime at or after the HEAD commit. A worktree without its own graph stays silent.
+3. The search must target the repository — no pipe feeding it, every path inside the root — and its pattern must be identifier-shaped (`name`, `mod.func`, `Class.method`, optionally `()`, optionally after `def`/`class`/`function`). Regexes and phrases stay silent.
+4. Look the identifier up in `graphify-out/cache/lh-graph-assist.json`, built from `graph.json` by `lh knowledge graph update` or lazily here. A lazy build that passes 1.5 s is abandoned for this call.
+5. On a match, emit up to three definitions as `additionalContext`, about 600 tokens at most. Homonyms are all listed.
+6. Always exit 0, including on any error.
+
+**Where it writes:** the index above, and one JSON line per evaluated search to `<agent dir>/logs/graph_assist_metrics.jsonl` (outcome, reason, latency).
+
 ### `post-tool-use-format` — runs on `PostToolUse`
 
 Source: `src/lazy_harness/hooks/builtins/post_tool_use_format.py`.

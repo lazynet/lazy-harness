@@ -404,6 +404,21 @@ def _report_omitted(
     return kept
 
 
+def _report_agent_scoped(script_names: list[str], profile: str, agent: str) -> list[str]:
+    """Drop the builtins declared for other agents, naming each one."""
+    from lazy_harness.hooks.loader import builtin_agents
+
+    kept: list[str] = []
+    for name in script_names:
+        agents = builtin_agents(name)
+        if agents and agent not in agents:
+            declared = ", ".join(sorted(agents))
+            click.echo(f"  · {name} omitted in '{profile}': declared for agents {declared}")
+            continue
+        kept.append(name)
+    return kept
+
+
 def _report_renamed(script_names: list[str]) -> None:
     """Name the rename, once per alias found in a profile's config.
 
@@ -452,6 +467,7 @@ def _hook_entries_for(cfg: Config, profile: str, binary: str) -> dict[str, list[
     entries: dict[str, list[HookEntry]] = {}
     for event_name, script_names in effective.items():
         script_names = _report_omitted(script_names, event_name, profile, undeliverable)
+        script_names = _report_agent_scoped(script_names, profile, agent.name)
         _report_renamed(script_names)
         if not script_names:
             continue

@@ -81,3 +81,23 @@ def _bash(command: object) -> tuple[str, object]:
 )
 def test_search_target(tool: str, tool_input: object, expected: str | None) -> None:
     assert search_target(tool, tool_input, ROOT, CWD) == expected
+
+
+@pytest.mark.parametrize(
+    ("tool", "tool_input", "expected"),
+    [
+        ("Grep", {"pattern": "x"}, True),
+        ("Grep", None, True),
+        ("Bash", {"command": "grep -r foo src"}, True),
+        ("Bash", {"command": "cat x | rg foo"}, True),
+        ("Bash", {"command": "ls src && git status"}, False),
+        ("Bash", {"command": "echo grep"}, False),
+        ("Bash", {"command": "'unterminated"}, False),
+        ("Bash", None, False),
+        ("Read", {"file_path": "x"}, False),
+    ],
+)
+def test_is_search_call(tool: str, tool_input: object, expected: bool) -> None:
+    from lazy_harness.knowledge.graph_assist import is_search_call
+
+    assert is_search_call(tool, tool_input) is expected

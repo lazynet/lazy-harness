@@ -40,6 +40,10 @@ class Operation(StrEnum):
     RUN_COMMAND = "run_command"
     READ_FILE = "read_file"
     MODIFY_FILE = "modify_file"
+    SEARCH_CODE = "search_code"
+    """A content search tool with its own pattern and path (Claude's `Grep`).
+
+    A shell `grep` stays `RUN_COMMAND`: its pattern is inside the command."""
 
 
 class Signal(StrEnum):
@@ -165,6 +169,10 @@ class ToolCall:
     three of the five builtins reading `edits` would have needed one (ADR-046).
     The trade is the opposite failure, which is visible: a reader that wants
     deletes and does not name this field simply does not react."""
+    search_pattern: str | None = None
+    """SEARCH_CODE: the pattern searched for, as the tool received it."""
+    search_path: Path | None = None
+    """SEARCH_CODE: where the search runs; `None` means the cwd."""
     raw_input: object | None = None
     """Adapters only. A builtin reading this is a normalisation that failed."""
 
