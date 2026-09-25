@@ -177,3 +177,86 @@ def test_write_repo_list_does_not_reload_the_config(tmp_path, monkeypatch) -> No
     monkeypatch.undo()
     assert load_config(cfg_path).knowledge.structure.repos == ["/repos/one"]
     assert save_config is not None
+
+
+def _fake_graphify(monkeypatch, write_graph: bool):
+    import json
+
+    from lazy_harness.knowledge import graphify as gmod
+
+    def fake_run(action, target=None, timeout=600):
+        if write_graph:
+            out = Path(str(target)) / "graphify-out"
+            out.mkdir(exist_ok=True)
+            node = {
+                "id": "f",
+                "label": "func()",
+                "source_file": "src/m.py",
+                "source_location": "L3",
+                "file_type": "code",
+            }
+            (out / "graph.json").write_text(json.dumps({"nodes": [node], "links": []}))
+        return gmod.GraphifyResult(exit_code=0, stdout="done", stderr="")
+
+    monkeypatch.setattr(gmod, "run_graphify", fake_run)
+    monkeypatch.setattr(gmod, "is_graphify_available", lambda: True)
+
+
+def test_graph_update_builds_the_graph_assist_index(tmp_path: Path, monkeypatch) -> None:
+    from lazy_harness.knowledge.graph_assist import load_index
+
+    repo = _repo(tmp_path, "a")
+    _config(tmp_path, repos=[str(repo)])
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _fake_graphify(monkeypatch, write_graph=True)
+
+    result = CliRunner().invoke(knowledge, ["graph", "update"])
+
+    assert result.exit_code == 0, result.output
+    index = repo / "graphify-out" / "cache" / "lh-graph-assist.json"
+    assert index.is_file()
+    # Fresh against the graph it was built from, so the hook will not rebuild.
+    entries = load_index(repo, deadline_s=0, clock=lambda: 0.0)
+    assert entries is not None and "func" in entries
+
+
+def test_graph_update_does_not_fail_a_repo_whose_index_cannot_build(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The graph is the product; the index is a derivative the hook can rebuild."""
+    repo = _repo(tmp_path, "a")
+    _config(tmp_path, repos=[str(repo)])
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _fake_graphify(monkeypatch, write_graph=False)
+
+    result = CliRunner().invoke(knowledge, ["graph", "update"])
+
+    assert result.exit_code == 0, result.output
+    assert "index" in result.output
+
+
+def test_graph_update_names_the_real_cause_when_the_index_write_fails(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from lazy_harness.knowledge import graph_assist
+
+    repo = _repo(tmp_path, "a")
+    _config(tmp_path, repos=[str(repo)])
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _fake_graphify(monkeypatch, write_graph=True)
+
+    def disk_full(path: Path) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(graph_assist, "write_index", disk_full)
+
+    result = CliRunner().invoke(knowledge, ["graph", "update"])
+
+    assert result.exit_code == 0, result.output
+    # Rich wraps at the terminal width, which is 80 on CI and splits the line.
+    output = " ".join(result.output.split())
+    assert "disk full" in output
+    assert "unreadable" not in output

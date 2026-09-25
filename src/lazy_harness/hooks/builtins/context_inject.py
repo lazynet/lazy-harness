@@ -588,7 +588,9 @@ def graphify_section(graphify_dir: Path, repo_root: Path) -> str:
 
     Returns "" when `graphify-out/graph.json` does not exist (no graph yet).
     Stale (mtime < HEAD timestamp) → "## Notice" banner pointing at /graphify.
-    Fresh → "## Code structure" summary with node/edge/community counts.
+    Fresh → "## Code structure": the five most connected symbols with their
+    locations, example commands built from them, and when the graph beats grep.
+    A graph with no code symbols falls back to its node and edge counts.
 
     Fail-soft on any IO or parse error — returns "".
     """
@@ -632,31 +634,32 @@ def graphify_section(graphify_dir: Path, repo_root: Path) -> str:
     except (json.JSONDecodeError, OSError, ValueError):
         return ""
 
+    if not isinstance(data, dict):
+        return ""
     nodes = data.get("nodes", [])
-    edges = data.get("edges", [])
+    links = data.get("links", data.get("edges", []))
     if not isinstance(nodes, list):
         return ""
 
-    community_counts: dict[int, int] = {}
-    for node in nodes:
-        if not isinstance(node, dict):
-            continue
-        cid = node.get("community")
-        if cid is None:
-            continue
-        try:
-            cid_int = int(cid)
-        except (TypeError, ValueError):
-            continue
-        community_counts[cid_int] = community_counts.get(cid_int, 0) + 1
+    from lazy_harness.knowledge.graph_assist import hubs
 
-    edge_count = len(edges) if isinstance(edges, list) else 0
-    lines: list[str] = ["## Code structure"]
-    lines.append(f"- {len(nodes)} nodes · {edge_count} edges · {len(community_counts)} communities")
-    if community_counts:
-        top = sorted(community_counts.items(), key=lambda kv: -kv[1])[:3]
-        labels = ", ".join(f"#{cid}({n})" for cid, n in top)
-        lines.append(f"- Largest communities: {labels}")
+    top = hubs(data)
+    if not top:
+        link_count = len(links) if isinstance(links, list) else 0
+        return f"## Code structure\n- {len(nodes)} nodes · {link_count} edges"
+
+    lines = ["## Code structure", "Most connected symbols:"]
+    lines += [f"- {label} — {location}" for label, location in top]
+    labels = [label for label, _ in top]
+    examples = [f'graphify explain "{labels[0]}"']
+    if len(labels) > 1:
+        examples.append(f'graphify path "{labels[0]}" "{labels[1]}"')
+    examples.append(f'graphify query "what depends on {labels[-1]}"')
+    lines.append("Examples: " + " · ".join(f"`{e}`" for e in examples))
+    lines.append(
+        "The graph answers who calls X, what breaks if Y changes and which docs "
+        "name Z faster than grep does."
+    )
     return "\n".join(lines)
 
 

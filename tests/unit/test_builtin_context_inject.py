@@ -425,11 +425,9 @@ def test_graphify_section_emits_staleness_banner_when_graph_older_than_head(
     assert "/graphify" in section
 
 
-def test_graphify_section_emits_content_summary_when_fresh(tmp_path: Path) -> None:
+def _fresh_graph_repo(tmp_path: Path, graph: dict) -> tuple[Path, Path]:
     import os as _os
     import time as _time
-
-    from lazy_harness.hooks.builtins.context_inject import graphify_section
 
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -448,20 +446,87 @@ def test_graphify_section_emits_content_summary_when_fresh(tmp_path: Path) -> No
     )
     out = repo / "graphify-out"
     out.mkdir()
-    graph = out / "graph.json"
-    nodes = (
-        [{"id": f"n{i}", "community": 0, "source_file": "a.py"} for i in range(5)]
-        + [{"id": f"n{i + 100}", "community": 1, "source_file": "b.py"} for i in range(3)]
-        + [{"id": f"n{i + 200}", "community": 2, "source_file": "c.py"} for i in range(2)]
-    )
-    graph.write_text(json.dumps({"nodes": nodes, "edges": []}))
+    graph_json = out / "graph.json"
+    graph_json.write_text(json.dumps(graph))
     fresh_ts = _time.time() + 5
-    _os.utime(graph, (fresh_ts, fresh_ts))
+    _os.utime(graph_json, (fresh_ts, fresh_ts))
+    return out, repo
+
+
+def _code(nid: str, label: str, source_file: str, line: int) -> dict:
+    return {
+        "id": nid,
+        "label": label,
+        "source_file": source_file,
+        "source_location": f"L{line}",
+        "file_type": "code",
+    }
+
+
+def _hub_graph() -> dict:
+    """sym{i} calls 6 - i leaves of its own, so sym0 is the top hub and sym5 falls
+    off the top five. The file node `contains` every leaf and outranks them all
+    on raw degree, which is exactly why structural edges do not count."""
+    nodes = [_code("file", "a.py", "src/a.py", 1)]
+    nodes += [_code(f"s{i}", f"sym{i}()", "src/a.py", 10 + i) for i in range(6)]
+    links: list[dict] = []
+    for i in range(6):
+        for j in range(6 - i):
+            leaf = f"leaf{i}_{j}"
+            nodes.append(_code(leaf, f"{leaf}()", "src/b.py", 100 + 10 * i + j))
+            links.append({"source": f"s{i}", "target": leaf, "relation": "calls"})
+            links.append({"source": "file", "target": leaf, "relation": "contains"})
+    return {"nodes": nodes, "links": links}
+
+
+def test_graphify_section_names_the_top_hubs_with_their_locations(tmp_path: Path) -> None:
+    from lazy_harness.hooks.builtins.context_inject import graphify_section
+
+    out, repo = _fresh_graph_repo(tmp_path, _hub_graph())
 
     section = graphify_section(out, repo)
-    assert "Code structure" in section
-    assert "10 nodes" in section
-    assert "3 communities" in section
+
+    assert section.startswith("## Code structure")
+    assert "sym0() — src/a.py:10" in section
+    assert "sym4() — src/a.py:14" in section
+    assert "sym5()" not in section
+    assert "a.py — " not in section, "a file node is not a hub"
+
+
+def test_graphify_section_gives_example_commands_and_when_to_use(tmp_path: Path) -> None:
+    from lazy_harness.hooks.builtins.context_inject import graphify_section
+
+    out, repo = _fresh_graph_repo(tmp_path, _hub_graph())
+
+    section = graphify_section(out, repo)
+
+    assert 'graphify explain "sym0()"' in section
+    assert 'graphify path "sym0()" "sym1()"' in section
+    assert "who calls X" in section
+    assert "MANDATORY" not in section
+
+
+def test_graphify_section_without_code_symbols_falls_back_to_counts(tmp_path: Path) -> None:
+    """graphify 0.9.67 writes `links`; reading `edges` printed `0 edges`."""
+    from lazy_harness.hooks.builtins.context_inject import graphify_section
+
+    graph = {
+        "nodes": [{"id": "x"}, {"id": "y"}],
+        "links": [{"source": "x", "target": "y", "relation": "references"}],
+    }
+    out, repo = _fresh_graph_repo(tmp_path, graph)
+
+    section = graphify_section(out, repo)
+
+    assert section == "## Code structure\n- 2 nodes · 1 edges"
+
+
+def test_graphify_section_replaces_the_count_line_when_it_has_hubs(tmp_path: Path) -> None:
+    from lazy_harness.hooks.builtins.context_inject import graphify_section
+
+    out, repo = _fresh_graph_repo(tmp_path, _hub_graph())
+
+    assert " nodes · " not in graphify_section(out, repo)
 
 
 def test_truncate_body_includes_suggest_section_when_body_fits() -> None:
@@ -1455,3 +1520,12 @@ def test_the_hook_logs_under_the_profile_it_was_invoked_with(tmp_path: Path) -> 
         f"no log under the profile's own config_dir; home holds "
         f"{sorted(p.name for p in home.iterdir())}"
     )
+
+
+def test_graphify_section_fallback_also_counts_a_legacy_edges_key(tmp_path: Path) -> None:
+    from lazy_harness.hooks.builtins.context_inject import graphify_section
+
+    graph = {"nodes": [{"id": "x"}, {"id": "y"}], "edges": [{"source": "x", "target": "y"}]}
+    out, repo = _fresh_graph_repo(tmp_path, graph)
+
+    assert graphify_section(out, repo) == "## Code structure\n- 2 nodes · 1 edges"

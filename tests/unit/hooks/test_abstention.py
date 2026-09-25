@@ -59,6 +59,16 @@ _NO_OBJECTION: dict[str, dict[str, object]] = {
         "tool_name": "Read",
         "tool_input": {"file_path": "/nonexistent/lazy-harness/abstention-probe.md"},
     },
+    # The silent branch: a regex is not an identifier, so nothing is looked up.
+    # The hit branch carries `additionalContext` and no verdict either; the
+    # hook's own tests assert `decision.verdict is None` on it.
+    "pre-tool-use-graph-assist": {
+        "hook_event_name": "PreToolUse",
+        "session_id": "s1",
+        "cwd": "/tmp",
+        "tool_name": "Grep",
+        "tool_input": {"pattern": "a.*b"},
+    },
     "session-export": {
         "hook_event_name": "Stop",
         "session_id": "s1",

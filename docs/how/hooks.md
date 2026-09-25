@@ -86,7 +86,7 @@ Sections composed, in the order they appear in the body (which is **not** the or
 3. **`## LazyNorth`** — your strategic compass file (universal + per-profile), if `[lazynorth]` is enabled in config. Truncated to ~20 lines for the universal doc and ~15 for the per-profile one.
 4. **`## Last session`** — the most recent exported session matching this project's name. Displays date, message count, and the first non-empty user message of that session (truncated to 80 chars). Pulled from the knowledge store, so it is scoped by project and spans profiles if you run multiple.
 5. **`## Handoff from last session`** — contents of `memory/handoff.md` (written by `compound-loop`) plus `memory/pre-compact-summary.md` (written by `pre-compact`) from the project's per-cwd memory dir.
-6. **`## Code structure`** — a summary of `graphify-out/graph.json` (node, edge and community counts) when the graph is fresh, or a `## Notice` pointing at regeneration when the graph is older than `HEAD`. Absent when the repo has no graph.
+6. **`## Code structure`** — from `graphify-out/graph.json` when the graph is fresh: the five most connected code symbols with their `file:line`, three example `graphify` commands built from them, and one line on when the graph beats grep (node and edge counts only when the graph holds no code symbols); or a `## Notice` pointing at regeneration when the graph is older than `HEAD`. Absent when the repo has no graph.
 7. **`## Proposals to review`** — contents of `memory/claude-md.proposal.md` when present. The compound-loop worker writes this file when it has surfaced patterns worth promoting into `CLAUDE.md` (curated semantic layer). Injecting them at session start lets you review and apply them by hand; `context-inject` never edits `CLAUDE.md` or `MEMORY.md` itself.
 8. **`## Relevant vault notes`** — QMD hits for the current branch name, when `qmd_suggest_enabled` is set.
 9. **`## Recent history`** — the last 3 entries from `decisions.jsonl` and the last 3 from `failures.jsonl`, with failures including their prevention field.
@@ -431,6 +431,23 @@ Every warning is also appended to `hooks.log`, so the rate of unbounded large re
 Bypass: set `LH_READ_SIZE_BYPASS=1` in the subprocess environment.
 
 **Where it writes:** nowhere on disk. Only stdout (the warning) and the standard hook log.
+
+### `pre-tool-use-graph-assist` — runs on `PreToolUse`
+
+Source: `src/lazy_harness/hooks/builtins/pre_tool_use_graph_assist.py`.
+
+Responsibility: when an agent searches a repository for a code identifier, put what graphify's graph knows about it — definitions, callers, callees, documents naming it — beside the search result. Information, never an instruction and never a verdict. Opt-in: add it to `[hooks.pre_tool_use].scripts`. Declared for Claude Code only; `lh deploy` omits it from other agents' profiles and says so.
+
+Mechanics:
+
+1. Scope check — only `Grep`, and `Bash` commands that run `grep`, `rg`, `ugrep` or `egrep`. Anything else exits 0 without a trace.
+2. The main checkout behind the cwd (resolved through `git --git-common-dir`, so a worktree uses its main checkout's graph) must hold `graphify-out/graph.json`, with an mtime at or after that checkout's HEAD commit. Line numbers can drift for files a worktree's branch has changed.
+3. The search must target the checkout the agent is in — no pipe feeding it, every path inside it, nothing the shell would expand (`~`, `$`, subshells) — and its pattern must be identifier-shaped (`name`, `mod.func`, `Class.method`, optionally `()`, optionally after `def`/`class`/`function`). Regexes and phrases stay silent.
+4. Look the identifier up in `graphify-out/cache/lh-graph-assist.json`, built from `graph.json` by `lh knowledge graph update` or lazily here. A lazy build that passes 1.5 s is abandoned for this call.
+5. On a match, emit up to three definitions as `additionalContext`, about 600 tokens at most. Homonyms are all listed.
+6. Always exit 0, including on any error.
+
+**Where it writes:** the index above, and one JSON line per evaluated search to `<agent dir>/logs/graph_assist_metrics.jsonl` (outcome, reason, latency). `lh knowledge graph-assist report` reads it.
 
 ### `post-tool-use-format` — runs on `PostToolUse`
 

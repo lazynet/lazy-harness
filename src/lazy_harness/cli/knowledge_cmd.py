@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import click
@@ -486,7 +487,7 @@ def knowledge_graph_update() -> None:
     exits early outside the main checkout), so nothing refreshes it in a
     worktree-first workflow. This is what the scheduler calls instead.
     """
-    from lazy_harness.knowledge import graphify
+    from lazy_harness.knowledge import graph_assist, graphify
 
     console = Console()
     try:
@@ -514,6 +515,17 @@ def knowledge_graph_update() -> None:
         if result.exit_code == 0:
             console.print(f"[green]updated[/green]  {contract_path(path)}")
             log_append(log_path, f"updated: {path}")
+            # The graph is the product and the index a derivative the hook can
+            # rebuild on its own, so a failed index never fails the repo.
+            try:
+                index = graph_assist.write_index(path)
+            except OSError as e:
+                console.print(f"[yellow]no index[/yellow] {contract_path(path)}: {escape(str(e))}")
+                log_append(log_path, f"index failed: {path}: {e}")
+                continue
+            if index is None:
+                console.print(f"[yellow]no index[/yellow] {contract_path(path)} (graph unreadable)")
+                log_append(log_path, f"index skipped: {path} (graph unreadable)")
         else:
             failures += 1
             detail = (result.stderr or result.stdout).strip().splitlines()
@@ -523,3 +535,34 @@ def knowledge_graph_update() -> None:
 
     if failures:
         raise SystemExit(1)
+
+
+@knowledge.group("graph-assist")
+def knowledge_graph_assist() -> None:
+    """Measure the graph-assist hook against its kill criteria."""
+
+
+@knowledge_graph_assist.command("report")
+@click.option(
+    "--since",
+    type=click.DateTime(formats=["%Y-%m-%d"]),
+    default=None,
+    help="Only sessions and hook runs from this date on (default: the last 14 days).",
+)
+def knowledge_graph_assist_report(since: datetime | None) -> None:
+    """Adoption, precision and latency per agent, from transcripts and hook metrics."""
+    from datetime import UTC, timedelta
+
+    from lazy_harness.knowledge import graph_assist_report as rep
+
+    console = Console()
+    try:
+        cfg = load_config(config_file())
+    except ConfigError as e:
+        console.print(f"[red]Error:[/red] {escape(str(e))}")
+        raise SystemExit(1)
+    start = (
+        since.replace(tzinfo=UTC) if since is not None else datetime.now(UTC) - timedelta(days=14)
+    )
+    sessions, metrics = rep.collect(cfg, start)
+    click.echo(rep.render(rep.compute(sessions, metrics), start))

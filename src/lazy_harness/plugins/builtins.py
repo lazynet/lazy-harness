@@ -60,7 +60,7 @@ _TOOLS = [
 # starts being deployed without editing that file — the "registered but
 # forgotten in the defaults" failure has no place left to happen.
 #
-# Four builtin hooks are deliberately absent. Three — `herdr-context-gauge`,
+# Five builtin hooks are deliberately absent. Three — `herdr-context-gauge`,
 # `post-tool-use-ansible-lint` and `user-prompt-goal` — appear in no default
 # list because they attach wherever the operator puts them, and giving them a
 # fixed `config_path` here would invent that event and then answer wrongly for
@@ -88,6 +88,11 @@ _TOOLS = [
 # taken a default-on guard would still block once per session while verifying
 # nothing. Opt-in until the operator has wired the producer — see
 # docs/how/hooks.md and specs/backlog.md.
+#
+# `pre-tool-use-graph-assist` is opt-in for a third reason: it is behavioural
+# automation shipped under kill criteria
+# (`specs/designs/2026-09-24-graph-assist-design.md` §6), and its removal is
+# dropping it from `[hooks.pre_tool_use].scripts`.
 _DEFAULT_ON_HOOKS: dict[str, list[str]] = {
     "session_start": ["context-inject", "session-start-preflight"],
     "session_stop": [

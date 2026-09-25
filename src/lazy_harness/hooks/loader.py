@@ -81,6 +81,15 @@ class BuiltinHookSpec:
     omit the retract too and strand a dead session's gauge on its pane.
     """
 
+    agents: frozenset[str] = frozenset()
+    """Agents this hook is deployed for; empty means every agent.
+
+    For a hook whose purpose is specific to one agent rather than to a missing
+    capability. `pre-tool-use-graph-assist` runs on Claude Code only because
+    Codex keeps graphify's upstream guard as the control group of the
+    graph-assist measurement; Codex could run it, and must not.
+    """
+
     def matcher_for(self, event: str | None) -> str | None:
         if isinstance(self.matcher, Mapping):
             return self.matcher.get(event) if event else None
@@ -198,6 +207,15 @@ _BUILTIN_HOOKS: dict[str, BuiltinHookSpec] = {
         # Declaring one would make `deploy` refuse to install a blocking guard
         # on an agent whose reader cannot supply a signal the hook never
         # touches — and an uninstalled guard is silent, not loud.
+    ),
+    "pre-tool-use-graph-assist": BuiltinHookSpec(
+        module="lazy_harness.hooks.builtins.pre_tool_use_graph_assist",
+        matcher="Bash|Grep",
+        event="pre_tool_use",
+        operations=frozenset({Operation.RUN_COMMAND, Operation.SEARCH_CODE}),
+        agents=frozenset({"claude-code"}),
+        # No `signals`: this hook reads the tool call, git and the graph index
+        # off disk, never the transcript.
     ),
     "pre-tool-use-memory-size": BuiltinHookSpec(
         module="lazy_harness.hooks.builtins.pre_tool_use_memory_size",
@@ -412,6 +430,12 @@ def resolve_hooks_for_event(
     if not event_cfg:
         return []
     return resolve_script_names(event_cfg.scripts, user_hooks_dir, event)
+
+
+def builtin_agents(name: str) -> frozenset[str]:
+    """Agents a builtin is scoped to; empty for every agent or an unknown name."""
+    spec = resolve_builtin_spec(name)
+    return spec.agents if spec is not None else frozenset()
 
 
 def builtin_operations(name: str) -> frozenset[Operation]:
