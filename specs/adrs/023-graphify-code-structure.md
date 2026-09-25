@@ -25,7 +25,7 @@ Concretely:
 
 ### Evolution — 2026-09-12
 
-Four details have moved, in the **Decision** bullets above and in **Consequences** below. The decision — Graphify as an optional, gated, pinned structural layer — stands.
+Five details have moved, in the **Decision** bullets above and in **Consequences** below. The decision — Graphify as an optional, gated, pinned structural layer — stands.
 
 - **The pin is `0.9.67`, not `0.6.9`.** Bumped from `0.9.41` on 2026-09-24 after probing the release against every surface lh depends on (`specs/designs/graphify-evidence.md`). `knowledge/graphify.py:PINNED_VERSION` is the live value and `config.py` imports it as `GRAPHIFY_PIN` rather than restating it, so `[knowledge.structure].version` defaults to whatever the module declares. The `version = "0.6.9"` literal under **Consequences** below is the same stale value, kept as written and covered by this bullet.
 - **`auto_rebuild_on_commit` was removed, not wired.** The field never had a branch, and `_parse_structure` now drops it from configs that still carry it. The Fase 3 wiring it was reserved for never happened; scheduled rebuilds went to `lh knowledge graph update` over a `[knowledge.structure].repos` list instead.

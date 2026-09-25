@@ -93,6 +93,9 @@ the profile's agent cannot serve, and prints each omission:
 · stop-verify-guard omitted in 'cx': agent 'codex' does not deliver goal_status
 ```
 
+A built-in declared for other agents only is omitted the same way, with
+`declared for agents <list>` as the reason.
+
 This is not a deploy failure — the exit code is unchanged and other profiles are
 untouched. `lh doctor` reads the same resolver, so what doctor reports is what
 deploy omits. The mechanism, and why a silently-installed inert hook is worse

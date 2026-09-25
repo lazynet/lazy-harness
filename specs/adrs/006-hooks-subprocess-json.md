@@ -47,7 +47,7 @@ Wiring:
 
 - Writing a user hook is trivial: any script that reads `sys.stdin`, does its work, and optionally prints JSON. Tests live under `tests/hooks/` and invoke the script file directly with a fake payload.
 - Built-in and user hooks are indistinguishable at the execution layer. The only difference is the lookup in `resolve_hook()`.
-- Each hook owns its own error handling and logging. The built-ins write to `logs/hooks.log` under the agent runtime directory, via a small helper pattern; failures there are still swallowed, because auditing must never break the hook. That directory resolves from the agent's environment variable first and only then from the profile. Since the step 5 migrations closed (#314→#328) every builtin that resolves a runtime dir does so through `_shared.py:agent_dir_for(cfg, event.profile)` — thirteen of the eighteen call it, exactly once each — rather than off the global `[agent].type`.
+- Each hook owns its own error handling and logging. The built-ins write to `logs/hooks.log` under the agent runtime directory, via a small helper pattern; failures there are still swallowed, because auditing must never break the hook. That directory resolves from the agent's environment variable first and only then from the profile. Since the step 5 migrations closed (#314→#328) every builtin that resolves a runtime dir does so through `_shared.py:agent_dir_for(cfg, event.profile)` — fourteen of the nineteen call it as of 2026-09-25, `engram_persist` twice — rather than off the global `[agent].type`.
 - Because hooks are independent subprocess invocations, they cannot share in-memory state. State that needs to persist across events goes through the filesystem: `compound-loop` drops task files in the agent's `queue/` directory (`~/.claude/queue/` on a single-profile Claude Code install — see the path note in [ADR-008](008-compound-loop-async-worker.md)), `pre-compact` writes `memory/pre-compact-summary.md`, `session-export` writes into the knowledge directory.
 - The JSON protocol is the interoperability hinge. Adding a second agent ([ADR-004](004-agent-adapter-pattern.md)) does not require touching any hook — the adapter translates `cfg.hooks` events to that agent's native format.
 
@@ -101,7 +101,7 @@ of the five was the one left stale. Grep the mechanism, not the identifier.
   adapter was never on the path a hook *ran* on, so eighteen builtins each
   carried one agent's wire format — the defect ADR-041 exists to fix, and the
   reason three builtins were migrated onto a typed event contract rather than
-  none. Step 5 closed on 2026-09-16 and the bullet is true for all eighteen:
+  none. Step 5 closed on 2026-09-16 and the bullet is true for all eighteen then, and nineteen since #469:
   every builtin exposes `main(event: HookEvent) -> HookDecision`, with
   `test_every_builtin_main_takes_an_event_and_returns_a_decision` in
   `tests/unit/hooks/test_builtin_registry.py` asserting that contract over the

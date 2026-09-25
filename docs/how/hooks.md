@@ -444,7 +444,7 @@ Mechanics:
 2. The main checkout behind the cwd (resolved through `git --git-common-dir`, so a worktree uses its main checkout's graph) must hold `graphify-out/graph.json`, with an mtime at or after that checkout's HEAD commit. Line numbers can drift for files a worktree's branch has changed.
 3. The search must target the checkout the agent is in — no pipe feeding it, every path inside it, nothing the shell would expand (`~`, `$`, subshells) — and its pattern must be identifier-shaped (`name`, `mod.func`, `Class.method`, optionally `()`, optionally after `def`/`class`/`function`). Regexes and phrases stay silent.
 4. Look the identifier up in `graphify-out/cache/lh-graph-assist.json`, built from `graph.json` by `lh knowledge graph update` or lazily here. A lazy build that passes 1.5 s is abandoned for this call.
-5. On a match, emit up to three definitions as `additionalContext`, about 600 tokens at most. Homonyms are all listed.
+5. On a match, emit up to three definitions as `additionalContext`, about 600 tokens at most. Homonyms are all counted; three are shown and the rest summarised as `(+N more)`.
 6. Always exit 0, including on any error.
 
 **Where it writes:** the index above, and one JSON line per evaluated search to `<agent dir>/logs/graph_assist_metrics.jsonl` (outcome, reason, latency). `lh knowledge graph-assist report` reads it.

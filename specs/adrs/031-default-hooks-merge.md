@@ -123,7 +123,7 @@ written and neither describes a hook that still exists.
 `PostCompact` executor returns only a user-facing display message, so a hook on
 that event cannot reach the model at all — the event-map fix this ADR records
 wired up a hook whose output channel turned out to be a dead end.
-`sorted(_BUILTIN_HOOKS)` now returns eighteen names and none of them is
+`sorted(_BUILTIN_HOOKS)` returned eighteen names as of 2026-08-18 (nineteen since #469) and none of them is
 `post-compact`. The `post_compact` → `PostCompact` mapping stays in
 `ClaudeCodeAdapter` deliberately, so an operator can still attach a hook of their
 own to the event; post-compaction continuity lives in `context-inject` on the
@@ -201,3 +201,19 @@ not the current reconciliation contract.
 
 Tracked in `specs/plans/2026-05-21-deploy-hook-defaults-plan.md` and
 delivered in the same PR as this ADR.
+
+**2026-09-25 (#469 and its coherence-audit fix): agent scoping is part of the
+merge.** A builtin can declare `BuiltinHookSpec.agents`;
+`pre-tool-use-graph-assist` declares `claude-code`, so Codex keeps graphify's
+upstream guard as the control group of its measurement. #469 first filtered it
+in `_hook_entries_for` alone, and `lh doctor` then reported the hook as deployed
+on a Codex profile where deploy had omitted it — the "same reader, cannot drift"
+guarantee above, broken by a stage added beside the reader instead of inside it.
+The rule now lives in `merge_with_defaults` (`deploy/defaults.py`), next to the
+system-doc filter, so deploy, `gaps_for_profile` and
+`operation_gaps_for_profile` all start from the same set.
+`agent_scoped_omissions` names what it dropped, and deploy prints each one:
+
+    · pre-tool-use-graph-assist omitted in 'cx': declared for agents claude-code
+
+`tests/unit/test_deploy_builtin_agents.py` asserts that the three readers agree.

@@ -58,7 +58,41 @@ def merge_with_defaults(
       empty (the agent does not use a file-based system instruction doc).
       The gate is "loads a system doc at all", not "loads exactly one": an
       adapter declaring two destinations keeps the hook (ADR-043).
+    - A builtin declaring `BuiltinHookSpec.agents` is omitted for any other
+      agent. Here, not in deploy alone, so `lh doctor` and the signal and
+      operation gap collectors reason about the same hook set deploy writes.
+      `agent_scoped_omissions` names what this rule dropped.
     """
+    effective = _merge_unscoped(user_hooks, agent)
+    return {
+        event: [s for s in scripts if not _scoped_out(s, agent)]
+        for event, scripts in effective.items()
+    }
+
+
+def agent_scoped_omissions(
+    user_hooks: dict[str, HookEventConfig], agent: AgentAdapter
+) -> list[tuple[str, str]]:
+    """(event, hook) pairs `merge_with_defaults` dropped for being declared for
+    other agents, so deploy can say so instead of omitting them silently."""
+    return [
+        (event, name)
+        for event, scripts in _merge_unscoped(user_hooks, agent).items()
+        for name in scripts
+        if _scoped_out(name, agent)
+    ]
+
+
+def _scoped_out(name: str, agent: AgentAdapter) -> bool:
+    from lazy_harness.hooks.loader import builtin_agents
+
+    agents = builtin_agents(name)
+    return bool(agents) and agent.name not in agents
+
+
+def _merge_unscoped(
+    user_hooks: dict[str, HookEventConfig], agent: AgentAdapter
+) -> dict[str, list[str]]:
     has_system_doc = bool(agent.system_docs())
 
     effective: dict[str, list[str]] = {}

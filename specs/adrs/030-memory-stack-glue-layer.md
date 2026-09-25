@@ -131,11 +131,15 @@ This is the missing piece that turns Graphify from "installed but unused" into
 "absorbed into every session". Cost: one JSON read + trivial in-process
 computation. Budget: under 50 ms.
 
-> **Shipped differently (noted 2026-09-23).** `context_inject.graphify_section`
-> emits one totals line (nodes, edges, communities) and the three largest
-> communities by node count, labelled by numeric community id. The top nodes by
-> degree and the file-count/language summary line were never implemented; the
-> gap is tracked in `specs/backlog.md`.
+> **Shipped differently (noted 2026-09-23, revised 2026-09-25 for #469).**
+> `context_inject.graphify_section` emits the five highest-degree code symbols
+> as `label — file:line` (`knowledge/graph_assist.py:hubs`, structural edges
+> excluded), three example `graphify` commands built from them, and one line on
+> when the graph beats grep. Degree ranking ships (top five, as `file:line`
+> rather than path plus degree). Communities are no longer emitted, and the
+> file-count/language line was never implemented. A graph with no code symbols
+> falls back to node and edge counts. The remaining gap is tracked in
+> `specs/backlog.md`.
 
 If `graphify-out/graph.json` does not exist, both behaviours are silent
 no-ops. Fail-soft on JSON parse errors with one log line.
