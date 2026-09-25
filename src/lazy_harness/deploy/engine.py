@@ -378,6 +378,8 @@ def _report_omitted(
     event: str,
     profile: str,
     undeliverable: dict[tuple[str, str], HookSignalGap],
+    *,
+    report: bool = True,
 ) -> list[str]:
     """Drop the hooks this agent cannot feed, naming each one as it goes.
 
@@ -398,9 +400,9 @@ def _report_omitted(
             kept.append(name)
             continue
         missing = ", ".join(signal.value for signal in gap.missing)
-        click.echo(
-            f"  · {gap.hook} omitted in '{profile}': agent '{gap.agent}' does not deliver {missing}"
-        )
+        if report:
+            detail = f"agent '{gap.agent}' does not deliver {missing}"
+            click.echo(f"  · {gap.hook} omitted in '{profile}': {detail}")
     return kept
 
 
@@ -420,7 +422,9 @@ def _report_renamed(script_names: list[str]) -> None:
             click.echo(f"  · hook '{name}' is now '{canonical}'; rename it in config.toml")
 
 
-def _hook_entries_for(cfg: Config, profile: str, binary: str) -> dict[str, list[HookEntry]]:
+def hook_entries_for(
+    cfg: Config, profile: str, binary: str, *, report: bool = True
+) -> dict[str, list[HookEntry]]:
     """The hook entries one profile's config gets, as agent-neutral records.
 
     Built per profile because `hook_command` names the profile and takes its
@@ -447,15 +451,19 @@ def _hook_entries_for(cfg: Config, profile: str, binary: str) -> dict[str, list[
 
     agent = agent_for_profile(cfg, profile)
     effective = merge_with_defaults(cfg.hooks, agent)
-    for _event, name in agent_scoped_omissions(cfg.hooks, agent):
-        declared = ", ".join(sorted(builtin_agents(name)))
-        click.echo(f"  · {name} omitted in '{profile}': declared for agents {declared}")
+    if report:
+        for _event, name in agent_scoped_omissions(cfg.hooks, agent):
+            declared = ", ".join(sorted(builtin_agents(name)))
+            click.echo(f"  · {name} omitted in '{profile}': declared for agents {declared}")
     undeliverable = {(gap.event, gap.hook): gap for gap in gaps_for_profile(cfg, profile)}
 
     entries: dict[str, list[HookEntry]] = {}
     for event_name, script_names in effective.items():
-        script_names = _report_omitted(script_names, event_name, profile, undeliverable)
-        _report_renamed(script_names)
+        script_names = _report_omitted(
+            script_names, event_name, profile, undeliverable, report=report
+        )
+        if report:
+            _report_renamed(script_names)
         if not script_names:
             continue
         hooks = resolve_script_names(script_names, event=event_name)
@@ -474,10 +482,11 @@ def _hook_entries_for(cfg: Config, profile: str, binary: str) -> dict[str, list[
     for event_name, event_cfg in cfg.hooks.items():
         for ext in event_cfg.external:
             if ext.agents and agent.name not in ext.agents:
-                click.echo(
-                    f"  · {ext.command} omitted in '{profile}': "
-                    f"declared for agents {', '.join(ext.agents)}"
-                )
+                if report:
+                    click.echo(
+                        f"  · {ext.command} omitted in '{profile}': "
+                        f"declared for agents {', '.join(ext.agents)}"
+                    )
                 continue
             command = _expand_external_command(
                 ext.command, profile=profile, config_dir=raw_config_dir
@@ -490,6 +499,9 @@ def _hook_entries_for(cfg: Config, profile: str, binary: str) -> dict[str, list[
                 )
             )
     return entries
+
+
+_hook_entries_for = hook_entries_for
 
 
 def _planner_for(cfg: Config, profile: str) -> ConfigPlanner:
@@ -681,7 +693,7 @@ def deploy_config(
         existing.update((displaced or {}).get(name, {}))
 
         ops = planner.plan_config(
-            _hook_entries_for(cfg, name, binary), servers, existing, binary=binary
+            hook_entries_for(cfg, name, binary), servers, existing, binary=binary
         )
         _report_mcp_gap(cfg, name, servers)
         if not ops:
@@ -764,7 +776,7 @@ def _deploy_config_subset(cfg: Config, *, only: str | None, hooks: bool, servers
         binary = binary_for_profile(cfg, name)
 
         existing, stamps = _read_targets(planner, target_dir)
-        entries = _hook_entries_for(cfg, name, binary) if hooks else {}
+        entries = hook_entries_for(cfg, name, binary) if hooks else {}
 
         ops = planner.plan_config(entries, detected, existing, binary=binary)
         _report_mcp_gap(cfg, name, detected)

@@ -104,13 +104,17 @@ def main(event: HookEvent) -> HookDecision:
         return HookDecision()
 
     try:
+        from lazy_harness.core.profile_identity import profile_identity
         from lazy_harness.knowledge.session_export import export_session
 
         sessions_root.mkdir(parents=True, exist_ok=True)
+        entry = cfg.profiles.items.get(event.profile)
         result, skip_reason = export_session(
             session_file,
             sessions_root,
             classify_rules=cfg.knowledge.classify_rules,
+            source_profile=event.profile,
+            source_identity=profile_identity(event.profile, entry) if entry is not None else "",
         )
         if result:
             _log(log_file, f"exported to {result.name}")

@@ -63,16 +63,8 @@ def test_every_registered_builtin_can_be_invoked_by_name() -> None:
         assert "Traceback" not in result.output, f"{name}: {result.output}"
 
 
-def test_a_codex_caller_with_no_codex_profile_is_refused_on_exit_2(tmp_path, monkeypatch) -> None:
-    """The refusal the unknown-profile fallback gives a Codex caller, byte for byte.
-
-    Exit 2, nothing on stdout, the reason on stderr is the shape `codex-cli
-    0.155.1` was run against on 2026-09-24 (`specs/designs/codex-evidence.md`
-    §8): with this `lh hook` invocation as its `PreToolUse` hook, Codex did not
-    run `touch marker.txt` and its router logged `Command blocked by PreToolUse
-    hook: <stderr>`. The command is benign on purpose, so only the fallback's
-    refusal -- never the builtin's own deny -- can produce the exit 2.
-    """
+def test_a_codex_caller_with_no_codex_profile_gets_a_native_refusal(tmp_path, monkeypatch) -> None:
+    """The caller marker determines the wire format, never a fallback identity."""
     (tmp_path / "config.toml").write_text(
         '[harness]\nversion = "1"\n\n'
         '[profiles]\ndefault = "claude-probe"\n\n'
@@ -98,8 +90,10 @@ def test_a_codex_caller_with_no_codex_profile_is_refused_on_exit_2(tmp_path, mon
         input=json.dumps(payload),
     )
 
-    assert result.exit_code == 2, result.output
-    assert result.stdout == ""
+    assert result.exit_code == 0, result.output
+    body = json.loads(result.stdout)["hookSpecificOutput"]
+    assert body["permissionDecision"] == "deny"
+    assert "no-such-profile" in body["permissionDecisionReason"]
     assert "pre-tool-use-security" in result.stderr
     assert "no-such-profile" in result.stderr
     assert "codex caller" in result.stderr

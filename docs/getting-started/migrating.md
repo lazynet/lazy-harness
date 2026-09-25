@@ -69,6 +69,8 @@ This reads the most recent rollback log and reverses every step in order. Rollba
 
 For an automatic rollback (if a step fails mid-execution), no action is needed — the executor does it for you and exits non-zero.
 
+The backup taken before execution keys each entry by its full source path, so two profile files that happen to share a basename (`settings.json` under two different profile dirs) are backed up and restored independently — neither one can overwrite or stand in for the other. Symlinked targets are recorded as symlinks, not resolved into a copy of what they point to. A backup interrupted partway through is marked incomplete and refused for automatic restore rather than silently replaying whatever partial state made it to disk; the backup directory itself is left in place for manual recovery. Backups written before this behavior shipped (no manifest present) still restore, as long as the files being restored don't collide by basename with each other.
+
 ## Post-migration checklist
 
 1. Run `lh selftest`. Every check should pass.

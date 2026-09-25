@@ -160,6 +160,27 @@ def _agent_segment(profiles_dir: Path, agent_name: str) -> Path | None:
     return path if path.is_file() else None
 
 
+def available_system_doc_sources(
+    source_dir: Path, profiles_dir: Path, agent: AgentAdapter
+) -> tuple[Path, ...]:
+    """Source files deploy's assembler can use for this agent's system document."""
+    docs = agent.system_docs()
+    if not docs:
+        return ()
+    layout = _layout_for(source_dir, docs[0].stem)
+    if layout is None:
+        flat = tuple(source_dir / doc for doc in docs)
+        return flat if all(path.is_file() for path in flat) else ()
+    common = profiles_dir / "_common" / layout.common_name
+    sources = (layout.head, common, layout.tail)
+    if not all(path.is_file() for path in sources):
+        return ()
+    agent_segment = _agent_segment(profiles_dir, agent.name)
+    if agent_segment is not None:
+        return (layout.head, common, agent_segment, layout.tail)
+    return sources
+
+
 @dataclass(frozen=True)
 class _SyncJob:
     """One (source dir, agent) pair to render and write — the unit a profile

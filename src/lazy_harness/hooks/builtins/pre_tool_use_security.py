@@ -10,15 +10,17 @@ from __future__ import annotations
 import fnmatch
 import os
 import re
+import shlex
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 from lazy_harness.agents.base import HookDecision, HookEvent, Operation, Verdict
+from lazy_harness.core.config import ConfigError
 from lazy_harness.core.paths import config_file
 
-Category = Literal["filesystem", "sql", "terraform", "credentials", "git"]
+Category = Literal["filesystem", "sql", "terraform", "credentials", "git", "policy"]
 
 
 @dataclass(frozen=True)
@@ -244,54 +246,163 @@ def _format_block_message(decision: BlockDecision) -> str:
         f"Blocked by lazy-harness PreToolUse: {decision.rule.reason} "
         f"({decision.rule.category}).\n"
         f"Matched: {matched}\n"
-        f"If this is intentional, add a regex pattern to "
-        f"[hooks.pre_tool_use] allow_patterns in your profile config.toml.\n"
+        f"Review [hooks.pre_tool_use] in config.toml. Only "
+        f"recursive_delete_roots can exempt a literal cleanup; legacy "
+        f"allow_patterns no longer bypass security rules.\n"
         f"See specs/designs/2026-04-17-security-hooks-cluster-design.md "
         f"for the full rule list.\n"
     )
 
 
-def _load_allowlist() -> list[str]:
-    """Load pre_tool_use.allow_patterns from the harness config.toml.
-
-    Returns empty list on any failure (missing file, malformed TOML, missing
-    section). Empty list means stricter blocking — fail-safe by design.
-    """
-    try:
-        cfg_path: Path = config_file()
-    except Exception:
-        return []
-    if not cfg_path.is_file():
-        return []
-    try:
-        data = tomllib.loads(cfg_path.read_text())
-    except (OSError, tomllib.TOMLDecodeError):
-        return []
-    section = data.get("hooks", {}).get("pre_tool_use", {})
-    patterns = section.get("allow_patterns", [])
-    if not isinstance(patterns, list):
-        return []
-    return [p for p in patterns if isinstance(p, str)]
+@dataclass(frozen=True)
+class SecurityPolicy:
+    recursive_delete_roots: tuple[Path, ...] = ()
+    denied_commands: tuple[str, ...] = ()
 
 
-def _safe_search(pattern: str, text: str) -> bool:
-    """Compile-and-search; broken user regexes are skipped, never raised."""
+def _load_policy() -> SecurityPolicy:
+    """Read hook-local options; malformed explicit policy must not disable a ban."""
+    from lazy_harness.core.config import parse_security_policy
+
     try:
-        return re.search(pattern, text) is not None
-    except re.error:
+        data = tomllib.loads(config_file().read_text())
+    except FileNotFoundError:
+        return SecurityPolicy()
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError) as exc:
+        raise ValueError("Cannot read security policy from config.toml") from exc
+    hooks = data.get("hooks", {})
+    if not isinstance(hooks, dict):
+        raise ValueError("hooks must be a table")
+    section = hooks.get("pre_tool_use", {})
+    values = parse_security_policy(section)
+    return SecurityPolicy(
+        tuple(Path(p) for p in values["recursive_delete_roots"]),
+        tuple(values["denied_commands"]),
+    )
+
+
+def _invocations(command: str) -> list[list[str]]:
+    """Inspect literal shell words without evaluating expansions or running a shell."""
+    command = command.replace("\\\n", "")
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()\n")
+    lexer.whitespace = " \t\r"
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    groups: list[list[str]] = [[]]
+    for word in lexer:
+        if word and all(c in ";&|()\n" for c in word):
+            groups.append([])
+        else:
+            groups[-1].append(word)
+    invocations: list[list[str]] = []
+    wrappers = {"sudo", "doas", "env", "command", "exec", "time", "nohup", "xargs"}
+    value_options = {"-u", "-g", "-h", "-p", "-C", "-n", "-P", "-I", "-s", "--chdir", "--unset"}
+    for words in groups:
+        while words:
+            if re.match(r"[A-Za-z_][A-Za-z_0-9]*=", words[0]):
+                words = words[1:]
+                continue
+            name = Path(words[0]).name
+            invocations.append(words)
+            if name == "eval":
+                invocations.extend(_invocations(" ".join(words[1:])))
+            if name in {"sh", "bash", "zsh", "ksh", "dash"}:
+                for index, word in enumerate(words[1:], 1):
+                    if re.fullmatch(r"-[a-z]*c[a-z]*", word) and index + 1 < len(words):
+                        invocations.extend(_invocations(words[index + 1]))
+                        break
+            if name not in wrappers:
+                break
+            words = words[1:]
+            while words and words[0].startswith("-"):
+                flag = words.pop(0)
+                if flag == "--":
+                    break
+                if flag in value_options and words:
+                    words = words[1:]
+    return invocations
+
+
+def _recursive(words: list[str]) -> bool:
+    for word in words[1:]:
+        if word == "--":
+            break
+        if re.fullmatch(r"-[A-Za-z]*[rR][A-Za-z]*|--recursive", word):
+            return True
+    return False
+
+
+def _safe_cleanup(command: str, roots: list[Path] | tuple[Path, ...], cwd: Path) -> bool:
+    # Do not infer shell expansion, wrapper behaviour, redirections, or a cwd
+    # changed by an earlier command. Even quoted metacharacters fail closed.
+    if not roots or any(c in command for c in "\n\r;&|<>()$`*?[]{}~\\"):
+        return False
+    try:
+        words = shlex.split(command)
+        if not words or words[0] not in {"rm", "/bin/rm", "/usr/bin/rm"} or not _recursive(words):
+            return False
+        operands: list[str] = []
+        options = True
+        for word in words[1:]:
+            if options and word == "--":
+                options = False
+            elif options and word.startswith("-"):
+                if not re.fullmatch(r"-[fFirRdv]+|--(?:force|recursive|verbose|dir)", word):
+                    return False
+            else:
+                operands.append(word)
+        if not operands:
+            return False
+        resolved_roots = [root.resolve() for root in roots if root.is_absolute()]
+        for operand in operands:
+            path = Path(operand)
+            if not operand or ".." in path.parts:
+                return False
+            resolved = (cwd / path).resolve()
+            if not any(
+                resolved != root and resolved.is_relative_to(root) for root in resolved_roots
+            ):
+                return False
+        return True
+    except (OSError, RuntimeError, ValueError):
         return False
 
 
-# `;`, `&&`, `||`, a bare `&` (background) and a newline chain independent
-# commands; `|` does not, since a pipe composes one command out of two, so it
-# is deliberately left out. This split is unquoted: a chain operator inside a
-# quoted string or heredoc body still splits here, which can over-segment.
-# Rule anchoring (`_COMMAND_START`) already tolerates that -- a mid-segment
-# split lands the tail at what the regex treats as a fresh line/command start
-# -- so over-segmenting narrows the allow_pattern rescue scope without
-# changing which commands the rules match. A redirection spelling (`2>&1`,
-# `>&2`, `&>file`, `<&3`) is excluded by the lookaround rather than relied on
-# for that tolerance, since its `&` never starts a new command.
+def _token_rule(words: list[str]) -> BlockRule | None:
+    """Cover quoting and flag ordering that the legacy regex rules cannot see."""
+    name = Path(words[0]).name
+    if name == "rm" and _recursive(words):
+        return BLOCK_RULES[0]
+    if name != "git":
+        return None
+    args = words[1:]
+    while args and args[0].startswith("-"):
+        option = args.pop(0)
+        if option in _GIT_GLOBAL_OPTIONS_WITH_ARG and args:
+            args = args[1:]
+        elif option in _GIT_GLOBAL_OPTIONS_BARE or any(
+            option.startswith(flag + "=") or (flag in {"-C", "-c"} and option.startswith(flag))
+            for flag in _GIT_GLOBAL_OPTIONS_WITH_ARG
+        ):
+            continue
+        else:
+            return None
+    if not args:
+        return None
+    subcommand, *operands = args
+    flags = operands[: operands.index("--")] if "--" in operands else operands
+    if subcommand == "push" and (
+        any(flag == "--force" or re.fullmatch(r"-[a-zA-Z]*f[a-zA-Z]*", flag) for flag in flags)
+        or any(operand.startswith("+") for operand in operands)
+    ):
+        return BLOCK_RULES[2]
+    if subcommand == "reset" and "--hard" in flags:
+        return BLOCK_RULES[3]
+    return None
+
+
+# Preserve the legacy regex segmentation for credential/infra matches. Cleanup
+# exceptions are checked against the entire command, never these text fragments.
 _CHAIN_OPERATORS = re.compile(r"&&|\|\||;|\n|(?<![<>])&(?![&>])")
 
 
@@ -332,28 +443,44 @@ def _normalise_git_globals(segment: str) -> str:
         normalised = rewritten
 
 
-def should_block(command: str, allow_patterns: list[str]) -> BlockDecision | None:
-    """Return BlockDecision if a shell segment matches a rule and is not rescued.
-
-    Evaluated per segment (split on `;`, `&&`, `||`, bare `&`, newline -- see
-    `_segments`): an allow_pattern rescues a match only if it also matches
-    within that match's own segment, so a pattern meant for one operation
-    cannot rescue a different, destructive one chained after it. Within a
-    segment, first rule match wins; later rules are not evaluated even if more
-    specific. Segments are checked in order and the first unrescued block
-    returns. Git rules match against a normalised copy of the segment (see
-    `_normalise_git_globals`) so a global option before the subcommand cannot
-    make them abstain; every other category matches the segment as given.
-    """
+def should_block(
+    command: str,
+    allow_patterns: list[str],
+    *,
+    recursive_delete_roots: list[Path] | tuple[Path, ...] = (),
+    denied_commands: list[str] | tuple[str, ...] = (),
+    cwd: Path | None = None,
+) -> BlockDecision | None:
+    """Judge operations; legacy allow_patterns is accepted but never grants an exception."""
+    try:
+        invocations = _invocations(command)
+    except (ValueError, RecursionError):
+        invocations = []
+        if denied_commands:
+            return BlockDecision(
+                BlockRule("policy", re.compile(""), "Cannot parse command under denied_commands"),
+                command,
+            )
+    for words in invocations:
+        if Path(words[0]).name in denied_commands:
+            return BlockDecision(
+                BlockRule("policy", re.compile(""), f"Denied command: {Path(words[0]).name}"),
+                command,
+            )
+    cleanup = _safe_cleanup(command, recursive_delete_roots, cwd or Path.cwd())
     for segment in _segments(command):
         for rule in BLOCK_RULES:
             subject = _normalise_git_globals(segment) if rule.category == "git" else segment
             match = rule.pattern.search(subject)
             if match is None:
                 continue
-            if any(_safe_search(ap, segment) for ap in allow_patterns):
-                break
+            if cleanup and rule is BLOCK_RULES[0]:
+                continue
             return BlockDecision(rule=rule, matched_text=match.group(0))
+    for words in invocations:
+        rule = _token_rule(words)
+        if rule is not None and not (cleanup and rule is BLOCK_RULES[0]):
+            return BlockDecision(rule, " ".join(words))
     return None
 
 
@@ -364,10 +491,8 @@ def should_block_path(path: str) -> BlockDecision | None:
     fnmatch treats `*` as crossing `/`, so an absolute path is what makes
     `**/secrets/**` match a nested file the way the deny rule used to.
 
-    `allow_patterns` deliberately does not apply here. It rescues commands, and
-    a pattern wide enough to be useful for one — `\\.worktrees/` is real in this
-    repo's own config — would silently exempt every secret underneath it. Paths
-    are rescued only by SECRET_PATH_EXCEPTIONS.
+    Cleanup roots and legacy allow_patterns never exempt secret paths. Paths
+    are exempted only by SECRET_PATH_EXCEPTIONS.
     """
     if not path:
         return None
@@ -433,7 +558,17 @@ def main(event: HookEvent) -> HookDecision:
         return HookDecision()
     if tool.operation is Operation.RUN_COMMAND:
         subject = tool.command or ""
-        decision = should_block(subject, _load_allowlist())
+        try:
+            policy = _load_policy()
+        except (ConfigError, ValueError, OSError, RuntimeError) as exc:
+            return HookDecision(verdict=Verdict.DENY, reason=f"Invalid security policy: {exc}\n")
+        decision = should_block(
+            subject,
+            [],
+            recursive_delete_roots=policy.recursive_delete_roots,
+            denied_commands=policy.denied_commands,
+            cwd=event.cwd,
+        )
     elif tool.operation in (Operation.READ_FILE, Operation.MODIFY_FILE):
         # Every path, not `paths[0]`. Under Claude Code the two are the same —
         # `reads` and `edits` are never both populated and `edits` never holds

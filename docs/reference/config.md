@@ -128,6 +128,7 @@ Each `[profiles.<name>]` sub-table:
 | `config_dir`    | string (path)   | `""`    | yes\*    | Agent config directory for this profile. `~` is expanded.                             |
 | `roots`         | list of strings | `[]`    | no       | Filesystem roots that resolve to this profile (used by `lh run` and `profile envrc`). |
 | `lazynorth_doc` | string          | `""`    | no       | Per-profile LazyNorth doc filename. Overrides `[lazynorth].universal_doc`.            |
+| `qmd_collection` | string | `""` | no | QMD collection for automatic SessionStart suggestions from this profile. Empty omits suggestions. Names must match `[A-Za-z0-9][A-Za-z0-9_-]*`; invalid values are rejected with the profile and field named. No inheritance from the default profile or its identity. |
 | `agent`         | string          | `""`    | no       | Agent adapter this profile runs. Empty inherits `[agent].type`. Registered values: `claude-code`, `codex` (the real adapter — hook trust reported by `lh doctor`, a native `apply_patch` edit path alongside its `Bash` heredoc path, see [ADR-044](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/044-codex-native-edit-path.md); metered through its `TranscriptReader` per [ADR-053](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/053-transcript-reader-carries-metering.md)), `copilot` (no edit guards and no context injection today — no tool has been observed editing a file, and `additionalContext` is unverified; see [ADR-047](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/047-copilot-adapter.md)), `null`. |
 | `harness_binary` | string         | `""`    | no       | Launcher this profile's generated hook commands name. Empty inherits `lh`. A bare name resolved from `PATH`, never a path. |
 | `billing_model` | string          | `"per_token"` | no | How this profile's usage is billed: `per_token` or `flat_rate`. Persisted on every `MetricEvent` this profile's ingest produces (ADR-050). A misspelled value is rejected at load with a diagnostic naming it. |
@@ -141,6 +142,13 @@ directly: the deploy and run paths resolve them through one function each so the
 cannot drift apart. Setting `agent` on one profile leaves every other profile on
 the global `[agent].type`, which is what makes a profile — not an installation —
 the blast radius when a new adapter is tried out.
+
+A hook invoked with a named profile absent from a populated profile table is
+refused; neither the default nor another profile running the same agent is used.
+Blocking hooks emit the caller's native denial when its payload identifies the
+agent, otherwise exit 2 with a diagnostic. Informational hooks emit no context
+and report the unknown profile on stderr. Repair the deployed `--profile` value
+before retrying. Empty profile tables retain the uninitialized-machine behavior.
 
 ### Profiles sharing an identity
 
@@ -444,25 +452,42 @@ external = [
 
 ### `[hooks.pre_tool_use]` — security hook overrides
 
-The `pre_tool_use` event has one extra field on top of `scripts`, used by the built-in `pre-tool-use-security` hook to rescue specific commands from its block list. Mechanics: [how hooks work — pre-tool-use-security](../how/hooks.md#pre-tool-use-security-runs-on-pretooluse).
+The `pre_tool_use` event accepts typed policy and memory-threshold options in
+addition to `scripts` and `external`. Policy applies to every profile reading the
+same harness config. Mechanics and static-analysis limits:
+[how hooks work — pre-tool-use-security](../how/hooks.md#pre-tool-use-security-runs-on-pretooluse).
 
-| Field            | Type            | Default | Required | Description                                                                                                                                                                                                                                                            |
-| ---------------- | --------------- | ------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `allow_patterns` | list of strings | `[]`    | no       | Python `re.search` regexes. A command that matches a built-in block rule **and** any of these patterns is allowed through. Patterns are consulted only after a block rule already matched — a pattern with no matching block rule is dead config (harmless, useless). |
+An options-only table inherits the default hook scripts. An explicit
+`scripts = []` suppresses them; saving and loading preserves that distinction.
+
+| Field | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `allow_patterns` | list of strings | `[]` | no | Legacy data preserved for migration. The security hook no longer evaluates these regexes or grants exemptions from them. |
+| `recursive_delete_roots` | list of strings | `[]` | no | Absolute cleanup roots. Only one simple literal recursive rm can be exempted, and every operand must resolve strictly below a declared root. Filesystem-root aliases, traversal, escaping symlinks, operators, wrappers and expansions cannot grant an exemption. |
+| `denied_commands` | list of strings | `[]` | no | Opt-in literal executable basenames, matched in recognized command positions. Names must match `[A-Za-z0-9_][A-Za-z0-9_.+-]*`, not paths or regexes. No command is prohibited by default. |
+| `claude_md_max_lines` | positive integer | inherited | no | Override the memory-size consumer's line ceiling. Omission retains the consumer default. Booleans and nonpositive values are rejected by the full config loader. |
+| `claude_md_max_bytes` | positive integer | inherited | no | Override the memory-size consumer's byte ceiling, with the same validation and inheritance as the line ceiling. |
 
 ```toml
 [hooks.pre_tool_use]
-allow_patterns = [
-    # Allow `terraform destroy` only against the test workspace
-    "terraform\\s+destroy.*-target=module\\.scratch",
-]
+recursive_delete_roots = ["/absolute/project/.worktrees", "/absolute/scratch"]
+denied_commands = ["example-cli"]
 ```
 
-Rules:
+Rules and migration:
 
-- Patterns are full regexes (not glob). Escape backslashes per TOML.
-- Broken regexes are silently skipped — they cannot turn the hook into a hard error.
-- If `config.toml` cannot be read, the allowlist is empty. Fail-safe: stricter blocking, never weaker.
+- Replace reviewed cleanup regexes with explicit roots; no regex is migrated
+  automatically. Other legacy exceptions, including Terraform and SQL, have no
+  automatic replacement. Incidental allowed text never rescues another operation.
+- Roots themselves and paths outside them are never eligible for cleanup.
+  Relative operands use the tool event's cwd. Quoted spaces, reordered flags and
+  multiple allowed operands are supported; ambiguous syntax is refused.
+- The full config loader and hook share `parse_security_policy`. A missing file
+  or missing section means empty lists. Unreadable/malformed config, invalid
+  policy values or unknown keys make the hook deny command execution.
+- The policy is static inspection, not an OS execution boundary. Its limits and
+  the required trusted-directory assumption are documented in the mechanics link
+  above. Environment restrictions require explicit configuration and deployment.
 
 ## `[compound_loop]`
 
@@ -484,7 +509,7 @@ Rules:
 
 ### `[hooks.pre_tool_use_git_scope]` — git-scope hook overrides
 
-The `pre-tool-use-git-scope` hook reads its own `allow_patterns`, deliberately **not** the list above. That one carries entries like `\.worktrees/` in a real profile, which would rescue precisely the commands this hook exists to catch. Mechanics: [how hooks work — pre-tool-use-git-scope](../how/hooks.md#pre-tool-use-git-scope-runs-on-pretooluse).
+The `pre-tool-use-git-scope` hook keeps its independent `allow_patterns` contract. The security hook no longer evaluates its legacy regexes, and scoped cleanup roots never exempt stash operations. Mechanics: [how hooks work — pre-tool-use-git-scope](../how/hooks.md#pre-tool-use-git-scope-runs-on-pretooluse).
 
 | Field            | Type            | Default | Required | Description                                                                                                                                 |
 | ---------------- | --------------- | ------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -573,14 +598,37 @@ There is **no automatic fallback between backends**. If the backend serving a ro
 | ---------------------- | ---- | ------- | -------- | --------------------------------------------------------------- |
 | `enabled`              | bool | `true`  | no       | Whether the SessionStart hook injects context into the session. |
 | `max_body_chars`       | int  | `3000`  | no       | Cap on injected body length.                                    |
-| `last_session_enabled` | bool | `true`  | no       | Whether to include a digest of the previous session.            |
-| `qmd_suggest_enabled`  | bool | `true`  | no       | Whether the branch name is used to pull related notes out of the search index. |
+| `last_session_enabled` | bool | `true`  | no       | Whether to include a digest of the previous session matching the canonical project and exporting identity. |
+| `qmd_suggest_enabled`  | bool | `true`  | no       | Whether the branch name is used to search the invoked profile's explicit `qmd_collection`. Missing scope omits suggestions. |
 | `qmd_suggest_top_k`    | int  | `3`     | no       | How many suggestions that lookup returns.                       |
 | `graphify_surface_enabled` | bool | `true` | no    | Whether the code-structure summary for the current repo is injected. |
 | `proposals_summary`    | bool | `true`  | no       | Whether a one-line summary of pending claude-md proposals is emitted even when the full proposals section is dropped to fit the char budget. |
 | `repo_map_scope`       | str  | `""`    | no       | Directory tree whose sessions receive the repo-map doc. Empty disables the section; a session whose cwd is outside the tree never pays for it. |
 | `repo_map_doc`         | str  | `"docs/repos.md"` | no | Path to the map, relative to the agent runtime dir. Only read when `repo_map_scope` is set. |
 | `repo_map_max_chars`   | int  | `1200`  | no       | Cap on the injected map, cut on a line boundary with the remainder announced. Keeps a long map from starving every other section of the body budget. |
+
+Automatic QMD suggestions use `qmd search --json --collection <name>` and accept
+only hits whose `qmd://<name>/` URI matches that collection. A missing collection
+or failed search produces no suggestions. Configure an existing collection
+explicitly per profile; the harness does not infer collection names. Interactive
+searches keep their existing separately selected scope.
+
+Claude Code and Codex session exports now record `project_key`, `project_root`,
+`source_profile` and `source_identity`. Lookup matches the canonical
+`host/owner/repo` key and the invoking profile's resolved identity. Profiles of
+different agents that declare the same identity can share session context;
+profiles without `identity` use their own name. Worktrees resolve to their main
+repository. For a `local/<name>` key, lookup also
+requires the exact main checkout path, preventing equal local basenames from
+sharing sessions. `project` and the classified `profile` remain display metadata.
+
+Legacy exports without canonical metadata or an explicit exporting identity are
+omitted from automatic injection; no basename or classified-label fallback is
+used. Exports without a recorded, existing absolute cwd cannot establish project
+scope. Existing unchanged exports are not upgraded automatically, and manual CLI
+exports without a source identity remain searchable without becoming automatic
+session context. The scoped metadata is recorded when a subsequent hook export
+writes the session. No history is deleted or reclassified.
 
 ## Environment variable overrides
 

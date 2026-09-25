@@ -42,11 +42,13 @@ class Finding:
     detail: str
 
 
-def check_repository(root: Path) -> list[Finding]:
+def check_repository(
+    root: Path, *, instruction_data: tuple[Path, ...] = (), check_tree: bool = True
+) -> list[Finding]:
     """Every way `root` departs from the ADR-060 contract, sorted by path."""
     findings: list[Finding] = []
 
-    if not (root / CANONICAL_NAME).is_file():
+    if check_tree and not (root / CANONICAL_NAME).is_file():
         findings.append(
             Finding(
                 path=Path(CANONICAL_NAME),
@@ -55,9 +57,16 @@ def check_repository(root: Path) -> list[Finding]:
             )
         )
 
-    for directory in _walk(root):
-        appendix = directory / APPENDIX_NAME
-        if appendix.is_file():
+    if check_tree:
+        cwd = Path.cwd().resolve()
+        for directory in _walk(root):
+            appendix = directory / APPENDIX_NAME
+            if not appendix.is_file():
+                continue
+            is_data = appendix.relative_to(root) in instruction_data
+            is_active = cwd.is_relative_to(directory.resolve())
+            if is_data and directory != root and not is_active:
+                continue
             findings.append(
                 Finding(
                     path=appendix.relative_to(root),

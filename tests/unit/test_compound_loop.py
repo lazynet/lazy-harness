@@ -1268,6 +1268,80 @@ def test_persist_results_holds_back_what_the_cap_refuses(tmp_path: Path) -> None
     assert any("held 1" in line for line in wrote)
 
 
+def test_persist_results_never_exceeds_cap_for_one_batch(tmp_path: Path) -> None:
+    memory = tmp_path / "memory"
+    _queue_with(memory, 9)
+    data = _proposal_data("first new rule")
+    data["claude_md_proposals"].append({"rule": "second new rule", "rationale": "why"})
+
+    persist_results(
+        data,
+        memory,
+        tmp_path / "Learnings",
+        "proj",
+        "2026-09-08T10:00:00-03:00",
+        max_pending_proposals=10,
+    )
+
+    assert len(collect_pending_proposals(memory, max_chars=1 << 30)) <= 10
+    held = [json.loads(line) for line in (memory / HELD_PROPOSALS_FILE).read_text().splitlines()]
+    assert len(held) >= 1
+
+
+def test_contending_proposal_writers_observe_capacity_under_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from contextlib import contextmanager
+    from threading import Barrier, local
+
+    from lazy_harness.core.memory_store import memory_dir_lock
+    from lazy_harness.knowledge import compound_loop
+
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    start = Barrier(2)
+    owner = local()
+    real_collect = compound_loop.collect_pending_proposals
+
+    @contextmanager
+    def observed_lock(path: Path):
+        with memory_dir_lock(path):
+            owner.active = True
+            try:
+                yield
+            finally:
+                owner.active = False
+
+    def collect_under_lock(path: Path, max_chars: int = 10_000) -> list[str]:
+        assert getattr(owner, "active", False), "capacity snapshot escaped memory_dir_lock"
+        return real_collect(path, max_chars=max_chars)
+
+    monkeypatch.setattr(compound_loop, "memory_dir_lock", observed_lock)
+    monkeypatch.setattr(compound_loop, "collect_pending_proposals", collect_under_lock)
+
+    def write(rule: str) -> list[str]:
+        start.wait()
+        return persist_results(
+            _proposal_data(rule),
+            memory,
+            tmp_path / "Learnings",
+            "proj",
+            "2026-09-08T10:00:00-03:00",
+            max_pending_proposals=1,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(write, "first writer")
+        second = pool.submit(write, "second writer")
+        results = [first.result(), second.result()]
+
+    assert len(collect_pending_proposals(memory, max_chars=1 << 30)) == 1
+    held = [json.loads(line) for line in (memory / HELD_PROPOSALS_FILE).read_text().splitlines()]
+    assert len(held) == 1
+    assert sum(any("halted" in item for item in result) for result in results) == 1
+
+
 def test_held_proposals_are_neither_pending_nor_rejected_to_the_grader(
     tmp_path: Path,
 ) -> None:

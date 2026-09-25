@@ -1122,46 +1122,44 @@ deprecated_reason: null
     ]
     if proposals:
         proposal_file = memory_dir / "claude-md.proposal.md"
-        queued = len(collect_pending_proposals(proposal_file.parent, max_chars=_UNBOUNDED))
-        if max_pending_proposals is not None and queued >= max_pending_proposals:
-            # Backpressure, not a discard: the queue stops growing so a full one
-            # costs something the next session is told about, and the refused
-            # batch goes to the held file instead of being lost.
-            with open(memory_dir / HELD_PROPOSALS_FILE, "a") as f:
-                for p in proposals:
-                    held = {
-                        "ts": timestamp,
-                        "rule": p.get("rule", ""),
-                        "rationale": p.get("rationale", ""),
-                        "project": project_name,
-                    }
-                    f.write(json.dumps(held, ensure_ascii=False) + "\n")
-            wrote.append(
-                f"claude_md_proposals: halted ({queued} pending >= cap {max_pending_proposals}),"
-                f" held {len(proposals)}"
-            )
-            proposals = []
-    if proposals:
-        proposal_file = memory_dir / "claude-md.proposal.md"
-        block_lines = [f"## {timestamp}\n"]
-        for p in proposals:
-            block_lines.append(f"- **Rule:** {p.get('rule', '')}")
-            rationale = p.get("rationale", "")
-            if rationale:
-                block_lines.append(f"  - **Rationale:** {rationale}")
-        block_lines.append("")
-        block = "\n".join(block_lines)
         with memory_dir_lock(memory_dir):
-            if proposal_file.exists():
-                existing = proposal_file.read_text()
-                _atomic_write(proposal_file, existing + "\n" + block)
-            else:
-                header = (
-                    "<!-- claude-md proposals (append-only). "
-                    "Review and merge into CLAUDE.md or discard. -->\n\n"
+            queued = len(collect_pending_proposals(memory_dir, max_chars=_UNBOUNDED))
+            if (
+                max_pending_proposals is not None
+                and queued + len(proposals) > max_pending_proposals
+            ):
+                with open(memory_dir / HELD_PROPOSALS_FILE, "a") as f:
+                    for p in proposals:
+                        held = {
+                            "ts": timestamp,
+                            "rule": p.get("rule", ""),
+                            "rationale": p.get("rationale", ""),
+                            "project": project_name,
+                        }
+                        f.write(json.dumps(held, ensure_ascii=False) + "\n")
+                wrote.append(
+                    f"claude_md_proposals: halted ({queued} pending + {len(proposals)} new "
+                    f"> cap {max_pending_proposals}), held {len(proposals)}"
                 )
-                _atomic_write(proposal_file, header + block)
-        wrote.append(f"claude_md_proposals: {len(proposals)}")
+            else:
+                block_lines = [f"## {timestamp}\n"]
+                for p in proposals:
+                    block_lines.append(f"- **Rule:** {p.get('rule', '')}")
+                    rationale = p.get("rationale", "")
+                    if rationale:
+                        block_lines.append(f"  - **Rationale:** {rationale}")
+                block_lines.append("")
+                block = "\n".join(block_lines)
+                if proposal_file.exists():
+                    existing = proposal_file.read_text()
+                    _atomic_write(proposal_file, existing + "\n" + block)
+                else:
+                    header = (
+                        "<!-- claude-md proposals (append-only). "
+                        "Review and merge into CLAUDE.md or discard. -->\n\n"
+                    )
+                    _atomic_write(proposal_file, header + block)
+                wrote.append(f"claude_md_proposals: {len(proposals)}")
 
     handoff_file = memory_dir / "handoff.md"
     handoff_items = data.get("handoff", [])

@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import errno
+import hashlib
 import json
 import os
+import re
+import tempfile
 from datetime import date
 from pathlib import Path
 
@@ -45,6 +49,52 @@ def _load_config_for_consolidate() -> Config:
 @click.group("memory")
 def memory() -> None:
     """Diagnostic commands for the memory stack."""
+
+
+@memory.command("budget")
+@click.option("--profile", default=None, help="Configured profile; defaults to [profiles].default.")
+@click.option("--cwd", type=click.Path(file_okay=False, path_type=Path), default=None)
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable inventory.")
+def budget(profile: str | None, cwd: Path | None, as_json: bool) -> None:
+    """Show static instruction bytes for one profile and working directory."""
+    from lazy_harness.agents.registry import AgentNotFoundError
+    from lazy_harness.core.context_budget import inspect_context_budget
+    from lazy_harness.deploy.engine import UnknownProfileError
+    from lazy_harness.hooks.builtins.pre_tool_use_memory_size import load_claude_md_thresholds
+
+    cf = config_file()
+    try:
+        cfg = load_config(cf)
+        result = inspect_context_budget(
+            cfg, profile or cfg.profiles.default, cwd or Path.cwd(), load_claude_md_thresholds(cf)
+        )
+    except (ConfigError, UnknownProfileError, AgentNotFoundError, OSError) as exc:
+        click.echo(f"Error: {exc}", err=True)
+        raise SystemExit(1) from exc
+    if as_json:
+        click.echo(json.dumps(result, indent=2))
+        return
+    click.echo(f"Profile: {result['profile']} ({result['agent']})  cwd: {result['cwd']}")
+    for row in result["sources"]:
+        click.echo(f"{row['kind']}: {row['path']}  {row['lines']} lines  {row['bytes']} bytes")
+    limits = result["limits"]
+    click.echo(
+        f"Selected readable source files: {result['total_lines']} lines / {result['total_bytes']} "
+        f"bytes ({result['total_status']}; per-file configured limits: "
+        f"{limits['lines']} lines / {limits['bytes']} bytes)"
+    )
+    for key in (
+        "missing",
+        "unreadable",
+        "shadowed",
+        "alternatives",
+        "aliases",
+        "truncated",
+        "unknown",
+    ):
+        for value in result[key]:
+            click.echo(f"{key}: {value}")
+    click.echo("Model tokens: unknown; byte totals are not token measurements.")
 
 
 @memory.command("legacy-check")
@@ -207,6 +257,33 @@ def _atomic_write(path: Path, content: str) -> None:
     os.replace(tmp, path)
 
 
+def _durable_write(path: Path, content: str) -> None:
+    """Flush a ledger replacement before the next step of a two-file transition."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False
+        ) as stream:
+            temp_path = Path(stream.name)
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp_path, path)
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            try:
+                os.fsync(directory_fd)
+            except OSError as exc:
+                if exc.errno not in {errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP}:
+                    raise
+        finally:
+            os.close(directory_fd)
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+
+
 def _append_block(path: Path, header_comment: str, block: str) -> None:
     if path.exists():
         existing = path.read_text()
@@ -308,6 +385,84 @@ def _load_pending(memory_dir: Path | None) -> tuple[Path, str, list[PendingPropo
     pending_file = target / "claude-md.proposal.md"
     text = pending_file.read_text() if pending_file.is_file() else ""
     return pending_file, text, parse_proposals(text)
+
+
+_HELD_FILE = "proposals-held.jsonl"
+_HELD_DISPOSITIONS = "proposals-held-requeued.jsonl"
+_HELD_MARKER = re.compile(r"<!-- held-requeue: ([0-9]+:[0-9a-f]{16}) -->")
+
+
+def _single_line(value: str) -> bool:
+    return value.splitlines() == [value]
+
+
+def _held_rows(memory_dir: Path) -> list[tuple[int, str, dict[str, str] | None]]:
+    path = memory_dir / _HELD_FILE
+    if not path.is_file():
+        return []
+    rows = []
+    for index, line in enumerate(path.read_text().splitlines(), 1):
+        identity = f"{index}:{hashlib.sha256(line.encode()).hexdigest()[:16]}"
+        try:
+            raw = json.loads(line)
+        except ValueError:
+            raw = None
+        valid = (
+            isinstance(raw, dict)
+            and isinstance(raw.get("ts"), str)
+            and _single_line(raw["ts"])
+            and isinstance(raw.get("rule"), str)
+            and bool(raw["rule"].strip())
+            and _single_line(raw["rule"])
+            and isinstance(raw.get("rationale", ""), str)
+            and (not raw.get("rationale") or _single_line(raw["rationale"]))
+        )
+        rows.append((index, identity, raw if valid else None))
+    return rows
+
+
+def _held_dispositions(memory_dir: Path) -> dict[str, dict[str, str]]:
+    path = memory_dir / _HELD_DISPOSITIONS
+    if not path.is_file():
+        return {}
+    result = {}
+    for line in path.read_text().splitlines():
+        try:
+            row = json.loads(line)
+        except ValueError as exc:
+            raise click.ClickException(f"Malformed held disposition at {path}.") from exc
+        if (
+            not isinstance(row, dict)
+            or not isinstance(row.get("id"), str)
+            or not re.fullmatch(r"[1-9][0-9]*:[0-9a-f]{16}", row["id"])
+        ):
+            raise click.ClickException(f"Malformed held disposition 'id' at {path}.")
+        if not isinstance(row.get("rule"), str):
+            raise click.ClickException(f"Malformed held disposition 'rule' at {path}.")
+        result[row["id"]] = row
+    return result
+
+
+def _record_held_disposition(memory_dir: Path, identity: str, rule: str) -> None:
+    path = memory_dir / _HELD_DISPOSITIONS
+    existing = path.read_text() if path.is_file() else ""
+    row = json.dumps({"id": identity, "rule": rule}, ensure_ascii=False)
+    _durable_write(path, existing + row + "\n")
+
+
+def _reconcile_held(memory_dir: Path, pending_text: str) -> dict[str, dict[str, str]]:
+    dispositions = _held_dispositions(memory_dir)
+    markers = set(_HELD_MARKER.findall(pending_text))
+    if not markers:
+        return dispositions
+    rows = {identity: row for _, identity, row in _held_rows(memory_dir)}
+    for identity in sorted(markers - dispositions.keys()):
+        row = rows.get(identity)
+        if row is None:
+            raise click.ClickException(f"Held source for pending marker {identity} is missing.")
+        _record_held_disposition(memory_dir, identity, row["rule"])
+        dispositions[identity] = {"id": identity, "rule": row["rule"]}
+    return dispositions
 
 
 def _get_proposal_or_fail(proposals: list[PendingProposal], index: int) -> PendingProposal:
@@ -454,7 +609,98 @@ def status(memory_dir: Path | None) -> None:
 
 @memory.group("proposals")
 def proposals() -> None:
-    """Review compound-loop claude-md proposals: list, accept, reject."""
+    """Review compound-loop claude-md proposals, including held entries."""
+
+
+@proposals.group("held", invoke_without_command=True)
+@click.pass_context
+@_MEMORY_DIR_OPTION
+def proposals_held(ctx: click.Context, memory_dir: Path | None) -> None:
+    """List held entries or explicitly requeue one."""
+    if ctx.invoked_subcommand is None:
+        _list_held(memory_dir or _project_memory_dir(), as_json=False)
+
+
+def _list_held(memory_dir: Path, *, as_json: bool) -> None:
+    dispositions = _held_dispositions(memory_dir)
+    rows = _held_rows(memory_dir)
+    listed = [
+        {
+            "index": index,
+            "id": identity,
+            "timestamp": row["ts"],
+            "rule": row["rule"],
+            "rationale": row.get("rationale", ""),
+        }
+        for index, identity, row in rows
+        if row is not None and identity not in dispositions
+    ]
+    malformed_lines = [index for index, _, row in rows if row is None]
+    if as_json:
+        click.echo(
+            json.dumps(
+                {"proposals": listed, "malformed_lines": malformed_lines},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
+    if not listed and not any(row is None for _, _, row in rows):
+        click.echo(f"No held claude-md proposals at {memory_dir / _HELD_FILE}.")
+    for item in listed:
+        click.echo(f"  {item['index']:>3}  {item['timestamp'][:10]}  {item['rule']}")
+    for index, _, row in rows:
+        if row is None:
+            click.echo(f"malformed line {index} in {memory_dir / _HELD_FILE}")
+
+
+@proposals_held.command("list")
+@click.option("--json", "as_json", is_flag=True)
+@_MEMORY_DIR_OPTION
+def proposals_held_list(as_json: bool, memory_dir: Path | None) -> None:
+    """List held entries without changing either queue."""
+    _list_held(memory_dir or _project_memory_dir(), as_json=as_json)
+
+
+@proposals_held.command("requeue")
+@click.argument("index", type=int)
+@click.option("--max-pending", type=click.IntRange(min=1), default=None)
+@_MEMORY_DIR_OPTION
+def proposals_held_requeue(index: int, max_pending: int | None, memory_dir: Path | None) -> None:
+    """Move one selected held line into the pending review queue."""
+    target = memory_dir or _project_memory_dir()
+    cap = max_pending or _load_config_for_consolidate().compound_loop.max_pending_proposals
+    with memory_dir_lock(target):
+        rows = _held_rows(target)
+        if index < 1 or index > len(rows):
+            raise click.ClickException(f"No held line {index} — {len(rows)} lines.")
+        _, identity, row = rows[index - 1]
+        if row is None:
+            raise click.ClickException(f"Held line {index} is malformed.")
+        pending_file, text, pending = _load_pending(target)
+        dispositions = _reconcile_held(target, text)
+        if identity in dispositions:
+            click.echo(f"Held line {index} was already requeued.")
+            return
+        if row["rule"].strip() in {p.rule.strip() for p in pending} | {
+            disposition["rule"].strip() for disposition in dispositions.values()
+        }:
+            _record_held_disposition(target, identity, row["rule"].strip())
+            click.echo(f"Held line {index} duplicates a reviewed rule.")
+            return
+        if len(pending) >= cap:
+            raise click.ClickException(f"Queue full: {len(pending)} pending >= cap {cap}.")
+        block = f"## {row['ts']}\n\n<!-- held-requeue: {identity} -->\n"
+        block += f"{_RULE_PREFIX} {row['rule']}\n"
+        if row.get("rationale"):
+            block += f"  {_RATIONALE_PREFIX} {row['rationale']}\n"
+        header = (
+            "<!-- claude-md proposals (append-only). "
+            "Review and merge into CLAUDE.md or discard. -->\n\n"
+        )
+        _durable_write(pending_file, (text.rstrip("\n") + "\n\n" if text else header) + block)
+        _record_held_disposition(target, identity, row["rule"])
+    click.echo(f"Requeued held line {index}: {row['rule']}")
 
 
 @proposals.command("list")
@@ -572,6 +818,7 @@ def proposals_apply(verdicts_file: Path, memory_dir: Path | None) -> None:
     target_dir = memory_dir or _project_memory_dir()
     with memory_dir_lock(target_dir):
         pending_file, text, pending = _load_pending(target_dir)
+        _reconcile_held(target_dir, text)
         decisions = _parse_verdicts(raw, len(pending))
         if not decisions:
             click.echo("No verdicts — nothing to apply.")
@@ -616,6 +863,7 @@ def proposals_accept(index: int, memory_dir: Path | None) -> None:
     target_dir = memory_dir or _project_memory_dir()
     with memory_dir_lock(target_dir):
         pending_file, text, pending = _load_pending(target_dir)
+        _reconcile_held(target_dir, text)
         target = _get_proposal_or_fail(pending, index)
 
         block = _format_entry_block(target, [f"accepted: {date.today().isoformat()}"])
@@ -645,6 +893,7 @@ def proposals_reject(index: int, reason: str, memory_dir: Path | None) -> None:
     target_dir = memory_dir or _project_memory_dir()
     with memory_dir_lock(target_dir):
         pending_file, text, pending = _load_pending(target_dir)
+        _reconcile_held(target_dir, text)
         target = _get_proposal_or_fail(pending, index)
 
         block = _format_entry_block(

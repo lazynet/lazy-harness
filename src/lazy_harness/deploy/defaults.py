@@ -40,6 +40,17 @@ def _derive_default_hooks() -> dict[str, list[str]]:
 DEFAULT_HOOKS: dict[str, list[str]] = _derive_default_hooks()
 
 
+def suppressed_defaults(user_hooks: dict[str, HookEventConfig]) -> dict[str, list[str]]:
+    """Default scripts displaced by explicit per-event script lists."""
+    return {
+        event: [name for name in scripts if name not in user_hooks[event].scripts]
+        for event, scripts in DEFAULT_HOOKS.items()
+        if event in user_hooks
+        and (user_hooks[event].scripts_configured or bool(user_hooks[event].scripts))
+        and any(name not in user_hooks[event].scripts for name in scripts)
+    }
+
+
 def merge_with_defaults(
     user_hooks: dict[str, HookEventConfig],
     agent: AgentAdapter,
@@ -47,9 +58,9 @@ def merge_with_defaults(
     """Produce the effective hook event → script-names mapping.
 
     Rules:
-    - For each event in DEFAULT_HOOKS: if user_hooks declares it (even with
-      an empty list), use user_hooks[event].scripts. Otherwise use the
-      default, filtered by agent capabilities.
+    - For each event in DEFAULT_HOOKS: an explicit scripts list (even empty)
+      replaces the default. An options-only table keeps the default, filtered
+      by agent capabilities.
     - For each event in user_hooks but NOT in DEFAULT_HOOKS, include verbatim.
     - Events with an empty script list are kept so callers can distinguish
       "explicit opt-out" from "not configured"; the engine drops empty events
@@ -97,7 +108,9 @@ def _merge_unscoped(
 
     effective: dict[str, list[str]] = {}
     for event, default_scripts in DEFAULT_HOOKS.items():
-        if event in user_hooks:
+        if event in user_hooks and (
+            user_hooks[event].scripts_configured or user_hooks[event].scripts
+        ):
             effective[event] = list(user_hooks[event].scripts)
         else:
             filtered = [s for s in default_scripts if s not in _SYSTEM_DOC_HOOKS or has_system_doc]

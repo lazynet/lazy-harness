@@ -504,6 +504,15 @@ The thresholds are the same 200-line and 12KB ceilings `pre-tool-use-memory-size
 lh memory rightsize
 ```
 
+### `lh memory budget`
+
+Shows a read-only inventory of static instruction files selected for a profile and working directory. It lists global and repository-chain files, bytes and lines per file, their total, per-file configured limits, missing, unreadable, shadowed or truncated files, and known alternatives. The total covers selected readable source files only; when a Codex document is partially included, that total is an upper bound for this known subset, not the entire static prompt. Dynamic hook output, skills, tools, and Codex CLI or layered config overrides remain unknown. Claude imports, rules, and local or managed instructions are unresolved. The byte total is not a model-token measurement. Symlink aliases are reported and counted by path; their injection multiplicity is unresolved.
+
+```bash
+lh memory budget
+lh memory budget --profile personal --cwd /path/to/repo --json
+```
+
 ### `lh memory legacy-check`
 
 Reports per-project memory still sitting in a profile's `projects/` tree rather than in the knowledge store, and classifies each one:
@@ -525,8 +534,12 @@ Lifecycle for the `claude-md.proposal.md` entries the compound loop appends (see
 - `lh memory proposals accept <N>` — removes entry N from the pending file, archives it to `claude-md.accepted.md` with the acceptance date, and prints the full rule. It never edits `MEMORY.md` or `CLAUDE.md` itself — pasting the rule is the human's call.
 - `lh memory proposals reject <N> --reason "<text>"` — removes entry N and records it in `claude-md.rejected.md` with the date and reason. That file is an immunity registry: the grading prompt carries as many of its rules as fit a 20,000-character budget, newest first, with an instruction not to re-propose equivalents.
 - `lh memory proposals apply --verdicts <file>` — drains many at once. The file is a JSON list of `{"index": N, "verdict": "accept"|"reject", "reason": "..."}` numbered against `list --json`. Every entry is validated before anything is written, and the verdicts are applied back-to-front, so an out-of-range or duplicate index leaves the queue untouched and the caller never has to iterate in reverse to avoid `accept`/`reject`'s shifting positions.
+- `lh memory proposals held` (or `lh memory proposals held list`) — read-only listing of held proposals. `held list --json` emits `proposals` with source line indices and identities plus `malformed_lines` with excluded line numbers.
+- `lh memory proposals held requeue <N>` — explicitly requeues source line N if the pending queue has room under `[compound_loop].max_pending_proposals`. A full queue reports its count and cap. The held source is preserved; a durable disposition records the action. Repeating the command cannot add the same source twice, including after an interrupted write. A rule already pending or previously requeued, compared after trimming surrounding whitespace as the pending parser does, is recorded as a duplicate without another pending entry.
 
-A queue that is never drained does not sit still: at `[compound_loop].max_pending_proposals` the loop stops adding new proposals to the queue, holding them back in `proposals-held.jsonl` instead, and the session-start context says so.
+The requeue protocol flushes and replaces the pending file before flushing and replacing the disposition file. Review commands reconcile a pending source marker before removing that proposal. This recovers process interruptions between steps. Directory syncing is attempted where supported; no power-loss guarantee is claimed on filesystems that reject directory syncing.
+
+A queue that is never drained does not sit still: when a new batch would exceed `[compound_loop].max_pending_proposals`, the loop holds the whole batch in `proposals-held.jsonl` instead, and the session-start context says so. Capacity is checked while holding the project's memory lock.
 
 ```bash
 lh memory proposals list
@@ -684,6 +697,8 @@ Manages agent profiles.
 
 `lh profile list` prints a table of every configured profile — name, config dir, roots, whether the config dir actually exists on disk.
 
+`lh profile inspect [NAME] [--json]` shows the default or named profile's resolved agent, identity, source and runtime paths, hook defaults and explicit overrides, suppressed defaults, omissions, and system-document and skill availability. Each configured hook has separate deployment evidence: `deployed` only when its event, command, and matcher match the parsed runtime file; `drift` when the matcher differs; `missing` when its command is absent; `unreadable` for an invalid runtime file; and `unknown` when no runtime file exists. Unmatched runtime hooks are listed separately as managed when the adapter's ownership record proves it, or unknown otherwise. Stale managed hooks count as deployment drift even when an explicit empty override configures none. Execution remains `unknown`; a Codex trust record does not prove a hook ran. Inspection reads files but writes nothing.
+
 `lh profile add <name> --config-dir <path> [--roots a,b,c]` registers a new profile in `config.toml`. `lh profile remove <name>` does the inverse.
 
 `lh profile envrc` walks every profile's roots and writes a managed `.envrc` block exporting the agent's config-dir env var (e.g. `CLAUDE_CONFIG_DIR`). With direnv installed, plain `claude` invocations inside a root then auto-pick the right profile. User content outside the managed block is preserved. `--dry-run` shows what it would write.
@@ -696,6 +711,7 @@ Manages agent profiles.
 
 ```bash
 lh profile list
+lh profile inspect --json
 lh profile add work --config-dir ~/.claude-work --roots ~/repos/work
 lh profile envrc
 lh profile move --from personal --to work --projects my-repo --yes
@@ -712,6 +728,7 @@ Checks on a repository's own instruction files.
 ```bash
 lh repo instructions            # the current repository
 lh repo instructions ../other   # any path
+lh repo instructions --manifest fleet.json
 ```
 
 Verifies the portable instruction contract: root `AGENTS.md` exists and no
@@ -719,12 +736,37 @@ Verifies the portable instruction contract: root `AGENTS.md` exists and no
 in labelled sections of `AGENTS.md`, so root and nested sessions receive the
 same contract in Claude Code and Codex.
 
+`--manifest` accepts a per-run JSON inventory. Paths are relative to the manifest,
+must stay inside its directory after symlink resolution, and cannot contain `..`.
+Each repository needs a `status`: `active`, `deferred`, or `upstream`. Active
+repositories keep the strict gate. Deferred and upstream repositories skip only
+their own tree check; ancestor shadows are still findings. Use these statuses
+only for repos with a recorded migration deferral or external ownership.
+
+```json
+{
+  "repositories": [
+    {"path": "owned", "status": "active", "instruction_data": ["fixtures/CLAUDE.md"]},
+    {"path": "migration-pending", "status": "deferred"},
+    {"path": "third-party", "status": "upstream"}
+  ]
+}
+```
+
+`instruction_data` names existing nested `CLAUDE.md` files stored as data, one
+exact repo-relative path each. Root `CLAUDE.md` cannot be excluded. A declared
+file remains a finding when the caller's working directory is inside its
+directory, because it then affects the active session. Other nested files and
+ancestor shadows still fail. A manifest cannot be combined with positional
+paths; without one, all paths remain strict.
+
 Two findings, each naming the file to change:
 
 | Code | Meaning |
 | --- | --- |
 | `missing-agents-md` | No root `AGENTS.md` exists, so repository rules are not portable. |
 | `claude-md-shadows-agents` | A `CLAUDE.md` prevents Claude Code from walking the parent `AGENTS.md` chain. |
+| `ancestor-claude-md-shadows-agents` | An ancestor `CLAUDE.md` blocks repository `AGENTS.md` discovery. |
 
 Exit code 0 when the tree is clean, 1 with one line per finding — so it works as
 a CI step, not only as a local convenience.
