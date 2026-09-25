@@ -388,6 +388,8 @@ Nothing rebuilds a code graph on its own in a worktree-first workflow: graphify'
 
 `add` registers a repo after checking it really is one, and is idempotent. It updates `repos` under `[knowledge.structure]` through the normal config writer, which preserves comments, formatting, and every key this version does not model. `update` walks every registered repo, skips ones that have gone missing, keeps going past a repo that fails, and exits non-zero if any did. After each successful rebuild it writes the graph-assist index (`graphify-out/cache/lh-graph-assist.json`) that [`pre-tool-use-graph-assist`](../how/hooks.md) reads; an index that cannot be written is reported and never fails the repo. Outcomes append to `graphify-update.log`.
 
+`lh knowledge graph-assist report [--since YYYY-MM-DD]` measures the [`pre-tool-use-graph-assist`](../how/hooks.md) hook against its kill criteria, read-only. It reads every profile's transcripts from the profile's own `config_dir` and the hook's `logs/graph_assist_metrics.jsonl`, and reports per agent: sessions in repositories holding a graph, graph touch (sessions where the agent called graphify or the hook answered), graphify calls against code greps and, for Claude Code, hit precision, p95 latency and deflection. Sessions that made no tool call are left out. The default window is the last 14 days. A tripped criterion is listed; it becomes a decision only at the end of the rollout window.
+
 ```bash
 lh knowledge init
 lh knowledge path --kind learnings
@@ -401,6 +403,7 @@ lh knowledge export-session ~/.claude/projects/-Users-me-repo/abc123.jsonl --for
 lh knowledge graph add ~/repos/my-project
 lh knowledge graph list
 lh knowledge graph update
+lh knowledge graph-assist report --since 2026-09-25
 ```
 
 ## `lh memory`

@@ -295,7 +295,7 @@ def identifier(pattern: str) -> str | None:
     return text if IDENTIFIER_RE.match(text) else None
 
 
-def _inside(path: Path, root: Path) -> bool:
+def is_inside(path: Path, root: Path) -> bool:
     try:
         path.resolve().relative_to(root.resolve())
     except (OSError, ValueError):
@@ -351,7 +351,8 @@ def _parse_search(argv: list[str]) -> tuple[str, list[str]] | None:
     return pattern, positionals
 
 
-def _bash_target(command: str, repo_root: Path, cwd: Path) -> str | None:
+def bash_search_pattern(command: str, repo_root: Path, cwd: Path) -> str | None:
+    """The raw pattern of the first executed search over the repository, or None."""
     segments = _segments(command)
     if segments is None:
         return None
@@ -372,9 +373,9 @@ def _bash_target(command: str, repo_root: Path, cwd: Path) -> str | None:
             return None
         pattern, paths = parsed
         targets = [here / p for p in paths] if paths else [here]
-        if not all(_inside(t, repo_root) for t in targets):
+        if not all(is_inside(t, repo_root) for t in targets):
             return None
-        return identifier(pattern)
+        return pattern
     return None
 
 
@@ -390,12 +391,15 @@ def search_target(tool_name: str, tool_input: object, repo_root: Path, cwd: Path
         if path is not None:
             if not isinstance(path, str):
                 return None
-            if not _inside(cwd / path, repo_root):
+            if not is_inside(cwd / path, repo_root):
                 return None
         return identifier(pattern)
     if tool_name == "Bash":
         command = tool_input.get("command")
-        return _bash_target(command, repo_root, cwd) if isinstance(command, str) else None
+        if not isinstance(command, str):
+            return None
+        pattern = bash_search_pattern(command, repo_root, cwd)
+        return identifier(pattern) if pattern is not None else None
     return None
 
 

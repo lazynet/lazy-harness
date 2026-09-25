@@ -1520,3 +1520,12 @@ def test_the_hook_logs_under_the_profile_it_was_invoked_with(tmp_path: Path) -> 
         f"no log under the profile's own config_dir; home holds "
         f"{sorted(p.name for p in home.iterdir())}"
     )
+
+
+def test_graphify_section_fallback_also_counts_a_legacy_edges_key(tmp_path: Path) -> None:
+    from lazy_harness.hooks.builtins.context_inject import graphify_section
+
+    graph = {"nodes": [{"id": "x"}, {"id": "y"}], "edges": [{"source": "x", "target": "y"}]}
+    out, repo = _fresh_graph_repo(tmp_path, graph)
+
+    assert graphify_section(out, repo) == "## Code structure\n- 2 nodes · 1 edges"

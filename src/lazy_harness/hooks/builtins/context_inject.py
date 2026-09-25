@@ -637,7 +637,7 @@ def graphify_section(graphify_dir: Path, repo_root: Path) -> str:
     if not isinstance(data, dict):
         return ""
     nodes = data.get("nodes", [])
-    links = data.get("links", [])
+    links = data.get("links", data.get("edges", []))
     if not isinstance(nodes, list):
         return ""
 

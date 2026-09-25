@@ -447,7 +447,7 @@ Mechanics:
 5. On a match, emit up to three definitions as `additionalContext`, about 600 tokens at most. Homonyms are all listed.
 6. Always exit 0, including on any error.
 
-**Where it writes:** the index above, and one JSON line per evaluated search to `<agent dir>/logs/graph_assist_metrics.jsonl` (outcome, reason, latency).
+**Where it writes:** the index above, and one JSON line per evaluated search to `<agent dir>/logs/graph_assist_metrics.jsonl` (outcome, reason, latency). `lh knowledge graph-assist report` reads it.
 
 ### `post-tool-use-format` — runs on `PostToolUse`
 
