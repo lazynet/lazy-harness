@@ -486,7 +486,7 @@ def knowledge_graph_update() -> None:
     exits early outside the main checkout), so nothing refreshes it in a
     worktree-first workflow. This is what the scheduler calls instead.
     """
-    from lazy_harness.knowledge import graphify
+    from lazy_harness.knowledge import graph_assist, graphify
 
     console = Console()
     try:
@@ -514,6 +514,16 @@ def knowledge_graph_update() -> None:
         if result.exit_code == 0:
             console.print(f"[green]updated[/green]  {contract_path(path)}")
             log_append(log_path, f"updated: {path}")
+            # The graph is the product and the index a derivative the hook can
+            # rebuild on its own, so a failed index never fails the repo.
+            try:
+                index = graph_assist.write_index(path)
+            except OSError as e:
+                index = None
+                log_append(log_path, f"index failed: {path}: {e}")
+            if index is None:
+                console.print(f"[yellow]no index[/yellow] {contract_path(path)}")
+                log_append(log_path, f"index skipped: {path} (graph unreadable)")
         else:
             failures += 1
             detail = (result.stderr or result.stdout).strip().splitlines()

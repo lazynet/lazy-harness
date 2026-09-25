@@ -416,3 +416,28 @@ def is_search_call(tool_name: str, tool_input: object) -> bool:
     if segments is None:
         return False
     return any(argv and argv[0].rsplit("/", 1)[-1] in SEARCH_TOOLS for argv, _ in segments)
+
+
+# Edges that describe where a symbol lives rather than how it is used. A file
+# node `contains` everything in it and would top any raw degree ranking.
+_STRUCTURAL_RELATIONS = frozenset({"contains", "method", "rationale_for", "defines"})
+
+
+def hubs(graph: dict, limit: int = 5) -> list[tuple[str, str]]:
+    """The `limit` highest-degree definitions, as (label, `file:line`)."""
+    raw_nodes = graph.get("nodes")
+    raw_links = graph.get("links")
+    nodes = {
+        n["id"]: n
+        for n in (raw_nodes if isinstance(raw_nodes, list) else [])
+        if isinstance(n, dict) and isinstance(n.get("id"), str) and _is_definition(n)
+    }
+    degree: dict[str, int] = {}
+    for link in raw_links if isinstance(raw_links, list) else []:
+        if not isinstance(link, dict) or link.get("relation") in _STRUCTURAL_RELATIONS:
+            continue
+        for end in (link.get("source"), link.get("target")):
+            if isinstance(end, str) and end in nodes:
+                degree[end] = degree.get(end, 0) + 1
+    ranked = sorted(degree, key=lambda nid: (-degree[nid], nodes[nid]["label"]))[:limit]
+    return [(nodes[nid]["label"], _location(nodes[nid])) for nid in ranked]
