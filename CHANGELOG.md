@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.81.1](https://github.com/lazynet/lazy-harness/compare/v0.81.0...v0.81.1) (2026-09-25)
+
+
+### Bug Fixes
+
+* read the context window through the profile's transcript reader ([#471](https://github.com/lazynet/lazy-harness/issues/471)) ([94be6b3](https://github.com/lazynet/lazy-harness/commit/94be6b3f3b210195d5d89c114709febb9132f1a3))
+
 ## [0.81.0](https://github.com/lazynet/lazy-harness/compare/v0.80.0...v0.81.0) (2026-09-25)
 
 
