@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shlex
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -255,3 +257,143 @@ def render(label: str, defs: list[dict], *, max_defs: int = MAX_DEFS) -> str:
     if len(text) > MAX_CHARS:
         text = text[: MAX_CHARS - 1].rsplit("\n", 1)[0] + "\n…"
     return text
+
+
+# --- search classification (spec §3.1, filter rules 3 and 4) ---
+
+SEARCH_TOOLS = frozenset({"grep", "rg", "ugrep", "egrep"})
+
+IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*\(?\)?$")
+_DECL_PREFIX = re.compile(r"^(?:def|class|function)\s+")
+
+# Options that consume the next argument. A value mistaken for the pattern would
+# be a wrong hit, which is worse than silence, so each tool's set is its own:
+# `-r` is recursion to grep and a replacement string to rg.
+_GREP_VALUE_FLAGS = frozenset(
+    {
+        "-e", "-f", "-m", "-A", "-B", "-C", "-d", "-D",
+        "--regexp", "--file", "--max-count", "--context", "--after-context",
+        "--before-context", "--include", "--exclude", "--exclude-dir",
+    }
+)  # fmt: skip
+_RG_VALUE_FLAGS = frozenset(
+    {
+        "-e", "-f", "-t", "-T", "-g", "-m", "-A", "-B", "-C", "-r", "-E", "-j", "-M",
+        "--regexp", "--file", "--type", "--type-not", "--glob", "--iglob", "--max-count",
+        "--context", "--after-context", "--before-context", "--replace", "--encoding",
+        "--threads", "--max-columns",
+    }
+)  # fmt: skip
+_PATTERN_FLAGS = frozenset({"-e", "--regexp"})
+_SEPARATORS = frozenset({";", "&&", "||", "&", "|"})
+
+
+def identifier(pattern: str) -> str | None:
+    """The identifier `pattern` names, or None for a regex, glob or phrase."""
+    text = pattern.strip().strip("'\"").strip()
+    text = _DECL_PREFIX.sub("", text)
+    return text if IDENTIFIER_RE.match(text) else None
+
+
+def _inside(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def _segments(command: str) -> list[tuple[list[str], bool]] | None:
+    """Split a shell command into (argv, fed_by_pipe) segments; None if unparsable."""
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|")
+    lexer.whitespace_split = True
+    try:
+        tokens = list(lexer)
+    except ValueError:
+        return None
+    segments: list[tuple[list[str], bool]] = []
+    current: list[str] = []
+    piped = False
+    for token in tokens:
+        if token in _SEPARATORS:
+            segments.append((current, piped))
+            current, piped = [], token == "|"
+        else:
+            current.append(token)
+    segments.append((current, piped))
+    return segments
+
+
+def _parse_search(argv: list[str]) -> tuple[str, list[str]] | None:
+    """(pattern, paths) from a grep-family argv, or None."""
+    tool = argv[0].rsplit("/", 1)[-1]
+    value_flags = _RG_VALUE_FLAGS if tool == "rg" else _GREP_VALUE_FLAGS
+    pattern: str | None = None
+    positionals: list[str] = []
+    args = iter(argv[1:])
+    options_done = False
+    for arg in args:
+        if not options_done and arg == "--":
+            options_done = True
+        elif not options_done and arg.startswith("-") and arg != "-":
+            if arg in value_flags:
+                value = next(args, None)
+                if value is None:
+                    return None
+                if arg in _PATTERN_FLAGS and pattern is None:
+                    pattern = value
+        else:
+            positionals.append(arg)
+    if pattern is None:
+        if not positionals:
+            return None
+        pattern, positionals = positionals[0], positionals[1:]
+    return pattern, positionals
+
+
+def _bash_target(command: str, repo_root: Path, cwd: Path) -> str | None:
+    segments = _segments(command)
+    if segments is None:
+        return None
+    here = cwd
+    for argv, piped in segments:
+        if not argv:
+            continue
+        name = argv[0].rsplit("/", 1)[-1]
+        if name == "cd" and len(argv) == 2:
+            here = (here / argv[1]) if not argv[1].startswith("/") else Path(argv[1])
+            continue
+        if name not in SEARCH_TOOLS:
+            continue
+        if piped:
+            return None
+        parsed = _parse_search(argv)
+        if parsed is None:
+            return None
+        pattern, paths = parsed
+        targets = [here / p for p in paths] if paths else [here]
+        if not all(_inside(t, repo_root) for t in targets):
+            return None
+        return identifier(pattern)
+    return None
+
+
+def search_target(tool_name: str, tool_input: object, repo_root: Path, cwd: Path) -> str | None:
+    """The identifier a `Grep`/`Bash` call searches the repository for, or None."""
+    if not isinstance(tool_input, dict):
+        return None
+    if tool_name == "Grep":
+        pattern = tool_input.get("pattern")
+        path = tool_input.get("path")
+        if not isinstance(pattern, str):
+            return None
+        if path is not None:
+            if not isinstance(path, str):
+                return None
+            if not _inside(cwd / path, repo_root):
+                return None
+        return identifier(pattern)
+    if tool_name == "Bash":
+        command = tool_input.get("command")
+        return _bash_target(command, repo_root, cwd) if isinstance(command, str) else None
+    return None
