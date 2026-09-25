@@ -256,5 +256,7 @@ def test_graph_update_names_the_real_cause_when_the_index_write_fails(
     result = CliRunner().invoke(knowledge, ["graph", "update"])
 
     assert result.exit_code == 0, result.output
-    assert "disk full" in result.output
-    assert "unreadable" not in result.output
+    # Rich wraps at the terminal width, which is 80 on CI and splits the line.
+    output = " ".join(result.output.split())
+    assert "disk full" in output
+    assert "unreadable" not in output
