@@ -306,6 +306,7 @@ desde `:367-369` cuando el step 3 insertó los helpers de merge arriba de la cla
 - [x] **El exit 2 fail-closed bloquea bajo Codex, medido con un runner real** — probe contra `codex-cli 0.155.1` con el profile `codex-lazy`: el hook con `--profile` desconocido sale exit 2 y Codex no ejecuta el comando (`specs/designs/codex-evidence.md` §8). No hizo falta fix; un test de regresión pinnea el contrato y dos mutaciones a mano prueban que carga. Se corrigieron los docstrings que decían que Codex nunca había honrado exit 2. PR #462, mergeado el 2026-09-24; entra en 0.80.0.
 - [x] **Tres MEDIA de la resaca de #460** — (1) ADR-032 L4: los seis builtins y `_shared` ya no caen a `or "projects"`; un test por glob sobre los builtins falla si vuelve el literal. (2) `lh memory proposals accept/reject/apply` toman `memory_dir_lock` durante todo el read-modify-write. (3) `lh doctor` reporta `warn` «catching up» cuando la corrida llegó al tope de 25 saves y el cursor avanzó en disco; un cursor trabado sigue en `fail`. PR #463, mergeado el 2026-09-24; entra en 0.80.0.
 - [x] **engram 2.1.0 del lado del harness, y el CT `agents` migrado como canary** — `PINNED_VERSION` = 2.1.0 y `mcp_server_config()` con path absoluto y `mcp --tools=agent`, para no disparar el ownership check de 2.x. Probe sobre una copia de la DB de la Mac en `specs/designs/engram-evidence.md`; plan en `specs/designs/2026-09-24-engram-2-migration.md`. El CT subió por lazy-ansible (`1cc41b6`, pin + sha256 + handler que mata el `serve` viejo) y pasó las once filas de verificación del plan; el marketplace del plugin queda pinneado a `v2.1.0` con `owner/repo@ref`. El menú de `engram setup` en SessionStart era skew plugin 0.1.2 / binario 1.20. PR #464, mergeado el 2026-09-24; entra en 0.80.0.
+- [x] **El guard de git ya no se abstiene ante una opción global que no conoce, ni ante una abreviatura** — el token layer judga cada palabra posterior como subcomando candidato cuando encuentra una opción global que no sabe parsear (`-P`, `--no-optional-locks`, `--namespace=`, repetidas o futuras), acepta cualquier prefijo que git aceptaría de `--hard` y `--force`, y cubre `find -delete` y una acción `-exec`/`-execdir`/`-ok` que bloquearía sola. Las tres variantes de `reset` se reprodujeron descartando cambios reales a través del hook desplegado de 0.82.1. Cierra la entrada que dejó #347 en «Known limits». Entra en la release siguiente a 0.82.1.
 - [x] **La Mac en engram 2.1.0 con el plugin 0.1.3** — backup en `~/.engram/pre-v2/`, `brew upgrade`, conteos idénticos al snapshot previo, `user_version` = 1, doctor sin hallazgos nuevos respecto del primer arranque en 2.1.0. `claude plugin update` desinstaló el plugin en claude-lazy en vez de actualizarlo; se reinstaló con `claude plugin install`. El pin de `config.toml` pasó a 2.1.0 por el template de chezmoi. Verificado en claude-lazy, claude-flex y codex-lazy; registro y gotcha en el plan §5.4. Operación de entorno, 2026-09-24.
 
 ## Open — Prioridad ALTA
@@ -669,14 +670,6 @@ lo que corresponde es el ataque adversarial periódico que el gate ya pide.
 Cada una mezcla responsabilidades no relacionadas: recolección de contexto y rendering; inspección de DB/filesystem/scheduler y presentación; o planificación de launch, manejo de proceso, billing y serialización de resultado. `overview.render` además trae todas las estadísticas históricas a memoria antes de agregar (`overview.py:65`, `db.py:400`) — el costo de memoria y procesamiento crece con el historial retenido.
 
 **Fuente:** hallazgo F9 de `specs/codebase-audit-2026-09-16.md`.
-
-### El guard de git normaliza un set fijo de opciones globales
-
-**Por qué:** `_normalise_git_globals` (cierre de F1, #347) sólo despoja un juego reconocido de opciones globales (`-C`, `-c`, `--git-dir=`, `--work-tree=`, `--no-pager`), y sólo una por pasada. Una opción que toma argumento repetida inmediatamente contra sí misma puede parsearse mal y dejar el subcomando real sin alcanzar, así que la regla se abstiene en vez de bloquear — valores distintos pasados de forma normal (por ejemplo dos `-C` a targets distintos) no lo sufren. Una opción global fuera de ese set reconocido también hace abstener a las reglas de git, igual que antes del fix.
-
-**Fuente:** PR #347, sección "Known limits" — atacado el guard terminado con variantes realistas, no fixeado por estar fuera del alcance de esa lane.
-
-**Acción:** ninguna propuesta en esta entrada.
 
 ### Falso positivo del hook de seguridad con backticks en el argumento de otro comando
 
