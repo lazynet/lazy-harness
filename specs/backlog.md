@@ -352,10 +352,13 @@ search` salta solo en comandos de búsqueda, no en `ls`, `git` ni `ssh`
 grep, e igual para un grep de logs que para un símbolo de código.
 **Estado:** mergeado en #469 (`de89535`) según
 `specs/designs/2026-09-24-graph-assist-design.md`; §8 de la spec registra los
-desvíos. **Acción:** rollout §6 (release, `config.toml.tmpl`, sacar a mano el
-guard de upstream de los `settings.json` de Claude, `lh deploy`) y anotar acá
-el día 0. Kill criteria a 14 días, medidos con `lh knowledge graph-assist
-report`. Prioridad MEDIA.
+desvíos. **Día 0: 2026-09-25.** 0.81.0 instalado y `lh deploy` corrido en la Mac
+y en el CT `agents`; el guard de upstream se sacó a mano de los `settings.json`
+de claude-lazy y claude-flex en los dos hosts, y queda solo en codex-lazy (grupo
+de control). **Acción:** el 2026-10-09 correr `lh knowledge graph-assist report
+--since 2026-09-25` y aplicar los kill criteria de §6 (graph touch < 20%,
+precisión < 50%, p95 > 1500 ms); si alguno salta, seguir la remoción de §6.
+Baseline previa en §8 de la spec. Prioridad MEDIA.
 
 ### `lh doctor` no detecta skew entre el plugin de engram y su binario
 
