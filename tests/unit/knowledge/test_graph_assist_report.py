@@ -346,3 +346,60 @@ def test_a_worktree_outside_the_main_tree_counts_toward_the_main_checkout(
 
     assert rep._graph_repo(worktree) == repo.resolve()
     assert rep._graph_repo(tmp_path / "elsewhere") is None
+
+
+@pytest.mark.parametrize("placement", ["nested", "external"])
+@pytest.mark.parametrize(
+    "command", ["grep -rn check_version src", "grep -rn check_version ../../src"]
+)
+def test_hook_and_report_agree_on_a_worktree_search(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, placement: str, command: str
+) -> None:
+    """Two paths answer "is this a search the hook serves"; AGENTS.md requires
+    an integration test that runs both and asserts they agree."""
+    import subprocess
+
+    from lazy_harness.agents.base import HookEvent
+    from lazy_harness.hooks.builtins import pre_tool_use_graph_assist as hook
+
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+           "GIT_COMMITTER_EMAIL": "t@t", "PATH": "/usr/bin:/bin:/opt/homebrew/bin"}  # fmt: skip
+    for args in (["init", "-q"], ["commit", "-q", "--allow-empty", "-m", "i"]):
+        subprocess.run(["git", *args], cwd=repo, check=True, env=env, capture_output=True)
+    (repo / "graphify-out").mkdir()
+    (repo / "graphify-out" / "graph.json").write_text('{"nodes": [], "links": []}')
+    worktree = (repo / ".worktrees" / "wt") if placement == "nested" else (tmp_path / "ext" / "wt")
+    subprocess.run(["git", "worktree", "add", "-q", str(worktree), "-b", "wt"],
+                   cwd=repo, check=True, env=env, capture_output=True)  # fmt: skip
+    (worktree / "src").mkdir(exist_ok=True)
+    lines: list[dict] = []
+    monkeypatch.setattr(hook, "_metrics_file", lambda profile: tmp_path / "m.jsonl")
+    monkeypatch.setattr(hook, "_record", lambda event, started, **f: lines.append(f))
+
+    hook.main(
+        HookEvent(
+            event="pre_tool_use",
+            profile="p",
+            session_id="s",
+            cwd=worktree,
+            transcript_path=None,
+            tool=_bash(command),
+        )
+    )
+    hook_serves = lines[-1]["reason"] != "not_search"
+
+    from lazy_harness.core.config import Config, ProfileEntry
+
+    now = datetime.now(UTC)
+    config_dir = _claude_profile(
+        tmp_path, "a", repo, {"s": [_claude_line(now, worktree, "Bash", {"command": command})]}
+    )
+    cfg = Config()
+    cfg.profiles.default = "a"
+    cfg.profiles.items = {"a": ProfileEntry(config_dir=str(config_dir), agent="claude-code")}
+    [session] = rep.collect(cfg, since=now - timedelta(days=1))[0]
+
+    assert session.repo == repo.resolve()
+    assert hook_serves == ([c.kind for c in session.calls] == ["code_grep"])

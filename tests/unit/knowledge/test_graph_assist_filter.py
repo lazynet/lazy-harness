@@ -141,3 +141,21 @@ def test_search_target_stays_silent_when_it_cannot_be_sure(
     command: str, expected: str | None
 ) -> None:
     assert search_target("Bash", {"command": command}, ROOT, CWD) == expected
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        # Parens and braces inside quotes are pattern text, not a subshell.
+        ('grep -rn "check_version()" src', "check_version()"),
+        ("rg -n 'load_index()' src", "load_index()"),
+        ("grep -rn check_version src | awk '{print $1}'", "check_version"),
+        ("rg -g '*.{py,md}' check_version", "check_version"),
+        ("rg -g *.{py,md} check_version", None),
+        ("grep --color=auto -rn check_version src", "check_version"),
+        ("grep --color -rn check_version src", "check_version"),
+        ("rg --line-buffered check_version", "check_version"),
+    ],
+)
+def test_quoted_punctuation_and_common_long_options(command: str, expected: str | None) -> None:
+    assert search_target("Bash", {"command": command}, ROOT, CWD) == expected

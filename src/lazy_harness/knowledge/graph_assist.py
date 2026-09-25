@@ -298,12 +298,21 @@ _FLAG_LONG = frozenset(
         "--null", "--text", "--byte-offset", "--initial-tab", "--hidden", "--no-ignore",
         "--no-ignore-vcs", "--follow", "--json", "--vimgrep", "--heading",
         "--no-heading", "--multiline", "--pcre2", "--trim", "--stats", "--unrestricted",
-        "--no-config", "--column", "--search-zip",
+        "--no-config", "--column", "--search-zip", "--line-buffered", "--block-buffered",
+        "--null-data", "--binary", "--crlf", "--passthru", "--pretty", "--include-zero",
+        "--sort-files", "--one-file-system", "--no-require-git", "--no-ignore-dot",
+        "--no-ignore-parent", "--no-ignore-global", "--no-ignore-exclude",
+        "--glob-case-insensitive", "--max-columns-preview",
+        # grep's `--color[=WHEN]` takes its value only after `=`; rg's `--color`
+        # always takes one and is in `_RG_VALUE_LONG`, which is checked first.
+        "--color", "--colour",
     }
 )  # fmt: skip
 # Options after which the positionals are not a pattern at all.
 _NO_PATTERN = frozenset({"--file", "--files", "--type-list"})
 _SEPARATORS = frozenset({";", "&&", "||", "&", "|"})
+_PUNCTUATION = frozenset("();&|{}")
+_GROUPING = frozenset("(){}")
 
 
 def identifier(pattern: str) -> str | None:
@@ -393,8 +402,17 @@ def _parse_search(argv: list[str]) -> tuple[str, list[str]] | None:
     return pattern, positionals
 
 
-def _subshell(tokens: list[str]) -> bool:
-    return any(t.startswith(("(", "{")) or t.endswith((")", "}")) for t in tokens)
+def _subshell(command: str) -> bool:
+    """Whether an *unquoted* paren or brace appears: a subshell, group or
+    expansion that moves the search somewhere this cannot follow. Quoted ones
+    are pattern text — `grep "check_version()"` is a lookup, not a subshell."""
+    lexer = shlex.shlex(command, posix=True, punctuation_chars="();&|{}")
+    lexer.whitespace_split = True
+    try:
+        tokens = list(lexer)
+    except ValueError:
+        return True
+    return any(set(t) <= _PUNCTUATION and set(t) & _GROUPING for t in tokens)
 
 
 def bash_search_pattern(command: str, repo_root: Path, cwd: Path) -> str | None:
@@ -405,7 +423,7 @@ def bash_search_pattern(command: str, repo_root: Path, cwd: Path) -> str | None:
     subshell, `pushd` — makes the whole command unknown, and unknown is silent.
     """
     segments = _segments(command)
-    if segments is None or _subshell([t for argv, _ in segments for t in argv]):
+    if segments is None or _subshell(command):
         return None
     here = cwd
     for argv, piped in segments:

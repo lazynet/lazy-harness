@@ -273,8 +273,8 @@ displaces a higher-priority section.
   Claude profiles' `settings.json` has to be removed once by hand at rollout.
 - **Baseline, re-measured with the shipped report.** `lh knowledge
   graph-assist report --since 2026-09-17`, run 2026-09-25 with every fix in
-  this section: Claude Code 39/648 sessions = 6.0% (a), 49/3 336 = 1.5% (b);
-  Codex 24/60 = 40.0% (a), 53/142 = 37.3% (b). Claude's (a) agrees with §1.
+  this section: Claude Code 39/649 sessions = 6.0% (a), 49/3 524 = 1.4% (b);
+  Codex 24/60 = 40.0% (a), 53/153 = 34.6% (b). Claude's (a) agrees with §1.
   Codex's does not, because this population counts spawned Codex agents as
   sessions, and (b) moved on both sides because the classifier now declines
   commands it cannot place. The report skips sessions with no tool call (about
@@ -296,8 +296,13 @@ displaces a higher-priority section.
   fits in what was injected. A hit listing three of forty `main()`s is the
   noise the criterion exists to catch.
 - **The classifier resolves doubt to silence.** Paths with `~`, `$` or
-  backticks, `cd` to anything but a plain path, `pushd`, subshells, `-f`,
-  `--files` and unknown long options all return no pattern. `--regexp=X`,
-  `-eX` and bundled clusters such as `-nt py` are parsed.
+  backticks, `cd` to anything but a plain path, `pushd`, unquoted parens or
+  braces, `-f`, `--files` and unknown long options all return no pattern.
+  Quoted punctuation is pattern text, so `grep "check_version()"` still counts.
+  `--regexp=X`, `-eX` and bundled clusters such as `-nt py` are parsed.
+- **Hook and report share both roots.** Population membership is the main
+  checkout's graph; the search scope is the checkout the session sat in. An
+  integration test runs one command through the hook and through
+  `collect` from a nested and an external worktree and asserts they agree.
 - **An over-deadline build is kept.** It answers nothing for the call that paid
   for it and is persisted, instead of being rebuilt on every search.

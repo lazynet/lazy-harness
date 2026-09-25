@@ -294,6 +294,19 @@ def _transcript_cwd(path: Path, max_lines: int = 200) -> Path | None:
     return None
 
 
+def _checkout_root(cwd: Path) -> Path | None:
+    """The checkout `cwd` is in — the hook's search scope (`--show-toplevel`).
+
+    Walked rather than asked of git, to spare a subprocess per session: the
+    nearest ancestor holding `.git`, a directory in a main checkout and a file
+    in a linked worktree.
+    """
+    for directory in (cwd, *cwd.parents):
+        if (directory / ".git").exists():
+            return directory.resolve()
+    return None
+
+
 def _graph_repo(cwd: Path) -> Path | None:
     """The main checkout whose graph serves `cwd`: the hook's rule, via git."""
     from lazy_harness.core.project_identity import main_repo_root
@@ -349,9 +362,12 @@ def collect(cfg: Config, since: datetime | None) -> tuple[list[SessionRecord], l
                 else path.stem
             )
             record = SessionRecord(agent=agent.name, session_id=session_id, repo=repo)
+            # Membership comes from the main checkout's graph, the search scope
+            # from the checkout the session sat in: the hook's two roots.
+            scope = _checkout_root(cwd) or repo
             for event in reader.read(path):
                 if event.signal is Signal.TOOL_CALLS and event.tool is not None:
-                    found = classify(event.tool, repo, cwd, event.timestamp)
+                    found = classify(event.tool, scope, cwd, event.timestamp)
                     record.calls += found or [Call("other", event.timestamp)]
             if record.calls:
                 sessions.append(record)
