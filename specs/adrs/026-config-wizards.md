@@ -13,7 +13,7 @@ ADR-018 specified two surfaces: `lh doctor` for discoverability (implemented in 
 
 The wizards always:
 1. Probe whether the underlying tool is installed (`is_<tool>_available`); if not, print the install hint with the pinned version and ask for confirmation to continue setup anyway.
-2. Walk the user through the relevant options with `click.confirm` defaults that match the safest path (cloud sync defaults to `false`, auto-rebuild defaults to `false`).
+2. Walk the user through the relevant options with `click.confirm` defaults that match the safest path (cloud sync defaults to `false`; the auto-rebuild question was removed with its field in #121, see ADR-023).
 3. Print the proposed TOML block before writing.
 4. Ask for explicit confirmation before merging into `config.toml`.
 5. Use the shared `wizards/_toml_merge.py` helper to do an atomic deep-merge that preserves all other sections.

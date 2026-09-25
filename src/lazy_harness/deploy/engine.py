@@ -404,21 +404,6 @@ def _report_omitted(
     return kept
 
 
-def _report_agent_scoped(script_names: list[str], profile: str, agent: str) -> list[str]:
-    """Drop the builtins declared for other agents, naming each one."""
-    from lazy_harness.hooks.loader import builtin_agents
-
-    kept: list[str] = []
-    for name in script_names:
-        agents = builtin_agents(name)
-        if agents and agent not in agents:
-            declared = ", ".join(sorted(agents))
-            click.echo(f"  · {name} omitted in '{profile}': declared for agents {declared}")
-            continue
-        kept.append(name)
-    return kept
-
-
 def _report_renamed(script_names: list[str]) -> None:
     """Name the rename, once per alias found in a profile's config.
 
@@ -456,18 +441,20 @@ def _hook_entries_for(cfg: Config, profile: str, binary: str) -> dict[str, list[
     reading of the same fields here: doctor reports what deploy acts on, and the
     two would drift the first time either learned something new.
     """
-    from lazy_harness.deploy.defaults import merge_with_defaults
-    from lazy_harness.hooks.loader import resolve_script_names
+    from lazy_harness.deploy.defaults import agent_scoped_omissions, merge_with_defaults
+    from lazy_harness.hooks.loader import builtin_agents, resolve_script_names
     from lazy_harness.hooks.signal_gaps import gaps_for_profile
 
     agent = agent_for_profile(cfg, profile)
     effective = merge_with_defaults(cfg.hooks, agent)
+    for _event, name in agent_scoped_omissions(cfg.hooks, agent):
+        declared = ", ".join(sorted(builtin_agents(name)))
+        click.echo(f"  · {name} omitted in '{profile}': declared for agents {declared}")
     undeliverable = {(gap.event, gap.hook): gap for gap in gaps_for_profile(cfg, profile)}
 
     entries: dict[str, list[HookEntry]] = {}
     for event_name, script_names in effective.items():
         script_names = _report_omitted(script_names, event_name, profile, undeliverable)
-        script_names = _report_agent_scoped(script_names, profile, agent.name)
         _report_renamed(script_names)
         if not script_names:
             continue

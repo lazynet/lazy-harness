@@ -185,3 +185,18 @@ The original exception handling also missed unmatched braces, conversions such
 as `{profile!z}`, and attribute access such as `{profile.x}`. Deploy now checks
 the parsed fields and reports each invalid command through
 `ExternalHookPlaceholderError`; `lh deploy` prints the diagnostic and exits 1.
+
+## Evolution — 2026-09-25: per-agent scoping (#469)
+
+Alternative A was rejected because nothing measured needed an entry that runs on
+some profiles and not others. The graph-assist design
+(`specs/designs/2026-09-24-graph-assist-design.md`) is that measurement: Codex
+keeps `graphify hook-guard search` as the control group while Claude Code gets
+the `pre-tool-use-graph-assist` builtin instead. Each `external` table now
+accepts `agents = [...]`, and deploy emits the entry only to profiles whose
+*resolved* agent is listed. The scoping is by agent, not by profile — the need
+was one agent against another, and a per-profile list would restate the agent
+of every profile. Unknown names fail at `load_config`, with the value and the
+known agents named. Deploy never deletes an entry it no longer emits (the
+ownership rule above), so narrowing an installed entry means removing it once by
+hand.

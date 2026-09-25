@@ -46,3 +46,33 @@ def test_builtin_agents_reads_the_spec() -> None:
     assert builtin_agents(HOOK) == frozenset({"claude-code"})
     assert builtin_agents("pre-tool-use-read-size") == frozenset()
     assert builtin_agents("not-a-hook") == frozenset()
+
+
+def test_doctor_and_deploy_agree_on_an_agent_scoped_builtin() -> None:
+    """Coherence audit 2026-09-25 (high): deploy omitted the hook from the Codex
+    profile while `lh doctor` reported it as deployed there with an inert
+    operation, because the scoping lived in deploy alone. One resolver now."""
+    from lazy_harness.agents.registry import agent_for_profile
+    from lazy_harness.deploy.defaults import merge_with_defaults
+    from lazy_harness.hooks.event_surface import operation_gaps_for_profile
+    from lazy_harness.hooks.signal_gaps import gaps_for_profile
+
+    cfg = _cfg()
+    codex = agent_for_profile(cfg, "cx")
+
+    assert HOOK not in merge_with_defaults(cfg.hooks, codex)["pre_tool_use"]
+    assert HOOK not in {g.hook for g in operation_gaps_for_profile(cfg, "cx")}
+    assert HOOK not in {g.hook for g in gaps_for_profile(cfg, "cx")}
+    assert HOOK in merge_with_defaults(cfg.hooks, agent_for_profile(cfg, "cl"))["pre_tool_use"]
+
+
+def test_agent_scoped_omissions_name_what_the_merge_dropped() -> None:
+    from lazy_harness.agents.registry import agent_for_profile
+    from lazy_harness.deploy.defaults import agent_scoped_omissions
+
+    cfg = _cfg()
+
+    assert agent_scoped_omissions(cfg.hooks, agent_for_profile(cfg, "cx")) == [
+        ("pre_tool_use", HOOK)
+    ]
+    assert agent_scoped_omissions(cfg.hooks, agent_for_profile(cfg, "cl")) == []

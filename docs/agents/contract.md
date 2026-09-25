@@ -34,8 +34,11 @@ every agent honours every verdict on every event, so an adapter declares per
 event which ones it can express. A verdict an agent cannot honour is refused at
 deploy time rather than discovered at runtime.
 
-**`Operation`** — what a tool call *does*, in the three terms the built-ins
-reason about: `run_command`, `read_file`, `modify_file`. Derived from what the
+**`Operation`** — what a tool call *does*, in the four terms the built-ins
+reason about: `run_command`, `read_file`, `modify_file`, `search_code`. A
+content search with its own pattern and path (Claude Code's `Grep`) is
+`search_code`; a shell `grep` stays `run_command`, its pattern inside the
+command. Derived from what the
 hooks consume, not from what a tool API offers. Each adapter maps its agent's
 native tool names onto these.
 
