@@ -21,17 +21,19 @@ turn it is measuring.
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import subprocess
 import tempfile
 import time
-from collections.abc import Mapping
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from lazy_harness.agents.base import HookDecision, HookEvent
-from lazy_harness.hooks.builtins._shared import existing_transcript
+from lazy_harness.agents.base import HookDecision, HookEvent, Signal
+from lazy_harness.hooks.builtins._shared import existing_transcript, transcript_reader
+
+if TYPE_CHECKING:
+    from lazy_harness.agents.base import TranscriptReader
 
 WARN_TOKENS = 200_000
 ROTATE_TOKENS = 400_000
@@ -46,46 +48,34 @@ THROTTLE_SECS = 60.0
 THROTTLED_EVENT = "post_tool_use"
 RETRACT_EVENT = "session_end"
 
-_USAGE_INPUT_KEYS = (
-    "input_tokens",
-    "cache_read_input_tokens",
-    "cache_creation_input_tokens",
-)
 
-
-def _usage_of(entry: object) -> Mapping[str, object] | None:
-    if not isinstance(entry, Mapping) or entry.get("type") != "assistant":
-        return None
-    message = entry.get("message")
-    if not isinstance(message, Mapping):
-        return None
-    usage = message.get("usage")
-    return usage if isinstance(usage, Mapping) else None
-
-
-def context_tokens(transcript: Path) -> int | None:
+def context_tokens(transcript: Path, reader: TranscriptReader) -> int | None:
     """Tokens the last turn actually sent, or None if the transcript says nothing.
 
     This is the live window, not the session's cumulative spend: every turn
     re-reads the whole window, so summing turns would report a number roughly
     three orders of magnitude too large.
+
+    The reader is the one the profile's agent declares, because the wire format
+    is the agent's: a Codex rollout read through the Claude Code shape reports
+    no usage at all, and the gauge retracted on every turn it should have
+    published. Every input channel counts, since the cache is still window.
     """
     latest: int | None = None
-    try:
-        with transcript.open(encoding="utf-8", errors="replace") as f:
-            for line in f:
-                try:
-                    entry = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                usage = _usage_of(entry)
-                if usage is None:
-                    continue
-                latest = sum(
-                    value for key in _USAGE_INPUT_KEYS if isinstance(value := usage.get(key), int)
-                )
-    except OSError:
-        return None
+    for event in reader.read(transcript):
+        usage = event.usage
+        if event.signal is not Signal.TOKEN_USAGE or usage is None:
+            continue
+        latest = sum(
+            value
+            for value in (
+                usage.input_tokens,
+                usage.cache_read_tokens,
+                usage.cache_creation_tokens,
+                usage.cache_creation_1h_tokens,
+            )
+            if value is not None
+        )
     return latest
 
 
@@ -148,7 +138,10 @@ def _record_publish(stamp: Path, now: float) -> None:
 
 def _tokens_of(event: HookEvent) -> int | None:
     transcript = existing_transcript(event.transcript_path)
-    return None if transcript is None else context_tokens(transcript)
+    if transcript is None:
+        return None
+    reader = transcript_reader(event.profile)
+    return None if reader is None else context_tokens(transcript, reader)
 
 
 def main(event: HookEvent) -> HookDecision:

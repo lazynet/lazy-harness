@@ -74,6 +74,12 @@ def _isolated_stamps(tmp_path, monkeypatch):
     monkeypatch.setattr(hook, "stamp_dir", lambda: tmp_path / "stamps")
 
 
+@pytest.fixture(autouse=True)
+def _no_real_config(tmp_path, monkeypatch):
+    """Resolve the reader from defaults, never from the operator's config.toml."""
+    monkeypatch.setattr("lazy_harness.core.paths.config_file", lambda: tmp_path / "absent.toml")
+
+
 def test_quiet_below_the_rotate_threshold(tmp_path) -> None:
     """A session under 400k gets no message at all."""
     t = _transcript(tmp_path, 150_000, 380_000)
@@ -99,6 +105,46 @@ def test_warns_above_the_rotate_threshold(tmp_path) -> None:
     msg = decision.system_message
     assert "437k" in msg
     assert "/compact" in msg and "/clear" in msg
+
+
+def test_warns_above_the_rotate_threshold_on_a_codex_profile(tmp_path, monkeypatch) -> None:
+    """A Codex rollout read through the Claude Code shape reports no usage, so the
+    notice never fired for a Codex session however large its window grew.
+    """
+    codex_dir = tmp_path / "codex-work"
+    codex_dir.mkdir()
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        '[harness]\nversion = "1"\n\n[agent]\ntype = "claude-code"\n\n'
+        '[profiles]\ndefault = "work"\n\n'
+        f'[profiles.work]\nconfig_dir = "{codex_dir}"\nroots = ["~"]\nagent = "codex"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("lazy_harness.core.paths.config_file", lambda: cfg)
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_text(
+        json.dumps(
+            {
+                "timestamp": "2026-09-25T12:16:47.767Z",
+                "type": "token_usage_record",
+                "payload": {
+                    "response_id": "resp_1",
+                    "usage": {"input_tokens": 437_000, "cached_input_tokens": 430_000},
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    event = HookEvent(
+        event="session_stop",
+        profile="work",
+        session_id="s-codex",
+        cwd=Path(""),
+        transcript_path=rollout,
+    )
+
+    assert "437k" in hook.main(event).system_message
 
 
 def test_notice_fires_once_per_session(tmp_path) -> None:
