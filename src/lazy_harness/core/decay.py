@@ -37,10 +37,9 @@ class DecayCandidate:
 def _frontmatter_lines(text: str) -> list[str] | None:
     """The lines between the opening and closing `---` markers, or None.
 
-    Line-based, not a YAML parse — `pyyaml` is a dev-only dependency in this
-    package, and `collect_existing_learnings` already reads this same file
-    shape the same way (`line.startswith("title:")`), so a second parsing
-    strategy would be a second way to disagree with the writer.
+    Line-based, not a YAML parse — `collect_existing_learnings` already reads
+    this same file shape the same way (`line.startswith("title:")`), so a
+    second parsing strategy would be a second way to disagree with the writer.
     """
     if not text.startswith("---\n"):
         return None
