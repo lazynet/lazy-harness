@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.82.0](https://github.com/lazynet/lazy-harness/compare/v0.81.1...v0.82.0) (2026-09-25)
+
+
+### Features
+
+* integrate harness review improvements ([#473](https://github.com/lazynet/lazy-harness/issues/473)) ([ca935eb](https://github.com/lazynet/lazy-harness/commit/ca935eb4e5b33670d1819ec1e2d4547e1547e04c))
+
 ## [0.81.1](https://github.com/lazynet/lazy-harness/compare/v0.81.0...v0.81.1) (2026-09-25)
 
 
