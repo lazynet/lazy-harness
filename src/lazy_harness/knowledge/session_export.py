@@ -9,11 +9,14 @@ from datetime import datetime
 from pathlib import Path
 
 from lazy_harness.core.config import ClassifyRule, _default_classify_rules
+from lazy_harness.core.project_identity import main_repo_root, project_key
 
 
 def _parse_session_jsonl(
     filepath: Path,
 ) -> tuple[dict[str, str], list[dict[str, str]], bool]:
+    from lazy_harness.knowledge.compound_loop import _transcript_message
+
     meta: dict[str, str] = {}
     messages: list[dict[str, str]] = []
     first_timestamp = ""
@@ -25,8 +28,12 @@ def _parse_session_jsonl(
             d = json.loads(line)
         except json.JSONDecodeError:
             continue
+        if not isinstance(d, dict):
+            continue
         msg_type = d.get("type", "")
         ts = d.get("timestamp", "")
+        if not isinstance(ts, str):
+            ts = ""
         if not first_timestamp and ts:
             first_timestamp = ts
         if msg_type in ("permission-mode", "last-prompt"):
@@ -34,27 +41,44 @@ def _parse_session_jsonl(
             continue
         if msg_type == "system" and not meta:
             meta = {
-                "cwd": d.get("cwd", ""),
-                "version": d.get("version", ""),
-                "branch": d.get("gitBranch", ""),
-                "timestamp": ts,
+                key: value if isinstance(value, str) else ""
+                for key, value in {
+                    "cwd": d.get("cwd", ""),
+                    "version": d.get("version", ""),
+                    "branch": d.get("gitBranch", ""),
+                    "timestamp": ts,
+                }.items()
             }
             continue
-        if msg_type in ("user", "assistant"):
-            msg = d.get("message", {})
-            content = msg.get("content", "")
-            texts: list[str] = []
-            if isinstance(content, str) and content.strip():
-                texts.append(content.strip())
-            elif isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict) and block.get("type") == "text":
-                        text = block.get("text", "").strip()
-                        if text:
-                            texts.append(text)
-            if texts:
-                role = "User" if msg_type == "user" else "Claude"
-                messages.append({"role": role, "text": "\n\n".join(texts), "timestamp": ts})
+        if msg_type == "session_meta" and not meta:
+            payload = d.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            meta = {
+                key: value if isinstance(value, str) else ""
+                for key, value in {
+                    "cwd": payload.get("cwd", ""),
+                    "version": payload.get("cli_version", ""),
+                    "session_id": payload.get("id", ""),
+                    "agent": "codex",
+                    "timestamp": ts,
+                }.items()
+            }
+            continue
+        message = _transcript_message(d)
+        if message is not None:
+            role, texts = message
+            if msg_type == "response_item" and role == "user":
+                is_interactive = True
+            messages.append(
+                {
+                    "role": "User"
+                    if role == "user"
+                    else ("Assistant" if msg_type == "response_item" else "Claude"),
+                    "text": "\n\n".join(texts),
+                    "timestamp": ts,
+                }
+            )
     if not meta.get("timestamp"):
         meta["timestamp"] = first_timestamp
     return meta, messages, is_interactive
@@ -155,6 +179,9 @@ def export_session(
     min_messages: int = 4,
     force: bool = False,
     classify_rules: list[ClassifyRule] | None = None,
+    *,
+    source_profile: str = "",
+    source_identity: str = "",
 ) -> tuple[Path | None, SkipReason | None]:
     effective_min = 1 if force else min_messages
     meta, messages, is_interactive = _parse_session_jsonl(session_file)
@@ -162,7 +189,9 @@ def export_session(
         return None, "short"
     if not is_interactive and not force:
         return None, "non-interactive"
-    session_id = session_file.stem
+    session_id = meta.get("session_id") or session_file.stem
+    if re.fullmatch(r"[A-Za-z0-9_-]+", session_id) is None:
+        session_id = session_file.stem
     cwd = meta.get("cwd", "")
     if not cwd:
         cwd = _decode_project_dir(session_file.parent.name)
@@ -185,11 +214,24 @@ def export_session(
 
     rules = classify_rules if classify_rules is not None else _default_classify_rules()
     profile, session_type = _classify(cwd, rules)
+    # A decoded agent directory is ambiguous and cannot prove repository scope.
+    recorded_cwd = meta.get("cwd", "")
+    source_cwd = Path(recorded_cwd) if recorded_cwd else None
+    scoped_key = ""
+    scoped_root = ""
+    if source_cwd is not None and source_cwd.is_absolute() and source_cwd.is_dir():
+        scoped_key = project_key(source_cwd)
+        scoped_root = str((main_repo_root(source_cwd) or source_cwd).resolve())
     parts: list[str] = [
-        f"---\ntype: claude-session\nsession_id: {session_id}\n",
+        f"---\ntype: {meta.get('agent', 'claude')}-session\nsession_id: {session_id}\n",
         f"date: {date_str}\ncwd: {cwd}\n",
         f"project: {project}\nprofile: {profile}\nsession_type: {session_type}\n",
-        f"branch: {meta.get('branch', '')}\nclaude_version: {meta.get('version', '')}\n",
+        f"project_key: {json.dumps(scoped_key)}\n"
+        f"project_root: {json.dumps(scoped_root)}\n"
+        f"source_profile: {json.dumps(source_profile)}\n",
+        f"source_identity: {json.dumps(source_identity)}\n",
+        f"branch: {meta.get('branch', '')}\n"
+        f"{meta.get('agent', 'claude')}_version: {meta.get('version', '')}\n",
         f"messages: {len(messages)}\n---\n\n",
         f"# Session {date_str} — {project or session_type}\n\n",
         f"**CWD**: `{cwd}` | **Project**: {project} | **Profile**: {profile}\n\n---\n\n",

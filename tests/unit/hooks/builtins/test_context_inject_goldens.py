@@ -362,8 +362,17 @@ def _last_session(world: World) -> None:
     write_marker(world.knowledge_root)
     sessions = world.knowledge_root / "sessions"
     sessions.mkdir(parents=True, exist_ok=True)
-    (sessions / "2026-09-10-work.md").write_text(_SESSION_MD)
-    world.config(f'\n[knowledge]\nroot = "{world.knowledge_root}"\n')
+    (sessions / "2026-09-10-work.md").write_text(
+        _SESSION_MD.replace(
+            "project: work\n",
+            "project_key: local/work\nsource_identity: work\n"
+            f'project_root: "{world.work.resolve()}"\n',
+        )
+    )
+    world.config(
+        f'\n[knowledge]\nroot = "{world.knowledge_root}"\n'
+        f'\n[profiles.work]\nconfig_dir = "{world.agent_dir}"\n'
+    )
 
 
 def _lazynorth(world: World) -> None:
@@ -575,8 +584,9 @@ def test_dropping_proposals_promotes_the_one_line_summary() -> None:
     """Pending proposals are never silently hidden by truncation."""
     body = _body("truncation-promotes-proposals-summary")
 
-    assert "dropped Recent history, Proposals to review" in body
+    assert body.startswith("[truncated]\n")
     assert "⚠ 2 claude-md proposal(s) pending" in body
+    assert len(body) <= 120
     # The section itself is gone; only the one-liner survives.
     assert "## Proposals to review" not in body
 

@@ -34,6 +34,14 @@ class RunnerError(Exception):
     """A failure the runner resolves against its policy rather than raising."""
 
 
+class UnknownProfileError(RunnerError):
+    """No declared identity may run this invocation."""
+
+    def __init__(self, reason: str, caller: str | None) -> None:
+        super().__init__(reason)
+        self.caller = caller
+
+
 TRACE_ENV = "LH_HOOK_TRACE"
 """Set to exactly `"1"` to record one line per dispatch in the runtime dir's log.
 
@@ -122,36 +130,16 @@ def _caller_agent(payload: dict) -> str | None:
 
 
 def _fallback_profile(cfg: Config, profile: str, caller: str | None) -> str:
-    """The declared profile an unknown `profile` falls back to, or a refusal.
+    """Refuse an unknown identity even when the calling agent is known.
 
-    Profiles are identity x agent (ADR-068), and the adapter the fallback
-    resolves decides the wire format of every answer. A stale name from a
-    Codex `hooks.json` falling back to a Claude Code default answered Codex in
-    Claude Code's format, and ran it under a profile -- memory scope, metrics
-    label -- that belongs to the other agent. The fallback therefore never
-    crosses agents: the default when it runs the caller's agent, else the
-    caller's only declared profile, else the refusal the runner gave before any
-    fallback. That refusal is exit 2 with the reason on stderr, which Codex
-    0.155.1 was run honouring (`specs/designs/codex-evidence.md` §8).
+    A payload marker identifies a wire protocol, never a persona. Neither a
+    default nor the caller's only configured profile proves the missing identity.
     """
-    from lazy_harness.agents.registry import agent_for_profile
-
-    declared = cfg.profiles.items
-    if caller is None:
-        raise RunnerError(
-            f"unknown profile {profile!r}; declared: {sorted(declared)}; "
-            f"cannot tell which agent is calling, so no profile to fall back to"
-        )
-    default_name = cfg.profiles.default
-    if default_name in declared and agent_for_profile(cfg, default_name).name == caller:
-        return default_name
-    same_agent = sorted(name for name in declared if agent_for_profile(cfg, name).name == caller)
-    if len(same_agent) == 1:
-        return same_agent[0]
-    raise RunnerError(
-        f"unknown profile {profile!r}; declared: {sorted(declared)}; "
-        f"no default profile to fall back to for a {caller} caller "
-        f"({len(same_agent)} declared {caller} profiles: {same_agent})"
+    raise UnknownProfileError(
+        f"unknown profile {profile!r}; declared: {sorted(cfg.profiles.items)}; "
+        f"identity cannot be inferred for {caller or 'unidentified'} caller; "
+        "repair the deployed hook's --profile",
+        caller,
     )
 
 
@@ -168,17 +156,8 @@ def _adapter_for(profile: str, payload: dict) -> tuple[AgentAdapter, str, str | 
     delivers. `test_the_deploy_and_the_runner_resolve_one_profile_to_the_same_agent`
     holds the two halves together.
 
-    Returns the adapter, the profile name the hook actually runs under (which
-    changes on the fallback below), and a warning to surface on stderr when it
-    did.
-
-    The profile is still validated against the config, but a typo no longer
-    takes every tool call down with it. Measured 2026-09-24 during the ADR-068
-    cutover: a renamed or removed profile made `pre-tool-use-security` exit 2
-    for `ls` and for a recursive delete alike, because the runner refused
-    before the builtin ever looked at the command. Failing closed is
-    defensible for a security hook; an identical diagnostic for a benign and a
-    dangerous command is not.
+    Returns the adapter, the unchanged profile and no warning. Unknown named
+    profiles are refused before a builtin can read another identity's context.
     """
     from lazy_harness.agents.registry import agent_for_profile
     from lazy_harness.core.config import Config, ConfigError, load_config
@@ -202,15 +181,9 @@ def _adapter_for(profile: str, payload: dict) -> tuple[AgentAdapter, str, str | 
     # an empty profile against a populated table would take every hook down
     # with it on exactly the machines that did run `lh init`.
     #
-    # A *named* profile absent from the table falls back to a declared profile
-    # running the calling agent -- `_fallback_profile` says which, and why it
-    # must never be another agent's. The fallback still runs under a real,
-    # declared profile, so memory and metrics land where that profile owns
-    # them, not where the typo pointed.
+    # Knowing the agent is insufficient to select an identity.
     if profile and declared and profile not in declared:
-        fallback = _fallback_profile(cfg, profile, _caller_agent(payload))
-        warning = f"unknown profile {profile!r}; falling back to profile {fallback!r}"
-        return agent_for_profile(cfg, fallback), fallback, warning
+        _fallback_profile(cfg, profile, _caller_agent(payload))
     return agent_for_profile(cfg, profile), profile, None
 
 
@@ -322,6 +295,25 @@ def run_hook(name: str, *, profile: str, stdin_text: str) -> HookOutput:
         return output
     except Exception as exc:  # noqa: BLE001 — the policy below is the whole point
         reason = str(exc) if isinstance(exc, RunnerError) else f"{type(exc).__name__}: {exc}"
+        if spec.blocking and isinstance(exc, UnknownProfileError) and exc.caller:
+            from lazy_harness.agents.base import HookDecision, Verdict
+            from lazy_harness.agents.registry import get_agent
+
+            try:
+                adapter = get_agent(exc.caller)
+                event = adapter.parse_hook_input(
+                    _canonical_event(adapter, payload, spec.event), payload, profile=profile
+                )
+                output = adapter.format_hook_output(
+                    event, HookDecision(verdict=Verdict.DENY, reason=f"{name}: {reason}")
+                )
+                return HookOutput(
+                    stdout=output.stdout,
+                    stderr=output.stderr or f"{name}: {reason}",
+                    exit_code=output.exit_code,
+                )
+            except Exception:  # noqa: BLE001 — an unsupported refusal still fails closed
+                pass
         if spec.blocking:
             return HookOutput(stdout=None, stderr=f"{name}: {reason}", exit_code=2)
         return HookOutput(stdout=None, stderr=f"{name}: {reason}", exit_code=0)

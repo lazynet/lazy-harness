@@ -259,20 +259,15 @@ def configured_profiles(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("lazy_harness.core.paths.config_file", lambda: cfg)
 
 
-def test_unknown_profile_falls_back_to_default_for_a_benign_command(
+def test_unknown_profile_refuses_a_benign_command(
     monkeypatch: pytest.MonkeyPatch, configured_profiles: None
 ) -> None:
-    """A blocking hook that abstains must still abstain under the fallback.
-
-    Before this fix, `_adapter_for` raised before the builtin ever ran, so
-    every blocking hook exited 2 on an unknown profile regardless of what the
-    command was -- `ls` and `rm -rf /` got the same diagnostic.
-    """
+    """A default cannot establish the identity of a stale profile name."""
     register(monkeypatch, "guard", lambda event: HookDecision(), blocking=True)
 
     result = runner.run_hook("guard", profile="ghost", stdin_text=json.dumps(CLAUDE_PRE_TOOL_USE))
 
-    assert result.exit_code == 0
+    assert result.exit_code == 2
     assert "ghost" in result.stderr
     assert "lazy" in result.stderr
 
@@ -280,7 +275,7 @@ def test_unknown_profile_falls_back_to_default_for_a_benign_command(
 def test_unknown_profile_still_blocks_a_dangerous_command(
     monkeypatch: pytest.MonkeyPatch, configured_profiles: None
 ) -> None:
-    """The fallback resolves the adapter, not the verdict: a real block still fires."""
+    """Unknown identities refuse before the builtin inspects any command."""
     register(
         monkeypatch,
         "guard",
@@ -291,7 +286,7 @@ def test_unknown_profile_still_blocks_a_dangerous_command(
     result = runner.run_hook("guard", profile="ghost", stdin_text=json.dumps(CLAUDE_PRE_TOOL_USE))
 
     assert result.exit_code == 2
-    assert "blocked" in result.stderr
+    assert "identity cannot be inferred" in result.stderr
     assert "ghost" in result.stderr
     assert "lazy" in result.stderr
 
@@ -308,12 +303,10 @@ def test_unknown_profile_lets_an_informational_hook_through(
     assert "lazy" in result.stderr
 
 
-def test_unknown_profile_resolves_the_default_s_adapter(
+def test_unknown_profile_does_not_dispatch_under_the_default(
     monkeypatch: pytest.MonkeyPatch, configured_profiles: None
 ) -> None:
-    """The event the builtin sees is threaded through under the default profile,
-    not the unresolved name -- so memory scope and metrics land on a profile
-    that actually exists."""
+    """No context or metrics may be attributed to a guessed profile."""
     seen: list[HookEvent] = []
 
     def main(event: HookEvent) -> HookDecision:
@@ -324,8 +317,7 @@ def test_unknown_profile_resolves_the_default_s_adapter(
 
     runner.run_hook("spy", profile="ghost", stdin_text=json.dumps(CLAUDE_PRE_TOOL_USE))
 
-    assert len(seen) == 1
-    assert seen[0].profile == "lazy"
+    assert seen == []
 
 
 def test_a_declared_profile_runs(
@@ -375,15 +367,14 @@ def profiles_without_a_resolvable_default(tmp_path, monkeypatch: pytest.MonkeyPa
 def test_no_resolvable_default_still_refuses_for_a_blocking_hook(
     monkeypatch: pytest.MonkeyPatch, profiles_without_a_resolvable_default: None
 ) -> None:
-    """A benign command must not slip through just because a default was
-    configured -- the fallback only helps when that default actually exists."""
+    """An invalid default cannot establish the missing identity either."""
     register(monkeypatch, "guard", lambda event: HookDecision(), blocking=True)
 
     result = runner.run_hook("guard", profile="ghost", stdin_text=json.dumps(CLAUDE_PRE_TOOL_USE))
 
     assert result.exit_code == 2
     assert "ghost" in result.stderr
-    assert "no default" in result.stderr.lower()
+    assert "identity cannot be inferred" in result.stderr
 
 
 def test_no_resolvable_default_lets_an_informational_hook_through(
@@ -471,12 +462,7 @@ def _deny(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_a_codex_caller_on_an_unknown_profile_is_blocked_in_codex_s_format(
     monkeypatch: pytest.MonkeyPatch, codex_profile: str
 ) -> None:
-    """The fallback must never change the wire format the caller speaks.
-
-    The default here is a Claude Code profile. Falling back to it answered a
-    Codex session in Claude Code's format and under Claude Code's profile. The
-    one declared Codex profile is the only fallback that keeps Codex's envelope.
-    """
+    """Refusal uses the identified caller's envelope without choosing a profile."""
     _deny(monkeypatch)
 
     result = runner.run_hook("guard", profile="ghost", stdin_text=json.dumps(CODEX_PRE_TOOL_USE))
@@ -488,7 +474,7 @@ def test_a_codex_caller_on_an_unknown_profile_is_blocked_in_codex_s_format(
     assert codex_profile in result.stderr
 
 
-def test_a_codex_caller_runs_under_the_codex_profile_it_fell_back_to(
+def test_a_codex_caller_never_runs_under_a_guessed_profile(
     monkeypatch: pytest.MonkeyPatch, codex_profile: str
 ) -> None:
     seen: list[HookEvent] = []
@@ -501,10 +487,10 @@ def test_a_codex_caller_runs_under_the_codex_profile_it_fell_back_to(
 
     runner.run_hook("spy", profile="ghost", stdin_text=json.dumps(CODEX_PRE_TOOL_USE))
 
-    assert [event.profile for event in seen] == [codex_profile]
+    assert seen == []
 
 
-def test_a_claude_caller_still_falls_back_to_a_claude_default(
+def test_a_claude_caller_refuses_without_using_the_default(
     monkeypatch: pytest.MonkeyPatch, codex_profile: str
 ) -> None:
     """The Codex profile in the table must not capture a Claude caller."""
@@ -513,21 +499,22 @@ def test_a_claude_caller_still_falls_back_to_a_claude_default(
     result = runner.run_hook("guard", profile="ghost", stdin_text=json.dumps(CLAUDE_PRE_TOOL_USE))
 
     assert result.exit_code == 2
-    assert "blocked" in result.stderr
+    assert "identity cannot be inferred" in result.stderr
     assert "'lazy'" in result.stderr
 
 
 def test_a_codex_caller_with_no_codex_profile_refuses(
     monkeypatch: pytest.MonkeyPatch, configured_profiles: None
 ) -> None:
-    """Every declared profile is Claude Code's: nothing left speaks Codex."""
+    """The payload identifies the refusal protocol without a Codex profile."""
     register(monkeypatch, "guard", lambda event: HookDecision(), blocking=True)
 
     result = runner.run_hook("guard", profile="ghost", stdin_text=json.dumps(CODEX_PRE_TOOL_USE))
 
-    assert result.exit_code == 2
+    assert result.exit_code == 0
     assert "ghost" in result.stderr
     assert "codex" in result.stderr
+    assert json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
 @pytest.fixture
@@ -546,14 +533,15 @@ def two_codex_profiles(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
 def test_a_codex_caller_with_two_codex_profiles_refuses(
     monkeypatch: pytest.MonkeyPatch, two_codex_profiles: None
 ) -> None:
-    """Picking one of two would pick a memory scope; the brief allows exactly one."""
+    """Neither of the caller's profiles proves the missing identity."""
     register(monkeypatch, "guard", lambda event: HookDecision(), blocking=True)
 
     result = runner.run_hook("guard", profile="ghost", stdin_text=json.dumps(CODEX_PRE_TOOL_USE))
 
-    assert result.exit_code == 2
+    assert result.exit_code == 0
     assert "cx1" in result.stderr
     assert "cx2" in result.stderr
+    assert json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
 @pytest.fixture
@@ -568,7 +556,7 @@ def codex_default(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("lazy_harness.core.paths.config_file", lambda: cfg)
 
 
-def test_a_codex_caller_prefers_a_codex_default_over_counting(
+def test_a_codex_default_does_not_change_the_unknown_profile_refusal(
     monkeypatch: pytest.MonkeyPatch, codex_default: None
 ) -> None:
     _deny(monkeypatch)

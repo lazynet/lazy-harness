@@ -9,8 +9,11 @@ from lazy_harness.core.repo_instructions import check_repository
 AGENTS_BODY = "# AGENTS.md — fixture\n\nEvery change goes through the gate.\n"
 
 
-def _codes(root: Path) -> list[tuple[str, str]]:
-    return [(finding.path.as_posix(), finding.code) for finding in check_repository(root)]
+def _codes(root: Path, *, instruction_data: tuple[Path, ...] = ()) -> list[tuple[str, str]]:
+    return [
+        (finding.path.as_posix(), finding.code)
+        for finding in check_repository(root, instruction_data=instruction_data)
+    ]
 
 
 def test_a_repository_with_only_root_agents_md_is_clean(tmp_path: Path) -> None:
@@ -105,3 +108,28 @@ def test_an_ancestor_claude_md_is_reported(tmp_path: Path) -> None:
     (repo / "AGENTS.md").write_text(AGENTS_BODY)
 
     assert [f.code for f in check_repository(repo)] == ["ancestor-claude-md-shadows-agents"]
+
+
+def test_declared_instruction_data_is_excluded_by_exact_path(tmp_path: Path) -> None:
+    (tmp_path / "AGENTS.md").write_text(AGENTS_BODY)
+    fixtures = tmp_path / "fixtures"
+    fixtures.mkdir()
+    (fixtures / "CLAUDE.md").write_text("stored sample")
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    (nested / "CLAUDE.md").write_text("active shadow")
+
+    assert _codes(tmp_path, instruction_data=(Path("fixtures/CLAUDE.md"),)) == [
+        ("nested/CLAUDE.md", "claude-md-shadows-agents")
+    ]
+
+
+def test_data_exclusion_cannot_hide_ancestor_shadow(tmp_path: Path) -> None:
+    (tmp_path / "CLAUDE.md").write_text("ancestor")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "AGENTS.md").write_text(AGENTS_BODY)
+
+    assert _codes(repo, instruction_data=(Path("CLAUDE.md"),)) == [
+        ((tmp_path / "CLAUDE.md").as_posix(), "ancestor-claude-md-shadows-agents")
+    ]

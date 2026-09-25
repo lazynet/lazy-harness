@@ -108,12 +108,14 @@ def test_last_session_context_picks_most_recent(tmp_path: Path) -> None:
     (sessions / "2026-04").mkdir(parents=True)
     old = sessions / "2026-03" / "2026-03-01-aaaa.md"
     old.write_text(
-        "---\nproject: my-proj\ndate: 2026-03-01 10:00\nmessages: 10\n---\n\n"
+        "---\nproject_key: github.com/team/my-proj\nsource_identity: work\n"
+        "date: 2026-03-01 10:00\nmessages: 10\n---\n\n"
         "## User\n\nfirst task\n"
     )
     new = sessions / "2026-04" / "2026-04-10-bbbb.md"
     new.write_text(
-        "---\nproject: my-proj\ndate: 2026-04-10 09:00\nmessages: 42\n---\n\n"
+        "---\nproject_key: github.com/team/my-proj\nsource_identity: work\n"
+        "date: 2026-04-10 09:00\nmessages: 42\n---\n\n"
         "## User\n\ndebug the broken hook\n"
     )
     import os
@@ -123,7 +125,7 @@ def test_last_session_context_picks_most_recent(tmp_path: Path) -> None:
     os.utime(old, (now - 3600, now - 3600))
     os.utime(new, (now, now))
 
-    result = last_session_context(sessions, "my-proj")
+    result = last_session_context(sessions, "github.com/team/my-proj", identity="work")
     assert "2026-04-10 09:00" in result
     assert "42 messages" in result
     assert "debug the broken hook" in result
@@ -143,9 +145,10 @@ def test_last_session_context_truncates_long_user_message(tmp_path: Path) -> Non
     (sessions / "2026-04").mkdir(parents=True)
     long_msg = "a" * 120
     (sessions / "2026-04" / "a.md").write_text(
-        f"---\nproject: p\ndate: 2026-04-10\nmessages: 5\n---\n\n## User\n\n{long_msg}\n"
+        "---\nproject_key: github.com/team/p\nsource_identity: work\n"
+        f"date: 2026-04-10\nmessages: 5\n---\n\n## User\n\n{long_msg}\n"
     )
-    result = last_session_context(sessions, "p")
+    result = last_session_context(sessions, "github.com/team/p", identity="work")
     assert '..."' in result
 
 
@@ -364,7 +367,7 @@ def test_qmd_suggest_context_formats_hits_as_markdown(monkeypatch) -> None:
         QmdHit(file="qmd://col/b.md", title="OAuth flow", score=0.87),
     ]
     monkeypatch.setattr("lazy_harness.knowledge.qmd.query", lambda *a, **kw: hits)
-    out = mod.qmd_suggest_context("auth", top_k=3)
+    out = mod.qmd_suggest_context("auth", top_k=3, collection="col")
     assert "Auth notes" in out
     assert "OAuth flow" in out
     assert "qmd://col/a.md" in out
@@ -578,6 +581,7 @@ def test_context_inject_includes_qmd_suggest_section_when_qmd_returns_hits(
     lh_config.mkdir()
     (lh_config / "config.toml").write_text(
         '[harness]\nversion = "1"\n\n[context_inject]\nqmd_suggest_enabled = true\n'
+        f'[profiles.work]\nconfig_dir = "{home / ".claude"}"\nqmd_collection = "col"\n'
     )
 
     env = {

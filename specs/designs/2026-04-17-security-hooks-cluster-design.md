@@ -1,7 +1,7 @@
 # Security hooks cluster — design
 
 **Date:** 2026-04-17
-**Status:** proposed
+**Status:** implemented; security exception contract revised 2026-09-25
 **Related ADRs:** [`006-hooks-subprocess-json.md`](../adrs/006-hooks-subprocess-json.md), [`009-profile-symlink-deploy.md`](../adrs/009-profile-symlink-deploy.md)
 **Backlog items:** `PreToolUse security` + `PostToolUse auto-format` (Prioridad ALTA cluster in [`specs/backlog.md`](../backlog.md))
 
@@ -19,7 +19,7 @@ Both gaps are closed by two new builtin hooks that Claude Code invokes automatic
 - Blocking `echo $SECRET` / `printf $TOKEN` style exfiltration. False-positive rate is too high (`echo $USER`, `echo $PATH`, legitimate CI scripts) and would require per-variable allowlists. Deferred to a v2 if evidence of actual exfiltration appears.
 - Multi-formatter support (JSON, YAML, Markdown). The backlog identifies Python-format drift only; widening scope to other languages has no evidence of pain.
 - `ruff check --fix --unsafe-fixes` as part of the PostToolUse hook. Unsafe fixes can change semantics silently (a comprehension simplification that shifts behavior) and the agent would not see the diff. `ruff format` is idempotent and whitespace-only.
-- Interactive confirmation. Hooks are non-interactive by contract (ADR-006). If a command is blocked, the agent either rewords it or the human adds the pattern to the allowlist.
+- Interactive confirmation. Hooks are non-interactive. A blocked operation must be reviewed; incidental text or a reworded command cannot grant an exception. Only an explicitly scoped literal cleanup has a configurable exception.
 
 ## Architecture
 
@@ -46,25 +46,34 @@ _BUILTIN_HOOKS = {
 
 ### Profile config shape
 
-Each profile's `config.toml` gains two blocks:
+Policy lives in the shared harness `config.toml` and affects each profile reading
+that file. The security options belong to the existing event table:
 
 ```toml
 [hooks.pre_tool_use]
-scripts = ["pre-tool-use-security"]
-allow_patterns = [
-  # Regex patterns that exempt a matched command from blocking.
-  # Example: "\\brm\\s+-rf\\s+\\.worktrees/" — cleanup-worktree scripts
-]
+recursive_delete_roots = ["/absolute/project/.worktrees", "/absolute/scratch"]
+denied_commands = ["example-cli"]
 
 [hooks.post_tool_use]
 scripts = ["post-tool-use-format"]
 ```
 
-Both blocks are added **default-on** to the `lh init` template so future profiles inherit them automatically. Existing profiles (`lazy` and `flex`) need a one-time manual snippet paste documented in the PR description — avoids building a migration command for a two-profile user base.
+An omitted `scripts` key inherits default hooks; an explicit list replaces them,
+and `scripts = []` opts out. Adding policy must preserve omission through both
+new-document and existing-document save/load cycles. Neither policy list has a
+nonempty default. No live profile migration happens automatically.
+
+Legacy `allow_patterns` remains readable configuration, but the security hook
+never evaluates it as an exemption. Replace reviewed cleanup regexes with
+absolute roots; other regex exemptions have no automatic replacement. The
+separate git-scope hook's allowlist is unaffected.
 
 ### Claude Code settings.json emission
 
-`src/lazy_harness/agents/claude_code.py` already translates the internal `hook_event_map` to native Claude Code events. The two new entries emit:
+The following was the initial April deployment sketch. Current deployments use
+`lh hook`, normalized operations and wider file-tool subscriptions; see
+[`docs/how/hooks.md`](../../docs/how/hooks.md#pre-tool-use-security-runs-on-pretooluse).
+It is not a configuration template for the revised policy.
 
 ```json
 {
@@ -101,7 +110,7 @@ from dataclasses import dataclass
 from typing import Literal
 import re
 
-Category = Literal["filesystem", "sql", "terraform", "credentials", "git"]
+Category = Literal["filesystem", "sql", "terraform", "credentials", "git", "policy"]
 
 
 @dataclass(frozen=True)
@@ -120,7 +129,7 @@ class BlockDecision:
 BLOCK_RULES: tuple[BlockRule, ...] = (
     BlockRule("filesystem",  re.compile(_COMMAND_START + r"rm\s+(?=…recursive flag…)\S+.*"),                          "Recursive delete"),
     BlockRule("filesystem",  re.compile(_COMMAND_START + r"truncate\s+(-s\s+\d+\s+)?[^\s-]"),                         "File truncation"),
-    BlockRule("git",         re.compile(_COMMAND_START + r"git\s+push\s+(--force\b|-f\b)(?!.*--force-with-lease)"),   "Force-push without lease"),
+    BlockRule("git",         re.compile(_COMMAND_START + r"git\s+push\s+(--force(?!-with-lease)\b|-f\b)"),   "Force-push without lease"),
     BlockRule("git",         re.compile(_COMMAND_START + r"git\s+reset\s+--hard\b"),                                  "Hard reset discards work"),
     BlockRule("git",         re.compile(_COMMAND_START + r"git\s+add\s+(-f\b|--force\b)[^|;&\n]*(\.env|\.pem|\.key|\.p12|credentials|id_rsa|id_ed25519)"), "Forced add of secret"),
     BlockRule("sql",         re.compile(r"\b(drop|truncate)\s+(table|database)\b", re.IGNORECASE),                    "SQL destruction"),
@@ -138,69 +147,64 @@ BLOCK_RULES: tuple[BlockRule, ...] = (
 Pattern authoring notes:
 
 - The `[^|;&\n]*` guard prevents matches where the credentials path is on the *right* side of a pipe / semicolon / ampersand (i.e., legitimate commands that only reference a sensitive path as a pipe sink, such as `some-generator | tee out.pem`). The intent is to catch direct *reads*, not all mentions. The newline belongs in that class for the same reason the separators do: a command's arguments end at the line break, and without it a `cat` opening a heredoc on the first line reaches a secrets filename written in the body three lines down.
-- `(?!--force-with-lease)` negative-lookahead on `git push --force` allows the safer lease variant through.
+- The negative lookahead after `--force` permits the lease-only spelling. Token
+  inspection also finds `--force`/`-f` after operands, short flag clusters and
+  forced `+refspec`. A lease flag does not exempt an additional force flag.
 - The `rm` rule matches **recursion alone**, in one lookahead. Force is not required and is not matched at all: `rm -rf`, `rm -fr`, `rm -r -f`, `rm --recursive --force`, `rm -r dir`, `rm -R dir`, `rm -r -- dir`, `rm -rv dir` all block; `rm -f file`, `rm -fv file`, `rm --force file`, `rm file` stay allowed. The lookahead is still keyed on the recursion letter rather than on a combined `-\S*f\S*`-style cluster, which would conflate the two and block every forced *single-file* delete under a "Recursive delete" label.
     - **Widened 2026-09-17, from a measurement rather than a preference.** It required recursion *and* force until then, so `rm -r dir` was allowed. Probe 6 (`codex-evidence.md` §4.2) put the same prompt — "a single recursive shell delete" — to the model three times and got `rm -rf` twice and `rm -r -- doomed` once; the guard blocked two of the three and the F9 acceptance gate's verdict became a coin flip on model phrasing. A rule whose verdict turns on the spelling a model happens to pick guards nothing.
     - The accepted cost is `rm -ri dir`, which prompts and now blocks anyway: the rule's subject is recursion, and an interactive confirmation is not something the pattern can read.
 - **Every rule whose token names an executable is anchored to a command position** (`_COMMAND_START`: start of a *line*, after `;`/`&`/`|`/`(`/backtick, or after a wrapper that execs its argument — `sudo`/`xargs`/`eval`/`sh -c` and its flag-cluster spellings such as `-lc`), with an optional leading path so `/bin/rm` still matches, and an optional quote so a command inside an interpreter's own string — `python3 -c '… os.system("…")'` — is still reached. Without that anchor a pattern also fires on commands that merely *mention* the token inside a quoted argument — `grep -rn "rm -rf" src`, `git commit -m "fix: rm -rf guard"`, `herdr agent prompt <pane> '<prose>'` — which is the dominant false-positive class in practice, measured three times against `terraform destroy` alone.
     - `sql` is the single deliberate exemption: `DROP TABLE` is never the executable, it is the argument of one (`psql -c "DROP TABLE users"`), so anchoring it would delete the rule rather than narrow it. The cost is that prose naming `DROP TABLE` still trips it.
     - `(?m)` is what makes `^` mean start-of-line, so a command on the second line of a multi-line script — or of a heredoc body piped into a shell — stays in command position. It has to sit at index 0 of the expression: Python accepts a global inline flag only at the start.
-    - **Known escapes, measured rather than assumed.** A command the shell reaches only indirectly is outside the anchor: a token assembled from fragments (`"terra"+"form destroy"`), a subcommand held in a variable (`T=destroy; terraform $T`), and a string built inside a command substitution (`eval $(echo …)`) all pass. `git push origin main --force` passes for an unrelated reason — that rule requires the flag adjacent to the subcommand. None is closed on purpose: each is a deliberate act, this hook guards a mistake rather than an adversary, and the widenings that would close them cost false positives on ordinary prose.
+    - **Limits.** Static inspection cannot trace dynamically constructed executable
+      names, arbitrary interpreters or every shell expansion. Quoted command
+      substitutions and `env -S` remain outside the opt-in command policy. This
+      is not an OS execution boundary. The previously documented force-push
+      ordering escape is closed: `git push origin main --force` now blocks.
 - `re.IGNORECASE` only on the SQL patterns — SQL is case-insensitive by convention; the rest are shell tokens that are case-sensitive.
 
-**Pure logic:**
+**Pure logic and exception boundary:**
 
-```python
-def should_block(command: str, allow_patterns: list[str]) -> BlockDecision | None:
-    """Return a BlockDecision if command matches a rule and no allow_pattern rescues it."""
-    for rule in BLOCK_RULES:
-        match = rule.pattern.search(command)
-        if match is None:
-            continue
-        if any(_safe_search(ap, command) for ap in allow_patterns):
-            return None  # Rescued by user allowlist.
-        return BlockDecision(rule=rule, matched_text=match.group(0))
-    return None
+`should_block` accepts legacy `allow_patterns` for call compatibility, but never
+uses them to rescue a match. `denied_commands` is checked in recognized command
+positions. Existing regex rules and tokenized rm/git arguments then determine
+whether an operation is destructive.
 
+Only the recursive-delete rule can be exempted by `recursive_delete_roots`.
+`_safe_cleanup` accepts one simple literal rm invocation and verifies **every**
+operand resolves strictly below an allowed root. It resolves symlinks at both
+ends, rejects the root itself, traversal and sibling-prefix paths, and uses the
+event cwd for relative operands. Quoted spaces, reordered flags and multiple
+allowed operands work; wrappers, operators, redirections, expansions, globs and
+unknown flags never qualify. Filesystem state must remain trusted between
+inspection and execution.
 
-def _safe_search(pattern: str, text: str) -> bool:
-    """Compile-and-search; broken user regexes are logged and skipped, never raised."""
-    try:
-        return re.search(pattern, text) is not None
-    except re.error:
-        return False
-```
+This closes the incidental-path reset bypass, a mixed safe/unsafe deletion, and
+pipeline rescue. An exception never transfers to another rule or operation.
 
-**Entry point:**
-
-```python
-def main() -> None:
-    payload = _read_stdin_json()
-    if payload.get("tool_name") != "Bash":
-        sys.exit(0)
-    command = payload.get("tool_input", {}).get("command", "")
-    allow = _load_allowlist()
-    decision = should_block(command, allow)
-    if decision is None:
-        sys.exit(0)
-    sys.stderr.write(_format_block_message(decision))
-    sys.exit(2)
-```
+**Entry point:** `main(event: HookEvent) -> HookDecision` consumes normalized
+operations. It returns `Verdict.DENY` on a refusal and abstains otherwise; adapters
+produce the native protocol (Claude Code stderr/exit 2, Codex JSON/exit 0). File
+reads and edits retain the independent secret-path guard and its sample/public
+key exceptions. Cleanup roots do not exempt file-tool secret paths.
 
 **Block message format** (stderr, consumed by Claude Code and surfaced to the agent):
 
 ```
 Blocked by lazy-harness PreToolUse: <reason> (<category>).
 Matched: <truncated matched_text, max 120 chars>
-If this is intentional, add a regex pattern to [hooks.pre_tool_use] allow_patterns in your profile config.toml.
+Review [hooks.pre_tool_use] in config.toml. Only recursive_delete_roots can exempt a literal cleanup; legacy allow_patterns no longer bypass security rules.
 See specs/designs/2026-04-17-security-hooks-cluster-design.md for the full rule list.
 ```
 
-**Allowlist loading** (`_load_allowlist()`):
-
-1. Locate the profile's `config.toml` by consulting `$CLAUDE_CONFIG_DIR` (set by the `lcc` wrapper per ADR-009) and walking up to the harness config root.
-2. Parse `[hooks.pre_tool_use].allow_patterns` as `list[str]`.
-3. On any failure (missing file, malformed TOML, missing section) return `[]`. This is fail-safe: no allowlist → stricter blocking, not looser.
+**Policy loading** (`_load_policy()`): resolve the harness config through
+`core.paths.config_file`, read only its local `[hooks.pre_tool_use]` table, and
+call `core.config.parse_security_policy`, the same parser the central config
+loader invokes. `ConfigError` becomes a denial without loading unrelated
+configuration. Missing files
+or sections mean empty policy lists. Unreadable or malformed files, invalid
+table shapes, unknown keys and invalid policy values refuse command execution.
+Existing size-limit keys remain valid in this shared event table.
 
 ### `post_tool_use_format.py`
 
@@ -235,11 +239,12 @@ This makes `ruff` on the global PATH a prerequisite, documented in the install i
 
 **PreToolUse path:**
 
-1. Claude Code emits `{"tool_name": "Bash", "tool_input": {"command": "..."}}` on the hook's stdin.
-2. Non-Bash tool calls → `sys.exit(0)` silently.
-3. Allowlist loaded from the profile `config.toml` (empty list if unreachable).
-4. `should_block(command, allowlist)` walks `BLOCK_RULES` top-to-bottom; **first match wins**, even if a later rule is more specific.
-5. Block: formatted message to stderr + `sys.exit(2)`. No match: silent `sys.exit(0)`.
+1. The runner parses the provider payload into a normalized tool operation.
+2. Command operations load policy and invoke `should_block`; read/edit operations
+   inspect every path through the secret-path guard. Other operations abstain.
+3. A scoped cleanup can skip only the recursive-delete rule. Other matches still
+   deny; arbitrary regex text never grants permission.
+4. The adapter serializes a denial or silent abstention for the calling provider.
 
 **PostToolUse path:**
 
@@ -252,10 +257,12 @@ This makes `ruff` on the global PATH a prerequisite, documented in the install i
 
 | Failure mode                               | PreToolUse behavior                               | PostToolUse behavior       |
 |--------------------------------------------|---------------------------------------------------|----------------------------|
-| Malformed stdin JSON                       | `sys.exit(0)` (fail-open; Claude Code's bug)      | `sys.exit(0)`              |
-| `config.toml` missing / unreadable         | Empty allowlist → stricter blocking (fail-safe)   | N/A                        |
+| Malformed stdin JSON                       | Runner refuses unusable input for this blocking hook | `sys.exit(0)`              |
+| `config.toml` missing                       | Empty policy lists; no cleanup exemption          | N/A                        |
+| `config.toml` unreadable / malformed        | Deny command execution with a policy diagnostic   | N/A                        |
 | Regex compile error in code                | Caught at import-time by tests                    | N/A                        |
-| Invalid regex in user's `allow_patterns`   | Log to `hooks.log`, skip that entry, continue     | N/A                        |
+| Legacy `allow_patterns`                    | Ignored for security exemptions, including invalid regexes | N/A                  |
+| Invalid policy key/value                   | Deny with a diagnostic naming the key             | N/A                        |
 | `ruff` not found on PATH                   | N/A                                               | Catch `FileNotFoundError`, log, exit 0 |
 | `ruff format` subprocess returns non-zero  | N/A                                               | Log stderr to `hooks.log`, exit 0 |
 | `ruff format` exceeds 10s timeout          | N/A                                               | Catch `TimeoutExpired`, log, exit 0 |
@@ -286,8 +293,15 @@ Roughly 30 cases via `pytest.parametrize`. Coverage plan:
 - **SQL:** `DROP TABLE users`, `drop database prod` → block. `SELECT * FROM users` → allow.
 - **Terraform:** `terraform destroy`, `terraform destroy -auto-approve` → block. `terraform apply -auto-approve` → block. `terraform apply` → allow. `terraform apply -replace=aws_instance.web` → block. `terraform state rm aws_instance.web` → block. `terraform plan` → allow.
 - **Credentials:** `cat .env` → block. `cat .env.example` → allow. `cat .env.local` → block. `grep -rn "process\.env" src/` → allow (an identifier ending in `.env` is an API, not the dotenv file; the escaped dot is how such a grep is usually written). `less ~/.ssh/id_rsa` → block. `cat ~/.ssh/id_rsa.pub` → allow (public key). `grep AWS_KEY ~/.aws/credentials` → block.
-- **Allowlist rescue:** `rm -rf .worktrees/foo` with `allow_patterns=[r"\.worktrees/"]` → allow.
-- **Invalid allow_pattern:** `allow_patterns=["(["]` + `rm -rf /tmp` → still block (broken regex skipped, real rules still apply).
+- **Legacy allowlist:** broad, matching and invalid regexes never rescue a denial.
+- **Scoped cleanup:** every literal operand must resolve strictly below an
+  explicit root; test mixed destinations, symlinks, root aliases, quoted paths,
+  whitespace, flag order and ambiguous shell syntax.
+- **Environment policy:** opt-in executable names block in recognized command
+  positions and wrappers; mentioning a name in ordinary prose stays allowed.
+- **Persistence:** full load/save/load/save/load cycles through the hook consumer
+  for new and existing destinations, including inherited scripts and size keys.
+- **Adversarial coverage:** targeted guard mutations must make these tests fail.
 
 ### `test_post_tool_use_format.py` — unit
 
@@ -318,7 +332,8 @@ Single PR. File changeset:
 - **New:** `src/lazy_harness/hooks/builtins/post_tool_use_format.py`
 - **Edit:** `src/lazy_harness/hooks/loader.py` — register the two new builtins.
 - **Edit:** `src/lazy_harness/agents/claude_code.py` — add hook_event_map entries for `pre_tool_use` → `PreToolUse` (matcher `"Bash"`) and `post_tool_use` → `PostToolUse` (matcher `"Edit|Write"`), if not already present.
-- **Edit:** `lh init` default template (exact path to confirm during implementation) — add the two `[hooks.*]` blocks with empty `allow_patterns = []`.
+- **Configuration:** new policy lists default to empty; preserve default hook
+  inheritance when an event table adds policy without an explicit scripts list.
 - **Edit:** `lh doctor` (if such a command exists — confirm during implementation) — add a check that warns if `ruff` is not on PATH, since the PostToolUse hook depends on it.
 - **New:** three test files as described.
 - **Edit:** `specs/backlog.md` — move the two items to Done.

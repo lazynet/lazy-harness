@@ -7,6 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 def _run_command(
     hook: str, payload: dict | str, env_extra: dict[str, str] | None = None
@@ -53,6 +55,37 @@ def test_pre_tool_use_security_allows_innocent_command(tmp_path: Path) -> None:
     )
     assert result.returncode == 0
     assert result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    "command,exit_code,reason",
+    [
+        ("rm -rf scratch/child", 0, ""),
+        ("rm -rf scratch/child outside", 2, "Recursive delete"),
+        ("example-cli list", 2, "Denied command: example-cli"),
+        ("echo example-cli", 0, ""),
+        ("git push origin main --force", 2, "Force-push without lease"),
+    ],
+)
+def test_pre_tool_use_security_consumes_scoped_policy(
+    tmp_path: Path, command: str, exit_code: int, reason: str
+) -> None:
+    (tmp_path / "config.toml").write_text(
+        '[harness]\nversion = "1"\n[hooks.pre_tool_use]\n'
+        f'recursive_delete_roots = ["{tmp_path / "scratch"}"]\n'
+        'denied_commands = ["example-cli"]\n'
+    )
+    result = _run_command(
+        "pre-tool-use-security",
+        {"cwd": str(tmp_path), "tool_name": "Bash", "tool_input": {"command": command}},
+        env_extra={"LH_CONFIG_DIR": str(tmp_path)},
+    )
+    assert result.returncode == exit_code, result.stderr
+    assert result.stdout == ""
+    if reason:
+        assert reason in result.stderr
+    else:
+        assert result.stderr == ""
 
 
 def test_post_tool_use_format_reformats_the_edited_python_file(tmp_path: Path) -> None:

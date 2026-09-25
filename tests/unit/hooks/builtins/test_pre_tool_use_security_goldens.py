@@ -136,6 +136,11 @@ ALLOWLIST_CASES: list[Case] = [
         config=_ALLOW_WORKTREES,
     ),
     _bash(
+        "rm -rf /srv/worktrees/feat",
+        case_id="scoped-cleanup-rescues-the-command",
+        config='[hooks.pre_tool_use]\nrecursive_delete_roots = ["/srv/worktrees"]\n',
+    ),
+    _bash(
         "rm -rf ./build",
         case_id="allowlist-invalid-regex-still-blocks",
         config=_ALLOW_BROKEN_REGEX,
@@ -239,7 +244,7 @@ SILENT_CASE_IDS: frozenset[str] = frozenset(
         *SHAPE_CASES,
         *EXCEPTION_CASES,
         *ABSTENTION_CASES,
-        Case(id="allowlist-rescues-the-command", stdin=""),
+        Case(id="scoped-cleanup-rescues-the-command", stdin=""),
         Case(id="path-empty-string", stdin=""),
         Case(id="path-key-absent", stdin=""),
     )

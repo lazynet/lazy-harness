@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import sqlite3
 import time
@@ -9,7 +10,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from stat import S_ISREG
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 if TYPE_CHECKING:
     from lazy_harness.plugins.contracts import MetricEvent
@@ -62,7 +65,171 @@ class RenameProfileError(Exception):
     whose `event_id` the rename would change out from under them."""
 
 
+# The only two SQLite error strings a read-only connection can produce that
+# mean "this environment couldn't prove anything", not "this store is
+# broken": failing to open the file at all, or failing to write the WAL
+# side-car the read/write path unconditionally requires. Any other
+# `OperationalError` (e.g. "no such table", a truly corrupt file) is a
+# genuine finding and must not be classified as permission-denied. Shared
+# so a read-only open (`MetricsDB.open_readonly`) and a write-path probe
+# (`selftest`'s monitoring check) agree on what counts as unverifiable.
+_PERMISSION_DENIED_MARKERS = ("unable to open database file", "readonly database")
+
+
+def looks_like_permission_denied(message: str) -> bool:
+    """True when a sqlite3 error message names an access problem, not a
+    structural one — see `_PERMISSION_DENIED_MARKERS`."""
+    lowered = message.lower()
+    return any(marker in lowered for marker in _PERMISSION_DENIED_MARKERS)
+
+
+class MetricsDBUnavailable(Exception):
+    """`MetricsDB.open_readonly` refused: the file is missing, unreadable,
+    or not a valid sqlite database.
+
+    `permission_denied` tells a caller whether this is a problem this
+    environment cannot see past (sandboxed/restrictive filesystem access)
+    or an actual finding (corruption, wrong file) — the two must not be
+    reported the same way. `not_found` is narrower still: true only for a
+    genuine `FileNotFoundError` — nothing at all sits at `path` — the one
+    case a caller may treat as "no DB has been created yet" rather than a
+    failure to report. A directory sitting there instead, or a path
+    component that should be a directory but is a plain file
+    (`NotADirectoryError`), is a *misconfigured* path, not an absent one:
+    `not_found` stays `False` for both, so a caller does not mistake a
+    broken `monitoring.db` setting for a healthy, empty store.
+    `not_found` is never true at the same time as `permission_denied`:
+    the whole point of stat-ing rather than calling `Path.is_file()` is
+    to tell "doesn't exist" apart from "couldn't check", which
+    `is_file()` collapses into the same `False` (measured on Python 3.14:
+    a `stat()` that raises `PermissionError` still makes `is_file()`
+    return `False`).
+    """
+
+    def __init__(
+        self, path: Path, reason: str, *, permission_denied: bool, not_found: bool = False
+    ) -> None:
+        super().__init__(f"{path}: {reason}")
+        self.path = path
+        self.reason = reason
+        self.permission_denied = permission_denied
+        self.not_found = not_found
+
+
 class MetricsDB:
+    @classmethod
+    def open_readonly(cls, path: Path | str) -> MetricsDB:
+        """Open an existing metrics DB for reading only.
+
+        Never issues a single write statement: no `PRAGMA
+        journal_mode=WAL`, no `_create_tables`'s CREATE/ALTER, no journal
+        mode change — a diagnostic read (`lh doctor`, selftest) must have
+        no write-path side effects on the schema, journal, or data. That
+        is a claim about the *statements this connection sends*, not a
+        guarantee that opening always succeeds without OS-level write
+        access: SQLite's read-only WAL support (3.22+) reads committed
+        WAL frames without creating a `-shm` file when one already
+        exists, but the realistic steady state — every writer closes its
+        own connection, which checkpoints and removes the `-wal`/`-shm`
+        side-cars — leaves nothing for the next reader to reuse. Opening
+        a still-WAL-mode file then needs to *create* that side-car even
+        just to read, which a read-only directory refuses outright
+        (measured: `attempt to write a readonly database`).
+
+        Connects with `mode=ro` only, deliberately never `immutable=1`.
+        Immutable would let such an open succeed without disk access, but
+        it does so by skipping the `-wal` file entirely — a write
+        committed but not yet checkpointed becomes invisible (measured:
+        turns a table with one committed, uncheckpointed row into "no
+        such table"), and a caller has no way to tell that read apart
+        from a fully caught-up one. The brief this exists for asks for
+        supported data or a reported-unavailable diagnostic, not a third,
+        quietly-stale option — so when `mode=ro` cannot open the file,
+        this raises `MetricsDBUnavailable(permission_denied=...)` rather
+        than reaching for a weaker connection mode that would.
+
+        Raises `MetricsDBUnavailable` rather than a bare sqlite3
+        exception so callers can decide whether the failure is one this
+        environment cannot verify past, or a genuine one.
+        """
+        path = Path(path)
+        # `path.stat()`, not `path.is_file()`: the latter is a boolean
+        # predicate that swallows every `OSError` it treats as "doesn't
+        # exist", and on Python 3.14 that set grew to include
+        # `PermissionError` — measured: patching `os.stat` to raise
+        # `PermissionError(EACCES)` still makes `Path.is_file()` return
+        # `False`, indistinguishable from a path that was never created.
+        # A caller reading that as "no DB yet" instead of "couldn't check"
+        # is exactly the inaccessible-reads-as-empty failure this method
+        # exists to avoid.
+        try:
+            mode = path.stat().st_mode
+        except FileNotFoundError as e:
+            # The only shape that means "nothing has been created here
+            # yet" — a caller may treat this as an empty, healthy store.
+            raise MetricsDBUnavailable(
+                path, "no such file", permission_denied=False, not_found=True
+            ) from e
+        except OSError as e:
+            # Includes `NotADirectoryError` (a path component that should
+            # be a directory is a plain file): a misconfigured path, not
+            # an absent one, so it falls through to the generic branch
+            # rather than being folded into `not_found` — `not_found`
+            # tells a caller "nothing to report", and a bad path is
+            # something to report.
+            permission_denied = e.errno in (errno.EACCES, errno.EPERM)
+            raise MetricsDBUnavailable(path, str(e), permission_denied=permission_denied) from e
+        if not S_ISREG(mode):
+            # Something exists at `path` (most likely a directory) but it
+            # is not a regular file — also a misconfigured path, not an
+            # absent one.
+            raise MetricsDBUnavailable(
+                path, f"not a regular file: {path}", permission_denied=False, not_found=False
+            )
+
+        # `quote` (default safe="/") percent-encodes `#` and `?`: left raw,
+        # `#` starts a URI fragment and `?` starts the query string, so a
+        # filename containing either silently truncates the path SQLite
+        # opens and drops `mode=ro` from what's left of the query string —
+        # measured to open a *different*, truncated path in default
+        # read/write/create mode instead of raising.
+        uri = f"file:{quote(path.as_posix())}?mode=ro"
+        try:
+            conn = sqlite3.connect(uri, uri=True)
+        except sqlite3.OperationalError as e:
+            raise MetricsDBUnavailable(
+                path, str(e), permission_denied=looks_like_permission_denied(str(e))
+            ) from e
+        except sqlite3.DatabaseError as e:
+            raise MetricsDBUnavailable(path, str(e), permission_denied=False) from e
+
+        try:
+            conn.row_factory = sqlite3.Row
+            # Forces the actual file open now, inside this try, rather than
+            # lazily on the caller's first query — where an access failure
+            # would be indistinguishable from a real "no such table" finding.
+            # Reads sqlite_master, not a bare `SELECT 1`: a constant-only
+            # query never opens the pager on some SQLite builds (measured:
+            # 3.47 lets it through, 3.51 does not), so it can silently skip
+            # validating a corrupt file's header depending on which SQLite
+            # the interpreter links.
+            conn.execute("SELECT name FROM sqlite_master LIMIT 1")
+        except sqlite3.OperationalError as e:
+            conn.close()
+            raise MetricsDBUnavailable(
+                path, str(e), permission_denied=looks_like_permission_denied(str(e))
+            ) from e
+        except sqlite3.DatabaseError as e:
+            conn.close()
+            raise MetricsDBUnavailable(path, str(e), permission_denied=False) from e
+        except BaseException:
+            conn.close()
+            raise
+
+        instance = cls.__new__(cls)
+        instance._conn = conn
+        return instance
+
     def __init__(self, path: Path | str) -> None:
         path = Path(path)
         if str(path) != ":memory:":

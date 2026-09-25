@@ -29,6 +29,7 @@ class ProfileEntry:
     config_dir: str = ""
     roots: list[str] = field(default_factory=list)
     lazynorth_doc: str = ""
+    qmd_collection: str = ""
     # Empty means "inherit `[agent].type`". Resolve it through
     # `agents.registry.agent_for_profile`, never by reading this field directly:
     # a second reader is how the deploy and run paths drift apart.
@@ -70,6 +71,7 @@ _PROFILE_ENTRY_KEYS: frozenset[str] = frozenset(
         "billing_model",
         "root_default",
         "identity",
+        "qmd_collection",
     }
 )
 
@@ -225,6 +227,13 @@ class ExternalHookConfig:
 class HookEventConfig:
     scripts: list[str] = field(default_factory=list)
     external: list[ExternalHookConfig] = field(default_factory=list)
+    recursive_delete_roots: list[str] = field(default_factory=list)
+    denied_commands: list[str] = field(default_factory=list)
+    allow_patterns: list[str] = field(default_factory=list)
+    claude_md_max_lines: int | None = None
+    claude_md_max_bytes: int | None = None
+    # A loaded options-only table inherits defaults; explicit [] suppresses them.
+    scripts_configured: bool = True
 
 
 @dataclass
@@ -429,6 +438,67 @@ def _parse_llm(raw: object) -> LLMConfig:
     )
 
 
+_HOOK_THRESHOLD_KEYS = ("claude_md_max_lines", "claude_md_max_bytes")
+
+
+def _parse_hook_thresholds(raw: dict[str, Any]) -> dict[str, int]:
+    thresholds: dict[str, int] = {}
+    for key in _HOOK_THRESHOLD_KEYS:
+        if key not in raw:
+            continue
+        value = raw[key]
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise ConfigError(f"[hooks.pre_tool_use].{key}={value!r} must be a positive integer")
+        thresholds[key] = value
+    return thresholds
+
+
+def parse_security_policy(raw: object) -> dict[str, list[str]]:
+    """Validate a raw pre_tool_use table without loading unrelated configuration.
+
+    Only security values are returned. Other hooks' options are admitted here
+    and validated by their own consumers, so an invalid memory ceiling cannot
+    disable an otherwise valid command policy.
+    """
+    if not isinstance(raw, dict):
+        raise ConfigError("[hooks.pre_tool_use] must be a table")
+    keys = ("recursive_delete_roots", "denied_commands")
+    unknown = raw.keys() - {*keys, *_HOOK_THRESHOLD_KEYS, "scripts", "external", "allow_patterns"}
+    if unknown:
+        raise ConfigError(
+            f"[hooks.pre_tool_use] has unknown field(s): {', '.join(sorted(unknown))}"
+        )
+    result: dict[str, list[str]] = {}
+    for key in keys:
+        value = raw.get(key, [])
+        if not isinstance(value, list) or any(not isinstance(v, str) or not v for v in value):
+            raise ConfigError(f"[hooks.pre_tool_use].{key} must be a list of nonempty strings")
+        result[key] = value
+    for value in result["recursive_delete_roots"]:
+        path = Path(value)
+        if not path.is_absolute() or path.resolve().parent == path.resolve():
+            raise ConfigError(
+                f"[hooks.pre_tool_use].recursive_delete_roots: {value!r} "
+                "must be an absolute path below the filesystem root"
+            )
+    for value in result["denied_commands"]:
+        if re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.+-]*", value) is None:
+            raise ConfigError(
+                f"[hooks.pre_tool_use].denied_commands: {value!r} "
+                "must be a literal executable basename, not a path or regex"
+            )
+    return result
+
+
+def _parse_security_policy(event: str, raw: dict[str, Any]) -> dict[str, list[str]]:
+    if event == "pre_tool_use":
+        return parse_security_policy(raw)
+    misplaced = sorted({"recursive_delete_roots", "denied_commands"} & raw.keys())
+    if misplaced:
+        raise ConfigError(f"[hooks.{event}]: {', '.join(misplaced)} require pre_tool_use")
+    return {}
+
+
 def _parse_profiles(raw: dict[str, Any]) -> ProfilesConfig:
     """Parse [profiles] section, separating 'default' key from profile entries."""
     default = raw.get("default", "personal")
@@ -451,6 +521,14 @@ def _parse_profiles(raw: dict[str, Any]) -> ProfilesConfig:
             root_default = value.get("root_default", False)
             if not isinstance(root_default, bool):
                 raise ConfigError(f"[profiles.{key}].root_default must be a boolean")
+            qmd_collection = value.get("qmd_collection", "")
+            if not isinstance(qmd_collection, str) or (
+                qmd_collection and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", qmd_collection)
+            ):
+                raise ConfigError(
+                    f"[profiles.{key}].qmd_collection={qmd_collection!r} must be empty "
+                    "or a collection identifier matching [A-Za-z0-9][A-Za-z0-9_-]*"
+                )
             identity = value.get("identity", "")
             if "identity" in value and not isinstance(identity, str):
                 raise ConfigError(
@@ -471,6 +549,7 @@ def _parse_profiles(raw: dict[str, Any]) -> ProfilesConfig:
                 billing_model=billing_model,
                 root_default=root_default,
                 identity=identity,
+                qmd_collection=qmd_collection,
             )
     _validate_root_defaults(items)
     return ProfilesConfig(default=default, items=items)
@@ -801,6 +880,10 @@ def load_config(path: Path) -> Config:
             cfg.hooks[event_name] = HookEventConfig(
                 scripts=event_cfg.get("scripts", []),
                 external=_parse_external_hooks(event_name, event_cfg.get("external", [])),
+                scripts_configured="scripts" in event_cfg,
+                allow_patterns=event_cfg.get("allow_patterns", []),
+                **_parse_security_policy(event_name, event_cfg),
+                **(_parse_hook_thresholds(event_cfg) if event_name == "pre_tool_use" else {}),
             )
 
     cl_raw = raw.get("compound_loop", {})
@@ -894,6 +977,7 @@ def _config_to_dict(cfg: Config) -> dict[str, Any]:
             "harness_binary": entry.harness_binary,
             "billing_model": entry.billing_model,
             "root_default": entry.root_default,
+            "qmd_collection": entry.qmd_collection,
         }
         # Omitted rather than written empty: a profile that never declared
         # `identity` must round-trip without gaining the key, so the presence
@@ -1015,7 +1099,17 @@ def _config_to_dict(cfg: Config) -> dict[str, Any]:
 
     hooks_dict: dict[str, Any] = {}
     for event_name, event_cfg in cfg.hooks.items():
-        event_dict: dict[str, Any] = {"scripts": event_cfg.scripts}
+        event_dict: dict[str, Any] = {}
+        if event_cfg.scripts_configured or event_cfg.scripts:
+            event_dict["scripts"] = event_cfg.scripts
+        if event_name == "pre_tool_use":
+            event_dict["recursive_delete_roots"] = event_cfg.recursive_delete_roots
+            event_dict["denied_commands"] = event_cfg.denied_commands
+            for key in _HOOK_THRESHOLD_KEYS:
+                value = getattr(event_cfg, key)
+                if value is not None:
+                    event_dict[key] = value
+        event_dict["allow_patterns"] = event_cfg.allow_patterns
         # A matcher-less entry has a shorthand — the bare command string — and
         # `_parse_external_hooks` reads it back identically. Always emitting
         # the table form rewrote every shorthand on every save.
@@ -1205,5 +1299,18 @@ def save_config(cfg: Config, path: Path) -> None:
     overlay = _config_to_dict(cfg)
     _apply(doc, overlay, defaults)
     _prune_owned_sections(doc, overlay)
+
+    # Generic merging skips absent empty lists; scripts=[] is an explicit opt-out.
+    for event, event_cfg in cfg.hooks.items():
+        table = doc["hooks"][event]
+        if event_cfg.scripts_configured or event_cfg.scripts:
+            if table.get("scripts") != event_cfg.scripts:
+                table["scripts"] = event_cfg.scripts
+        else:
+            table.pop("scripts", None)
+        if event == "pre_tool_use":
+            for key in _HOOK_THRESHOLD_KEYS:
+                if getattr(event_cfg, key) is None:
+                    table.pop(key, None)
 
     atomic_write_text(path, tomlkit.dumps(doc))

@@ -1,5 +1,5 @@
 {
   "exit_code": 2,
-  "stderr": "Blocked by lazy-harness PreToolUse: Secret path (**/.env) (credentials).\nMatched: /srv/app/.env\nIf this is intentional, add a regex pattern to [hooks.pre_tool_use] allow_patterns in your profile config.toml.\nSee specs/designs/2026-04-17-security-hooks-cluster-design.md for the full rule list.\n",
+  "stderr": "Blocked by lazy-harness PreToolUse: Secret path (**/.env) (credentials).\nMatched: /srv/app/.env\nReview [hooks.pre_tool_use] in config.toml. Only recursive_delete_roots can exempt a literal cleanup; legacy allow_patterns no longer bypass security rules.\nSee specs/designs/2026-04-17-security-hooks-cluster-design.md for the full rule list.\n",
   "stdout": ""
 }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import tempfile
 from pathlib import Path
 
@@ -36,14 +37,28 @@ def check_knowledge(*, config_path: Path) -> list[CheckResult]:
             pass
         results.append(CheckResult(group=group, name="path:writable", status=CheckStatus.PASSED))
     except OSError as e:
-        results.append(
-            CheckResult(
-                group=group,
-                name="path:writable",
-                status=CheckStatus.FAILED,
-                message=f"not writable: {e}",
+        # EACCES/EPERM here is this environment refusing the probe write,
+        # not proof the configured root is actually broken — same
+        # unverifiable-vs-genuine split as `monitoring_check`'s db-path
+        # probe. Anything else (ENOSPC, …) is a real finding.
+        if e.errno in (errno.EACCES, errno.EPERM):
+            results.append(
+                CheckResult(
+                    group=group,
+                    name="path:writable",
+                    status=CheckStatus.WARNING,
+                    message=f"cannot verify write access (permission denied): {e}",
+                )
             )
-        )
+        else:
+            results.append(
+                CheckResult(
+                    group=group,
+                    name="path:writable",
+                    status=CheckStatus.FAILED,
+                    message=f"not writable: {e}",
+                )
+            )
 
     try:
         marker = read_marker(knowledge_path)

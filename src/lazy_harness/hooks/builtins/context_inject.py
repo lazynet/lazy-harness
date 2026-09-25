@@ -8,6 +8,7 @@ Outputs JSON with `hookSpecificOutput` for Claude Code. Sections composed:
     ## Last session    — most recent exported session for this project
     ## Handoff         — handoff.md + pre-compact-summary.md
     ## Proposals       — claude-md.proposal.md from compound-loop
+    ## Curated memory  — canonical per-project MEMORY.md
     ## Recent history  — decisions.jsonl + failures.jsonl tails
 
 Read-only. Always exits 0. Logs to `<agent runtime dir>/logs/hooks.log`.
@@ -20,6 +21,8 @@ import os
 import re
 import subprocess
 from pathlib import Path
+
+import yaml
 
 from lazy_harness.agents.base import HookDecision, HookEvent
 
@@ -87,24 +90,40 @@ def git_context(cwd: Path) -> str:
     return "\n".join(parts)
 
 
-def last_session_context(sessions_dir: Path, project_name: str) -> str:
-    """Find the most recent exported session .md for this project and extract
-    date + message count + first user message. Matches the bash implementation."""
-    if not sessions_dir.is_dir() or not project_name:
+def last_session_context(
+    sessions_dir: Path,
+    project_name: str,
+    *,
+    identity: str = "",
+    project_root: Path | None = None,
+) -> str:
+    """Read the latest export with exact project and exporting-identity metadata.
+
+    Legacy display names and classified profile labels cannot establish scope.
+    Local project keys additionally need their main checkout's absolute path.
+    """
+    if not sessions_dir.is_dir() or "/" not in project_name or not identity:
         return ""
 
-    marker = f"project: {project_name}"
     best_path: Path | None = None
     best_mtime = 0.0
     for md in sessions_dir.rglob("*.md"):
         try:
-            # Read just enough to find the frontmatter project line
             with open(md) as f:
-                head = f.read(2048)
-            if marker not in head:
+                head = f.read(16384)
+            if not head.startswith("---\n") or "\n---\n" not in head[4:]:
+                continue
+            meta = yaml.safe_load(head[4:].split("\n---\n", 1)[0])
+            if not isinstance(meta, dict):
+                continue
+            if meta.get("project_key") != project_name or meta.get("source_identity") != identity:
+                continue
+            if project_name.startswith("local/") and (
+                project_root is None or meta.get("project_root") != str(project_root.resolve())
+            ):
                 continue
             mtime = md.stat().st_mtime
-        except OSError:
+        except (OSError, UnicodeError, yaml.YAMLError):
             continue
         if mtime > best_mtime:
             best_mtime = mtime
@@ -115,7 +134,7 @@ def last_session_context(sessions_dir: Path, project_name: str) -> str:
 
     try:
         text = best_path.read_text()
-    except OSError:
+    except (OSError, UnicodeError):
         return ""
 
     date_val = ""
@@ -445,6 +464,36 @@ def episodic_context(memory_dir: Path, limit: int = 3) -> str:
     return "\n".join(parts)
 
 
+def curated_memory_context(memory_dir: Path, max_chars: int) -> str:
+    source = memory_dir / "MEMORY.md"
+    if max_chars <= 0:
+        return ""
+    source_text = str(source)
+    source_limit = max(1, max_chars // 3)
+    if len(source_text) > source_limit:
+        source_text = "…" + source_text[-(source_limit - 1) :]
+    prefix = f"## Curated memory\nSource: {source_text}\n"
+    try:
+        with source.open(encoding="utf-8") as memory_file:
+            content = memory_file.read(max_chars + 1)
+    except FileNotFoundError:
+        return ""
+    except (OSError, UnicodeError):
+        return (prefix + "[unreadable or invalid MEMORY.md]")[:max_chars]
+
+    if not content:
+        return ""
+    available = max_chars - len(prefix)
+    if available <= 0:
+        return (prefix[: max_chars - 1] + "…") if max_chars > 1 else "…"
+    if len(content) <= available:
+        return prefix + content
+    notice = "\n[curated memory truncated]"
+    if available <= len(notice):
+        return prefix + notice[:available]
+    return prefix + content[: available - len(notice)] + notice
+
+
 # --------------------------------------------------------------------------- #
 # Composition
 # --------------------------------------------------------------------------- #
@@ -500,6 +549,7 @@ def _truncate_body(
     proposals_summary: str = "",
     graphify_section_text: str = "",
     repo_map_section: str = "",
+    curated_section: str = "",
 ) -> str:
     """Drop sections in priority order until body fits: episodic → suggest →
     proposals → north → code structure → repo map → handoff. Proposals (compound-loop
@@ -523,6 +573,7 @@ def _truncate_body(
         repo_map: bool,
     ) -> str:
         return _join_sections(
+            curated_section,
             git_section,
             repo_map_section if repo_map else "",
             north_section if north else "",
@@ -572,6 +623,36 @@ def _truncate_body(
             return _prepend_truncation_banner(body, dropped, max_chars, summary_line)
 
     return _prepend_truncation_banner(body, dropped, max_chars, summary_line)
+
+
+def _cap_body(body: str, max_chars: int, curated_priority: str = "") -> str:
+    if max_chars <= 0:
+        return ""
+    if len(body) <= max_chars:
+        return body
+    notice = "[context truncated to max_body_chars]"
+    proposal_summary = next((line for line in body.splitlines() if line.startswith("⚠ ")), "")
+    if curated_priority:
+        compact = ""
+        if proposal_summary:
+            match = re.search(r"⚠ (\d+) claude-md proposal", proposal_summary)
+            if match:
+                compact = f"⚠ {match.group(1)} proposal(s) pending"
+        candidate = _join_sections(curated_priority, "[truncated]", compact)
+        if len(candidate) <= max_chars:
+            return candidate
+        candidate = _join_sections(curated_priority, notice)
+        if len(candidate) <= max_chars:
+            return candidate
+    compact_notice = "[truncated]"
+    if proposal_summary and len(compact_notice) + 1 + len(proposal_summary) <= max_chars:
+        return f"{compact_notice}\n{proposal_summary}"
+    if max_chars <= len(notice):
+        return notice[:max_chars]
+    kept = body[: max_chars - len(notice) - 1]
+    if "\n" in kept and not kept.endswith("\n"):
+        kept = kept.rsplit("\n", 1)[0]
+    return kept + "\n" + notice
 
 
 def _prepend_truncation_banner(
@@ -703,18 +784,20 @@ def repo_map_context(cwd: Path, doc: Path, scope: Path | None, max_chars: int = 
     return "\n\n".join(filter(None, ["\n".join(kept), note]))
 
 
-def qmd_suggest_context(query_text: str, top_k: int = 3, timeout: int = 5) -> str:
+def qmd_suggest_context(
+    query_text: str, top_k: int = 3, timeout: int = 5, *, collection: str = ""
+) -> str:
     """Top-K vault notes related to the current task as markdown.
 
     Returns "" when the query is blank or qmd has no hits — caller should
     omit the section entirely. Fail-soft: never raises.
     """
     query_text = query_text.strip()
-    if not query_text:
+    if not query_text or not collection:
         return ""
     from lazy_harness.knowledge import qmd
 
-    hits = qmd.query(query_text, limit=top_k, timeout=timeout)
+    hits = qmd.query(query_text, limit=top_k, timeout=timeout, collection=collection)
     if not hits:
         return ""
     lines: list[str] = []
@@ -818,14 +901,23 @@ def main(event: HookEvent) -> HookDecision:
         try:
             sessions_dir = knowledge_sessions_dir(resolve_root(cfg.knowledge.root or None))
         except MarkerError:
-            sessions_dir = Path()
+            sessions_dir = None
         if (
             cfg.context_inject.enabled
             and cfg.context_inject.last_session_enabled
             and sessions_dir
             and sessions_dir.is_dir()
         ):
-            last_session_ctx = last_session_context(sessions_dir, cwd.name)
+            from lazy_harness.core.profile_identity import profile_identity
+            from lazy_harness.core.project_identity import main_repo_root, project_key
+
+            entry = cfg.profiles.items.get(event.profile)
+            last_session_ctx = last_session_context(
+                sessions_dir,
+                project_key(cwd),
+                identity=profile_identity(event.profile, entry) if entry is not None else "",
+                project_root=main_repo_root(cwd) or cwd,
+            )
 
         if cfg.lazynorth.enabled and cfg.lazynorth.path:
             env_var = agent.env_var()
@@ -857,8 +949,11 @@ def main(event: HookEvent) -> HookDecision:
                 if line.startswith("Branch:"):
                     branch_name = line.split(":", 1)[1].strip()
                     break
-        if branch_name:
-            suggest_ctx = qmd_suggest_context(branch_name, cfg.context_inject.qmd_suggest_top_k)
+        entry = cfg.profiles.items.get(event.profile)
+        if branch_name and entry is not None:
+            suggest_ctx = qmd_suggest_context(
+                branch_name, cfg.context_inject.qmd_suggest_top_k, collection=entry.qmd_collection
+            )
 
     graphify_ctx = ""
     if cfg is None or cfg.context_inject.graphify_surface_enabled:
@@ -891,6 +986,7 @@ def main(event: HookEvent) -> HookDecision:
     repo_map_section = f"## Repo map\n{repo_map_ctx}" if repo_map_ctx else ""
 
     max_chars = cfg.context_inject.max_body_chars if cfg is not None else 3000
+    curated_ctx = curated_memory_context(memory_dir, min(12000, max_chars // 2))
     body = _truncate_body(
         max_chars,
         git_section,
@@ -903,11 +999,13 @@ def main(event: HookEvent) -> HookDecision:
         proposals_summary=proposals_summary,
         graphify_section_text=graphify_ctx,
         repo_map_section=repo_map_section,
+        curated_section=curated_ctx,
     )
     if not body:
         body = "New project, no prior context."
+    body = _cap_body(body, max_chars, curated_priority=curated_ctx)
 
-    banner = _compose_banner(git_ctx, last_session_ctx, handoff_ctx)
+    banner = _cap_body(_compose_banner(git_ctx, last_session_ctx, handoff_ctx), min(200, max_chars))
 
     _log(log_file, f"injected {len(body)} chars, banner={banner[:80]}")
     # The banner is a top-level `systemMessage` and the body is nested under

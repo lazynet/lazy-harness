@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import click
@@ -11,6 +12,7 @@ from rich.table import Table
 
 from lazy_harness.agents.registry import AgentNotFoundError, agent_for_profile, get_agent
 from lazy_harness.core.config import Config, ConfigError, load_config, save_config
+from lazy_harness.core.effective_profile import inspect_profile
 from lazy_harness.core.envrc import EnvrcResult, write_envrc
 from lazy_harness.core.move_projects import (
     MoveError,
@@ -28,6 +30,7 @@ from lazy_harness.core.profile_migrate import (
 )
 from lazy_harness.core.profiles import ProfileError, add_profile, list_profiles, remove_profile
 from lazy_harness.core.sync_agent_md import SyncError, SyncResult, sync_profiles
+from lazy_harness.deploy.engine import UnknownProfileError
 
 
 def deploy_envrc_for_all_profiles(cfg: Config) -> list[EnvrcResult]:
@@ -64,6 +67,39 @@ def deploy_envrc_for_all_profiles(cfg: Config) -> list[EnvrcResult]:
 @click.group()
 def profile() -> None:
     """Manage agent profiles."""
+
+
+@profile.command("inspect")
+@click.argument("name", required=False)
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable evidence")
+def profile_inspect(name: str | None, as_json: bool) -> None:
+    """Inspect a profile's effective hooks and runtime evidence."""
+    try:
+        cfg = load_config(config_file())
+        evidence = inspect_profile(cfg, name or cfg.profiles.default)
+    except (ConfigError, UnknownProfileError, AgentNotFoundError, ValueError) as exc:
+        click.echo(f"Error: {exc}", err=True)
+        raise SystemExit(1) from exc
+    if as_json:
+        click.echo(json.dumps(evidence, indent=2, default=str))
+        return
+    click.echo(f"Profile: {evidence['profile']} ({evidence['agent']})")
+    click.echo(f"Identity: {evidence['identity']}")
+    click.echo(f"Source: {evidence['source_dir']}")
+    click.echo(f"Runtime: {evidence['runtime_dir']}")
+    click.echo(f"Configured: yes; deployed: {evidence['deployed']}; observed: unknown")
+    click.echo("Hooks:")
+    for event, entries in evidence["hooks"].items():
+        for hook in entries:
+            click.echo(f"  {event}: {hook['command']} [{hook['deployed']}]")
+    click.echo("Suppressed defaults:")
+    for event, names in evidence["suppressed_defaults"].items():
+        click.echo(f"  {event}: {', '.join(names)}")
+    for category, rows in evidence["omissions"].items():
+        if rows:
+            click.echo(f"{category.title()} omissions: {len(rows)}")
+    click.echo(f"System docs available: {evidence['system_docs']['available']}")
+    click.echo(f"Skills available: {evidence['skills']['available']}")
 
 
 @profile.command("list")

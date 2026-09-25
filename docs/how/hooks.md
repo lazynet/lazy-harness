@@ -83,15 +83,18 @@ Sections composed, in the order they appear in the body (which is **not** the or
 
 1. **`## Git`** — current branch, last commit, working-tree status (modified / untracked count). Computed with a short-timeout `git` subprocess; absent if the cwd is not inside a git repo.
 2. **`## Repo map`** — the doc at `repo_map_doc`, injected only when the session's cwd sits inside `repo_map_scope`. Off unless that scope is set. Use it for the map of which repo lives where and which remote is authoritative: knowledge an agent needs *before* it starts guessing, and that a conditional "read this file if…" instruction in `CLAUDE.md` reliably fails to trigger. Capped at `repo_map_max_chars` (default 1200), cut on a line boundary, with the remainder announced.
-3. **`## LazyNorth`** — your strategic compass file (universal + per-profile), if `[lazynorth]` is enabled in config. Truncated to ~20 lines for the universal doc and ~15 for the per-profile one.
-4. **`## Last session`** — the most recent exported session matching this project's name. Displays date, message count, and the first non-empty user message of that session (truncated to 80 chars). Pulled from the knowledge store, so it is scoped by project and spans profiles if you run multiple.
-5. **`## Handoff from last session`** — contents of `memory/handoff.md` (written by `compound-loop`) plus `memory/pre-compact-summary.md` (written by `pre-compact`) from the project's per-cwd memory dir.
-6. **`## Code structure`** — from `graphify-out/graph.json` when the graph is fresh: the five most connected code symbols with their `file:line`, three example `graphify` commands built from them, and one line on when the graph beats grep (node and edge counts only when the graph holds no code symbols); or a `## Notice` pointing at regeneration when the graph is older than `HEAD`. Absent when the repo has no graph.
-7. **`## Proposals to review`** — contents of `memory/claude-md.proposal.md` when present. The compound-loop worker writes this file when it has surfaced patterns worth promoting into `CLAUDE.md` (curated semantic layer). Injecting them at session start lets you review and apply them by hand; `context-inject` never edits `CLAUDE.md` or `MEMORY.md` itself.
-8. **`## Relevant vault notes`** — QMD hits for the current branch name, when `qmd_suggest_enabled` is set.
-9. **`## Recent history`** — the last 3 entries from `decisions.jsonl` and the last 3 from `failures.jsonl`, with failures including their prevention field.
+3. **`## Curated memory`** — the canonical per-project `MEMORY.md` from the same resolved memory directory as the episodic files. The section names its source (abbreviated when necessary), is absent when the file is missing or empty, and reports unreadable or invalid UTF-8 content without including the underlying exception.
+4. **`## LazyNorth`** — your strategic compass file (universal + per-profile), if `[lazynorth]` is enabled in config. Truncated to ~20 lines for the universal doc and ~15 for the per-profile one.
+5. **`## Last session`** — the most recent exported session matching this project's name. Displays date, message count, and the first non-empty user message of that session (truncated to 80 chars). Pulled from the knowledge store, so it is scoped by project and spans profiles if you run multiple.
+6. **`## Handoff from last session`** — contents of `memory/handoff.md` (written by `compound-loop`) plus `memory/pre-compact-summary.md` (written by `pre-compact`) from the project's per-cwd memory dir.
+7. **`## Code structure`** — from `graphify-out/graph.json` when the graph is fresh: the five most connected code symbols with their `file:line`, three example `graphify` commands built from them, and one line on when the graph beats grep (node and edge counts only when the graph holds no code symbols); or a `## Notice` pointing at regeneration when the graph is older than `HEAD`. Absent when the repo has no graph.
+8. **`## Proposals to review`** — contents of `memory/claude-md.proposal.md` when present. The compound-loop worker writes this file when it has surfaced patterns worth promoting into `CLAUDE.md` (curated semantic layer). Injecting them at session start lets you review and apply them by hand; `context-inject` never edits `CLAUDE.md` or `MEMORY.md` itself.
+9. **`## Relevant vault notes`** — QMD hits for the current branch name, when `qmd_suggest_enabled` is set.
+10. **`## Recent history`** — the last 3 entries from `decisions.jsonl` and the last 3 from `failures.jsonl`, with failures including their prevention field.
 
-The body is truncated to `cfg.context_inject.max_body_chars` (default 3000) by dropping sections in the order `episodic → vault notes → proposals → lazynorth → code structure → repo map → handoff`. A compact banner is also emitted as a top-level `systemMessage` — a sibling of `hookSpecificOutput`, not a key inside it — so the agent can surface "Session context loaded: on main | Last session: 2026-04-12 18:32 | has handoff notes" without printing the full body.
+Curated memory is read only up to its allocation plus one character. Its rendered section, including source and any truncation notice, gets at most `min(12000, max_body_chars / 2)` characters. The body is capped at `cfg.context_inject.max_body_chars` (default 3000): it first drops sections in the order `episodic → vault notes → proposals → lazynorth → code structure → repo map → handoff`, then clips any remaining overflow with a notice. A compact pending-proposal warning survives when the full notice cannot fit. Curated guidance takes priority when the remaining body also exceeds the cap. A zero or negative `max_body_chars` suppresses the body; small positive budgets can fit only a truncation notice. A banner is also emitted as a top-level `systemMessage` — a sibling of `hookSpecificOutput`, not a key inside it — capped separately at `min(200, max_body_chars)` characters. The body and banner together are therefore bounded by `max_body_chars + min(200, max_body_chars)` for positive values.
+
+[Claude Code auto memory](https://code.claude.com/docs/en/memory) is on by default and loads the first 200 lines or 25KB of its native `projects/<project>/memory/MEMORY.md`. `autoMemoryDirectory`, `autoMemoryEnabled`, and `CLAUDE_CODE_DISABLE_AUTO_MEMORY` can change delivery. After migration, the knowledge-store file and native file may differ; the hook does not infer equivalence from the adapter name. A linked or redirected native file can cause duplicate guidance until its identity and actual delivery are verified.
 
 **Why the repo map is capped rather than left to the drop order.** It is the only section whose source is a hand-written document of unbounded length, and it sits second-to-last in the drop order — so an uncapped map survives while every other section is dropped to make room for it, and then gets dropped itself, leaving a body with nothing in it. `repo_map_max_chars` bounds the section before the budget is ever consulted. Raise it if your map is genuinely worth the room; the cap is in characters because that is the unit `max_body_chars` spends.
 
@@ -237,11 +240,11 @@ A harness-agnostic fallback is also available as a CLI command: `lh knowledge ha
 
 Source: `src/lazy_harness/hooks/builtins/pre_tool_use_security.py`.
 
-Responsibility: stop high-blast-radius shell commands **before** the agent runs them. This is the framework's only built-in that exits non-zero on purpose — Claude Code interprets exit code 2 from a `PreToolUse` hook as a **block** decision and surfaces the hook's stderr message back into the agent's turn so it can adapt.
+Responsibility: stop high-blast-radius shell commands **before** the agent runs them. Like the git-scope guard, it returns a denial — Claude Code interprets exit code 2 from a `PreToolUse` hook as a **block** decision and surfaces the hook's stderr message back into the agent's turn so it can adapt.
 
 Scope: two shapes of tool call are inspected, and every other tool name (Grep, MCP tools, …) is a fast exit 0.
 
-- **`Bash`** — the hook reads `tool_input.command` and walks an ordered list of regex rules grouped by category. The first match wins; later rules are not evaluated.
+- **`Bash`** — the hook checks command positions and arguments, then an ordered list of regex rules grouped by category. A denial is never rescued by incidental allowed text.
 - **`Read`, `Edit`, `Write`, `NotebookEdit`** — the hook reads `tool_input.file_path` (or `notebook_path`) and matches it against `SECRET_PATH_GLOBS`, the secret-path list described below.
 
 The subscription has to be as wide as that scope: the hook is registered with
@@ -256,7 +259,7 @@ Categories shipped:
 | Category | Examples blocked |
 |---|---|
 | `filesystem` | `rm` asked to recurse, in any spelling — a short cluster containing `r` or `R` (`-r`, `-R`, `-rf`, `-fr`, `-rv`, `-rfv`) or `--recursive`. **Recursion alone is the trigger**: force is not required and is not matched at all, so force without recursion (`rm -f`, `rm -fv`, `rm --force`) stays allowed, as does `rm <file>`. `truncate <file>` |
-| `git` | `git push --force` (without `--force-with-lease`), `git reset --hard`, `git add -f .env`/`*.pem`/`id_rsa`/credentials |
+| `git` | `git push --force` or `-f` in any argument position, forced `+refspec` (a lease alone stays allowed), `git reset --hard`, `git add -f .env`/`*.pem`/`id_rsa`/credentials |
 | `sql` | `DROP TABLE`, `DROP DATABASE`, `TRUNCATE TABLE` |
 | `terraform` | `terraform destroy`, `terraform apply -auto-approve`, `terraform apply -replace=…`, `terraform state rm`/`push` |
 | `credentials` | reads of `.env` (excluding `.env.example` / `.sample` / `.template`), `.ssh/id_*` private keys (excluding `*.pub`), `.aws/credentials` & `.aws/config`, any `.pem` / `.key` / `.p12` |
@@ -273,8 +276,8 @@ heredoc cannot reach a secrets filename named in the body.
 
 `sql` is the exception, and deliberately: `DROP TABLE` is never the command being
 run, it is the argument of one (`psql -c "DROP TABLE users"`), so it is matched
-anywhere in the string. Prose naming `DROP TABLE` is blocked as a result — use
-`allow_patterns` if you need to write it.
+anywhere in the string. Prose naming `DROP TABLE` is blocked as a result; use
+a file editing tool when writing such documentation.
 
 **Secret-path guard on the file tools.** The regex rules above only see shell
 commands; a `Read` of the same file is a different tool call, so the hook matches
@@ -302,45 +305,70 @@ and prompts instead. Enforcing the same globs from the hook keeps the coverage,
 drops the prompts, and extends the protection to `Bash`, which a `Read()` deny
 rule never reached.
 
-`allow_patterns` does **not** apply to these paths — it rescues commands only. A
-pattern broad enough to wave through a shell command would silently exempt every
-secret living under it, so the only escape hatch here is the exception list
-above.
+`recursive_delete_roots` does **not** apply to file-tool paths or credential
+reads. The only path exemptions are the public-key and sample-file globs above.
+Legacy `allow_patterns` no longer exempts commands either.
 
 The `.env` rule follows the same principle: it matches the dotenv **file**, not any identifier that happens to end in `.env`. Searching source for the Node or Vite environment APIs — `grep -rn "process\.env" src/`, `rg 'import.meta.env' app/` — reads code, not credentials, and is not blocked.
 
-When a rule matches, the hook writes a structured message to stderr —
+When a rule matches, Claude Code receives this message on stderr with exit 2;
+Codex receives the adapter's native deny decision:
 
 ```
 Blocked by lazy-harness PreToolUse: <reason> (<category>).
 Matched: <truncated command>
-If this is intentional, add a regex pattern to
-[hooks.pre_tool_use] allow_patterns in your profile config.toml.
+Review [hooks.pre_tool_use] in config.toml. Only recursive_delete_roots can exempt a literal cleanup; legacy allow_patterns no longer bypass security rules.
 ```
 
-— and exits 2.
-
-**Per-profile allowlist.** A specific command can be rescued by adding a regex to `[hooks.pre_tool_use].allow_patterns` in `config.toml`:
+**Scoped cleanup and environment policy.** Options live in the existing event
+table in the shared harness `config.toml`. They apply to every profile reading
+that file; they are not implicitly scoped to the invoking profile.
 
 ```toml
 [hooks.pre_tool_use]
-allow_patterns = [
-    # Allow `terraform destroy` only against the test workspace
-    "terraform\\s+destroy.*-target=module\\.scratch",
-    # Allow reading the example env file (already excluded by default,
-    # shown here as the shape of an override)
-    "cat\\s+\\.env\\.example",
-]
+recursive_delete_roots = ["/absolute/project/.worktrees", "/absolute/scratch"]
+denied_commands = ["example-cli"]
 ```
 
-Rules of the allowlist:
+- Both lists default to empty. Roots must be absolute paths below the filesystem
+  root; command names must be literal executable basenames, not regexes or paths.
+- A cleanup exception covers only one simple `rm` invocation with a recursive
+  flag. Every operand must resolve strictly below a declared root. The root
+  itself, sibling paths and symlinks resolving outside it are refused. Relative
+  operands use the tool event's working directory. Root symlinks are resolved
+  too, so platform aliases such as `/tmp` retain their filesystem meaning.
+- Quoted spaces, reordered flags, `--` and multiple in-scope operands work.
+  Shell operators, pipelines, redirections, wrappers, `..`, expansions, globs
+  and unknown flags never qualify for cleanup exceptions, even if their text
+  appears safe. Submit a separate simple cleanup command instead.
+- `denied_commands` blocks the named executable in recognized command positions,
+  including absolute executable paths, assignments and common wrappers
+  (`env`, `sudo`, `command`, `xargs`, shell `-c`, `eval`). A plain argument such as
+  `echo example-cli` is not an invocation. No executable is prohibited by default.
+- Missing configuration gives no cleanup exceptions and no opt-in bans.
+  Unreadable/malformed configuration, invalid policy values and unknown keys in
+  this event table refuse command execution with a diagnostic naming the problem.
 
-- It is consulted **only when a block rule already matched**. A pattern that matches no block rule is dead config; harmless but useless.
-- Patterns are full Python `re.search` regexes. Broken patterns are skipped silently — they cannot turn the hook into a hard error.
-- If `config.toml` cannot be read or the section is missing, the allowlist is empty. This is fail-safe: stricter blocking, never weaker.
-- Matching is per-command, not per-rule. One pattern can rescue any block rule it covers.
+**Migration from `allow_patterns`.** Security no longer evaluates arbitrary
+allow regexes. A path mention could previously exempt an unrelated reset, a
+second deletion destination or another operation in a pipeline. Existing regex
+entries may remain in the config for migration, but grant no exemptions. Replace
+`\.worktrees/` or `rm -rf /tmp/` with reviewed absolute cleanup roots. Other
+regex exemptions (including Terraform and SQL) have no automatic replacement;
+perform those operations outside the agent hook only after explicit review.
+The separate git-scope hook's allowlist is unchanged.
 
-**Where it writes:** nowhere on disk. Blocks are logged to `logs/hooks.log` inside the runtime directory of the profile the hook was invoked with — this hook and `context-inject` are the two that resolve that directory per profile; see [Observability](#observability).
+**Limits.** This is a static heuristic guard, not a shell interpreter or an OS
+execution boundary. It does not trace aliases, shell functions, dynamically
+constructed executable names, command substitutions inside quoted arguments,
+arbitrary wrapper options (such as `env -S`) or commands executed inside another
+program. Filesystem checks are subject to changes between the
+hook and execution; roots must be trusted directories. Secrets in shell reads
+still use the existing regex rules. Environment-specific bans require configuring
+`denied_commands` in every applicable config and verifying the deployed hook;
+this feature does not change a live profile automatically.
+
+**Where it writes:** blocks are logged to `logs/hooks.log` inside the runtime directory of the profile the hook was invoked with; see [Observability](#observability).
 
 The full rule list and the rationale behind each category live in [`specs/designs/2026-04-17-security-hooks-cluster-design.md`](https://github.com/lazynet/lazy-harness/blob/main/specs/designs/2026-04-17-security-hooks-cluster-design.md).
 
@@ -369,7 +397,7 @@ Every `git stash` in a compound command is judged, not only the first: `git stas
 
 **Shared-stack detection** reads the checkout's `.git`. A linked worktree's is a file pointing into `<main>/.git/worktrees/<name>`; the main checkout has a directory, and its `.git/worktrees/` holds one entry per linked worktree — empty or absent means nobody else is on the stack. A submodule's `.git` file points into `.git/modules/` and is out of scope. Reading the filesystem directly is what keeps this cheap enough to run ahead of every Bash call; a `git rev-parse` subprocess would not be.
 
-**Escape hatch.** `[hooks.pre_tool_use_git_scope] allow_patterns` in the profile config takes regexes matched against the whole command. It is deliberately **not** the list `pre-tool-use-security` reads: that one carries `\.worktrees/` in the reference profile, which would rescue every command this hook exists to catch.
+**Escape hatch.** `[hooks.pre_tool_use_git_scope] allow_patterns` in the profile config takes regexes matched against the whole command. This is independent of the security hook: scoped cleanup roots never exempt stash operations, and legacy security regexes no longer grant exceptions.
 
 **A payload it cannot parse is a refusal, not a pass.** This hook blocks, and exit 0 with no output is how a hook says "no objection" — so a guard that degraded a malformed payload into silence would report consent it never formed. The runner refuses before the hook is reached, with the reason on stderr and exit 2. Every non-blocking built-in takes the other branch and still exits 0, because refusing a tool call it was never meant to judge is the worse failure there.
 

@@ -194,10 +194,10 @@ def test_should_block_git_rules_survive_global_options(
         assert decision.rule.category == expected_category
 
 
-def test_should_block_allowlist_rescues_match() -> None:
+def test_should_block_legacy_allowlist_no_longer_rescues_match() -> None:
     from lazy_harness.hooks.builtins.pre_tool_use_security import should_block
 
-    assert should_block("rm -rf .worktrees/foo", allow_patterns=[r"\.worktrees/"]) is None
+    assert should_block("rm -rf .worktrees/foo", allow_patterns=[r"\.worktrees/"]) is not None
 
 
 # An allow_pattern written to rescue one legitimate operation must not rescue a
@@ -228,27 +228,33 @@ def test_should_block_allow_pattern_does_not_rescue_a_chained_segment(
     assert decision.rule.category == "filesystem"
 
 
-def test_should_block_allow_pattern_rescues_only_the_segment_it_matches() -> None:
-    """A pattern legitimately meant for one segment still works within it."""
-    from lazy_harness.hooks.builtins.pre_tool_use_security import should_block
-
-    assert should_block("rm -rf .worktrees/foo && ls -la", allow_patterns=[r"\.worktrees/"]) is None
-
-
-def test_should_block_allow_pattern_still_spans_a_pipe() -> None:
-    """A pipe composes one command; it is not a chaining operator to split on."""
+def test_should_block_legacy_allow_pattern_does_not_rescue_a_segment() -> None:
+    """Legacy regexes no longer grant exceptions, even for a single operation."""
     from lazy_harness.hooks.builtins.pre_tool_use_security import should_block
 
     assert (
-        should_block("echo .worktrees/foo | xargs rm -rf", allow_patterns=[r"\.worktrees/"]) is None
+        should_block("rm -rf .worktrees/foo && ls -la", allow_patterns=[r"\.worktrees/"])
+        is not None
     )
 
 
-def test_should_block_allow_pattern_rescues_only_its_segment_across_bare_ampersand() -> None:
-    """A pattern legitimately meant for one segment still works when the chain is `&`."""
+def test_should_block_legacy_allow_pattern_does_not_rescue_a_pipe() -> None:
+    """A pipeline cannot supply statically verified cleanup operands."""
     from lazy_harness.hooks.builtins.pre_tool_use_security import should_block
 
-    assert should_block("rm -rf .worktrees/foo & ls -la", allow_patterns=[r"\.worktrees/"]) is None
+    assert (
+        should_block("echo .worktrees/foo | xargs rm -rf", allow_patterns=[r"\.worktrees/"])
+        is not None
+    )
+
+
+def test_should_block_legacy_allow_pattern_does_not_rescue_background_cleanup() -> None:
+    """Background cleanup cannot inherit an exception from incidental text."""
+    from lazy_harness.hooks.builtins.pre_tool_use_security import should_block
+
+    assert (
+        should_block("rm -rf .worktrees/foo & ls -la", allow_patterns=[r"\.worktrees/"]) is not None
+    )
 
 
 @pytest.mark.parametrize(
@@ -282,13 +288,13 @@ def test_should_block_redirection_ampersand_does_not_split_a_matched_segment(
     ],
     ids=["stderr-to-stdout", "stdout-to-fd2", "combined-redirect", "dup-input-fd"],
 )
-def test_should_block_redirection_ampersand_still_rescued_by_allow_pattern(
+def test_should_block_redirection_is_not_rescued_by_legacy_allow_pattern(
     redirection_command: str,
 ) -> None:
-    """The allow_pattern still sees the whole segment: redirection did not fracture it."""
+    """Redirection cannot turn legacy incidental text into an exception."""
     from lazy_harness.hooks.builtins.pre_tool_use_security import should_block
 
-    assert should_block(redirection_command, allow_patterns=[r"\.worktrees/"]) is None
+    assert should_block(redirection_command, allow_patterns=[r"\.worktrees/"]) is not None
 
 
 def test_should_block_invalid_allow_pattern_is_ignored() -> None:
@@ -336,52 +342,6 @@ def test_format_block_message_truncates_long_match() -> None:
     # Truncated to MAX_MATCH_LEN (120) + ellipsis
     assert huge not in msg
     assert "…" in msg or "..." in msg
-
-
-def test_load_allowlist_returns_empty_when_config_missing(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from lazy_harness.hooks.builtins.pre_tool_use_security import _load_allowlist
-
-    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
-    assert _load_allowlist() == []
-
-
-def test_load_allowlist_reads_patterns_from_config_toml(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from lazy_harness.hooks.builtins.pre_tool_use_security import _load_allowlist
-
-    cfg = tmp_path / "config.toml"
-    cfg.write_text(
-        "[hooks.pre_tool_use]\n"
-        'scripts = ["pre-tool-use-security"]\n'
-        'allow_patterns = ["\\\\.worktrees/", "/tmp/"]\n'
-    )
-    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
-    assert _load_allowlist() == ["\\.worktrees/", "/tmp/"]
-
-
-def test_load_allowlist_returns_empty_when_section_missing(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from lazy_harness.hooks.builtins.pre_tool_use_security import _load_allowlist
-
-    cfg = tmp_path / "config.toml"
-    cfg.write_text("[monitoring]\nenabled = true\n")
-    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
-    assert _load_allowlist() == []
-
-
-def test_load_allowlist_returns_empty_on_malformed_toml(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from lazy_harness.hooks.builtins.pre_tool_use_security import _load_allowlist
-
-    cfg = tmp_path / "config.toml"
-    cfg.write_text("this is not [ valid toml")
-    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
-    assert _load_allowlist() == []
 
 
 def _decide(payload: dict[str, object]) -> HookDecision:

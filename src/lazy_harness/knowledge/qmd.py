@@ -93,7 +93,9 @@ def mcp_server_config() -> dict:
     return {"command": "qmd", "args": ["mcp"]}
 
 
-def query(text: str, limit: int = 3, timeout: int = 5) -> list[QmdHit]:
+def query(
+    text: str, limit: int = 3, timeout: int = 5, *, collection: str | None = None
+) -> list[QmdHit]:
     """BM25 keyword search via `qmd search --json`. Top `limit` hits.
 
     Returns an empty list on any failure (qmd missing, timeout, parse error,
@@ -101,6 +103,10 @@ def query(text: str, limit: int = 3, timeout: int = 5) -> list[QmdHit]:
     start without blocking on a misbehaving qmd.
     """
     cmd = ["qmd", "search", text, "--json"]
+    if collection is not None:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", collection):
+            return []
+        cmd.extend(["--collection", collection])
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
@@ -114,8 +120,13 @@ def query(text: str, limit: int = 3, timeout: int = 5) -> list[QmdHit]:
     if not isinstance(data, list):
         return []
     hits: list[QmdHit] = []
-    for entry in data[:limit]:
+    for entry in data:
         if not isinstance(entry, dict):
+            continue
+        if collection is not None and (
+            not isinstance(entry.get("file"), str)
+            or not entry["file"].startswith(f"qmd://{collection}/")
+        ):
             continue
         try:
             hits.append(
@@ -127,4 +138,4 @@ def query(text: str, limit: int = 3, timeout: int = 5) -> list[QmdHit]:
             )
         except (TypeError, ValueError):
             continue
-    return hits
+    return hits[:limit]

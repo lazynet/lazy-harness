@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import sqlite3
 import stat
 import subprocess
 from dataclasses import asdict, dataclass
@@ -57,7 +58,7 @@ from lazy_harness.llm import LLMBackendError, LLMBackendNotFoundError
 from lazy_harness.llm.invoke import _resolve_api_key
 from lazy_harness.llm.openai_compat import OpenAICompatibleBackend
 from lazy_harness.llm.registry import build_backend
-from lazy_harness.monitoring.db import MetricsDB
+from lazy_harness.monitoring.db import MetricsDB, MetricsDBUnavailable, looks_like_permission_denied
 from lazy_harness.monitoring.engram_persist_health import (
     CURSOR_LAG_FAIL_BYTES,
     EngramPersistHealth,
@@ -794,6 +795,22 @@ class LaunchesReport:
     verdict: AdoptionVerdict | None
 
 
+@dataclass(frozen=True)
+class LaunchesUnavailable:
+    """Why the `Launches` section couldn't be read.
+
+    `permission_denied` separates an environment this machine cannot
+    verify past (a sandboxed or otherwise restrictive filesystem) from an
+    actual finding (a corrupt file, a DB that predates the `launches`
+    table) — text and `--json` both render this, from the one place that
+    produces it (`_launches_report_or_diagnostic`), so the two can't
+    disagree about which case a given failure is.
+    """
+
+    reason: str
+    permission_denied: bool
+
+
 def collect_launches(db: MetricsDB, now: datetime) -> LaunchesReport:
     """The blast-radius kill criterion's counters (specs/backlog.md, "Nada
     muestra los contadores de `launches` a un humano"), derived exactly as
@@ -827,12 +844,15 @@ def collect_launches(db: MetricsDB, now: datetime) -> LaunchesReport:
     )
 
 
-def _render_launches(console: Console, db: MetricsDB, now: datetime) -> None:
+def _render_launches(console: Console, report: LaunchesReport | LaunchesUnavailable) -> None:
     """The `Launches` block — the first human-visible surface for the
     blast-radius kill criterion's counters."""
     console.print("\n[bold]Launches[/bold]")
 
-    report = collect_launches(db, now)
+    if isinstance(report, LaunchesUnavailable):
+        icon = "[yellow]![/yellow]" if report.permission_denied else "[red]✗[/red]"
+        console.print(f"  {icon} unreadable: {escape(report.reason)}")
+        return
 
     if report.non_claude_totals:
         for profile in sorted(report.non_claude_totals):
@@ -896,18 +916,61 @@ def _project_memory_dir(agent: AgentAdapter, cfg: Config | None, profile: str) -
     )
 
 
-def _open_launches_db(cfg: Config) -> MetricsDB:
-    """Never opens (and so never creates) a DB file that does not already
-    exist — `lh doctor` is read-only, same rule as `collect_sink_freshness`."""
+def _launches_report_or_diagnostic(
+    cfg: Config, now: datetime
+) -> LaunchesReport | LaunchesUnavailable:
+    """The `Launches` section's data, or why it couldn't be produced.
+
+    Never opens (and so never creates) a DB file that does not already
+    exist — `lh doctor` is read-only, same rule as `collect_sink_freshness`
+    — and never uses the write-path `MetricsDB` constructor on one that
+    does: that constructor's `PRAGMA journal_mode=WAL` and schema
+    migrations are write statements a diagnostic read must not issue.
+    `MetricsDB.open_readonly` is the one place that tells "no file yet"
+    apart from "couldn't check" (stat-based, not `Path.is_file()`, which
+    swallows a permission error into the same `False` as a genuinely
+    missing path — measured on Python 3.14); this delegates to its
+    `not_found` flag rather than re-deriving existence itself, so the two
+    cannot disagree.
+
+    The one place that opens the launches DB and interprets what happened,
+    so text and `--json` — both of which call this — cannot disagree
+    about whether a given failure is a permission problem or a genuine
+    one.
+    """
     launches_db_path = (
         expand_path(cfg.monitoring.db) if cfg.monitoring.db else data_dir() / "metrics.db"
     )
-    return (
-        MetricsDB(launches_db_path) if launches_db_path.is_file() else MetricsDB(Path(":memory:"))
-    )
+    try:
+        db = MetricsDB.open_readonly(launches_db_path)
+    except MetricsDBUnavailable as e:
+        if e.not_found:
+            db = MetricsDB(Path(":memory:"))
+            try:
+                return collect_launches(db, now)
+            finally:
+                db.close()
+        return LaunchesUnavailable(reason=e.reason, permission_denied=e.permission_denied)
+
+    try:
+        return collect_launches(db, now)
+    except sqlite3.DatabaseError as e:
+        # A query against a real table failing here is a genuine finding —
+        # unlike `open_readonly`'s own `sqlite_master` probe, this is not
+        # merely an inability to open the file. Two distinct shapes land
+        # here: "no such table: launches" (a DB that predates the table,
+        # an `OperationalError`) and "database disk image is malformed"
+        # (damaged table pages found only once the table is actually
+        # read, a plain `DatabaseError` — `OperationalError` alone does
+        # not catch it, measured).
+        return LaunchesUnavailable(
+            reason=str(e), permission_denied=looks_like_permission_denied(str(e))
+        )
+    finally:
+        db.close()
 
 
-def _doctor_json(cfg: Config) -> dict:
+def _doctor_json(cfg: Config) -> tuple[dict, bool]:
     """The structured half of `lh doctor`: the sections F9 (codex-acceptance.sh)
     reads by key rather than by parsing the Rich-rendered text.
 
@@ -917,12 +980,16 @@ def _doctor_json(cfg: Config) -> dict:
     machine-readable consumer of *this specific* structured data has no use
     for, and `--json` staying fast and side-effect-free is worth more than
     parity with the text output's coverage.
+
+    Returns the payload alongside whether it is healthy — for now, solely
+    whether `launches` came back as a genuine (non-permission) failure,
+    the only section here whose failure the text renderer treats as
+    exit-worthy. `doctor()`'s `--json` branch raises on `not ok`, so a
+    corrupt or pre-`launches`-table metrics DB fails the same way under
+    `--json` as it does in text mode instead of always exiting 0.
     """
-    launches_db = _open_launches_db(cfg)
-    try:
-        launches = collect_launches(launches_db, _now())
-    finally:
-        launches_db.close()
+    launches = _launches_report_or_diagnostic(cfg, _now())
+    ok = not (isinstance(launches, LaunchesUnavailable) and not launches.permission_denied)
 
     return {
         "profiles": [asdict(p) for p in list_profiles(cfg)],
@@ -934,7 +1001,7 @@ def _doctor_json(cfg: Config) -> dict:
         "hook_operations": [asdict(g) for g in collect_hook_operation_gaps(cfg)],
         "uncarried_events": [asdict(g) for g in collect_uncarried_events(cfg)],
         "mcp_gaps": [asdict(g) for g in collect_mcp_gaps(cfg)],
-    }
+    }, ok
 
 
 def _render_home_instruction_shadows(console: Console) -> bool:
@@ -1147,7 +1214,10 @@ def doctor(as_json: bool) -> None:
         raise SystemExit(1)
 
     if as_json:
-        click.echo(json.dumps(_doctor_json(cfg), default=str))
+        payload, ok_json = _doctor_json(cfg)
+        click.echo(json.dumps(payload, default=str))
+        if not ok_json:
+            raise SystemExit(1)
         return
 
     console.print(f"[green]✓[/green] Config version: {cfg.harness.version}")
@@ -1264,15 +1334,27 @@ def doctor(as_json: bool) -> None:
     _render_mcp_gaps(console, collect_mcp_gaps(cfg))
     _render_codex_trust(console, collect_codex_trust(cfg))
 
-    launches_db = _open_launches_db(cfg)
-    try:
-        _render_launches(console, launches_db, _now())
-    finally:
-        launches_db.close()
+    launches_report = _launches_report_or_diagnostic(cfg, _now())
+    _render_launches(console, launches_report)
+    launches_unverifiable = False
+    if isinstance(launches_report, LaunchesUnavailable):
+        if launches_report.permission_denied:
+            launches_unverifiable = True
+        else:
+            ok = False
 
     console.print()
-    if ok:
-        console.print("[green]All checks passed.[/green]")
-    else:
+    if not ok:
         console.print("[red]Some checks failed. Review above.[/red]")
         raise SystemExit(1)
+    elif launches_unverifiable:
+        # Exit 0 stands — permission-denied is unverifiable, not a
+        # confirmed failure — but "All checks passed" would claim the
+        # Launches section was confirmed healthy when this environment
+        # could not actually check it.
+        console.print(
+            "[yellow]Completed — some checks could not be verified in this "
+            "environment. Review above.[/yellow]"
+        )
+    else:
+        console.print("[green]All checks passed.[/green]")
