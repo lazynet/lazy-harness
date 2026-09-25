@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.81.0](https://github.com/lazynet/lazy-harness/compare/v0.80.0...v0.81.0) (2026-09-25)
+
+
+### Features
+
+* answer code-symbol searches from the graph in Claude Code ([#469](https://github.com/lazynet/lazy-harness/issues/469)) ([de89535](https://github.com/lazynet/lazy-harness/commit/de8953513ef970b52ac4f7c9862db838623afe2c))
+* pin graphify 0.9.67 after probing every surface lh depends on ([e56826e](https://github.com/lazynet/lazy-harness/commit/e56826ea79285ded3b8c75b8ea591007a4da3054))
+
+
+### Bug Fixes
+
+* resolve agent-scoped builtins in the shared merge and close the 0.81.0 audit drift ([#470](https://github.com/lazynet/lazy-harness/issues/470)) ([aa1c5b6](https://github.com/lazynet/lazy-harness/commit/aa1c5b6ed0c094631a71d35ba2488d79eabc9c41))
+
+
+### Documentation
+
+* design graph assist for Claude Code graphify adoption ([90b3eb0](https://github.com/lazynet/lazy-harness/commit/90b3eb08de972b9d496ac829bec41400edd1b38d))
+* record the Mac engram 2.1.0 migration and the plugin-update gotcha ([66ef1dd](https://github.com/lazynet/lazy-harness/commit/66ef1ddc5e8ce607c79e2115cf08a2e023d5efdb))
+* record the silent knowledge-push failure, the launchd probe and graphify adoption ([1613906](https://github.com/lazynet/lazy-harness/commit/161390660f6d361afd3f49bae30121419c0fe7b4))
+
 ## [0.80.0](https://github.com/lazynet/lazy-harness/compare/v0.79.1...v0.80.0) (2026-09-24)
 
 
