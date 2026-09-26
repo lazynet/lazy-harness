@@ -13,51 +13,44 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 Última revisión: 2026-09-25 — `/coherence-audit` antes de cortar 0.81.0, sobre `main` @ `de89535`, con foco en el delta desde 0.80.0: #468 (graphify 0.9.67) y #469 (graph assist). Piece B: quince hallazgos (1 high, 5 medium, 9 low), los quince cerrados en la misma branch; el high era código (doctor y deploy no coincidían sobre un builtin con scoping por agente). Roadmap sin cambios: no hubo ADR nuevo.
 
 
-## Orden de ataque (2026-09-24)
+## Orden de ataque (2026-09-25)
 
-Priorizado sobre `main` @ `58d3ef5`, con cada item re-verificado contra el código.
-Criterio: pérdida o fuga de datos primero, después lo que bloquea sesiones o el
-deploy, después deuda de arquitectura. Las tres iteraciones cerraron en la
-entrada §Done de #460 (más abajo); 06c60c5 borró las entradas individuales al
-cerrarlas.
+Priorizado sobre `main` @ `bae9296` (0.82.1), después del review de #473. Mismo
+criterio que la ronda anterior: pérdida o fuga primero, después lo que falla en
+silencio, después deuda. La ronda del 2026-09-24 cerró entera (#460, #462–#464);
+su historia está en `git log -S 'Orden de ataque (2026-09-24)' -- specs/backlog.md`.
 
-1. **Iteración 1 — resaca de ADR-068 y fixes de seguridad chicos.** Hook
-   bloqueante con `--profile` desconocido (opción b: caer a la política del
-   profile default con warning); F4, dry-run de `lh metrics ingest` que igual
-   entrega remoto; ADR-054, placeholder malformado como traceback y escape
-   `{{`/`}}` sin documentar; ejemplo `--profile lazy` en `docs/reference/cli.md`.
-2. **Iteración 2 — integridad del knowledge store compartido entre profiles.**
-   Cursor por profile de `engram-persist` (medir duplicados, tope por corrida);
-   el cap de proposals descarta (persistir lo frenado); F7, locks del worker
-   sobre la memoria compartida; `project_key` colapsa en `local/lazynet`.
-3. **Iteración 3 — preparar Codex y un deploy que no se cae por skills.** ADR-032
-   L4, los sitios que asumen `projects/`, junto con `legacy_memory_dirs`; el
-   sync de skills de claude.ai que puede abortar `lh deploy` (medir primero).
+Cada iteración es una tanda de PRs chicos, uno por item, con test rojo antes del
+fix. Una iteración cierra cuando sus items están en §Done con release, no cuando
+se abren los PRs.
 
-**Estado al 2026-09-24:** las tres iteraciones mergearon en #460 (ver §Done).
-La ronda siguiente, el mismo día, cerró la ALTA y las tres MEDIA que #460 dejó
-abiertas (#462, #463) y migró engram a 2.1.0 del lado del harness y en el CT
-(#464); la Mac migró después, fuera de un PR (§Done).
+1. **Iteración 1 — el guard de seguridad deja de depender de la grafía.** Las
+   evasiones de 0.82.1 (abreviaturas de opciones largas de git, opciones
+   globales que el guard no conocía, `find -delete`/`-exec rm`) cierran en su
+   propio PR. Siguen, en este orden: los falsos positivos con backticks y prosa
+   citada (tres entradas MEDIA y una BAJA sobre el mismo síntoma, a resolver
+   juntas porque tocan el mismo tokenizer); F6, el `.envrc` generado sin escapar;
+   y la trust de capa proyecto de Codex. Default-deny queda como decisión de
+   diseño aparte: necesita su medición de 72 h antes de tocar código.
+2. **Iteración 2 — lo que falla sin que nadie se entere.** El job programado que
+   falló diez días; el probe de launchd que confunde fallo con `not loaded`; el
+   skew plugin/binario de engram en `lh doctor`; el aviso de deploy/doctor cuando
+   un `scripts` explícito desplaza defaults; `metrics_secrets_file()` ignorando
+   `[secrets] dir`; F3 y F5 del outbox de métricas.
+3. **Iteración 3 — un release no puede salir roto.** El wheel de 0.82.0 salió sin
+   PyYAML y los cuatro gates pasaron (entrada nueva abajo). Van juntos: el smoke
+   del wheel aislado en CI, el workflow `tests` que no corre sobre el PR de
+   release-please, y el `uv.lock` que queda un release atrás.
+4. **Iteración 4 — deuda sin riesgo inmediato.** Las cinco copias de
+   `_atomic_write`, `run_engram()` y `PluginRegistry` sin callers, el shim
+   `core/sync_claude.py`, el docstring de `memory_dir`, `.memory.lock` fuera del
+   `.gitignore`, F9.
 
-Hallazgos de la pasada de #460, ya resueltos o movidos a su propia entrada:
-
-- El cruce de agente en el fallback por `--profile` desconocido y el deny de Codex
-  que no se aplicaba están corregidos y cerrados en §Done (#460). Lo que seguía
-  abierto — el camino exit 2 de Codex nunca ejercido — tiene su propia entrada en
-  §Open Prioridad ALTA.
-- `skills/synced` ya no se adopta como skill propio: `RESERVED_SKILL_NAME` lo
-  saltea en `_skills_for_profile` (`deploy/skills.py:67`). Cerrado, sin entrada
-  propia.
-- Los duplicados de Engram ya se limpiaron — ver §Done, "Duplicados de
-  lazy-harness en engram limpiados".
-- El resto del review de `compound-queue` y `engram-cursor` (proposals CLI sin
-  lock, las cinco copias de `_atomic_write`, `.memory.lock` fuera del
-  `.gitignore`, y el umbral de lag de `lh doctor` bajo el tope de 25 saves) tiene
-  su propia entrada en §Open Prioridad MEDIA/BAJA.
-
-Fuera de las iteraciones: las ventanas con fecha (ADR-060 Wave 1, loop
-engineering el 2026-10-08), el `uv` de pyenv (entorno), la auditoría del gate,
-F3/F5/F6 sin re-verificar y default-deny, que pide 72 h de medición.
+Decisiones de operador, no de código, fuera de las iteraciones: el drenaje de las
+colas de proposals (la herramienta ya existe desde #473), el costo del gate
+(medición ya registrada), la cantidad de MCPs activos. Ventanas con fecha que no
+se tocan antes de cerrar: Graph Assist el 2026-10-09, loop engineering el
+2026-10-08, ADR-060 Wave 1, y el kill criterion de adapters el 2026-11-11.
 
 ---
 
@@ -306,7 +299,8 @@ desde `:367-369` cuando el step 3 insertó los helpers de merge arriba de la cla
 - [x] **El exit 2 fail-closed bloquea bajo Codex, medido con un runner real** — probe contra `codex-cli 0.155.1` con el profile `codex-lazy`: el hook con `--profile` desconocido sale exit 2 y Codex no ejecuta el comando (`specs/designs/codex-evidence.md` §8). No hizo falta fix; un test de regresión pinnea el contrato y dos mutaciones a mano prueban que carga. Se corrigieron los docstrings que decían que Codex nunca había honrado exit 2. PR #462, mergeado el 2026-09-24; entra en 0.80.0.
 - [x] **Tres MEDIA de la resaca de #460** — (1) ADR-032 L4: los seis builtins y `_shared` ya no caen a `or "projects"`; un test por glob sobre los builtins falla si vuelve el literal. (2) `lh memory proposals accept/reject/apply` toman `memory_dir_lock` durante todo el read-modify-write. (3) `lh doctor` reporta `warn` «catching up» cuando la corrida llegó al tope de 25 saves y el cursor avanzó en disco; un cursor trabado sigue en `fail`. PR #463, mergeado el 2026-09-24; entra en 0.80.0.
 - [x] **engram 2.1.0 del lado del harness, y el CT `agents` migrado como canary** — `PINNED_VERSION` = 2.1.0 y `mcp_server_config()` con path absoluto y `mcp --tools=agent`, para no disparar el ownership check de 2.x. Probe sobre una copia de la DB de la Mac en `specs/designs/engram-evidence.md`; plan en `specs/designs/2026-09-24-engram-2-migration.md`. El CT subió por lazy-ansible (`1cc41b6`, pin + sha256 + handler que mata el `serve` viejo) y pasó las once filas de verificación del plan; el marketplace del plugin queda pinneado a `v2.1.0` con `owner/repo@ref`. El menú de `engram setup` en SessionStart era skew plugin 0.1.2 / binario 1.20. PR #464, mergeado el 2026-09-24; entra en 0.80.0.
-- [x] **El guard de git ya no se abstiene ante una opción global que no conoce, ni ante una abreviatura** — el token layer judga cada palabra posterior como subcomando candidato cuando encuentra una opción global que no sabe parsear (`-P`, `--no-optional-locks`, `--namespace=`, repetidas o futuras), acepta cualquier prefijo que git aceptaría de `--hard` y `--force`, y cubre `find -delete` y una acción `-exec`/`-execdir`/`-ok` que bloquearía sola. Las tres variantes de `reset` se reprodujeron descartando cambios reales a través del hook desplegado de 0.82.1. Cierra la entrada que dejó #347 en «Known limits». Entra en la release siguiente a 0.82.1.
+- [x] **El guard de git ya no se abstiene ante una opción global que no conoce, ni ante una abreviatura** — el token layer judga cada palabra posterior como subcomando candidato cuando encuentra una opción global que no sabe parsear (`-P`, `--no-optional-locks`, `--namespace=`, repetidas o futuras), acepta cualquier prefijo que git aceptaría de `--hard` y `--force`, y cubre `find -delete` y una acción `-exec`/`-execdir`/`-ok` que bloquearía sola. Las tres variantes de `reset` se reprodujeron descartando cambios reales a través del hook desplegado de 0.82.1. Cierra la entrada que dejó #347 en «Known limits». PR #477, mergeado el 2026-09-25; entra en 0.82.2.
+- [x] **El backup de `lh migrate` ya no colapsa artefactos con igual basename** — cada target se copia bajo un nombre indexado y `backup-manifest.json` guarda su path de origen; `lh migrate --rollback` restaura por ese path, con un camino legacy para backups sin manifest. Reproducido antes del fix con `one/settings.json` y `two/settings.json`. PR #473, mergeado el 2026-09-25; entra en 0.82.0.
 - [x] **La Mac en engram 2.1.0 con el plugin 0.1.3** — backup en `~/.engram/pre-v2/`, `brew upgrade`, conteos idénticos al snapshot previo, `user_version` = 1, doctor sin hallazgos nuevos respecto del primer arranque en 2.1.0. `claude plugin update` desinstaló el plugin en claude-lazy en vez de actualizarlo; se reinstaló con `claude plugin install`. El pin de `config.toml` pasó a 2.1.0 por el template de chezmoi. Verificado en claude-lazy, claude-flex y codex-lazy; registro y gotcha en el plan §5.4. Operación de entorno, 2026-09-24.
 
 ## Open — Prioridad ALTA
@@ -375,7 +369,7 @@ binario (plan §5.2 ítem 4). Prioridad MEDIA.
 
 **Estado:** la opción (d) entró en #450 — `lh doctor` muestra toda cola frenada de la máquina (17 colas, 263 propuestas medidas el 2026-09-23). Siguen sin elegir (a) drenar a mano, (b) subir el cap o (c) expirar por antigüedad fuera del immunity registry; el análisis está en la historia de esta entrada (`git log -S 'immunity registry' -- specs/backlog.md`).
 
-**Corrección, medida por el review de #450:** la corrección anterior de esta entrada decía que el cap era «backpressure, not a discard». Es falso. `knowledge/compound_loop.py` hace `proposals = []` cuando `queued >= cap`, así que la propuesta que el grader produjo en esa corrida **se pierde**; el comentario del mismo bloque dice lo contrario. Lo único cierto es que el freno se avisa. **Cerrado en #460 (2026-09-24):** lo frenado se persiste en `proposals-held.jsonl`, que el grader no lee, y `lh doctor` lo cuenta. **Queda abierto:** nada devuelve lo retenido a la cola, y (a)/(b)/(c) siguen sin elegir. Prioridad MEDIA.
+**Corrección, medida por el review de #450:** la corrección anterior de esta entrada decía que el cap era «backpressure, not a discard». Es falso. `knowledge/compound_loop.py` hace `proposals = []` cuando `queued >= cap`, así que la propuesta que el grader produjo en esa corrida **se pierde**; el comentario del mismo bloque dice lo contrario. Lo único cierto es que el freno se avisa. **Cerrado en #460 (2026-09-24):** lo frenado se persiste en `proposals-held.jsonl`, que el grader no lee, y `lh doctor` lo cuenta. **Cerrado en #473 (2026-09-25):** `lh memory proposals held` lista lo retenido y lo devuelve a la cola de a uno, respetando el cap bajo lock y registrando la disposición en `proposals-held-requeued.jsonl`. **Queda abierto:** sólo la decisión de operador — (a)/(b)/(c) siguen sin elegir y las colas vivas sin drenar. Prioridad MEDIA.
 
 ### F2–F9 del coherence-audit del 2026-09-19 siguen siendo drift abierto en `main`
 
@@ -480,6 +474,19 @@ org FlexibilitySRL. (4) Efecto colateral de sacar el link, medido el 2026-09-23 
 cerrado en #447: los registries de plugins del perfil `lazy` apuntaban a
 `~/.claude/plugins/...` y ningún plugin cargaba.
 
+### El gate no ejerce el wheel que se publica
+
+**Por qué:** 0.82.0 salió con `context_inject` importando `yaml` y `pyyaml` sólo en
+las dependencias de desarrollo. Los cuatro gates pasaron porque corren en el venv
+de desarrollo, donde PyYAML está; se descubrió recién al desplegar. El test que
+agregó #475 (`tests/unit/test_runtime_dependencies.py`) lee `pyproject.toml` y
+busca el string: pasa aunque otro import de runtime falte, y no toca el wheel.
+
+**Acción:** un job de CI que construya el wheel, lo instale en un venv limpio sin
+grupos de desarrollo e invoque `lh --version`, `lh doctor --help` y cada hook
+builtin con un payload vacío. Probarlo en ambas direcciones: sacar `pyyaml` de
+`dependencies` tiene que ponerlo en rojo. Prioridad MEDIA.
+
 ### El workflow tests falla en startup sobre la rama de release-please
 
 **Por qué:** en la rama `release-please--branches--main--components--lazy-harness`, cada corrida de `tests` de los dos últimos releases siguió el mismo patrón: dos corridas `action_required` en cada push del bot, seguidas por dos corridas `failure` con **cero jobs**. `gh run view` dice *"This run likely failed because of a workflow file issue"*. Se observó para `chore(main): release 0.72.1` (corridas del 2026-09-18 17:14–17:45 UTC) y para `chore(main): release 0.73.0` (corridas del 2026-09-18 21:25–22:39 UTC, por ejemplo `35402547729`). El mismo workflow pasa en `main` para los commits desde los que se corta el release PR (`60c351d`, `3879f81`, `b8b2a12`, todos `success`). Como consecuencia, el release PR no lleva checks propios (`statusCheckRollup` vacío en #398 al mergear): el gate de merge de un release depende de la última corrida de `main`, por accidente y no por decisión. No está investigado si `action_required` es el gate de aprobación de fork/bot para corridas `pull_request` de `github-actions[bot]`, ni por qué el reintento termina en una falla de startup en vez de una corrida omitida.
@@ -562,62 +569,18 @@ pre_compact   -> ctx
 
 **Acción:** auditar cuántos MCPs están activos por perfil. Desactivar los que no se usen frecuentemente.
 
-### El backup de `lh migrate` colapsa dos artefactos que comparten basename
-
-`migrate/steps/backup.py:35` escribe cada target como `dest = backup_dir / t.name`.
-Dos artefactos con un mismo basename — `~/.claude-lazy/settings.json` y
-`~/.claude-flex/settings.json` son el caso vivo — resuelven al mismo archivo de
-backup, y el segundo pisa al primero **al escribir**, antes de que nadie intente
-restaurar. El consumidor tiene la mitad simétrica del bug:
-`migrate/rollback.py:39-40` hace `src = backup_dir / Path(payload["path"]).name`.
-
-Es pérdida de datos silenciosa: el backup de la migración queda incompleto y
-`lh migrate --rollback` reporta `restored` para los dos paths.
-
-Repro, contra el paquete instalado:
-
-```python
-import json, tempfile
-from pathlib import Path
-from lazy_harness.migrate.rollback import apply_rollback_log
-
-tmp = Path(tempfile.mkdtemp()); bd = tmp / "bk"; bd.mkdir()
-(tmp/"lazy").mkdir(); (tmp/"flex").mkdir()
-(bd/"settings.json").write_text("BACKUP-CONTENT-ONE-COPY")
-(tmp/"lazy"/"settings.json").write_text("new-lazy")
-(tmp/"flex"/"settings.json").write_text("new-flex")
-(bd/"rollback.json").write_text(json.dumps([
-    {"step":"s","kind":"restore_file","payload":{"path":str(tmp/"lazy"/"settings.json")}},
-    {"step":"s","kind":"restore_file","payload":{"path":str(tmp/"flex"/"settings.json")}},
-]))
-apply_rollback_log(bd)
-# ambos quedan en "BACKUP-CONTENT-ONE-COPY", ambos reportan restored
-```
-
-Nota relacionada del mismo archivo: `migrate/rollback.py:47` actúa solo
-`if not link.exists()`, así que **nunca repunta un symlink existente**. Hoy es
-correcto por accidente — su único productor, `migrate/steps/scripts_step.py:38`,
-hace `unlink()` antes de registrar la op, así que el link siempre está ausente
-cuando se replaya. No reusar ese op kind para un relink: `lh deploy` no lo hace,
-tiene su propia rama de manifest con `_restore_symlink`, que desvincula y
-revincula incondicionalmente.
-
-**Por qué no se arregló acá:** el PR del snapshot de deploy
-([decision 10](designs/2026-09-13-multi-agent-blast-radius-design.md)) reusa
-`apply_rollback_log` agregándole una rama de manifest y deja la rama de
-migración intacta a propósito — reescribirla cambiaría un camino que funciona
-para un comando que nadie está tocando.
-
-**Condición de arranque:** cuando se toque `lh migrate` por cualquier otro
-motivo, o si aparece un caso real de migración con dos artefactos de igual
-basename. El arreglo es el mismo que ya vive en `deploy/snapshot.py`: un content
-path único por destino en vez de por basename.
-
 ---
 
 ---
 
 ### `pre_tool_use_security` es denylist; evaluar default-deny
+
+**Línea de base actualizada (2026-09-25, #473).** `allow_patterns` ya no rescata
+nada: se acepta como dato legacy y se ignora. Las únicas excepciones son
+`recursive_delete_roots`, que exime un `rm` recursivo literal bajo una raíz
+nombrada, y `denied_commands` suma denegación explícita por nombre de comando. El
+párrafo siguiente describe el diseño anterior; la pregunta de default-deny sigue
+abierta, y las abreviaturas de git que pasaron en 0.82.1 son un caso más de ella.
 
 **Por qué:** `should_block()` es block-if-match (`hooks/builtins/pre_tool_use_security.py:241`)
 con `allow_patterns` como rescate (`:250`). Una corrida de mutation testing sobre esa
@@ -853,6 +816,8 @@ Dedup semántico ya funciona con inyección de títulos. Diferir.
 `_DEFAULT_ON_HOOKS` solo aplica a eventos que el `config.toml` no declara. Un perfil con `scripts = [...]` explícito congela esa lista: un builtin nuevo marcado default-on **no** aparece al actualizar.
 
 Pasó con `pre-tool-use-git-scope` en 0.57.0 — registrado, default-on, testeado, releasado y sin correr una sola vez hasta que se agregó a mano al `config.toml`. El síntoma es indistinguible de que el hook funcione y no encuentre nada.
+
+**Parcial en #473 (2026-09-25):** `lh profile inspect` ya nombra los defaults desplazados por evento (`suppressed_defaults`). Falta que lo avisen `lh deploy` y `lh doctor` sin que nadie lo pida, que es lo que sigue abierto.
 
 **Acción:** que `lh deploy` (o `lh doctor`) avise cuando un builtin default-on queda fuera de un evento declarado explícitamente. Es la diferencia entre un hook desactivado a propósito y uno olvidado.
 

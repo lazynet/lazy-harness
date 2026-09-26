@@ -197,6 +197,15 @@ not authorize deletion. The original rejection of preserving unknown entries and
 the corresponding hand-edit consequence remain above as the historical decision,
 not the current reconciliation contract.
 
+**2026-09-25 (PR #473): the override test is an explicit `scripts` key, not
+the event table.** The formula under **Decision** keys the override on
+`event in user_hooks`. The loader now records `scripts_configured` — whether the
+`scripts` key was written — and `merge_with_defaults` overrides only when it is
+set or the list is non-empty. An options-only table such as
+`[hooks.pre_tool_use]` holding just `recursive_delete_roots` therefore keeps
+`DEFAULT_HOOKS[event]`; `scripts = []` is still the explicit opt-out. Read the
+formula as `user_hooks[event].scripts if user_hooks[event].scripts_configured`.
+
 ## Implementation
 
 Tracked in `specs/plans/2026-05-21-deploy-hook-defaults-plan.md` and
