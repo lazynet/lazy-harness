@@ -329,7 +329,7 @@ wheels = [
 
 [[package]]
 name = "lazy-harness"
-version = "0.82.3"
+version = "0.83.0"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
