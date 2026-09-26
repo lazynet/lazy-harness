@@ -1072,6 +1072,12 @@ def test_detected_servers_land_under_mcp_servers() -> None:
     assert parsed["mcp_servers"]["qmd"] == {"command": "qmd", "args": ["mcp"]}
 
 
+def test_always_load_is_a_claude_only_hint_and_never_reaches_codex() -> None:
+    servers = {"graphify": {"command": "graphify-mcp", "args": [], "always_load": True}}
+    ops = _adapter().plan_config({}, servers, {}, binary="lh")
+    assert _parsed(ops)["mcp_servers"]["graphify"] == {"command": "graphify-mcp", "args": []}
+
+
 def test_an_env_table_survives_the_toml_round_trip() -> None:
     """A nested dict is the one MCP field TOML could mangle into a sibling table."""
     ops = _adapter().plan_config(

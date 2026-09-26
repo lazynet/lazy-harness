@@ -282,7 +282,7 @@ def test_collect_mcp_servers_includes_graphify_when_enabled_and_available(
     cfg.knowledge.structure.enabled = True
     result = engine._collect_mcp_servers(cfg)
 
-    assert result["graphify"] == {"command": "graphify-mcp", "args": []}
+    assert result["graphify"] == graphify_mod.mcp_server_config()
 
 
 def test_collect_mcp_servers_skips_graphify_when_structure_disabled(
