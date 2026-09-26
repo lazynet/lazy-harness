@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.82.3](https://github.com/lazynet/lazy-harness/compare/v0.82.2...v0.82.3) (2026-09-26)
+
+
+### Documentation
+
+* sweep stale allow_patterns workarounds and the git-options comment ([#480](https://github.com/lazynet/lazy-harness/issues/480)) ([8de0bf3](https://github.com/lazynet/lazy-harness/commit/8de0bf339dddec325931ae5a8824905b9d76a3d7))
+
 ## [0.82.2](https://github.com/lazynet/lazy-harness/compare/v0.82.1...v0.82.2) (2026-09-26)
 
 
