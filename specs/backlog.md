@@ -656,11 +656,11 @@ Cada una mezcla responsabilidades no relacionadas: recolección de contexto y re
 
 **Fuente:** orchestrator y lane A1, "Process findings" (`_wave-d-gate-notes.md`); emparentado con *Falso positivo del PreToolUse de seguridad con backticks de markdown* (Prioridad BAJA), pero disparado por la grafía completa del comando y no por un backtick aislado.
 
-**Acción:** ninguna propuesta en esta entrada — mismo trade-off que el hallazgo de backticks: el hook falla hacia el lado seguro; evaluar `allow_patterns` si se vuelve frecuente.
+**Acción:** ninguna propuesta en esta entrada — mismo trade-off que el hallazgo de backticks: el hook falla hacia el lado seguro. No hay salida por config: desde #473 `allow_patterns` no exime ninguna regla, y `recursive_delete_roots` sólo exime un `rm` recursivo literal. Si se vuelve frecuente, el arreglo es el tokenizer (iteración 1 del orden de ataque del 2026-09-25).
 
 ### El guard de recursive-delete dispara con un operador de shell dentro de un argumento citado, delante de la grafía `-rf`
 
-**Por qué:** medido el 2026-09-17, tres veces, sobre llamadas a herramientas de esta misma sesión. `grep -rn 'a\|rm -rf\|b' tests/` bloquea, porque el `|` dentro del propio patrón de grep matchea la alternativa de operador del regex; lo mismo un heredoc con un string de Python que contiene `/bin/zsh -lc 'rm -rf …'`, vía la alternativa `sh -c`, y un docstring donde un backtick precede al token. `grep -rn "rm -rf" src` y `git commit -m "fix: rm -rf guard"` no se ven afectados — una mención simple y citada sigue permitida. Preexistente al ensanche de recursión de PR #385 — la grafía `-rf` siempre bloqueó; cerrarlo pide reconocer comillas, algo que el ancla actual no tiene, y el workaround es `allow_patterns`. `specs/plans/2026-04-17-security-hooks-cluster-plan.md:333` y `:1749` siguen registrando `rm -r dir` como expected-allow: es registro histórico fechado, porque `specs/workflow/layout.md` congela `specs/plans/` desde #388. Lo que sigue sin declarar ahí es `specs/gates/`.
+**Por qué:** medido el 2026-09-17, tres veces, sobre llamadas a herramientas de esta misma sesión. `grep -rn 'a\|rm -rf\|b' tests/` bloquea, porque el `|` dentro del propio patrón de grep matchea la alternativa de operador del regex; lo mismo un heredoc con un string de Python que contiene `/bin/zsh -lc 'rm -rf …'`, vía la alternativa `sh -c`, y un docstring donde un backtick precede al token. `grep -rn "rm -rf" src` y `git commit -m "fix: rm -rf guard"` no se ven afectados — una mención simple y citada sigue permitida. Preexistente al ensanche de recursión de PR #385 — la grafía `-rf` siempre bloqueó; cerrarlo pide reconocer comillas, algo que el ancla actual no tiene, y no hay workaround por config desde #473, que dejó `allow_patterns` sin efecto. `specs/plans/2026-04-17-security-hooks-cluster-plan.md:333` y `:1749` siguen registrando `rm -r dir` como expected-allow: es registro histórico fechado, porque `specs/workflow/layout.md` congela `specs/plans/` desde #388. Lo que sigue sin declarar ahí es `specs/gates/`.
 
 **Fuente:** PR #385, Backlog text.
 
@@ -746,7 +746,7 @@ del store. Prioridad BAJA.
 
 **Por qué NO se arregla ya:** el hook falla hacia el lado seguro y el workaround (sacar los backticks) es trivial. Parsear heredocs para distinguir texto de comando no es barato, y un parser incompleto de shell es peor que el falso positivo actual — daría una falsa sensación de precisión sobre una superficie que hoy es deliberadamente conservadora.
 
-**Acción:** ninguna por ahora. Si el falso positivo se vuelve frecuente al documentar, la salida más barata es un `allow_patterns` en el config del profile, no tocar `_COMMAND_START`.
+**Acción:** ninguna por ahora. Si el falso positivo se vuelve frecuente al documentar, el arreglo es reconocer comillas en el tokenizer (iteración 1 del orden de ataque del 2026-09-25); un `allow_patterns` ya no sirve de salida desde #473, y tocar `_COMMAND_START` sigue descartado.
 
 ### F10 — `PluginRegistry` no tiene un solo caller en `src/`
 

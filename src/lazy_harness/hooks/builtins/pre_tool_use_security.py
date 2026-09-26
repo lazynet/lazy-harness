@@ -448,8 +448,9 @@ def _segments(command: str) -> list[str]:
 # Global git options this hook recognises between `git` and its subcommand.
 # Options that take a value are listed with the flag alone; both the `=`-joined
 # and space-separated spellings are matched. Anything not named here (e.g.
-# `--namespace=`, `--exec-path`) still makes the git rules abstain, same as
-# before this normalisation existed.
+# `--namespace=`, `--exec-path`) makes the regex rules abstain, but not the
+# token layer: `_token_rule` then judges every later word as a candidate
+# subcommand, so an unknown option fails closed.
 _GIT_GLOBAL_OPTIONS_WITH_ARG = ("-C", "-c", "--git-dir", "--work-tree")
 _GIT_GLOBAL_OPTIONS_BARE = ("--no-pager",)
 _GIT_GLOBAL_OPTION_AFTER_GIT = re.compile(
