@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.82.2](https://github.com/lazynet/lazy-harness/compare/v0.82.1...v0.82.2) (2026-09-26)
+
+
+### Bug Fixes
+
+* close git abbreviation and unknown-option bypasses in the security guard ([#477](https://github.com/lazynet/lazy-harness/issues/477)) ([ad6d8cc](https://github.com/lazynet/lazy-harness/commit/ad6d8cc3091e4d521095f97a68ee0bfe702020bf))
+
+
+### Documentation
+
+* fix post-0.82 spec drift and reorder the backlog attack plan ([#478](https://github.com/lazynet/lazy-harness/issues/478)) ([7854e49](https://github.com/lazynet/lazy-harness/commit/7854e49ffc21d0665117f11daf84b5415042322c))
+
 ## [0.82.1](https://github.com/lazynet/lazy-harness/compare/v0.82.0...v0.82.1) (2026-09-25)
 
 
