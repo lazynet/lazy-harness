@@ -101,3 +101,11 @@ def test_graphify_check_version_ignores_decoration_around_the_number(monkeypatch
     matches, current = graphify.check_version()
     assert current == graphify.PINNED_VERSION
     assert matches
+
+
+def test_graphify_mcp_server_config_asks_to_be_always_loaded() -> None:
+    # Claude Code defers MCP tools behind ToolSearch and agents never loaded
+    # these; the spec stays agent-neutral and each adapter translates the hint.
+    from lazy_harness.knowledge.graphify import mcp_server_config
+
+    assert mcp_server_config() == {"command": "graphify-mcp", "args": [], "always_load": True}

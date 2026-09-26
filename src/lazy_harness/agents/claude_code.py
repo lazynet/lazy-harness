@@ -1185,6 +1185,8 @@ class ClaudeCodeAdapter:
             }
             if entry.get("env"):
                 normalized[name]["env"] = dict(entry["env"])
+            if entry.get("always_load"):
+                normalized[name]["alwaysLoad"] = True
         return {"mcpServers": normalized}
 
     # --- config planning (ConfigPlanner) ---

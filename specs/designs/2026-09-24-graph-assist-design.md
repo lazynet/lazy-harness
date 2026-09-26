@@ -251,7 +251,7 @@ displaces a higher-priority section.
 
 - The upstream `graphify hook-guard read`: it stays for both agents, unchanged.
 - Graphify strict mode.
-- MCP tool loading. The tools stay deferred behind ToolSearch, as today.
+- MCP tool loading. Out of scope at design time; changed on 2026-09-26, see §9.
 
 ## 8. Implementation notes (2026-09-25)
 
@@ -306,3 +306,26 @@ displaces a higher-priority section.
   `collect` from a nested and an external worktree and asserts they agree.
 - **An over-deadline build is kept.** It answers nothing for the call that paid
   for it and is persisted, instead of being rebuilt on every search.
+
+## 9. Graphify MCP tools always loaded (2026-09-26)
+
+On day 1 the report read (a) agent calls 1/110 = 0.9% for Claude against
+2/17 for Codex, and (a') graph touch 13.6%, already under the kill line. In
+~5 000 Claude tool calls across both profiles no `mcp__graphify__*` tool was
+ever called: they sat deferred behind ToolSearch and no session loaded them.
+
+`graphify.mcp_server_config()` now carries the agent-neutral `always_load`
+hint. The Claude Code adapter renders it as `alwaysLoad: true`; the Codex
+adapter drops it. Probed on Claude Code 2.1.283 with a stdio server, since
+the upstream docs describe the field only for remote transports: with the
+flag a headless session called `graph_stats` directly, without it the tool
+was deferred. Cost, same probe: +1 757 input tokens on the first turn.
+
+**This breaks the §6 freeze.** Agent calls count towards (a'), so from the
+deploy date (a') no longer isolates the hook. The hook has to be judged on
+the sessions with a `hit` injection alone, and the report does not print that
+split: it is counted by hand until it does.
+
+**Kill criteria** for `always_load`, 14 days after the deploy: if (a) agent
+calls for Claude stay under 10% — baseline 0.9% — the hint is removed from
+the spec and the tools go back to deferred.

@@ -1186,7 +1186,9 @@ class CodexAdapter:
             preserved.extend(f"projects: {path}" for path in projects)
 
         for name, entry in servers.items():
-            section[name] = _as_toml(entry)
+            # Claude-only hint; Codex has no deferred tool loading to opt out of.
+            codex_entry = {key: value for key, value in entry.items() if key != "always_load"}
+            section[name] = _as_toml(codex_entry)
 
         return WriteOp(
             artifact=ConfigArtifact(

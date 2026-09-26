@@ -35,8 +35,13 @@ def is_graphify_mcp_available() -> bool:
 
 
 def mcp_server_config() -> dict:
-    """Declarative MCP entry for Graphify (consumed by deploy_mcp_servers)."""
-    return {"command": "graphify-mcp", "args": []}
+    """Declarative MCP entry for Graphify (consumed by deploy_mcp_servers).
+
+    `always_load` is an agent-neutral hint: Claude Code defers MCP tools behind
+    ToolSearch, and deferred graphify tools went uncalled in every session
+    measured, so its adapter renders this as `alwaysLoad`.
+    """
+    return {"command": "graphify-mcp", "args": [], "always_load": True}
 
 
 def _build_command(action: str, target: str | None = None) -> list[str]:

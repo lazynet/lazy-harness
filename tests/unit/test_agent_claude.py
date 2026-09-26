@@ -273,6 +273,18 @@ def test_claude_adapter_generate_mcp_config_passes_env() -> None:
     assert result["mcpServers"]["engram"]["env"] == {"ENGRAM_PORT": "7437"}
 
 
+def test_claude_adapter_generate_mcp_config_translates_always_load() -> None:
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    servers = {
+        "graphify": {"command": "graphify-mcp", "args": [], "always_load": True},
+        "qmd": {"command": "qmd", "args": ["mcp"]},
+    }
+    result = ClaudeCodeAdapter()._generate_mcp_config(servers)["mcpServers"]
+    assert result["graphify"] == {"command": "graphify-mcp", "args": [], "alwaysLoad": True}
+    assert "alwaysLoad" not in result["qmd"]
+
+
 def test_claude_adapter_owns_no_global_config_link() -> None:
     # `~/.claude` -> profile dir put the profile's CLAUDE.md at `~/.claude/CLAUDE.md`,
     # an ancestor of every repo under $HOME, which stops Claude Code loading any
