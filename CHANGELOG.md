@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.83.0](https://github.com/lazynet/lazy-harness/compare/v0.82.3...v0.83.0) (2026-09-26)
+
+
+### Features
+
+* always load graphify MCP tools in Claude Code ([#482](https://github.com/lazynet/lazy-harness/issues/482)) ([c3c8e69](https://github.com/lazynet/lazy-harness/commit/c3c8e69142b34eefa8fde3fbfa21db07c70c7e1d))
+
 ## [0.82.3](https://github.com/lazynet/lazy-harness/compare/v0.82.2...v0.82.3) (2026-09-26)
 
 
