@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.83.1](https://github.com/lazynet/lazy-harness/compare/v0.83.0...v0.83.1) (2026-09-29)
+
+
+### Bug Fixes
+
+* price claude-sonnet-5-5 ([eb19096](https://github.com/lazynet/lazy-harness/commit/eb19096c4c8ee80dca36603ec3823ee9cb15489c))
+
 ## [0.83.0](https://github.com/lazynet/lazy-harness/compare/v0.82.3...v0.83.0) (2026-09-26)
 
 
