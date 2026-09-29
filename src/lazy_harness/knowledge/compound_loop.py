@@ -824,9 +824,15 @@ def build_prompt(
     rejected_proposals: list[str] | None = None,
     pending_proposals: list[str] | None = None,
     recent_failures: list[str] | None = None,
+    proposals_enabled: bool = True,
 ) -> str:
     """Build the headless-Claude prompt. Ported verbatim from the bash worker
-    to preserve the calibration of the evaluator — reword with care."""
+    to preserve the calibration of the evaluator — reword with care.
+
+    `proposals_enabled=False` is for a queue already at the cap: whatever the
+    grader proposed would only be held, so the prompt neither shows the pending
+    queue nor asks for `claude_md_proposals`.
+    """
     insights_section = ""
     if captured_insights:
         titles = "\n".join(f"- {_first_line(i.body)}" for i in captured_insights)
@@ -844,7 +850,7 @@ def build_prompt(
             f"{rejected}\n"
         )
     pending_section = ""
-    if pending_proposals:
+    if pending_proposals and proposals_enabled:
         pending = "\n".join(f"- {rule}" for rule in pending_proposals)
         pending_section = (
             "\n## Proposals already pending review — do NOT re-propose rules "
@@ -854,15 +860,31 @@ def build_prompt(
     failures_section = ""
     if recent_failures:
         rendered_failures = "\n".join(recent_failures)
-        failures_section = (
-            "\n## Recorded failures from previous sessions:\n"
-            f"{rendered_failures}\n"
+        failures_section = f"\n## Recorded failures from previous sessions:\n{rendered_failures}\n"
+    if recent_failures and proposals_enabled:
+        failures_section += (
             "If this session's failures, or the recorded failures above, show "
             "the same root cause occurring 2+ times, emit a claude_md_proposals "
             "entry whose rule starts with `[EVITAR]` capturing the prevention. "
             "Do not duplicate rules already proposed or listed in the rejected "
             "section.\n"
         )
+    proposals_schema = proposals_rule = proposals_empty = ""
+    if proposals_enabled:
+        proposals_schema = (
+            '\n  "claude_md_proposals": [\n'
+            '    {"rule": "one-line workflow rule worth adding to this project\'s CLAUDE.md", '
+            '"rationale": "why this rule belongs in CLAUDE.md specifically"}\n'
+            "  ],"
+        )
+        proposals_rule = (
+            "- claude_md_proposals: workflow rules or conventions that emerged this session "
+            "and would belong as a bullet in *this project's* CLAUDE.md. Different from "
+            "learnings (cross-project) and decisions (one-off). Only include if the rule is "
+            "concrete, durable, and specific to how to work in this repo. Empty list `[]` if "
+            "nothing qualifies — this is the common case.\n"
+        )
+        proposals_empty = ' "claude_md_proposals": [],'
     return f"""You are evaluating a Claude Code session for learnings. Analyze the conversation and output ONLY valid JSON.
 
 Project: {project_name}
@@ -895,10 +917,7 @@ Return ONLY this JSON structure (no markdown fences, no explanation):
   "learnings": [
     {{"title": "...", "learning": "1-2 sentences", "context": "...", "scope": "universal|backend|infra|consulting", "tags": ["..."]}}
   ],
-  "handoff": ["concrete pending item for next session"],
-  "claude_md_proposals": [
-    {{"rule": "one-line workflow rule worth adding to this project's CLAUDE.md", "rationale": "why this rule belongs in CLAUDE.md specifically"}}
-  ],
+  "handoff": ["concrete pending item for next session"],{proposals_schema}
   "grade": {{
     "quality": "excellent|good|acceptable|poor",
     "issues": ["incomplete|hallucination|tool_misuse|missed_context|wrong_approach|inefficient|none"],
@@ -918,13 +937,12 @@ Rules:
 - decisions: architectural or design decisions made. Skip if already in recent decisions above.
 - failures: preventable errors. Skip if already in recent failures above. Include root cause and prevention. Do not record a failure for the engram/mem_save memory persistence protocol not being invoked by hand — the `engram-persist` Stop hook already persists session memory automatically on every session close, so the model not calling `mem_save`/`mem_session_summary` itself is not a preventable error. Only record a failure here if the hook itself malfunctioned (crashed, wrote nothing, cursor stuck).
 - learnings: ONLY transferable knowledge useful outside this project. Universal patterns, reusable insights. Project-specific stuff goes in decisions.
-- claude_md_proposals: workflow rules or conventions that emerged this session and would belong as a bullet in *this project's* CLAUDE.md. Different from learnings (cross-project) and decisions (one-off). Only include if the rule is concrete, durable, and specific to how to work in this repo. Empty list `[]` if nothing qualifies — this is the common case.
-- CRITICAL: Check ALL existing lists above. If a decision, failure, or learning already exists that covers the same concept (even with different wording), do NOT generate a new one. Only add genuinely new insights.
+{proposals_rule}- CRITICAL: Check ALL existing lists above. If a decision, failure, or learning already exists that covers the same concept (even with different wording), do NOT generate a new one. Only add genuinely new insights.
 - handoff: concrete, actionable items left pending for the next session. NOT summaries of what was done. Only what remains to be done. If everything was resolved or it was just a Q&A, return [].
 - grade: rate the assistant's overall performance against the user's intent. quality is one of excellent|good|acceptable|poor. issues come from this fixed taxonomy: incomplete (stopped before resolving), hallucination (invented APIs/files/tools), tool_misuse (wrong tool/args/repeated failures), missed_context (ignored a stated constraint), wrong_approach (solved a different problem), inefficient (right answer, avoidable cost), none (no issues observed). Use ["none"] when quality is excellent or good. confidence is 0.0-1.0. reasoning must reference concrete evidence from the transcript.
 - goal_declared: true only if, BEFORE doing the work, the assistant stated a concrete verifiable success criterion for this session — a specific command, test, or check whose outcome would demonstrate the task is done (for example: "this is done when `pytest tests/test_foo.py` passes", or "verify by curling /health and confirming a 200"). What does NOT count: restating the user's request in different words is not a criterion; a summary of what was done written after the work is finished is not a criterion (this field asks whether a target was set before execution, not whether the result got described afterward); a vague intention such as "I'll make sure it works" or "let's get this right" is not a criterion. Use false for trivial or purely conversational sessions, or whenever no such criterion was stated.
 - project_update: a bounded snapshot of this session for the project's live readme, replaced whole on every session. summary describes what happened, in the past tense, from the project's point of view. completed lists only things actually finished and verified in the transcript; next lists only what remains. references anchor those items (PR numbers, commit hashes, file paths). Use null for a trivial or purely conversational session.
-- Empty session or just status checks? Return {{"decisions": [], "failures": [], "learnings": [], "handoff": [], "claude_md_proposals": [], "grade": {{"quality": "good", "issues": ["none"], "reasoning": "trivial session", "confidence": 0.9}}, "goal_declared": false, "project_update": null}}
+- Empty session or just status checks? Return {{"decisions": [], "failures": [], "learnings": [], "handoff": [],{proposals_empty} "grade": {{"quality": "good", "issues": ["none"], "reasoning": "trivial session", "confidence": 0.9}}, "goal_declared": false, "project_update": null}}
 - Output ONLY the JSON object."""
 
 
@@ -1490,6 +1508,11 @@ def process_task(
     existing_learnings = collect_existing_learnings(learnings_dir)
 
     project_name = project_name_for_cwd(Path(cwd))
+    queue_full = (
+        cl.max_pending_proposals is not None
+        and len(collect_pending_proposals(memory_dir, max_chars=_UNBOUNDED))
+        >= cl.max_pending_proposals
+    )
     prompt = build_prompt(
         project_name,
         cwd,
@@ -1502,6 +1525,7 @@ def process_task(
         rejected_proposals=collect_rejected_proposals(memory_dir),
         pending_proposals=collect_pending_proposals(memory_dir),
         recent_failures=collect_recent_failures(memory_dir),
+        proposals_enabled=not queue_full,
     )
 
     result = run_inference(prompt, role="distill", cfg=cfg, timeout=cl.timeout_seconds)

@@ -3527,3 +3527,91 @@ def test_concurrent_atomic_writes_to_one_path_do_not_share_a_temp_file(
     assert errors == []
     assert target.read_text() in ("one", "two")
     assert [p.name for p in target.parent.iterdir()] == ["handoff.md"]
+
+
+def _prompt_with(proposals_enabled: bool) -> str:
+    return build_prompt(
+        project_name="proj",
+        cwd="/tmp/proj",
+        session_id="sess1",
+        timestamp="2026-09-29T10:00:00-03:00",
+        existing_decisions="",
+        existing_failures="",
+        existing_learnings="",
+        summary="## User\nx",
+        rejected_proposals=["Never amend published commits"],
+        pending_proposals=["Verify a tool's effect, not its exit code"],
+        recent_failures=["- failure: stale handoff"],
+        proposals_enabled=proposals_enabled,
+    )
+
+
+def test_build_prompt_without_proposals_drops_the_pending_section_and_the_key() -> None:
+    """A full queue holds whatever the grader proposes, so asking for proposals
+    only spends output and a pending section of up to 10K chars on a result
+    that never reaches the queue."""
+    prompt = _prompt_with(proposals_enabled=False)
+
+    assert "already pending review" not in prompt
+    assert "Verify a tool's effect" not in prompt
+    assert "claude_md_proposals" not in prompt
+
+
+def test_build_prompt_without_proposals_keeps_everything_else() -> None:
+    enabled = _prompt_with(proposals_enabled=True)
+    disabled = _prompt_with(proposals_enabled=False)
+
+    for marker in (
+        '"decisions"',
+        '"failures"',
+        '"learnings"',
+        '"handoff"',
+        '"grade"',
+        '"goal_declared"',
+        '"project_update"',
+        "Previously rejected proposals",
+        "- failure: stale handoff",
+        "## Session conversation:",
+    ):
+        assert marker in enabled
+        assert marker in disabled
+
+
+def test_process_task_omits_proposals_from_the_prompt_when_the_queue_is_full(
+    tmp_path: Path, monkeypatch
+) -> None:
+    memory = tmp_path / "memory"
+    _queue_with(memory, 10)
+    session = _interactive_session(tmp_path)
+    task = create_task(tmp_path / "queue", Path("/tmp/proj"), session, "abcd1234", memory)
+    captured: dict[str, str] = {}
+
+    def fake_invoke(prompt: str, model: str, timeout: int) -> str:
+        captured["prompt"] = prompt
+        return "{}"
+
+    _stub_run_inference(monkeypatch, fake_invoke)
+    process_task(task, _cfg(max_pending_proposals=10), tmp_path / "Learnings")
+
+    assert "claude_md_proposals" not in captured["prompt"]
+    assert "already pending review" not in captured["prompt"]
+
+
+def test_process_task_asks_for_proposals_while_the_queue_has_room(
+    tmp_path: Path, monkeypatch
+) -> None:
+    memory = tmp_path / "memory"
+    _queue_with(memory, 9)
+    session = _interactive_session(tmp_path)
+    task = create_task(tmp_path / "queue", Path("/tmp/proj"), session, "abcd1234", memory)
+    captured: dict[str, str] = {}
+
+    def fake_invoke(prompt: str, model: str, timeout: int) -> str:
+        captured["prompt"] = prompt
+        return "{}"
+
+    _stub_run_inference(monkeypatch, fake_invoke)
+    process_task(task, _cfg(max_pending_proposals=10), tmp_path / "Learnings")
+
+    assert "claude_md_proposals" in captured["prompt"]
+    assert "already pending review" in captured["prompt"]
