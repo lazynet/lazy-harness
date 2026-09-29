@@ -367,7 +367,9 @@ _PROPOSAL_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}")
 #: Said once, read by both callers. The halt notice and the budget-pressure
 #: fallback are the same sentence: a reader who sees one and not the other
 #: would otherwise get two different accounts of the same queue.
-_QUEUE_FULL_TAIL = "the queue is full, so no new ones are being recorded. Drain it"
+_QUEUE_FULL_TAIL = (
+    "the queue is full, so new ones are held in proposals-held.jsonl, not queued. Drain it"
+)
 
 
 def _pending_summary(memory_dir: Path) -> tuple[int, str]:
@@ -398,9 +400,9 @@ def proposals_summary_line(memory_dir: Path, max_pending: int | None = None) -> 
     with: a reader that counts a bullet the CLI declines to number reports a
     queue the user cannot drain. Archived HTML comment blocks do not count.
 
-    At or above `max_pending` the compound loop has stopped emitting proposals,
-    so the line says that rather than only asking for a review — the halt is
-    the part that costs something. Empty string when nothing is pending.
+    At or above `max_pending` the compound loop holds new proposals back
+    instead of queueing them, so the line says that rather than only asking
+    for a review — the halt is the part that costs something. Empty string when nothing is pending.
     """
     count, oldest = _pending_summary(memory_dir)
     if not count:

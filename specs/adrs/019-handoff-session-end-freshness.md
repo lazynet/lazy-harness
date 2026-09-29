@@ -67,3 +67,26 @@ Same semantics as `session-end`, but driven by the user. Motivations:
 - `handoff.md` provenance is unaffected: the frontmatter still records `session_id`, `written_at`, and `source_mtime`, and the staleness classifier in `context_inject` remains the belt-and-suspenders check. With the new force path the classifier should hit "stale" much less often in practice.
 - Users on older Claude Code builds (no `SessionEnd`) get the config-level improvement for free (lower growth threshold) and can opt into `lh knowledge handoff-now` as a manual wrap command.
 - The worker cost goes up modestly. Per hour of active session: at most one extra evaluation from the lower threshold plus one extra evaluation on close. The single-instance `flock` prevents cascades.
+
+## Evolution
+
+**2026-09-29 — the growth gate goes back up, to 1800 seconds.** Decision 1 above
+lowered it from 300 to 120 to shrink the dead zone at session close. Decision 2
+closed that dead zone on its own: `session-end` forces the final evaluation with
+no growth check, so the Stop-path gate no longer guards the final handoff — only
+how often a live session is re-evaluated mid-flight. This ADR already called it
+"a cost control, not a correctness bound".
+
+The cost turned out to be re-evaluation. A diagnosis of the evaluator's 30-day
+transcripts (2026-09-29) counted 2,977 evaluator runs over 526 sessions, 82% of
+them re-evaluating a session already evaluated. Replaying the seven days of
+`queue/done/` still on disk (claude-lazy and claude-flex, 2,539 tasks over 1,081
+sessions) against candidate gates put 713 of the 866 growth-gated re-queues
+(gaps of 120 s or more) between 2 and 30 minutes. A 1800 s gate removes those;
+3600 s removed only 3 percentage points more of the queued tasks. The same
+replay projects a 20% cut in queued tasks, well short of the ≈65% the diagnosis
+estimated, so the kill criteria in `specs/backlog.md` are measured, not assumed.
+
+Mid-session handoff freshness is what this trades away; the slim handoff still
+covers sessions below the evaluation thresholds, and the removal threshold is a
+measured stale-handoff rate.

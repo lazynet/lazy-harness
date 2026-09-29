@@ -871,7 +871,9 @@ def test_proposals_summary_line_reports_the_producer_halted_at_the_cap(
     line = proposals_summary_line(memory, max_pending=3)
 
     assert "3 claude-md proposal(s) pending" in line
-    assert "no new ones are being recorded" in line
+    assert "new ones are held in proposals-held.jsonl, not queued" in line
+    # Held proposals are recorded since #460; the banner must not say otherwise.
+    assert "not being recorded" not in line
     assert "lh memory proposals" in line
 
 
@@ -887,7 +889,7 @@ def test_proposals_summary_line_below_the_cap_does_not_claim_a_halt(
     line = proposals_summary_line(memory, max_pending=3)
 
     assert "1 claude-md proposal(s) pending" in line
-    assert "no new ones are being recorded" not in line
+    assert "held in proposals-held.jsonl" not in line
 
 
 def test_proposals_summary_line_empty_when_no_file(tmp_path: Path) -> None:
@@ -1021,7 +1023,7 @@ def test_context_inject_reports_the_halt_using_the_configured_cap(
 
     body = _run_hook_in_process(monkeypatch, capsys, cwd, cfg_file)
 
-    assert "no new ones are being recorded" in body
+    assert "new ones are held in proposals-held.jsonl, not queued" in body
 
 
 def test_context_inject_emits_proposals_summary_under_budget_pressure(

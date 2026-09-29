@@ -265,15 +265,16 @@ class CompoundLoopConfig:
     min_user_chars: int = 200
     debounce_seconds: int = 60
     timeout_seconds: int = 120
-    reprocess_min_growth_seconds: int = 120
+    reprocess_min_growth_seconds: int = 1800
     grading_enabled: bool = True
     lazymind_dir: str | None = None
     slim_handoff_enabled: bool = True
     backend: str = "claude"
     backend_options: dict[str, str] = field(default_factory=dict)
-    #: Pending claude-md proposals above which the loop stops emitting new
-    #: ones. Backpressure, not a discard: a queue nobody drains silently
-    #: crowded the session-start budget for months.
+    #: Pending claude-md proposals above which the loop holds new ones in
+    #: proposals-held.jsonl instead of queueing them. Backpressure, not a
+    #: discard: a queue nobody drains silently crowded the session-start budget
+    #: for months.
     max_pending_proposals: int = 10
 
 

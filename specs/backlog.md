@@ -371,6 +371,25 @@ binario (plan §5.2 ítem 4). Prioridad MEDIA.
 
 **Corrección, medida por el review de #450:** la corrección anterior de esta entrada decía que el cap era «backpressure, not a discard». Es falso. `knowledge/compound_loop.py` hace `proposals = []` cuando `queued >= cap`, así que la propuesta que el grader produjo en esa corrida **se pierde**; el comentario del mismo bloque dice lo contrario. Lo único cierto es que el freno se avisa. **Cerrado en #460 (2026-09-24):** lo frenado se persiste en `proposals-held.jsonl`, que el grader no lee, y `lh doctor` lo cuenta. **Cerrado en #473 (2026-09-25):** `lh memory proposals held` lista lo retenido y lo devuelve a la cola de a uno, respetando el cap bajo lock y registrando la disposición en `proposals-held-requeued.jsonl`. **Queda abierto:** sólo la decisión de operador — (a)/(b)/(c) siguen sin elegir y las colas vivas sin drenar. Prioridad MEDIA.
 
+### Kill criteria del compound-loop: B (sin proposals con la cola llena) y C (growth gate a 1800 s)
+
+**Por qué:** el diagnóstico del 2026-09-29 midió que el costo del evaluador es re-evaluación, no la cola: 2.977 corridas sobre 526 sesiones en 30 días, 82% re-evaluando una sesión ya evaluada, $280 de los $301 de haiku. B y C son automatización de comportamiento, así que llevan kill criteria declaradas antes del deploy, con la calibración congelada hasta el horizonte. El horizonte arranca el día que el release con los dos cambios se instala en la Mac (`uv tool install --reinstall` + grep de site-packages), no el del merge.
+
+**C — `reprocess_min_growth_seconds` 120 → 1800 (ADR-019, Evolution 2026-09-29).**
+- *Baseline:* 5,66 corridas por sesión evaluada (2.977 / 526), 82% re-evaluaciones, $280 de evaluador en 30 días.
+- *Horizonte:* 14 días desde el deploy.
+- *Éxito:* ≤ 2,0 corridas por sesión evaluada y ≥ 50% menos $ de evaluador por sesión evaluada.
+- *Se revierte si* el operador reporta handoffs viejos, o si la tasa medida de handoff viejo —`written_at` del `handoff.md` a más de 30 min del cierre, en sesiones sin corrida de SessionEnd— supera el 10% de las sesiones.
+- *Ojo con el éxito:* el replay de los 7 días de `queue/done/` que quedan en disco (2.539 tareas, 1.081 sesiones) proyecta sólo −20% de tareas encoladas con 1800 s, no el ≈−65% que estimaba el diagnóstico, y ahí hay 2,35 tareas por sesión, no 5,66. Las dos fuentes cuentan cosas distintas (tareas encoladas contra transcripts del evaluador), y la diferencia es lo primero que tiene que explicar la lectura del horizonte. Si el −50% por sesión no se alcanza, la conclusión es que C no era la palanca, no que hay que subir el gate de nuevo.
+
+**B — sin sección de pendientes ni clave `claude_md_proposals` en el prompt cuando la cola está llena.**
+- *Baseline:* crecimiento de `proposals-held.jsonl` en 7 días (lazy-harness tenía 45 retenidas el 2026-09-29).
+- *Horizonte:* 14 días desde el deploy.
+- *Éxito:* crecimiento de retenidas ≈ 0 mientras las colas siguen llenas.
+- *Se remueve si* la tasa de aceptación de proposals después del próximo drenaje (aceptadas / (aceptadas + rechazadas)) es menor que la de antes: significaría que la sección de pendientes estaba orientando la calidad.
+
+**Fuera de esta entrada:** E (aislar el `claude -p` del evaluador) tiene las probes hechas en `specs/designs/claude-code-evidence.md` y su decisión está pendiente; sus kill criteria entran con ella. Prioridad ALTA hasta el horizonte.
+
 ### F2–F9 del coherence-audit del 2026-09-19 siguen siendo drift abierto en `main`
 
 **Por qué está acá:** el audit que los levantó vivía en
@@ -543,7 +562,7 @@ pre_compact   -> ctx
 
 **Señal determinística disponible, sin usar todavía:** `/goal <condition>` escribe sincrónicamente una entrada `{"type":"attachment","attachment":{"type":"goal_status",...}}` al transcript JSONL en el momento en que corre, así que está disponible durante el `Stop`. A diferencia de `goal_declared`, que es una clasificación LLM post-hoc del compound-loop, no requiere inferencia. Es más angosta —solo capta el uso explícito de `/goal`, no un criterio declarado en prosa— pero es exacta. Salió del trabajo de `stop-verify-guard`, ya cerrado.
 
-**Acción:** fase 1 shippeó el 2026-09-10 — skill `verify-before-done` deployado y `[loops] inject_goal_prompt = true` aplicado; **la ventana de cuatro semanas cierra el 2026-10-08** contra el 17%. La cuarta pieza, el `Stop` hook `stop-verify-guard`, quedó deployada y wireada en las dos máquinas el 2026-09-11 (ver Done). Fase 4 queda reemplazada por `agent_dispatched`, ya en Done. Pendiente real, y único: leer la ventana cuando cierre y aplicar las kill criteria.
+**Acción:** fase 1 shippeó el 2026-09-10 — skill `verify-before-done` deployado y `[loops] inject_goal_prompt = true` aplicado; **la ventana de cuatro semanas cierra el 2026-10-08** contra el 17%. La cuarta pieza, el `Stop` hook `stop-verify-guard`, quedó deployada y wireada en las dos máquinas el 2026-09-11 (ver Done). Fase 4 queda reemplazada por `agent_dispatched`, ya en Done. Pendiente real, y único: leer la ventana cuando cierre y aplicar las kill criteria. **La métrica cambió a mitad de ventana (2026-09-29):** el grader ve ahora los primeros 8 mensajes además de los últimos 20, y las corridas del evaluador ya no cuentan en `nontrivial_prompt` ni en `session_closed`. Sobre el mismo snapshot de `metrics.db`: el 29% (162/560) sube a ≈37% por proxy léxico (69 de 243 sesiones largas `goal_absent` tienen la frase de criterio visible con head 8 + tail 20, contra 25 con sólo el tail; frase angosta, hits sin leer uno por uno), y los denominadores bajan de 6.075 a 3.089 (`nontrivial_prompt`, 49% eran del evaluador) y de 4.688 a 1.938 (`session_closed`, 59%). La lectura del 2026-10-08 tiene que publicar las dos versiones, y el «7,5% de las sesiones no triviales» de arriba está calculado sobre el denominador contaminado.
 
 ### Audit de las capas de instrucciones por context clash
 

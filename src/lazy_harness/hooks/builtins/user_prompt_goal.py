@@ -98,6 +98,13 @@ def main(event: HookEvent) -> HookDecision:
         if not isinstance(prompt, str) or not is_non_trivial(prompt):
             return HookDecision()
 
+        from lazy_harness.knowledge.evaluator_prompt import is_evaluator_prompt
+
+        # The compound-loop evaluator is a headless session of its own: its
+        # prompt is neither a work request to count nor one to nudge.
+        if is_evaluator_prompt(prompt):
+            return HookDecision()
+
         from lazy_harness.hooks.builtins._shared import project_key
         from lazy_harness.monitoring.db import MetricsDB
 

@@ -106,8 +106,11 @@ def _interactive_session(tmp_path: Path, name: str = "sess.jsonl") -> Path:
     return session
 
 
-def test_compound_loop_config_default_reprocess_min_growth_seconds_is_120() -> None:
-    assert CompoundLoopConfig().reprocess_min_growth_seconds == 120
+def test_compound_loop_config_default_reprocess_min_growth_seconds_is_1800() -> None:
+    """Re-evaluation is the evaluator's cost driver, and the forced SessionEnd run
+    (ADR-019) already guarantees the final handoff, so the Stop-path gate only has
+    to bound mid-session refreshes."""
+    assert CompoundLoopConfig().reprocess_min_growth_seconds == 1800
 
 
 def test_compound_loop_config_default_slim_handoff_enabled_is_true() -> None:
@@ -3527,3 +3530,170 @@ def test_concurrent_atomic_writes_to_one_path_do_not_share_a_temp_file(
     assert errors == []
     assert target.read_text() in ("one", "two")
     assert [p.name for p in target.parent.iterdir()] == ["handoff.md"]
+
+
+def _prompt_with(proposals_enabled: bool) -> str:
+    return build_prompt(
+        project_name="proj",
+        cwd="/tmp/proj",
+        session_id="sess1",
+        timestamp="2026-09-29T10:00:00-03:00",
+        existing_decisions="",
+        existing_failures="",
+        existing_learnings="",
+        summary="## User\nx",
+        rejected_proposals=["Never amend published commits"],
+        pending_proposals=["Verify a tool's effect, not its exit code"],
+        recent_failures=["- failure: stale handoff"],
+        proposals_enabled=proposals_enabled,
+    )
+
+
+def test_build_prompt_without_proposals_drops_the_pending_section_and_the_key() -> None:
+    """A full queue holds whatever the grader proposes, so asking for proposals
+    only spends output and a pending section of up to 10K chars on a result
+    that never reaches the queue."""
+    prompt = _prompt_with(proposals_enabled=False)
+
+    assert "already pending review" not in prompt
+    assert "Verify a tool's effect" not in prompt
+    assert "claude_md_proposals" not in prompt
+
+
+def test_build_prompt_without_proposals_keeps_everything_else() -> None:
+    enabled = _prompt_with(proposals_enabled=True)
+    disabled = _prompt_with(proposals_enabled=False)
+
+    for marker in (
+        '"decisions"',
+        '"failures"',
+        '"learnings"',
+        '"handoff"',
+        '"grade"',
+        '"goal_declared"',
+        '"project_update"',
+        "Previously rejected proposals",
+        "- failure: stale handoff",
+        "## Session conversation:",
+    ):
+        assert marker in enabled
+        assert marker in disabled
+
+
+def test_process_task_omits_proposals_from_the_prompt_when_the_queue_is_full(
+    tmp_path: Path, monkeypatch
+) -> None:
+    memory = tmp_path / "memory"
+    _queue_with(memory, 10)
+    session = _interactive_session(tmp_path)
+    task = create_task(tmp_path / "queue", Path("/tmp/proj"), session, "abcd1234", memory)
+    captured: dict[str, str] = {}
+
+    def fake_invoke(prompt: str, model: str, timeout: int) -> str:
+        captured["prompt"] = prompt
+        return "{}"
+
+    _stub_run_inference(monkeypatch, fake_invoke)
+    process_task(task, _cfg(max_pending_proposals=10), tmp_path / "Learnings")
+
+    assert "claude_md_proposals" not in captured["prompt"]
+    assert "already pending review" not in captured["prompt"]
+
+
+def test_process_task_asks_for_proposals_while_the_queue_has_room(
+    tmp_path: Path, monkeypatch
+) -> None:
+    memory = tmp_path / "memory"
+    _queue_with(memory, 9)
+    session = _interactive_session(tmp_path)
+    task = create_task(tmp_path / "queue", Path("/tmp/proj"), session, "abcd1234", memory)
+    captured: dict[str, str] = {}
+
+    def fake_invoke(prompt: str, model: str, timeout: int) -> str:
+        captured["prompt"] = prompt
+        return "{}"
+
+    _stub_run_inference(monkeypatch, fake_invoke)
+    process_task(task, _cfg(max_pending_proposals=10), tmp_path / "Learnings")
+
+    assert "claude_md_proposals" in captured["prompt"]
+    assert "already pending review" in captured["prompt"]
+
+
+def test_a_compound_loop_table_without_the_growth_gate_loads_the_new_default(
+    tmp_path: Path,
+) -> None:
+    """The operator's config.toml sets no growth gate, so the dataclass default
+    is what ships to them: it has to survive a save/load round trip."""
+    from lazy_harness.core.config import load_config, save_config
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text('[harness]\nversion = "1"\n\n[compound_loop]\nenabled = true\n')
+
+    first = load_config(cfg_file)
+    save_config(first, cfg_file)
+    second = load_config(cfg_file)
+
+    assert first.compound_loop.reprocess_min_growth_seconds == 1800
+    assert second.compound_loop.reprocess_min_growth_seconds == 1800
+
+
+def _numbered_session(tmp_path: Path, count: int) -> Path:
+    session = tmp_path / "s.jsonl"
+    records: list[dict[str, Any]] = [{"type": "permission-mode"}]
+    for i in range(count):
+        records.append({"type": "user", "message": {"content": f"msg{i}."}})
+    _write_jsonl(session, records)
+    return session
+
+
+def test_extract_messages_keeps_the_session_head_for_the_goal_grader(tmp_path: Path) -> None:
+    """A success criterion is stated before the work, so a long session's
+    criterion sat outside a tail-only window and graded as goal_absent."""
+    text, count = extract_messages(_numbered_session(tmp_path, 30))
+
+    assert count == 30
+    assert "msg0." in text
+    assert "msg7." in text
+    assert "msg8." not in text
+    assert "msg9." not in text
+    assert "msg10." in text
+    assert "msg29." in text
+    assert "2 messages omitted" in text
+
+
+def test_extract_messages_sends_a_session_that_fits_whole(tmp_path: Path) -> None:
+    text, count = extract_messages(_numbered_session(tmp_path, 28))
+
+    assert count == 28
+    assert all(f"msg{i}." in text for i in range(28))
+    assert "omitted" not in text
+
+
+def test_is_evaluator_prompt_recognises_the_prompt_build_prompt_writes() -> None:
+    from lazy_harness.knowledge.compound_loop import is_evaluator_prompt
+
+    prompt = build_prompt("p", "/c", "s", "t", "", "", "", "## User\nx")
+
+    assert is_evaluator_prompt(prompt)
+    assert not is_evaluator_prompt("implementá el hook y agregá el test")
+
+
+def test_is_evaluator_session_reads_the_first_user_message(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.compound_loop import is_evaluator_session
+
+    prompt = build_prompt("p", "/c", "s", "t", "", "", "", "## User\nx")
+    evaluator = tmp_path / "eval.jsonl"
+    _write_jsonl(
+        evaluator,
+        [
+            {"type": "queue-operation"},
+            {"type": "attachment"},
+            {"type": "user", "message": {"content": prompt}},
+            {"type": "assistant", "message": {"content": "{}"}},
+        ],
+    )
+
+    assert is_evaluator_session(evaluator)
+    assert not is_evaluator_session(_interactive_session(tmp_path))
+    assert not is_evaluator_session(tmp_path / "missing.jsonl")

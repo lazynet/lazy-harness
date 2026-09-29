@@ -1177,7 +1177,7 @@ def _render_halted_proposals(console: Console, cfg: Config) -> None:
     total_held = sum(h[1] for h in halted)
     console.print(
         f"  {len(halted)} queue(s) halted at the cap of {cap}, {total} proposal(s) pending "
-        "in them: the compound loop records no new proposals there until each is drained."
+        "in them: new proposals there are held, not queued, until each is drained."
     )
     if total_held:
         console.print(

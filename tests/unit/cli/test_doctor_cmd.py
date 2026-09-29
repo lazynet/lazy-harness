@@ -2355,3 +2355,6 @@ def test_halted_queues_report_what_the_cap_held_back(tmp_path: Path) -> None:
     assert "3 pending, 2 held back" in out
     assert "4 pending (oldest" in out
     assert "2 held back by the cap" in out
+    # Held proposals are recorded, just not queued: the summary says where they go.
+    assert "records no new proposals" not in out
+    assert "new proposals there are held, not queued" in out

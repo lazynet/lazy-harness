@@ -379,3 +379,30 @@ def test_main_exits_zero_even_when_enqueue_raises_uncaught_exception(
 
     # main() must still abstain, not let the KeyError escape.
     assert hook_mod.main(_event()) == HookDecision()
+
+
+def test_records_no_session_closed_for_the_compound_loop_evaluator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.hooks.builtins import session_end as hook_mod
+    from lazy_harness.knowledge.compound_loop import build_prompt
+    from lazy_harness.monitoring.db import MetricsDB
+
+    claude_dir = tmp_path / ".claude-test"
+    cwd = tmp_path / "proj"
+    cwd.mkdir()
+    db_path = tmp_path / "m.db"
+    transcript = tmp_path / "eval.jsonl"
+    prompt = build_prompt("p", "/c", "s", "t", "", "", "", "## User\nx")
+    transcript.write_text(json.dumps({"type": "user", "message": {"content": prompt}}) + "\n")
+
+    monkeypatch.setattr(hook_mod, "_loop_db_path", lambda: db_path)
+    _patch_config_lookup(monkeypatch, claude_dir)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_dir))
+    monkeypatch.chdir(cwd)
+    monkeypatch.setattr(hook_mod.subprocess, "Popen", lambda *a, **kw: None)
+
+    event = _event({"session_id": "s1", "transcript_path": str(transcript)})
+    assert hook_mod.main(event) == HookDecision()
+
+    assert MetricsDB(db_path).loop_event_counts() == {}

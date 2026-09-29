@@ -35,7 +35,13 @@ def _record_session_closed(event: HookEvent) -> None:
     """Never raises: the compound-loop enqueue below must run regardless."""
     try:
         from lazy_harness.hooks.builtins._shared import project_key
+        from lazy_harness.knowledge.compound_loop import is_evaluator_session
         from lazy_harness.monitoring.db import MetricsDB
+
+        # The compound-loop evaluator's own session closes too; counting it made
+        # most of the `session_closed` denominator the grader's runs.
+        if event.transcript_path is not None and is_evaluator_session(event.transcript_path):
+            return
 
         # No `Path.cwd()` fallback here, deliberately: a payload naming no cwd
         # used to reach `project_key` as the empty string and record an
