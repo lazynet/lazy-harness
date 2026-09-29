@@ -106,8 +106,11 @@ def _interactive_session(tmp_path: Path, name: str = "sess.jsonl") -> Path:
     return session
 
 
-def test_compound_loop_config_default_reprocess_min_growth_seconds_is_120() -> None:
-    assert CompoundLoopConfig().reprocess_min_growth_seconds == 120
+def test_compound_loop_config_default_reprocess_min_growth_seconds_is_1800() -> None:
+    """Re-evaluation is the evaluator's cost driver, and the forced SessionEnd run
+    (ADR-019) already guarantees the final handoff, so the Stop-path gate only has
+    to bound mid-session refreshes."""
+    assert CompoundLoopConfig().reprocess_min_growth_seconds == 1800
 
 
 def test_compound_loop_config_default_slim_handoff_enabled_is_true() -> None:
@@ -3615,3 +3618,21 @@ def test_process_task_asks_for_proposals_while_the_queue_has_room(
 
     assert "claude_md_proposals" in captured["prompt"]
     assert "already pending review" in captured["prompt"]
+
+
+def test_a_compound_loop_table_without_the_growth_gate_loads_the_new_default(
+    tmp_path: Path,
+) -> None:
+    """The operator's config.toml sets no growth gate, so the dataclass default
+    is what ships to them: it has to survive a save/load round trip."""
+    from lazy_harness.core.config import load_config, save_config
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text('[harness]\nversion = "1"\n\n[compound_loop]\nenabled = true\n')
+
+    first = load_config(cfg_file)
+    save_config(first, cfg_file)
+    second = load_config(cfg_file)
+
+    assert first.compound_loop.reprocess_min_growth_seconds == 1800
+    assert second.compound_loop.reprocess_min_growth_seconds == 1800

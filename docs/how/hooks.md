@@ -178,7 +178,7 @@ This is the hook that does the heaviest lifting. It is split into two pieces del
 1. Check `compound_loop.enabled` in config, bail if disabled.
 2. Find the latest session JSONL for the current cwd.
 3. Apply debounce (`debounce_seconds`, default 60) — if a task for this session was queued within the window, skip.
-4. Apply the growth gate (`reprocess_min_growth_seconds`, default 120) — re-queue only if the JSONL grew past the threshold since the last `done/` task.
+4. Apply the growth gate (`reprocess_min_growth_seconds`, default 1800) — re-queue only if the JSONL grew past the threshold since the last `done/` task.
 5. Check `queue/done/` for the same short session id — if already processed, skip.
 6. Drop a task file (`<unix-ts>-<short-id>.task`) into the agent's `queue/` directory with key=value metadata (`cwd`, `session_jsonl`, `session_id`, `memory_dir`, `timestamp`).
 7. `subprocess.Popen` the worker as a detached process. Return immediately.

@@ -265,7 +265,7 @@ class CompoundLoopConfig:
     min_user_chars: int = 200
     debounce_seconds: int = 60
     timeout_seconds: int = 120
-    reprocess_min_growth_seconds: int = 120
+    reprocess_min_growth_seconds: int = 1800
     grading_enabled: bool = True
     lazymind_dir: str | None = None
     slim_handoff_enabled: bool = True

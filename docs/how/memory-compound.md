@@ -70,7 +70,7 @@ Steps, in order:
 2. **Load config.** `load_config(config_file())` — if it fails or `compound_loop.enabled == False`, log and exit. The loop is opt-in.
 3. **Find the session JSONL.** The transcript the event names wins when it is on disk, because the agent's project-dir encoding has changed across releases. Only when the event names none is the path derived: encode the cwd into Claude Code's project-dir convention (`/Users/x/repo` → `-Users-x-repo`), look under `<agent runtime dir>/projects/<encoded>/`, pick the most recent `*.jsonl` by mtime.
 4. **Debounce.** `is_debounced(queue_dir, session_id, debounce_seconds)` — if a task for the same session was queued within the window (default 60s), skip. This is what prevents a flapping session close from queuing the same work repeatedly.
-5. **Growth gate.** `should_reprocess` — re-queue only if the session JSONL has grown past `reprocess_min_growth_seconds` (default 120) since the last `done/` task for this session. Bounds the worker cost on long active sessions where `Stop` fires after every LLM turn.
+5. **Growth gate.** `should_reprocess` — re-queue only if the session JSONL has grown past `reprocess_min_growth_seconds` (default 1800) since the last `done/` task for this session. Bounds the worker cost on long active sessions where `Stop` fires after every LLM turn.
 6. **Drop the task file.** `create_task(queue_dir, cwd, session_jsonl, session_id, memory_dir)` writes a file named `<unix_ts>-<short_id>.task` with lines:
    ```
    cwd=/Users/x/repo
@@ -296,7 +296,7 @@ This table covers the knobs that decide *whether and how often* a session is dis
 | `min_messages` | `4` | Sessions with fewer interactive messages are skipped. |
 | `min_user_chars` | `200` | Sessions where the user typed fewer than this many characters total are skipped — covers fast "what's the weather" prompts. |
 | `debounce_seconds` | `60` | Debounce window for repeat Stop events on the same session. |
-| `reprocess_min_growth_seconds` | `120` | Minimum seconds of JSONL growth since the last `done/` task before a Stop event re-queues. Bounds worker cost on long sessions; the `session-end` hook and `lh knowledge handoff-now` both bypass this. |
+| `reprocess_min_growth_seconds` | `1800` | Minimum seconds of JSONL growth since the last `done/` task before a Stop event re-queues. Bounds worker cost on long sessions; the `session-end` hook and `lh knowledge handoff-now` both bypass this. |
 | `timeout_seconds` | `120` | Hard timeout on the `claude -p` subprocess. |
 
 Changes take effect on the next session — the producer and worker both reload config each run.
