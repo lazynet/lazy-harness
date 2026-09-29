@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.83.2](https://github.com/lazynet/lazy-harness/compare/v0.83.1...v0.83.2) (2026-09-29)
+
+
+### Bug Fixes
+
+* stop the compound loop paying for work it cannot use ([#486](https://github.com/lazynet/lazy-harness/issues/486)) ([b510ed2](https://github.com/lazynet/lazy-harness/commit/b510ed226d683e8fd71f26d940af8551fcee5e83))
+
+
+### Documentation
+
+* ADR-069 agent config is tested by an eval suite ([#487](https://github.com/lazynet/lazy-harness/issues/487)) ([7d96b67](https://github.com/lazynet/lazy-harness/commit/7d96b67a88cf1e64db198239fbd0211f9cb00aa3))
+
 ## [0.83.1](https://github.com/lazynet/lazy-harness/compare/v0.83.0...v0.83.1) (2026-09-29)
 
 
