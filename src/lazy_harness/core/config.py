@@ -271,9 +271,10 @@ class CompoundLoopConfig:
     slim_handoff_enabled: bool = True
     backend: str = "claude"
     backend_options: dict[str, str] = field(default_factory=dict)
-    #: Pending claude-md proposals above which the loop stops emitting new
-    #: ones. Backpressure, not a discard: a queue nobody drains silently
-    #: crowded the session-start budget for months.
+    #: Pending claude-md proposals above which the loop holds new ones in
+    #: proposals-held.jsonl instead of queueing them. Backpressure, not a
+    #: discard: a queue nobody drains silently crowded the session-start budget
+    #: for months.
     max_pending_proposals: int = 10
 
 
