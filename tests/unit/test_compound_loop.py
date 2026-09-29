@@ -3636,3 +3636,64 @@ def test_a_compound_loop_table_without_the_growth_gate_loads_the_new_default(
 
     assert first.compound_loop.reprocess_min_growth_seconds == 1800
     assert second.compound_loop.reprocess_min_growth_seconds == 1800
+
+
+def _numbered_session(tmp_path: Path, count: int) -> Path:
+    session = tmp_path / "s.jsonl"
+    records: list[dict[str, Any]] = [{"type": "permission-mode"}]
+    for i in range(count):
+        records.append({"type": "user", "message": {"content": f"msg{i}."}})
+    _write_jsonl(session, records)
+    return session
+
+
+def test_extract_messages_keeps_the_session_head_for_the_goal_grader(tmp_path: Path) -> None:
+    """A success criterion is stated before the work, so a long session's
+    criterion sat outside a tail-only window and graded as goal_absent."""
+    text, count = extract_messages(_numbered_session(tmp_path, 30))
+
+    assert count == 30
+    assert "msg0." in text
+    assert "msg7." in text
+    assert "msg8." not in text
+    assert "msg9." not in text
+    assert "msg10." in text
+    assert "msg29." in text
+    assert "2 messages omitted" in text
+
+
+def test_extract_messages_sends_a_session_that_fits_whole(tmp_path: Path) -> None:
+    text, count = extract_messages(_numbered_session(tmp_path, 28))
+
+    assert count == 28
+    assert all(f"msg{i}." in text for i in range(28))
+    assert "omitted" not in text
+
+
+def test_is_evaluator_prompt_recognises_the_prompt_build_prompt_writes() -> None:
+    from lazy_harness.knowledge.compound_loop import is_evaluator_prompt
+
+    prompt = build_prompt("p", "/c", "s", "t", "", "", "", "## User\nx")
+
+    assert is_evaluator_prompt(prompt)
+    assert not is_evaluator_prompt("implementá el hook y agregá el test")
+
+
+def test_is_evaluator_session_reads_the_first_user_message(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.compound_loop import is_evaluator_session
+
+    prompt = build_prompt("p", "/c", "s", "t", "", "", "", "## User\nx")
+    evaluator = tmp_path / "eval.jsonl"
+    _write_jsonl(
+        evaluator,
+        [
+            {"type": "queue-operation"},
+            {"type": "attachment"},
+            {"type": "user", "message": {"content": prompt}},
+            {"type": "assistant", "message": {"content": "{}"}},
+        ],
+    )
+
+    assert is_evaluator_session(evaluator)
+    assert not is_evaluator_session(_interactive_session(tmp_path))
+    assert not is_evaluator_session(tmp_path / "missing.jsonl")

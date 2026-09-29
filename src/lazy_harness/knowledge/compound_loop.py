@@ -28,6 +28,7 @@ from pathlib import Path
 from lazy_harness.core.config import Config
 from lazy_harness.core.memory_store import memory_dir_lock
 from lazy_harness.core.proposals import rule_lines
+from lazy_harness.knowledge.evaluator_prompt import EVALUATOR_PROMPT_HEAD, is_evaluator_prompt
 from lazy_harness.knowledge.project_state import (
     ProjectUpdate,
     Provenance,
@@ -517,11 +518,14 @@ def count_user_chars(session_jsonl: Path) -> int:
     return total
 
 
-def extract_messages(session_jsonl: Path, tail: int = 20) -> tuple[str, int]:
+def extract_messages(session_jsonl: Path, tail: int = 20, head: int = 8) -> tuple[str, int]:
     """Extract messages from a session JSONL into a markdown summary.
 
-    Returns (formatted_text, total_message_count). Only the last `tail`
-    messages are included in the formatted text to keep the prompt bounded.
+    Returns (formatted_text, total_message_count). The first `head` and the
+    last `tail` messages are included, the middle elided, to keep the prompt
+    bounded. The head is there for `goal_declared`: a success criterion is
+    stated before the work, and a tail-only window graded every long session
+    that declared one up front as goal_absent.
     """
     messages: list[str] = []
     try:
@@ -538,7 +542,36 @@ def extract_messages(session_jsonl: Path, tail: int = 20) -> tuple[str, int]:
                     messages.append(f"## {role}\n\n{chr(10).join(texts)}")
     except OSError:
         return "", 0
-    return "\n\n".join(messages[-tail:]), len(messages)
+    if len(messages) <= head + tail:
+        return "\n\n".join(messages), len(messages)
+    omitted = len(messages) - head - tail
+    kept = [*messages[:head], f"[... {omitted} messages omitted ...]", *messages[-tail:]]
+    return "\n\n".join(kept), len(messages)
+
+
+#: Lines scanned for the evaluator's first user message. Its transcript opens
+#: with queue operations and one attachment per SessionStart hook.
+_EVALUATOR_SCAN_LINES = 50
+
+
+def is_evaluator_session(session_jsonl: Path) -> bool:
+    """True when the transcript's first user message is the evaluator prompt."""
+    try:
+        with open(session_jsonl) as f:
+            for _ in range(_EVALUATOR_SCAN_LINES):
+                line = f.readline()
+                if not line:
+                    return False
+                try:
+                    d = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                message = _transcript_message(d)
+                if message is not None and message[0] == "user":
+                    return is_evaluator_prompt("\n".join(message[1]))
+    except OSError:
+        return False
+    return False
 
 
 def parse_task(task_file: Path) -> dict[str, str]:
@@ -885,7 +918,7 @@ def build_prompt(
             "nothing qualifies — this is the common case.\n"
         )
         proposals_empty = ' "claude_md_proposals": [],'
-    return f"""You are evaluating a Claude Code session for learnings. Analyze the conversation and output ONLY valid JSON.
+    return f"""{EVALUATOR_PROMPT_HEAD} Analyze the conversation and output ONLY valid JSON.
 
 Project: {project_name}
 CWD: {cwd}

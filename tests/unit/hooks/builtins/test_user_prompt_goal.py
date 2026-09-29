@@ -257,3 +257,17 @@ def test_injection_enabled_returns_false_when_config_read_fails(monkeypatch) -> 
     monkeypatch.setattr("lazy_harness.core.paths.config_file", _boom)
 
     assert mod._injection_enabled() is False
+
+
+def test_records_nothing_for_the_compound_loop_evaluator(monkeypatch, tmp_path: Path) -> None:
+    """The evaluator's `claude -p` fires UserPromptSubmit too; counting it made
+    half the `nontrivial_prompt` denominator the grader grading itself."""
+    from lazy_harness.knowledge.compound_loop import build_prompt
+
+    db_path = tmp_path / "m.db"
+    prompt = build_prompt("p", "/c", "s", "t", "", "", "", "## User\nimplementá el hook")
+
+    decision = _run(monkeypatch, _event(prompt=prompt), db_path)
+
+    assert decision == HookDecision()
+    assert not db_path.exists() or _recorded(db_path) == []

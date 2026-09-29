@@ -215,6 +215,7 @@ Responsibility: force one final compound-loop evaluation when the session actual
 
 **What it does:**
 
+0. Record a `session_closed` row in `loop_events` — unless the transcript's first user message is the compound-loop evaluator prompt, since the evaluator's own headless sessions close too.
 1. Check `compound_loop.enabled`; bail if disabled.
 2. Find the latest session JSONL for the current cwd.
 3. Call `should_queue_task(..., force=True)` — bypasses debounce and the growth gate; the helper still respects the `force` flag as the one intersection point between the two producers.
@@ -675,7 +676,7 @@ Source: `src/lazy_harness/hooks/builtins/user_prompt_goal.py`.
 
 Responsibility: record events for prompts that look like work. Ships as a sensor collecting baseline data; injection of goal prompts back to the agent is gated behind `[loops] inject_goal_prompt`, which defaults to off until a baseline exists.
 
-The hook classifies prompts into trivial and non-trivial. For non-trivial ones it records an event with `kind="nontrivial_prompt"` to the metrics store — one row per qualifying prompt, not per session — so that later analysis can measure how often such prompts occur. This hook records only the denominator: `UserPromptSubmit` fires before the assistant has produced any text, so it can classify the incoming request but cannot judge whether a goal actually got declared. The numerator — `goal_declared`/`goal_absent` — is recorded by the compound-loop worker instead, which already reads the full transcript to grade the session.
+The hook classifies prompts into trivial and non-trivial. For non-trivial ones it records an event with `kind="nontrivial_prompt"` to the metrics store — one row per qualifying prompt, not per session — so that later analysis can measure how often such prompts occur. This hook records only the denominator: `UserPromptSubmit` fires before the assistant has produced any text, so it can classify the incoming request but cannot judge whether a goal actually got declared. The numerator — `goal_declared`/`goal_absent` — is recorded by the compound-loop worker instead, which grades the session from its first 8 and last 20 messages — the head is there because a success criterion is stated before the work.
 
 Classification logic:
 
@@ -688,9 +689,10 @@ Mechanics:
 
 1. Read the user's submitted prompt off the hook event (`event.prompt`); the runner parses the payload and the agent adapter normalises it, so the hook never touches stdin.
 2. Call `is_non_trivial(prompt)` to classify it.
-3. If the prompt is non-trivial, insert a row into the `loop_events` table of `metrics.db` with `kind="nontrivial_prompt"`, `session=<from payload>`, `project=<cwd from payload>`, and a server-generated timestamp.
-4. If the prompt is trivial, record nothing.
-5. Always exit 0, even on malformed input or database write failures. This is a fail-soft sensor.
+3. If the prompt is the compound-loop evaluator's own (it opens with `EVALUATOR_PROMPT_HEAD`), record nothing and inject nothing: the evaluator runs as a headless session, and counting it made about half of the `nontrivial_prompt` rows the grader's own runs.
+4. Otherwise, if the prompt is non-trivial, insert a row into the `loop_events` table of `metrics.db` with `kind="nontrivial_prompt"`, `session=<from payload>`, `project=<cwd from payload>`, and a server-generated timestamp.
+5. If the prompt is trivial, record nothing.
+6. Always exit 0, even on malformed input or database write failures. This is a fail-soft sensor.
 
 **Output:** none. The hook only records to the store, it does not emit `hookSpecificOutput`.
 
