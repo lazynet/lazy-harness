@@ -295,6 +295,13 @@ DEFAULT_PRICING: dict[str, dict[str, float]] = {
         "cache_create": 2.5,
         "cache_create_1h": 4.0,
     },
+    "claude-sonnet-5-5": {
+        "input": 2.0,
+        "output": 10.0,
+        "cache_read": 0.2,
+        "cache_create": 2.5,
+        "cache_create_1h": 4.0,
+    },
     "claude-haiku-4-5-20251001": {
         "input": 1.0,
         "output": 5.0,
