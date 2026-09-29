@@ -696,6 +696,23 @@ def test_fable_5_1_cache_reads_are_cheaper_than_fable_5s() -> None:
     assert pricing["claude-fable-5-1"]["cache_read"] < pricing["claude-fable-5"]["cache_read"]
 
 
+def test_default_pricing_includes_sonnet_5_5() -> None:
+    """claude-sonnet-5-5 is what the `sonnet` alias resolves to.
+
+    Unpriced, every orchestrated implement lane ingests as `unknown_model`
+    and drops out of the API-equivalent totals.
+    """
+    from lazy_harness.monitoring.pricing import default_pricing
+
+    assert default_pricing()["claude-sonnet-5-5"] == {
+        "input": 2.0,
+        "output": 10.0,
+        "cache_read": 0.2,
+        "cache_create": 2.5,
+        "cache_create_1h": 4.0,
+    }
+
+
 def test_default_pricing_includes_mythos_5_1() -> None:
     """claude-mythos-5-1 carries the same rates as claude-fable-5-1.
 
