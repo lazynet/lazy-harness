@@ -2,7 +2,85 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
+
+import pytest
+
+SPECIAL_PATHS = (
+    "/profiles/$(touch sentinel)",
+    "/profiles/`touch sentinel`",
+    '/profiles/"quoted"',
+    r"/profiles/back\slash\$ENVRC_TEST_VALUE",
+    "/profiles/$ENVRC_TEST_VALUE",
+    "/profiles/with space",
+    "/profiles/it's literal",
+)
+
+
+@pytest.mark.parametrize("shell", ["sh", "bash"])
+@pytest.mark.parametrize("mode", ["new", "append", "merge"])
+def test_generated_paths_are_literal_in_shell(tmp_path: Path, shell: str, mode: str) -> None:
+    from lazy_harness.core.envrc import write_envrc
+
+    for index, value in enumerate(SPECIAL_PATHS):
+        root = tmp_path / str(index)
+        root.mkdir()
+        envrc = root / ".envrc"
+        if mode == "append":
+            envrc.write_text("# user prelude\n")
+        write_envrc(root, "ENVRC_TEST_PATH", Path(value))
+        if mode == "merge":
+            write_envrc(root, "ENVRC_OTHER_PATH", Path("/other"))
+        result = subprocess.run(
+            [
+                shell,
+                "-c",
+                'set -eu; ENVRC_TEST_VALUE=expanded; . ./.envrc; printf "%s" "$ENVRC_TEST_PATH"',
+            ],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert not (root / "sentinel").exists(), value
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == value
+
+
+@pytest.mark.parametrize("value", SPECIAL_PATHS)
+def test_single_quoted_exports_round_trip(value: str) -> None:
+    from lazy_harness.core.envrc import _build_block, _parse_exports, render_envrc
+
+    block = render_envrc("ENVRC_TEST_PATH", Path(value)).rstrip("\n")
+    assert _parse_exports(block) == {"ENVRC_TEST_PATH": value}
+    assert _build_block(_parse_exports(block)) == block
+    assert "export ENVRC_TEST_PATH='" in block
+
+
+def test_legacy_exports_survive_merge_and_upgrade(tmp_path: Path) -> None:
+    from lazy_harness.core.envrc import _parse_exports, write_envrc
+
+    envrc = tmp_path / ".envrc"
+    legacy = (
+        "# user prelude\n# >>> lazy-harness >>>\n"
+        'export ENVRC_OLD_PATH="/old/plain path"\n'
+        "# <<< lazy-harness <<<\n# user epilogue\n"
+    )
+    envrc.write_text(legacy)
+    assert _parse_exports(legacy) == {"ENVRC_OLD_PATH": "/old/plain path"}
+    result = write_envrc(tmp_path, "ENVRC_TEST_PATH", Path("/new"))
+    content = envrc.read_text()
+    assert result.action == "updated"
+    assert _parse_exports(content) == {
+        "ENVRC_OLD_PATH": "/old/plain path",
+        "ENVRC_TEST_PATH": "/new",
+    }
+    assert "export ENVRC_OLD_PATH='/old/plain path'" in content
+    assert content.startswith("# user prelude\n")
+    assert content.endswith("# user epilogue\n")
+    assert write_envrc(tmp_path, "ENVRC_TEST_PATH", Path("/new")).action == "unchanged"
+    assert envrc.read_text() == content
 
 
 def test_render_creates_block_when_existing_is_none() -> None:
@@ -11,7 +89,7 @@ def test_render_creates_block_when_existing_is_none() -> None:
     out = render_envrc("CLAUDE_CONFIG_DIR", Path("/home/foo/.claude-lazy"))
     assert BEGIN_MARKER in out
     assert END_MARKER in out
-    assert 'export CLAUDE_CONFIG_DIR="/home/foo/.claude-lazy"' in out
+    assert "export CLAUDE_CONFIG_DIR='/home/foo/.claude-lazy'" in out
     assert out.endswith("\n")
 
 
@@ -32,7 +110,7 @@ def test_render_replaces_existing_managed_block() -> None:
     assert "echo hello" in out
     assert "# user epilogue" in out
     assert "/old/path" not in out
-    assert 'export CLAUDE_CONFIG_DIR="/new/path"' in out
+    assert "export CLAUDE_CONFIG_DIR='/new/path'" in out
     # Markers appear exactly once after substitution
     assert out.count("# >>> lazy-harness >>>") == 1
     assert out.count("# <<< lazy-harness <<<") == 1
@@ -112,7 +190,7 @@ def test_write_envrc_works_for_arbitrary_env_var(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     write_envrc(root, "OPENAI_HOME", Path("/openai"))
     content = (root / ".envrc").read_text()
-    assert 'export OPENAI_HOME="/openai"' in content
+    assert "export OPENAI_HOME='/openai'" in content
 
 
 def test_notice_carries_the_writing_version() -> None:
@@ -153,8 +231,8 @@ def test_write_envrc_twice_over_one_root_keeps_both_exports(tmp_path: Path) -> N
     write_envrc(root, "CODEX_HOME", Path("/h/.codex-sandbox"))
 
     content = (root / ".envrc").read_text()
-    assert 'export CLAUDE_CONFIG_DIR="/h/.claude-work"' in content
-    assert 'export CODEX_HOME="/h/.codex-sandbox"' in content
+    assert "export CLAUDE_CONFIG_DIR='/h/.claude-work'" in content
+    assert "export CODEX_HOME='/h/.codex-sandbox'" in content
     assert content.count("# >>> lazy-harness >>>") == 1
 
 
@@ -188,8 +266,8 @@ def test_write_envrc_old_single_export_block_upgrades_in_place(tmp_path: Path) -
 
     assert result.action == "updated"
     content = envrc.read_text()
-    assert 'export CLAUDE_CONFIG_DIR="/h/.claude-work"' in content
-    assert 'export CODEX_HOME="/h/.codex-sandbox"' in content
+    assert "export CLAUDE_CONFIG_DIR='/h/.claude-work'" in content
+    assert "export CODEX_HOME='/h/.codex-sandbox'" in content
 
 
 def test_multi_export_block_orders_exports_deterministically_by_env_var(
@@ -214,6 +292,6 @@ def test_rewriting_the_same_env_var_updates_its_config_dir_only(tmp_path: Path) 
     write_envrc(root, "CLAUDE_CONFIG_DIR", Path("/new"))
 
     content = (root / ".envrc").read_text()
-    assert 'export CLAUDE_CONFIG_DIR="/new"' in content
+    assert "export CLAUDE_CONFIG_DIR='/new'" in content
     assert "/old" not in content
-    assert 'export CODEX_HOME="/h/.codex-sandbox"' in content
+    assert "export CODEX_HOME='/h/.codex-sandbox'" in content

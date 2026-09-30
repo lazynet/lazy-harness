@@ -32,22 +32,23 @@ class EnvrcResult:
     action: str  # "created", "updated", "unchanged"
 
 
-_EXPORT_LINE = re.compile(r'^export (\w+)="(.*)"$')
+_EXPORT_LINE = re.compile(r"""^export (\w+)=(?:'((?:[^']|'\\'')*)'|"(.*)")$""")
 
 
 def _parse_exports(block: str) -> dict[str, str]:
-    """Every `export ENV_VAR="value"` line inside a managed block, as a dict.
+    """Read literal values from generated exports without evaluating shell code.
 
-    Tolerant of a block written by an older harness that only ever held one
-    export (decision 7, 2026-09-13 multi-agent blast radius design) — there is
-    nothing version-specific about the line shape itself, only about how many
-    of them a block used to carry.
+    Older harness versions used double quotes without escaping their contents;
+    retain those values literally when upgrading a block to single quotes.
     """
     exports: dict[str, str] = {}
     for line in block.splitlines():
         match = _EXPORT_LINE.match(line.strip())
         if match:
-            exports[match.group(1)] = match.group(2)
+            value = match.group(2)
+            exports[match.group(1)] = (
+                value.replace("'\\''", "'") if value is not None else match.group(3)
+            )
     return exports
 
 
@@ -55,7 +56,9 @@ def _build_block(exports: dict[str, str]) -> str:
     """One export per distinct agent claiming the root, ordered by env var name
     so the block is deterministic regardless of which profile wrote last."""
     lines = [BEGIN_MARKER, NOTICE.format(version=__version__)]
-    lines.extend(f'export {env_var}="{exports[env_var]}"' for env_var in sorted(exports))
+    for env_var in sorted(exports):
+        value = exports[env_var].replace("'", "'\\''")
+        lines.append(f"export {env_var}='{value}'")
     lines.append(END_MARKER)
     return "\n".join(lines)
 
