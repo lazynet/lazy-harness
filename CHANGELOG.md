@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.83.3](https://github.com/lazynet/lazy-harness/compare/v0.83.2...v0.83.3) (2026-09-30)
+
+
+### Bug Fixes
+
+* judge handoff staleness from the author's transcript across agents ([#493](https://github.com/lazynet/lazy-harness/issues/493)) ([4e9f577](https://github.com/lazynet/lazy-harness/commit/4e9f577c81b1a92cb0c572a38a323b588b326a5f))
+* keep generated .envrc paths literal to the shell ([#492](https://github.com/lazynet/lazy-harness/issues/492)) ([b8292e6](https://github.com/lazynet/lazy-harness/commit/b8292e68d445ded29362edd57766a740dd742dac))
+* stop the PreToolUse guards reading quoted text as commands ([#491](https://github.com/lazynet/lazy-harness/issues/491)) ([596e79a](https://github.com/lazynet/lazy-harness/commit/596e79a70444642f0e42a29d994cc4d07ad1d8e5))
+
+
+### Documentation
+
+* fix drift found by the pre-release coherence audit ([6d080e6](https://github.com/lazynet/lazy-harness/commit/6d080e6992252f6dc2a22613561ce98822342ee7))
+* record iteration 1 closures and handoff findings in the backlog ([1a7aff1](https://github.com/lazynet/lazy-harness/commit/1a7aff14735d1c9f287d58fc8a3a910a3c9cd37b))
+* specify eval pilot and stabilize graph index test ([#489](https://github.com/lazynet/lazy-harness/issues/489)) ([03db752](https://github.com/lazynet/lazy-harness/commit/03db75263c2a8ae3e55112938311a3619059312f))
+
 ## [0.83.2](https://github.com/lazynet/lazy-harness/compare/v0.83.1...v0.83.2) (2026-09-29)
 
 
