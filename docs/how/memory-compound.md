@@ -180,6 +180,10 @@ Pendiente para próxima sesión:
 
 If the LLM returns an empty handoff list, the file is **deleted** — which is why the absence of `handoff.md` at session start means "nothing left hanging", not "there was no memory".
 
+A handoff written with a session carries frontmatter: `session_id`, `written_at` (when the task was queued), `source_mtime` (the transcript's mtime at processing) and `source_jsonl` (the transcript's path). Each agent drains its own queue, so a worker can reach an old session's task after another agent's worker wrote a newer handoff; when the existing file names a different session with a later `source_mtime`, it is neither overwritten nor deleted.
+
+At session start `context-inject` warns that a handoff may be stale when its own transcript grew more than 300 s past `source_mtime`, or when a newer session sits in the reading agent's project directory — for a handoff from the same agent, any other latest session; for one written by another agent, found through `source_jsonl`, only a session more than 300 s newer. A handoff whose transcript cannot be found at all is reported with its session id: the first eight characters for a UUID, the whole id otherwise.
+
 ### `learnings/YYYY-MM/YYYY-MM-DD-<slug>-<host>.md` — long-term cross-project knowledge
 
 Each learning becomes a dedicated markdown file in the knowledge store under `<learnings_dir>/YYYY-MM/`. The filename is date-prefixed, slugified from the title, and suffixed with the writing machine's hostname; existing files are not overwritten (learnings are write-once).

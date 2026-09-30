@@ -1535,3 +1535,106 @@ def test_graphify_section_fallback_also_counts_a_legacy_edges_key(tmp_path: Path
     out, repo = _fresh_graph_repo(tmp_path, graph)
 
     assert graphify_section(out, repo) == "## Code structure\n- 2 nodes · 1 edges"
+
+
+_CODEX_SID = "rollout-2026-09-29T19-23-30-01a0ef44-11f2-7bd2-8f3f-3893d9e89d25"
+
+
+def _write_handoff_meta(memory: Path, **meta: str) -> None:
+    memory.mkdir(parents=True, exist_ok=True)
+    fields = "".join(f"{key}: {value}\n" for key, value in meta.items())
+    (memory / "handoff.md").write_text(f"---\n{fields}---\nPendiente:\n- carry on\n")
+
+
+def _jsonl(path: Path, mtime: float) -> Path:
+    import os
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{}\n")
+    os.utime(path, (mtime, mtime))
+    return path
+
+
+def test_handoff_context_reads_sessions_from_the_given_dir_not_the_memory_parent(
+    tmp_path: Path,
+) -> None:
+    """Memory in a knowledge store has no session JSONL beside it."""
+    memory = tmp_path / "store" / "memory" / "github.com" / "team" / "api"
+    sessions = tmp_path / "claude" / "projects" / "-repos-api"
+    _jsonl(sessions / "abcd1234-aaaa-bbbb.jsonl", 10_000.0)
+    _write_handoff_meta(memory, session_id="abcd1234-aaaa-bbbb", source_mtime="10000")
+
+    result = handoff_context(memory, sessions_dir=sessions)
+
+    assert "may be stale" not in result
+    assert "carry on" in result
+
+
+def test_handoff_from_another_agent_is_fresh_when_its_own_jsonl_is_unchanged(
+    tmp_path: Path,
+) -> None:
+    rollout = _jsonl(tmp_path / "codex" / "sessions" / "2026" / f"{_CODEX_SID}.jsonl", 10_000.0)
+    sessions = tmp_path / "claude" / "projects" / "-repos-api"
+    _jsonl(sessions / "abcd1234-older.jsonl", 9_000.0)
+    memory = tmp_path / "store" / "memory"
+    _write_handoff_meta(
+        memory, session_id=_CODEX_SID, source_mtime="10000", source_jsonl=str(rollout)
+    )
+
+    result = handoff_context(memory, sessions_dir=sessions)
+
+    assert "may be stale" not in result
+    assert "carry on" in result
+
+
+def test_handoff_from_another_agent_is_stale_when_its_own_jsonl_grew(tmp_path: Path) -> None:
+    rollout = _jsonl(tmp_path / "codex" / "sessions" / f"{_CODEX_SID}.jsonl", 20_000.0)
+    memory = tmp_path / "store" / "memory"
+    _write_handoff_meta(
+        memory, session_id=_CODEX_SID, source_mtime="10000", source_jsonl=str(rollout)
+    )
+
+    result = handoff_context(memory, sessions_dir=tmp_path / "claude" / "projects" / "-x")
+
+    assert "may be stale" in result
+    assert f"Session {_CODEX_SID} grew" in result
+
+
+def test_handoff_from_another_agent_is_stale_when_a_newer_local_session_exists(
+    tmp_path: Path,
+) -> None:
+    rollout = _jsonl(tmp_path / "codex" / "sessions" / f"{_CODEX_SID}.jsonl", 10_000.0)
+    sessions = tmp_path / "claude" / "projects" / "-repos-api"
+    _jsonl(sessions / "9999abcd-cccc-4ddd-8eee-ffff00001111.jsonl", 20_000.0)
+    memory = tmp_path / "store" / "memory"
+    _write_handoff_meta(
+        memory, session_id=_CODEX_SID, source_mtime="10000", source_jsonl=str(rollout)
+    )
+
+    result = handoff_context(memory, sessions_dir=sessions)
+
+    assert "may be stale" in result
+    assert f"Last written for session {_CODEX_SID}." in result
+    assert "Most recent session on disk: 9999abcd." in result
+
+
+def test_missing_jsonl_diagnostic_names_a_non_uuid_session_in_full(tmp_path: Path) -> None:
+    memory = tmp_path / "store" / "memory"
+    _write_handoff_meta(memory, session_id=_CODEX_SID, source_mtime="10000")
+
+    result = handoff_context(memory, sessions_dir=tmp_path / "nowhere")
+
+    assert f"No session JSONL found on disk for handoff {_CODEX_SID}." in result
+
+
+def test_missing_jsonl_diagnostic_keeps_the_short_form_for_a_uuid_session(
+    tmp_path: Path,
+) -> None:
+    memory = tmp_path / "store" / "memory"
+    _write_handoff_meta(
+        memory, session_id="1d279476-ef51-4d34-8495-5bd96c646582", source_mtime="10000"
+    )
+
+    result = handoff_context(memory, sessions_dir=tmp_path / "nowhere")
+
+    assert "No session JSONL found on disk for handoff 1d279476." in result
