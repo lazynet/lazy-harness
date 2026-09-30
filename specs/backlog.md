@@ -24,7 +24,7 @@ Cada iteración es una tanda de PRs chicos, uno por item, con test rojo antes de
 fix. Una iteración cierra cuando sus items están en §Done con release, no cuando
 se abren los PRs.
 
-1. **Iteración 1 — el guard de seguridad deja de depender de la grafía.** Las
+1. **Iteración 1 — el guard de seguridad deja de depender de la grafía.** Estado al 2026-09-30: cerrados las evasiones (#477), los falsos positivos por comillas (#491) y F6 (#492); la trust de capa proyecto de Codex no tiene acción mientras el harness no escriba `[projects.*]`, y queda abierta la evasión por flag citado en Prioridad ALTA. Las
    evasiones de 0.82.1 (abreviaturas de opciones largas de git, opciones
    globales que el guard no conocía, `find -delete`/`-exec rm`) cierran en su
    propio PR. Siguen, en este orden: los falsos positivos con backticks y prosa
@@ -302,14 +302,33 @@ desde `:367-369` cuando el step 3 insertó los helpers de merge arriba de la cla
 - [x] **El guard de git ya no se abstiene ante una opción global que no conoce, ni ante una abreviatura** — el token layer judga cada palabra posterior como subcomando candidato cuando encuentra una opción global que no sabe parsear (`-P`, `--no-optional-locks`, `--namespace=`, repetidas o futuras), acepta cualquier prefijo que git aceptaría de `--hard` y `--force`, y cubre `find -delete` y una acción `-exec`/`-execdir`/`-ok` que bloquearía sola. Las tres variantes de `reset` se reprodujeron descartando cambios reales a través del hook desplegado de 0.82.1. Cierra la entrada que dejó #347 en «Known limits». PR #477, mergeado el 2026-09-25; entra en 0.82.2.
 - [x] **El backup de `lh migrate` ya no colapsa artefactos con igual basename** — cada target se copia bajo un nombre indexado y `backup-manifest.json` guarda su path de origen; `lh migrate --rollback` restaura por ese path, con un camino legacy para backups sin manifest. Reproducido antes del fix con `one/settings.json` y `two/settings.json`. PR #473, mergeado el 2026-09-25; entra en 0.82.0.
 - [x] **La Mac en engram 2.1.0 con el plugin 0.1.3** — backup en `~/.engram/pre-v2/`, `brew upgrade`, conteos idénticos al snapshot previo, `user_version` = 1, doctor sin hallazgos nuevos respecto del primer arranque en 2.1.0. `claude plugin update` desinstaló el plugin en claude-lazy en vez de actualizarlo; se reinstaló con `claude plugin install`. El pin de `config.toml` pasó a 2.1.0 por el template de chezmoi. Verificado en claude-lazy, claude-flex y codex-lazy; registro y gotcha en el plan §5.4. Operación de entorno, 2026-09-24.
+- [x] **Los guards PreToolUse ya no leen texto citado como comando** — un scanner compartido (`hooks/builtins/_inert_text.py`) marca el texto que el shell nunca ejecuta: comillas simples, comillas dobles sin `$` ni backtick, el cuerpo de un heredoc con delimitador citado, y el idiom de heredoc sustituido que usan los bodies de PR y los mensajes de commit. La excepción aplica sólo si cada comando del string trata sus argumentos como texto (allowlist en `docs/how/hooks.md`); una regla dispara sobre cualquiera de dos lecturas, la original sin los matches que empiezan dentro del texto y una copia enmascarada. Lo que el scanner no puede clasificar (comillas sin cerrar, sustituciones, ANSI-C, heredoc sin citar) se juzga como antes. Cierra las cuatro entradas de falsos positivos por backticks y prosa citada. Una tabla de 39 evasiones a través de comillas sigue bloqueada, incluida una sustitución en subíndice de array vía `printf -v` que el primer corte había abierto, medida en bash 5.3; 26 probes adversariales extra dan el mismo veredicto en `main` y en la rama. Queda bloqueado a propósito un heredoc que alimenta un intérprete. PR #491, mergeado el 2026-09-30; entra en 0.83.3.
+- [x] **F6 — El `.envrc` generado deja los paths literales** — el generador usa comillas simples y escapa la comilla simple embebida; `_parse_exports` hace round-trip del formato nuevo y sigue leyendo el formato viejo de comillas dobles, así que un bloque de un harness anterior se preserva y migra en el merge. Subprocesos reales de `sh` y `bash` sourcean el bloque para siete paths con caracteres especiales, en creación, append y merge, sin efectos laterales. El formato cambia: cada `.envrc` gestionado pide `direnv allow` una vez después de actualizar. PR #492, mergeado el 2026-09-30; entra en 0.83.3.
+- [x] **La staleness del handoff se juzga contra el transcript del autor, entre agentes** — desde que la memoria vive en el knowledge store, `handoff_context` buscaba los JSONL de sesión en `memory_dir.parent`, donde no hay ninguno, así que todo handoff con frontmatter salía stale, también los de Claude; los goldens no lo vieron porque fijan el layout legacy. El handoff gana un campo `source_jsonl`, el lector usa el project dir del agente que lee (de `transcript_path`), entre agentes decide por `source_mtime`, y el diagnóstico muestra un id útil (el prefijo de 8 de un id de Codex es siempre `rollout-`). `persist_results` ya no pisa ni borra un handoff de otra sesión más reciente: medido, un task de Codex encolado a las 20:05 del 2026-09-29 se procesó a las 09:57 del día siguiente y reemplazó el handoff de Claude escrito a las 20:24. Test de integración por la CLI desde el checkout principal y desde un worktree. PR #493, mergeado el 2026-09-30; entra en 0.83.3.
 
 ## Open — Prioridad ALTA
 
-Ninguna.
+### Un flag de force citado o escapado esquiva la regla de `git add` forzado
+
+**Por qué:** medido el 2026-09-30 contra `main` @ `4e9f577c` y contra el `main` previo a #491, con el mismo resultado: la regla de `git add` forzado del `pre_tool_use_security` matchea el flag sólo en su grafía desnuda. Con el flag entre comillas o precedido de una barra invertida, el shell lo entrega a git idéntico después de quitar las comillas, y el guard no lo ve — ni la regex ni el token layer. Es la misma familia que las evasiones que cerró #477 (el guard juzga la grafía, no lo que git recibe); #491 no la abre ni la cierra.
+
+**Acción:** que el token layer juzgue las palabras después de quitar comillas y escapes, como hace git, y un test por grafía (comillas simples, dobles, barra invertida, flag abreviado) en ambas direcciones. Revisar las demás reglas de flags con la misma probe.
 
 ## Open — Prioridad MEDIA
 
 ---
+
+### El SessionEnd de Codex nunca arranca el worker del compound-loop
+
+**Por qué:** medido el 2026-09-30 en `~/.codex-lazy/logs/`: cada `compound-loop: queued` del hook Stop va seguido de un `worker: started` en el mismo segundo, y ninguno de los seis `session-end: queued … (force)` del 2026-09-29 y 2026-09-30 lo tiene; `session_end.py` no registró `worker spawn failed`. El snapshot final de cada sesión de Codex queda en la cola hasta el próximo Stop, a veces al día siguiente, y aterriza fuera de orden — así se pisó un handoff de Claude más nuevo (ver #493). La causa no está probada: la hipótesis es que Codex mata los hijos del hook al salir aunque se lancen con `start_new_session=True`.
+
+**Acción:** probe primero contra el binario de Codex y registrar el resultado en su `codex-evidence.md`. Candidatos, con tradeoffs: drenaje por scheduler (robusto, un job más a verificar por su scheduler); drenar en el SessionStart de cualquier agente (barato, tarde); doble fork con `setsid` (puede seguir siendo cosechado).
+
+### Todas las tareas de Codex comparten la clave de cola `rollout-`
+
+**Por qué:** `create_task`, `is_debounced` y `last_processed_mtime` identifican la tarea por `session_id[:8]`, que para un id de Codex es siempre el literal `rollout-`. El debounce y el gate de crecimiento comparan sesiones de Codex distintas entre sí (observado: `no new activity since last process for rollout-`). Los primeros 8 caracteres de un UUIDv7 tampoco son únicos entre sesiones arrancadas cerca: hay dos rollouts `01a0ef44-*` en disco.
+
+**Acción:** clave por el uuid final del id (`agents/codex.py:_ROLLOUT_SESSION` ya lo parsea) completo, no por un prefijo, con un test de dos sesiones de Codex seguidas.
 
 ### Un job programado falló diez días seguidos y nada lo reportó
 
@@ -633,12 +652,6 @@ lo que corresponde es el ataque adversarial periódico que el gate ya pide.
 
 **Fuente:** hallazgo F5 de `specs/codebase-audit-2026-09-16.md`.
 
-### F6 — El `.envrc` generado interpola paths sin escapar shell
-
-**Por qué:** medido por la auditoría del 2026-09-16 con una probe de rendering puro, no re-verificado en esta pasada. `core/envrc.py:35`: el generador envuelve el path en comillas dobles sin escapar sustituciones de comando ni comillas embebidas. Un segmento de path configurado que contenga `$(...)` o backticks se emite tal cual dentro de la línea `export` entre comillas dobles, y al sourcear el archivo esa sustitución se evalúa en vez de preservarse como string literal. La explotación requiere control sobre el path configurado y ejecución del archivo generado — la CLI ya exige `direnv allow` antes de aplicar un `.envrc` actualizado (`cli/profile_cmd.py:280`).
-
-**Fuente:** hallazgo F6 de `specs/codebase-audit-2026-09-16.md`.
-
 ### F9 — Tres funciones de orquestación concentran la complejidad del repo
 
 **Por qué:** medido por la auditoría del 2026-09-16 con un heurístico de screening (conteo de branches/booleanos/handlers/generators vía AST, explícitamente no una métrica de complejidad cognitiva estandarizada), no re-verificado en esta pasada.
@@ -653,14 +666,6 @@ Cada una mezcla responsabilidades no relacionadas: recolección de contexto y re
 
 **Fuente:** hallazgo F9 de `specs/codebase-audit-2026-09-16.md`.
 
-### Falso positivo del hook de seguridad con backticks en el argumento de otro comando
-
-**Por qué:** el `pre_tool_use_security` desplegado interpreta cualquier backtick como operador de command substitution, sin distinguir el que abre shell real del que sólo aparece dentro de un argumento citado de otro comando. Bloqueó una llamada a `gh pr create --body` cuyo texto citaba, entre backticks de markdown, un comando destructivo mencionado como prosa — evaluó esa cita como si fuera una invocación de git real, no el contenido de un PR body.
-
-**Fuente:** surgido dos veces durante la lane de #347, al redactar el body de su propio PR. Mecanismo emparentado con *Falso positivo del PreToolUse de seguridad con backticks de markdown* (Prioridad BAJA), pero disparado dentro del argumento de otro comando, no de un heredoc.
-
-**Acción:** ninguna propuesta en esta entrada — mecanismo registrado, sin repro (regla de repo público).
-
 ### Trust de capa proyecto de Codex
 
 **Por qué:** el diseño (`:730-746`) deja alcanzable y silencioso el estado "deployed, hook-trusted, and still not running" en la capa de proyecto de `~/.codex/config.toml` (`[projects.*]`). Si el harness alguna vez escribe hooks de capa proyecto, `lh doctor` va a necesitar leer esa sección para no reportar un trust que no aplica.
@@ -668,22 +673,6 @@ Cada una mezcla responsabilidades no relacionadas: recolección de contexto y re
 **Fuente:** #348, follow-up 6.
 
 **Acción:** ninguna propuesta en esta entrada — el harness no escribe `[projects.*]` hoy.
-
-### El denylist de seguridad y el guard de git-scope bloquean prosa que sólo cita una grafía peligrosa
-
-**Por qué:** los hooks PreToolUse de seguridad y de git-scope evalúan el string de comando completo, así que un heredoc que sólo *menciona* — como ejemplo o advertencia en prosa — un `rm -rf` o una grafía de stash recursivo dispara el bloqueo igual que la invocación real. Es un true positive sobre un pretexto falso: el matcher no distingue "esto va a ejecutar un delete" de "esto va a escribir texto que habla de un delete".
-
-**Fuente:** orchestrator y lane A1, "Process findings" (`_wave-d-gate-notes.md`); emparentado con *Falso positivo del PreToolUse de seguridad con backticks de markdown* (Prioridad BAJA), pero disparado por la grafía completa del comando y no por un backtick aislado.
-
-**Acción:** ninguna propuesta en esta entrada — mismo trade-off que el hallazgo de backticks: el hook falla hacia el lado seguro. No hay salida por config: desde #473 `allow_patterns` no exime ninguna regla, y `recursive_delete_roots` sólo exime un `rm` recursivo literal. Si se vuelve frecuente, el arreglo es el tokenizer (iteración 1 del orden de ataque del 2026-09-25).
-
-### El guard de recursive-delete dispara con un operador de shell dentro de un argumento citado, delante de la grafía `-rf`
-
-**Por qué:** medido el 2026-09-17, tres veces, sobre llamadas a herramientas de esta misma sesión. `grep -rn 'a\|rm -rf\|b' tests/` bloquea, porque el `|` dentro del propio patrón de grep matchea la alternativa de operador del regex; lo mismo un heredoc con un string de Python que contiene `/bin/zsh -lc 'rm -rf …'`, vía la alternativa `sh -c`, y un docstring donde un backtick precede al token. `grep -rn "rm -rf" src` y `git commit -m "fix: rm -rf guard"` no se ven afectados — una mención simple y citada sigue permitida. Preexistente al ensanche de recursión de PR #385 — la grafía `-rf` siempre bloqueó; cerrarlo pide reconocer comillas, algo que el ancla actual no tiene, y no hay workaround por config desde #473, que dejó `allow_patterns` sin efecto. `specs/plans/2026-04-17-security-hooks-cluster-plan.md:333` y `:1749` siguen registrando `rm -r dir` como expected-allow: es registro histórico fechado, porque `specs/workflow/layout.md` congela `specs/plans/` desde #388. Lo que sigue sin declarar ahí es `specs/gates/`.
-
-**Fuente:** PR #385, Backlog text.
-
-**Acción:** ninguna propuesta en esta entrada — mecanismo registrado, pide quote-awareness que el ancla actual no tiene.
 
 ### `memory_dir`'s docstring is stale since #463, and two CLI callers skip the `NullAdapter` guard
 
@@ -695,6 +684,18 @@ Cada una mezcla responsabilidades no relacionadas: recolección de contexto y re
 ---
 
 ## Open — Prioridad BAJA
+
+### `write_slim_handoff` pisa el handoff sin frontmatter ni guard
+
+**Por qué:** #493 le dio a `persist_results` un guard de orden y el campo `source_jsonl`, pero el handoff reducido que se escribe cuando los gates del LLM bloquean no tiene frontmatter ni guard: una tarea vieja puede seguir reemplazando un handoff más nuevo, y el lector lo trata como legacy sin poder juzgar su staleness.
+
+**Acción:** mismo frontmatter y mismo guard que `persist_results`, con el test de la tarea vieja que no pisa.
+
+### Los goldens de `context_inject` fijan el layout legacy de memoria
+
+**Por qué:** `test_context_inject_goldens._world` pone `memory_dir = project_dir / "memory"`, el layout anterior al knowledge store; por eso el bug de staleness que cerró #493 salió sin que ningún golden lo viera.
+
+**Acción:** un golden con el layout del store y un handoff con frontmatter.
 
 ### Codex bajo exit 2: las formas que #462 no midió
 
@@ -754,18 +755,6 @@ del store. Prioridad BAJA.
 **Por qué:** cero hits del flag en este archivo, lo que hace parecer que nadie lo ejercitó. Está ejercitado en tres probes — `specs/gates/probes/codex-hook-probe6.sh:466` (arm B), `codex-matcher-probe.sh:300` y `codex-hook-exec-probe.sh:375` — y el arm B del probe 6 produjo una medición real, registrada en `specs/designs/codex-evidence.md` §4.2: bajo el flag, el comando emitido fue bloqueado por `pre-tool-use-security`, contra el arm A bajo trust real donde el mismo guard fue invocado y permitió. No hay trabajo pendiente acá; lo que falta es el renglón que dice dónde vive la medición, y este es ese renglón.
 
 **Fuente:** `/coherence-audit` antes de 0.72.0, seed 2e.
-
-### Falso positivo del PreToolUse de seguridad con backticks de markdown
-
-**Por qué:** `_COMMAND_START` incluye el backtick como operador de shell — correcto para command substitution. Pero un backtick de markdown inline-code delante de un comando destructivo, incluso dentro de un heredoc citado donde el shell nunca lo interpreta, dispara igual. Escribir prosa *sobre* comandos destructivos queda bloqueado.
-
-**Repro medido el 2026-09-10.** Contra `BLOCK_RULES`, el mismo texto pasa o se bloquea según lleve backticks: la variante sin backticks queda `allowed`, la variante con backticks alrededor del comando devuelve `Recursive delete`. El bloqueo se disparó tres veces seguidas mientras se redactaba esta misma entrada, incluida la que intentaba documentarlo.
-
-**Re-medido el 2026-09-16, después de #335 — sigue vigente y NO es una regresión de esa PR.** #335 ancló doce de las catorce `BLOCK_RULES` en `_COMMAND_START`, y midió este caso en las dos ramas antes de asumir nada: un cuerpo de heredoc que nombra el borrado **sin** backticks queda `allowed` tanto en `main` (798016c) como en la rama, y **con** backticks de markdown queda **BLOCKED** en las dos. Idéntico, porque `rm` era justamente la única regla que ya traía el ancla. Lo que rechaza esa oración es el **backtick**, que es command substitution genuina y pertenece a la clase de operadores — no la falta de ancla. #335 lo dejó afuera a propósito y registró los cuatro falsos positivos que sobreviven como medidos y no como supuestos. La recomendación de abajo no cambia.
-
-**Por qué NO se arregla ya:** el hook falla hacia el lado seguro y el workaround (sacar los backticks) es trivial. Parsear heredocs para distinguir texto de comando no es barato, y un parser incompleto de shell es peor que el falso positivo actual — daría una falsa sensación de precisión sobre una superficie que hoy es deliberadamente conservadora.
-
-**Acción:** ninguna por ahora. Si el falso positivo se vuelve frecuente al documentar, el arreglo es reconocer comillas en el tokenizer (iteración 1 del orden de ataque del 2026-09-25); un `allow_patterns` ya no sirve de salida desde #473, y tocar `_COMMAND_START` sigue descartado.
 
 ### F10 — `PluginRegistry` no tiene un solo caller en `src/`
 
