@@ -1214,19 +1214,24 @@ deprecated_reason: null
 
     handoff_file = memory_dir / "handoff.md"
     handoff_items = data.get("handoff", [])
-    if handoff_items:
+    source_mtime = 0.0
+    if session_jsonl is not None:
+        try:
+            source_mtime = session_jsonl.stat().st_mtime
+        except OSError:
+            source_mtime = 0.0
+    if _handoff_belongs_to_newer_session(handoff_file, session_id, source_mtime):
+        wrote.append("handoff: kept, a more recent session wrote it")
+    elif handoff_items:
         lines = "\n".join(f"- {item}" for item in handoff_items)
         body = f"Pendiente para próxima sesión:\n{lines}\n"
         if session_id and session_jsonl is not None:
-            try:
-                source_mtime = session_jsonl.stat().st_mtime
-            except OSError:
-                source_mtime = 0.0
             frontmatter = (
                 "---\n"
                 f"session_id: {session_id}\n"
                 f"written_at: {timestamp}\n"
                 f"source_mtime: {source_mtime:.0f}\n"
+                f"source_jsonl: {session_jsonl}\n"
                 "---\n"
             )
             body = frontmatter + body
@@ -1236,6 +1241,51 @@ deprecated_reason: null
         handoff_file.unlink()
 
     return wrote
+
+
+def _handoff_belongs_to_newer_session(
+    handoff_file: Path, session_id: str, source_mtime: float
+) -> bool:
+    """True when `handoff_file` was written from a different session whose
+    transcript was newer than this one's.
+
+    One queue per agent drains in its own order, so a worker can reach an old
+    session's task hours after another agent's worker wrote a newer handoff.
+    """
+    if not session_id or not source_mtime:
+        return False
+    try:
+        text = handoff_file.read_text()
+    except OSError:
+        return False
+    meta, _ = parse_handoff_frontmatter(text)
+    if meta.get("session_id", "") in ("", session_id):
+        return False
+    try:
+        existing_mtime = float(meta.get("source_mtime", "0") or 0)
+    except ValueError:
+        return False
+    return existing_mtime > source_mtime
+
+
+def parse_handoff_frontmatter(text: str) -> tuple[dict[str, str], str]:
+    """Split a handoff.md into (metadata, body_without_frontmatter).
+
+    Returns an empty metadata dict if the file has no leading `---` block.
+    """
+    if not text.startswith("---\n"):
+        return {}, text
+    end = text.find("\n---\n", 4)
+    if end == -1:
+        return {}, text
+    meta_block = text[4:end]
+    body = text[end + 5 :]
+    meta: dict[str, str] = {}
+    for line in meta_block.splitlines():
+        if ":" in line:
+            key, _, value = line.partition(":")
+            meta[key.strip()] = value.strip()
+    return meta, body
 
 
 _PRJ_NAME_PREFIXES = ("lazy-", "flex-", "mngt-", "prj-")

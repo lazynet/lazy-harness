@@ -3697,3 +3697,73 @@ def test_is_evaluator_session_reads_the_first_user_message(tmp_path: Path) -> No
     assert is_evaluator_session(evaluator)
     assert not is_evaluator_session(_interactive_session(tmp_path))
     assert not is_evaluator_session(tmp_path / "missing.jsonl")
+
+
+def _persist_handoff(tmp_path: Path, session: Path, session_id: str, items: list[str]) -> None:
+    persist_results(
+        {"decisions": [], "failures": [], "learnings": [], "handoff": items},
+        tmp_path / "memory",
+        tmp_path / "Learnings",
+        "proj",
+        "2026-09-29T20:05:06-03:00",
+        session_id=session_id,
+        session_jsonl=session,
+    )
+
+
+def test_persist_results_records_the_source_jsonl_path(tmp_path: Path) -> None:
+    """A reader running under another agent cannot derive where this
+    transcript lives from the session id alone."""
+    session = _interactive_session(tmp_path)
+    _persist_handoff(tmp_path, session, "abcd1234-deadbeef", ["do X"])
+
+    text = (tmp_path / "memory" / "handoff.md").read_text()
+    assert f"source_jsonl: {session}\n" in text
+
+
+def test_persist_results_keeps_a_handoff_from_a_more_recent_session(tmp_path: Path) -> None:
+    """Tasks are processed in queue order per agent, not in session order: a
+    worker draining an old task must not replace a newer session's handoff."""
+    import os
+
+    newer = _interactive_session(tmp_path, "newer.jsonl")
+    os.utime(newer, (20_000.0, 20_000.0))
+    older = _interactive_session(tmp_path, "older.jsonl")
+    os.utime(older, (10_000.0, 10_000.0))
+
+    _persist_handoff(tmp_path, newer, "newer-session", ["NEWER_ITEM"])
+    _persist_handoff(tmp_path, older, "older-session", ["OLDER_ITEM"])
+
+    text = (tmp_path / "memory" / "handoff.md").read_text()
+    assert "NEWER_ITEM" in text
+    assert "OLDER_ITEM" not in text
+
+
+def test_persist_results_does_not_remove_a_handoff_from_a_more_recent_session(
+    tmp_path: Path,
+) -> None:
+    import os
+
+    newer = _interactive_session(tmp_path, "newer.jsonl")
+    os.utime(newer, (20_000.0, 20_000.0))
+    older = _interactive_session(tmp_path, "older.jsonl")
+    os.utime(older, (10_000.0, 10_000.0))
+
+    _persist_handoff(tmp_path, newer, "newer-session", ["NEWER_ITEM"])
+    _persist_handoff(tmp_path, older, "older-session", [])
+
+    assert "NEWER_ITEM" in (tmp_path / "memory" / "handoff.md").read_text()
+
+
+def test_persist_results_lets_the_same_session_replace_its_own_handoff(tmp_path: Path) -> None:
+    """Re-processing one session after it moved on must still land, even
+    though the new write reads the same session id."""
+    import os
+
+    session = _interactive_session(tmp_path)
+    os.utime(session, (20_000.0, 20_000.0))
+    _persist_handoff(tmp_path, session, "same-session", ["FIRST"])
+    os.utime(session, (10_000.0, 10_000.0))
+    _persist_handoff(tmp_path, session, "same-session", ["SECOND"])
+
+    assert "SECOND" in (tmp_path / "memory" / "handoff.md").read_text()

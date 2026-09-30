@@ -238,54 +238,70 @@ def lazynorth_context(
 _STALENESS_WINDOW_SECONDS = 300
 
 
-def _parse_handoff_frontmatter(text: str) -> tuple[dict[str, str], str]:
-    """Split a handoff.md into (metadata, body_without_frontmatter).
-
-    Returns an empty metadata dict if the file has no leading `---` block.
-    """
-    if not text.startswith("---\n"):
-        return {}, text
-    end = text.find("\n---\n", 4)
-    if end == -1:
-        return {}, text
-    meta_block = text[4:end]
-    body = text[end + 5 :]
-    meta: dict[str, str] = {}
-    for line in meta_block.splitlines():
-        if ":" in line:
-            key, _, value = line.partition(":")
-            meta[key.strip()] = value.strip()
-    return meta, body
+_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
 
-def _classify_handoff_staleness(meta: dict[str, str], latest_session: Path | None) -> str | None:
+def _display_session_id(session_id: str) -> str:
+    """Eight characters identify a random uuid; they do not identify a Codex
+    rollout id, whose first eight are the constant `rollout-`."""
+    return session_id[:8] if _UUID.fullmatch(session_id) else session_id
+
+
+def _author_session_jsonl(meta: dict[str, str], sessions_dir: Path | None) -> Path | None:
+    """The transcript the handoff was distilled from, wherever its agent keeps it."""
+    declared = meta.get("source_jsonl", "")
+    if declared and Path(declared).is_file():
+        return Path(declared)
+    handoff_sid = meta.get("session_id", "")
+    if sessions_dir is not None and handoff_sid:
+        local = sessions_dir / f"{handoff_sid}.jsonl"
+        if local.is_file():
+            return local
+    return None
+
+
+def _classify_handoff_staleness(
+    meta: dict[str, str], latest_session: Path | None, sessions_dir: Path | None = None
+) -> str | None:
     """Return a reason string if the handoff is stale, None if fresh.
 
-    Fresh means: the handoff's session_id matches the latest session JSONL on
-    disk AND that JSONL has not grown past `_STALENESS_WINDOW_SECONDS` beyond
-    the recorded source_mtime.
+    Fresh means: no newer session exists on the reader's side, AND the
+    handoff's own transcript has not grown past `_STALENESS_WINDOW_SECONDS`
+    beyond the recorded source_mtime. A handoff whose transcript lives in the
+    reader's sessions dir is newest only if it *is* the latest file there; one
+    written by another agent is compared by time, the only order two agents'
+    session dirs share.
     """
     handoff_sid = meta.get("session_id", "")
-    if latest_session is None:
-        return f"No session JSONL found on disk for handoff {handoff_sid[:8]}."
-    latest_sid = latest_session.stem
-    if handoff_sid != latest_sid:
-        return (
-            f"Last written for session {handoff_sid[:8]}. "
-            f"Most recent session on disk: {latest_sid[:8]}."
-        )
+    shown = _display_session_id(handoff_sid)
+    author = _author_session_jsonl(meta, sessions_dir)
     try:
         source_mtime = float(meta.get("source_mtime", "0") or 0)
     except ValueError:
         source_mtime = 0.0
+    if latest_session is None and author is None:
+        return f"No session JSONL found on disk for handoff {shown}."
+    if latest_session is not None and latest_session != author:
+        cross_agent = author is not None and author.parent != latest_session.parent
+        try:
+            newer = latest_session.stat().st_mtime - source_mtime > _STALENESS_WINDOW_SECONDS
+        except OSError:
+            newer = False
+        if not cross_agent or newer:
+            return (
+                f"Last written for session {shown}. "
+                f"Most recent session on disk: {_display_session_id(latest_session.stem)}."
+            )
+    if author is None:
+        return None
     try:
-        current_mtime = latest_session.stat().st_mtime
+        current_mtime = author.stat().st_mtime
     except OSError:
         return None  # can't tell — trust it
     delta = current_mtime - source_mtime
     if delta > _STALENESS_WINDOW_SECONDS:
         return (
-            f"Session {handoff_sid[:8]} grew {delta:.0f}s "
+            f"Session {shown} grew {delta:.0f}s "
             f"past the handoff snapshot (window={_STALENESS_WINDOW_SECONDS}s)."
         )
     return None
@@ -300,7 +316,11 @@ def _latest_session_jsonl(sessions_dir: Path) -> Path | None:
     return max(jsonl_files, key=lambda f: f.stat().st_mtime)
 
 
-def handoff_context(memory_dir: Path) -> str:
+def handoff_context(memory_dir: Path, sessions_dir: Path | None = None) -> str:
+    """`sessions_dir` is the reading agent's project dir. Absent, it falls back
+    to `memory_dir.parent`, which holds sessions only in the legacy layout."""
+    from lazy_harness.knowledge.compound_loop import parse_handoff_frontmatter
+
     parts: list[str] = []
 
     handoff = memory_dir / "handoff.md"
@@ -310,16 +330,17 @@ def handoff_context(memory_dir: Path) -> str:
         except OSError:
             raw = ""
         if raw:
-            meta, body = _parse_handoff_frontmatter(raw)
+            meta, body = parse_handoff_frontmatter(raw)
             body = body.strip()
             if not meta:
                 parts.append(
                     "(legacy handoff — no provenance metadata, treat with caution)\n" + body
                 )
             else:
-                sessions_dir = memory_dir.parent
+                if sessions_dir is None:
+                    sessions_dir = memory_dir.parent
                 latest = _latest_session_jsonl(sessions_dir)
-                stale_reason = _classify_handoff_staleness(meta, latest)
+                stale_reason = _classify_handoff_staleness(meta, latest, sessions_dir)
                 if stale_reason is None:
                     parts.append(body)
                 else:
@@ -933,7 +954,7 @@ def main(event: HookEvent) -> HookDecision:
                 profile_doc,
             )
 
-    handoff_ctx = handoff_context(memory_dir)
+    handoff_ctx = handoff_context(memory_dir, project_dir)
     proposals_ctx = proposals_context(memory_dir)
     proposals_summary = ""
     if cfg is None or cfg.context_inject.proposals_summary:

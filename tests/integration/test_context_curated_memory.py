@@ -339,3 +339,47 @@ def test_system_banner_is_bounded_with_the_body_for_long_branch(
     assert len(payload["hookSpecificOutput"]["additionalContext"]) <= 200
     assert len(payload["systemMessage"]) <= 200
     assert "truncated" in payload["systemMessage"]
+
+
+def test_handoff_in_the_store_is_fresh_when_its_session_sits_in_the_agent_project_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, git_checkout
+) -> None:
+    """The store holds memory; the agent's project dir holds sessions. The
+    staleness check must look in the second, from a main checkout and a worktree."""
+    store = _setup(tmp_path, monkeypatch, "claude-code")
+    repo = git_checkout.repo
+    subprocess.run(
+        ["git", "remote", "add", "origin", "https://github.com/team/api.git"],
+        cwd=repo,
+        check=True,
+    )
+    memory = memory_dir_for(repo, knowledge_root=store)
+    memory.mkdir(parents=True)
+    project_dir = tmp_path / "agent" / "projects" / "-repos-api"
+    project_dir.mkdir(parents=True)
+    previous = project_dir / "abcd1234-aaaa-bbbb-cccc-ddddeeeeffff.jsonl"
+    previous.write_text("{}\n")
+    os.utime(previous, (10_000.0, 10_000.0))
+    (memory / "handoff.md").write_text(
+        "---\nsession_id: abcd1234-aaaa-bbbb-cccc-ddddeeeeffff\nsource_mtime: 10000\n---\n"
+        "Pendiente:\n- HANDOFF_SENTINEL\n"
+    )
+    current = project_dir / "9999ffff-0000-1111-2222-333344445555.jsonl"
+
+    for cwd in (repo, git_checkout.worktree):
+        result = CliRunner().invoke(
+            cli,
+            ["hook", "context-inject", "--profile", "memory"],
+            input=json.dumps(
+                {
+                    "hook_event_name": "SessionStart",
+                    "prompt_id": "test",
+                    "cwd": str(cwd),
+                    "transcript_path": str(current),
+                }
+            ),
+        )
+        assert result.exit_code == 0, result.output
+        body = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "HANDOFF_SENTINEL" in body
+        assert "may be stale" not in body
