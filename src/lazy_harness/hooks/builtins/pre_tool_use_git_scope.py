@@ -38,6 +38,7 @@ from pathlib import Path
 
 from lazy_harness.agents.base import HookDecision, HookEvent, Operation, Verdict
 from lazy_harness.core.paths import config_file
+from lazy_harness.hooks.builtins._inert_text import inert_spans, mask, starts_inert
 
 
 @dataclass(frozen=True)
@@ -227,11 +228,23 @@ def is_unsafe_stash(command: str) -> UnsafeStash | None:
     Every `git stash` in the command is judged, not just the first: a compound
     like `git stash list; git stash pop` is unsafe on account of its second
     invocation.
+
+    A stash named inside text the shell never runs — a quoted commit message,
+    a heredoc of prose — is not an invocation; `_inert_text` decides which text
+    that is, and a masked copy keeps a quoted separator from hiding the rest.
     """
-    for match in _STASH_CALL.finditer(command):
-        verdict = _classify(match.group(1).strip())
-        if verdict is not None:
-            return verdict
+    inert = inert_spans(command)
+    readings = [(command, inert), (mask(command, inert), ())] if inert else [(command, ())]
+    for text, exempt in readings:
+        position = 0
+        while (match := _STASH_CALL.search(text, position)) is not None:
+            if starts_inert(match.start(), exempt):
+                position = match.start() + 1
+                continue
+            verdict = _classify(match.group(1).strip())
+            if verdict is not None:
+                return verdict
+            position = match.end()
     return None
 
 

@@ -23,8 +23,8 @@ from lazy_harness.hooks.loader import _BUILTIN_HOOKS
 _SRC = Path(__file__).resolve().parents[3] / "src" / "lazy_harness"
 _BUILTINS_DIR = _SRC / "hooks" / "builtins"
 
-#: Not hooks: the package marker and the helpers every hook imports.
-_NOT_HOOKS = {"__init__", "_shared"}
+#: Not hooks: the package marker and the helpers hooks import.
+_NOT_HOOKS = {"__init__", "_shared", "_inert_text"}
 
 
 def _modules_on_disk() -> set[str]:
