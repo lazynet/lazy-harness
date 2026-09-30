@@ -286,9 +286,11 @@ every command in the string treats its arguments as text: `echo`, `printf`
 `gh pr`/`gh issue` create, edit or comment. So a markdown backtick in a PR body, a `|` in a `grep`
 alternation or a `;` in a commit message no longer reads as a command. The
 exemption fails closed: an unterminated quote, command or process substitution,
-ANSI-C quoting, an unquoted heredoc delimiter, a heredoc without its terminator,
-or any other command in the string — a shell, `eval`, an interpreter, a pipe into
-one — leaves the whole command judged as before. A file written alongside `git`
+ANSI-C quoting, a heredoc without its terminator, or any other command in the
+string — a shell, `eval`, an interpreter, a pipe into one — leaves the whole
+command judged as before. The body of a heredoc whose delimiter is unquoted is
+never exempted and is judged as written; quoted text elsewhere in the same
+command keeps its exemption. A file written alongside `git`
 also forfeits it, since a commit can run a hook the same command just wrote. A
 rule whose own command is in plain view still fires on a quoted operand
 (`grep x '.env'` reads the file).
