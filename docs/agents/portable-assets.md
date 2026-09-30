@@ -116,6 +116,10 @@ source is removed on the next deploy, including a single-profile deploy. Native
 directories and links to other locations are left intact; `synced` is removed
 from the harness ownership ledger.
 
+A profile-source skill that is a symlink to a missing target — typically an
+absolute path valid on another host — is not projected. `lh deploy` names it
+once with its dangling target, even when several profiles share that source.
+
 Slash commands and subagent definitions stay **native**. They are not projected,
 not translated, and not warned about — they are simply each agent's own.
 
