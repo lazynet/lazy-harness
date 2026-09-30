@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.83.4](https://github.com/lazynet/lazy-harness/compare/v0.83.3...v0.83.4) (2026-09-30)
+
+
+### Bug Fixes
+
+* report broken profile skill symlinks on deploy ([#495](https://github.com/lazynet/lazy-harness/issues/495)) ([b10024e](https://github.com/lazynet/lazy-harness/commit/b10024e38d7e6148d5130ac797fa4aa5ebbad80d))
+
 ## [0.83.3](https://github.com/lazynet/lazy-harness/compare/v0.83.2...v0.83.3) (2026-09-30)
 
 
