@@ -19,6 +19,7 @@ from typing import Literal
 from lazy_harness.agents.base import HookDecision, HookEvent, Operation, Verdict
 from lazy_harness.core.config import ConfigError
 from lazy_harness.core.paths import config_file
+from lazy_harness.hooks.builtins._inert_text import Span, inert_spans, mask, starts_inert
 
 Category = Literal["filesystem", "sql", "terraform", "credentials", "git", "policy"]
 
@@ -441,8 +442,26 @@ def _find_rule(words: list[str]) -> BlockRule | None:
 _CHAIN_OPERATORS = re.compile(r"&&|\|\||;|\n|(?<![<>])&(?![&>])")
 
 
-def _segments(command: str) -> list[str]:
-    return _CHAIN_OPERATORS.split(command)
+def _segments(command: str) -> list[tuple[int, str]]:
+    """Each segment with its offset, so a match can be placed in the command."""
+    segments, start = [], 0
+    for operator in _CHAIN_OPERATORS.finditer(command):
+        segments.append((start, command[start : operator.start()]))
+        start = operator.end()
+    segments.append((start, command[start:]))
+    return segments
+
+
+def _live_match(
+    pattern: re.Pattern[str], subject: str, offset: int, inert: tuple[Span, ...]
+) -> re.Match[str] | None:
+    """The first match that does not start inside text the shell never runs."""
+    position = 0
+    while (match := pattern.search(subject, position)) is not None:
+        if not starts_inert(offset + match.start(), inert):
+            return match
+        position = match.start() + 1
+    return None
 
 
 # Global git options this hook recognises between `git` and its subcommand.
@@ -488,8 +507,15 @@ def should_block(
     cwd: Path | None = None,
 ) -> BlockDecision | None:
     """Judge operations; legacy allow_patterns is accepted but never grants an exception."""
+    # Two readings of a command holding inert text, and a rule fires on either.
+    # The original, skipping matches that *start* inside the text, keeps a
+    # quoted operand in view (`grep x '.env'`); the masked copy keeps a quoted
+    # separator from cutting a real command's arguments short (`grep 'x;' .env`).
+    inert = inert_spans(command)
+    masked = mask(command, inert)
+    readings = [(command, inert), (masked, ())] if inert else [(command, ())]
     try:
-        invocations = _invocations(command)
+        invocations = _invocations(masked)
     except (ValueError, RecursionError):
         invocations = []
         if denied_commands:
@@ -504,15 +530,19 @@ def should_block(
                 command,
             )
     cleanup = _safe_cleanup(command, recursive_delete_roots, cwd or Path.cwd())
-    for segment in _segments(command):
-        for rule in BLOCK_RULES:
-            subject = _normalise_git_globals(segment) if rule.category == "git" else segment
-            match = rule.pattern.search(subject)
-            if match is None:
-                continue
-            if cleanup and rule is BLOCK_RULES[0]:
-                continue
-            return BlockDecision(rule=rule, matched_text=match.group(0))
+    for text, exempt in readings:
+        for offset, segment in _segments(text):
+            for rule in BLOCK_RULES:
+                subject = _normalise_git_globals(segment) if rule.category == "git" else segment
+                # Normalising shifts offsets, so a rewritten segment gets no exemption.
+                match = _live_match(
+                    rule.pattern, subject, offset, exempt if subject == segment else ()
+                )
+                if match is None:
+                    continue
+                if cleanup and rule is BLOCK_RULES[0]:
+                    continue
+                return BlockDecision(rule=rule, matched_text=match.group(0))
     for words in invocations:
         rule = _token_rule(words)
         if rule is not None and not (cleanup and rule is BLOCK_RULES[0]):

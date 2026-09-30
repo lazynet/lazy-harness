@@ -275,10 +275,29 @@ terraform destroy"` is a commit message, and a heredoc body written into a file
 is prose. A command's arguments also end at the line break, so a `cat` opening a
 heredoc cannot reach a secrets filename named in the body.
 
-`sql` is the exception, and deliberately: `DROP TABLE` is never the command being
-run, it is the argument of one (`psql -c "DROP TABLE users"`), so it is matched
-anywhere in the string. Prose naming `DROP TABLE` is blocked as a result; use
-a file editing tool when writing such documentation.
+**Quoted text the shell never runs.** A shell operator or backtick inside quoted
+text does not open a command position. Text counts as inert when the shell does
+not interpret it — single quotes, double quotes holding no `$` or backtick, the
+body of a heredoc whose delimiter is quoted (`<<'EOF'`), and that body in the
+`"$(cat <<'EOF' … EOF\n)"` shape used for PR bodies and commit messages — **and**
+every command in the string treats its arguments as text: `echo`, `printf`
+(without `-v`), `grep`, `cat`, `tee`, `head`, `tail`, `wc`, `sort`, `uniq`,
+`cut`, `tr`, `less`, `more`, `cd`, `git add`/`commit`, `gh pr review` and
+`gh pr`/`gh issue` create, edit or comment. So a markdown backtick in a PR body, a `|` in a `grep`
+alternation or a `;` in a commit message no longer reads as a command. The
+exemption fails closed: an unterminated quote, command or process substitution,
+ANSI-C quoting, an unquoted heredoc delimiter, a heredoc without its terminator,
+or any other command in the string — a shell, `eval`, an interpreter, a pipe into
+one — leaves the whole command judged as before. A file written alongside `git`
+also forfeits it, since a commit can run a hook the same command just wrote. A
+rule whose own command is in plain view still fires on a quoted operand
+(`grep x '.env'` reads the file).
+
+`sql` is the exception to command position, and deliberately: `DROP TABLE` is
+never the command being run, it is the argument of one (`psql -c "DROP TABLE
+users"`), so it is matched anywhere in the string. Prose naming `DROP TABLE`
+is blocked as a result unless it sits in inert quoted text as described above;
+otherwise use a file editing tool when writing such documentation.
 
 **Secret-path guard on the file tools.** The regex rules above only see shell
 commands; a `Read` of the same file is a different tool call, so the hook matches
@@ -403,6 +422,8 @@ Every `git stash` in a compound command is judged, not only the first: `git stas
 **A payload it cannot parse is a refusal, not a pass.** This hook blocks, and exit 0 with no output is how a hook says "no objection" — so a guard that degraded a malformed payload into silence would report consent it never formed. The runner refuses before the hook is reached, with the reason on stderr and exit 2. Every non-blocking built-in takes the other branch and still exits 0, because refusing a tool call it was never meant to judge is the worse failure there.
 
 **Known limits, measured rather than assumed.** The rule recognises a stash in command position, and an invocation the shell only reaches indirectly is outside that: `sh -c "…"`, `eval "…"`, a command assembled in a variable, a backslash-escaped or absolutely-pathed `git`, a quoted subcommand, and a redirect written before the command all pass. None is closed on purpose — each is a deliberate act, this hook guards a scope mistake rather than an adversary, and widening the anchor would cost false positives on ordinary scripts. The full list, with what was attacked and what held, is on `_STASH_CALL` in the source.
+
+A stash named inside inert quoted text — a commit message, a PR body, a heredoc of prose — is not an invocation. The rule for what counts as inert is the security hook's, shared by both guards; see *Quoted text the shell never runs* above.
 
 **Kill criteria.** This hook blocks, so its cost is false positives rather than non-adoption. If clearing them needs more than three `allow_patterns` entries in the first month of use, the rule is too broad and comes out rather than growing an allowlist.
 
