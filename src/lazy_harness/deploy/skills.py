@@ -50,17 +50,33 @@ class SkillProjectionPlan:
     omissions: tuple[tuple[str, str], ...]
     narrowed: bool
     reserved_source_present: bool = False
+    broken_sources: tuple[Path, ...] = ()
+
+
+def _skill_source_roots(profile_dir: Path, agent_name: str) -> list[Path]:
+    roots = [profile_dir / "skills"]
+    roots.extend(profile_dir / segment / "skills" for segment in ("shared", agent_name))
+    return roots
+
+
+def _broken_skill_links(profile_dir: Path, agent_name: str) -> list[Path]:
+    """Source entries `_skills_for_profile` drops because their link target is gone."""
+    return [
+        child
+        for root in _skill_source_roots(profile_dir, agent_name)
+        if root.is_dir()
+        for child in sorted(root.iterdir())
+        if child.is_symlink() and not child.exists()
+    ]
 
 
 def _skills_for_profile(profile_dir: Path, agent_name: str) -> tuple[dict[str, Path], bool]:
     """Resolve skill directories at root < shared < agent precedence."""
     if not profile_dir.is_dir():
         return {}, False
-    roots = [profile_dir / "skills"]
-    roots.extend(profile_dir / segment / "skills" for segment in ("shared", agent_name))
     resolved: dict[str, Path] = {}
     reserved_source_present = False
-    for root in roots:
+    for root in _skill_source_roots(profile_dir, agent_name):
         if not root.is_dir():
             continue
         for child in sorted(root.iterdir()):
@@ -166,11 +182,13 @@ def plan_skill_projections(
     legacy_roots: set[Path] = set()
     omissions: list[tuple[str, str]] = []
     reserved_source_present = False
+    broken_sources: dict[Path, None] = {}
 
     for profile, entry in profiles.items():
         source_dir = profile_source_dir(cfg, profile, profiles_src)
         adapter = adapters[profile]
         skills, has_reserved_source = _skills_for_profile(source_dir, adapter.name)
+        broken_sources.update(dict.fromkeys(_broken_skill_links(source_dir, adapter.name)))
         reserved_source_present |= has_reserved_source
         skill_root = getattr(adapter, "skill_root", None)
         root = skill_root(entry.config_dir) if callable(skill_root) else None
@@ -247,7 +265,9 @@ def plan_skill_projections(
                 replaces_legacy_root=root in legacy_roots,
             )
         )
-    return SkillProjectionPlan(tuple(plans), tuple(omissions), narrowed, reserved_source_present)
+    return SkillProjectionPlan(
+        tuple(plans), tuple(omissions), narrowed, reserved_source_present, tuple(broken_sources)
+    )
 
 
 def apply_skill_projections(plan: SkillProjectionPlan, profiles_src: Path) -> list[str]:
@@ -255,6 +275,8 @@ def apply_skill_projections(plan: SkillProjectionPlan, profiles_src: Path) -> li
     output: list[str] = []
     if plan.reserved_source_present:
         output.append("  · skills/synced is reserved for native sync; remove the source copy")
+    for source in plan.broken_sources:
+        output.append(f"  · {source} -> {os.readlink(source)} is a broken symlink; skipped")
     for root_plan in plan.roots:
         root = root_plan.root
         if root_plan.replaces_legacy_root and root.is_symlink():

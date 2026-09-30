@@ -148,6 +148,44 @@ def test_deploy_converges_when_profile_skill_is_a_symlink_to_an_external_catalog
     assert json.loads(ledger.read_text())["links"] == ["portable"]
 
 
+def test_broken_profile_skill_symlink_is_skipped_and_named(
+    home_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from lazy_harness.core.paths import config_dir
+
+    profile = config_dir() / "profiles" / "one"
+    _skill(profile, "shared", "portable", "managed")
+    dangling = home_dir / "other-host" / "catalog" / "gone"
+    broken = profile / "shared" / "skills" / "gone"
+    broken.symlink_to(dangling, target_is_directory=True)
+
+    deploy_profiles(_config(home_dir, {"one": "claude-code"}))
+
+    root = home_dir / ".one" / "skills"
+    assert not (root / "gone").is_symlink()
+    assert (root / "portable").is_symlink()
+    out = capsys.readouterr().out
+    assert out.count(f"skills/gone -> {dangling}") == 1
+    assert "broken symlink" in out
+
+
+def test_broken_skill_symlink_shared_by_two_profiles_is_named_once(
+    home_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from lazy_harness.core.paths import config_dir
+
+    broken = config_dir() / "profiles" / "work" / "shared" / "skills" / "gone"
+    broken.parent.mkdir(parents=True)
+    broken.symlink_to(home_dir / "missing", target_is_directory=True)
+    cfg = _config(home_dir, {"claude-work": "claude-code", "codex-work": "codex"})
+    for entry in cfg.profiles.items.values():
+        entry.identity = "work"
+
+    deploy_profiles(cfg)
+
+    assert capsys.readouterr().out.count("skills/gone -> ") == 1
+
+
 def test_user_owned_entry_is_never_adopted_or_replaced(home_dir: Path) -> None:
     from lazy_harness.core.paths import config_dir
 
