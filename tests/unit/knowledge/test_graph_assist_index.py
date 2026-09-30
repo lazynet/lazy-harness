@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -240,19 +239,25 @@ def _real_graph() -> Path | None:
     return graph if graph.is_file() else None
 
 
-def test_index_from_the_real_graph(tmp_path: Path) -> None:
+@pytest.mark.parametrize("line_offset", [0, 100])
+def test_index_from_the_real_graph(tmp_path: Path, line_offset: int) -> None:
     graph = _real_graph()
     if graph is None:
         pytest.skip("no graphify-out/graph.json in the main checkout")
-    (tmp_path / "graphify-out").mkdir()
-    shutil.copy(graph, tmp_path / "graphify-out" / "graph.json")
+    payload = json.loads(graph.read_text())
+    definitions = [n for n in payload["nodes"] if n["label"] == "check_version()"]
+    for node in definitions:
+        node["source_location"] = f"L{int(node['source_location'].removeprefix('L')) + line_offset}"
+    _repo_with_graph(tmp_path, payload)
 
     entries = ga.load_index(tmp_path, deadline_s=60)
 
     assert entries is not None
     homonyms = sorted((d["source_file"], d["source_location"]) for d in entries["check_version"])
-    assert ("src/lazy_harness/knowledge/graphify.py", "L64") in homonyms
-    assert ("src/lazy_harness/memory/engram.py", "L59") in homonyms
+    assert {"src/lazy_harness/knowledge/graphify.py", "src/lazy_harness/memory/engram.py"} <= {
+        node["source_file"] for node in definitions
+    }
+    assert homonyms == sorted((n["source_file"], n["source_location"]) for n in definitions)
     [atomic] = entries["atomic_write_text"]
     assert any(doc.startswith("specs/") for doc in atomic["docs"])
 
