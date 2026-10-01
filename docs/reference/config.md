@@ -419,7 +419,9 @@ losing native metadata, and pre-existing foreign duplicates remain distinct. In
 Codex, managed groups are replaced in their existing positions so preserved
 foreign groups keep their positional trust identity. Surplus managed groups are
 appended only after every existing group, so an addition never shifts a foreign
-group unnecessarily; removing an earlier managed slot can still shift it.
+group unnecessarily; removing an earlier managed slot can still shift it. A
+missing `external` group is inserted right after the event's last harness
+group instead, so a foreign tool that installed itself last stays last.
 Malformed `hooks.json` content is refused rather than overwritten. In Claude Code, a foreign entry
 whose matcher would invalidate the whole settings file is repaired and reported.
 `lh selftest` checks the same schema, since a failure that stops hooks from

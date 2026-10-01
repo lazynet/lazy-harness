@@ -747,15 +747,40 @@ def _merge_hook_groups(
 
     for event, desired in external.items():
         output = merged.setdefault(event, [])
+        insert_at = _harness_tail(event, output, new_owned, desired)
         for group in desired:
             identity = _group_identity(event, group)
             if identity is not None and any(
                 _group_identity(event, candidate) == identity for candidate in output
             ):
                 continue
-            output.append(group)
+            output.insert(insert_at, group)
+            insert_at += 1
 
     return merged, new_owned, preserved, dropped
+
+
+def _harness_tail(
+    event: str,
+    output: list[dict],
+    owned: set[tuple[str, int]],
+    external: list[dict],
+) -> int:
+    """Where a missing external goes: right after the event's last harness group.
+
+    A foreign installer that appended itself after the harness expects to stay
+    last — moshi-hook's doctor reports its hooks stale otherwise — so an external
+    the harness ensures later must not land behind it. With no harness group in
+    the event yet there is nothing to stay behind, and the group is appended.
+    Surplus managed groups still append: that keeps their trust re-prompt to the
+    one new position.
+    """
+    external_ids = {_group_identity(event, group) for group in external} - {None}
+    last = -1
+    for index, group in enumerate(output):
+        if (event, index) in owned or _group_identity(event, group) in external_ids:
+            last = index
+    return len(output) if last < 0 else last + 1
 
 
 def _trust_event_segment(native: str) -> str:
