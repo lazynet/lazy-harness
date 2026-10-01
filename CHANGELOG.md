@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.83.6](https://github.com/lazynet/lazy-harness/compare/v0.83.5...v0.83.6) (2026-10-01)
+
+
+### Documentation
+
+* record external hook placement in ADR-042 ([#499](https://github.com/lazynet/lazy-harness/issues/499)) ([ce5b19f](https://github.com/lazynet/lazy-harness/commit/ce5b19fa8e540110dbd3493f8a8dc5a33d53280b))
+
 ## [0.83.5](https://github.com/lazynet/lazy-harness/compare/v0.83.4...v0.83.5) (2026-10-01)
 
 
