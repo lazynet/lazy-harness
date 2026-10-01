@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.83.5](https://github.com/lazynet/lazy-harness/compare/v0.83.4...v0.83.5) (2026-10-01)
+
+
+### Bug Fixes
+
+* keep foreign hook shape that moshi-hook doctor checks ([#497](https://github.com/lazynet/lazy-harness/issues/497)) ([38bd51b](https://github.com/lazynet/lazy-harness/commit/38bd51bbe22c1310e988b5518995dce2c57a3ae7))
+
 ## [0.83.4](https://github.com/lazynet/lazy-harness/compare/v0.83.3...v0.83.4) (2026-09-30)
 
 
