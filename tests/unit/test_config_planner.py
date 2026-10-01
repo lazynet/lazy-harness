@@ -386,6 +386,29 @@ def test_preserved_reports_foreign_hook_entries() -> None:
     assert op.repaired == []
 
 
+def test_a_foreign_group_without_a_matcher_is_carried_through_without_one() -> None:
+    """An absent matcher is valid; only `null` or a non-string makes Claude reject the file.
+
+    moshi-hook 0.4.10 writes its groups without `matcher` and its doctor reports
+    `hooks out of date` the moment one gains `"matcher": ""`.
+    """
+    cfg = _cfg_with_profile(Path("/nonexistent"))
+    group = {
+        "hooks": [{"type": "command", "command": "'/opt/homebrew/bin/moshi-hook' claude-hook"}]
+    }
+    existing = json.dumps({"hooks": {"Stop": [group]}}, indent=2)
+
+    ops = ClaudeCodeAdapter().plan_config(
+        _entries_for(cfg, PROFILE, "lh"), {}, {SETTINGS: existing}
+    )
+
+    op = _op_for(ops, SETTINGS)
+    assert op is not None
+    written = json.loads(op.artifact.content)["hooks"]["Stop"]
+    assert group in written
+    assert op.repaired == []
+
+
 def test_external_equivalent_keeps_richer_native_claude_metadata() -> None:
     richer = {
         "matcher": "Write",

@@ -265,7 +265,9 @@ def _normalize_entry(entry: dict) -> tuple[dict, list[str]]:
     """
     repairs: list[str] = []
     fixed = dict(entry)
-    matcher = fixed.get("matcher")
+    if "matcher" not in fixed:
+        return fixed, repairs
+    matcher = fixed["matcher"]
     if matcher is None:
         fixed["matcher"] = ""
         repairs.append('matcher: null -> ""')

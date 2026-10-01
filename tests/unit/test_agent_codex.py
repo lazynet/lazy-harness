@@ -532,6 +532,46 @@ def test_external_identity_includes_matcher_and_preserves_foreign_duplicates() -
     ]
 
 
+_CONTEXT_INJECT = {"hooks": [{"type": "command", "command": "lh hook context-inject --profile p"}]}
+_TRAILING_FOREIGN = {
+    "hooks": [{"type": "command", "command": "'/opt/homebrew/bin/moshi-hook' codex-hook"}]
+}
+
+
+def _session_start_after(entries: list[HookEntry]) -> list[dict]:
+    existing = json.dumps(
+        {
+            "description": DESCRIPTION,
+            "hooks": {"SessionStart": [_CONTEXT_INJECT, _TRAILING_FOREIGN]},
+        },
+        indent=2,
+    )
+    ops = _plan({"session_start": entries}, {HOOKS_JSON: existing})
+    hook_op = next(op for op in ops if op.relative_path == HOOKS_JSON)
+    assert hook_op.artifact is not None
+    return json.loads(hook_op.artifact.content)["hooks"]["SessionStart"]
+
+
+def test_a_new_external_lands_before_a_trailing_foreign_group() -> None:
+    """A foreign installer that appended itself last stays last.
+
+    moshi-hook's doctor reports `hooks out of date` once any group follows its
+    own in SessionStart; appending the harness's new group after it did that.
+    """
+    groups = _session_start_after(
+        [
+            HookEntry(command="lh hook context-inject --profile p"),
+            HookEntry(command="herdr-agent-state session", ownership=HookOwnership.EXTERNAL),
+        ]
+    )
+
+    assert groups == [
+        _CONTEXT_INJECT,
+        {"hooks": [{"type": "command", "command": "herdr-agent-state session"}]},
+        _TRAILING_FOREIGN,
+    ]
+
+
 def _artifacts(ops: list) -> dict[Path, str]:
     return {op.relative_path: op.artifact.content for op in ops if op.artifact is not None}
 
