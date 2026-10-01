@@ -240,6 +240,15 @@ instruction. File deletion now requires actual recognized managed groups to be
 removed and no foreign group to remain; a stamp on an empty document grants no
 deletion authority.
 
+> **Evolution (2026-09-30).** A missing `external` group is no longer appended
+> after every existing group: `_merge_hook_groups` inserts it right after the
+> event's last harness group (managed, or an external already present), and
+> appends only when the event has none. A foreign installer that placed itself
+> last — moshi-hook, whose doctor reports its hooks stale once a group follows
+> its own in `SessionStart` — stays last, at the cost of one re-trust for the
+> foreign groups the insertion shifts. Surplus managed groups keep the append
+> rule above.
+
 ## References
 
 - `specs/designs/2026-09-13-multi-agent-harness-design.md` — decision 4 and step 7
