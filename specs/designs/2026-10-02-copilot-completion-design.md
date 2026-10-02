@@ -108,32 +108,75 @@ path per call observed.
 `edit` to `COPILOT_TOOL_NAMES`, and fill `ToolCall.edits` in `_parse_tool`
 (`copilot.py:245-265`) with one
 `FileEdit(path=Path(path), replacements=((old_str, new_str),))`
-(`base.py:129-144`). Mirror the guards `ClaudeCodeAdapter` uses for the same
-shape (`claude_code.py:690-705`): a missing or non-string `path` yields no edit;
-a missing `new_str` is a deletion of `old_str`, never the text `"None"`.
-`is_create` stays `False` — creation is unmeasured. The test at
+(`base.py:129-144`), **only** when `path`, `old_str` and `new_str` are all
+strings — the one shape the run recorded. Any other shape (a missing or `null`
+`new_str`, a non-string `path`) yields `edits = ()` with `operation` still
+`MODIFY_FILE`, so the call is visibly unprojected rather than guessed at. This
+string guard is a new requirement: `ClaudeCodeAdapter`'s parser does not
+implement it — it takes any truthy path and coerces it with `str()`
+(`claude_code.py:685`, `:690`, `:695`) and reads a missing `new_string` as a
+deletion (`claude_code.py:701-705`), a convention that cannot establish
+Copilot's `new_str` semantics. Deletion semantics wait on P1-edit's deletion leg
+(§3.2). `is_create` stays `False` — creation is unmeasured. The test at
 `test_agent_copilot.py:252` is **inverted, not deleted**, so the absence of
 other mappings stays asserted. Correct `base.py:151-153`, which still names
 "Copilot's `edit`" as multi-file.
 
-**Effect on builtins.** Live by the mapping alone (no matcher at
-`loader.py:167-176`): `post-tool-use-format`, `post-tool-use-sync-system-doc`.
-Live only once §2.7 lands, because their matchers are Claude-spelled:
-`pre-tool-use-security`'s modify arm (`loader.py:242`),
-`post-tool-use-ansible-lint` (`loader.py:159`), `pre-tool-use-memory-size`
-(`loader.py:222`). Of those, `ansible-lint` speaks only through
-`additional_context` (`post_tool_use_ansible_lint.py:136`) and `memory-size`
-only through `system_message` (`pre_tool_use_memory_size.py:279`), so they also
-wait on §2.5. `herdr-context-gauge` declares `MODIFY_FILE` with matcher `*`
-(`loader.py:140-142`) and waits on §2.7.
+**Builtins gate on the native name, not only on the operation.** Four
+edit-gating builtins check `tool.native_name in INSPECTED_TOOLS` after the
+operation, and their set is `_shared.EDIT_TOOLS = {"Edit", "Write",
+"apply_patch"}` (`hooks/builtins/_shared.py:42`): `post-tool-use-format`
+(`post_tool_use_format.py:29`, `:39`), `post-tool-use-ansible-lint`
+(`post_tool_use_ansible_lint.py:38`, `:118`), `pre-tool-use-memory-size`
+(`pre_tool_use_memory_size.py:49`, `:259`). `memory-size` additionally projects
+by name — `Write`, `apply_patch`, `Edit` (`pre_tool_use_memory_size.py:150`,
+`:163`, `:166`) — so a Copilot `edit` falls through even past the gate. Only
+`post-tool-use-sync-system-doc` gates on the operation alone at runtime
+(`post_tool_use_sync_system_doc.py:104-110`), and `pre-tool-use-security`
+dispatches on `Operation` (`pre_tool_use_security.py:622-659`).
 
-**Tests.** `test_edit_maps_to_modify_file_with_one_replacement` *(proposed)*;
-`test_edit_without_path_has_no_edits` *(proposed)*;
-`test_edit_with_null_new_str_projects_a_deletion` *(proposed)*. Plus the
-existing doctor coverage report (`doctor_cmd.py:641`) asserting `MODIFY_FILE`
-no longer appears as inert for the two matcher-free builtins.
+So the adapter mapping alone is not enough. The builtin-side change *(proposed)*
+follows the precedent `apply_patch` set when Codex's edit tool was added: add
+`"edit"` to `EDIT_TOOLS`, and give `memory-size`'s projection an `edit` branch
+over the same `FileEdit.replacements` shape `Edit` uses. The existing gate
+`test_every_inspected_tool_name_is_one_some_agent_emits`
+(`tests/unit/test_hook_matcher_coverage.py:179`) then requires `edit` in
+`CopilotAdapter._TOOL_OPERATIONS`, and
+`test_apply_patch_joins_inspected_tools_without_widening_claude_codes_matcher`
+(`:196`) is the model for asserting Claude Code's matcher is not widened.
 
-**Probe still needed.** P1-edit (§3.2): file creation, replace-all, two files in
+**Effect on builtins**, by what each still needs:
+
+| Builtin | Adapter mapping | `EDIT_TOOLS` change | Matcher (§2.7) | Channel (§2.5) |
+|---|---|---|---|---|
+| `post-tool-use-sync-system-doc` | needed | not needed | none declared | none (side effect) |
+| `post-tool-use-format` | needed | **needed** | none declared | none (side effect) |
+| `pre-tool-use-security`, modify arm | needed | not needed | `loader.py:242` | `DENY` (emitted) |
+| `post-tool-use-ansible-lint` | needed | **needed** | `loader.py:159` | `additional_context` on `postToolUse` (`post_tool_use_ansible_lint.py:136`) |
+| `pre-tool-use-memory-size` | needed | **needed**, plus projection branch | `loader.py:222` | `system_message` on `preToolUse` (`pre_tool_use_memory_size.py:279`) |
+
+"Needs a matcher" means: fires only if P4 shows the deployed Claude-spelled
+matcher matches `edit`, or §2.7 rewrites/omits it. Activation is claimed only
+after the hook's effect is observed on a Copilot run, not from the mapping.
+
+`herdr-context-gauge` is **not** in this table: it declares no operations
+(`loader.py:138-155`), and its `post_tool_use` placement requires
+`Signal.TOKEN_USAGE` (`loader.py:152`), which deploy filters out on an agent
+with no reader supplying it (`deploy/engine.py:458`; pinned by
+`tests/unit/test_deploy_signal_filter.py:200-214`). It waits on a
+`TOKEN_USAGE`-capable Copilot reader (§2.13), and only then on §2.7.
+
+**Tests.** Adapter: `test_edit_maps_to_modify_file_with_one_replacement`
+*(proposed)*; `test_edit_with_a_non_string_field_has_no_edits` *(proposed)*,
+covering missing `path`, `null` `new_str` and a non-string `path`. Consumers,
+each watched failing with `"edit"` removed from `EDIT_TOOLS`:
+`test_format_runs_its_formatter_on_a_copilot_edit` *(proposed)*;
+`test_memory_size_projects_a_copilot_edit` *(proposed)*;
+`test_ansible_lint_inspects_a_copilot_edit` *(proposed)*;
+`test_sync_system_doc_regenerates_on_a_copilot_edit` *(proposed)*.
+
+**Probe still needed.** P1-edit (§3.2): deletion of text (does `edit` send an
+empty, `null` or missing `new_str`?), file creation, replace-all, two files in
 one request, and whether a separate create/write tool exists.
 
 ### 2.3 Read gating — `READ_FILE`
@@ -150,14 +193,27 @@ measured; a guard that sees no range assumes a whole-file read, which is the
 conservative direction for a size guard.
 
 **Effect on builtins.** `pre-tool-use-security`'s read arm becomes reachable
-(subject to §2.7). `pre-tool-use-read-size` receives a path but **still produces
-no effect**: it speaks only through `system_message`
-(`pre_tool_use_read_size.py:128`), which the adapter drops (§2.5). Doctor's
-operation coverage stops calling `READ_FILE` structurally empty; the
-read-size hook's remaining silence is a channel gap, and §2.15 reports it.
+(subject to §2.7); it dispatches on `Operation` (`pre_tool_use_security.py:622-659`),
+so filled `reads` change what it denies wherever the hook fires.
+`pre-tool-use-read-size` stays inert for **three** reasons: it gates on
+`INSPECTED_TOOLS = {"Read"}` (`pre_tool_use_read_size.py:21`, `:107`) — the
+builtin-side change *(proposed)* is adding `"view"` there, as in §2.2; its
+matcher is `Read` (`loader.py:232`, §2.7); and it speaks only through
+`system_message` (`pre_tool_use_read_size.py:128`), which the adapter drops
+(§2.5).
+
+Doctor does **not** report this today and the mapping does not change what it
+reports. The operation report computes `declared - producible`, where producible
+is `_TOOL_OPERATIONS.values()` (`hooks/event_surface.py:70-83`, `:103`); `view`
+already maps `READ_FILE` (`copilot.py:151`), so `READ_FILE` is reported as
+producible now, with `reads = ()`. The renderer reports unmapped operations only
+(`doctor_cmd.py:641-668`). A **structure** diagnostic — an operation mapped but
+its arguments never projected — would be new; §2.15 proposes it.
 
 **Tests.** `test_view_fills_reads_with_its_path` *(proposed)*;
-`test_view_without_path_leaves_reads_empty` *(proposed)*; one F8-style test that
+`test_view_without_path_leaves_reads_empty` *(proposed)*;
+`test_read_size_inspects_a_copilot_view` *(proposed, consumer, watched failing
+with `"view"` removed from its `INSPECTED_TOOLS`)*; one F8-style test that
 a `READ_FILE` call with a path makes `pre_tool_use_security` deny a denylisted
 path through the Copilot parser (watched failing with `reads` emptied).
 
@@ -202,16 +258,23 @@ accepted without error on `preToolUse`; reach to the model **inconclusive**
 1.0.89 run moves this row from "never observed read" to "accepted, effect
 unknown", which is not a licence to emit. When measured, emit per event, not
 globally: the channel may be honoured on `sessionStart` and not on
-`preToolUse`, or the reverse, and `HookSupport` has no per-event channel field
+`preToolUse` or `postToolUse`, or any other combination, and `HookSupport` has no per-event channel field
 — so the gate lives in `format_hook_output` as a per-event table
 `_CONTEXT_EVENTS` *(proposed)*.
 
-**Effect on builtins.** Blocked today and unblocked by a positive P2-context:
-`context-inject` (`context_inject.py:1038`, `session_start`),
-`session-start-preflight` (`session_start_preflight.py:305`),
-`post-tool-use-ansible-lint`, `pre-tool-use-read-size`,
-`pre-tool-use-memory-size`. `pre-tool-use-graph-assist` is scoped to
-`claude-code` (`loader.py:216`) and stays out.
+**Effect on builtins.** Each is unblocked only by a positive result **on its own
+event** — the per-event rule above:
+
+| Builtin | Channel | Event | P2-context leg | Also needs |
+|---|---|---|---|---|
+| `context-inject` | `additional_context` + `system_message` (`context_inject.py:1038`) | `session_start` | `sessionStart` | — |
+| `session-start-preflight` | `additional_context` (`session_start_preflight.py:305`) | `session_start` | `sessionStart` | — |
+| `pre-tool-use-read-size` | `system_message` (`pre_tool_use_read_size.py:128`) | `pre_tool_use` | `preToolUse` | §2.3 name change, §2.7 |
+| `pre-tool-use-memory-size` | `system_message` (`pre_tool_use_memory_size.py:279`) | `pre_tool_use` | `preToolUse` | §2.2 name change, §2.7 |
+| `post-tool-use-ansible-lint` | `additional_context` (`post_tool_use_ansible_lint.py:136`) | `post_tool_use` (`loader.py:160`) | **`postToolUse`** | §2.2 name change, §2.7 |
+
+`pre-tool-use-graph-assist` is scoped to `claude-code` (`loader.py:216`) and
+stays out.
 
 **Tests.** On a positive result: invert the pin at `test_agent_copilot.py:366`
 for the measured event(s) only, and add
@@ -229,7 +292,8 @@ radius in the adapter.
 
 **Evidence.** evidence §4: the written shape loads and fires on 1.0.89; nested
 and `bash` shapes load too; a missing `version` and an unknown top-level key are
-both tolerated; a first write fired with no approval step in `-p`.
+both tolerated. Trust/approval of a fresh hook stays **unmeasured** (evidence
+§4 *Trust*).
 
 **Change.** Remove the "cannot verify" language from `copilot.py:168-172` and
 ADR-047 §6 — the shape is now `run`. Keep `version: 1`: tolerance of its absence
@@ -242,8 +306,8 @@ not useful.
 **Tests.** No new behaviour, so no new test; the docstring change is prose.
 The existing plan tests stand.
 
-**Probe still needed.** None for the shape. `disableAllHooks` and enterprise
-lockdown stay unprobed by choice (§6).
+**Probe still needed.** None for the shape. P0-trust (§3.2) for the approval
+flow. `disableAllHooks` and enterprise lockdown stay unprobed by choice (§6).
 
 ### 2.7 Matcher
 
@@ -251,15 +315,18 @@ lockdown stay unprobed by choice (§6).
 (`copilot.py:575-578`); deploy fills it from the builtin's Claude-spelled
 matcher (`deploy/engine.py:475`, `loader.py:394`). So a Copilot profile today
 receives `Bash` (`loader.py:201`), `Read` (`:232`), `Edit|Write` (`:159`,
-`:222`), `Bash|Read|Edit|Write|NotebookEdit` (`:242`) and `*` (`:140`), against
-tool names `bash`, `view`, `edit`.
+`:222`) and `Bash|Read|Edit|Write|NotebookEdit` (`:242`), against tool names
+`bash`, `view`, `edit`. The `*` matcher of `herdr-context-gauge` (`:140`) does
+not reach a Copilot document today: deploy omits the gauge's signal-bearing
+placements on an agent without `TOKEN_USAGE` (§2.2).
 
 **Evidence.** None. evidence §4 *`matcher`* is still probe 4; every probe
 document omitted the key.
 
 **Consequence for an accepted claim.** ADR-047 Consequences says
 `pre-tool-use-security` "is live on the command half". That rests on the
-1.0.83 deny matrix, whose hook had no matcher. The *deployed* security hook
+1.0.83 runs (multi-agent design `:2107-2124`, `:2172-2189`), which record no
+matcher on the hook they registered. The *deployed* security hook
 carries `Bash|Read|Edit|Write|NotebookEdit`; if Copilot's matcher is a
 case-sensitive regex or a literal, it matches no Copilot tool and the command
 denylist is **not** live on a deployed profile. This is unmeasured either way
@@ -271,8 +338,9 @@ and is the first item of Phase 0's probe list.
   `_MATCHER_NAMES` *(proposed)* (`Bash`→`bash`, `Read`→`view`, `Edit`/`Write`→
   `edit`; `NotebookEdit`, `Grep` dropped), in the syntax P4 measured.
 - **Omit.** `_hook_groups` never writes `matcher` for Copilot, and every hook
-  fires on every call of its event; the builtins already self-filter on
-  `Operation` (`pre_tool_use_security.py:612-615`).
+  fires on every call of its event; the builtins already self-filter — on
+  `Operation` (`pre_tool_use_security.py:622-659`) and, for most, also on the
+  native name (§2.2).
 
 **Effect on builtins.** Decides whether the guards in §2.2/§2.3 fire at all.
 
@@ -342,7 +410,7 @@ external-hooks merge already does this, `copilot.py:463-475`).
 they stack.
 
 **Change.** **Keep one destination.** `system_docs()` promises the agent loads
-every entry and `render_agent_md` writes identical bytes to each (`base.py:722-740`);
+every entry and `render_agent_md` writes identical bytes to each (`base.py:732-735`);
 because the two stack, returning both would put the rendered document into
 context twice. The measurement turns the second path from "unknown" into
 "known and deliberately unused". Update the docstring at `copilot.py:640-645`
@@ -400,11 +468,14 @@ malformed output and asserts it degrades, never raises.
 (`copilot.py:610-618`).
 
 **Evidence.** evidence §5 *`session_dirs()`* (log, 1.0.83) and §6. The 1.0.89
-package ships `schemas/session-events.schema.json` at 898 KB, up from 783 KB on
-1.0.83 (evidence §6) — the schema moves between patch releases.
+package's `schemas/session-events.schema.json` is 898 KB by a directory listing
+recorded in evidence §6, against the 783 KB the multi-agent design records for
+the 1.0.83 file. The sizes differ; the contents were **not** diffed, so what
+changed is unknown. That is enough to rule out reusing one version's reader for
+another unchecked, and not enough to say what moved.
 
 **Change.** Step 12's method unchanged: generate the reader from the schema of
-the version being read. Because the schema moves, the reader keys on the
+the version being read. Because the schema file differs between versions, the reader keys on the
 `copilotVersion` each session file declares (evidence §5) and refuses a version
 it was not generated for rather than misreading it. Metrics map
 `totalPremiumRequests` / AI credits into `MetricEvent` with the per-seat billing
@@ -450,11 +521,17 @@ agent, or channels an adapter drops.
    event is reported as silent, the way `_render_hook_operations` reports an
    inert operation. Today this would name `pre-tool-use-read-size` and
    `pre-tool-use-memory-size` on Copilot.
-2. A **matcher** line, if D3 picks *translate*: an entry whose matcher had no
+2. A **structure** line: a deployed hook whose declared operation is mapped
+   (`_TOOL_OPERATIONS`) but whose argument structure the parser never fills —
+   today `view` → `READ_FILE` with `reads = ()`. The existing operation report
+   cannot say this (`hooks/event_surface.py:70-83`, `:103`; §2.3). Test: a
+   profile installing `pre-tool-use-read-size` on the current adapter must
+   produce the line, and after §2.3 must not.
+3. A **matcher** line, if D3 picks *translate*: an entry whose matcher had no
    Copilot counterpart and was dropped.
-3. A **timeout** line on Copilot: each `DENY`-capable hook with its
+4. A **timeout** line on Copilot: each `DENY`-capable hook with its
    `timeoutSec` and the fail-open note.
-4. The **version** line from §2.16.
+5. The **version** line from §2.16.
 
 **Tests.** One per line, each fed a profile that must produce it and one that
 must not.
@@ -475,7 +552,7 @@ check (`features.py:87-113`, `memory/engram.py:14`). The probe script prints
 the version it ran against (it already does, first line), and each evidence cell
 names it. Policy:
 
-- **Patch drift** (1.0.89 → 1.0.91): warn; re-run phase 0 and the
+- **Patch drift** (e.g. 1.0.89 → 1.0.91): warn; re-run phase 0 and the
   P4-matcher probe before the next release that touches the adapter.
 - **Minor/major drift**: warn and recommend the full probe set before trusting
   any guard.
@@ -510,17 +587,18 @@ correr*). In priority order:
 |---|---|---|---|
 | **P4-matcher** | Is `matcher` literal, glob or regex; case-sensitive; does `*` work; does `Bash` match `bash`; does omission fire on every call? | One home per matcher value (`bash`, `Bash`, `bash\|view`, `Bash\|Read`, `*`, `.*`, omitted) on `preToolUse`, one prompt driving `bash`+`view`+`edit`; sink per value. | §2.7, and whether ADR-047's "security live on the command half" holds for a deployed profile. **Blocking.** |
 | **P3-timeout** | Default timeout when `timeoutSec` is omitted; is `timeoutSec` still honoured on 1.0.89? | Handler sleeping N s for N in a ladder, with and without `timeoutSec`; side-effect file shows whether the tool ran. | §2.8 |
-| **P2-context** | Do `additionalContext` / `systemMessage` reach the model on `preToolUse`, and on `sessionStart`? | Behavioural nonce (H3) per channel per event, with a no-hook control. | §2.5 — the widest blast radius. |
+| **P2-context** | Do `additionalContext` / `systemMessage` reach the model on `sessionStart`, `preToolUse` and `postToolUse`? | Behavioural nonce (H3) per channel per event, with a no-hook control per event. The `postToolUse` leg injects after a tool call and asks the follow-up question in the same turn. | §2.5, per event — `sessionStart` for `context-inject`/`session-start-preflight`, `preToolUse` for read-size/memory-size, `postToolUse` for ansible-lint. The widest blast radius. |
 | **P2-allow** | Does `allow` override a would-be prompt? | Run **without** `--allow-all-tools`, a tool that would otherwise be refused in `-p`, hook returning `allow`; control without the hook. | §2.4 |
 | **P2-ask-interactive** | Does `ask` prompt in an interactive session? | Manual, interactive; record the screen. | §2.4 |
 | **P1-events** | Payloads of `postToolUseFailure` (trigger: `view` of a missing path), `preMcpToolCall`, `preCompact`, `notification`, `subagentStart`/`Stop`; `sessionStart.source` on resume. | Phase 1 with corrected triggers; MCP leg shares P7's home. | §2.1 |
-| **P1-edit** | Create, replace-all, two-file change; any other write tool. | Phase 1 prompts per case. | §2.2 completeness |
+| **P1-edit** | Deletion of text (empty, `null` or missing `new_str`?), create, replace-all, two-file change; any other write tool. | Phase 1 prompts per case; the deletion leg asks to remove one line from the fixture, and the summary records `new_str`'s JSON type and whether the key is present. | §2.2 — deletion semantics before any are encoded; completeness |
 | **P1-view-range** | Does `view` carry a range key for a partial read? | Prompt for lines 2-3 of a long file. | §2.3 completeness |
 | **P7-mcp** | Is `$COPILOT_HOME/mcp-config.json` read? | One stdio server in a throwaway home; ask the model to list its tools; control without the file. | §2.9 |
 | **P8-skills** | Which user-level skill root is discovered? | One skill per candidate root, plus a no-skill control. | §2.11 |
 | **P9-headless** | Output modes, model flag, prompt on stdin, refusal exit code. | Direct runs, no hooks. | §2.12 |
 | **P10-transcript** | 1.0.89 `events.jsonl` keys and types. | One `-p` run, read `session-state/<uuid>/events.jsonl` keys only. | §2.13 |
 | **P11-bypass** | What each candidate flag grants. | ADR-049's two-destination method, per flag. | §2.14 |
+| **P0-trust** | Does a freshly written hook document fire without an approval step, interactively and in `-p` **without** `--allow-all-tools`? | Clean `COPILOT_HOME`, one hook, an interactive session recorded on screen; then `-p` without the flag. | §2.6; records the approval flow the 1.0.89 run did not observe. |
 | P5-interp | `${COPILOT_PROJECT_DIR}` interpolation. | Lowest priority; nothing depends on it. | — |
 
 ## 4. Phased delivery
@@ -531,8 +609,8 @@ Each phase is one PR, smallest safe unit, gated by `/tdd-check`.
 |---|---|---|
 | **A** | Probe-harness fixes H1-H3 (§3.1). | — |
 | **B** | Evidence + ADR record of the 1.0.89 run (this document's companion edit, already in `copilot-evidence.md`) and the ADR text chosen in D1. Prose only. | — |
-| **C** | `edit` → `MODIFY_FILE` with `FileEdit`; `view` → `reads`; `base.py` docstring corrections. (§2.2, §2.3) | — |
 | **D** | Maintainer runs P4-matcher and P3-timeout with the fixed harness; results into evidence. | A |
+| **C** | Adapter: `edit` → `MODIFY_FILE` with string-only `FileEdit`; `view` → `reads`. Builtins *(proposed)*: `"edit"` in `EDIT_TOOLS`, an `edit` projection in `memory-size`, `"view"` in read-size's `INSPECTED_TOOLS`. Consumer tests per §2.2/§2.3; `base.py` docstring corrections. | **D** (P4 result) |
 | **E** | Matcher translate-or-omit (§2.7) and `timeoutSec` (§2.8). | C, D, D2, D3 |
 | **F** | Payload completions: `toolResult`, `permissionRequest.toolInput` (§2.1). | — |
 | **G** | Doctor lines: dropped channel, timeout, matcher, version (§2.15, §2.16). | E for the matcher/timeout lines |
@@ -541,9 +619,16 @@ Each phase is one PR, smallest safe unit, gated by `/tdd-check`.
 | **J** | P8, P9, P10, P11 → skills root, `HeadlessAgent`, `TranscriptReader`, bypass. One PR each. | A |
 | **K** | `docs/agents/copilot.md`, backlog and roadmap entries (§7). | each feature PR updates its own row |
 
-C can merge before E and is safe: with Claude-spelled matchers it only revives
-the two matcher-free builtins, which have no deny path. E is the phase that can
-change what a deployed guard blocks, which is why it waits on a measurement.
+C waits on D. Its effect on a deployed profile depends on matcher semantics
+nobody has measured: if Copilot ignores the key, matches case-insensitively or
+aliases names, `pre-tool-use-security` (matcher `Bash|Read|Edit|Write|NotebookEdit`,
+`loader.py:242`) may already fire on `view` and `edit`, and C's filled `reads`
+and `edits` would change what it denies (`pre_tool_use_security.py:622-659`).
+No claim that C is behaviour-neutral, or that it only touches hooks without a
+deny path, is made before P4. With P4 in hand, C ships with a guard regression
+test: the security hook, fed Copilot payloads through the Copilot parser, denies
+exactly what it denies for the equivalent Claude Code payload. Activation of any
+builtin is claimed only from an observed effect on a Copilot run after deploy.
 
 ## 5. Open decisions for the maintainer
 
@@ -572,8 +657,11 @@ measured p99 of the slowest deny hook), no per-hook field until a hook needs it.
 **D3. Matcher: translate or omit?** *Translate* keeps hooks off irrelevant tool
 calls (fewer processes, less timeout exposure) and needs a name table that
 drifts with the vendor. *Omit* is vendor-proof and relies on builtins
-self-filtering by `Operation` (they do), at the cost of a hook process on every
-tool call. **Recommendation:** translate, if P4 shows a regex or alternation
+self-filtering (they do, on `Operation` and mostly on native name — §2.2), at
+the cost of a hook process on every tool call. Since C now carries the
+native-name changes and waits on P4, the choice also decides whether C's
+`EDIT_TOOLS` addition is the only gate (omit) or one of two (translate).
+**Recommendation:** translate, if P4 shows a regex or alternation
 syntax; omit, if it shows a literal-only matcher.
 
 **D4. `ALLOW`/`ASK`: declare when measured, or never?** No builtin emits them.
@@ -587,13 +675,14 @@ the vocabulary in the evidence only.
 
 **D6. One system-doc destination or two?** Two would let the harness split a
 user-level document across files (e.g. one per role) — but `render_agent_md`
-writes one document to every destination (`base.py:734-737`), so two today means
+writes one document to every destination (`base.py:732-735`), so two today means
 the same text twice. **Recommendation:** one, until the system-doc renderer
 supports distinct content per destination.
 
 **D7. F8 gate third leg.** ADR-047 deferred it until an edit tool was known;
-it is now known. Options: extend in Phase C, or a separate PR after E (when the
-matcher is settled). **Recommendation:** after E, so the gate's expected
+it is now known. Options: extend in Phase C (which now waits on P4 anyway, so
+the matcher semantics are at least measured), or a separate PR after E (when
+the adapter's matcher output is settled). **Recommendation:** after E, so the gate's expected
 live/inert sets are written once against the final matcher behaviour.
 
 ## 6. Risks
@@ -614,8 +703,11 @@ live/inert sets are written once against the final matcher behaviour.
   the harness writes (evidence §4). A deploy cannot see it; doctor cannot
   either without a firing test. Recorded as the first suspect for "deployed but
   never fires"; no probe is planned because it needs a managed account.
-- **Version drift.** 1.0.83 → 1.0.89 changed `version` enforcement and added
-  `hookName` to one event; 1.0.91 is already cached locally. The adapter's
+- **Version drift.** Two facts were first observed on 1.0.89 — a document with
+  no `version` loads, and `permissionRequest` carries `hookName` — and neither
+  can be dated: 1.0.83 has a `version: Required` *string* (evidence §4) but no
+  measured rejection, and no recorded `permissionRequest` payload (evidence §1).
+  The local package cache already holds 1.0.91 (evidence, header). The adapter's
   evidence ages per patch release. §2.16 makes the age visible; it cannot make
   it current.
 - **Vendor-owned files.** An MCP merge into `mcp-config.json` writes a file
@@ -628,17 +720,22 @@ Not made here; each belongs to the phase named.
 
 - **ADR**: per D1, ADR-070 *(proposed)* or Evolution sections in ADR-047; either
   way ADR-047 §6 loses "cannot verify", Consequences gain the matcher risk
-  (§2.7) and the read-size/memory-size channel finding (§2.3, §2.5). Phase B.
+  (§2.7), the native-name gates (§2.2) and the read-size/memory-size channel
+  finding (§2.3, §2.5). Phase B.
 - **`src/lazy_harness/agents/copilot.py` docstrings** at `:1-31`, `:133-148`,
   `:168-172`, `:565-568`, `:640-645`: rewritten in the PRs that change the
   behaviour they describe (C, E, B).
 - **`base.py:151-153`** (multi-file claim) and **`base.py:209`**
-  (`result_type`): Phase C and F.
+  (`result_type`): Phase C and F. Also the comment at
+  `hooks/builtins/pre_tool_use_memory_size.py:262`, which repeats the
+  multi-file claim about Copilot's `edit`: Phase C.
 - **`docs/agents/copilot.md`**: the "partial … 1.0.83" intro (`:3-6`) and the
   *cannot do yet* table (`:79-85`) change per feature PR. Phase K.
 - **`specs/backlog.md`**: one entry per phase A–J when opened; the ADR-047
   entry stays as history.
 - **`docs/roadmap.md`**: a "Copilot first-class" item listing phases C, E, H
   as the user-visible milestones.
-- **Multi-agent design `:1285`** (stale "no hook has fired") — still another
-  lane's file; ADR-047 already records the correction.
+- **Multi-agent design `:1310-1312`** (stale "no hook has fired") — nothing to
+  do: the design already carries a dated correction at `:1314-1320`. That
+  correction's own citations (`:1201`, `:2071-2098`) predate a line shift and
+  now point elsewhere; fixing them is that file's lane.
