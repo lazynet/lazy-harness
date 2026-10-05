@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.84.0](https://github.com/lazynet/lazy-harness/compare/v0.83.5...v0.84.0) (2026-10-05)
+
+
+### Features
+
+* support Engram 3.0.0 ([#502](https://github.com/lazynet/lazy-harness/issues/502)) ([d8fac88](https://github.com/lazynet/lazy-harness/commit/d8fac88d3316b3b9ec686041a2bc12c7f165d4a0))
+
+
+### Documentation
+
+* record external hook placement in ADR-042 ([#499](https://github.com/lazynet/lazy-harness/issues/499)) ([ce5b19f](https://github.com/lazynet/lazy-harness/commit/ce5b19fa8e540110dbd3493f8a8dc5a33d53280b))
+
 ## [0.83.5](https://github.com/lazynet/lazy-harness/compare/v0.83.4...v0.83.5) (2026-10-01)
 
 
