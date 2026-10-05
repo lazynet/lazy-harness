@@ -400,6 +400,7 @@ binario (plan §5.2 ítem 4). Prioridad MEDIA.
 - *Horizonte:* 14 días desde el deploy.
 - *Éxito:* crecimiento de retenidas ≈ 0 mientras las colas siguen llenas.
 - *Se remueve si* la tasa de aceptación de proposals después del próximo drenaje (aceptadas / (aceptadas + rechazadas)) es menor que la de antes: significaría que la sección de pendientes estaba orientando la calidad.
+- *Lectura del 2026-10-05, contaminada — B no se remueve:* el drenaje de las 26 colas dio 7,8% (12 / 153) contra 23,6% (368 / 1.560) de todo lo anterior, contado sobre las fechas `accepted:`/`rejected:` de los registros. Tres cosas la invalidan como lectura de B: llegó antes del horizonte; 99 de las 153 eran retenidas producidas antes de B, con la sección de pendientes todavía en el prompt; y el criterio de rechazo fue más estricto que el histórico, porque descartó todo restatement de las reglas globales de evidencia y first-action (24 de las 54 pendientes; las retenidas no se clasificaron por motivo). Rehacer la lectura al horizonte, sólo sobre proposals con fecha ≥ deploy de v0.83.2.
 
 **Fuera de esta entrada:** E (aislar el `claude -p` del evaluador) tiene las probes hechas en `specs/designs/claude-code-evidence.md` y su decisión está pendiente; sus kill criteria entran con ella. Prioridad ALTA hasta el horizonte.
 
