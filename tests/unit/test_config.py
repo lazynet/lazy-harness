@@ -479,7 +479,34 @@ def test_config_memory_engram_defaults_when_missing() -> None:
     assert cfg.memory.engram.enabled is False
     assert cfg.memory.engram.git_sync is True
     assert cfg.memory.engram.cloud is False
-    assert cfg.memory.engram.version == "2.1.0"
+    assert cfg.memory.engram.version == "3.0.0"
+
+
+@pytest.mark.parametrize("existing", [False, True])
+@pytest.mark.parametrize("configured_version", [None, "2.1.0"])
+def test_engram_version_survives_two_config_round_trips(
+    tmp_path: Path, existing: bool, configured_version: str | None
+) -> None:
+    from lazy_harness.core.config import Config, load_config, save_config
+
+    path = tmp_path / "config.toml"
+    if existing:
+        path.write_text('[harness]\nversion = "1"\n\n# Keep this comment.\n')
+        cfg = load_config(path)
+    else:
+        cfg = Config()
+    if configured_version is not None:
+        cfg.memory.engram.version = configured_version
+    expected = configured_version or "3.0.0"
+
+    for _ in range(2):
+        save_config(cfg, path)
+        cfg = load_config(path)
+        assert cfg.memory.engram.version == expected
+        assert cfg.memory.engram.enabled is False
+        assert cfg.memory.engram.binary == ""
+    if existing:
+        assert "# Keep this comment." in path.read_text()
 
 
 def test_config_memory_engram_binary_defaults_to_empty() -> None:

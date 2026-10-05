@@ -1,6 +1,6 @@
-# Engram 2.1.0 `save` probe evidence
+# Engram compatibility probe evidence
 
-**Scope:** §5.2 item 1 of `specs/designs/2026-09-24-engram-2-migration.md` — probe
+**Historical scope (2026-09-24):** §5.2 item 1 of `specs/designs/2026-09-24-engram-2-migration.md` — probe
 the exact `engram save` call `engram-persist` makes, under 2.1.0, before the
 version pin bumps. Every claim below carries the command that produced it. The
 live install and live DB (`/opt/homebrew/bin/engram`, `~/.engram/engram.db`)
@@ -207,3 +207,94 @@ no row-count regression). The one behaviour change with a real consequence is
 the new session-ownership check, which will need four pre-existing session
 rows fixed on the Mac (one of them `lazy-harness` itself) as part of that
 host's migration step, independent of anything in this repo's code.
+
+## 2026-10-05 — 3.0.0 real-store preflight
+
+Evidence supplied by the separate preflight unit, executed before the support
+pin change. This section records copied-store observations, not a deployed
+upgrade. Host-specific paths and identifiers are normalized below. The older
+2.1.0 findings above describe their dated snapshot, not current deployment state.
+
+### Provenance and isolation
+
+Target: [v3.0.0](https://github.com/Gentleman-Programming/engram/releases/tag/v3.0.0),
+commit `15a2f78885d7ad8ced23b2d1d88383e9bb472c17`, Claude plugin `0.1.5`.
+Release archive checksums were independently rechecked:
+
+```text
+engram_3.0.0_darwin_arm64.tar.gz: OK
+54e080ed64a1d1b7b8a5d59e5a6d17100adbd69a6aafbb73d270dbeb37c03266
+engram_3.0.0_linux_amd64.tar.gz: OK
+22bbfd81ee9071a04d446f653842c383a3101b594e8829519a63a7c747602e69
+```
+
+SQLite online-backup snapshots of two real stores were hashed and retained as
+read-only baselines. Each version ran on a separate fresh copy with isolated
+`HOME`, `ENGRAM_DATA_DIR`, `ENGRAM_NO_UPDATE_CHECK=1` and
+`ENGRAM_CLOUD_AUTOSYNC=0`. Linux probes ran both on tmpfs and on the same local
+ZFS filesystem as that host's live store. The Darwin store used local APFS.
+The live binaries and registrations were unchanged. Closing the Linux online
+backup checkpointed its live WAL; counts, base-column digests and schema objects
+were verified unchanged. A read-only backup source avoids that side effect.
+
+### Migration and shipped persistence
+
+The preflight's `runcopy.sh HOSTDIR LABEL BINARY` copied each baseline, executed
+`doctor --json` twice, then used SQLite backup and `dbstat.py` to compare counts,
+schema objects and base-column digests. Both stores retained every pre-existing
+table count, live count and digest across first open and reopen. Integrity was
+`ok`, and `user_version` remained `1`. Migration added one empty
+`prompt_source_confirmations` table, its autoindex, three explicit indexes and
+nine TEXT columns; an unchanged stamp does not mean an unchanged schema.
+
+The executed `persist_probe.py ROOT BASELINE_DB BINARY PROJECT` loaded the
+installed harness 0.83.5 `EngramPersister`. On a fresh pre-doctor copy it saved
+one decision and one failure, appended and saved another pair, then ran with no
+new input. It checked exact stored content, project/type/scope, row deltas and
+JSONL byte offsets. The shipping call remained:
+
+```text
+engram save <title> <JSON-content> --type decision|failure --project <project> --scope project
+CHECKS {"first_saved_2": true, "second_saved_2": true, "third_noop": true, "cursor_complete": true, "exact_4_rows": true, "contents_exact": true, "types_project_scope": true, "obs_delta_4": true, "all_saves_rc0": true}
+VERDICT PASS
+```
+
+| 3.0.0 execution | First pair, seconds | Steady pair, seconds | Result |
+| --- | --- | --- | --- |
+| Darwin arm64, APFS store copy | 0.215 / 0.137 | 0.138 / 0.134 | 4 exact rows, complete cursor, third pass no-op |
+| Linux amd64, ZFS store copy | 0.129 / 0.078 | 0.069 / 0.080 | Same checks; every save stderr empty |
+
+First save included migration and stayed below the persister's 30-second
+timeout. No CLI save adaptation was established. CLI `save` accepts a new
+explicit project on both 2.1.0 and 3.0.0; MCP `mem_save` has a different contract.
+
+### Mutation and plugin boundaries
+
+Actual stdio MCP `tools/list` returned 19 agent tools on both releases.
+`mem_update.required` changed from `[id]` to `[id, expected_project]`.
+Missing, blank and wrong owners were rejected on 3.0.0 without changing the row
+hash or revision count; correct owner updated the row and revision `1` to `2`.
+2.1.0 applied the same invalid-owner calls as a negative control. Sync was not
+enrolled, so unchanged sync counts alone do not discriminate a rejection.
+Separate upstream HTTP probes observed missing-owner 400, wrong-owner 409 and
+correct-owner 200. The mirror builds no MCP/HTTP update or delete payloads.
+
+Isolated plugin scripts confirmed authoritative session binding, rejected
+unreachable/mismatched/missing/ended session cases, and replayed a bound write
+through real MCP. Plugin 0.1.5 made no SessionStart setup call. Plugin 0.1.3 with
+3.0.0 made no registration change when the entry matched exactly; differing
+entries produced a conflict. These probes used a recorder stub for Claude,
+so they do not verify Claude's dispatcher, matcher, plugin-root expansion or
+the deployed Stop hook. The Homebrew canonical-command mapping was checked in
+source only; a real 3.0.0 keg was not installed during preflight.
+
+Binary downgrade/reopen tolerated a prompt-bearing copy with reconciled counts,
+but locally captured prompts left the new sync-identity columns NULL. The
+partial unique index with populated values and cloud/sync paths were not tested.
+Production rollback therefore remains a frozen DB plus its matching cursor
+trees, restored together. No repair, deduplication or project merge was run.
+
+**Verdict:** GO for a supervised Linux canary. Live per-profile session/Stop
+smoke, fresh freeze/count baselines, installed binary/plugin read-back and the
+observation window remain rollout gates. This evidence supports the harness
+default pin change, without certifying deployment or rollback.

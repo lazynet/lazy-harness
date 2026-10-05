@@ -227,13 +227,15 @@ The `[memory]` block configures **agent-side** memory backends — tools the age
 
 | Field      | Type   | Default      | Required | Description                                                                                                                                     |
 | ---------- | ------ | ------------ | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `enabled`  | bool   | `false`      | no       | When true, `lh deploy` wires the Engram MCP server into each profile's `.claude.json` and the `engram-persist` Stop hook becomes meaningful.    |
-| `git_sync` | bool   | `true`       | no       | Whether Engram persists per-repo memory chunks under a versioned `.engram/chunks/` directory (recommended; keeps knowledge with the code).      |
-| `cloud`    | bool   | `false`      | no       | Opt-in cloud sync. Off by default — enabling it breaks the framework's local-first guarantee, so flip it deliberately.                          |
-| `version`  | string | `"2.1.0"`    | no       | Pinned Engram version. `lh doctor` flags drift. See [ADR-022](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/022-engram-episodic-memory.md) and [ADR-029](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/029-engram-persist-deterministic-mirror.md). |
-| `binary`   | string | `""`         | no       | Absolute path to the `engram` executable. Empty means "resolve from `PATH`", which is what a normal install wants. Set it where `PATH` is not the harness's — a hook spawned by a scheduler inherits the daemon's environment, not your shell's, and `lh doctor` points here when it cannot find the binary. Read by the `engram-persist` hook. |
+| `enabled`  | bool   | `false`      | no       | When true and Engram is on `PATH`, `lh deploy` adds its MCP entry through each agent's adapter. The independent `engram-persist` Stop hook does not check this flag. |
+| `git_sync` | bool   | `true`       | no       | Stored preference for per-repo memory chunks. The harness does not start or disable Engram git sync from this field; configure sync in Engram separately. |
+| `cloud`    | bool   | `false`      | no       | Stored cloud-sync preference. The harness does not start or disable Engram cloud sync from this field; configure it in Engram separately. |
+| `version`  | string | `"3.0.0"`    | no       | Configured comparison pin for `lh doctor`; defaults to the supported Engram version. Overrides are preserved and drift is reported, without gating persistence. See [ADR-022](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/022-engram-episodic-memory.md) and [ADR-029](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/029-engram-persist-deterministic-mirror.md). |
+| `binary`   | string | `""`         | no       | Absolute executable path for `engram-persist`; empty resolves from `PATH`. Set it when the hook's environment needs an explicit path. MCP deployment and feature-version probes resolve `engram` independently from `PATH`. |
 
 The interactive `lh config memory --init` wizard (see [ADR-026](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/026-config-wizards.md)) writes this block for you and merges it into an existing config preserving comments and unrelated sections.
+
+Engram 3.0.0 requires `expected_project` on MCP `mem_update` and `mem_delete` calls. Clients must refresh their tool schemas after upgrading. The deterministic JSONL mirror continues to use CLI `save`; it does not build those mutation calls. Claude plugin 0.1.5 no longer registers MCP during SessionStart, so verify the registration separately when upgrading.
 
 ## `[monitoring]`
 

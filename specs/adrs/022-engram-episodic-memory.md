@@ -58,3 +58,23 @@ Concretely:
   `{"command": <absolute engram binary>, "args": ["mcp", "--tools=agent"]}` —
   so enabling `[memory.engram]` does not trip 2.x's exact-match conflict
   check in `setup claude-code --mcp-only` (plan §1.4, §5.2 item 3).
+
+## Evolution — 2026-10-05: supported pin moved to 3.0.0
+
+- **`PINNED_VERSION` moved to `3.0.0`.** The shipped deterministic persister
+  passed first-open, steady-write and no-op probes on consistent copies of
+  real Darwin/APFS and Linux/ZFS stores before this change. Four exact rows,
+  complete cursors and integrity checks passed; no save adaptation was needed.
+  Executed evidence and limits: [`engram-evidence.md`](../designs/engram-evidence.md).
+- **The default is support metadata, not an upgrade or write gate.** Config,
+  wizard and capability defaults derive from the module pin. Existing explicit
+  version overrides survive save/load cycles; doctor compares the configured
+  pin. `check_version()` compares the module pin. Neither controls persistence.
+- **The breaking mutation contract belongs to MCP/HTTP clients.** Engram 3.0.0
+  requires `expected_project` for observation update/delete. The harness mirror
+  uses CLI `save`, and no harness caller builds those mutation payloads.
+- **Registration remains explicit.** The MCP entry stays an absolute binary
+  path plus `mcp --tools=agent`. Claude plugin 0.1.5 stops running setup at
+  SessionStart; copied-store script probes do not prove live runtime wiring.
+  Binary/plugin deployment, fresh-session smoke and DB/cursor backup remain
+  separate rollout gates. This support change enables no integration or sync.

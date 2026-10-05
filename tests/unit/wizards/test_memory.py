@@ -20,14 +20,21 @@ def _scripted_confirm(answers: list[bool]):
     return _confirm
 
 
+@pytest.mark.parametrize("existing", [False, True])
 def test_memory_wizard_writes_block_when_engram_installed_and_user_confirms(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, existing: bool
 ) -> None:
+    from lazy_harness.core.config import load_config, save_config
     from lazy_harness.memory import engram as engram_mod
     from lazy_harness.wizards.memory import wizard_memory
 
     monkeypatch.setattr(engram_mod, "is_engram_available", lambda: True)
     cfg_path = tmp_path / "config.toml"
+    if existing:
+        cfg_path.write_text(
+            '[harness]\nversion = "1"\n\n# Keep this comment.\n'
+            '[memory.engram]\nversion = "2.1.0"\nbinary = "/usr/local/bin/engram"\n'
+        )
     output: list[str] = []
 
     confirm = _scripted_confirm([True, True, False, True])
@@ -41,6 +48,16 @@ def test_memory_wizard_writes_block_when_engram_installed_and_user_confirms(
     assert "enabled = true" in content
     assert "git_sync = true" in content
     assert "cloud = false" in content
+    assert 'version = "3.0.0"' in content
+    assert 'version = "3.0.0"' in "\n".join(output)
+    cfg = load_config(cfg_path)
+    for _ in range(2):
+        save_config(cfg, cfg_path)
+        cfg = load_config(cfg_path)
+        assert cfg.memory.engram.version == "3.0.0"
+    if existing:
+        assert cfg.memory.engram.binary == "/usr/local/bin/engram"
+        assert "# Keep this comment." in cfg_path.read_text()
 
 
 def test_memory_wizard_cancels_when_user_declines_final_write(
@@ -93,4 +110,4 @@ def test_memory_wizard_when_engram_missing_prints_install_hint(
     joined = "\n".join(output)
     assert "Engram is not installed" in joined
     assert "brew install engram" in joined
-    assert "2.1.0" in joined
+    assert "3.0.0" in joined
