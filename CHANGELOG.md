@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.85.0](https://github.com/lazynet/lazy-harness/compare/v0.84.0...v0.85.0) (2026-10-06)
+
+
+### Features
+
+* keep agent temp files in the repository tmp dir ([#504](https://github.com/lazynet/lazy-harness/issues/504)) ([28ba5e9](https://github.com/lazynet/lazy-harness/commit/28ba5e9e6510cb998a2f3d8314f2f0b7c8e721dc))
+
+
+### Documentation
+
+* **backlog:** record contaminated kill-criterion B reading ([43e1718](https://github.com/lazynet/lazy-harness/commit/43e1718a94f4028aa734843c77cc4ed13e939c02))
+* **specs:** design contract-aware compound-loop evaluator ([60eb943](https://github.com/lazynet/lazy-harness/commit/60eb9431fb63bfb5d6457f639996f7af92191c84))
+
 ## [0.84.0](https://github.com/lazynet/lazy-harness/compare/v0.83.5...v0.84.0) (2026-10-05)
 
 
