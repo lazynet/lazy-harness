@@ -15,6 +15,7 @@ from lazy_harness.agents.registry import AgentNotFoundError, agent_for_profile
 from lazy_harness.core.config import Config
 from lazy_harness.core.paths import expand_path
 from lazy_harness.core.profiles import ProfileError, resolve_profile_with_source
+from lazy_harness.core.project_identity import main_repo_root
 from lazy_harness.core.secrets import SecretsError, overlay_profile_secrets, secrets_dir_for
 
 
@@ -34,6 +35,23 @@ class LaunchPlan:
     adapter: AgentAdapter
     binary: Path
     env: dict[str, str]
+
+
+def _project_tmp_dir(cwd: Path) -> Path | None:
+    """`<main checkout>/tmp`, created; `None` outside a repo or if it cannot be.
+
+    The main checkout rather than the worktree: a worktree is removed after
+    merge, and temp files are keyed to the project, not the branch.
+    """
+    root = main_repo_root(cwd)
+    if root is None:
+        return None
+    tmp_dir = root / "tmp"
+    try:
+        tmp_dir.mkdir(exist_ok=True)
+    except OSError:
+        return None
+    return tmp_dir
 
 
 def resolve_launch(
@@ -100,6 +118,12 @@ def resolve_launch(
     # would otherwise authenticate as the first — silently.
     if adapter.env_var():
         env[adapter.env_var()] = str(config_dir)
+    tmp_dir = _project_tmp_dir(cwd or Path.cwd())
+    if tmp_dir is not None:
+        # Claude Code reads only CLAUDE_CODE_TMPDIR (it writes under /tmp, not
+        # $TMPDIR); Codex and every tool either agent runs read TMPDIR.
+        env["TMPDIR"] = str(tmp_dir)
+        env["CLAUDE_CODE_TMPDIR"] = str(tmp_dir)
     # A declared secrets file that cannot be read stops the launch (ADR-045 D2).
     # Continuing would exec the agent with whichever account the ambient
     # environment already carries, which is the one thing the file exists to
