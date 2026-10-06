@@ -777,6 +777,8 @@ Resolves the right profile for the current directory (or `--profile <name>`), se
 
 `--list` prints profiles and exits. `--dry-run` prints the resolved exec invocation without running.
 
+Launched inside a git repository, the agent keeps its temporary files in the repository: `lh run` creates `<repo>/tmp` and points both `TMPDIR` (read by Codex and by the tools either agent runs) and `CLAUDE_CODE_TMPDIR` (read by Claude Code, which ignores `TMPDIR`) at it. From a linked worktree, `<repo>` is the main checkout, so temporary files outlive the worktree's removal. Keep `/tmp/` in a gitignore; outside a repository, or if the directory cannot be created, both variables are left as the environment had them. `lh exec` shares this resolution.
+
 If no configured root matches the current directory, the default profile is used and a warning naming the directory and the profile is written to **stderr** — never stdout, which belongs to the agent once `lh run` execs it. The warning is unconditional rather than interactive-only: a scheduled caller has no terminal and is the one most likely to be launching from an unrouted directory. It is suppressed when no profile declares a root at all, since routing by directory is then not in use and the default is the configured design rather than a guess.
 
 ```bash

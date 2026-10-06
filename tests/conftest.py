@@ -81,8 +81,11 @@ def timeout_when_agent_is_ready(ready: Path, cap: float = 60.0) -> Iterator[None
     def fire_when_ready(
         self: subprocess.Popen, input: str | None = None, timeout: float | None = None
     ) -> tuple[str, str]:
-        # The second call is `lh exec` draining the pipes after the kill.
-        if timeout is None or getattr(self, "_lh_deadline_fired", False):
+        # The second call is `lh exec` draining the pipes after the kill. A
+        # process with no stdin pipe is not the agent — `lh exec` always feeds
+        # it the prompt — but a helper `lh exec` runs on the way there, such as
+        # the `git rev-parse` resolving the project's temp dir.
+        if timeout is None or self.stdin is None or getattr(self, "_lh_deadline_fired", False):
             return real_communicate(self, input, timeout)
         pending = input
         deadline = time.monotonic() + cap
