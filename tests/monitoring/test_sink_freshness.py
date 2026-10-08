@@ -44,7 +44,8 @@ def test_ok_for_a_recently_enqueued_sink(tmp_path: Path) -> None:
         db.outbox_enqueue(sink_name="http_remote", event_id="e1", payload_json="{}")
         recent_ts = NOW.timestamp() - 300  # 5 minutes ago
         db._conn.execute(
-            "UPDATE sink_outbox SET created_ts = ? WHERE event_id = 'e1'", (recent_ts,)
+            "UPDATE sink_outbox SET created_ts = ?1, pending_since_ts = ?1 WHERE event_id = 'e1'",
+            (recent_ts,),
         )
         db._conn.commit()
     finally:
@@ -61,7 +62,10 @@ def test_warn_at_24_hours_stale(tmp_path: Path) -> None:
     try:
         db.outbox_enqueue(sink_name="http_remote", event_id="e1", payload_json="{}")
         stale_ts = (NOW - timedelta(hours=25)).timestamp()
-        db._conn.execute("UPDATE sink_outbox SET created_ts = ? WHERE event_id = 'e1'", (stale_ts,))
+        db._conn.execute(
+            "UPDATE sink_outbox SET created_ts = ?1, pending_since_ts = ?1 WHERE event_id = 'e1'",
+            (stale_ts,),
+        )
         db._conn.commit()
     finally:
         db.close()
@@ -77,7 +81,10 @@ def test_fail_at_7_days_stale(tmp_path: Path) -> None:
     try:
         db.outbox_enqueue(sink_name="http_remote", event_id="e1", payload_json="{}")
         stale_ts = (NOW - timedelta(days=8)).timestamp()
-        db._conn.execute("UPDATE sink_outbox SET created_ts = ? WHERE event_id = 'e1'", (stale_ts,))
+        db._conn.execute(
+            "UPDATE sink_outbox SET created_ts = ?1, pending_since_ts = ?1 WHERE event_id = 'e1'",
+            (stale_ts,),
+        )
         db._conn.commit()
     finally:
         db.close()
@@ -160,7 +167,10 @@ def test_active_sink_is_checked_against_the_configured_db(tmp_path: Path) -> Non
     try:
         db.outbox_enqueue(sink_name="http_remote", event_id="e1", payload_json="{}")
         stale_ts = (NOW - timedelta(days=8)).timestamp()
-        db._conn.execute("UPDATE sink_outbox SET created_ts = ? WHERE event_id = 'e1'", (stale_ts,))
+        db._conn.execute(
+            "UPDATE sink_outbox SET created_ts = ?1, pending_since_ts = ?1 WHERE event_id = 'e1'",
+            (stale_ts,),
+        )
         db._conn.commit()
     finally:
         db.close()
@@ -210,7 +220,7 @@ def _enqueue(db_path: Path, *, attempts: int, error: str = "HTTP 503") -> None:
         for _ in range(attempts):
             db.outbox_mark_failed("http_remote", "e1", error=error, retry_after_seconds=60)
         db._conn.execute(
-            "UPDATE sink_outbox SET created_ts = ? WHERE event_id = 'e1'",
+            "UPDATE sink_outbox SET created_ts = ?1, pending_since_ts = ?1 WHERE event_id = 'e1'",
             (NOW.timestamp() - 300,),
         )
         db._conn.commit()
@@ -277,11 +287,12 @@ def _enqueue_aged(db_path: Path, *, oldest_age: timedelta) -> None:
         db.outbox_enqueue(sink_name="http_remote", event_id="old", payload_json="{}")
         db.outbox_enqueue(sink_name="http_remote", event_id="fresh", payload_json="{}")
         db._conn.execute(
-            "UPDATE sink_outbox SET created_ts = ? WHERE event_id = 'old'",
+            "UPDATE sink_outbox SET created_ts = ?1, pending_since_ts = ?1 WHERE event_id = 'old'",
             (NOW.timestamp() - oldest_age.total_seconds(),),
         )
         db._conn.execute(
-            "UPDATE sink_outbox SET created_ts = ? WHERE event_id = 'fresh'",
+            "UPDATE sink_outbox SET created_ts = ?1, pending_since_ts = ?1 "
+            "WHERE event_id = 'fresh'",
             (NOW.timestamp() - 300,),
         )
         db._conn.commit()
@@ -343,7 +354,10 @@ def test_an_idle_machine_reports_no_delivery_problem(tmp_path: Path) -> None:
         db.outbox_enqueue(sink_name="http_remote", event_id="e1", payload_json="{}")
         db.outbox_mark_sent("http_remote", "e1")
         stale_ts = (NOW - timedelta(days=8)).timestamp()
-        db._conn.execute("UPDATE sink_outbox SET created_ts = ? WHERE event_id = 'e1'", (stale_ts,))
+        db._conn.execute(
+            "UPDATE sink_outbox SET created_ts = ?1, pending_since_ts = ?1 WHERE event_id = 'e1'",
+            (stale_ts,),
+        )
         db._conn.commit()
     finally:
         db.close()

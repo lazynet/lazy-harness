@@ -330,14 +330,85 @@ def test_outbox_delivery_health_reports_the_oldest_undelivered_timestamp(
     db = MetricsDB(tmp_path / "m.db")
     try:
         db.outbox_enqueue(sink_name="http_remote", event_id="old", payload_json="{}")
-        db._conn.execute("UPDATE sink_outbox SET created_ts = ? WHERE event_id = 'old'", (1000.0,))
+        db._conn.execute(
+            "UPDATE sink_outbox SET pending_since_ts = ? WHERE event_id = 'old'", (1000.0,)
+        )
         db.outbox_enqueue(sink_name="http_remote", event_id="new", payload_json="{}")
-        db._conn.execute("UPDATE sink_outbox SET created_ts = ? WHERE event_id = 'new'", (5000.0,))
+        db._conn.execute(
+            "UPDATE sink_outbox SET pending_since_ts = ? WHERE event_id = 'new'", (5000.0,)
+        )
 
         health = db.outbox_delivery_health("http_remote")
 
         assert health["max_attempts"] == 0
         assert health["oldest_undelivered_ts"] == 1000.0
+    finally:
+        db.close()
+
+
+def test_outbox_delivery_health_ages_a_repriced_row_from_its_requeue(tmp_path: Path) -> None:
+    """A reprice returns delivered history to 'pending'; that is new work, not a stall.
+
+    Measured from `created_ts`, the 0.86.0 reprice put 4500 events back in the
+    queue whose oldest was created 14 days earlier, and doctor reported FAIL
+    while the drain cleared 500 per run with nothing failing.
+    """
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.outbox_enqueue(sink_name="http_remote", event_id="e1", payload_json='{"v":1}')
+        db._conn.execute("UPDATE sink_outbox SET created_ts = 1000.0, pending_since_ts = 1000.0")
+        db.outbox_mark_sent("http_remote", "e1")
+        before = time.time()
+
+        db.outbox_enqueue(sink_name="http_remote", event_id="e1", payload_json='{"v":2}')
+
+        assert db.outbox_delivery_health("http_remote")["oldest_undelivered_ts"] >= before
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("status", ["pending", "sending"])
+def test_outbox_enqueue_keeps_the_age_of_a_row_still_undelivered(
+    tmp_path: Path, status: str
+) -> None:
+    """Only delivery restarts the clock.
+
+    A live session is re-enqueued with new totals on every ingest; if that
+    reset the age too, a queue that never delivered would always look fresh.
+    """
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        db.outbox_enqueue(sink_name="http_remote", event_id="e1", payload_json='{"v":1}')
+        db._conn.execute("UPDATE sink_outbox SET status = ?, pending_since_ts = 1000.0", (status,))
+
+        db.outbox_enqueue(sink_name="http_remote", event_id="e1", payload_json='{"v":2}')
+
+        assert db.outbox_delivery_health("http_remote")["oldest_undelivered_ts"] == 1000.0
+    finally:
+        db.close()
+
+
+def test_an_outbox_from_before_pending_since_ages_from_created_ts(tmp_path: Path) -> None:
+    """The migration backfills the only age an existing row has."""
+    path = tmp_path / "m.db"
+    conn = sqlite3.connect(path)
+    conn.execute(
+        """CREATE TABLE sink_outbox (
+            sink_name TEXT NOT NULL, event_id TEXT NOT NULL, payload_json TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT NOT NULL DEFAULT '', next_attempt_ts REAL, lease_until REAL,
+            created_ts REAL NOT NULL, PRIMARY KEY (sink_name, event_id))"""
+    )
+    conn.execute(
+        "INSERT INTO sink_outbox (sink_name, event_id, payload_json, created_ts) "
+        "VALUES ('http_remote', 'e1', '{}', 1000.0)"
+    )
+    conn.commit()
+    conn.close()
+
+    db = MetricsDB(path)
+    try:
+        assert db.outbox_delivery_health("http_remote")["oldest_undelivered_ts"] == 1000.0
     finally:
         db.close()
 
