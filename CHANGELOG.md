@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.86.1](https://github.com/lazynet/lazy-harness/compare/v0.86.0...v0.86.1) (2026-10-08)
+
+
+### Bug Fixes
+
+* age undelivered outbox rows from their last requeue ([#512](https://github.com/lazynet/lazy-harness/issues/512)) ([664f785](https://github.com/lazynet/lazy-harness/commit/664f7854931ae39346615dfa5cbdfbf6b9f2000e))
+* price gpt-6.1-sol ([#511](https://github.com/lazynet/lazy-harness/issues/511)) ([323b3c9](https://github.com/lazynet/lazy-harness/commit/323b3c9e8b7df29491ebb6c077a5707fef789b97))
+
+
+### Documentation
+
+* fix 2026-10-08 coherence-audit drift ([#510](https://github.com/lazynet/lazy-harness/issues/510)) ([a011aa8](https://github.com/lazynet/lazy-harness/commit/a011aa81acfb90652491ae2f75e74a885a75409d))
+
 ## [0.86.0](https://github.com/lazynet/lazy-harness/compare/v0.85.1...v0.86.0) (2026-10-08)
 
 
