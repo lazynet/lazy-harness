@@ -1186,3 +1186,71 @@ def test_cost_for_billing_model_forwards_the_context_class() -> None:
         billing_model="per_token",
         context_class="long",
     ) == (pytest.approx(0.5), "pricing")
+
+
+def test_anthropic_table_declares_a_derived_context_class() -> None:
+    from lazy_harness.monitoring.pricing import API_RATE_TABLES
+
+    table = API_RATE_TABLES["anthropic"]
+    assert table.dimensions == ("context_class",)
+    assert table.required == ()
+    assert table.version == "anthropic-2026-10-07"
+
+
+def test_only_a_model_with_a_long_tier_has_distinct_long_rates() -> None:
+    from lazy_harness.monitoring.pricing import (
+        API_RATE_TABLES,
+        DEFAULT_PRICING,
+        LONG_CONTEXT_PRICING,
+    )
+
+    rates = API_RATE_TABLES["anthropic"].rates
+    for model, row in DEFAULT_PRICING.items():
+        assert rates[(model, "short")] == row
+        expected_long = LONG_CONTEXT_PRICING[model].rates if model in LONG_CONTEXT_PRICING else row
+        assert rates[(model, "long")] == expected_long
+
+
+def test_api_equivalent_derives_the_haiku_5_5_class_from_the_prompt() -> None:
+    from lazy_harness.monitoring.pricing import price_api_response
+
+    result = price_api_response(
+        "claude-haiku-5-5",
+        _LONG_HAIKU,
+        service_tier="standard",
+        context_class=None,
+        on="2026-10-07",
+    )
+    assert result.status == "priced"
+    assert result.amount == pytest.approx(0.122501)
+    assert result.basis is not None
+    assert result.basis.rate_table_version == "anthropic-2026-10-07"
+
+
+def test_an_explicit_anthropic_context_class_beats_the_derivation() -> None:
+    from lazy_harness.monitoring.pricing import price_api_response
+
+    result = price_api_response(
+        "claude-haiku-5-5", _LONG_HAIKU, service_tier="standard", context_class="short", on=None
+    )
+    assert result.amount == pytest.approx(0.0245002)
+
+
+def test_api_equivalent_and_calculate_cost_agree_on_every_anthropic_key() -> None:
+    """Two paths answer one question; they must give one answer."""
+    from lazy_harness.monitoring.pricing import (
+        API_RATE_TABLES,
+        DEFAULT_PRICING,
+        calculate_cost,
+        price_api_response,
+    )
+
+    tokens = dict.fromkeys(
+        ("input", "output", "cache_read", "cache_create", "cache_create_1h"), 1_000_000
+    )
+    for (model, context_class), rates in API_RATE_TABLES["anthropic"].rates.items():
+        equivalent = price_api_response(
+            model, tokens, service_tier="standard", context_class=context_class, on=None
+        )
+        billed = calculate_cost(model, tokens, DEFAULT_PRICING, context_class=context_class)
+        assert equivalent.amount == pytest.approx(billed) == pytest.approx(sum(rates.values()))

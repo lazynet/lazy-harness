@@ -25,7 +25,7 @@ class ApiEquivalentPrice:
 
 
 _OPENAI_API_RATE_VERSION = "openai-2026-09-22"
-_ANTHROPIC_API_RATE_VERSION = "anthropic-2026-09-22"
+_ANTHROPIC_API_RATE_VERSION = "anthropic-2026-10-07"
 # The dates each rate was published for, not the date it was read off the page.
 # A `None` end is a rate with no announced expiry — the window is open, which
 # is a different fact from a rate whose last covered day is known.
@@ -153,9 +153,10 @@ def price_api_response(
         return ApiEquivalentPrice(None, "no_usage")
     evidence = {"service_tier": service_tier, "context_class": context_class}
     anthropic = API_RATE_TABLES["anthropic"]
-    if model in anthropic.rates:
+    if model in {key[0] for key in anthropic.rates}:
         if any(evidence[dimension] is None for dimension in anthropic.required):
             return ApiEquivalentPrice(None, "unknown_tier")
+        context_class = context_class or anthropic_context_class(model, tokens)
         # Both figures come from the same `_select_rates`/`_raw_cost`, so the
         # comparison figure and the per-token figure can never drift apart
         # into two answers for one published rate; only the per-session
@@ -165,7 +166,8 @@ def price_api_response(
         # the evidence.
         return ApiEquivalentPrice(
             _raw_cost(
-                _select_rates(model, DEFAULT_PRICING, on=on, context_class="short") or {}, tokens
+                _select_rates(model, DEFAULT_PRICING, on=on, context_class=context_class) or {},
+                tokens,
             ),
             "priced",
             ApiPriceBasis(
@@ -355,29 +357,6 @@ class ApiRateTable:
     """Prompt size above which the provider charges its long-context rates."""
 
 
-API_RATE_TABLES: dict[str, ApiRateTable] = {
-    "openai": ApiRateTable(
-        provider="openai",
-        version=_OPENAI_API_RATE_VERSION,
-        dimensions=("service_tier", "context_class"),
-        rates=_OPENAI_API_RATES,
-        # The context class is a function of the prompt size, which the usage
-        # record reports, so it is derived rather than awaited (ADR-067).
-        required=("service_tier",),
-        # "Prompts with >272K input tokens are priced at 2x input and 1.5x
-        # output for the full request" — published on both models' pages, and
-        # already encoded in the long rows above.
-        long_context_threshold=272_000,
-    ),
-    "anthropic": ApiRateTable(
-        provider="anthropic",
-        version=_ANTHROPIC_API_RATE_VERSION,
-        dimensions=(),
-        rates=DEFAULT_PRICING,
-    ),
-}
-
-
 @dataclass(frozen=True)
 class IntroductoryRate:
     """A launch discount that expires on a fixed date.
@@ -444,6 +423,42 @@ def anthropic_context_class(model: str, tokens: dict[str, int]) -> str:
         return "short"
     gross = sum(int(tokens.get(name, 0) or 0) for name in _ANTHROPIC_PROMPT_BUCKETS)
     return "long" if gross > tier.threshold else "short"
+
+
+def _anthropic_rates() -> dict[tuple[str, str], dict[str, float]]:
+    """Key every model by class; a flat-priced model's two rows are equal."""
+    rates: dict[tuple[str, str], dict[str, float]] = {}
+    for model, row in DEFAULT_PRICING.items():
+        tier = LONG_CONTEXT_PRICING.get(model)
+        rates[(model, "short")] = row
+        rates[(model, "long")] = tier.rates if tier is not None else row
+    return rates
+
+
+API_RATE_TABLES: dict[str, ApiRateTable] = {
+    "openai": ApiRateTable(
+        provider="openai",
+        version=_OPENAI_API_RATE_VERSION,
+        dimensions=("service_tier", "context_class"),
+        rates=_OPENAI_API_RATES,
+        # The context class is a function of the prompt size, which the usage
+        # record reports, so it is derived rather than awaited (ADR-067).
+        required=("service_tier",),
+        # "Prompts with >272K input tokens are priced at 2x input and 1.5x
+        # output for the full request" — published on both models' pages, and
+        # already encoded in the long rows above.
+        long_context_threshold=272_000,
+    ),
+    "anthropic": ApiRateTable(
+        provider="anthropic",
+        version=_ANTHROPIC_API_RATE_VERSION,
+        dimensions=("context_class",),
+        rates=_anthropic_rates(),
+        # The class is derived from the usage record (ADR-070), so it is never
+        # required of the caller.
+        required=(),
+    ),
+}
 
 
 # The ADR-050 `cost_source` vocabulary for a `MetricEvent`/`session_stats`
