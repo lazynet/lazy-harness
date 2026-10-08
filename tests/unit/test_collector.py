@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 
 def _write_session_jsonl(path: Path, messages: list[dict]) -> None:
     with open(path, "w") as f:
@@ -561,3 +563,26 @@ def test_session_cost_from_disk_survives_an_unreadable_transcript(tmp_path: Path
 
     assert cost.cost_usd is None
     assert cost.output_tokens is None
+
+
+def test_session_cost_from_disk_classifies_each_request(tmp_path: Path) -> None:
+    from lazy_harness.monitoring.collector import session_cost_from_disk
+    from lazy_harness.monitoring.pricing import default_pricing
+
+    project = _project_dir(tmp_path)
+    session_id = "0f6b0e0e-1111-4222-8333-444455556667"
+    short = _usage(inp=60_000, out=0, cache_read=0, c5m=0, c1h=0)
+    long = _usage(inp=2, out=1000, cache_read=0, c5m=0, c1h=120_000)
+    _write_session_jsonl(
+        project / f"{session_id}.jsonl",
+        [
+            _assistant("msg_1", "claude-haiku-5-5", short),
+            _assistant("msg_2", "claude-haiku-5-5", short),
+            _assistant("msg_3", "claude-haiku-5-5", long),
+        ],
+    )
+
+    cost = session_cost_from_disk(project.parent, session_id, default_pricing())
+
+    # 2 x 60K short ($0.012) + one long write-heavy request ($0.122501).
+    assert cost.cost_usd == pytest.approx(0.134501, abs=1e-6)

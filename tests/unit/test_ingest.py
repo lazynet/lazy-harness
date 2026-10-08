@@ -1470,3 +1470,14 @@ def test_ingest_bills_a_long_request_at_the_long_tier(tmp_path: Path) -> None:
     assert row["input"] == 160_000
     assert row["cost"] == pytest.approx(0.076)
     assert row["api_equivalent_cost"] == pytest.approx(0.076)
+
+
+def test_ingest_and_exec_price_a_mixed_haiku_5_5_session_alike(tmp_path: Path) -> None:
+    from lazy_harness.monitoring.collector import session_cost_from_disk
+    from lazy_harness.monitoring.pricing import load_pricing
+
+    row = _ingest_haiku_5_5(tmp_path, 150_000, 10_000, 60_000)
+    exec_cost = session_cost_from_disk(
+        tmp_path / "lazy" / "projects", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", load_pricing()
+    )
+    assert exec_cost.cost_usd == pytest.approx(row["cost"])
