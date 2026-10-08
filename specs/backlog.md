@@ -368,6 +368,11 @@ de control). **Acción:** el 2026-10-09 correr `lh knowledge graph-assist report
 --since 2026-09-25` y aplicar los kill criteria de §6 (graph touch < 20%,
 precisión < 50%, p95 > 1500 ms); si alguno salta, seguir la remoción de §6.
 Baseline previa en §8 de la spec. Prioridad MEDIA.
+**Lectura previa, 2026-10-08 (14 días, clasificador propio, no el de `graph-assist
+report`):** sesiones elegibles con ≥1 llamada — claude-lazy 20/411, claude-flex
+20/977, codex-lazy 17/167; greps por llamada a graphify ~90–185 en Claude y ~26
+en Codex. Codex cae de 74,2% a ~10%, pero el denominador incluye sesiones
+headless que la baseline no contaba: la lectura del 2026-10-09 decide, esta no.
 
 ### `lh doctor` no detecta skew entre el plugin de engram y su binario
 
@@ -422,6 +427,8 @@ binario (plan §5.2 ítem 4). Prioridad MEDIA.
 ### Desde 0.85.0 `tmp_path` cae dentro del repo y ~125 tests fallan bajo un agente
 
 **Por qué:** desde #504 los agentes arrancan con `TMPDIR` dentro del `tmp/` del repo, así que el `tmp_path` de pytest queda dentro del árbol git y los tests que asumen un directorio fuera de un repo fallan. Workaround: `TMPDIR=$(getconf DARWIN_USER_TEMP_DIR) uv run --frozen pytest -q`. Conteo medido: 125 fallas de 6.197 corriendo la suite entera con el `TMPDIR` de sesión (2026-10-08).
+
+Con `TMPDIR=/tmp` quedan dos fuentes más de rojos según la corrida (2026-10-08): `COLUMNS=0` en el shell del agente hace que Rich parta la salida que los tests de CLI esperan en una línea, y el guard que vigila `~/.local/share/claude/versions` falla si Claude Code se autoactualiza durante la corrida. Además, los `tmp/pytest-of-*` que quedan de corridas viejas hacen fallar `test_this_repository_passes_its_own_instruction_gate` por sus fixtures `CLAUDE.md`.
 
 **Acción:** decidir si el gate fija `TMPDIR` fuera del repo (conftest o `tdd-check.md`) o si los tests dejan de depender de que `tmp_path` no sea un repo.
 
