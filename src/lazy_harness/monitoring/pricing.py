@@ -164,7 +164,9 @@ def price_api_response(
         # caller's "standard" is an assumption, and recording it would invent
         # the evidence.
         return ApiEquivalentPrice(
-            _raw_cost(_select_rates(model, DEFAULT_PRICING, on=on) or {}, tokens),
+            _raw_cost(
+                _select_rates(model, DEFAULT_PRICING, on=on, context_class="short") or {}, tokens
+            ),
             "priced",
             ApiPriceBasis(
                 "anthropic",
@@ -487,7 +489,10 @@ def _select_rates(
     pricing: dict[str, dict[str, float]],
     *,
     on: str | None,
+    context_class: str,
 ) -> dict[str, float] | None:
+    if context_class not in ("short", "long"):
+        raise ValueError(f"context_class must be 'short' or 'long', got {context_class!r}")
     rates = pricing.get(model)
     if not rates:
         return None
@@ -497,6 +502,13 @@ def _select_rates(
     # discount while the table still holds the shipped default.
     if intro and on and intro.covers(on) and rates == DEFAULT_PRICING.get(model):
         rates = intro.rates
+    tier = LONG_CONTEXT_PRICING.get(model)
+    if (
+        context_class == "long"
+        and tier is not None
+        and pricing.get(model) == DEFAULT_PRICING.get(model)
+    ):
+        rates = tier.rates
     return rates
 
 
@@ -520,6 +532,7 @@ def calculate_cost(
     pricing: dict[str, dict[str, float]],
     *,
     on: str | None = None,
+    context_class: str = "short",
 ) -> float:
     """Price one session's tokens.
 
@@ -530,8 +543,11 @@ def calculate_cost(
     entry in INTRODUCTORY_PRICING, where it selects the discounted rate for
     sessions inside the window. Without a date, the standing rate applies —
     a missing date should never under-charge.
+
+    The context class belongs to one response, so callers classify each
+    response before summing (ADR-070).
     """
-    rates = _select_rates(model, pricing, on=on)
+    rates = _select_rates(model, pricing, on=on, context_class=context_class)
     if not rates:
         return 0.0
     return round(_raw_cost(rates, tokens), 6)
@@ -544,6 +560,7 @@ def cost_for_billing_model(
     *,
     billing_model: str,
     on: str | None = None,
+    context_class: str = "short",
 ) -> tuple[float, str | None]:
     """Price one row according to its profile's billing model (ADR-050).
 
@@ -558,6 +575,6 @@ def cost_for_billing_model(
     if billing_model == "flat_rate":
         return 0.0, "subscription"
 
-    cost = calculate_cost(model, tokens, pricing, on=on)
+    cost = calculate_cost(model, tokens, pricing, on=on, context_class=context_class)
     cost_source = "pricing" if (model in pricing or is_pseudo_model(model)) else None
     return cost, cost_source

@@ -1124,3 +1124,65 @@ def test_a_flat_priced_anthropic_model_is_always_short() -> None:
 
     assert anthropic_context_class("claude-opus-5-5", {"input": 900_000}) == "short"
     assert anthropic_context_class("claude-unknown-9", {"input": 900_000}) == "short"
+
+
+_LONG_HAIKU = {"input": 2, "output": 1000, "cache_create_1h": 120_000}
+
+
+def test_calculate_cost_bills_a_long_haiku_5_5_request_at_the_long_tier() -> None:
+    """The whole request moves tier — output and writes included."""
+    from lazy_harness.monitoring.pricing import calculate_cost, default_pricing
+
+    pricing = default_pricing()
+    assert calculate_cost(
+        "claude-haiku-5-5", _LONG_HAIKU, pricing, context_class="long"
+    ) == pytest.approx(0.122501, abs=1e-6)
+    assert calculate_cost(
+        "claude-haiku-5-5", _LONG_HAIKU, pricing, context_class="short"
+    ) == pytest.approx(0.0245002, abs=1e-6)
+
+
+def test_a_long_class_on_a_flat_model_bills_the_standing_rate() -> None:
+    from lazy_harness.monitoring.pricing import calculate_cost, default_pricing
+
+    assert calculate_cost(
+        "claude-opus-5-5", {"input": 1_000_000}, default_pricing(), context_class="long"
+    ) == pytest.approx(4.0)
+
+
+def test_an_overridden_haiku_5_5_row_never_switches_to_the_shipped_long_tier() -> None:
+    from lazy_harness.monitoring.pricing import calculate_cost, load_pricing
+
+    pricing = load_pricing(
+        {
+            "claude-haiku-5-5": {
+                "input": 0.3,
+                "output": 1.0,
+                "cache_read": 0.03,
+                "cache_create": 0.375,
+                "cache_create_1h": 0.6,
+            }
+        }
+    )
+    assert calculate_cost(
+        "claude-haiku-5-5", {"input": 1_000_000}, pricing, context_class="long"
+    ) == pytest.approx(0.3)
+
+
+def test_an_unknown_context_class_is_refused() -> None:
+    from lazy_harness.monitoring.pricing import calculate_cost, default_pricing
+
+    with pytest.raises(ValueError, match="context_class"):
+        calculate_cost("claude-haiku-5-5", {"input": 1}, default_pricing(), context_class="medium")
+
+
+def test_cost_for_billing_model_forwards_the_context_class() -> None:
+    from lazy_harness.monitoring.pricing import cost_for_billing_model, default_pricing
+
+    assert cost_for_billing_model(
+        "claude-haiku-5-5",
+        {"input": 1_000_000},
+        default_pricing(),
+        billing_model="per_token",
+        context_class="long",
+    ) == (pytest.approx(0.5), "pricing")
