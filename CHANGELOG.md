@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.86.0](https://github.com/lazynet/lazy-harness/compare/v0.85.1...v0.86.0) (2026-10-08)
+
+
+### Features
+
+* price claude haiku 5.5 by prompt length ([#509](https://github.com/lazynet/lazy-harness/issues/509)) ([ef721e4](https://github.com/lazynet/lazy-harness/commit/ef721e4285e9fc6f0eb27d769726189e53ef5ffc))
+
+
+### Documentation
+
+* **backlog:** close codex session-end worker item ([306ae11](https://github.com/lazynet/lazy-harness/commit/306ae1157d8c7ada9d2b9b41fff8934abef45a9e))
+
 ## [0.85.1](https://github.com/lazynet/lazy-harness/compare/v0.85.0...v0.85.1) (2026-10-08)
 
 
