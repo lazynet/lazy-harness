@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from lazy_harness.core.config import (
@@ -261,3 +262,45 @@ def test_ingest_event_id_is_unchanged_by_the_new_dimensions(tmp_path: Path) -> N
     assert ev.event_id == derive_event_id(
         profile="personal", session="sess1", model="claude-sonnet-4-5"
     )
+
+
+def test_ingesting_an_unchanged_session_twice_yields_byte_identical_payloads(
+    tmp_path: Path,
+) -> None:
+    """The outbox treadmill's root cause, guarded where it would start.
+
+    `outbox_enqueue` only returns a delivered row to 'pending' when its payload
+    changed, and doctor ages a row from that requeue. A field that differs from
+    one ingest to the next — a timestamp, an unordered collection — would make
+    every finished session look changed on every run: the drain would re-send
+    the whole history forever and the age check would never see it.
+    """
+    profile_dir = tmp_path / "claude-personal"
+    _write_fake_jsonl(profile_dir / "projects", "sess1")
+    cfg = Config()
+    cfg.profiles = ProfilesConfig(
+        default="personal",
+        items={
+            "personal": ProfileEntry(config_dir=str(profile_dir), roots=[], lazynorth_doc=""),
+        },
+    )
+    cfg.metrics = MetricsConfig(
+        sinks=["sqlite_local", "counting"],
+        sink_configs={
+            "sqlite_local": SinkDefinition(options={}),
+            "counting": SinkDefinition(options={}),
+        },
+    )
+
+    payloads: list[list[str]] = []
+    for run in ("first", "second"):
+        db = MetricsDB(tmp_path / f"{run}.db")
+        counting = _CountingSink()
+        try:
+            ingest_all(cfg, db, pricing={}, sinks=[counting])
+        finally:
+            db.close()
+        payloads.append([json.dumps(e.to_dict(), sort_keys=True) for e in counting.events])
+
+    assert payloads[0]
+    assert payloads[0] == payloads[1]

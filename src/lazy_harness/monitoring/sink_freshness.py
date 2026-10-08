@@ -55,9 +55,12 @@ ATTEMPTS_FAIL = 6
 #
 # Age is safe here in a way it is not for enqueue age — an idle machine has
 # nothing undelivered to age — but it must stay loose enough to let a genuine
-# backlog drain. The drain moves one batch (50) per ingest and ingest runs
-# every 15 minutes, so even a 2500-event burst clears in about 13 hours.
-# A day is therefore slack; three days is unambiguously stuck.
+# backlog drain. The drain moves one batch per ingest (50 by default,
+# `batch_size` raises it) and ingest runs every 15 minutes, so even a
+# 2500-event burst clears in about 13 hours at the default. A day is therefore
+# slack; three days is unambiguously stuck. Age runs from when a row last
+# became undelivered, so a reprice that requeues weeks of delivered history
+# starts at zero rather than at the age of the oldest event it touched.
 UNDELIVERED_AGE_WARN = timedelta(hours=24)
 UNDELIVERED_AGE_FAIL = timedelta(days=3)
 

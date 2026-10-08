@@ -304,9 +304,11 @@ class MetricsDB:
                 next_attempt_ts REAL,
                 lease_until REAL,
                 created_ts REAL NOT NULL,
+                pending_since_ts REAL,
                 PRIMARY KEY (sink_name, event_id)
             )
         """)
+        self._migrate_outbox_pending_since()
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_outbox_pending "
             "ON sink_outbox(sink_name, status, next_attempt_ts)"
@@ -340,6 +342,18 @@ class MetricsDB:
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_launches_ts ON launches(ts)")
         self._migrate_identity_columns()
         self._conn.commit()
+
+    def _migrate_outbox_pending_since(self) -> None:
+        """Add `pending_since_ts` to an outbox created before it existed.
+
+        Backfilled from `created_ts`, the only age such a row has: a row that
+        was requeued before the column existed keeps the age doctor already
+        reported for it, rather than one invented to look healthy.
+        """
+        cols = {row[1] for row in self._conn.execute("PRAGMA table_info(sink_outbox)")}
+        if "pending_since_ts" not in cols:
+            self._conn.execute("ALTER TABLE sink_outbox ADD COLUMN pending_since_ts REAL")
+            self._conn.execute("UPDATE sink_outbox SET pending_since_ts = created_ts")
 
     def _migrate_identity_columns(self) -> None:
         """Add columns added after a database's creation to session_stats.
@@ -953,17 +967,21 @@ class MetricsDB:
             """
             INSERT INTO sink_outbox (
                 sink_name, event_id, payload_json, status, attempts,
-                last_error, next_attempt_ts, lease_until, created_ts
-            ) VALUES (?, ?, ?, 'pending', 0, '', NULL, NULL, ?)
+                last_error, next_attempt_ts, lease_until, created_ts, pending_since_ts
+            ) VALUES (?, ?, ?, 'pending', 0, '', NULL, NULL, ?, ?)
             ON CONFLICT(sink_name, event_id) DO UPDATE SET
                 payload_json = excluded.payload_json,
+                pending_since_ts = CASE
+                    WHEN sink_outbox.status = 'sent' THEN excluded.pending_since_ts
+                    ELSE sink_outbox.pending_since_ts
+                END,
                 status = 'pending',
                 next_attempt_ts = NULL,
                 lease_until = NULL,
                 last_error = ''
             WHERE sink_outbox.payload_json <> excluded.payload_json
             """,
-            (sink_name, event_id, payload_json, now),
+            (sink_name, event_id, payload_json, now, now),
         )
         self._conn.commit()
 
@@ -1150,17 +1168,26 @@ class MetricsDB:
         delivered row, so the drain re-sent the same oldest batch forever with
         `attempts` pinned at 0 and a backlog six days deep.
 
-        `oldest_undelivered_ts` catches that. It is safe against the machine
-        nobody used, which is why age was rejected here before: an idle machine
-        has nothing undelivered to age. Callers cross it with enqueue freshness
-        to tell a stalled queue from a cold one.
+        `oldest_undelivered_ts` catches a queue whose rows are never delivered.
+        It is safe against the machine nobody used, which is why age was
+        rejected here before: an idle machine has nothing undelivered to age.
+        Callers cross it with enqueue freshness to tell a stalled queue from a
+        cold one.
+
+        It reads `pending_since_ts`, not `created_ts`: a reprice returns
+        delivered history to the queue, and that is new work, not a stall.
+        The price is that a row delivered and then resurrected starts a new
+        age, so the treadmill above is no longer visible here. It is stopped at
+        its cause instead: an unchanged payload never requeues, and a test
+        asserts that ingesting an unchanged session twice yields byte-identical
+        payloads.
         """
         row = self._conn.execute(
             """
             SELECT
                 COUNT(*) AS undelivered,
                 COALESCE(MAX(attempts), 0) AS max_attempts,
-                MIN(created_ts) AS oldest_undelivered_ts,
+                MIN(pending_since_ts) AS oldest_undelivered_ts,
                 COALESCE((
                     SELECT last_error FROM sink_outbox
                     WHERE sink_name = ? AND status != 'sent'

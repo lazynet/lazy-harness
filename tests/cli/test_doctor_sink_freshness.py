@@ -21,7 +21,8 @@ def _enqueue_stale(db_path: Path, sink_name: str, *, age_seconds: float) -> None
     try:
         db.outbox_enqueue(sink_name=sink_name, event_id="e1", payload_json="{}")
         db._conn.execute(
-            "UPDATE sink_outbox SET created_ts = ? WHERE sink_name = ? AND event_id = 'e1'",
+            "UPDATE sink_outbox SET created_ts = ?1, pending_since_ts = ?1 "
+            "WHERE sink_name = ? AND event_id = 'e1'",
             (time.time() - age_seconds, sink_name),
         )
         db._conn.commit()
@@ -245,7 +246,8 @@ def _enqueue_failing(
             db.outbox_mark_failed("http_remote", "e1", error=error, retry_after_seconds=60)
         if created_ts is not None:
             db._conn.execute(
-                "UPDATE sink_outbox SET created_ts = ? WHERE event_id = 'e1'",
+                "UPDATE sink_outbox SET created_ts = ?1, pending_since_ts = ?1 "
+                "WHERE event_id = 'e1'",
                 (created_ts,),
             )
             db._conn.commit()
@@ -264,7 +266,7 @@ def _enqueue_stalled(db_path: Path, *, oldest_age_seconds: float) -> None:
         db.outbox_enqueue(sink_name="http_remote", event_id="old", payload_json="{}")
         db.outbox_enqueue(sink_name="http_remote", event_id="fresh", payload_json="{}")
         db._conn.execute(
-            "UPDATE sink_outbox SET created_ts = ? WHERE event_id = 'old'",
+            "UPDATE sink_outbox SET created_ts = ?1, pending_since_ts = ?1 WHERE event_id = 'old'",
             (time.time() - oldest_age_seconds,),
         )
         db._conn.commit()
