@@ -295,10 +295,11 @@ DEFAULT_PRICING: dict[str, dict[str, float]] = {
         "cache_create": 2.5,
         "cache_create_1h": 4.0,
     },
+    # Sonnet 5.5 reads bill at 0.05x base input ($0.10), like Opus 5.5 — not sonnet-5's 0.1x.
     "claude-sonnet-5-5": {
         "input": 2.0,
         "output": 10.0,
-        "cache_read": 0.2,
+        "cache_read": 0.1,
         "cache_create": 2.5,
         "cache_create_1h": 4.0,
     },

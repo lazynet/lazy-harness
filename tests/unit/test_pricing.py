@@ -707,7 +707,7 @@ def test_default_pricing_includes_sonnet_5_5() -> None:
     assert default_pricing()["claude-sonnet-5-5"] == {
         "input": 2.0,
         "output": 10.0,
-        "cache_read": 0.2,
+        "cache_read": 0.1,
         "cache_create": 2.5,
         "cache_create_1h": 4.0,
     }
@@ -1056,3 +1056,14 @@ def test_default_pricing_includes_haiku_5_5_short_rates() -> None:
         "cache_create": 0.125,
         "cache_create_1h": 0.20,
     }
+
+
+def test_sonnet_5_5_cache_reads_bill_at_five_percent_of_input() -> None:
+    """Published: "$0.10 / MTok", 0.05x base input, like Opus 5.5.
+
+    The row was a copy of claude-sonnet-5 (0.1x) and charged every read twice.
+    """
+    from lazy_harness.monitoring.pricing import calculate_cost, default_pricing
+
+    cost = calculate_cost("claude-sonnet-5-5", {"cache_read": 1_000_000}, default_pricing())
+    assert cost == pytest.approx(0.10)
