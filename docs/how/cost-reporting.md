@@ -175,11 +175,13 @@ the subscription already paid for the usage, and reporting `$0.00` would
 read as free rather than unmetered. A group or total with partial coverage
 prints the priced-row count beside the amount rather than silently presenting
 it as complete. API-equivalent pricing runs per response, and the context class is derived from the prompt the usage record reports: OpenAI's 272K boundary (ADR-067) and Haiku 5.5's 100K boundary (ADR-070). No reader has to supply it. `codex-auto-review` has no public price row and remains
-`unknown_model`; it is not aliased to another model. The captured Sol table is
-valid from 2026-09-19 through its evidenced promotional horizon of 2026-11-21.
-Astra was observed only on 2026-09-19, so other Astra dates fail closed.
-Missing, malformed, or out-of-window response dates also fail closed instead
-of treating a point-in-time snapshot as permanent pricing.
+`unknown_model`; it is not aliased to another model. Each OpenAI model
+prices only inside its published window: `gpt-5.6-sol` from 2026-08-21 through
+the vendor's committed floor of 2026-11-21, `gpt-6-astra` from 2026-09-03,
+`gpt-6-sol` and `gpt-6-luna` from 2026-09-22, and `gpt-5.6-luna` from
+2026-07-30, all open-ended except Sol 5.6. Missing, malformed, or out-of-window
+response dates fail closed instead of treating a point-in-time snapshot as
+permanent pricing.
 
 **Codex today**: the reader's `turn_context` line declares `gpt-5-codex`
 (measured 2026-09-17), which carries no `DEFAULT_PRICING` entry. The

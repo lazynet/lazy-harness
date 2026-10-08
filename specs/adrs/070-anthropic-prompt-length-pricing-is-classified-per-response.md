@@ -96,8 +96,10 @@ over 100K, one is over only once its cache writes are counted.
    holds, for each model the vendor prices by prompt length, the threshold and
    the higher rates. `claude-haiku-5-5` is the only entry. This follows
    `INTRODUCTORY_PRICING`: one exception table keyed by model, and a config
-   override of a model's row is final. A model whose short row was overridden
-   in `[monitoring.pricing]` is never switched to the shipped long rates.
+   override of a model's row is final for billed cost. A model whose short row
+   was overridden in `[monitoring.pricing]` is never switched to the shipped
+   long rates when billing; API-equivalent cost (`price_api_response`) always
+   prices from the published list and keeps the long tier.
 
 2. **The class is decided per response from Anthropic's prompt.**
    `anthropic_context_class(model, tokens)` returns `"long"` when
