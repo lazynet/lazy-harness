@@ -174,13 +174,7 @@ in `DEFAULT_PRICING` never falls into the `per_token` / no-rate row above —
 the subscription already paid for the usage, and reporting `$0.00` would
 read as free rather than unmetered. A group or total with partial coverage
 prints the priced-row count beside the amount rather than silently presenting
-it as complete. API-equivalent pricing is performed per response. The captured Codex
-evidence does not establish the official short/long context boundary, so those
-responses fail closed as `unknown_tier` until a reader can provide an explicit
-context class. None of the shipped transcript readers supplies that class,
-so locally ingested API-equivalent cost currently has zero priced coverage:
-every amount is null and the CLI shows `—`. The pricing tables alone do not
-provide live coverage. `codex-auto-review` has no public price row and remains
+it as complete. API-equivalent pricing runs per response, and the context class is derived from the prompt the usage record reports: OpenAI's 272K boundary (ADR-067) and Haiku 5.5's 100K boundary (ADR-070). No reader has to supply it. `codex-auto-review` has no public price row and remains
 `unknown_model`; it is not aliased to another model. The captured Sol table is
 valid from 2026-09-19 through its evidenced promotional horizon of 2026-11-21.
 Astra was observed only on 2026-09-19, so other Astra dates fail closed.

@@ -1,7 +1,12 @@
 # ADR-070: Anthropic prompt-length pricing is classified per response and stored per session
 
-**Status:** proposed
+**Status:** accepted
 **Date:** 2026-10-07
+**Implemented:** 2026-10-08 — `claude-haiku-5-5` is priced at its short and long
+prompt-length tiers per response, ingest and `session_cost_from_disk` price each
+class bucket before summing, the Anthropic rate table declares `context_class`,
+the `claude-sonnet-5-5` cache read is corrected to $0.10, and a test pins the
+Claude Code alias targets.
 **Supersedes:** —
 **Superseded by:** —
 **Related:** ADR-050 (billing model), ADR-061 (billed and API-equivalent cost

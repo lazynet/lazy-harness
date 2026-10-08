@@ -81,6 +81,7 @@ The design and its derived blast-radius document are **accepted as of 2026-09-18
 - [ ] Roll out the v4-tolerant receiver before producer emission, backfill and drain, then split the external Grafana panels into billed and API-equivalent measures ([ADR-061](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/061-billed-cost-and-api-equivalent-cost-are-separate.md)).
 - [x] Publish a bounded, opt-in `Última sesión` section from SessionEnd processing, with Claude/Codex transcript support, canonical worktree resolution and writes only to a uniquely marked generated section ([ADR-062](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/062-session-end-publishes-bounded-project-state.md)).
 - [ ] Archive PRJ-LazyHarness through reviewed vault tooling and add its explicit generated-section marker before enabling the first rollout ([ADR-062](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/062-session-end-publishes-bounded-project-state.md)).
+- [x] Price Claude Haiku 5.5 per request by prompt length and fix the Sonnet 5.5 cache-read rate ([ADR-070](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/070-anthropic-prompt-length-pricing-is-classified-per-response.md))
 
 ## Closed themes
 

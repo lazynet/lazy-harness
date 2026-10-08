@@ -82,7 +82,7 @@ Cache rates follow the published multipliers, relative to the model's base input
 
 | Bucket | Field | Multiplier |
 | --- | --- | --- |
-| Cache read (hit) | `cache_read` | 0.1× |
+| Cache read (hit) | `cache_read` | 0.1× (0.05× on Opus 5.5 and Sonnet 5.5; 0.025× on Fable 5.1 and Mythos 5.1) |
 | 5-minute TTL write | `cache_create` | 1.25× |
 | 1-hour TTL write | `cache_create_1h` | 2× |
 
@@ -101,6 +101,12 @@ They are recombined immediately after. The stored `session_stats.cache_create` c
 A transcript written before the breakdown existed carries only `cache_creation_input_tokens`. Nothing records its TTL, so it is billed as a 5-minute write — the alternative invents a 2× charge on evidence we do not have.
 
 This distinction is not marginal. Across a week of measured local traffic, 1-hour writes were 92.9% of all cache-write tokens; pricing them at the 5-minute rate under-reported the total cost by 26.5%.
+
+### Haiku 5.5 is priced by prompt length
+
+A request whose prompt (`input + cache_read + cache_create + cache_create_1h`) is over 100,000 tokens pays the higher tier on every bucket, output included. Every other current Claude model is priced flat across its window.
+
+`LONG_CONTEXT_PRICING` holds the tier and `anthropic_context_class` classifies each response. Ingest prices each class bucket before summing, so stored rows stay per `(session, model)`. A `[monitoring.pricing]` override of the model's row disables the shipped long tier for it.
 
 ### Launch discounts expire on their own
 
