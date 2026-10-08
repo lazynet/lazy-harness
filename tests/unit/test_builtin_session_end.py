@@ -406,3 +406,49 @@ def test_records_no_session_closed_for_the_compound_loop_evaluator(
     assert hook_mod.main(event) == HookDecision()
 
     assert MetricsDB(db_path).loop_event_counts() == {}
+
+
+def test_session_end_spawns_the_worker_with_the_profile_that_queued_the_task(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The hook queues under `event.profile`; the worker must drain there.
+
+    A bare spawn resolves the worker's directory from its own environment. A
+    Codex hook subprocess carries neither `CODEX_HOME` nor `CLAUDE_CONFIG_DIR`,
+    so the worker fell back to `~/.claude`, created it, found that queue empty
+    and exited 0 while the task sat in `~/.codex-lazy/queue` forever.
+    """
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+    from lazy_harness.hooks.builtins import session_end as hook_mod
+
+    claude_dir = tmp_path / ".claude-test"
+    cwd = tmp_path / "proj"
+    cwd.mkdir()
+    encoded = "-" + str(cwd).replace("/", "-").lstrip("-")
+    sessions_dir = claude_dir / "projects" / encoded
+    sessions_dir.mkdir(parents=True)
+    _interactive_session_jsonl(sessions_dir, "abcd1234-deadbeef-0002")
+
+    _patch_config_lookup(monkeypatch, claude_dir)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_dir))
+    monkeypatch.chdir(cwd)
+    # `hook_mod.subprocess` is the global module: only the worker spawn is
+    # intercepted, so the hook's own `git` calls still run for real.
+    real_popen = hook_mod.subprocess.Popen
+    spawns: list[list[str]] = []
+
+    def fake_popen(args: list[str], *a: object, **kw: object) -> object:
+        if "lazy_harness.knowledge.compound_loop_worker" in args:
+            spawns.append(args)
+            return None
+        return real_popen(args, *a, **kw)
+
+    monkeypatch.setattr(hook_mod.subprocess, "Popen", fake_popen)
+
+    event = ClaudeCodeAdapter().parse_hook_input("session_end", {}, profile="test")
+    assert hook_mod.main(event) == HookDecision()
+
+    assert len(spawns) == 1, "the worker was never spawned"
+    argv = spawns[0]
+    assert "--profile" in argv, argv
+    assert argv[argv.index("--profile") + 1] == "test", argv

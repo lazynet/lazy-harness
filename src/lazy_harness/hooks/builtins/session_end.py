@@ -174,7 +174,14 @@ def _enqueue_compound_loop(event: HookEvent) -> None:
         worker_log.parent.mkdir(parents=True, exist_ok=True)
         with open(worker_log, "a") as stdout_f:
             subprocess.Popen(
-                [sys.executable, "-m", "lazy_harness.knowledge.compound_loop_worker"],
+                # Bare, the worker resolves its directory from an environment a
+                # Codex hook does not carry and drains `~/.claude` instead.
+                [
+                    sys.executable,
+                    "-m",
+                    "lazy_harness.knowledge.compound_loop_worker",
+                    *(["--profile", event.profile] if event.profile else []),
+                ],
                 stdin=subprocess.DEVNULL,
                 stdout=stdout_f,
                 stderr=stdout_f,
