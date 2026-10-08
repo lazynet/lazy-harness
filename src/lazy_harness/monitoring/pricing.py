@@ -302,6 +302,16 @@ DEFAULT_PRICING: dict[str, dict[str, float]] = {
         "cache_create": 2.5,
         "cache_create_1h": 4.0,
     },
+    # Haiku 5.5 is the one current model priced by prompt length. This row is
+    # the rate for prompts up to 100K tokens; the higher tier lives in
+    # LONG_CONTEXT_PRICING (ADR-070).
+    "claude-haiku-5-5": {
+        "input": 0.10,
+        "output": 0.50,
+        "cache_read": 0.01,
+        "cache_create": 0.125,
+        "cache_create_1h": 0.20,
+    },
     "claude-haiku-4-5-20251001": {
         "input": 1.0,
         "output": 5.0,

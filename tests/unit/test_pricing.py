@@ -1020,3 +1020,39 @@ def test_a_per_token_codex_session_with_an_unrated_model_is_an_unpriced_gap() ->
     )
     assert cost == 0.0
     assert cost_source is None
+
+
+# What each Claude Code model alias resolved to, probed 2026-10-07 with
+# Claude Code 2.1.293: `claude -p --model <alias> --output-format json
+# "Reply with ok"` reports the resolved id as the `modelUsage` key. Re-probe
+# when Anthropic ships a model, and update this map: an alias that moves to an
+# unpriced model makes every `flat_rate` row `unknown_model` silently, because
+# `unknown_models` only fires for `per_token` profiles.
+CLAUDE_CODE_ALIAS_TARGETS = {
+    "haiku": "claude-haiku-5-5",
+    "sonnet": "claude-sonnet-5-5",
+    "opus": "claude-opus-5-5",
+}
+
+
+@pytest.mark.parametrize(("alias", "model"), sorted(CLAUDE_CODE_ALIAS_TARGETS.items()))
+def test_every_claude_code_alias_target_is_priced(alias: str, model: str) -> None:
+    from lazy_harness.monitoring.pricing import DEFAULT_PRICING, price_api_response
+
+    assert model in DEFAULT_PRICING, f"`{alias}` resolves to {model}, which has no rate"
+    result = price_api_response(
+        model, {"input": 1}, service_tier="standard", context_class=None, on="2026-10-07"
+    )
+    assert result.status == "priced"
+
+
+def test_default_pricing_includes_haiku_5_5_short_rates() -> None:
+    from lazy_harness.monitoring.pricing import default_pricing
+
+    assert default_pricing()["claude-haiku-5-5"] == {
+        "input": 0.10,
+        "output": 0.50,
+        "cache_read": 0.01,
+        "cache_create": 0.125,
+        "cache_create_1h": 0.20,
+    }
