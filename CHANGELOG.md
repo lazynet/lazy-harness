@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.85.1](https://github.com/lazynet/lazy-harness/compare/v0.85.0...v0.85.1) (2026-10-08)
+
+
+### Bug Fixes
+
+* spawn the session-end worker under the hook's profile ([#506](https://github.com/lazynet/lazy-harness/issues/506)) ([32ac7f8](https://github.com/lazynet/lazy-harness/commit/32ac7f891d5e26d2922e3925017d94e32e748951))
+
 ## [0.85.0](https://github.com/lazynet/lazy-harness/compare/v0.84.0...v0.85.0) (2026-10-06)
 
 
