@@ -289,6 +289,30 @@ If at four weeks the declared rate has not moved above the 17% baseline, or
 signal-to-noise is below 50%, the `UserPromptSubmit` injection is **removed**
 rather than supplemented with additional triggers. The `verify-before-done` skill survives independently; it has value with or without the hook.
 
+### Phase 1 result (2026-10-08): killed
+
+The window ran 2026-09-10 → 2026-10-08 with the injection on in every profile.
+
+- **Declared rate: 32% (165/516)**, above the 17% baseline, so the first clause
+  did not fire. It decayed week over week (35.5 → 33.3 → 25.3 → 26.9%), and
+  fell to 23.6% (30/127) after the 2026-09-29 grader change that was expected
+  to raise it.
+- **Signal-to-noise: 20% and 44%** for the two halves of the window, from 50
+  injected prompts labelled by hand (25 per half; `nontrivial_prompt` rows
+  carry no text, so each was matched to its transcript by session and
+  timestamp). The noise was the compound-loop evaluator, `<task-notification>`
+  turns and automated prompts. Almost all the signal was delegated worker
+  briefs, which match the file-reference rule and already carry acceptance
+  criteria; operator-written work prompts were 1 in 25 per half. Excluding the
+  evaluator, filtered from the sensor since 2026-09-29, gives 56% and 61% on
+  n = 9 and 18.
+
+The signal-to-noise clause fired, so the injection was removed:
+`[loops] inject_goal_prompt = false`. The `nontrivial_prompt` sensor and the
+`verify-before-done` skill stay. The same flag gates `stop-verify-guard`, which
+went off with it; the guard was not broken, but no session had run `/goal`
+since 2026-09-19, so it had nothing to act on.
+
 The same applies per trigger in phase 4: the multi-repository signal and the context-threshold signal are measured and killed independently. One failing does not condemn the other, and neither is rescued by adding a third.
 
 ## Risks
