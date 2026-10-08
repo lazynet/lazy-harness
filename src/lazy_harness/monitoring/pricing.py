@@ -24,7 +24,7 @@ class ApiEquivalentPrice:
     basis: ApiPriceBasis | None = None
 
 
-_OPENAI_API_RATE_VERSION = "openai-2026-09-22"
+_OPENAI_API_RATE_VERSION = "openai-2026-09-29"
 _ANTHROPIC_API_RATE_VERSION = "anthropic-2026-10-07"
 # The dates each rate was published for, not the date it was read off the page.
 # A `None` end is a rate with no announced expiry — the window is open, which
@@ -43,6 +43,9 @@ _OPENAI_API_RATE_WINDOWS: dict[str, tuple[date, date | None]] = {
     # announced end.
     "gpt-6-sol": (date(2026, 9, 22), None),
     "gpt-6-luna": (date(2026, 9, 22), None),
+    # "Released GPT-6.1 Sol (`gpt-6.1-sol`)", changelog entry dated 2026-09-29,
+    # with these launch rates and no later price change or announced end.
+    "gpt-6.1-sol": (date(2026, 9, 29), None),
     # "Starting July 30, GPT-5.6 Luna costs 80% less" — the changelog records
     # no change since, so the window opens on the cut and stays open.
     "gpt-5.6-luna": (date(2026, 7, 30), None),
@@ -96,6 +99,18 @@ _OPENAI_API_RATES: dict[tuple[str, str, str], dict[str, float]] = {
         "cache_create": 0.25,
         "output": 0.75,
     },
+    ("gpt-6.1-sol", "standard", "short"): {
+        "input": 2.0,
+        "cache_read": 0.1,
+        "cache_create": 2.5,
+        "output": 10.0,
+    },
+    ("gpt-6.1-sol", "standard", "long"): {
+        "input": 4.0,
+        "cache_read": 0.2,
+        "cache_create": 5.0,
+        "output": 15.0,
+    },
     ("gpt-5.6-luna", "standard", "short"): {
         "input": 0.2,
         "cache_read": 0.02,
@@ -143,8 +158,9 @@ def price_api_response(
     The bar is per provider, not per function (ADR-065). OpenAI rates key on
     `(model, service_tier, context_class)` inside a dated window, so pricing
     one without a context class would pick between two rates that differ 2x.
-    Anthropic publishes one rate per model, so the same demand would refuse a
-    figure it has everything it needs to produce. `API_RATE_TABLES` carries
+    Anthropic keys on `context_class` too (Haiku 5.5 has two rates, ADR-070),
+    but derives it per response with `anthropic_context_class`, so nothing is
+    required of the caller. `API_RATE_TABLES` carries
     each table's declared dimensions and a test holds that declaration to the
     arity of the table's own keys.
     """
@@ -339,8 +355,9 @@ DEFAULT_PRICING: dict[str, dict[str, float]] = {
 class ApiRateTable:
     """One provider's published rates and the evidence its keys demand.
 
-    `dimensions` names what a caller must supply beyond the model. It is a
-    claim about `rates`, not a description of it: the gate test compares it
+    `dimensions` names what the keys carry beyond the model; `required` is the
+    subset a caller must evidence. `dimensions` is a claim about `rates`, not
+    a description of it: the gate test compares it
     against the arity of the table's own keys, so a provider that starts
     billing by tier or context cannot keep an empty declaration and go on
     being priced at whichever row happened to be first.

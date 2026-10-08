@@ -12,6 +12,8 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 
 Última revisión: 2026-09-25 — `/coherence-audit` antes de cortar 0.81.0, sobre `main` @ `de89535`, con foco en el delta desde 0.80.0: #468 (graphify 0.9.67) y #469 (graph assist). Piece B: quince hallazgos (1 high, 5 medium, 9 low), los quince cerrados en la misma branch; el high era código (doctor y deploy no coincidían sobre un builtin con scoping por agente). Roadmap sin cambios: no hubo ADR nuevo.
 
+Última revisión: 2026-10-08 — `/coherence-audit` antes de cortar 0.86.0, sobre `origin/main` @ `ef721e42`, con foco en #509 / ADR-070 (Haiku 5.5 por largo de prompt). Piece B: ocho hallazgos (0 high, 3 medium, 5 low), siete cerrados en la branch `docs/coherence-audit-2026-10-08`. El item de ADR-060 Wave 1 en `docs/roadmap.md` sigue abierto: cerrarlo necesita el resultado del fleet gate, que esta auditoría no corrió.
+
 
 ## Orden de ataque (2026-09-25)
 
@@ -66,6 +68,7 @@ Este ledger se escribe en español. Las entradas se appendean en el orden en que
 - [x] **Tarifas para `claude-opus-5-5`, `gpt-6-sol`, `gpt-5.6-luna` y `gpt-6-luna`** — cuatro modelos vistos en sesiones reales que preciaban 0. La tabla de OpenAI pasa a `openai-2026-09-22`, y los fixtures son respuestas observadas de sesiones Codex locales. PRs #439 y #441, mergeados el 2026-09-22; entran en 0.76.11.
 - [x] **Haiku 5.5 se precia por largo de prompt, por request (ADR-070)** — `claude-haiku-5-5` preciaba 0 y `claude-sonnet-5-5` cobraba cada cache read al doble ($0.20 en vez de $0.10). La clase se decide por respuesta con `input + cache_read + cache_creation` > 100K; ingest y `lh exec` suman por clase y las filas siguen por sesión. Un test fija los modelos a los que resuelven los alias de Claude Code. PR #509.
 - [x] **El doctor deja de marcar FAIL un outbox recién repreciado** — después del reprice de 0.86.0, `lh doctor` dio `✗ oldest 14d` con el drain sano (500 por corrida, 0 fallos): el upsert devolvía a `pending` filas ya entregadas sin tocar `created_ts`, y la edad se medía con `MIN(created_ts)`. `sink_outbox.pending_since_ts` se resetea solo en la transición `sent`→`pending` y la salud lo lee; la migración lo rellena con `created_ts`. El treadmill del #210 deja de verse por edad y queda guardado en su causa: un test exige payloads byte-idénticos al ingestar dos veces una sesión sin cambios.
+- [x] **Tarifa para `gpt-6.1-sol`** — 24 eventos de Codex quedaban `unknown_model` y eran parte del hueco de cobertura del panel 131. Ventana desde el 2026-09-29 (changelog de OpenAI) sin cierre; la tabla pasa a `openai-2026-09-29`. `codex-auto-review` sigue sin precio a propósito (ADR-061).
 - [x] **`test_process_task_second_identical_run_is_byte_identical` deja de ser flaky** — no era dependencia de orden: el marker de procedencia lleva la hora de creación de la tarea al segundo, y el test creaba una tarea nueva por corrida, así que dos creaciones a ambos lados de un borde de segundo reescribían el PRJ. Reproducido con un sleep de 1,1 s entre corridas; el test reusa una sola tarea y conserva el sleep para cruzar siempre el borde. Reemplaza la entrada MEDIA que lo diagnosticaba como orden de tests. PR #440, mergeado el 2026-09-22; entra en 0.76.11.
 - [x] **`lh deploy` deja de linkear `~/.claude`, que ocultaba el `AGENTS.md` de cada repo** — Claude Code 2.1.280 no carga el `AGENTS.md` de un repo cuando un ancestro lleva `CLAUDE.md` o `.claude/CLAUDE.md`, y el link `~/.claude -> ~/.claude-<default>` ponía uno arriba de todo `$HOME`, piloto de ADR-060 incluido. `ClaudeCodeAdapter.global_config_link()` devuelve `None`, `AgentAdapter.default_home()` mantiene la resolución sin profile en `~/.claude`, y `lh repo instructions` reporta `ancestor-claude-md-shadows-agents`. PR #442, mergeado el 2026-09-22; entra en 0.77.0.
 - [x] **Gate de la flota de repos, `CLAUDE.md` en `$HOME` y contratos `AGENTS.md` medidos** — fase 2 del rollout de ADR-060: `lh repo instructions` toma N repos con un veredicto por repo, `lh doctor` corre el chequeo de ancestro sobre `$HOME`, y `lh memory rightsize` más el hook `pre-tool-use-memory-size` miden `AGENTS.md` contra el mismo techo de 200 líneas / 12 KB. PR #444, mergeado el 2026-09-22; entra en 0.77.0.
@@ -408,6 +411,24 @@ binario (plan §5.2 ítem 4). Prioridad MEDIA.
 - *Lectura del 2026-10-05, contaminada — B no se remueve:* el drenaje de las 26 colas dio 7,8% (12 / 153) contra 23,6% (368 / 1.560) de todo lo anterior, contado sobre las fechas `accepted:`/`rejected:` de los registros. Tres cosas la invalidan como lectura de B: llegó antes del horizonte; 99 de las 153 eran retenidas producidas antes de B, con la sección de pendientes todavía en el prompt; y el criterio de rechazo fue más estricto que el histórico, porque descartó todo restatement de las reglas globales de evidencia y first-action (24 de las 54 pendientes; las retenidas no se clasificaron por motivo). Rehacer la lectura al horizonte, sólo sobre proposals con fecha ≥ deploy de v0.83.2.
 
 **Fuera de esta entrada:** E (aislar el `claude -p` del evaluador) tiene las probes hechas en `specs/designs/claude-code-evidence.md` y su decisión está pendiente; sus kill criteria entran con ella. Prioridad ALTA hasta el horizonte.
+
+### `knowledge_cmd.py` lanza el worker del compound-loop sin `--profile`
+
+**Por qué:** `cli/knowledge_cmd.py` (~línea 269) hace `Popen([sys.executable, "-m", "lazy_harness.knowledge.compound_loop_worker"])` sin `--profile`. Es el mismo bug que #506 arregló en `session_end.py`: el worker resuelve el profile por default y puede recrear `~/.claude`.
+
+**Acción:** pasar el profile del comando al worker como hace `session_end.py`, con un test que falle sin el flag (borrar el guard, ver el rojo, restaurar a mano).
+
+### Desde 0.85.0 `tmp_path` cae dentro del repo y ~125 tests fallan bajo un agente
+
+**Por qué:** desde #504 los agentes arrancan con `TMPDIR` dentro del `tmp/` del repo, así que el `tmp_path` de pytest queda dentro del árbol git y los tests que asumen un directorio fuera de un repo fallan. Workaround: `TMPDIR=$(getconf DARWIN_USER_TEMP_DIR) uv run --frozen pytest -q`. Conteo medido: 125 fallas de 6.197 corriendo la suite entera con el `TMPDIR` de sesión (2026-10-08).
+
+**Acción:** decidir si el gate fija `TMPDIR` fuera del repo (conftest o `tdd-check.md`) o si los tests dejan de depender de que `tmp_path` no sea un repo.
+
+### El prompt de distill del compound-loop no dice que las tool calls están recortadas, ni fija el idioma
+
+**Por qué:** el grader marca sesiones como "no tool calls visible" porque el constructor del prompt recorta las tool calls (4.5 sacó 5/10 poor por eso en el shadow del 2026-10-07). El idioma de salida tampoco está fijado: Haiku 5.5 a veces escribe en español. El compound-loop pasó a `claude-haiku-5-5` el 2026-10-08 con kill criteria: aceptación < 28% al 2026-10-15, o más de 2/20 no verificables en un spot-check.
+
+**Acción:** dos cambios al prompt: avisarle al grader que las tool calls están recortadas y exigir inglés. Medir contra los kill criteria antes de tocar nada más.
 
 ### F2–F9 del coherence-audit del 2026-09-19 siguen siendo drift abierto en `main`
 

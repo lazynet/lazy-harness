@@ -16,6 +16,7 @@ import pytest
         ("gpt-6-sol.jsonl", "short", "2026-09-22", 0.0447672),
         ("gpt-5.6-luna.jsonl", "short", "2026-09-19", 0.00419224),
         ("gpt-6-luna.jsonl", "short", "2026-09-22", 0.00205468),
+        ("gpt-6.1-sol.jsonl", "short", "2026-10-05", 0.0557096),
     ],
 )
 def test_api_equivalent_prices_one_observed_response(
@@ -46,7 +47,7 @@ def test_api_equivalent_prices_one_observed_response(
     assert result.amount == pytest.approx(expected)
     assert result.status == "priced"
     assert result.basis is not None
-    assert result.basis.rate_table_version == "openai-2026-09-22"
+    assert result.basis.rate_table_version == "openai-2026-09-29"
 
 
 def test_api_equivalent_fails_closed_without_an_evidenced_service_tier() -> None:
@@ -139,6 +140,9 @@ def test_api_equivalent_fails_closed_outside_the_evidenced_rate_window(
         # Luna 6 was released alongside Sol 6, with no announced end.
         ("gpt-6-luna", "2026-09-21", "unknown_tier"),
         ("gpt-6-luna", "2026-09-22", "priced"),
+        # Sol 6.1 was released 2026-09-29, with no announced end.
+        ("gpt-6.1-sol", "2026-09-28", "unknown_tier"),
+        ("gpt-6.1-sol", "2026-09-29", "priced"),
     ],
 )
 def test_a_rate_window_spans_the_dates_the_vendor_published(

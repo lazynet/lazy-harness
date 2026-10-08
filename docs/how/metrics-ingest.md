@@ -21,11 +21,13 @@ Two pieces are needed on either side of the pipeline:
 4. Iterates the files in order, maintaining a `seen_msg_ids: set[str]` across the whole profile. Each event's `message_id` is checked against the set; novel events bump an in-memory aggregator keyed by `(session_id, model)`; already-seen ones are counted as deduped and dropped. An event whose provider gives no stable id is counted every time it is seen — there is nothing to match on, and losing real tokens is worse than double-counting a resume's shared prefix.
 5. Each response is offered independently to API-equivalent pricing before its
    money is aggregated; this preserves context-class and effective-date
-   differences. Billed pricing still uses `calculate_cost()` with
-   `DEFAULT_PRICING` plus any `[monitoring.pricing]` override. If a provider
-   does not expose an explicit short/long context class, equivalent pricing
-   fails closed instead of inferring the unpublished boundary. The resulting
-   `(session, model)` totals are handed to `upsert_stats(entries)`. Sessions
+   differences. The context class is derived per response from the usage the
+   record reports: OpenAI's 272K boundary (ADR-067) and Haiku 5.5's 100K
+   boundary (`anthropic_context_class`, ADR-070). Billed pricing sums tokens
+   per `(session, model, context_class)` bucket and prices each bucket with
+   `cost_for_billing_model()` over `DEFAULT_PRICING` plus any
+   `[monitoring.pricing]` override. The buckets are summed back, so the stored
+   rows stay per `(session, model)` and are handed to `upsert_stats(entries)`. Sessions
    whose transcripts no longer exist on disk are not re-scanned, so their rows
    remain beyond transcript retention.
 
@@ -106,7 +108,7 @@ This distinction is not marginal. Across a week of measured local traffic, 1-hou
 
 A request whose prompt (`input + cache_read + cache_create + cache_create_1h`) is over 100,000 tokens pays the higher tier on every bucket, output included. Every other current Claude model is priced flat across its window.
 
-`LONG_CONTEXT_PRICING` holds the tier and `anthropic_context_class` classifies each response. Ingest prices each class bucket before summing, so stored rows stay per `(session, model)`. A `[monitoring.pricing]` override of the model's row disables the shipped long tier for it.
+`LONG_CONTEXT_PRICING` holds the tier and `anthropic_context_class` classifies each response. Ingest prices each class bucket before summing, so stored rows stay per `(session, model)`. For billed cost, a `[monitoring.pricing]` override of the model's row disables the shipped long tier for it; API-equivalent cost always prices from the published list (`DEFAULT_PRICING` and `LONG_CONTEXT_PRICING`), so it keeps the long tier.
 
 ### Launch discounts expire on their own
 
