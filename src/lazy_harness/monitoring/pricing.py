@@ -143,8 +143,9 @@ def price_api_response(
     The bar is per provider, not per function (ADR-065). OpenAI rates key on
     `(model, service_tier, context_class)` inside a dated window, so pricing
     one without a context class would pick between two rates that differ 2x.
-    Anthropic publishes one rate per model, so the same demand would refuse a
-    figure it has everything it needs to produce. `API_RATE_TABLES` carries
+    Anthropic keys on `context_class` too (Haiku 5.5 has two rates, ADR-070),
+    but derives it per response with `anthropic_context_class`, so nothing is
+    required of the caller. `API_RATE_TABLES` carries
     each table's declared dimensions and a test holds that declaration to the
     arity of the table's own keys.
     """
@@ -339,8 +340,9 @@ DEFAULT_PRICING: dict[str, dict[str, float]] = {
 class ApiRateTable:
     """One provider's published rates and the evidence its keys demand.
 
-    `dimensions` names what a caller must supply beyond the model. It is a
-    claim about `rates`, not a description of it: the gate test compares it
+    `dimensions` names what the keys carry beyond the model; `required` is the
+    subset a caller must evidence. `dimensions` is a claim about `rates`, not
+    a description of it: the gate test compares it
     against the arity of the table's own keys, so a provider that starts
     billing by tier or context cannot keep an empty declaration and go on
     being priced at whichever row happened to be first.

@@ -12,6 +12,10 @@ own key arity, the two cache-write TTLs stop being merged before pricing, and
 carry) from `required` (what a caller must evidence); OpenAI now requires only
 `service_tier`, and a missing context class is derived from the gross prompt
 rather than refused. The arity test below checks `dimensions`.
+**Amended by:** ADR-070 — Haiku 5.5 is priced by prompt length, so the
+Anthropic table is keyed `(model, context_class)` with
+`dimensions=("context_class",)`; `required` stays empty because the class is
+derived per response.
 **Related:** ADR-061 (billed cost and API-equivalent cost are separate),
 ADR-050 (agent and billing model in MetricEvent v3)
 
