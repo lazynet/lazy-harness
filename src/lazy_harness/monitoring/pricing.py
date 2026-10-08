@@ -24,7 +24,7 @@ class ApiEquivalentPrice:
     basis: ApiPriceBasis | None = None
 
 
-_OPENAI_API_RATE_VERSION = "openai-2026-09-22"
+_OPENAI_API_RATE_VERSION = "openai-2026-09-29"
 _ANTHROPIC_API_RATE_VERSION = "anthropic-2026-10-07"
 # The dates each rate was published for, not the date it was read off the page.
 # A `None` end is a rate with no announced expiry — the window is open, which
@@ -43,6 +43,9 @@ _OPENAI_API_RATE_WINDOWS: dict[str, tuple[date, date | None]] = {
     # announced end.
     "gpt-6-sol": (date(2026, 9, 22), None),
     "gpt-6-luna": (date(2026, 9, 22), None),
+    # "Released GPT-6.1 Sol (`gpt-6.1-sol`)", changelog entry dated 2026-09-29,
+    # with these launch rates and no later price change or announced end.
+    "gpt-6.1-sol": (date(2026, 9, 29), None),
     # "Starting July 30, GPT-5.6 Luna costs 80% less" — the changelog records
     # no change since, so the window opens on the cut and stays open.
     "gpt-5.6-luna": (date(2026, 7, 30), None),
@@ -95,6 +98,18 @@ _OPENAI_API_RATES: dict[tuple[str, str, str], dict[str, float]] = {
         "cache_read": 0.02,
         "cache_create": 0.25,
         "output": 0.75,
+    },
+    ("gpt-6.1-sol", "standard", "short"): {
+        "input": 2.0,
+        "cache_read": 0.1,
+        "cache_create": 2.5,
+        "output": 10.0,
+    },
+    ("gpt-6.1-sol", "standard", "long"): {
+        "input": 4.0,
+        "cache_read": 0.2,
+        "cache_create": 5.0,
+        "output": 15.0,
     },
     ("gpt-5.6-luna", "standard", "short"): {
         "input": 0.2,
