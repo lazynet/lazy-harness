@@ -103,7 +103,7 @@ Steps:
 4. For each task, `process_task`:
     - **Parse metadata.**
     - **Session JSONL exists?** If not, mark skipped ("session JSONL not found").
-    - **Interactive check.** `is_interactive_session` looks at line 1 of the JSONL; sessions without a `permission-mode` first record are headless `claude -p` invocations or subagent dispatches and are excluded from the loop.
+    - **Interactive check.** `is_interactive_session` scans the leading records of the JSONL (skipping `attachment` hook records, capped at 200 lines) for a `permission-mode` or `last-prompt` record; sessions without one are headless `claude -p` invocations or subagent dispatches and are excluded from the loop.
     - **User-char gate.** `count_user_chars` sums the chars across all `user` messages. If under `min_user_chars` (default 200), skip — the session is too thin to distill.
     - **Message-count gate.** `extract_messages` returns (formatted_text, total_count). Skip if under `min_messages` (default 4).
     - **Collect existing memory** for de-dup prompts:

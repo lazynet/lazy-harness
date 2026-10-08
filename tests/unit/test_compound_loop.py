@@ -236,6 +236,33 @@ def test_is_interactive_session_marker_within_scan_window(tmp_path: Path) -> Non
     assert is_interactive_session(session) is True
 
 
+def test_is_interactive_session_marker_after_post_clear_hook_attachments(tmp_path: Path) -> None:
+    # Record types of a real session started after /clear: the first marker
+    # sits on line 25, behind two queue records and ~20 attachment records.
+    session = tmp_path / "s.jsonl"
+    _write_jsonl(
+        session,
+        [
+            {"type": "queue-operation"},
+            {"type": "queue-operation"},
+            *[{"type": "attachment", "attachment": {"type": "hook_success"}}] * 7,
+            {"type": "user", "message": {"content": "go"}},
+            *[{"type": "attachment", "attachment": {"type": "environment"}}] * 14,
+            {"type": "last-prompt", "lastPrompt": "go"},
+        ],
+    )
+    assert is_interactive_session(session) is True
+
+
+def test_is_interactive_session_stops_scanning_at_the_hard_line_cap(tmp_path: Path) -> None:
+    session = tmp_path / "s.jsonl"
+    _write_jsonl(
+        session,
+        [{"type": "attachment"}] * 500 + [{"type": "permission-mode"}],
+    )
+    assert is_interactive_session(session) is False
+
+
 def test_is_interactive_session_accepts_a_real_codex_rollout_shape(tmp_path: Path) -> None:
     session = tmp_path / "rollout.jsonl"
     _write_jsonl(
