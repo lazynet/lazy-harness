@@ -179,6 +179,17 @@ def test_api_equivalent_keeps_sub_micro_response_costs() -> None:
     assert result.amount == pytest.approx(0.0000004)
 
 
+def test_api_equivalent_keeps_sub_micro_anthropic_response_costs() -> None:
+    """Rounding per response erased this; measured 0.0 on 2026-10-07."""
+    from lazy_harness.monitoring.pricing import price_api_response
+
+    result = price_api_response(
+        "claude-opus-5", {"cache_read": 1}, service_tier="standard", context_class=None, on=None
+    )
+    assert result.status == "priced"
+    assert result.amount == pytest.approx(0.0000005)
+
+
 def test_codex_auto_review_is_not_aliased_for_api_equivalent_pricing() -> None:
     from lazy_harness.monitoring.pricing import price_api_response
 
@@ -707,7 +718,7 @@ def test_default_pricing_includes_sonnet_5_5() -> None:
     assert default_pricing()["claude-sonnet-5-5"] == {
         "input": 2.0,
         "output": 10.0,
-        "cache_read": 0.2,
+        "cache_read": 0.1,
         "cache_create": 2.5,
         "cache_create_1h": 4.0,
     }
@@ -1020,3 +1031,226 @@ def test_a_per_token_codex_session_with_an_unrated_model_is_an_unpriced_gap() ->
     )
     assert cost == 0.0
     assert cost_source is None
+
+
+# What each Claude Code model alias resolved to, probed 2026-10-07 with
+# Claude Code 2.1.293: `claude -p --model <alias> --output-format json
+# "Reply with ok"` reports the resolved id as the `modelUsage` key. Re-probe
+# when Anthropic ships a model, and update this map: an alias that moves to an
+# unpriced model makes every `flat_rate` row `unknown_model` silently, because
+# `unknown_models` only fires for `per_token` profiles.
+CLAUDE_CODE_ALIAS_TARGETS = {
+    "haiku": "claude-haiku-5-5",
+    "sonnet": "claude-sonnet-5-5",
+    "opus": "claude-opus-5-5",
+}
+
+
+@pytest.mark.parametrize(("alias", "model"), sorted(CLAUDE_CODE_ALIAS_TARGETS.items()))
+def test_every_claude_code_alias_target_is_priced(alias: str, model: str) -> None:
+    from lazy_harness.monitoring.pricing import DEFAULT_PRICING, price_api_response
+
+    assert model in DEFAULT_PRICING, f"`{alias}` resolves to {model}, which has no rate"
+    result = price_api_response(
+        model, {"input": 1}, service_tier="standard", context_class=None, on="2026-10-07"
+    )
+    assert result.status == "priced"
+
+
+def test_default_pricing_includes_haiku_5_5_short_rates() -> None:
+    from lazy_harness.monitoring.pricing import default_pricing
+
+    assert default_pricing()["claude-haiku-5-5"] == {
+        "input": 0.10,
+        "output": 0.50,
+        "cache_read": 0.01,
+        "cache_create": 0.125,
+        "cache_create_1h": 0.20,
+    }
+
+
+def test_sonnet_5_5_cache_reads_bill_at_five_percent_of_input() -> None:
+    """Published: "$0.10 / MTok", 0.05x base input, like Opus 5.5.
+
+    The row was a copy of claude-sonnet-5 (0.1x) and charged every read twice.
+    """
+    from lazy_harness.monitoring.pricing import calculate_cost, default_pricing
+
+    cost = calculate_cost("claude-sonnet-5-5", {"cache_read": 1_000_000}, default_pricing())
+    assert cost == pytest.approx(0.10)
+
+
+def test_haiku_5_5_carries_its_published_long_prompt_tier() -> None:
+    from lazy_harness.monitoring.pricing import LONG_CONTEXT_PRICING, LongContextRate
+
+    assert LONG_CONTEXT_PRICING == {
+        "claude-haiku-5-5": LongContextRate(
+            threshold=100_000,
+            rates={
+                "input": 0.50,
+                "output": 2.50,
+                "cache_read": 0.05,
+                "cache_create": 0.625,
+                "cache_create_1h": 1.0,
+            },
+        )
+    }
+
+
+@pytest.mark.parametrize("bucket", ["cache_create", "cache_create_1h", "cache_read"])
+def test_anthropic_prompt_size_counts_every_cached_bucket(bucket: str) -> None:
+    """Anthropic reports cache reads and writes beside `input_tokens`, not in it.
+
+    The one Haiku 5.5 response observed so far is 2 input tokens and 47,703
+    1-hour write tokens: the prompt is almost entirely cache write.
+    """
+    from lazy_harness.monitoring.pricing import anthropic_context_class
+
+    assert anthropic_context_class("claude-haiku-5-5", {"input": 2, bucket: 120_000}) == "long"
+
+
+def test_anthropic_context_boundary_is_strict() -> None:
+    """Published as "over 100,000 tokens"."""
+    from lazy_harness.monitoring.pricing import anthropic_context_class
+
+    assert anthropic_context_class("claude-haiku-5-5", {"input": 100_000}) == "short"
+    assert (
+        anthropic_context_class("claude-haiku-5-5", {"input": 100_000, "cache_read": 1}) == "long"
+    )
+
+
+def test_a_flat_priced_anthropic_model_is_always_short() -> None:
+    from lazy_harness.monitoring.pricing import anthropic_context_class
+
+    assert anthropic_context_class("claude-opus-5-5", {"input": 900_000}) == "short"
+    assert anthropic_context_class("claude-unknown-9", {"input": 900_000}) == "short"
+
+
+_LONG_HAIKU = {"input": 2, "output": 1000, "cache_create_1h": 120_000}
+
+
+def test_calculate_cost_bills_a_long_haiku_5_5_request_at_the_long_tier() -> None:
+    """The whole request moves tier — output and writes included."""
+    from lazy_harness.monitoring.pricing import calculate_cost, default_pricing
+
+    pricing = default_pricing()
+    assert calculate_cost(
+        "claude-haiku-5-5", _LONG_HAIKU, pricing, context_class="long"
+    ) == pytest.approx(0.122501, abs=1e-6)
+    assert calculate_cost(
+        "claude-haiku-5-5", _LONG_HAIKU, pricing, context_class="short"
+    ) == pytest.approx(0.0245002, abs=1e-6)
+
+
+def test_a_long_class_on_a_flat_model_bills_the_standing_rate() -> None:
+    from lazy_harness.monitoring.pricing import calculate_cost, default_pricing
+
+    assert calculate_cost(
+        "claude-opus-5-5", {"input": 1_000_000}, default_pricing(), context_class="long"
+    ) == pytest.approx(4.0)
+
+
+def test_an_overridden_haiku_5_5_row_never_switches_to_the_shipped_long_tier() -> None:
+    from lazy_harness.monitoring.pricing import calculate_cost, load_pricing
+
+    pricing = load_pricing(
+        {
+            "claude-haiku-5-5": {
+                "input": 0.3,
+                "output": 1.0,
+                "cache_read": 0.03,
+                "cache_create": 0.375,
+                "cache_create_1h": 0.6,
+            }
+        }
+    )
+    assert calculate_cost(
+        "claude-haiku-5-5", {"input": 1_000_000}, pricing, context_class="long"
+    ) == pytest.approx(0.3)
+
+
+def test_an_unknown_context_class_is_refused() -> None:
+    from lazy_harness.monitoring.pricing import calculate_cost, default_pricing
+
+    with pytest.raises(ValueError, match="context_class"):
+        calculate_cost("claude-haiku-5-5", {"input": 1}, default_pricing(), context_class="medium")
+
+
+def test_cost_for_billing_model_forwards_the_context_class() -> None:
+    from lazy_harness.monitoring.pricing import cost_for_billing_model, default_pricing
+
+    assert cost_for_billing_model(
+        "claude-haiku-5-5",
+        {"input": 1_000_000},
+        default_pricing(),
+        billing_model="per_token",
+        context_class="long",
+    ) == (pytest.approx(0.5), "pricing")
+
+
+def test_anthropic_table_declares_a_derived_context_class() -> None:
+    from lazy_harness.monitoring.pricing import API_RATE_TABLES
+
+    table = API_RATE_TABLES["anthropic"]
+    assert table.dimensions == ("context_class",)
+    assert table.required == ()
+    assert table.version == "anthropic-2026-10-07"
+
+
+def test_only_a_model_with_a_long_tier_has_distinct_long_rates() -> None:
+    from lazy_harness.monitoring.pricing import (
+        API_RATE_TABLES,
+        DEFAULT_PRICING,
+        LONG_CONTEXT_PRICING,
+    )
+
+    rates = API_RATE_TABLES["anthropic"].rates
+    for model, row in DEFAULT_PRICING.items():
+        assert rates[(model, "short")] == row
+        expected_long = LONG_CONTEXT_PRICING[model].rates if model in LONG_CONTEXT_PRICING else row
+        assert rates[(model, "long")] == expected_long
+
+
+def test_api_equivalent_derives_the_haiku_5_5_class_from_the_prompt() -> None:
+    from lazy_harness.monitoring.pricing import price_api_response
+
+    result = price_api_response(
+        "claude-haiku-5-5",
+        _LONG_HAIKU,
+        service_tier="standard",
+        context_class=None,
+        on="2026-10-07",
+    )
+    assert result.status == "priced"
+    assert result.amount == pytest.approx(0.122501)
+    assert result.basis is not None
+    assert result.basis.rate_table_version == "anthropic-2026-10-07"
+
+
+def test_an_explicit_anthropic_context_class_beats_the_derivation() -> None:
+    from lazy_harness.monitoring.pricing import price_api_response
+
+    result = price_api_response(
+        "claude-haiku-5-5", _LONG_HAIKU, service_tier="standard", context_class="short", on=None
+    )
+    assert result.amount == pytest.approx(0.0245002)
+
+
+def test_api_equivalent_and_calculate_cost_agree_on_every_anthropic_key() -> None:
+    """Two paths answer one question; they must give one answer."""
+    from lazy_harness.monitoring.pricing import (
+        API_RATE_TABLES,
+        DEFAULT_PRICING,
+        calculate_cost,
+        price_api_response,
+    )
+
+    tokens = dict.fromkeys(
+        ("input", "output", "cache_read", "cache_create", "cache_create_1h"), 1_000_000
+    )
+    for (model, context_class), rates in API_RATE_TABLES["anthropic"].rates.items():
+        equivalent = price_api_response(
+            model, tokens, service_tier="standard", context_class=context_class, on=None
+        )
+        billed = calculate_cost(model, tokens, DEFAULT_PRICING, context_class=context_class)
+        assert equivalent.amount == pytest.approx(billed) == pytest.approx(sum(rates.values()))

@@ -25,7 +25,7 @@ class ApiEquivalentPrice:
 
 
 _OPENAI_API_RATE_VERSION = "openai-2026-09-22"
-_ANTHROPIC_API_RATE_VERSION = "anthropic-2026-09-22"
+_ANTHROPIC_API_RATE_VERSION = "anthropic-2026-10-07"
 # The dates each rate was published for, not the date it was read off the page.
 # A `None` end is a rate with no announced expiry — the window is open, which
 # is a different fact from a rate whose last covered day is known.
@@ -153,17 +153,22 @@ def price_api_response(
         return ApiEquivalentPrice(None, "no_usage")
     evidence = {"service_tier": service_tier, "context_class": context_class}
     anthropic = API_RATE_TABLES["anthropic"]
-    if model in anthropic.rates:
+    if model in {key[0] for key in anthropic.rates}:
         if any(evidence[dimension] is None for dimension in anthropic.required):
             return ApiEquivalentPrice(None, "unknown_tier")
-        # `calculate_cost` is the same function `cost_for_billing_model`
-        # calls, so the comparison figure and the per-token figure can never
-        # drift apart into two answers for one published rate. The tier slot
-        # is filled from the declaration rather than from the argument: while
-        # Anthropic does not bill by tier the caller's "standard" is an
-        # assumption, and recording it would invent the evidence.
+        context_class = context_class or anthropic_context_class(model, tokens)
+        # Both figures come from the same `_select_rates`/`_raw_cost`, so the
+        # comparison figure and the per-token figure can never drift apart
+        # into two answers for one published rate; only the per-session
+        # figure rounds. The tier slot is filled from the declaration rather
+        # than from the argument: while Anthropic does not bill by tier the
+        # caller's "standard" is an assumption, and recording it would invent
+        # the evidence.
         return ApiEquivalentPrice(
-            calculate_cost(model, tokens, DEFAULT_PRICING, on=on),
+            _raw_cost(
+                _select_rates(model, DEFAULT_PRICING, on=on, context_class=context_class) or {},
+                tokens,
+            ),
             "priced",
             ApiPriceBasis(
                 "anthropic",
@@ -295,12 +300,23 @@ DEFAULT_PRICING: dict[str, dict[str, float]] = {
         "cache_create": 2.5,
         "cache_create_1h": 4.0,
     },
+    # Sonnet 5.5 reads bill at 0.05x base input ($0.10), like Opus 5.5 — not sonnet-5's 0.1x.
     "claude-sonnet-5-5": {
         "input": 2.0,
         "output": 10.0,
-        "cache_read": 0.2,
+        "cache_read": 0.1,
         "cache_create": 2.5,
         "cache_create_1h": 4.0,
+    },
+    # Haiku 5.5 is the one current model priced by prompt length. This row is
+    # the rate for prompts up to 100K tokens; the higher tier lives in
+    # LONG_CONTEXT_PRICING (ADR-070).
+    "claude-haiku-5-5": {
+        "input": 0.10,
+        "output": 0.50,
+        "cache_read": 0.01,
+        "cache_create": 0.125,
+        "cache_create_1h": 0.20,
     },
     "claude-haiku-4-5-20251001": {
         "input": 1.0,
@@ -341,29 +357,6 @@ class ApiRateTable:
     """Prompt size above which the provider charges its long-context rates."""
 
 
-API_RATE_TABLES: dict[str, ApiRateTable] = {
-    "openai": ApiRateTable(
-        provider="openai",
-        version=_OPENAI_API_RATE_VERSION,
-        dimensions=("service_tier", "context_class"),
-        rates=_OPENAI_API_RATES,
-        # The context class is a function of the prompt size, which the usage
-        # record reports, so it is derived rather than awaited (ADR-067).
-        required=("service_tier",),
-        # "Prompts with >272K input tokens are priced at 2x input and 1.5x
-        # output for the full request" — published on both models' pages, and
-        # already encoded in the long rows above.
-        long_context_threshold=272_000,
-    ),
-    "anthropic": ApiRateTable(
-        provider="anthropic",
-        version=_ANTHROPIC_API_RATE_VERSION,
-        dimensions=(),
-        rates=DEFAULT_PRICING,
-    ),
-}
-
-
 @dataclass(frozen=True)
 class IntroductoryRate:
     """A launch discount that expires on a fixed date.
@@ -389,6 +382,84 @@ class IntroductoryRate:
 # moved into DEFAULT_PRICING and the window it needed went away. The
 # mechanism stays for the next launch discount.
 INTRODUCTORY_PRICING: dict[str, IntroductoryRate] = {}
+
+
+@dataclass(frozen=True)
+class LongContextRate:
+    """A higher tier a model bills for prompts above a published size (ADR-070)."""
+
+    threshold: int
+    """Prompt tokens above which, strictly, `rates` apply to the whole request."""
+
+    rates: dict[str, float]
+
+
+# Only Haiku 5.5 is priced by prompt length; every other current model is
+# published flat across its 1M window. A config override of the model's
+# DEFAULT_PRICING row is the last word and disables this tier for it.
+LONG_CONTEXT_PRICING: dict[str, LongContextRate] = {
+    "claude-haiku-5-5": LongContextRate(
+        threshold=100_000,
+        rates={
+            "input": 0.50,
+            "output": 2.50,
+            "cache_read": 0.05,
+            "cache_create": 0.625,
+            "cache_create_1h": 1.0,
+        },
+    ),
+}
+
+# Anthropic reports `input_tokens` net of both cache buckets, and "all three
+# count toward the window" — so its prompt is the sum. OpenAI's differs
+# (ADR-067): its input already includes the write.
+_ANTHROPIC_PROMPT_BUCKETS = ("input", "cache_read", "cache_create", "cache_create_1h")
+
+
+def anthropic_context_class(model: str, tokens: dict[str, int]) -> str:
+    """Classify one response. Never call it on a session's summed tokens."""
+    tier = LONG_CONTEXT_PRICING.get(model)
+    if tier is None:
+        return "short"
+    gross = sum(int(tokens.get(name, 0) or 0) for name in _ANTHROPIC_PROMPT_BUCKETS)
+    return "long" if gross > tier.threshold else "short"
+
+
+def _anthropic_rates() -> dict[tuple[str, str], dict[str, float]]:
+    """Key every model by class; a flat-priced model's two rows are equal."""
+    rates: dict[tuple[str, str], dict[str, float]] = {}
+    for model, row in DEFAULT_PRICING.items():
+        tier = LONG_CONTEXT_PRICING.get(model)
+        rates[(model, "short")] = row
+        rates[(model, "long")] = tier.rates if tier is not None else row
+    return rates
+
+
+API_RATE_TABLES: dict[str, ApiRateTable] = {
+    "openai": ApiRateTable(
+        provider="openai",
+        version=_OPENAI_API_RATE_VERSION,
+        dimensions=("service_tier", "context_class"),
+        rates=_OPENAI_API_RATES,
+        # The context class is a function of the prompt size, which the usage
+        # record reports, so it is derived rather than awaited (ADR-067).
+        required=("service_tier",),
+        # "Prompts with >272K input tokens are priced at 2x input and 1.5x
+        # output for the full request" — published on both models' pages, and
+        # already encoded in the long rows above.
+        long_context_threshold=272_000,
+    ),
+    "anthropic": ApiRateTable(
+        provider="anthropic",
+        version=_ANTHROPIC_API_RATE_VERSION,
+        dimensions=("context_class",),
+        rates=_anthropic_rates(),
+        # The class is derived from the usage record (ADR-070), so it is never
+        # required of the caller.
+        required=(),
+    ),
+}
+
 
 # The ADR-050 `cost_source` vocabulary for a `MetricEvent`/`session_stats`
 # row: what `cost_for_billing_model` below returns whenever it names a
@@ -428,12 +499,55 @@ def load_pricing(
     return pricing
 
 
+def _select_rates(
+    model: str,
+    pricing: dict[str, dict[str, float]],
+    *,
+    on: str | None,
+    context_class: str,
+) -> dict[str, float] | None:
+    if context_class not in ("short", "long"):
+        raise ValueError(f"context_class must be 'short' or 'long', got {context_class!r}")
+    rates = pricing.get(model)
+    if not rates:
+        return None
+
+    intro = INTRODUCTORY_PRICING.get(model)
+    # A rate the caller overrode in config is the last word, so only apply the
+    # discount while the table still holds the shipped default.
+    if intro and on and intro.covers(on) and rates == DEFAULT_PRICING.get(model):
+        rates = intro.rates
+    tier = LONG_CONTEXT_PRICING.get(model)
+    if (
+        context_class == "long"
+        and tier is not None
+        and pricing.get(model) == DEFAULT_PRICING.get(model)
+    ):
+        rates = tier.rates
+    return rates
+
+
+def _raw_cost(rates: dict[str, float], tokens: dict[str, int]) -> float:
+    # A config override replaces a model's whole rate dict, so one written
+    # against the older four-key shape carries no 1-hour rate. Falling back
+    # to the published 2x multiplier keeps it from billing at zero.
+    one_hour = rates.get("cache_create_1h", 2.0 * rates.get("input", 0.0))
+    return (
+        tokens.get("input", 0) * rates.get("input", 0)
+        + tokens.get("output", 0) * rates.get("output", 0)
+        + tokens.get("cache_read", 0) * rates.get("cache_read", 0)
+        + tokens.get("cache_create", 0) * rates.get("cache_create", 0)
+        + tokens.get("cache_create_1h", 0) * one_hour
+    ) / 1_000_000
+
+
 def calculate_cost(
     model: str,
     tokens: dict[str, int],
     pricing: dict[str, dict[str, float]],
     *,
     on: str | None = None,
+    context_class: str = "short",
 ) -> float:
     """Price one session's tokens.
 
@@ -444,28 +558,14 @@ def calculate_cost(
     entry in INTRODUCTORY_PRICING, where it selects the discounted rate for
     sessions inside the window. Without a date, the standing rate applies —
     a missing date should never under-charge.
+
+    The context class belongs to one response, so callers classify each
+    response before summing (ADR-070).
     """
-    rates = pricing.get(model)
+    rates = _select_rates(model, pricing, on=on, context_class=context_class)
     if not rates:
         return 0.0
-
-    intro = INTRODUCTORY_PRICING.get(model)
-    # A rate the caller overrode in config is the last word, so only apply the
-    # discount while the table still holds the shipped default.
-    if intro and on and intro.covers(on) and rates == DEFAULT_PRICING.get(model):
-        rates = intro.rates
-    # A config override replaces a model's whole rate dict, so one written
-    # against the older four-key shape carries no 1-hour rate. Falling back
-    # to the published 2x multiplier keeps it from billing at zero.
-    one_hour = rates.get("cache_create_1h", 2.0 * rates.get("input", 0.0))
-    cost = (
-        tokens.get("input", 0) * rates.get("input", 0)
-        + tokens.get("output", 0) * rates.get("output", 0)
-        + tokens.get("cache_read", 0) * rates.get("cache_read", 0)
-        + tokens.get("cache_create", 0) * rates.get("cache_create", 0)
-        + tokens.get("cache_create_1h", 0) * one_hour
-    ) / 1_000_000
-    return round(cost, 6)
+    return round(_raw_cost(rates, tokens), 6)
 
 
 def cost_for_billing_model(
@@ -475,6 +575,7 @@ def cost_for_billing_model(
     *,
     billing_model: str,
     on: str | None = None,
+    context_class: str = "short",
 ) -> tuple[float, str | None]:
     """Price one row according to its profile's billing model (ADR-050).
 
@@ -489,6 +590,6 @@ def cost_for_billing_model(
     if billing_model == "flat_rate":
         return 0.0, "subscription"
 
-    cost = calculate_cost(model, tokens, pricing, on=on)
+    cost = calculate_cost(model, tokens, pricing, on=on, context_class=context_class)
     cost_source = "pricing" if (model in pricing or is_pseudo_model(model)) else None
     return cost, cost_source

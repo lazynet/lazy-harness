@@ -64,7 +64,11 @@ from lazy_harness.core.profiles import ProfileInfo, list_profiles
 from lazy_harness.monitoring.collector import extract_session_date
 from lazy_harness.monitoring.db import MetricsDB
 from lazy_harness.monitoring.event_id import derive_event_id
-from lazy_harness.monitoring.pricing import cost_for_billing_model, price_api_response
+from lazy_harness.monitoring.pricing import (
+    anthropic_context_class,
+    cost_for_billing_model,
+    price_api_response,
+)
 from lazy_harness.plugins.contracts import (
     METRIC_EVENT_SCHEMA_VERSION,
     MetricEvent,
@@ -215,6 +219,7 @@ def ingest_profile(
                         "cache_read": 0,
                         "cache_create": 0,
                         "cache_create_1h": 0,
+                        "by_class": {},
                         "date": session_date,
                         "project": identity.project or "",
                         "api_equivalent_cost": 0.0,
@@ -241,6 +246,17 @@ def ingest_profile(
                     "cache_create": usage.cache_creation_tokens or 0,
                     "cache_create_1h": usage.cache_creation_1h_tokens or 0,
                 }
+                # The boundary applies to one request, so the class is decided
+                # here and the tokens are bucketed by it for pricing (ADR-070).
+                # The stored row still carries the plain sums above.
+                context_class = event.context_class or anthropic_context_class(
+                    event.model or "unknown", response_tokens
+                )
+                class_tokens = agg["by_class"].setdefault(
+                    context_class, dict.fromkeys(response_tokens, 0)
+                )
+                for name, count in response_tokens.items():
+                    class_tokens[name] += count
                 equivalent = price_api_response(
                     event.model or "unknown",
                     response_tokens,
@@ -277,19 +293,21 @@ def ingest_profile(
     entries: list[dict] = []
     events: list[MetricEvent] = []
     for (session_id, model), agg in aggregated.items():
-        cost, cost_source = cost_for_billing_model(
-            model,
-            {
-                "input": agg["input"],
-                "output": agg["output"],
-                "cache_read": agg["cache_read"],
-                "cache_create": agg["cache_create"],
-                "cache_create_1h": agg["cache_create_1h"],
-            },
-            pricing,
-            billing_model=billing_model,
-            on=agg["date"],
-        )
+        cost = 0.0
+        cost_source: str | None = None
+        for context_class, class_tokens in sorted(agg["by_class"].items()):
+            class_cost, cost_source = cost_for_billing_model(
+                model,
+                class_tokens,
+                pricing,
+                billing_model=billing_model,
+                on=agg["date"],
+                context_class=context_class,
+            )
+            cost += class_cost
+        # `cost_source` depends only on the model and billing model, so the
+        # last class's value is every class's value.
+        cost = round(cost, 6)
         # cost_source is None for exactly the gap this report exists to
         # surface: a per_token row whose model has no rate. A flat_rate row
         # never reaches this branch — its usage is real but not per-token
