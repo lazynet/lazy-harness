@@ -1425,3 +1425,48 @@ def test_ingest_profile_ingests_the_valid_session_past_a_foreign_jsonl(
     assert [r["session"] for r in rows] == [good_uuid]
     assert rows[0]["input"] == 100
     db.close()
+
+
+def _ingest_haiku_5_5(tmp_path: Path, *inputs: int) -> dict:
+    from lazy_harness.monitoring.db import MetricsDB
+    from lazy_harness.monitoring.ingest import ingest_profile
+    from lazy_harness.monitoring.pricing import load_pricing
+
+    prof = _profile(tmp_path, "lazy")
+    _write_session(
+        prof.config_dir / "projects",
+        "-Users-foo-repos-demo",
+        "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        [
+            _assistant_msg(
+                model="claude-haiku-5-5",
+                inp=inp,
+                out=0,
+                ts=f"2026-10-07T10:00:{i:02d}",
+                msg_id=f"msg_{i}",
+            )
+            for i, inp in enumerate(inputs)
+        ],
+    )
+    db = MetricsDB(tmp_path / "metrics.db")
+    try:
+        ingest_profile(prof, db, load_pricing())
+        return db.query_stats(period="all")[0]
+    finally:
+        db.close()
+
+
+def test_ingest_classifies_each_request_not_the_session_sum(tmp_path: Path) -> None:
+    """Two 60K prompts are two short requests; their 120K sum is no prompt at all."""
+    row = _ingest_haiku_5_5(tmp_path, 60_000, 60_000)
+    assert row["input"] == 120_000
+    assert row["cost"] == pytest.approx(0.012)
+    assert row["api_equivalent_cost"] == pytest.approx(0.012)
+
+
+def test_ingest_bills_a_long_request_at_the_long_tier(tmp_path: Path) -> None:
+    row = _ingest_haiku_5_5(tmp_path, 150_000, 10_000)
+    # 150K at $0.50 (long) + 10K at $0.10 (short); one stored row.
+    assert row["input"] == 160_000
+    assert row["cost"] == pytest.approx(0.076)
+    assert row["api_equivalent_cost"] == pytest.approx(0.076)
