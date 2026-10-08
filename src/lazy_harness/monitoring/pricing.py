@@ -156,14 +156,15 @@ def price_api_response(
     if model in anthropic.rates:
         if any(evidence[dimension] is None for dimension in anthropic.required):
             return ApiEquivalentPrice(None, "unknown_tier")
-        # `calculate_cost` is the same function `cost_for_billing_model`
-        # calls, so the comparison figure and the per-token figure can never
-        # drift apart into two answers for one published rate. The tier slot
-        # is filled from the declaration rather than from the argument: while
-        # Anthropic does not bill by tier the caller's "standard" is an
-        # assumption, and recording it would invent the evidence.
+        # Both figures come from the same `_select_rates`/`_raw_cost`, so the
+        # comparison figure and the per-token figure can never drift apart
+        # into two answers for one published rate; only the per-session
+        # figure rounds. The tier slot is filled from the declaration rather
+        # than from the argument: while Anthropic does not bill by tier the
+        # caller's "standard" is an assumption, and recording it would invent
+        # the evidence.
         return ApiEquivalentPrice(
-            calculate_cost(model, tokens, DEFAULT_PRICING, on=on),
+            _raw_cost(_select_rates(model, DEFAULT_PRICING, on=on) or {}, tokens),
             "priced",
             ApiPriceBasis(
                 "anthropic",
@@ -439,6 +440,38 @@ def load_pricing(
     return pricing
 
 
+def _select_rates(
+    model: str,
+    pricing: dict[str, dict[str, float]],
+    *,
+    on: str | None,
+) -> dict[str, float] | None:
+    rates = pricing.get(model)
+    if not rates:
+        return None
+
+    intro = INTRODUCTORY_PRICING.get(model)
+    # A rate the caller overrode in config is the last word, so only apply the
+    # discount while the table still holds the shipped default.
+    if intro and on and intro.covers(on) and rates == DEFAULT_PRICING.get(model):
+        rates = intro.rates
+    return rates
+
+
+def _raw_cost(rates: dict[str, float], tokens: dict[str, int]) -> float:
+    # A config override replaces a model's whole rate dict, so one written
+    # against the older four-key shape carries no 1-hour rate. Falling back
+    # to the published 2x multiplier keeps it from billing at zero.
+    one_hour = rates.get("cache_create_1h", 2.0 * rates.get("input", 0.0))
+    return (
+        tokens.get("input", 0) * rates.get("input", 0)
+        + tokens.get("output", 0) * rates.get("output", 0)
+        + tokens.get("cache_read", 0) * rates.get("cache_read", 0)
+        + tokens.get("cache_create", 0) * rates.get("cache_create", 0)
+        + tokens.get("cache_create_1h", 0) * one_hour
+    ) / 1_000_000
+
+
 def calculate_cost(
     model: str,
     tokens: dict[str, int],
@@ -456,27 +489,10 @@ def calculate_cost(
     sessions inside the window. Without a date, the standing rate applies —
     a missing date should never under-charge.
     """
-    rates = pricing.get(model)
+    rates = _select_rates(model, pricing, on=on)
     if not rates:
         return 0.0
-
-    intro = INTRODUCTORY_PRICING.get(model)
-    # A rate the caller overrode in config is the last word, so only apply the
-    # discount while the table still holds the shipped default.
-    if intro and on and intro.covers(on) and rates == DEFAULT_PRICING.get(model):
-        rates = intro.rates
-    # A config override replaces a model's whole rate dict, so one written
-    # against the older four-key shape carries no 1-hour rate. Falling back
-    # to the published 2x multiplier keeps it from billing at zero.
-    one_hour = rates.get("cache_create_1h", 2.0 * rates.get("input", 0.0))
-    cost = (
-        tokens.get("input", 0) * rates.get("input", 0)
-        + tokens.get("output", 0) * rates.get("output", 0)
-        + tokens.get("cache_read", 0) * rates.get("cache_read", 0)
-        + tokens.get("cache_create", 0) * rates.get("cache_create", 0)
-        + tokens.get("cache_create_1h", 0) * one_hour
-    ) / 1_000_000
-    return round(cost, 6)
+    return round(_raw_cost(rates, tokens), 6)
 
 
 def cost_for_billing_model(

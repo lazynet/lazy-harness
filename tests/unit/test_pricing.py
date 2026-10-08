@@ -179,6 +179,17 @@ def test_api_equivalent_keeps_sub_micro_response_costs() -> None:
     assert result.amount == pytest.approx(0.0000004)
 
 
+def test_api_equivalent_keeps_sub_micro_anthropic_response_costs() -> None:
+    """Rounding per response erased this; measured 0.0 on 2026-10-07."""
+    from lazy_harness.monitoring.pricing import price_api_response
+
+    result = price_api_response(
+        "claude-opus-5", {"cache_read": 1}, service_tier="standard", context_class=None, on=None
+    )
+    assert result.status == "priced"
+    assert result.amount == pytest.approx(0.0000005)
+
+
 def test_codex_auto_review_is_not_aliased_for_api_equivalent_pricing() -> None:
     from lazy_harness.monitoring.pricing import price_api_response
 
