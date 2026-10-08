@@ -1078,3 +1078,49 @@ def test_sonnet_5_5_cache_reads_bill_at_five_percent_of_input() -> None:
 
     cost = calculate_cost("claude-sonnet-5-5", {"cache_read": 1_000_000}, default_pricing())
     assert cost == pytest.approx(0.10)
+
+
+def test_haiku_5_5_carries_its_published_long_prompt_tier() -> None:
+    from lazy_harness.monitoring.pricing import LONG_CONTEXT_PRICING, LongContextRate
+
+    assert LONG_CONTEXT_PRICING == {
+        "claude-haiku-5-5": LongContextRate(
+            threshold=100_000,
+            rates={
+                "input": 0.50,
+                "output": 2.50,
+                "cache_read": 0.05,
+                "cache_create": 0.625,
+                "cache_create_1h": 1.0,
+            },
+        )
+    }
+
+
+@pytest.mark.parametrize("bucket", ["cache_create", "cache_create_1h", "cache_read"])
+def test_anthropic_prompt_size_counts_every_cached_bucket(bucket: str) -> None:
+    """Anthropic reports cache reads and writes beside `input_tokens`, not in it.
+
+    The one Haiku 5.5 response observed so far is 2 input tokens and 47,703
+    1-hour write tokens: the prompt is almost entirely cache write.
+    """
+    from lazy_harness.monitoring.pricing import anthropic_context_class
+
+    assert anthropic_context_class("claude-haiku-5-5", {"input": 2, bucket: 120_000}) == "long"
+
+
+def test_anthropic_context_boundary_is_strict() -> None:
+    """Published as "over 100,000 tokens"."""
+    from lazy_harness.monitoring.pricing import anthropic_context_class
+
+    assert anthropic_context_class("claude-haiku-5-5", {"input": 100_000}) == "short"
+    assert (
+        anthropic_context_class("claude-haiku-5-5", {"input": 100_000, "cache_read": 1}) == "long"
+    )
+
+
+def test_a_flat_priced_anthropic_model_is_always_short() -> None:
+    from lazy_harness.monitoring.pricing import anthropic_context_class
+
+    assert anthropic_context_class("claude-opus-5-5", {"input": 900_000}) == "short"
+    assert anthropic_context_class("claude-unknown-9", {"input": 900_000}) == "short"

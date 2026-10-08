@@ -402,6 +402,48 @@ class IntroductoryRate:
 # mechanism stays for the next launch discount.
 INTRODUCTORY_PRICING: dict[str, IntroductoryRate] = {}
 
+
+@dataclass(frozen=True)
+class LongContextRate:
+    """A higher tier a model bills for prompts above a published size (ADR-070)."""
+
+    threshold: int
+    """Prompt tokens above which, strictly, `rates` apply to the whole request."""
+
+    rates: dict[str, float]
+
+
+# Only Haiku 5.5 is priced by prompt length; every other current model is
+# published flat across its 1M window. A config override of the model's
+# DEFAULT_PRICING row is the last word and disables this tier for it.
+LONG_CONTEXT_PRICING: dict[str, LongContextRate] = {
+    "claude-haiku-5-5": LongContextRate(
+        threshold=100_000,
+        rates={
+            "input": 0.50,
+            "output": 2.50,
+            "cache_read": 0.05,
+            "cache_create": 0.625,
+            "cache_create_1h": 1.0,
+        },
+    ),
+}
+
+# Anthropic reports `input_tokens` net of both cache buckets, and "all three
+# count toward the window" — so its prompt is the sum. OpenAI's differs
+# (ADR-067): its input already includes the write.
+_ANTHROPIC_PROMPT_BUCKETS = ("input", "cache_read", "cache_create", "cache_create_1h")
+
+
+def anthropic_context_class(model: str, tokens: dict[str, int]) -> str:
+    """Classify one response. Never call it on a session's summed tokens."""
+    tier = LONG_CONTEXT_PRICING.get(model)
+    if tier is None:
+        return "short"
+    gross = sum(int(tokens.get(name, 0) or 0) for name in _ANTHROPIC_PROMPT_BUCKETS)
+    return "long" if gross > tier.threshold else "short"
+
+
 # The ADR-050 `cost_source` vocabulary for a `MetricEvent`/`session_stats`
 # row: what `cost_for_billing_model` below returns whenever it names a
 # source at all (`None` is not a member — it is the absence of one, the
