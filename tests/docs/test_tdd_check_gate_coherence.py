@@ -156,9 +156,14 @@ def test_contributing_spells_out_every_gate_command() -> None:
 
 
 def test_agents_md_spells_out_every_gate_command() -> None:
-    body = AGENTS_MD.read_text()
-    missing = [cmd for cmd in _gate_commands() if cmd not in body]
+    """Matched as whole backticked commands, not substrings: AGENTS.md said
+    `uv run --frozen pytest -q` while the gate runs `uv run --frozen pytest`,
+    and a substring check read the longer one as containing the shorter."""
+    named = set(_HEADING_COMMAND.findall(AGENTS_MD.read_text()))
+    missing = [cmd for cmd in _gate_commands() if cmd not in named]
     assert not missing, f"AGENTS.md omits: {missing}"
+    extra = sorted(named - set(_gate_commands()))
+    assert not extra, f"AGENTS.md names commands the gate does not run: {extra}"
 
 
 def test_the_pr_template_asks_about_every_gate_command() -> None:
