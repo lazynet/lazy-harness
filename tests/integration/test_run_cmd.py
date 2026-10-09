@@ -75,6 +75,7 @@ def test_run_dry_run_resolves_profile_by_cwd(
 ) -> None:
     _setup_two_profiles(home_dir)
     _stub_binary(monkeypatch)
+    monkeypatch.setenv("COLUMNS", "400")  # rich wraps the long config-dir line at 80
     monkeypatch.chdir(home_dir / "repos" / "flex")
     runner = CliRunner()
     result = runner.invoke(cli, ["run", "--dry-run"])
