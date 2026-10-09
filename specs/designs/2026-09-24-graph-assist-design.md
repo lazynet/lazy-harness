@@ -329,3 +329,21 @@ split: it is counted by hand until it does.
 **Kill criteria** for `always_load`, 14 days after the deploy: if (a) agent
 calls for Claude stay under 10% — baseline 0.9% — the hint is removed from
 the spec and the tools go back to deferred.
+
+## 10. Day-14 read suspended (2026-10-09)
+
+`lh knowledge graph-assist report --since 2026-09-25` tripped one criterion:
+(a') graph touch 89/742 = 12.0% < 20%. Hit precision 125/137 = 91.2%, p95
+47 ms and deflection 97.7% passed. The read is **suspended, not acted on**:
+178 of 403 sessions with a hook evaluation were blind for the whole session
+because every evaluation was `stale`, and the report counted ~340 sessions
+the hook never saw. Root causes and fixes:
+[`2026-10-09-graph-freshness-design.md`](2026-10-09-graph-freshness-design.md).
+
+Re-read with the corrected denominator, same window: (a') 84/388 = 21.6%,
+(a) 12/388 = 3.1%, stale share 4 171/7 834 = 53.2%. A new 14-day window opens
+on the day the freshness fix is deployed on both hosts; §6 thresholds unchanged.
+
+The §9 `always_load` kill line — (a) for Claude under 10% 14 days after its
+deploy — falls due 2026-10-10 and reads 3.1% today. Its denominator had the same
+blind sessions, so it is judged in the new window too, not on 2026-10-10.
