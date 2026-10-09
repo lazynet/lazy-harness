@@ -116,11 +116,69 @@ def test_compute_counts_each_metric_per_agent() -> None:
     report = rep.compute(sessions, metrics)
     claude, codex = report["claude-code"], report["codex"]
 
-    assert (claude.sessions, claude.graph_touch, claude.agent_calls) == (4, 2, 1)
+    assert (claude.sessions, claude.graph_touch, claude.agent_calls) == (2, 1, 0)
+    assert claude.all_sessions == 4
     assert (claude.graphify_calls, claude.code_greps) == (1, 4)
     assert (claude.hits, claude.precise_hits) == (2, 1)
     assert claude.p95_latency_ms == 3000
     assert (codex.sessions, codex.graph_touch, codex.agent_calls) == (1, 1, 1)
+    assert codex.all_sessions == 1
+
+
+def test_codex_control_uses_all_sessions_without_hook_evaluations() -> None:
+    sessions = [
+        _session("x1", "codex", _call("graphify")),
+        _session("x2", "codex", _call("code_grep")),
+    ]
+    reports = rep.compute(sessions, [])
+    codex = reports["codex"]
+
+    assert (codex.sessions, codex.graph_touch, codex.agent_calls) == (2, 1, 1)
+    output = rep.render(reports, None)
+    assert "denominator              all indexed-repo sessions" in output
+    assert "(a') graph touch         1/2 = 50.0%" in output
+    assert "(a) agent graphify use   1/2 = 50.0%" in output
+
+
+def test_unevaluated_sessions_do_not_change_adoption_or_kill_verdict() -> None:
+    evaluated = _session("work", "claude-code", _call("graphify"))
+    metrics = [{"session_id": "work", "reason": "not_search", "outcome": "skip"}]
+    baseline = rep.compute([evaluated], metrics)["claude-code"]
+    diluted = rep.compute(
+        [evaluated, *[_session(f"idle-{i}", "claude-code", _call("graphify")) for i in range(10)]],
+        metrics,
+    )["claude-code"]
+
+    assert (diluted.sessions, diluted.graph_touch, diluted.agent_calls) == (1, 1, 1)
+    assert diluted.all_sessions == 11
+    assert rep.kill_reasons(diluted) == rep.kill_reasons(baseline) == []
+    output = rep.render({"claude-code": diluted}, None)
+    assert "denominator              hook-evaluated sessions" in output
+    assert "sessions (all)          11" in output
+    assert "(a') graph touch         1/1 = 100.0%" in output
+    assert "(a) agent graphify use   1/1 = 100.0%" in output
+
+
+def test_stale_share_excludes_evaluations_without_a_graph() -> None:
+    metrics = [
+        {"session_id": "s", "repo": "/repo", "reason": reason, "outcome": "skip"}
+        for reason in ("stale", "stale", "not_search", "no_graph")
+    ]
+    metrics += [
+        {"session_id": "s", "repo": "", "reason": "no_repo", "outcome": "skip"},
+        {"session_id": "s", "repo": "/repo", "reason": "miss", "outcome": "miss"},
+        _hit("s", 0, "foo") | {"repo": "/repo"},
+    ]
+    report = rep.compute([_session("s", "claude-code")], metrics)["claude-code"]
+
+    assert (report.stale_evaluations, report.graph_evaluations) == (2, 5)
+    assert "stale share              2/5 = 40.0%" in rep.render({"claude-code": report}, None)
+
+
+def test_empty_evaluations_render_zero_stale_share() -> None:
+    report = rep.compute([], [])["claude-code"]
+
+    assert "stale share              0/0 = 0.0%" in rep.render({"claude-code": report}, None)
 
 
 def test_deflection_counts_hits_not_followed_by_a_re_search() -> None:

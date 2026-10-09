@@ -64,6 +64,7 @@ class SessionRecord:
 class AgentReport:
     agent: str
     sessions: int = 0
+    all_sessions: int = 0
     graph_touch: int = 0
     agent_calls: int = 0
     graphify_calls: int = 0
@@ -73,6 +74,8 @@ class AgentReport:
     latencies: list[int] = field(default_factory=list)
     deflection_base: int = 0
     deflected: int = 0
+    graph_evaluations: int = 0
+    stale_evaluations: int = 0
 
     @property
     def p95_latency_ms(self) -> int | None:
@@ -185,6 +188,7 @@ def _deflection(session: SessionRecord, hits: list[dict]) -> tuple[int, int]:
 
 def compute(sessions: Iterable[SessionRecord], metrics: Iterable[dict]) -> dict[str, AgentReport]:
     lines = [m for m in metrics if isinstance(m, dict)]
+    evaluated_sessions = {str(m.get("session_id", "")) for m in lines}
     hits_by_session: dict[str, list[dict]] = {}
     for line in lines:
         if line.get("outcome") == "hit":
@@ -193,19 +197,25 @@ def compute(sessions: Iterable[SessionRecord], metrics: Iterable[dict]) -> dict[
     reports: dict[str, AgentReport] = {}
     for session in sessions:
         report = reports.setdefault(session.agent, AgentReport(agent=session.agent))
-        report.sessions += 1
+        report.all_sessions += 1
         graphify = sum(c.kind == "graphify" for c in session.calls)
         report.graphify_calls += graphify
         report.code_greps += sum(c.kind == "code_grep" for c in session.calls)
         hits = hits_by_session.get(session.session_id, [])
-        report.agent_calls += graphify > 0
-        report.graph_touch += graphify > 0 or bool(hits)
+        if session.agent != "claude-code" or session.session_id in evaluated_sessions:
+            report.sessions += 1
+            report.agent_calls += graphify > 0
+            report.graph_touch += graphify > 0 or bool(hits)
         base, deflected = _deflection(session, hits)
         report.deflection_base += base
         report.deflected += deflected
 
     claude = reports.setdefault("claude-code", AgentReport(agent="claude-code"))
     for line in lines:
+        # Use the hook's observation, not today's filesystem state, for historical runs.
+        if line.get("repo") and line.get("reason") not in {"no_repo", "no_graph"}:
+            claude.graph_evaluations += 1
+            claude.stale_evaluations += line.get("reason") == "stale"
         latency = line.get("latency_ms")
         if isinstance(latency, int):
             claude.latencies.append(latency)
@@ -241,7 +251,12 @@ def render(reports: dict[str, AgentReport], since: datetime | None) -> str:
         lines += [
             "",
             f"{agent}",
+            "  denominator              "
+            + (
+                "hook-evaluated sessions" if agent == "claude-code" else "all indexed-repo sessions"
+            ),
             f"  sessions                 {r.sessions}",
+            f"  sessions (all)          {r.all_sessions}",
             f"  (a') graph touch         {r.graph_touch}/{r.sessions} = "
             f"{_pct(r.graph_touch, r.sessions):.1f}%",
             f"  (a) agent graphify use   {r.agent_calls}/{r.sessions} = "
@@ -252,6 +267,8 @@ def render(reports: dict[str, AgentReport], since: datetime | None) -> str:
         if agent == "claude-code":
             p95 = r.p95_latency_ms
             lines += [
+                f"  stale share              {r.stale_evaluations}/{r.graph_evaluations} = "
+                f"{_pct(r.stale_evaluations, r.graph_evaluations):.1f}%",
                 f"  hit precision            {r.precise_hits}/{r.hits} = "
                 f"{_pct(r.precise_hits, r.hits):.1f}%",
                 f"  p95 latency              {'-' if p95 is None else f'{p95} ms'}",
