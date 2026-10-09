@@ -566,7 +566,54 @@ def _render_memory_hygiene(console: Console, memory_dir: Path, now: datetime | N
         counts.append(f"{n} {label}")
     console.print(f"  [grey50]·[/grey50] {' · '.join(counts)}")
 
+    _render_weak_grades(console, memory_dir / "grades.jsonl", now)
     return ok
+
+
+def _render_weak_grades(console: Console, grades_file: Path, now: datetime) -> None:
+    """Weak session grades of the last week, aggregated by issue.
+
+    `grades.jsonl` is the only place grades land (ADR-021 Evolution), so this
+    line is where a run of weak sessions becomes visible.
+    """
+    from collections import Counter
+
+    from lazy_harness.knowledge.compound_loop import is_weak_grade
+
+    if not grades_file.is_file():
+        return
+    cutoff = now - timedelta(days=7)
+    total = 0
+    weak = 0
+    issues: Counter[str] = Counter()
+    for line in grades_file.read_text(errors="replace").splitlines():
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(row, dict) or not isinstance(row.get("ts"), str):
+            continue
+        try:
+            ts = datetime.fromisoformat(row["ts"])
+        except ValueError:
+            continue
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=UTC)
+        if ts < cutoff:
+            continue
+        total += 1
+        if not is_weak_grade(row):
+            continue
+        weak += 1
+        raw = row.get("issues")
+        if isinstance(raw, list):
+            issues.update(i for i in raw if isinstance(i, str) and i and i != "none")
+    if not total:
+        return
+    top = ", ".join(f"{name} ×{n}" for name, n in issues.most_common(3))
+    state = "[yellow]![/yellow]" if weak else "[green]✓[/green]"
+    suffix = f" — top issues: {top}" if top else ""
+    console.print(f"  {state} {weak} weak grade(s) of {total} in 7d{suffix}")
 
 
 def _render_profile_secrets(console: Console, cfg: Config) -> None:

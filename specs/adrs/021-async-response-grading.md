@@ -65,7 +65,7 @@ The prompt's JSON output gains one field:
 }
 ```
 
-### Backlog escalation (PRJ.md update)
+### Backlog escalation (PRJ.md update) — superseded, see Evolution
 
 When `grade.quality` is `poor`, **or** `acceptable` with a non-empty `issues` list, the worker locates the matching `PRJ-<Name>/PRJ-<Name>.md` under the user's LazyMind vault and appends a backlog item under `### Pendiente — Alta prioridad` (skipped when the note has no such section):
 
@@ -97,3 +97,18 @@ Resolution `cwd → PRJ-<Name>.md` is best-effort:
 - **Calibration risk.** ADR-008 warns that rewording the prompt degrades extraction quality. We mitigate by **appending** the `grade` block at the end of the schema, not interleaving, and by keeping the existing rules verbatim.
 - **Privacy.** `grades.jsonl` lives in the same `memory/` directory as `decisions.jsonl` — same security profile (user-only, never synced unless the user puts the project under a synced path).
 - **Backlog noise.** If the judge is too strict, every session leaves a backlog item. Counter-measure: only escalate `poor` or `acceptable + issues`. `good` and `excellent` never escalate. If even that proves noisy, the `confidence` threshold becomes a config knob.
+
+## Evolution — 2026-10-09: grades stay in `grades.jsonl`
+
+The backlog escalation above is removed. Between 2026-09-12 and 2026-10-09 it
+appended 121 `Session quality regression` items to one PRJ note, most of them
+repeating the same reproach, and buried the human-curated backlog twice. A grade
+is a per-session audit row, not a backlog item.
+
+- The worker writes the grade only to `grades.jsonl`, never to a PRJ.
+  `lazymind_dir` keeps serving the project snapshot of ADR-062.
+- `grading_enabled = false` now drops the grade before persistence, so no row
+  reaches `grades.jsonl`. Before this change the flag gated only the PRJ write.
+- `lh doctor` aggregates the last seven days in *Memory hygiene*: weak grades
+  (`poor`, or `acceptable` with real issues — `is_weak_grade`) over all grades,
+  and the three most frequent issues.

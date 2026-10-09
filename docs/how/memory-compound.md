@@ -166,7 +166,7 @@ Same one-line-per-entry format. The worker prompt asks the LLM to score the run 
  "confidence":0.9}
 ```
 
-Poor grades (`quality: "poor"`, low confidence, or recurring issues) escalate to the project's PRJ.md as a flag for the human to review. The file is append-only and not surfaced in `context-inject` — it is an audit trail, not session context.
+Grades never leave this file: `lh doctor` summarises the last seven days in *Memory hygiene* — weak grades (`poor`, or `acceptable` with real issues) over all grades, plus the most frequent issues. `grading_enabled = false` stops the rows. The file is append-only and not surfaced in `context-inject` — it is an audit trail, not session context.
 
 ### `handoff.md` — open items for next session
 
@@ -269,7 +269,7 @@ The file is append-only from the worker's side. Pending entries are reviewed wit
 
 When a batch would exceed the pending cap, the worker records it in `proposals-held.jsonl` under the same memory lock. `lh memory proposals held` lists those source lines without modifying them; `held requeue <N>` selects one line for pending review when capacity permits. The command keeps the source file and writes a disposition to `proposals-held-requeued.jsonl`. It flushes the pending replacement before the disposition replacement. A source marker in the pending entry lets a retry, or an accept/reject/apply operation, finish the disposition after an interrupted process without adding the proposal twice. Malformed held lines stay visible as diagnostics and cannot be selected. Directory syncing is attempted where supported, so this protocol does not promise power-loss recovery on filesystems that reject it.
 
-The grading prompt also receives the last 30 entries from `failures.jsonl` under a `## Recorded failures from previous sessions` section. When the same root cause shows up two or more times — across sessions or within one — the LLM is instructed to emit a proposal whose rule starts with `[EVITAR]`, capturing the prevention. Repeated mistakes graduate into candidate rules instead of accumulating silently; the human gate on merging stays unchanged. `lh doctor` reports the state of this pipeline in its *Memory hygiene* section: `MEMORY.md` size against both the 200-line and the 12KB cap, pending proposal count and age, and accepted/rejected totals.
+The grading prompt also receives the last 30 entries from `failures.jsonl` under a `## Recorded failures from previous sessions` section. When the same root cause shows up two or more times — across sessions or within one — the LLM is instructed to emit a proposal whose rule starts with `[EVITAR]`, capturing the prevention. Repeated mistakes graduate into candidate rules instead of accumulating silently; the human gate on merging stays unchanged. `lh doctor` reports the state of this pipeline in its *Memory hygiene* section: `MEMORY.md` size against both the 200-line and the 12KB cap, pending proposal count and age, accepted/rejected totals, and the weak session grades of the last seven days from `grades.jsonl`.
 
 ## De-duplication — why the same learning does not appear twice
 
