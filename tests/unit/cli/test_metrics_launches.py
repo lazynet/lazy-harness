@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from click.testing import CliRunner
 
+from lazy_harness.cli import metrics_cmd
 from lazy_harness.cli.metrics_cmd import metrics
 from lazy_harness.monitoring.db import MetricsDB
 
@@ -28,9 +31,16 @@ def _stat(session: str, date: str, profile: str) -> dict[str, object]:
     }
 
 
-def _fixed_clock(db: MetricsDB, monkeypatch: pytest.MonkeyPatch, when: str) -> None:
+def _fixed_clock(monkeypatch: pytest.MonkeyPatch, when: str) -> None:
+    """Freeze every clock `lh metrics launches` reads.
+
+    The command opens its own `MetricsDB`, so pinning `_now` on the test's
+    instance never reached it; the class is patched instead. The command also
+    derives `since` from its own `time.time()`, hence the module-level pin.
+    """
     ts = datetime.fromisoformat(when).timestamp()
-    monkeypatch.setattr(db, "_now", lambda: ts)
+    monkeypatch.setattr(MetricsDB, "_now", lambda self: ts)
+    monkeypatch.setattr(metrics_cmd, "time", SimpleNamespace(time=lambda: ts))
 
 
 def test_reports_counts_grouped_by_profile_agent_entry(tmp_path: Path) -> None:
@@ -65,7 +75,7 @@ def test_ratio_block_shows_the_computed_ratio(
 ) -> None:
     db_path = tmp_path / "metrics.db"
     db = MetricsDB(db_path)
-    _fixed_clock(db, monkeypatch, "2026-09-16T12:00:00")
+    _fixed_clock(monkeypatch, "2026-09-16T12:00:00")
     for _ in range(3):
         db.record_launch(profile="lazy", agent="claude-code", entry="run")
     db.insert_stats([_stat("s1", "2026-09-10", "lazy"), _stat("s2", "2026-09-12", "lazy")])
@@ -74,7 +84,8 @@ def test_ratio_block_shows_the_computed_ratio(
     result = CliRunner().invoke(metrics, ["launches", "--db", str(db_path)])
 
     assert result.exit_code == 0
-    assert "1.5" in result.output
+    assert "launches=3 sessions=2 ratio=1.50" in result.output
+    assert re.search(r"claude-code\s+run\s+3", result.output)
 
 
 def test_days_filters_the_launch_count(tmp_path: Path) -> None:
