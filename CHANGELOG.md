@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.88.0](https://github.com/lazynet/lazy-harness/compare/v0.87.0...v0.88.0) (2026-10-09)
+
+
+### Features
+
+* deploy blocking hooks to claude code with onFailure block ([#521](https://github.com/lazynet/lazy-harness/issues/521)) ([935127b](https://github.com/lazynet/lazy-harness/commit/935127b1dc0ca9f20f65f3b80d96436b4b9b4bfd))
+* keep session grades out of the PRJ and summarise them in lh doctor ([#524](https://github.com/lazynet/lazy-harness/issues/524)) ([f95f96e](https://github.com/lazynet/lazy-harness/commit/f95f96ee2567a58128b4ad35a6d721baa30b37df))
+
+
+### Bug Fixes
+
+* align agents.md gate command with tdd-check ([#523](https://github.com/lazynet/lazy-harness/issues/523)) ([1c0429f](https://github.com/lazynet/lazy-harness/commit/1c0429f617b6658ab1fa6bbbbc047424fdd90965))
+
 ## [0.87.0](https://github.com/lazynet/lazy-harness/compare/v0.86.1...v0.87.0) (2026-10-09)
 
 
