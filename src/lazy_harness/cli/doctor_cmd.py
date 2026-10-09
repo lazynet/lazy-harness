@@ -54,6 +54,7 @@ from lazy_harness.hooks.event_surface import (
 )
 from lazy_harness.hooks.runner import resolve_profile
 from lazy_harness.hooks.signal_gaps import HookSignalGap, collect_hook_signal_gaps
+from lazy_harness.knowledge.graph_repos import GraphHealth, collect_graph_health
 from lazy_harness.llm import LLMBackendError, LLMBackendNotFoundError
 from lazy_harness.llm.invoke import _resolve_api_key
 from lazy_harness.llm.openai_compat import OpenAICompatibleBackend
@@ -343,6 +344,46 @@ def _render_transcripts(console: Console, cfg: Config) -> None:
         # `icon` is the only markup on this line. A profile name or a path
         # holding `[...]` is markup to rich too, and it deletes it silently.
         console.print(f"  {icon} {escape(entry.profile)} \u2014 {escape(detail)}")
+
+
+_GRAPH_ICONS = {
+    "ok": "[green]✓[/green]",
+    "warning": "[yellow]![/yellow]",
+    "error": "[red]✗[/red]",
+    "skipped": "[grey50]·[/grey50]",
+}
+
+
+def _render_graph_repos(console: Console, health: GraphHealth) -> None:
+    """What `lh knowledge graph update` could not fix, per repo in scope.
+
+    A healthy repo is one `ok` line; a repo with problems gets a header and one
+    line per problem. Nothing here fails `lh doctor`: a stale graph or a hook
+    the shared dispatcher does not forward is a repair to make, and doctor is
+    read-only, so the section names it rather than turning the exit code red.
+    Silent when no repo is in scope.
+    """
+    if not health.repos and not health.error:
+        return
+    console.print("\n[bold]Graph repos[/bold]")
+    if health.error:
+        console.print(f"  {_GRAPH_ICONS['warning']} could not collect: {escape(health.error)}")
+        return
+    for repo in health.repos:
+        tag = " [dim]discovered[/dim]" if repo.discovered else ""
+        name = escape(contract_path(repo.path))
+        if repo.status == "ok":
+            console.print(f"  {_GRAPH_ICONS['ok']} {name}{tag} \u2014 ok")
+            continue
+        console.print(f"  {_GRAPH_ICONS[repo.status]} {name}{tag}")
+        for check in repo.checks:
+            icon = _GRAPH_ICONS[check.status]
+            console.print(f"      {icon} {escape(check.name)}: {escape(check.detail)}")
+    if health.extensions is not None:
+        ext = health.extensions
+        console.print(
+            f"  {_GRAPH_ICONS[ext.status]} {escape(ext.name)} \u2014 {escape(ext.detail)}"
+        )
 
 
 def _render_shared_roots(console: Console, shared_roots: list[SharedRootInfo]) -> None:
@@ -1001,6 +1042,7 @@ def _doctor_json(cfg: Config) -> tuple[dict, bool]:
         "hook_operations": [asdict(g) for g in collect_hook_operation_gaps(cfg)],
         "uncarried_events": [asdict(g) for g in collect_uncarried_events(cfg)],
         "mcp_gaps": [asdict(g) for g in collect_mcp_gaps(cfg)],
+        "graph_repos": asdict(collect_graph_health(cfg)),
     }, ok
 
 
@@ -1333,6 +1375,7 @@ def doctor(as_json: bool) -> None:
     _render_uncarried_events(console, collect_uncarried_events(cfg))
     _render_mcp_gaps(console, collect_mcp_gaps(cfg))
     _render_codex_trust(console, collect_codex_trust(cfg))
+    _render_graph_repos(console, collect_graph_health(cfg))
 
     launches_report = _launches_report_or_diagnostic(cfg, _now())
     _render_launches(console, launches_report)
