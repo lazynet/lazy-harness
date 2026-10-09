@@ -12,6 +12,7 @@ A hook is an executable that:
 2. Reads a JSON payload describing the event from stdin.
 3. Optionally writes a JSON object with `hookSpecificOutput` on stdout.
 4. Exits with code 0. **Always**, with two deliberate exceptions: the `PreToolUse` hooks that block — `pre-tool-use-security` and `pre-tool-use-git-scope` — exit 2 when they decide to block, which is how Claude Code expects a `PreToolUse` decision to be communicated. Every other built-in is exit-0-always, including on error.
+   Deploy writes those two to Claude Code with `"onFailure": "block"`, so a guard that cannot even start — `lh` missing from `PATH`, a crash before the runner, Claude Code's own hook timeout — also blocks instead of passing. Claude Code before 2.1.295 ignores the key and keeps loading the file, so there the old fail-open behaviour remains.
 
 Built-in hooks ship inside the framework as Python scripts under `src/lazy_harness/hooks/builtins/`. User hooks live under `~/.config/lazy-harness/hooks/<name>.py` (or whatever language you prefer as long as the binary is executable and reads stdin).
 

@@ -438,6 +438,12 @@ def builtin_agents(name: str) -> frozenset[str]:
     return spec.agents if spec is not None else frozenset()
 
 
+def builtin_blocking(name: str) -> bool:
+    """Whether a builtin refuses actions (`BuiltinHookSpec.blocking`); False for a user hook."""
+    spec = resolve_builtin_spec(name)
+    return spec.blocking if spec is not None else False
+
+
 def builtin_operations(name: str) -> frozenset[Operation]:
     """Tool operations a builtin declares (`BuiltinHookSpec.operations`).
 

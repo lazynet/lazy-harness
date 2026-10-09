@@ -59,7 +59,7 @@ def _entries_for(cfg: Config, profile: str, binary: str) -> dict[str, list[HookE
     from lazy_harness.agents.registry import get_agent
     from lazy_harness.deploy.defaults import merge_with_defaults
     from lazy_harness.deploy.engine import hook_command
-    from lazy_harness.hooks.loader import resolve_script_names
+    from lazy_harness.hooks.loader import builtin_blocking, resolve_script_names
 
     agent = get_agent(cfg.agent.type)
     effective = merge_with_defaults(cfg.hooks, agent)
@@ -75,6 +75,7 @@ def _entries_for(cfg: Config, profile: str, binary: str) -> dict[str, list[HookE
             HookEntry(
                 command=hook_command(hook, profile=profile, binary=binary),
                 matcher=hook.matcher,
+                blocking=hook.is_builtin and builtin_blocking(hook.name),
             )
             for hook in resolved
         ]

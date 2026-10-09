@@ -314,7 +314,7 @@ def _group_is_exact_builtin(event: str, entry: dict, *, binaries: Collection[str
     if not isinstance(handlers, list) or len(handlers) != 1:
         return False
     handler = handlers[0]
-    if not isinstance(handler, dict) or set(handler) != {"type", "command"}:
+    if not isinstance(handler, dict) or not {"type", "command"} <= set(handler):
         return False
     command = handler.get("command")
     if handler.get("type") != "command" or not isinstance(command, str):
@@ -324,6 +324,11 @@ def _group_is_exact_builtin(event: str, entry: dict, *, binaries: Collection[str
         return False
     spec = resolve_builtin_spec(name)
     if spec is None:
+        return False
+    # A deploy from before `onFailure` existed wrote a blocking builtin without
+    # it, so both shapes are ours; an informational builtin never carries it.
+    extra = {key: value for key, value in handler.items() if key not in ("type", "command")}
+    if extra not in ({}, {"onFailure": "block"} if spec.blocking else {}):
         return False
     default_matcher = {"pre_tool_use": "Bash", "post_tool_use": "Edit|Write"}.get(canonical, "")
     return entry.get("matcher") == (spec.matcher_for(canonical) or default_matcher)
@@ -623,18 +628,16 @@ class ClaudeCodeAdapter:
             default_matcher = matcher_map.get(event, "")
             matchers = []
             for script in scripts:
+                handler: dict[str, str] = {"type": "command"}
                 if isinstance(script, HookEntry):
-                    command = script.command
+                    handler["command"] = script.command
                     matcher = script.matcher or default_matcher
+                    if script.blocking:
+                        handler["onFailure"] = "block"
                 else:
-                    command = script
+                    handler["command"] = script
                     matcher = default_matcher
-                matchers.append(
-                    {
-                        "matcher": matcher,
-                        "hooks": [{"type": "command", "command": command}],
-                    }
-                )
+                matchers.append({"matcher": matcher, "hooks": [handler]})
             settings_hooks[cc_event] = matchers
         return settings_hooks
 

@@ -113,7 +113,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "lh hook pre-tool-use-security --profile personal"
+            "command": "lh hook pre-tool-use-security --profile personal",
+            "onFailure": "block"
           }
         ]
       }
@@ -126,7 +127,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "lh hook pre-tool-use-git-scope --profile personal"
+            "command": "lh hook pre-tool-use-git-scope --profile personal",
+            "onFailure": "block"
           }
         ]
       }
