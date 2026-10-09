@@ -54,12 +54,15 @@ def _git(root: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=root, check=True, capture_output=True, env=env)
 
 
-def _repo(tmp_path: Path, *, graph: dict | None = GRAPH, graph_offset: int = 60) -> Path:
+def _repo(
+    tmp_path: Path, *, graph: dict | None = GRAPH, graph_offset: int = 60, code: bool = True
+) -> Path:
     root = tmp_path / "repo"
     (root / "src").mkdir(parents=True)
     _git(root, "init", "-q")
-    (root / "README").write_text("x")
-    _git(root, "add", "README")
+    tracked = "src/app.py" if code else "README"
+    (root / tracked).write_text("x")
+    _git(root, "add", tracked)
     _git(root, "commit", "-qm", "init")
     if graph is not None:
         out = root / "graphify-out"
@@ -170,6 +173,14 @@ def test_a_stale_graph_stays_silent(tmp_path: Path, metrics: Path) -> None:
 
     assert decision.additional_context == ""
     assert _lines(metrics)[-1]["reason"] == "stale"
+
+
+def test_a_graph_older_than_a_docs_only_head_is_still_fresh(tmp_path: Path, metrics: Path) -> None:
+    root = _repo(tmp_path, graph_offset=-60, code=False)
+
+    decision = hook.main(_event(root, "Grep", {"pattern": "check_version"}))
+
+    assert "2 definitions" in decision.additional_context
 
 
 def test_a_graph_exactly_at_head_time_is_fresh(tmp_path: Path, metrics: Path) -> None:

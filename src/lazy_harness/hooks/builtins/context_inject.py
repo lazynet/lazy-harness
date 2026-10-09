@@ -691,7 +691,7 @@ def graphify_section(graphify_dir: Path, repo_root: Path) -> str:
     """Either a staleness banner or a content summary, depending on freshness.
 
     Returns "" when `graphify-out/graph.json` does not exist (no graph yet).
-    Stale (mtime < HEAD timestamp) → "## Notice" banner pointing at /graphify.
+    Stale (mtime < last code commit) → "## Notice" banner pointing at /graphify.
     Fresh → "## Code structure": the five most connected symbols with their
     locations, example commands built from them, and when the graph beats grep.
     A graph with no code symbols falls back to its node and edge counts.
@@ -702,34 +702,21 @@ def graphify_section(graphify_dir: Path, repo_root: Path) -> str:
     if not graph_json.is_file():
         return ""
 
-    try:
-        graph_mtime = graph_json.stat().st_mtime
-    except OSError:
-        return ""
+    from lazy_harness.knowledge import graph_freshness
 
-    head_ts: float | None = None
-    try:
-        result = subprocess.run(
-            ["git", "log", "-1", "--format=%ct"],
-            cwd=str(repo_root),
-            capture_output=True,
-            text=True,
-            timeout=2,
-            check=False,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            head_ts = float(result.stdout.strip())
-    except (OSError, subprocess.SubprocessError, ValueError):
-        head_ts = None
-
-    if head_ts is not None and graph_mtime < head_ts:
+    if graph_freshness.is_fresh(repo_root) is False:
         from datetime import datetime as _dt
 
-        head_date = _dt.fromtimestamp(head_ts).strftime("%Y-%m-%d")
+        try:
+            graph_mtime = graph_json.stat().st_mtime
+        except OSError:
+            return ""
+        code_ts = graph_freshness.last_code_commit_ts(repo_root)
+        code_date = _dt.fromtimestamp(code_ts or 0).strftime("%Y-%m-%d")
         graph_date = _dt.fromtimestamp(graph_mtime).strftime("%Y-%m-%d")
         return (
             f"## Notice\n"
-            f"graphify-out/ is stale (last built {graph_date}, HEAD {head_date}). "
+            f"graphify-out/ is stale (last built {graph_date}, last code commit {code_date}). "
             f"Run /graphify to refresh."
         )
 
