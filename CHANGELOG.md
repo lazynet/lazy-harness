@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.87.0](https://github.com/lazynet/lazy-harness/compare/v0.86.1...v0.87.0) (2026-10-09)
+
+
+### Features
+
+* repair graph repos and refresh them after merges ([#517](https://github.com/lazynet/lazy-harness/issues/517)) ([2af6145](https://github.com/lazynet/lazy-harness/commit/2af61457e9fcf24f74629e4d008eccb869d57780))
+* report graph repo health in lh doctor ([#520](https://github.com/lazynet/lazy-harness/issues/520)) ([b3920f3](https://github.com/lazynet/lazy-harness/commit/b3920f398cefa10f8a1b7000969c5678c970a23a))
+
+
+### Bug Fixes
+
+* measure graph freshness against the last code commit ([#516](https://github.com/lazynet/lazy-harness/issues/516)) ([04ed5c2](https://github.com/lazynet/lazy-harness/commit/04ed5c293f753f1d3a4330b4ae4caa8aa62fa480))
+* pin every clock and the console width in two date- and width-dependent tests ([#519](https://github.com/lazynet/lazy-harness/issues/519)) ([5c70b34](https://github.com/lazynet/lazy-harness/commit/5c70b348ce56adb66a13ea271c7e313421339847))
+* scope graph assist adoption denominator ([#518](https://github.com/lazynet/lazy-harness/issues/518)) ([020c02a](https://github.com/lazynet/lazy-harness/commit/020c02a370e6374b0e5bbe18af3f4649af2e31cd))
+* skip attachment records when scanning for an interactive session marker ([#515](https://github.com/lazynet/lazy-harness/issues/515)) ([b22ed69](https://github.com/lazynet/lazy-harness/commit/b22ed694d087d78df63bbfeb8dd9ccd832460c18))
+
+
+### Documentation
+
+* **backlog:** record 2026-10-08 graphify and test-env readings ([dcc25ee](https://github.com/lazynet/lazy-harness/commit/dcc25ee655254ee2d67e033f952eb89d27cfa23f))
+* **roadmap:** close ADR-061 receiver and panel rollout ([cbc86aa](https://github.com/lazynet/lazy-harness/commit/cbc86aa5f68ad4e0290ac082a8ade43167e5a4b2))
+* **specs:** record the inject_goal_prompt kill ([52bb9c6](https://github.com/lazynet/lazy-harness/commit/52bb9c60c0828a504c8a4bd7d8f42df2d07e136d))
+
 ## [0.86.1](https://github.com/lazynet/lazy-harness/compare/v0.86.0...v0.86.1) (2026-10-08)
 
 
