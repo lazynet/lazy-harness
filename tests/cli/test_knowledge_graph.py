@@ -260,3 +260,265 @@ def test_graph_update_names_the_real_cause_when_the_index_write_fails(
     output = " ".join(result.output.split())
     assert "disk full" in output
     assert "unreadable" not in output
+
+
+# ---- self-repair and scope (graph_repos) ----------------------------------
+
+
+def _stub_repair(monkeypatch) -> list[Path]:
+    """Replace `ensure_repo` so no test touches real hooks; records the roots."""
+    from lazy_harness.knowledge import graph_repos
+
+    seen: list[Path] = []
+
+    def fake(root, *, log_dir=None):  # noqa: ANN001, ANN202
+        seen.append(Path(root))
+        return graph_repos.RepoRepair(
+            root=Path(root),
+            post_merge="installed",
+            graphify_hooks="already",
+            ignored="failed: boom",
+        )
+
+    monkeypatch.setattr(graph_repos, "ensure_repo", fake)
+    return seen
+
+
+def _real_repo(root: Path, name: str) -> Path:
+    import subprocess
+
+    r = root / name
+    r.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(r)], check=True)
+    return r
+
+
+def test_graph_add_repairs_the_repo(tmp_path: Path, monkeypatch) -> None:
+    _config(tmp_path)
+    repo = _repo(tmp_path, "myrepo")
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("COLUMNS", "300")
+    seen = _stub_repair(monkeypatch)
+
+    result = CliRunner().invoke(knowledge, ["graph", "add", str(repo)])
+
+    assert result.exit_code == 0, result.output
+    assert seen == [repo.resolve()]
+    output = " ".join(result.output.split())
+    assert "post-merge" in output and "installed" in output
+    assert "ignored paths" in output and "boom" in output
+    assert "graphify hooks" not in output, "an `already` action is silent"
+
+
+def test_graph_add_repairs_an_already_registered_repo_too(tmp_path: Path, monkeypatch) -> None:
+    repo = _repo(tmp_path, "myrepo")
+    _config(tmp_path, repos=[str(repo)])
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    seen = _stub_repair(monkeypatch)
+
+    result = CliRunner().invoke(knowledge, ["graph", "add", str(repo)])
+
+    assert result.exit_code == 0, result.output
+    assert seen == [repo.resolve()]
+
+
+def _scope_setup(tmp_path: Path, monkeypatch, registered: list[Path]) -> None:
+    _config(tmp_path, repos=[str(r) for r in registered])
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("LH_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("COLUMNS", "300")
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+
+
+def _discovered_store(tmp_path: Path, *repos: Path) -> None:
+    import json
+
+    store = tmp_path / "data" / "graph-repos.json"
+    store.parent.mkdir(parents=True, exist_ok=True)
+    store.write_text(json.dumps({"discovered": [str(r) for r in repos]}))
+
+
+def test_graph_update_repairs_each_repo_before_its_graphify_run(
+    tmp_path: Path, monkeypatch
+) -> None:
+    a, b = _repo(tmp_path, "a"), _repo(tmp_path, "b")
+    _scope_setup(tmp_path, monkeypatch, [a, b])
+    from lazy_harness.knowledge import graph_repos
+    from lazy_harness.knowledge import graphify as gmod
+
+    order: list[str] = []
+
+    def fake_repair(root, *, log_dir=None):  # noqa: ANN001, ANN202
+        order.append(f"repair:{root.name}")
+        return graph_repos.RepoRepair(root, "already", "already", "already")
+
+    def fake_run(action, target=None, timeout=600):  # noqa: ANN001, ANN202
+        order.append(f"update:{Path(str(target)).name}")
+        return gmod.GraphifyResult(exit_code=0, stdout="", stderr="")
+
+    monkeypatch.setattr(graph_repos, "ensure_repo", fake_repair)
+    monkeypatch.setattr(gmod, "run_graphify", fake_run)
+    monkeypatch.setattr(gmod, "is_graphify_available", lambda: True)
+
+    result = CliRunner().invoke(knowledge, ["graph", "update"])
+
+    assert result.exit_code == 0, result.output
+    assert order == ["repair:a", "update:a", "repair:b", "update:b"]
+    assert "post-merge" not in result.output, "nothing to report when everything is `already`"
+
+
+def test_graph_update_prints_one_line_per_repair_that_was_not_already(
+    tmp_path: Path, monkeypatch
+) -> None:
+    a = _repo(tmp_path, "a")
+    _scope_setup(tmp_path, monkeypatch, [a])
+    _stub_repair(monkeypatch)
+    _fake_graphify(monkeypatch, write_graph=True)
+
+    result = CliRunner().invoke(knowledge, ["graph", "update"])
+
+    assert result.exit_code == 0, result.output
+    output = " ".join(result.output.split())
+    assert "post-merge: installed" in output
+    assert "ignored paths: failed: boom" in output
+    assert "graphify hooks" not in output
+
+
+def test_graph_update_walks_discovered_repos_after_the_registered_ones(
+    tmp_path: Path, monkeypatch
+) -> None:
+    reg, disc = _repo(tmp_path, "reg"), _repo(tmp_path, "disc")
+    _scope_setup(tmp_path, monkeypatch, [reg])
+    _discovered_store(tmp_path, disc)
+    seen = _stub_repair(monkeypatch)
+    _fake_graphify(monkeypatch, write_graph=False)
+
+    result = CliRunner().invoke(knowledge, ["graph", "update"])
+
+    assert result.exit_code == 0, result.output
+    assert seen == [reg, disc]
+
+
+def test_graph_update_with_nothing_registered_still_walks_discovered_repos(
+    tmp_path: Path, monkeypatch
+) -> None:
+    disc = _repo(tmp_path, "disc")
+    _scope_setup(tmp_path, monkeypatch, [])
+    _discovered_store(tmp_path, disc)
+    seen = _stub_repair(monkeypatch)
+    _fake_graphify(monkeypatch, write_graph=False)
+
+    result = CliRunner().invoke(knowledge, ["graph", "update"])
+
+    assert result.exit_code == 0, result.output
+    assert seen == [disc]
+
+
+def test_graph_update_repo_option_updates_only_that_repo_even_if_unregistered(
+    tmp_path: Path, monkeypatch
+) -> None:
+    reg, other = _repo(tmp_path, "reg"), _repo(tmp_path, "other")
+    _scope_setup(tmp_path, monkeypatch, [reg])
+    seen = _stub_repair(monkeypatch)
+    _fake_graphify(monkeypatch, write_graph=False)
+
+    result = CliRunner().invoke(knowledge, ["graph", "update", "--repo", str(other)])
+
+    assert result.exit_code == 0, result.output
+    assert seen == [other.resolve()]
+
+
+def test_graph_update_repo_option_rejects_a_path_that_is_not_a_repo(
+    tmp_path: Path, monkeypatch
+) -> None:
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    _scope_setup(tmp_path, monkeypatch, [])
+    _stub_repair(monkeypatch)
+    _fake_graphify(monkeypatch, write_graph=False)
+
+    result = CliRunner().invoke(knowledge, ["graph", "update", "--repo", str(plain)])
+
+    assert result.exit_code != 0
+    assert "not a git repo" in result.output.lower()
+
+
+def test_graph_update_without_options_runs_on_real_repos(tmp_path: Path, monkeypatch) -> None:
+    """Smoke: the parameter-less path through the real repair, with git and no stubs for it."""
+    repo = _real_repo(tmp_path, "real")
+    _scope_setup(tmp_path, monkeypatch, [repo])
+    _fake_graphify(monkeypatch, write_graph=False)
+    from lazy_harness.knowledge import graph_repos
+
+    monkeypatch.setattr(
+        graph_repos, "ensure_graphify_hooks", lambda root: "failed: stubbed, no real install"
+    )
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "empty.gitconfig"))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+    result = CliRunner().invoke(knowledge, ["graph", "update"])
+
+    assert result.exit_code == 0, result.output
+    assert (repo / ".git" / "hooks" / "post-merge").is_file()
+
+
+def test_graph_update_refreshes_the_discovered_store_from_the_metrics(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import json
+
+    repo = _repo(tmp_path, "seen")
+    (repo / "graphify-out").mkdir()
+    (repo / "graphify-out" / "graph.json").write_text("{}")
+    profile = tmp_path / "profile"
+    (profile / "logs").mkdir(parents=True)
+    (profile / "logs" / "graph_assist_metrics.jsonl").write_text(
+        json.dumps({"repo": str(repo)}) + "\n"
+    )
+    body = (
+        '[harness]\nversion = "1"\n[knowledge.structure]\nenabled = true\nrepos = []\n'
+        '[profiles]\ndefault = "p"\n'
+        f'[profiles.p]\nconfig_dir = "{profile}"\nagent = "claude-code"\n'
+    )
+    (tmp_path / "config.toml").write_text(body)
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("LH_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    seen = _stub_repair(monkeypatch)
+    _fake_graphify(monkeypatch, write_graph=False)
+
+    result = CliRunner().invoke(knowledge, ["graph", "update"])
+
+    assert result.exit_code == 0, result.output
+    assert seen == [repo]
+    stored = json.loads((tmp_path / "data" / "graph-repos.json").read_text())
+    assert stored["discovered"] == [str(repo)]
+
+
+def test_graph_list_marks_discovered_repos(tmp_path: Path, monkeypatch) -> None:
+    reg, disc = _repo(tmp_path, "reg"), _repo(tmp_path, "disc")
+    _scope_setup(tmp_path, monkeypatch, [reg])
+    _discovered_store(tmp_path, disc)
+
+    result = CliRunner().invoke(knowledge, ["graph", "list"])
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.splitlines()
+    reg_line = next(ln for ln in lines if "/reg" in ln)
+    disc_line = next(ln for ln in lines if "/disc" in ln)
+    assert "discovered" not in reg_line and "discovered" in disc_line
+
+
+def test_graph_list_shows_discovered_repos_when_nothing_is_registered(
+    tmp_path: Path, monkeypatch
+) -> None:
+    disc = _repo(tmp_path, "disc")
+    _scope_setup(tmp_path, monkeypatch, [])
+    _discovered_store(tmp_path, disc)
+
+    result = CliRunner().invoke(knowledge, ["graph", "list"])
+
+    assert result.exit_code == 0, result.output
+    assert "disc" in result.output and "No repos registered" not in result.output

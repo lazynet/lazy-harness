@@ -433,10 +433,19 @@ def _write_repo_list(cfg_path: Path, cfg: Config, repos: list[str]) -> None:
     save_config(cfg, cfg_path)
 
 
+def _report_repairs(console: Console, log_path: Path, path: Path, repair) -> None:  # noqa: ANN001
+    """One line per repair that did something or failed; `already` stays silent."""
+    for action, status in repair.changes().items():
+        console.print(f"[cyan]repair[/cyan]  {contract_path(path)}  {action}: {escape(status)}")
+        log_append(log_path, f"repair: {path}: {action}: {status}")
+
+
 @knowledge_graph.command("add")
 @click.argument("repo", type=click.Path(exists=True, file_okay=False, path_type=Path))
 def knowledge_graph_add(repo: Path) -> None:
     """Register REPO so its code graph is refreshed on schedule."""
+    from lazy_harness.knowledge import graph_repos
+
     console = Console()
     resolved = repo.resolve()
     if not (resolved / ".git").exists():
@@ -452,16 +461,21 @@ def knowledge_graph_add(repo: Path) -> None:
 
     if str(resolved) in repos:
         console.print(f"[dim]already registered:[/dim] {contract_path(resolved)}")
-        return
+    else:
+        repos.append(str(resolved))
+        _write_repo_list(cfg_path, cfg, repos)
+        console.print(f"[green]registered:[/green] {contract_path(resolved)}")
 
-    repos.append(str(resolved))
-    _write_repo_list(cfg_path, cfg, repos)
-    console.print(f"[green]registered:[/green] {contract_path(resolved)}")
+    # Re-adding is how a repo gets its hooks fixed, so it repairs either way.
+    log_path = default_log_dir() / "graphify-update.log"
+    _report_repairs(console, log_path, resolved, graph_repos.ensure_repo(resolved))
 
 
 @knowledge_graph.command("list")
 def knowledge_graph_list() -> None:
     """List the repos whose code graph is refreshed on schedule."""
+    from lazy_harness.knowledge import graph_repos
+
     console = Console()
     try:
         _, repos = _structure_repos(config_file())
@@ -469,48 +483,70 @@ def knowledge_graph_list() -> None:
         console.print(f"[red]Error:[/red] {escape(str(e))}")
         raise SystemExit(1)
 
-    if not repos:
+    scoped = graph_repos.scope(
+        [expand_path(entry) for entry in repos], graph_repos.load_discovered()
+    )
+    if not scoped:
         console.print("No repos registered. Add one with `lh knowledge graph add <path>`.")
         return
-    for entry in repos:
-        path = expand_path(entry)
-        graph = path / "graphify-out" / "graph.json"
+    for entry in scoped:
+        graph = entry.path / "graphify-out" / "graph.json"
         state = "graph" if graph.is_file() else "[yellow]no graph yet[/yellow]"
-        console.print(f"  {contract_path(path)}  {state}")
+        origin = "  [dim]discovered[/dim]" if entry.discovered else ""
+        console.print(f"  {contract_path(entry.path)}  {state}{origin}")
 
 
 @knowledge_graph.command("update")
-def knowledge_graph_update() -> None:
-    """Rebuild the code graph for every registered repo.
+@click.option(
+    "--repo",
+    "only",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Update just this repo (registered or not) instead of every repo in scope.",
+)
+def knowledge_graph_update(only: Path | None) -> None:
+    """Rebuild the code graph for every registered or discovered repo.
 
     A worktree commit never rebuilds the graph (graphify's own post-commit hook
     exits early outside the main checkout), so nothing refreshes it in a
-    worktree-first workflow. This is what the scheduler calls instead.
+    worktree-first workflow. This is what the scheduler calls instead. Each
+    repo is repaired first: missing hooks and globally-ignored directories are
+    fixed before graphify walks it.
     """
-    from lazy_harness.knowledge import graph_assist, graphify
+    from lazy_harness.knowledge import graph_assist, graph_repos, graphify
 
     console = Console()
-    try:
-        _, repos = _structure_repos(config_file())
-    except ConfigError as e:
-        console.print(f"[red]Error:[/red] {escape(str(e))}")
-        raise SystemExit(1)
-
-    if not repos:
-        console.print("No repos registered. Add one with `lh knowledge graph add <path>`.")
-        return
+    targets: list[Path]
+    if only is not None:
+        resolved = only.resolve()
+        if not (resolved / ".git").exists():
+            console.print(f"[red]Error:[/red] {contract_path(resolved)} is not a git repo.")
+            raise SystemExit(1)
+        targets = [resolved]
+    else:
+        try:
+            cfg, repos = _structure_repos(config_file())
+        except ConfigError as e:
+            console.print(f"[red]Error:[/red] {escape(str(e))}")
+            raise SystemExit(1)
+        discovered = graph_repos.refresh_discovered(cfg)
+        scoped = graph_repos.scope([expand_path(entry) for entry in repos], discovered)
+        targets = [entry.path for entry in scoped]
+        if not targets:
+            console.print("No repos registered. Add one with `lh knowledge graph add <path>`.")
+            return
     if not graphify.is_graphify_available():
         console.print("[red]Error:[/red] graphify is not on PATH.")
         raise SystemExit(1)
 
     log_path = default_log_dir() / "graphify-update.log"
     failures = 0
-    for entry in repos:
-        path = expand_path(entry)
+    for path in targets:
         if not path.is_dir():
             console.print(f"[yellow]skipped[/yellow]  {contract_path(path)} (missing)")
             log_append(log_path, f"skipped: {path} (missing)")
             continue
+        _report_repairs(console, log_path, path, graph_repos.ensure_repo(path))
         result = graphify.run_graphify("update", str(path))
         if result.exit_code == 0:
             console.print(f"[green]updated[/green]  {contract_path(path)}")
@@ -530,7 +566,7 @@ def knowledge_graph_update() -> None:
             failures += 1
             detail = (result.stderr or result.stdout).strip().splitlines()
             last = detail[-1] if detail else ""
-            console.print(f"[red]failed [/red]  {contract_path(path)}: {last}")
+            console.print(f"[red]failed [/red]  {contract_path(path)}: {escape(last)}")
             log_append(log_path, f"failed: {path}: {last}")
 
     if failures:
