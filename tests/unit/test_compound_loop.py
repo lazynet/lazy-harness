@@ -1469,118 +1469,15 @@ def test_resolve_prj_md_returns_none_when_dir_missing(tmp_path: Path) -> None:
     assert resolve_prj_md("anything", tmp_path / "missing") is None
 
 
-def test_append_grade_to_prj_backlog_only_when_grade_warrants(tmp_path: Path) -> None:
-    from lazy_harness.knowledge.compound_loop import append_grade_to_prj_backlog
-
-    lazymind = _build_lazymind(tmp_path, ["LazyHarness"])
-    prj_md = lazymind / "1-Projects" / "PRJ-LazyHarness" / "PRJ-LazyHarness.md"
-
-    appended = append_grade_to_prj_backlog(
-        prj_md,
-        {"quality": "good", "issues": [], "reasoning": "fine", "confidence": 0.9},
-        "2026-05-02",
-        "abcd1234",
-    )
-    assert appended is False
-    assert "Session quality regression" not in prj_md.read_text()
-
-
-def test_append_grade_to_prj_backlog_writes_for_poor_quality(tmp_path: Path) -> None:
-    from lazy_harness.knowledge.compound_loop import append_grade_to_prj_backlog
-
-    lazymind = _build_lazymind(tmp_path, ["LazyHarness"])
-    prj_md = lazymind / "1-Projects" / "PRJ-LazyHarness" / "PRJ-LazyHarness.md"
-
-    appended = append_grade_to_prj_backlog(
-        prj_md,
-        {
-            "quality": "poor",
-            "issues": ["hallucination", "tool_misuse"],
-            "reasoning": "Hallucinated a flag.",
-            "confidence": 0.85,
-        },
-        "2026-05-02",
-        "abcd1234",
-    )
-    assert appended is True
-    text = prj_md.read_text()
-    assert "Session quality regression — Hallucinated a flag." in text
-    assert "graded 2026-05-02" in text
-    assert "session abcd1234" in text
-    assert "hallucination" in text
-    # New item must land under Alta prioridad, before Media.
-    alta = text.index("Alta prioridad")
-    new_item = text.index("Session quality regression")
-    media = text.index("Media prioridad")
-    assert alta < new_item < media
-
-
-def test_append_grade_to_prj_backlog_writes_for_acceptable_with_issues(
-    tmp_path: Path,
+def test_process_task_persists_a_poor_grade_without_touching_the_prj(
+    tmp_path: Path, monkeypatch
 ) -> None:
-    from lazy_harness.knowledge.compound_loop import append_grade_to_prj_backlog
-
-    lazymind = _build_lazymind(tmp_path, ["LazyHarness"])
-    prj_md = lazymind / "1-Projects" / "PRJ-LazyHarness" / "PRJ-LazyHarness.md"
-
-    appended = append_grade_to_prj_backlog(
-        prj_md,
-        {
-            "quality": "acceptable",
-            "issues": ["inefficient"],
-            "reasoning": "Avoidable cost.",
-            "confidence": 0.7,
-        },
-        "2026-05-02",
-        "abcd1234",
-    )
-    assert appended is True
-
-
-def test_append_grade_to_prj_backlog_skips_acceptable_without_issues(
-    tmp_path: Path,
-) -> None:
-    from lazy_harness.knowledge.compound_loop import append_grade_to_prj_backlog
-
-    lazymind = _build_lazymind(tmp_path, ["LazyHarness"])
-    prj_md = lazymind / "1-Projects" / "PRJ-LazyHarness" / "PRJ-LazyHarness.md"
-
-    appended = append_grade_to_prj_backlog(
-        prj_md,
-        {"quality": "acceptable", "issues": [], "reasoning": "ok", "confidence": 0.6},
-        "2026-05-02",
-        "abcd1234",
-    )
-    assert appended is False
-
-
-def test_append_grade_to_prj_backlog_returns_false_when_section_missing(
-    tmp_path: Path,
-) -> None:
-    from lazy_harness.knowledge.compound_loop import append_grade_to_prj_backlog
-
-    prj_md = tmp_path / "PRJ-X.md"
-    prj_md.write_text("# PRJ-X\n\nNo backlog here.\n")
-    appended = append_grade_to_prj_backlog(
-        prj_md,
-        {
-            "quality": "poor",
-            "issues": ["incomplete"],
-            "reasoning": "stopped early",
-            "confidence": 0.9,
-        },
-        "2026-05-02",
-        "abcd1234",
-    )
-    assert appended is False
-
-
-def test_process_task_persists_grade_and_appends_backlog(tmp_path: Path, monkeypatch) -> None:
     queue = tmp_path / "queue"
     memory = tmp_path / "memory"
     learnings = tmp_path / "Learnings"
     lazymind = _build_lazymind(tmp_path, ["LazyHarness"])
     prj_md = lazymind / "1-Projects" / "PRJ-LazyHarness" / "PRJ-LazyHarness.md"
+    before = prj_md.read_bytes()
 
     session = _interactive_session(tmp_path)
     cwd = Path("/tmp/lazy-harness")
@@ -1613,7 +1510,7 @@ def test_process_task_persists_grade_and_appends_backlog(tmp_path: Path, monkeyp
 
     assert outcome.was_processed
     assert (memory / "grades.jsonl").is_file()
-    assert "Session quality regression" in prj_md.read_text()
+    assert prj_md.read_bytes() == before
 
 
 # ---------------------------------------------------------------------------
@@ -3093,44 +2990,6 @@ _POOR = {
 }
 
 
-def test_append_grade_bumps_updated_when_it_writes(tmp_path: Path) -> None:
-    from lazy_harness.knowledge.compound_loop import append_grade_to_prj_backlog
-
-    lazymind = _build_lazymind_with_frontmatter(tmp_path, ["LazyHarness"])
-    prj_md = lazymind / "1-Projects" / "PRJ-LazyHarness" / "PRJ-LazyHarness.md"
-
-    assert append_grade_to_prj_backlog(prj_md, _POOR, "2026-09-19", "abcd1234") is True
-    text = prj_md.read_text()
-    assert "updated: 2026-09-19\n" in text
-    assert "updated: 2026-09-14" not in text
-
-
-def test_append_grade_is_a_no_op_for_a_session_already_escalated(tmp_path: Path) -> None:
-    from lazy_harness.knowledge.compound_loop import append_grade_to_prj_backlog
-
-    lazymind = _build_lazymind_with_frontmatter(tmp_path, ["LazyHarness"])
-    prj_md = lazymind / "1-Projects" / "PRJ-LazyHarness" / "PRJ-LazyHarness.md"
-    append_grade_to_prj_backlog(prj_md, _POOR, "2026-09-19", "abcd1234-deadbeef")
-    first = prj_md.read_bytes()
-
-    appended = append_grade_to_prj_backlog(prj_md, _POOR, "2026-09-20", "abcd1234-deadbeef")
-
-    assert appended is False
-    assert prj_md.read_bytes() == first
-    assert prj_md.read_text().count("Session quality regression") == 1
-
-
-def test_append_grade_still_escalates_a_different_session(tmp_path: Path) -> None:
-    from lazy_harness.knowledge.compound_loop import append_grade_to_prj_backlog
-
-    lazymind = _build_lazymind_with_frontmatter(tmp_path, ["LazyHarness"])
-    prj_md = lazymind / "1-Projects" / "PRJ-LazyHarness" / "PRJ-LazyHarness.md"
-    append_grade_to_prj_backlog(prj_md, _POOR, "2026-09-19", "abcd1234")
-
-    assert append_grade_to_prj_backlog(prj_md, _POOR, "2026-09-20", "ffff0000") is True
-    assert prj_md.read_text().count("Session quality regression") == 2
-
-
 # ---------------------------------------------------------------------------
 # ADR-062 — process_task publishes the bounded snapshot, fail-soft
 # ---------------------------------------------------------------------------
@@ -3371,7 +3230,34 @@ def test_process_task_survives_a_crashing_project_sync(
     assert (tmp_path / "m" / "grades.jsonl").is_file()
 
 
-def test_poor_grade_and_project_update_both_land(
+def test_grading_disabled_writes_no_grade(tmp_path: Path, monkeypatch) -> None:
+    queue = tmp_path / "queue"
+    memory = tmp_path / "memory"
+    session = _interactive_session(tmp_path)
+    task = create_task(queue, Path("/tmp/lazy-harness"), session, "abcd1234-deadbeef", memory)
+    response = json.dumps(
+        {
+            "decisions": [],
+            "failures": [],
+            "learnings": [],
+            "handoff": [],
+            "grade": {"quality": "poor", "issues": ["x"], "reasoning": "r", "confidence": 0.9},
+        }
+    )
+    cfg = Config(
+        compound_loop=CompoundLoopConfig(
+            enabled=True, min_messages=2, min_user_chars=100, grading_enabled=False
+        )
+    )
+    _stub_run_inference(monkeypatch, lambda *a: response)
+
+    outcome = process_task(task, cfg, tmp_path / "Learnings")
+
+    assert outcome.was_processed
+    assert not (memory / "grades.jsonl").exists()
+
+
+def test_a_poor_grade_lands_in_grades_jsonl_and_never_in_the_prj(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     lazymind = _build_lazymind_with_frontmatter(tmp_path, ["LazyHarness"])
@@ -3380,10 +3266,10 @@ def test_poor_grade_and_project_update_both_land(
     outcome = _run_project_state_task(tmp_path, monkeypatch, _good_response(grade=_POOR), lazymind)
 
     assert "project: PRJ-LazyHarness.md" in outcome.wrote
-    assert "backlog: PRJ-LazyHarness.md" in outcome.wrote
+    assert not any(w.startswith("backlog:") for w in outcome.wrote)
     text = prj.read_text()
     assert "Shipped the bounded snapshot." in text
-    assert text.count("Session quality regression") == 1
+    assert "Session quality regression" not in text
 
 
 def test_build_prompt_asks_for_a_project_update() -> None:

@@ -24,7 +24,8 @@ project or rewrites human-curated sections. `updated` changes only with real
 content, and every refusal is a logged fail-soft no-op.
 
 Poor-grade backlog escalation remains independent, gains deduplication and
-bumps `updated` when it writes.
+bumps `updated` when it writes. *(Removed 2026-10-09 by ADR-021's Evolution:
+grades no longer reach a PRJ, so the project snapshot is the only PRJ write.)*
 
 ## Alternatives considered
 

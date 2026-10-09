@@ -391,6 +391,63 @@ def test_render_memory_hygiene_reports_healthy_state(tmp_path: Path) -> None:
     assert "1 rejected" in out
 
 
+def _write_grades(memory: Path, rows: list[tuple[str, str, list[str]]]) -> None:
+    (memory / "grades.jsonl").write_text(
+        "".join(
+            json.dumps({"ts": ts, "type": "grade", "quality": q, "issues": issues}) + "\n"
+            for ts, q, issues in rows
+        )
+    )
+
+
+def test_render_memory_hygiene_summarises_weak_grades_of_the_last_week(tmp_path: Path) -> None:
+    from datetime import datetime
+
+    from lazy_harness.cli.doctor_cmd import _render_memory_hygiene
+
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    _write_grades(
+        memory,
+        [
+            ("2026-10-08T10:00:00-03:00", "poor", ["incomplete", "missed_context", "none"]),
+            ("2026-10-07T10:00:00-03:00", "acceptable", ["missed_context"]),
+            ("2026-10-06T10:00:00-03:00", "acceptable", ["none"]),
+            ("2026-10-05T10:00:00-03:00", "good", ["tool_misuse"]),
+            ("2026-09-20T10:00:00-03:00", "poor", ["hallucination"]),
+        ],
+    )
+
+    console, buf = _recording_console()
+    now = datetime(2026, 10, 9, 12, 0, tzinfo=UTC)
+    assert _render_memory_hygiene(console, memory, now=now) is True
+    out = buf.getvalue()
+    assert "2 weak grade(s) of 4 in 7d" in out
+    assert "missed_context ×2" in out
+    assert "incomplete ×1" in out
+    assert "hallucination" not in out
+    assert "tool_misuse" not in out
+    assert "none ×" not in out
+
+
+def test_render_memory_hygiene_skips_unparseable_grade_rows(tmp_path: Path) -> None:
+    from datetime import datetime
+
+    from lazy_harness.cli.doctor_cmd import _render_memory_hygiene
+
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    (memory / "grades.jsonl").write_text(
+        'not json\n[1, 2]\n{"ts": null, "quality": "poor"}\n'
+        '{"ts": "2026-10-08T10:00:00-03:00", "quality": "poor", "issues": "oops"}\n'
+    )
+
+    console, buf = _recording_console()
+    now = datetime(2026, 10, 9, 12, 0, tzinfo=UTC)
+    assert _render_memory_hygiene(console, memory, now=now) is True
+    assert "1 weak grade(s) of 1 in 7d" in buf.getvalue()
+
+
 def test_render_memory_hygiene_warns_near_memory_cap(tmp_path: Path) -> None:
     from lazy_harness.cli.doctor_cmd import _render_memory_hygiene
 

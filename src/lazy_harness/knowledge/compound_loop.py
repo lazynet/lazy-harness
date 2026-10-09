@@ -1346,77 +1346,12 @@ def resolve_prj_md(project_name: str, lazymind_dir: Path) -> Path | None:
     return candidates[0] if len(candidates) == 1 else None
 
 
-def _grade_warrants_backlog_entry(grade: dict) -> bool:
+def is_weak_grade(grade: dict) -> bool:
+    """A grade worth a human's attention: poor, or acceptable with real issues."""
+    issues = grade.get("issues")
+    real = [i for i in issues if i and i != "none"] if isinstance(issues, list) else []
     quality = grade.get("quality", "")
-    issues = [i for i in grade.get("issues", []) if i and i != "none"]
-    if quality == "poor":
-        return True
-    if quality == "acceptable" and issues:
-        return True
-    return False
-
-
-_ALTA_HEADER = "### Pendiente — Alta prioridad"
-
-
-def append_grade_to_prj_backlog(
-    prj_md: Path,
-    grade: dict,
-    date_str: str,
-    session_id: str,
-) -> bool:
-    """Append a backlog item under '### Pendiente — Alta prioridad' if the grade
-    warrants escalation. Returns True if an entry was written, False otherwise.
-
-    Best-effort: returns False (without raising) when the section is missing or
-    the file cannot be parsed. One item per session: a reprocessed session
-    that already escalated is a no-op. A write bumps frontmatter `updated`
-    (ADR-062)."""
-    if not _grade_warrants_backlog_entry(grade):
-        return False
-    try:
-        text = prj_md.read_text()
-    except OSError:
-        return False
-    if _ALTA_HEADER not in text:
-        return False
-    issues = [i for i in grade.get("issues", []) if i and i != "none"]
-    issues_str = ", ".join(issues) if issues else "none"
-    short_id = session_id[:8] if session_id else "unknown"
-    if any(
-        "Session quality regression" in line and f"session {short_id}," in line
-        for line in text.splitlines()
-    ):
-        return False
-    reasoning = grade.get("reasoning", "").strip() or "no reasoning given"
-    item = (
-        f"- [ ] **Session quality regression — {reasoning}** "
-        f"(graded {date_str}, session {short_id}, issues: {issues_str})\n"
-    )
-    lines = text.splitlines(keepends=True)
-    out: list[str] = []
-    inserted = False
-    for i, line in enumerate(lines):
-        out.append(line)
-        if inserted or line.rstrip() != _ALTA_HEADER:
-            continue
-        # Skip a single blank line after the header, then insert our item
-        # before any existing content (so the most recent regression sits on top).
-        j = i + 1
-        if j < len(lines) and lines[j].strip() == "":
-            out.append(lines[j])
-            j += 1
-        out.append(item)
-        # Append the rest verbatim and break the outer loop via slice.
-        out.extend(lines[j:])
-        inserted = True
-        break
-    if not inserted:
-        return False
-    from lazy_harness.knowledge.project_state import bump_updated
-
-    _atomic_write(prj_md, bump_updated("".join(out), date_str))
-    return True
+    return quality == "poor" or (quality == "acceptable" and bool(real))
 
 
 class TaskOutcome:
@@ -1635,6 +1570,8 @@ def process_task(
         return TaskOutcome(skipped=f"JSON parse failed for {session_id[:8]} — raw: {snippet}")
 
     _record_goal_verdict(data, session_id=session_id, cwd=cwd)
+    if not cl.grading_enabled:
+        data.pop("grade", None)
 
     wrote = persist_results(
         data,
@@ -1666,14 +1603,6 @@ def process_task(
         wrote.append(project_wrote)
     if project_note:
         notes.append(project_note)
-
-    grade = data.get("grade")
-    if cl.grading_enabled and isinstance(grade, dict) and cl.lazymind_dir:
-        prj_md = resolve_prj_md(project_name, Path(cl.lazymind_dir))
-        if prj_md is not None:
-            date_str = timestamp[:10] if len(timestamp) >= 10 else "unknown"
-            if append_grade_to_prj_backlog(prj_md, grade, date_str, session_id):
-                wrote.append(f"backlog: {prj_md.name}")
 
     return TaskOutcome(wrote=wrote, notes=notes)
 
