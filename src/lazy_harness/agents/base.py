@@ -583,6 +583,14 @@ class HookEntry:
     command: str
     matcher: str | None = None
     ownership: HookOwnership = HookOwnership.HARNESS
+    blocking: bool = False
+    """Whether the agent should refuse the action when this hook fails to run.
+
+    The runner already exits 2 for a blocking builtin it cannot run, but only
+    once the launcher is running: a missing binary or an agent-side timeout
+    exits with some other code, which an agent reads as no objection. Agents
+    with a native fail-closed switch (Claude Code's `onFailure`) emit it here.
+    """
 
 
 @runtime_checkable

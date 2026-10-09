@@ -1,7 +1,8 @@
 # Claude Code dialect evidence — caller identification marker
 
 **Status:** two probes recorded — 2026-09-24 against Claude Code 2.1.281, and
-2026-09-29 against 2.1.284 (§ Headless isolation flags).
+2026-09-29 against 2.1.284 (§ Headless isolation flags), and 2026-10-09 against
+2.1.295 and 2.1.283 (§ Hook `onFailure`).
 **Scope:** the first section owns one fact only — the payload key `hooks/runner.py`'s
 `_caller_agent` uses to tell a Claude Code hook invocation apart from a Codex
 one (ADR-041, Evolution 2026-09-24; ADR-068, Evolution 2026-09-24). It is not
@@ -84,3 +85,30 @@ deliberately, since it would also remove the evaluator's spend from metrics
 (ADR-039 F7). The probe sessions themselves left a `session_closed` row and a
 queued task for each hooked run, which the worker skips as non-interactive.
 
+
+## Hook `onFailure` — observed vs changelog
+
+**Claim (2.1.295 changelog).** `onFailure: "block"` on a command hook blocks the
+action when the hook "can't start, times out, or exits with an unexpected code".
+
+**Probe, 2026-10-09, Claude Code 2.1.295 on macOS.** One `PreToolUse` `Bash`
+handler per run, passed with `--settings`, `claude -p --model haiku` asked to
+run `touch marker`; whether `marker` exists is the verdict.
+
+| Handler | `onFailure` | `marker` |
+|---|---|---|
+| `exit 1` | absent | created — the action passes |
+| `exit 1` | `block` | absent |
+| `/nonexistent/lh-probe` | `block` | absent |
+| `sleep 20`, `timeout: 3` | `block` | absent |
+| `exit 0` | `block` | created |
+
+**Probe, same day, Claude Code 2.1.283 on the agents CT** — a version that
+predates the key. The handler `touch hook-ran` with `onFailure: "block"`, once
+via `--settings` and once as a project `.claude/settings.json`: both times the
+hook ran and `marker` was created. The unknown key is ignored and the settings
+file still loads, unlike `"attribution": false`, which the 2.1.281 changelog
+says older versions answer by skipping the whole file.
+
+**What was not measured.** Exit 2 with `onFailure` set (the documented block
+path, unchanged); HTTP hooks; events other than `PreToolUse`.

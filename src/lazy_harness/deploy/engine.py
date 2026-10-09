@@ -446,7 +446,7 @@ def hook_entries_for(
     two would drift the first time either learned something new.
     """
     from lazy_harness.deploy.defaults import agent_scoped_omissions, merge_with_defaults
-    from lazy_harness.hooks.loader import builtin_agents, resolve_script_names
+    from lazy_harness.hooks.loader import builtin_agents, builtin_blocking, resolve_script_names
     from lazy_harness.hooks.signal_gaps import gaps_for_profile
 
     agent = agent_for_profile(cfg, profile)
@@ -474,6 +474,7 @@ def hook_entries_for(
                 command=hook_command(hook, profile=profile, binary=binary),
                 matcher=hook.matcher,
                 ownership=(HookOwnership.HARNESS if hook.is_builtin else HookOwnership.EXTERNAL),
+                blocking=hook.is_builtin and builtin_blocking(hook.name),
             )
             for hook in hooks
         ]
