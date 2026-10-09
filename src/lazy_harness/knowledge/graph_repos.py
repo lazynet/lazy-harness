@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -24,7 +25,8 @@ from pathlib import Path
 
 from lazy_harness.core.config import Config
 from lazy_harness.core.logfile import default_log_dir
-from lazy_harness.core.paths import data_dir
+from lazy_harness.core.paths import data_dir, expand_path
+from lazy_harness.knowledge import graph_freshness
 
 INSTALLED = "installed"
 ALREADY = "already"
@@ -445,3 +447,311 @@ def scope(registered: Sequence[Path], discovered: Sequence[Path]) -> list[Scoped
             seen.add(key)
             out.append(ScopedRepo(p, is_discovered))
     return out
+
+
+# -------------------------------------------------------------------- health
+
+OK = "ok"
+WARNING = "warning"
+ERROR = "error"
+SKIPPED = "skipped"
+_SEVERITY = {OK: 0, SKIPPED: 0, WARNING: 1, ERROR: 2}
+
+_HOOKS = (
+    ("post-commit", _POST_COMMIT_MARK),
+    ("post-checkout", _POST_CHECKOUT_MARK),
+    ("post-merge", _POST_MERGE_BEGIN),
+)
+_UPDATE_RESULT = re.compile(r"^\[[^\]]*\] (?:updated|failed|skipped): (?P<rest>.*)$")
+_SOURCE_FILE = re.compile(r'^\s+"source_file":\s*(".*")\s*,?\s*$')
+_TOP_LEVEL_KEY = re.compile(r'^  "[^"]+":')
+_NODES_OPEN = re.compile(r'^  "nodes":\s*\[')
+# A real graph.json was 417 MB with 6.2M indented lines: read it line by line,
+# never whole. A line this long means the layout is not the indented one.
+_MAX_LINE = 1 << 20
+_COMPACT_LIMIT = 64 << 20
+_LISTED_DIRS = 5
+
+
+@dataclass(frozen=True)
+class HealthCheck:
+    name: str
+    status: str
+    detail: str
+
+
+@dataclass(frozen=True)
+class RepoHealth:
+    path: str
+    discovered: bool
+    status: str
+    checks: list[HealthCheck]
+
+
+@dataclass(frozen=True)
+class GraphHealth:
+    repos: list[RepoHealth]
+    extensions: HealthCheck | None
+    error: str = ""
+
+
+def _hooks_path_dir(root: Path, main_root: Path) -> Path | None:
+    configured = _git(root, "config", "--get", "core.hooksPath", check_codes=(0, 1))
+    if configured is None or not configured.strip():
+        return None
+    path = Path(os.path.expanduser(configured.strip()))
+    return path if path.is_absolute() else main_root / path
+
+
+def check_hooks(root: Path) -> list[HealthCheck]:
+    """Problems with the three hooks that keep the graph fresh; empty when sound.
+
+    A hook is sound when its marked block sits in `<common-dir>/hooks` and git
+    would actually run it: with `core.hooksPath` set (globally here, to a shared
+    dispatcher), a name the directory does not carry is never forwarded.
+    """
+    common = git_common_dir(root)
+    if common is None:
+        return [HealthCheck("hooks", ERROR, "not a git repository")]
+    hooks = common / "hooks"
+    problems: list[HealthCheck] = []
+    for name, mark in _HOOKS:
+        try:
+            present = mark in (hooks / name).read_text()
+        except OSError:
+            present = False
+        if not present:
+            problems.append(HealthCheck("hooks", ERROR, f"{name} missing in {hooks}"))
+    forwarded = _hooks_path_dir(root, _main_root(root, common))
+    if forwarded is not None:
+        for name, _ in _HOOKS:
+            if not (forwarded / name).exists():
+                detail = f"{name} not forwarded by core.hooksPath ({forwarded})"
+                problems.append(HealthCheck("hooks", ERROR, detail))
+    return problems
+
+
+def _age(seconds: float) -> str:
+    seconds = max(seconds, 0)
+    days, rest = divmod(int(seconds), 86400)
+    hours = rest // 3600
+    if days:
+        return f"{days}d {hours}h"
+    if hours:
+        return f"{hours}h"
+    return f"{rest // 60}m"
+
+
+def check_freshness(root: Path) -> list[HealthCheck]:
+    graph = root / "graphify-out" / "graph.json"
+    try:
+        built = graph.stat().st_mtime
+    except OSError:
+        return [HealthCheck("freshness", WARNING, "no graph yet (graphify-out/graph.json)")]
+    if graph_freshness.is_fresh(root) is not False:
+        return []
+    last = graph_freshness.last_code_commit_ts(root)
+    gap = f", last code commit {_age(last - built)} newer" if last is not None else ""
+    return [HealthCheck("freshness", WARNING, f"stale graph{gap}")]
+
+
+def check_last_update(root: Path, log_path: Path) -> list[HealthCheck]:
+    """The newest `updated/failed/skipped` line for `root`; a non-success is a warning."""
+    try:
+        text = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    prefix = str(root)
+    last: str | None = None
+    for line in text.splitlines():
+        match = _UPDATE_RESULT.match(line)
+        if match is None:
+            continue
+        rest = match.group("rest")
+        if rest == prefix or rest.startswith((f"{prefix}:", f"{prefix} (")):
+            last = line.strip()
+    if last is None or " updated: " in last:
+        return []
+    return [HealthCheck("last update", WARNING, last)]
+
+
+def _node_source_files(graph: Path):  # noqa: ANN202 — a generator of str
+    """`source_file` of every node, streamed; edges carry the key too and are skipped."""
+    in_nodes = False
+    seen_nodes = False
+    with graph.open(encoding="utf-8") as f:
+        while True:
+            line = f.readline(_MAX_LINE)
+            if not line:
+                break
+            if len(line) >= _MAX_LINE and not line.endswith("\n"):
+                break
+            if not in_nodes:
+                if _NODES_OPEN.match(line):
+                    in_nodes = seen_nodes = True
+                continue
+            if _TOP_LEVEL_KEY.match(line):
+                return
+            match = _SOURCE_FILE.match(line)
+            if match is not None:
+                yield json.loads(match.group(1))
+    if seen_nodes:
+        return
+    if graph.stat().st_size > _COMPACT_LIMIT:
+        raise ValueError("graph.json is not in the indented layout and is too large to load")
+    with graph.open(encoding="utf-8") as f:
+        data = json.load(f)
+    for node in data.get("nodes", []) if isinstance(data, dict) else []:
+        if isinstance(node, dict) and isinstance(node.get("source_file"), str):
+            yield node["source_file"]
+
+
+def _relative_parts(source: str, root: Path) -> tuple[str, ...] | None:
+    path = Path(source)
+    if path.is_absolute():
+        try:
+            path = path.relative_to(root)
+        except ValueError:
+            return None
+    return path.parts
+
+
+def _ignored_dirs(root: Path, dirs: list[str]) -> set[str] | None:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "check-ignore", "-z", "--no-index", "--stdin"],
+            input="\0".join(dirs) + "\0",
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode not in (0, 1):
+        return None
+    return {p for p in result.stdout.split("\0") if p}
+
+
+def check_ignored_in_graph(root: Path) -> list[HealthCheck]:
+    """Top-level directories git ignores that the graph still has nodes from."""
+    graph = root / "graphify-out" / "graph.json"
+    if not graph.is_file():
+        return []
+    counts: dict[str, int] = {}
+    try:
+        for source in _node_source_files(graph):
+            parts = _relative_parts(source, root)
+            if parts is not None and len(parts) > 1:
+                top = f"{parts[0]}/"
+                counts[top] = counts.get(top, 0) + 1
+    except (OSError, ValueError) as e:
+        return [HealthCheck("ignored paths", WARNING, f"could not scan graph.json: {e}")]
+    if not counts:
+        return []
+    ignored = _ignored_dirs(root, sorted(counts))
+    if ignored is None:
+        return [HealthCheck("ignored paths", WARNING, "could not ask git which paths are ignored")]
+    hits = sorted(((d, counts[d]) for d in ignored if d in counts), key=lambda x: (-x[1], x[0]))
+    if not hits:
+        return []
+    listed = ", ".join(f"{d} ({n} nodes)" for d, n in hits[:_LISTED_DIRS])
+    if len(hits) > _LISTED_DIRS:
+        listed += f", +{len(hits) - _LISTED_DIRS} more"
+    return [HealthCheck("ignored paths", WARNING, f"graph indexes ignored paths: {listed}")]
+
+
+_EXTENSIONS_PROBE = (
+    "import json, graphify.detect as d; print(json.dumps(sorted(d.CODE_EXTENSIONS)))"
+)
+
+
+def _installed_extensions() -> frozenset[str] | str:
+    """graphify's `CODE_EXTENSIONS`, or why they could not be read."""
+    exe = shutil.which("graphify")
+    if exe is None:
+        return "graphify not on PATH"
+    try:
+        with open(exe, "rb") as f:
+            first = f.readline(512)
+    except OSError as e:
+        return f"cannot read {exe}: {e}"
+    if not first.startswith(b"#!"):
+        return f"{exe} has no interpreter line"
+    try:
+        interpreter = shlex.split(first[2:].decode("utf-8", errors="replace"))
+        result = subprocess.run(
+            [*interpreter, "-c", _EXTENSIONS_PROBE],
+            capture_output=True,
+            text=True,
+            timeout=_GRAPHIFY_INSTALL_TIMEOUT,
+        )
+        if result.returncode != 0:
+            return f"graphify's interpreter exited {result.returncode}"
+        found = json.loads(result.stdout)
+    except (OSError, ValueError, subprocess.TimeoutExpired) as e:
+        return f"could not read graphify's CODE_EXTENSIONS: {e}"
+    if not isinstance(found, list) or not all(isinstance(x, str) for x in found):
+        return "graphify's CODE_EXTENSIONS had an unexpected shape"
+    return frozenset(found)
+
+
+def check_code_extensions() -> HealthCheck:
+    """Our vendored `CODE_EXTENSIONS` against the installed graphify's, once."""
+    name = "code extensions"
+    installed = _installed_extensions()
+    if isinstance(installed, str):
+        return HealthCheck(name, SKIPPED, installed)
+    ours = graph_freshness.CODE_EXTENSIONS
+    if installed == ours:
+        return HealthCheck(name, OK, f"{len(ours)} extensions match the installed graphify")
+    new = ", ".join(sorted(installed - ours)) or "none"
+    gone = ", ".join(sorted(ours - installed)) or "none"
+    return HealthCheck(
+        name,
+        WARNING,
+        f"drift from the installed graphify: new {new}; no longer indexed {gone} "
+        "(update graph_freshness.CODE_EXTENSIONS)",
+    )
+
+
+def _worst(checks: Sequence[HealthCheck]) -> str:
+    return max((c.status for c in checks), key=lambda s: _SEVERITY[s], default=OK)
+
+
+def _repo_health(entry: ScopedRepo, log_path: Path) -> RepoHealth:
+    root = entry.path
+    if not root.is_dir():
+        checks = [HealthCheck("repo", ERROR, f"path missing: {root}")]
+        return RepoHealth(str(root), entry.discovered, ERROR, checks)
+    probes: list[tuple[str, Callable[[], list[HealthCheck]]]] = [
+        ("hooks", lambda: check_hooks(root)),
+        ("freshness", lambda: check_freshness(root)),
+        ("last update", lambda: check_last_update(root, log_path)),
+        ("ignored paths", lambda: check_ignored_in_graph(root)),
+    ]
+    problems: list[HealthCheck] = []
+    for name, probe in probes:
+        try:
+            problems.extend(probe())
+        except Exception as e:  # noqa: BLE001 — doctor reports a broken repo, never dies on it
+            problems.append(HealthCheck(name, ERROR, f"check crashed: {e}"))
+    if not problems:
+        problems = [HealthCheck("graph", OK, "hooks, freshness, last update and sources are clean")]
+    return RepoHealth(str(root), entry.discovered, _worst(problems), problems)
+
+
+def collect_graph_health(cfg: Config, *, log_path: Path | None = None) -> GraphHealth:
+    """What the harness could not fix, per repo in scope, plus one extensions line.
+
+    Read-only: discovered repos come from the store `lh knowledge graph update`
+    keeps, not from a fresh scan of the metrics.
+    """
+    log = log_path or default_log_dir() / "graphify-update.log"
+    try:
+        registered = [expand_path(entry) for entry in cfg.knowledge.structure.repos]
+        scoped = scope(registered, load_discovered())
+        repos = [_repo_health(entry, log) for entry in scoped]
+        extensions = check_code_extensions() if repos else None
+    except Exception as e:  # noqa: BLE001 — doctor reports a broken collector, never dies on it
+        return GraphHealth(repos=[], extensions=None, error=f"{type(e).__name__}: {e}")
+    return GraphHealth(repos=repos, extensions=extensions)
