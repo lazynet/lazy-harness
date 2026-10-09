@@ -38,7 +38,8 @@ from lazy_harness.knowledge.project_state import (
 from lazy_harness.llm.invoke import run_inference
 
 _INTERACTIVE_MARKERS = ("permission-mode", "last-prompt")
-_INTERACTIVE_SCAN_LINES = 10
+_INTERACTIVE_SCAN_RECORDS = 10
+_INTERACTIVE_SCAN_MAX_LINES = 200
 
 _INSIGHT_PATTERN = re.compile(r"★ Insight ─+\s*\n(.*?)\n─+", re.DOTALL)
 _TRANSCRIPT_TEXT_BLOCKS = frozenset({"text", "input_text", "output_text"})
@@ -328,18 +329,26 @@ def is_interactive_session(session_jsonl: Path) -> bool:
     only want to evaluate actual user conversations. We scan a bounded prefix
     because Claude Code's session JSONL layout is not strictly ordered — the
     marker may sit on line 1 or a few lines down depending on session origin
-    (fresh vs resumed).
+    (fresh vs resumed). `attachment` records (hook output, environment, skill
+    listings) do not spend the record budget: a session started after /clear
+    leads with 10-20 of them, so only a hard line cap bounds them.
     """
     try:
         with open(session_jsonl) as f:
-            for _ in range(_INTERACTIVE_SCAN_LINES):
+            records = 0
+            for _ in range(_INTERACTIVE_SCAN_MAX_LINES):
+                if records >= _INTERACTIVE_SCAN_RECORDS:
+                    return False
                 line = f.readline()
                 if not line:
                     return False
                 try:
                     d = json.loads(line)
                 except (json.JSONDecodeError, ValueError):
+                    records += 1
                     continue
+                if not (isinstance(d, dict) and d.get("type") == "attachment"):
+                    records += 1
                 if isinstance(d, dict) and d.get("type") in _INTERACTIVE_MARKERS:
                     return True
                 message = _transcript_message(d)
