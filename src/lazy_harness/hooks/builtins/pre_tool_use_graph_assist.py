@@ -30,7 +30,7 @@ from pathlib import Path
 
 from lazy_harness.agents.base import HookDecision, HookEvent, Operation, ToolCall
 from lazy_harness.core.project_identity import main_repo_root
-from lazy_harness.knowledge import graph_assist
+from lazy_harness.knowledge import graph_assist, graph_freshness
 
 # `tests/unit/test_hook_matcher_coverage.py` holds the deployed matcher to this.
 INSPECTED_TOOLS = frozenset({"Bash", "Grep"})
@@ -103,8 +103,7 @@ def _evaluate(event: HookEvent, native_name: str, raw_input: object) -> tuple[st
     graph_json = graph_assist.graph_path(root)
     if not graph_json.is_file():
         return "", {"repo": str(root), "reason": "no_graph"}
-    head = _git(root, "log", "-1", "--format=%ct")
-    if head is not None and graph_json.stat().st_mtime < float(head):
+    if graph_freshness.is_fresh(root) is False:
         return "", {"repo": str(root), "reason": "stale"}
 
     pattern = graph_assist.search_target(native_name, raw_input, scope, event.cwd)

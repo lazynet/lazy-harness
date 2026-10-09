@@ -9,5 +9,8 @@ build/
 site/
 .worktrees/
 
+# repo-local TMPDIR for agent sessions (#504)
+/tmp/
+
 # graphify-out artifacts: generated output, not for versioning (prevents churn from .graphify_root path changes and graph.json size)
 graphify-out/

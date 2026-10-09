@@ -387,6 +387,84 @@ def test_qmd_suggest_context_returns_empty_for_blank_query(monkeypatch) -> None:
     assert called["n"] == 0
 
 
+def test_graphify_section_ignores_a_docs_only_head_newer_than_the_graph(tmp_path: Path) -> None:
+    import os as _os
+
+    from lazy_harness.hooks.builtins.context_inject import graphify_section
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def git(*args: str, ts: int) -> None:
+        env = {
+            **_os.environ,
+            "GIT_AUTHOR_DATE": f"@{ts} +0000",
+            "GIT_COMMITTER_DATE": f"@{ts} +0000",
+            "GIT_AUTHOR_NAME": "t",
+            "GIT_AUTHOR_EMAIL": "t@t",
+            "GIT_COMMITTER_NAME": "t",
+            "GIT_COMMITTER_EMAIL": "t@t",
+        }
+        subprocess.run(["git", *args], cwd=str(repo), capture_output=True, env=env, check=True)
+
+    git("init", ts=1_700_000_000)
+    (repo / "app.py").write_text("x = 1\n")
+    git("add", "app.py", ts=1_700_000_000)
+    git("commit", "-m", "code", ts=1_700_000_000)
+    out = repo / "graphify-out"
+    out.mkdir()
+    graph = out / "graph.json"
+    graph.write_text(json.dumps({"nodes": [], "edges": []}))
+    _os.utime(graph, (1_700_000_010, 1_700_000_010))
+    (repo / "NOTES.md").write_text("docs\n")
+    git("add", "NOTES.md", ts=1_700_000_100)
+    git("commit", "-m", "docs", ts=1_700_000_100)
+
+    assert "stale" not in graphify_section(out, repo).lower()
+
+
+def test_graphify_section_banner_names_the_last_code_commit(tmp_path: Path) -> None:
+    import os as _os
+
+    from lazy_harness.hooks.builtins.context_inject import graphify_section
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    code_ts = 1_700_000_000  # 2023-11-14
+    docs_ts = 1_800_000_000  # 2027-01-15
+
+    def git(*args: str, ts: int) -> None:
+        env = {
+            **_os.environ,
+            "GIT_AUTHOR_DATE": f"@{ts} +0000",
+            "GIT_COMMITTER_DATE": f"@{ts} +0000",
+            "GIT_AUTHOR_NAME": "t",
+            "GIT_AUTHOR_EMAIL": "t@t",
+            "GIT_COMMITTER_NAME": "t",
+            "GIT_COMMITTER_EMAIL": "t@t",
+        }
+        subprocess.run(["git", *args], cwd=str(repo), capture_output=True, env=env, check=True)
+
+    git("init", ts=code_ts)
+    (repo / "app.py").write_text("x = 1\n")
+    git("add", "app.py", ts=code_ts)
+    git("commit", "-m", "code", ts=code_ts)
+    (repo / "NOTES.md").write_text("docs\n")
+    git("add", "NOTES.md", ts=docs_ts)
+    git("commit", "-m", "docs", ts=docs_ts)
+    out = repo / "graphify-out"
+    out.mkdir()
+    graph = out / "graph.json"
+    graph.write_text(json.dumps({"nodes": [], "edges": []}))
+    _os.utime(graph, (code_ts - 86400 * 30, code_ts - 86400 * 30))
+
+    section = graphify_section(out, repo)
+
+    assert "stale" in section.lower()
+    assert "last code commit 2023-11-14" in section
+    assert "2027" not in section
+
+
 def test_graphify_section_returns_empty_when_graph_missing(tmp_path: Path) -> None:
     from lazy_harness.hooks.builtins.context_inject import graphify_section
 
@@ -404,8 +482,10 @@ def test_graphify_section_emits_staleness_banner_when_graph_older_than_head(
     repo = tmp_path / "repo"
     repo.mkdir()
     subprocess.run(["git", "init"], cwd=str(repo), capture_output=True)
+    (repo / "app.py").write_text("x = 1\n")
+    subprocess.run(["git", "add", "app.py"], cwd=str(repo), capture_output=True)
     subprocess.run(
-        ["git", "commit", "--allow-empty", "-m", "init"],
+        ["git", "commit", "-m", "init"],
         cwd=str(repo),
         capture_output=True,
         env={

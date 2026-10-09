@@ -373,6 +373,28 @@ report`):** sesiones elegibles con ≥1 llamada — claude-lazy 20/411, claude-f
 20/977, codex-lazy 17/167; greps por llamada a graphify ~90–185 en Claude y ~26
 en Codex. Codex cae de 74,2% a ~10%, pero el denominador incluye sesiones
 headless que la baseline no contaba: la lectura del 2026-10-09 decide, esta no.
+**Lectura 2026-10-09: suspendida.** (a') 12,0% < 20% saltó, pero 178 de 403
+sesiones con evaluación quedaron ciegas por `stale` y el denominador contaba
+~340 sesiones que el hook nunca vio. Causas y arreglos en
+[`designs/2026-10-09-graph-freshness-design.md`](designs/2026-10-09-graph-freshness-design.md)
+(§10 de la spec de graph assist). Con el denominador corregido, misma ventana:
+(a') 21,6%, stale share 53,2%. **Acción:** día 0 nuevo cuando el arreglo esté
+deployado en Mac y CT; leer a los 14 días. El kill de `always_load` (§9) se
+juzga en la misma ventana.
+
+### Graph freshness: lo que quedó afuera del arreglo del 2026-10-09
+
+- **Pin de graphify desfasado:** instalado 0.9.72, `[knowledge.structure].version`
+  y ADR-023 dicen 0.9.67. `CODE_EXTENSIONS` de `knowledge/graph_freshness.py` se
+  copió de 0.9.72. Decidir: subir el pin o bajar el binario.
+- **`.json` cuenta como código** en el set de graphify, así que un commit que
+  solo toca configs o goldens vuelve stale el grafo. Medir en la ventana nueva
+  cuánto stale queda por eso antes de excluirlo.
+- **Control Codex:** (a) cae de 74,2% (baseline) a 6,5%; leer aparte, sin
+  sesiones headless.
+- **`lh doctor` no falla** por errores de la sección Graph repos (hooks no
+  reenviados, update con timeout). Decidir si un `error` cambia el exit code.
+Prioridad MEDIA.
 
 ### `lh doctor` no detecta skew entre el plugin de engram y su binario
 

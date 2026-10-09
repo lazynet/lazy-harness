@@ -118,10 +118,14 @@ class World:
             check=check,
         )
 
-    def init_repo(self) -> None:
+    def init_repo(self, *, code: bool = False) -> None:
         self.git("init", "-q", "-b", "main")
         (self.work / "README.md").write_text("# demo\n")
         self.git("add", "README.md")
+        if code:
+            # Freshness is measured against the last *code* commit, so a stale graph needs one.
+            (self.work / "app.py").write_text("x = 1\n")
+            self.git("add", "app.py")
         self.git("commit", "-q", "-m", "seed the repo")
 
     def graph_json(self, text: str, *, mtime: float) -> None:
@@ -323,7 +327,7 @@ def _graphify_fresh_in_repo(world: World) -> None:
 
 
 def _graphify_stale(world: World) -> None:
-    world.init_repo()
+    world.init_repo(code=True)
     world.graph_json(_GRAPH, mtime=COMMIT_EPOCH - DAY)
 
 
