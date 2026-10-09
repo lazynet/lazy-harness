@@ -129,12 +129,14 @@ def _strip_block(text: str, begin: str, end: str) -> str:
 
 def _post_merge_block(main_root: Path, log_dir: Path) -> str:
     log = log_dir / "graphify-post-merge.log"
+    # A hook inherits its caller's PATH, and a GUI git client often lacks ~/.local/bin.
+    lh = shlex.quote(shutil.which("lh") or "lh")
     return (
         f"{_POST_MERGE_BEGIN}\n"
         'if [ "$(git rev-parse --path-format=absolute --git-dir)" = '
         '"$(git rev-parse --path-format=absolute --git-common-dir)" ]; then\n'
         f"  mkdir -p {shlex.quote(str(log_dir))} || true\n"
-        f"  nohup lh knowledge graph update --repo {shlex.quote(str(main_root))} "
+        f"  nohup {lh} knowledge graph update --repo {shlex.quote(str(main_root))} "
         f">> {shlex.quote(str(log))} 2>&1 < /dev/null &\n"
         "fi\n"
         f"{_POST_MERGE_END}\n"

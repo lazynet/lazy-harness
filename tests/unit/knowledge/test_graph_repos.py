@@ -63,7 +63,7 @@ def _no_graphify(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """PATH with git and sh but no graphify, whatever the machine has installed."""
     bare = tmp_path / "bare-bin"
     bare.mkdir(exist_ok=True)
-    for tool in ("git", "sh", "env"):
+    for tool in ("git", "sh", "env", "nohup", "mkdir"):
         found = subprocess.run(["which", tool], capture_output=True, text=True).stdout.strip()
         (bare / tool).symlink_to(found)
     monkeypatch.setenv("PATH", str(bare))
@@ -195,12 +195,67 @@ def test_post_merge_never_fails_the_merge_when_lh_is_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo = _repo(tmp_path / "repo")
-    gr.ensure_post_merge(repo, log_dir=tmp_path / "logs")
     _no_graphify(tmp_path, monkeypatch)
+    gr.ensure_post_merge(repo, log_dir=tmp_path / "logs")
 
     result = _run_hook(_post_merge(repo), repo)
 
     assert result.returncode == 0
+
+
+def test_post_merge_bakes_in_the_absolute_path_of_lh(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _repo(tmp_path / "repo")
+    seen = tmp_path / "seen.txt"
+    _stub(tmp_path / "bin", "lh", f'echo ran > "{seen}"', monkeypatch)
+    gr.ensure_post_merge(repo, log_dir=tmp_path / "logs")
+    assert f"nohup {tmp_path / 'bin' / 'lh'} " in _post_merge(repo).read_text()
+    # A git client launched without the user's PATH must still find lh.
+    _no_graphify(tmp_path, monkeypatch)
+
+    result = _run_hook(_post_merge(repo), repo)
+
+    assert result.returncode == 0, result.stderr
+    assert _wait_for(seen), "the hook needed lh on its own PATH"
+
+
+def test_post_merge_quotes_an_lh_path_with_spaces(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _repo(tmp_path / "repo")
+    _stub(tmp_path / "my bin", "lh", "exit 0", monkeypatch)
+
+    gr.ensure_post_merge(repo, log_dir=tmp_path / "logs")
+
+    assert f"nohup '{tmp_path / 'my bin' / 'lh'}' " in _post_merge(repo).read_text()
+
+
+def test_post_merge_is_rewritten_when_lh_moves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _repo(tmp_path / "repo")
+    _stub(tmp_path / "old", "lh", "exit 0", monkeypatch)
+    gr.ensure_post_merge(repo, log_dir=tmp_path / "logs")
+    _stub(tmp_path / "new", "lh", "exit 0", monkeypatch)
+
+    status = gr.ensure_post_merge(repo, log_dir=tmp_path / "logs")
+
+    text = _post_merge(repo).read_text()
+    assert status == "installed"
+    assert str(tmp_path / "new" / "lh") in text and str(tmp_path / "old" / "lh") not in text
+    assert text.count("# lazy-harness graph-begin") == 1
+
+
+def test_post_merge_falls_back_to_bare_lh_when_it_cannot_be_resolved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _repo(tmp_path / "repo")
+    _no_graphify(tmp_path, monkeypatch)
+
+    gr.ensure_post_merge(repo, log_dir=tmp_path / "logs")
+
+    assert "nohup lh " in _post_merge(repo).read_text()
 
 
 def test_post_merge_logs_the_update_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

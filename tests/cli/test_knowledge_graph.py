@@ -70,6 +70,8 @@ def test_graph_list_shows_registered_repos(tmp_path: Path, monkeypatch) -> None:
     repo = _repo(tmp_path, "myrepo")
     _config(tmp_path, repos=[str(repo)])
     monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    # Rich wraps at the terminal width and a pytest tmp path is long enough to split the name.
+    monkeypatch.setenv("COLUMNS", "300")
 
     result = CliRunner().invoke(knowledge, ["graph", "list"])
 
