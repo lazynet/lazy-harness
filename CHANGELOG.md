@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.89.0](https://github.com/lazynet/lazy-harness/compare/v0.88.0...v0.89.0) (2026-10-10)
+
+
+### Features
+
+* fail closed on a codex blocking hook that cannot start ([#525](https://github.com/lazynet/lazy-harness/issues/525)) ([736d4c2](https://github.com/lazynet/lazy-harness/commit/736d4c22938ba166efc064b04dd13a5c2d58bc41))
+
 ## [0.88.0](https://github.com/lazynet/lazy-harness/compare/v0.87.0...v0.88.0) (2026-10-09)
 
 
