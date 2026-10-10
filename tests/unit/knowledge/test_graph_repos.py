@@ -648,6 +648,32 @@ def test_refresh_discovered_persists_to_the_data_dir_and_accumulates(tmp_path: P
     assert sorted(gr.load_discovered()) == [a, b]
 
 
+def test_refresh_discovered_drops_a_repo_whose_graph_is_gone(tmp_path: Path) -> None:
+    """A deleted scratch repo otherwise stays in scope, and in doctor, forever."""
+    keep, gone = _graph_repo(tmp_path / "keep"), _graph_repo(tmp_path / "gone")
+    pa = tmp_path / "pa"
+    _metrics(pa, {"repo": str(keep)}, {"repo": str(gone)})
+    cfg = _cfg({"pa": pa})
+    gr.refresh_discovered(cfg)
+    (gone / "graphify-out" / "graph.json").unlink()
+
+    merged = gr.refresh_discovered(cfg)
+
+    assert merged == [keep]
+    assert gr.load_discovered() == [keep]
+
+
+def test_refresh_discovered_keeps_a_repo_the_metrics_no_longer_mention(tmp_path: Path) -> None:
+    a = _graph_repo(tmp_path / "a")
+    pa = tmp_path / "pa"
+    _metrics(pa, {"repo": str(a)})
+    cfg = _cfg({"pa": pa})
+    gr.refresh_discovered(cfg)
+    (pa / "logs" / "graph_assist_metrics.jsonl").write_text("")
+
+    assert gr.refresh_discovered(cfg) == [a]
+
+
 @pytest.mark.parametrize("body", ["not json", "null", "5", "[1]", '{"discovered": 5}', "{}"])
 def test_load_discovered_tolerates_a_corrupt_store(tmp_path: Path, body: str) -> None:
     store = tmp_path / "data" / "graph-repos.json"

@@ -409,6 +409,10 @@ def _scope_setup(tmp_path: Path, monkeypatch, registered: list[Path]) -> None:
 def _discovered_store(tmp_path: Path, *repos: Path) -> None:
     import json
 
+    # Discovery only ever stores repos that have a graph; one without is pruned.
+    for r in repos:
+        (r / "graphify-out").mkdir(parents=True, exist_ok=True)
+        (r / "graphify-out" / "graph.json").write_text("{}")
     store = tmp_path / "data" / "graph-repos.json"
     store.parent.mkdir(parents=True, exist_ok=True)
     store.write_text(json.dumps({"discovered": [str(r) for r in repos]}))
