@@ -1215,6 +1215,7 @@ def _render_halted_proposals(console: Console, cfg: Config) -> None:
     """
     import shlex
 
+    from lazy_harness.cli.memory_cmd import outstanding_held_rows
     from lazy_harness.core.memory_store import all_memory_dirs
     from lazy_harness.core.proposals import rule_lines
     from lazy_harness.hooks.builtins._shared import knowledge_root_for
@@ -1245,22 +1246,31 @@ def _render_halted_proposals(console: Console, cfg: Config) -> None:
         count = len(rule_lines(text))
         if count and count >= cap:
             oldest = _pending_summary(memory_dir)[1] or "unknown"
+            unreadable = ""
             try:
-                held_text = (memory_dir / HELD_PROPOSALS_FILE).read_text()
-            except OSError:
-                held_text = ""
-            held = sum(1 for line in held_text.splitlines() if line.strip())
-            halted.append((count, held, oldest, memory_dir))
+                held = len(outstanding_held_rows(memory_dir))
+            except (OSError, click.ClickException) as e:
+                # Doctor never dies on a broken file: count every held line and
+                # say why the requeued ones could not be subtracted.
+                unreadable = e.format_message() if isinstance(e, click.ClickException) else str(e)
+                try:
+                    held_text = (memory_dir / HELD_PROPOSALS_FILE).read_text()
+                except OSError:
+                    held_text = ""
+                held = sum(1 for line in held_text.splitlines() if line.strip())
+            halted.append((count, held, oldest, memory_dir, unreadable))
     if not halted:
         return
 
     console.print("\n[bold]Halted proposal queues[/bold]")
-    for count, held, oldest, memory_dir in sorted(halted, key=lambda h: -h[0]):
+    for count, held, oldest, memory_dir, unreadable in sorted(halted, key=lambda h: -h[0]):
         held_part = f", {held} held back" if held else ""
         console.print(
             f"  [yellow]![/yellow] {count} pending{held_part} (oldest {oldest}) — "
             f"{contract_path(memory_dir)}"
         )
+        if unreadable:
+            console.print(f"      held count includes requeued lines: {escape(unreadable)}")
         console.print(f"      lh memory proposals list --memory-dir {shlex.quote(str(memory_dir))}")
     total = sum(h[0] for h in halted)
     total_held = sum(h[1] for h in halted)

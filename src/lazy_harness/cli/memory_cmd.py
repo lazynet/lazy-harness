@@ -443,6 +443,12 @@ def _held_dispositions(memory_dir: Path) -> dict[str, dict[str, str]]:
     return result
 
 
+def outstanding_held_rows(memory_dir: Path) -> list[tuple[int, str, dict[str, str] | None]]:
+    """Held lines not yet requeued, malformed ones included: what `held list` reports."""
+    dispositions = _held_dispositions(memory_dir)
+    return [r for r in _held_rows(memory_dir) if r[1] not in dispositions]
+
+
 def _record_held_disposition(memory_dir: Path, identity: str, rule: str) -> None:
     path = memory_dir / _HELD_DISPOSITIONS
     existing = path.read_text() if path.is_file() else ""
@@ -622,8 +628,7 @@ def proposals_held(ctx: click.Context, memory_dir: Path | None) -> None:
 
 
 def _list_held(memory_dir: Path, *, as_json: bool) -> None:
-    dispositions = _held_dispositions(memory_dir)
-    rows = _held_rows(memory_dir)
+    rows = outstanding_held_rows(memory_dir)
     listed = [
         {
             "index": index,
@@ -633,7 +638,7 @@ def _list_held(memory_dir: Path, *, as_json: bool) -> None:
             "rationale": row.get("rationale", ""),
         }
         for index, identity, row in rows
-        if row is not None and identity not in dispositions
+        if row is not None
     ]
     malformed_lines = [index for index, _, row in rows if row is None]
     if as_json:

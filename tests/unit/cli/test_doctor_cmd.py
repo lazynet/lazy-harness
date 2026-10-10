@@ -2415,3 +2415,71 @@ def test_halted_queues_report_what_the_cap_held_back(tmp_path: Path) -> None:
     # Held proposals are recorded, just not queued: the summary says where they go.
     assert "records no new proposals" not in out
     assert "new proposals there are held, not queued" in out
+
+
+def _held_with_requeued(memory: Path, total: int, requeued: int) -> None:
+    from lazy_harness.cli.memory_cmd import _held_rows
+    from lazy_harness.knowledge.compound_loop import HELD_PROPOSALS_FILE
+
+    rows = [json.dumps({"ts": f"2026-09-0{i + 1}", "rule": f"r{i}"}) for i in range(total)]
+    (memory / HELD_PROPOSALS_FILE).write_text("\n".join(rows) + "\n")
+    done = [
+        json.dumps({"id": identity, "rule": row["rule"]})
+        for _, identity, row in _held_rows(memory)[:requeued]
+        if row is not None
+    ]
+    (memory / "proposals-held-requeued.jsonl").write_text("\n".join(done) + "\n")
+
+
+@pytest.mark.usefixtures("_no_ambient_store")
+def test_halted_queues_do_not_count_held_lines_already_requeued(tmp_path: Path) -> None:
+    """Doctor and `lh memory proposals held list` answer one question; they must agree."""
+    from click.testing import CliRunner
+
+    from lazy_harness.cli.doctor_cmd import _render_halted_proposals
+    from lazy_harness.cli.memory_cmd import memory
+
+    queue = _queue(tmp_path / ".claude-lazy/projects/-held/memory", 3)
+    _held_with_requeued(queue, total=3, requeued=2)
+    console, buf = _wide_console()
+
+    _render_halted_proposals(console, _queues_cfg(tmp_path))
+
+    out = _unwrapped(buf.getvalue())
+    assert "3 pending, 1 held back" in out
+    assert "1 held back by the cap" in out
+    listed = CliRunner().invoke(
+        memory, ["proposals", "held", "list", "--json", "--memory-dir", str(queue)]
+    )
+    assert len(json.loads(listed.output)["proposals"]) == 1
+
+
+@pytest.mark.usefixtures("_no_ambient_store")
+def test_halted_queues_omit_held_part_when_every_line_was_requeued(tmp_path: Path) -> None:
+    from lazy_harness.cli.doctor_cmd import _render_halted_proposals
+
+    queue = _queue(tmp_path / ".claude-lazy/projects/-held/memory", 3)
+    _held_with_requeued(queue, total=2, requeued=2)
+    console, buf = _wide_console()
+
+    _render_halted_proposals(console, _queues_cfg(tmp_path))
+
+    out = _unwrapped(buf.getvalue())
+    assert "3 pending (oldest" in out
+    assert "held back" not in out
+
+
+@pytest.mark.usefixtures("_no_ambient_store")
+def test_halted_queues_survive_a_malformed_dispositions_file(tmp_path: Path) -> None:
+    from lazy_harness.cli.doctor_cmd import _render_halted_proposals
+
+    queue = _queue(tmp_path / ".claude-lazy/projects/-held/memory", 3)
+    _held_with_requeued(queue, total=2, requeued=0)
+    (queue / "proposals-held-requeued.jsonl").write_text("not json\n")
+    console, buf = _wide_console()
+
+    _render_halted_proposals(console, _queues_cfg(tmp_path))
+
+    out = _unwrapped(buf.getvalue())
+    assert "3 pending, 2 held back" in out
+    assert "proposals-held-requeued.jsonl" in out
