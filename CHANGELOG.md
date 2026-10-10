@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.89.1](https://github.com/lazynet/lazy-harness/compare/v0.89.0...v0.89.1) (2026-10-10)
+
+
+### Bug Fixes
+
+* drop discovered graph repos whose graph is gone ([#530](https://github.com/lazynet/lazy-harness/issues/530)) ([cb25164](https://github.com/lazynet/lazy-harness/commit/cb25164b2702ece67702284bdbc6d3d464ded82d))
+* mark an unchanged graph fresh after lh knowledge graph update ([#527](https://github.com/lazynet/lazy-harness/issues/527)) ([094a9ac](https://github.com/lazynet/lazy-harness/commit/094a9ac5484f3e29814b98b7454c2ddcd3c67102))
+* subtract requeued held proposals from the lh doctor count ([#529](https://github.com/lazynet/lazy-harness/issues/529)) ([1adfdc9](https://github.com/lazynet/lazy-harness/commit/1adfdc975cbae9a5a103fca9ba06d9e8c6c56a84))
+
+
+### Documentation
+
+* align held count, graph freshness and discovered scope with the code ([#531](https://github.com/lazynet/lazy-harness/issues/531)) ([5bb3db8](https://github.com/lazynet/lazy-harness/commit/5bb3db81b2c9f126fd0abf01956e129983677453))
+
 ## [0.89.0](https://github.com/lazynet/lazy-harness/compare/v0.88.0...v0.89.0) (2026-10-10)
 
 
