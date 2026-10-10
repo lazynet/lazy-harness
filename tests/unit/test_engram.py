@@ -58,7 +58,7 @@ def test_engram_mcp_server_config_shape() -> None:
 def test_engram_pinned_version_constant() -> None:
     from lazy_harness.memory import engram
 
-    assert engram.PINNED_VERSION == "3.0.0"
+    assert engram.PINNED_VERSION == "3.3.2"
 
 
 def test_engram_check_version_matches_pin() -> None:
@@ -66,11 +66,11 @@ def test_engram_check_version_matches_pin() -> None:
 
     with patch("subprocess.run") as mock_run:
         mock_run.return_value = type(
-            "R", (), {"returncode": 0, "stdout": "engram 3.0.0\n", "stderr": ""}
+            "R", (), {"returncode": 0, "stdout": "engram 3.3.2\n", "stderr": ""}
         )()
         matches, current = check_version()
         assert matches is True
-        assert current == "3.0.0"
+        assert current == "3.3.2"
 
 
 def test_engram_check_version_mismatch() -> None:

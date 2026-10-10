@@ -48,13 +48,13 @@ def test_memory_wizard_writes_block_when_engram_installed_and_user_confirms(
     assert "enabled = true" in content
     assert "git_sync = true" in content
     assert "cloud = false" in content
-    assert 'version = "3.0.0"' in content
-    assert 'version = "3.0.0"' in "\n".join(output)
+    assert 'version = "3.3.2"' in content
+    assert 'version = "3.3.2"' in "\n".join(output)
     cfg = load_config(cfg_path)
     for _ in range(2):
         save_config(cfg, cfg_path)
         cfg = load_config(cfg_path)
-        assert cfg.memory.engram.version == "3.0.0"
+        assert cfg.memory.engram.version == "3.3.2"
     if existing:
         assert cfg.memory.engram.binary == "/usr/local/bin/engram"
         assert "# Keep this comment." in cfg_path.read_text()
@@ -110,4 +110,4 @@ def test_memory_wizard_when_engram_missing_prints_install_hint(
     joined = "\n".join(output)
     assert "Engram is not installed" in joined
     assert "brew install engram" in joined
-    assert "3.0.0" in joined
+    assert "3.3.2" in joined

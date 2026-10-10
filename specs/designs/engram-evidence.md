@@ -298,3 +298,46 @@ trees, restored together. No repair, deduplication or project merge was run.
 smoke, fresh freeze/count baselines, installed binary/plugin read-back and the
 observation window remain rollout gates. This evidence supports the harness
 default pin change, without certifying deployment or rollback.
+
+## 2026-10-10 — 3.3.2 copied-store compatibility
+
+Release archive SHA256 values matched the published `checksums.txt`:
+
+```text
+engram_3.3.2_darwin_arm64.tar.gz:
+3d6b4ac0055883ec23d5b0a04a3cda041653cdf4916fd7e98944692e62fd0441
+engram_3.3.2_linux_amd64.tar.gz:
+8694d3817b63c5fc5607b5919e88aa929bffa0bafda330513364e10c8ab61445
+engram --version: engram 3.3.2
+```
+
+SQLite online backups used read-only source connections. Each probe isolated
+`HOME` and `ENGRAM_DATA_DIR`, disabled update checks and Cloud autosync, ran
+`doctor --json` twice, then invoked the installed `EngramPersister` twice.
+The source stores and installed binaries were not upgraded by these probes.
+
+| Probe | Observations before / after | Sessions | Prompts | Result |
+| --- | --- | --- | --- | --- |
+| Darwin arm64, 2.1.0 baseline | 26,636 / 26,638 | 7,244 | 8,516 | 2 exact saves, repeated pass no-op, integrity `ok` |
+| Darwin arm64, 3.3.2 candidate | 26,636 / 26,638 | 7,244 | 8,516 | Same persistence checks |
+| Linux amd64, 3.0.0 baseline | 2,537 / 2,539 | 196 | 157 | Same persistence checks |
+| Linux amd64, 3.3.2 candidate | 2,537 / 2,539 | 196 | 157 | Same persistence checks |
+
+Original columns of the three base tables were compared as bytes, including
+historical text that cannot be decoded as UTF-8. The Linux candidate retained
+every compared value. The Darwin candidate changed one session's
+`ownership_mode` from NULL to `project_owned`, matching upstream
+`backfillLegacySessionOwnershipModes`; all other compared values were retained.
+`user_version` remained `1`, which does not imply an unchanged schema.
+
+Doctor's existing findings persisted on both versions: the Darwin copy had
+448 directory mismatches, 842 required-sync-field findings and 79 foreign sync
+targets; its unowned-session findings fell from two to one. Both Linux copies
+had seven foreign sync targets. These runs used isolated configuration and do
+not establish the live hosts' full diagnostic state. Doctor returned exit 0
+despite JSON `status: error`, so the JSON report must be inspected.
+
+**Verdict:** the supported pin can move without changing the CLI persister.
+Fresh backups, binary/plugin alignment and native per-profile session smoke
+remain required for deployment. The CLI probes do not verify Claude's hook
+dispatcher or Codex's native integration.

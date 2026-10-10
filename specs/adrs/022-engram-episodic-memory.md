@@ -78,3 +78,18 @@ Concretely:
   SessionStart; copied-store script probes do not prove live runtime wiring.
   Binary/plugin deployment, fresh-session smoke and DB/cursor backup remain
   separate rollout gates. This support change enables no integration or sync.
+
+## Evolution — 2026-10-10: supported pin moved to 3.3.2
+
+- **`PINNED_VERSION` moved to `3.3.2`.** Real-store copies on Darwin arm64
+  and Linux amd64 retained observation, session and prompt content, apart
+  from one documented legacy-session ownership backfill. The installed
+  persister saved two exact entries and saved none on a repeated pass;
+  SQLite integrity remained `ok`. See `specs/designs/engram-evidence.md`.
+- **No persistence contract changed.** The mirror still uses CLI `save`.
+  HTTP/Pi operation-ID replay recovery does not make this CLI path replay-safe.
+  The `expected_project` requirement for MCP/HTTP mutations remains in force.
+- **Agent deployment remains separate.** The release includes Claude plugin
+  `0.1.7`; install it and refresh MCP schemas with the binary. Existing
+  diagnostics are compared with the baseline, rather than hidden or repaired
+  as a side effect of the version bump.
