@@ -45,6 +45,13 @@ observed:
 Refuted on the way: a full `graphify update <path>` *does* rewrite `graph.json`
 on a docs-only commit. Only the incremental post-commit path leaves it.
 
+**Correction, 2026-10-10:** the refutation does not hold for a code change that
+moves no topology. graphify 0.9.72 re-extracts, prints `No code-graph topology
+changes detected; outputs left untouched` and exits 0 — observed on a commit
+touching only a `.json` file. Two repos stayed stale through every scheduled
+run. `lh knowledge graph update` now touches an existing `graph.json` after a
+successful run; a failed run and a missing graph are left alone.
+
 The report itself over-counts the denominator: 742 sessions, of which ~340 made
 no Bash/Grep call the hook could see.
 

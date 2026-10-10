@@ -264,6 +264,79 @@ def test_graph_update_names_the_real_cause_when_the_index_write_fails(
     assert "unreadable" not in output
 
 
+def _old_graph(repo: Path) -> Path:
+    import json
+    import os
+
+    graph = repo / "graphify-out" / "graph.json"
+    graph.parent.mkdir(parents=True)
+    graph.write_text(json.dumps({"nodes": [], "links": []}))
+    os.utime(graph, (1_000, 1_000))
+    return graph
+
+
+def _graphify_exits(monkeypatch, code: int) -> None:
+    from lazy_harness.knowledge import graphify as gmod
+
+    def fake_run(action, target=None, timeout=600):
+        return gmod.GraphifyResult(exit_code=code, stdout="", stderr="boom")
+
+    monkeypatch.setattr(gmod, "run_graphify", fake_run)
+    monkeypatch.setattr(gmod, "is_graphify_available", lambda: True)
+
+
+def test_graph_update_marks_an_untouched_graph_fresh(tmp_path: Path, monkeypatch) -> None:
+    """graphify leaves graph.json alone when the topology did not change.
+
+    Freshness is graph.json mtime against the last code commit, so without the
+    touch a successful update of a non-topology code change stays stale forever.
+    """
+    import time
+
+    repo = _repo(tmp_path, "a")
+    graph = _old_graph(repo)
+    _config(tmp_path, repos=[str(repo)])
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _graphify_exits(monkeypatch, 0)
+    before = time.time() - 1
+
+    result = CliRunner().invoke(knowledge, ["graph", "update"])
+
+    assert result.exit_code == 0, result.output
+    assert graph.stat().st_mtime >= before
+
+
+def test_graph_update_leaves_the_graph_stale_when_graphify_fails(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = _repo(tmp_path, "a")
+    graph = _old_graph(repo)
+    _config(tmp_path, repos=[str(repo)])
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _graphify_exits(monkeypatch, 1)
+
+    CliRunner().invoke(knowledge, ["graph", "update"])
+
+    assert graph.stat().st_mtime == 1_000
+
+
+def test_graph_update_does_not_create_a_graph_graphify_did_not_write(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = _repo(tmp_path, "a")
+    _config(tmp_path, repos=[str(repo)])
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _graphify_exits(monkeypatch, 0)
+
+    result = CliRunner().invoke(knowledge, ["graph", "update"])
+
+    assert result.exit_code == 0, result.output
+    assert not (repo / "graphify-out" / "graph.json").exists()
+
+
 # ---- self-repair and scope (graph_repos) ----------------------------------
 
 

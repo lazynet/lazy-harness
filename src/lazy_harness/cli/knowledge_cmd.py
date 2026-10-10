@@ -551,6 +551,11 @@ def knowledge_graph_update(only: Path | None) -> None:
         if result.exit_code == 0:
             console.print(f"[green]updated[/green]  {contract_path(path)}")
             log_append(log_path, f"updated: {path}")
+            # graphify leaves graph.json untouched when the topology did not
+            # change, and freshness is its mtime against the last code commit.
+            graph = path / "graphify-out" / "graph.json"
+            if graph.is_file():
+                graph.touch()
             # The graph is the product and the index a derivative the hook can
             # rebuild on its own, so a failed index never fails the repo.
             try:
