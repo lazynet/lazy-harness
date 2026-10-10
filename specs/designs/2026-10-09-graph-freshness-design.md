@@ -112,6 +112,11 @@ in any profile's `graph_assist_metrics.jsonl`; they are persisted in
 which is rendered from a chezmoi template. `lh knowledge graph list` shows both,
 marked.
 
+**Correction, 2026-10-10:** the store only grew, so a deleted scratch repo stayed
+in scope forever. `refresh_discovered` now drops a stored repo whose
+`graph.json` is gone; one that still has a graph is kept even when the metrics
+no longer name it.
+
 ### 2.3 Lazy-harness itself
 
 `/tmp/` goes into the versioned `.gitignore`: since #504 `tmp/` is a repository
