@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.89.2](https://github.com/lazynet/lazy-harness/compare/v0.89.1...v0.89.2) (2026-10-10)
+
+
+### Bug Fixes
+
+* honour --memory-dir given on lh memory proposals held ([#533](https://github.com/lazynet/lazy-harness/issues/533)) ([3bc60b3](https://github.com/lazynet/lazy-harness/commit/3bc60b3614211516fd92cef8c26e049e910839cc))
+
 ## [0.89.1](https://github.com/lazynet/lazy-harness/compare/v0.89.0...v0.89.1) (2026-10-10)
 
 
