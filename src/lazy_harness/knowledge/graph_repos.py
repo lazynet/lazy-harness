@@ -419,8 +419,12 @@ def discover_repos(cfg: Config) -> list[Path]:
 
 
 def refresh_discovered(cfg: Config) -> list[Path]:
-    """Merge fresh discoveries into the persisted store and return the union."""
-    merged = load_discovered()
+    """Merge fresh discoveries into the persisted store and return the union.
+
+    A stored repo whose graph is gone is dropped: discovery would never add it
+    again, so keeping it only parks a deleted scratch repo in scope forever.
+    """
+    merged = [p for p in load_discovered() if (p / "graphify-out" / "graph.json").is_file()]
     for repo in discover_repos(cfg):
         if repo not in merged:
             merged.append(repo)
