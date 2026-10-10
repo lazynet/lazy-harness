@@ -623,8 +623,20 @@ def proposals() -> None:
 @_MEMORY_DIR_OPTION
 def proposals_held(ctx: click.Context, memory_dir: Path | None) -> None:
     """List held entries or explicitly requeue one."""
+    ctx.obj = memory_dir
     if ctx.invoked_subcommand is None:
         _list_held(memory_dir or _project_memory_dir(), as_json=False)
+
+
+def _held_target(memory_dir: Path | None) -> Path:
+    """Resolve the held queue from the subcommand's or the group's --memory-dir."""
+    parent = click.get_current_context().parent
+    group_dir = parent.obj if parent else None
+    if memory_dir and group_dir and memory_dir.resolve() != group_dir.resolve():
+        raise click.UsageError(
+            f"--memory-dir given twice with different values: {group_dir} and {memory_dir}."
+        )
+    return memory_dir or group_dir or _project_memory_dir()
 
 
 def _list_held(memory_dir: Path, *, as_json: bool) -> None:
@@ -664,7 +676,7 @@ def _list_held(memory_dir: Path, *, as_json: bool) -> None:
 @_MEMORY_DIR_OPTION
 def proposals_held_list(as_json: bool, memory_dir: Path | None) -> None:
     """List held entries without changing either queue."""
-    _list_held(memory_dir or _project_memory_dir(), as_json=as_json)
+    _list_held(_held_target(memory_dir), as_json=as_json)
 
 
 @proposals_held.command("requeue")
@@ -673,7 +685,7 @@ def proposals_held_list(as_json: bool, memory_dir: Path | None) -> None:
 @_MEMORY_DIR_OPTION
 def proposals_held_requeue(index: int, max_pending: int | None, memory_dir: Path | None) -> None:
     """Move one selected held line into the pending review queue."""
-    target = memory_dir or _project_memory_dir()
+    target = _held_target(memory_dir)
     cap = max_pending or _load_config_for_consolidate().compound_loop.max_pending_proposals
     with memory_dir_lock(target):
         rows = _held_rows(target)
