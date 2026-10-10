@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import shutil
 import tomllib
 from datetime import datetime
@@ -597,6 +598,34 @@ def _group_identity(
     return event, group.get("matcher"), tuple(identities)
 
 
+_FAIL_CLOSED_REASON = "lazy-harness: blocking hook failed to run"
+
+
+def _fail_closed(command: str) -> str:
+    """Wrap a blocking builtin so a launcher that cannot start still refuses.
+
+    Codex has no `onFailure`: exit 1, a missing binary and a timeout all let the
+    call through, and exit 2 refuses only with a reason on stderr (evidence §9).
+    The fallback after `||` is that refusal. A timeout is still not covered —
+    Codex kills the whole wrapper.
+    """
+    script = f'{command} || {{ echo "{_FAIL_CLOSED_REASON}" >&2; exit 2; }}'
+    return f"sh -c {shlex.quote(script)}"
+
+
+def _unwrap_fail_closed(command: str) -> str | None:
+    """The command `_fail_closed` wrapped, or None for any other string."""
+    try:
+        argv = shlex.split(command)
+    except ValueError:
+        return None
+    suffix = f' || {{ echo "{_FAIL_CLOSED_REASON}" >&2; exit 2; }}'
+    if len(argv) != 3 or not argv[2].endswith(suffix):
+        return None
+    inner = argv[2][: -len(suffix)]
+    return inner if _fail_closed(inner) == command else None
+
+
 def _group_is_harness_builtin(event: str, group: dict, *, binaries: set[str]) -> bool:
     """Recognise exactly one matcher group the Codex generator can emit."""
     from lazy_harness.hooks.loader import builtin_name_from_command, resolve_builtin_spec
@@ -619,11 +648,13 @@ def _group_is_harness_builtin(event: str, group: dict, *, binaries: set[str]) ->
     command = handler.get("command")
     if not isinstance(command, str):
         return False
-    name = builtin_name_from_command(command, binaries=binaries)
+    inner = _unwrap_fail_closed(command)
+    name = builtin_name_from_command(command if inner is None else inner, binaries=binaries)
     if name is None:
         return False
     spec = resolve_builtin_spec(name)
-    if spec is None:
+    # The generator wraps only blocking builtins; a bare one is a pre-wrapper deploy.
+    if spec is None or (inner is not None and not spec.blocking):
         return False
     matcher = spec.matcher_for(canonical)
     expected = {"hooks": [handler], **({"matcher": matcher} if matcher else {})}
@@ -1246,7 +1277,14 @@ class CodexAdapter:
             groups[support.native_name] = [
                 {
                     **({"matcher": entry.matcher} if entry.matcher else {}),
-                    "hooks": [{"type": "command", "command": entry.command}],
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": _fail_closed(entry.command)
+                            if entry.blocking
+                            else entry.command,
+                        }
+                    ],
                 }
                 for entry in entries
             ]
