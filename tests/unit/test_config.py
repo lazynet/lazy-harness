@@ -479,7 +479,7 @@ def test_config_memory_engram_defaults_when_missing() -> None:
     assert cfg.memory.engram.enabled is False
     assert cfg.memory.engram.git_sync is True
     assert cfg.memory.engram.cloud is False
-    assert cfg.memory.engram.version == "3.0.0"
+    assert cfg.memory.engram.version == "3.3.2"
 
 
 @pytest.mark.parametrize("existing", [False, True])
@@ -497,7 +497,7 @@ def test_engram_version_survives_two_config_round_trips(
         cfg = Config()
     if configured_version is not None:
         cfg.memory.engram.version = configured_version
-    expected = configured_version or "3.0.0"
+    expected = configured_version or "3.3.2"
 
     for _ in range(2):
         save_config(cfg, path)

@@ -61,7 +61,7 @@ def test_engram_status_active(monkeypatch) -> None:
     monkeypatch.setattr(
         "shutil.which", lambda name: f"/usr/bin/{name}" if name in installed else None
     )
-    monkeypatch.setattr("lazy_harness.features._probe_version", lambda binary: "3.0.0")
+    monkeypatch.setattr("lazy_harness.features._probe_version", lambda binary: "3.3.2")
 
     cfg = Config()
     cfg.memory.engram.enabled = True
@@ -69,8 +69,8 @@ def test_engram_status_active(monkeypatch) -> None:
     statuses = collect_feature_statuses(cfg)
     engram = next(s for s in statuses if s.name == "engram")
     assert engram.state == "active"
-    assert engram.installed_version == "3.0.0"
-    assert engram.pinned_version == "3.0.0"
+    assert engram.installed_version == "3.3.2"
+    assert engram.pinned_version == "3.3.2"
 
 
 def test_engram_supported_pin_and_configured_diagnostic_can_differ(monkeypatch) -> None:
@@ -84,7 +84,7 @@ def test_engram_supported_pin_and_configured_diagnostic_can_differ(monkeypatch) 
     cfg.memory.engram.version = "2.1.0"
 
     status = next(s for s in collect_feature_statuses(cfg) if s.name == "engram")
-    assert builtin_registry().get("engram").pinned_version == "3.0.0"
+    assert builtin_registry().get("engram").pinned_version == "3.3.2"
     assert status.pinned_version == "2.1.0"
     assert status.installed_version == "3.0.0"
     assert status.state == "dormant"
