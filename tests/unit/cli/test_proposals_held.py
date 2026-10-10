@@ -231,3 +231,43 @@ def test_durable_write_syncs_file_before_replace_and_directory_after(
     memory_cmd._durable_write(tmp_path / "ledger", "value")
     assert events == ["sync", "replace", "sync"]
     assert (tmp_path / "ledger").read_text() == "value"
+
+
+def _run_group_dir(memory_dir: Path, *args: str):
+    return CliRunner().invoke(memory, ["proposals", "held", "--memory-dir", str(memory_dir), *args])
+
+
+def _cwd_project_is(monkeypatch, other: Path) -> None:
+    monkeypatch.setattr("lazy_harness.cli.memory_cmd._project_memory_dir", lambda: other)
+
+
+def test_held_group_memory_dir_reaches_list(tmp_path: Path, monkeypatch) -> None:
+    target = tmp_path / "target"
+    _held(target, [_row("from target")])
+    _cwd_project_is(monkeypatch, tmp_path / "cwd-project")
+    result = _run_group_dir(target, "list", "--json")
+    assert result.exit_code == 0, result.output
+    rules = [row["rule"] for row in json.loads(result.output)["proposals"]]
+    assert rules == ["from target"]
+
+
+def test_held_group_memory_dir_reaches_requeue(tmp_path: Path, monkeypatch) -> None:
+    target = tmp_path / "target"
+    _held(target, [_row("from target")])
+    _cwd_project_is(monkeypatch, tmp_path / "cwd-project")
+    result = _run_group_dir(target, "requeue", "1", "--max-pending", "10")
+    assert result.exit_code == 0, result.output
+    assert collect_pending_proposals(target) == ["from target"]
+    assert not (tmp_path / "cwd-project").exists()
+
+
+def test_held_conflicting_memory_dirs_are_refused(tmp_path: Path) -> None:
+    first, second = tmp_path / "first", tmp_path / "second"
+    _held(first, [_row("a")])
+    _held(second, [_row("b")])
+    result = CliRunner().invoke(
+        memory,
+        ["proposals", "held", "--memory-dir", str(first), "list", "--memory-dir", str(second)],
+    )
+    assert result.exit_code != 0
+    assert "--memory-dir" in result.output
