@@ -1395,6 +1395,101 @@ asserts exit 2, empty stdout and the reason on stderr. Removing the final
 `raise` in `_fallback_profile`, or turning the runner's blocking-failure exit 2
 into 0, each makes it fail.
 
+## 9. A hook that fails without exit 2
+
+**Question.** Claude Code 2.1.295 turns a hook that cannot start into a refusal
+with `onFailure: "block"` (`claude-code-evidence.md`). Codex documents no such
+key. What does it do with a `PreToolUse` hook that exits 1, does not exist, or
+times out — the failures that happen before `lh`'s runner can exit 2?
+
+**Fixture.** Same shape as §8: one `codex exec` turn per variant on
+`codex-cli 0.160.1`, a fresh work dir, the probe hook injected with
+`-c hooks.PreToolUse=[...]` under `--dangerously-bypass-hook-trust`, the model told
+to run exactly `touch marker.txt`. Run 2026-10-09 with
+`CODEX_HOME=$HOME/.codex-lazy`.
+
+```bash
+#!/usr/bin/env bash
+# Probe: what does Codex do when a PreToolUse hook fails without exit 2?
+set -euo pipefail
+OUT="${1:?out dir}"; mkdir -p "$OUT"
+run() {  # $1 label, $2 handler TOML (inline table body)
+  local label="$1" WORK="$OUT/$1/work"; mkdir -p "$WORK"
+  set +e
+  codex exec --dangerously-bypass-hook-trust --sandbox workspace-write --skip-git-repo-check \
+    -C "$WORK" \
+    -c "hooks.PreToolUse=[{matcher=\"Bash\",hooks=[{$2}]}]" \
+    --json "Run exactly this one shell command and nothing else: touch marker.txt" \
+    > "$OUT/$label/stream.jsonl" 2> "$OUT/$label/stream.stderr" < /dev/null
+  local rc=$?; set -e
+  if [ -e "$WORK/marker.txt" ]; then m=present; else m=absent; fi
+  echo "$label: codex-exit=$rc marker=$m"
+}
+printf '#!/usr/bin/env bash\ncat >/dev/null\nexit 1\n' > "$OUT/exit1.sh"; chmod +x "$OUT/exit1.sh"
+printf '#!/usr/bin/env bash\ncat >/dev/null\nsleep 8\nexit 0\n' > "$OUT/slow.sh"; chmod +x "$OUT/slow.sh"
+run exit1          "type=\"command\",command=\"$OUT/exit1.sh\""
+run missing        "type=\"command\",command=\"/nonexistent/lh-probe\""
+run timeout        "type=\"command\",command=\"$OUT/slow.sh\",timeout=2"
+run wrap-missing   "type=\"command\",command=\"sh -c '/nonexistent/lh-probe || exit 2'\""
+run wrap-exit1     "type=\"command\",command=\"sh -c '$OUT/exit1.sh || exit 2'\""
+```
+
+```bash
+#!/usr/bin/env bash
+# Probe: does Codex need a non-empty stderr to honour exit 2?
+set -euo pipefail
+OUT="${1:?out dir}"; mkdir -p "$OUT"
+run() {
+  local label="$1" WORK="$OUT/$1/work"; mkdir -p "$WORK"
+  set +e
+  codex exec --dangerously-bypass-hook-trust --sandbox workspace-write --skip-git-repo-check \
+    -C "$WORK" -c "hooks.PreToolUse=[{matcher=\"Bash\",hooks=[{$2}]}]" \
+    --json "Run exactly this one shell command and nothing else: touch marker.txt" \
+    > "$OUT/$label/stream.jsonl" 2> "$OUT/$label/stream.stderr" < /dev/null
+  local rc=$?; set -e
+  if [ -e "$WORK/marker.txt" ]; then m=present; else m=absent; fi
+  echo "$label: codex-exit=$rc marker=$m"
+}
+printf '#!/usr/bin/env bash\ncat >/dev/null\nexit 2\n' > "$OUT/exit2-silent.sh"; chmod +x "$OUT/exit2-silent.sh"
+printf '#!/usr/bin/env bash\ncat >/dev/null\nexit 1\n' > "$OUT/exit1.sh"; chmod +x "$OUT/exit1.sh"
+run exit2-silent     "type=\"command\",command=\"$OUT/exit2-silent.sh\""
+run wrap-exit1-msg   "type=\"command\",command=\"sh -c '$OUT/exit1.sh || { echo hook failed to run >&2; exit 2; }'\""
+```
+
+**Observed.**
+
+| Variant | Handler | `marker.txt` |
+|---|---|---|
+| `exit1` | script exits 1, empty stderr | **created** |
+| `missing` | `/nonexistent/lh-probe` | **created** |
+| `timeout` | sleeps 8 s, `timeout=2` | **created** |
+| `exit2-silent` | script exits 2, empty stderr | **created** |
+| `wrap-missing` | `sh -c '/nonexistent/lh-probe \|\| exit 2'` (sh prints *No such file* on stderr) | absent — `Command blocked by PreToolUse hook: sh: /nonexistent/lh-probe: No such file or directory` |
+| `wrap-exit1` | `sh -c '<exit1> \|\| exit 2'`, empty stderr | **created** |
+| `wrap-exit1-msg` | `sh -c '<exit1> \|\| { echo hook failed to run >&2; exit 2; }'` | absent |
+
+`codex exec` exited 0 in every run; where the marker was created the stream
+carries a `command_execution` item for `touch marker.txt`.
+
+**Reading.** Codex fails open on every failure except exit 2, and §8's "exit 2
+refuses" holds only with a reason on stderr: a silent exit 2 is ignored. The
+runner's own exit 2 always carries one (`hooks/runner.py`), so the gap is the
+launcher that never reaches it. A shell fallback that prints a reason and exits 2
+closes the missing-binary and crash cases; the timeout case stays open, because
+Codex kills the wrapper with the hook.
+
+**Pinned by** `tests/unit/test_codex_fail_closed.py`: the deploy wraps every
+blocking builtin as `sh -c '<lh hook …> || { echo "lazy-harness: blocking hook
+failed to run" >&2; exit 2; }'`, and the tests run that string under `/bin/sh` with
+the launcher missing, crashing, allowing and refusing.
+
+**End to end, same day.** The exact string `_fail_closed` emits, injected the same
+way: with the installed `lh hook pre-tool-use-security --profile codex-lazy` inside,
+`touch marker.txt` ran (allow passes through) and a read of a planted `.env` was
+refused with the guard's own reason, the canary value absent from the stream; with
+`/nonexistent/lh` inside, `touch marker.txt` was refused with
+`sh: /nonexistent/lh: No such file or directory`.
+
 ## Pendiente
 
 Cerrado 2026-09-16 contra el binario real (`codex-cli 0.154.0`, modelo

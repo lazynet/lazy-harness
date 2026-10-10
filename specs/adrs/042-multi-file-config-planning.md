@@ -249,6 +249,21 @@ deletion authority.
 > foreign groups the insertion shifts. Surplus managed groups keep the append
 > rule above.
 
+## Evolution — 2026-10-09: one exact fail-closed wrapper is recognised
+
+Codex has no `onFailure`, and fails open when a hook exits 1, is missing or
+times out; only exit 2 with a reason on stderr refuses (`codex-evidence.md` §9).
+The Codex generator now emits every blocking builtin as
+`sh -c '<lh hook …> || { echo "lazy-harness: blocking hook failed to run" >&2; exit 2; }'`.
+The "wrappers remain foreign" rule above gains one exception: that exact string,
+re-emitted from its inner command and compared byte for byte, around a launcher
+invocation `builtin_name_from_command` accepts, for a builtin whose spec is
+blocking. Any other shell, script, quoting or chained command stays foreign, and
+a wrapped informational builtin is foreign because the generator never writes
+one. The bare form remains recognised as a pre-wrapper deploy, so the next
+deploy replaces it in place. Changing the command changes its trust hash, so
+Codex asks to review both guards once after the upgrade.
+
 ## References
 
 - `specs/designs/2026-09-13-multi-agent-harness-design.md` — decision 4 and step 7

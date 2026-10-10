@@ -589,7 +589,8 @@ class HookEntry:
     The runner already exits 2 for a blocking builtin it cannot run, but only
     once the launcher is running: a missing binary or an agent-side timeout
     exits with some other code, which an agent reads as no objection. Agents
-    with a native fail-closed switch (Claude Code's `onFailure`) emit it here.
+    with a native fail-closed switch (Claude Code's `onFailure`) emit it here;
+    Codex has none, so its adapter wraps the command in a shell fallback.
     """
 
 
