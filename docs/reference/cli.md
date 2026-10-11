@@ -433,7 +433,7 @@ Diagnostic commands for the memory stack. Read-only inspection, a propose-only c
 
 ### `lh memory status`
 
-Inventory of the current project's memory: the key its store path is built from, the resolved store directory, and what sits in it — `MEMORY.md` in lines and bytes, the curated memory documents, record counts and last-written dates for `decisions.jsonl`, `failures.jsonl` and `grades.jsonl`, and proposals by state.
+Inventory of the current project's memory: the key its store path is built from, the resolved store directory, and what sits in it — `MEMORY.md` in lines and bytes, the curated memory documents, record counts and last-written dates for `decisions.jsonl`, `failures.jsonl`, `grades.jsonl` and the `/coherence-audit` ledger `coherence-drift.jsonl` (each only when present), and proposals by state.
 
 It reports; it does not judge. The hygiene verdict — `MEMORY.md` against its ceiling, the age of the oldest pending proposal — belongs to `lh doctor`, and the cross-project table to `lh status memory`.
 
