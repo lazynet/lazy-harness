@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.89.3](https://github.com/lazynet/lazy-harness/compare/v0.89.2...v0.89.3) (2026-10-11)
+
+
+### Bug Fixes
+
+* give /coherence-audit its own drift ledger ([#535](https://github.com/lazynet/lazy-harness/issues/535)) ([b75a284](https://github.com/lazynet/lazy-harness/commit/b75a284249cbf6cbd0079d5a082f0e57a72532ee))
+
+
+### Documentation
+
+* annotate ADR drift found by the 0.89.2 coherence audit ([#536](https://github.com/lazynet/lazy-harness/issues/536)) ([845186c](https://github.com/lazynet/lazy-harness/commit/845186c18288efc894185a7d8ae097b786106d43))
+* close the prose drift from the 0.89.2 coherence audit ([#537](https://github.com/lazynet/lazy-harness/issues/537)) ([0712db0](https://github.com/lazynet/lazy-harness/commit/0712db08bfa82aa4f41aec76a3e55ab99427ff19))
+
 ## [0.89.2](https://github.com/lazynet/lazy-harness/compare/v0.89.1...v0.89.2) (2026-10-10)
 
 
