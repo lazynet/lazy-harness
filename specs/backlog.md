@@ -1,9 +1,9 @@
 # lazy-harness backlog
 
-0.80.0 cortado el 2026-09-24 (`5855f6c`, #465); 0.81.0 lleva #468 (graphify 0.9.67), #469
-(graph assist) y el drift de su `/coherence-audit`. El rollout de graph assist (config, deploy,
-día 0) sigue después del corte. El cutover de la flota a los nombres de ADR-068 se ejecutó el
-2026-09-24 en los dos hosts (ver Done).
+Último release cortado: 0.89.1 (`ff6a2e3`, #528); `main` lleva además #533 (`--memory-dir` en
+`lh memory proposals held`) y el `/coherence-audit` del gate de 0.89.2 (ver la última revisión).
+El cutover de la flota a los nombres de ADR-068 se ejecutó el 2026-09-24 en los dos hosts (ver
+Done).
 ADR-060 Wave 1 sigue en su ventana de siete días hábiles. Rollout externo pendiente: Wave 2
 de ADR-060, el push de los renames `AGENTS.MD` de flex, el probe de proyección de skills
 instalada, receiver/Grafana y el opt-in de PRJ-LazyHarness.
@@ -13,6 +13,8 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 Última revisión: 2026-09-25 — `/coherence-audit` antes de cortar 0.81.0, sobre `main` @ `de89535`, con foco en el delta desde 0.80.0: #468 (graphify 0.9.67) y #469 (graph assist). Piece B: quince hallazgos (1 high, 5 medium, 9 low), los quince cerrados en la misma branch; el high era código (doctor y deploy no coincidían sobre un builtin con scoping por agente). Roadmap sin cambios: no hubo ADR nuevo.
 
 Última revisión: 2026-10-08 — `/coherence-audit` antes de cortar 0.86.0, sobre `origin/main` @ `ef721e42`, con foco en #509 / ADR-070 (Haiku 5.5 por largo de prompt). Piece B: ocho hallazgos (0 high, 3 medium, 5 low), siete cerrados en la branch `docs/coherence-audit-2026-10-08`. El item de ADR-060 Wave 1 en `docs/roadmap.md` sigue abierto: cerrarlo necesita el resultado del fleet gate, que esta auditoría no corrió.
+
+Última revisión: 2026-10-11 — `/coherence-audit` antes de cortar 0.89.2, sobre `main` @ `3bc60b3`. Piece B: veintiún hallazgos (1 high, 7 medium, 13 low). Esta branch (`docs/backlog-docs-drift-0892`) cierra los ocho de prosa de este archivo, ADR-011, ADR-039, `docs/agents/codex.md` y `docs/how/cost-reporting.md`; el resto va por otras lanes. El item de ADR-060 Wave 1 no se tocó acá.
 
 
 ## Orden de ataque (2026-09-25)
@@ -412,7 +414,7 @@ binario (plan §5.2 ítem 4). Prioridad MEDIA.
 
 **Estado:** la opción (d) entró en #450 — `lh doctor` muestra toda cola frenada de la máquina (17 colas, 263 propuestas medidas el 2026-09-23). Siguen sin elegir (a) drenar a mano, (b) subir el cap o (c) expirar por antigüedad fuera del immunity registry; el análisis está en la historia de esta entrada (`git log -S 'immunity registry' -- specs/backlog.md`).
 
-**Corrección, medida por el review de #450:** la corrección anterior de esta entrada decía que el cap era «backpressure, not a discard». Es falso. `knowledge/compound_loop.py` hace `proposals = []` cuando `queued >= cap`, así que la propuesta que el grader produjo en esa corrida **se pierde**; el comentario del mismo bloque dice lo contrario. Lo único cierto es que el freno se avisa. **Cerrado en #460 (2026-09-24):** lo frenado se persiste en `proposals-held.jsonl`, que el grader no lee, y `lh doctor` lo cuenta. **Cerrado en #473 (2026-09-25):** `lh memory proposals held` lista lo retenido y lo devuelve a la cola de a uno, respetando el cap bajo lock y registrando la disposición en `proposals-held-requeued.jsonl`. **Queda abierto:** sólo la decisión de operador — (a)/(b)/(c) siguen sin elegir y las colas vivas sin drenar. Prioridad MEDIA.
+**Corrección, medida por el review de #450:** la corrección anterior de esta entrada decía que el cap era «backpressure, not a discard». Es falso. `knowledge/compound_loop.py` hace `proposals = []` cuando `queued >= cap`, así que la propuesta que el grader produjo en esa corrida **se pierde**; el comentario del mismo bloque dice lo contrario. Lo único cierto es que el freno se avisa. **Cerrado en #460 (2026-09-24):** lo frenado se persiste en `proposals-held.jsonl`, que el grader no lee, y `lh doctor` lo cuenta. **Cerrado en #473 (2026-09-25):** `lh memory proposals held` lista lo retenido y lo devuelve a la cola de a uno, respetando el cap bajo lock y registrando la disposición en `proposals-held-requeued.jsonl`. **Drenaje (2026-10-10):** las colas vivas se drenaron a cero; el 2026-10-11 `lh doctor` (0.89.2) imprime `✓ 0 pending proposals` bajo *Memory hygiene* y no imprime la sección *Halted proposal queues*, que sólo aparece con una cola frenada. **Queda abierto:** sólo la política — (a) drenar a mano, (b) subir el cap o (c) expirar por antigüedad fuera del immunity registry siguen sin elegir, y sin una el cap vuelve a frenar. Prioridad MEDIA.
 
 ### El evaluador no ve los contratos vigentes y re-propone sus reglas en cada proyecto
 
@@ -462,7 +464,9 @@ Con `TMPDIR=/tmp` quedan dos fuentes más de rojos según la corrida (2026-10-08
 
 **Acción:** dos cambios al prompt: avisarle al grader que las tool calls están recortadas y exigir inglés. Medir contra los kill criteria antes de tocar nada más.
 
-### F2–F9 del coherence-audit del 2026-09-19 siguen siendo drift abierto en `main`
+### F9 del coherence-audit del 2026-09-19 sigue sin re-derivar (F2–F8 cerrados)
+
+**Estado (2026-10-11):** F2–F8 están cerrados, cada fila de la tabla dice cuándo y por qué PR; la tabla queda como evidencia de cómo se cerró cada uno. Sólo F9 sigue abierto. La decisión de código de F7 tiene su propia entrada («Inferencia con Claude: dos argv de `claude -p` y `run_inference` no escribe a `metrics.db`»).
 
 **Por qué está acá:** el audit que los levantó vivía en
 `reports/2026-09-19-external-hook-ownership-coherence-audit.md` y se borró al podar
@@ -481,7 +485,7 @@ de abrir el archivo, no de confiar en el reporte:
 | F4 | `specs/adrs/024-mcp-server-orchestration.md:41` | **Cerrado el 2026-09-23** por #452. Estado del 2026-09-20: Dice que el `plan_config` de Codex «ignores `servers`» y que «the first adapter that has to translate an `mcpServers` entry is still unwritten». Falso desde `7585c7c` (#341, 2026-09-16, 0.68.0): `CodexAdapter.plan_config` llama `self._plan_mcp(servers, …)`, que mergea `[mcp_servers.<id>]` en `config.toml`. La otra mitad de la misma oración —`mcp_config_file()` devuelve `""`— **sigue siendo cierta** (`CodexAdapter.mcp_config_file`), así que quien la releyó chequeó la mitad verdadera y la dio por buena. |
 | F5 | `specs/adrs/010-pre-compact-preservation.md:22` | **Cerrado el 2026-09-23** por #451. Estado previo: El punto 2 sigue prometiendo que `parse_transcript` recolecta intents y file paths. Es la otra punta del item abierto de `parse_transcript` de este mismo archivo; ADR-010 se cierra en el PR de ese fix, que ya lo declara como superficie propia. |
 | F6 | `specs/adrs/029-engram-persist-deterministic-mirror.md:17` | **Cerrado el 2026-09-23**, mismo PR. Documenta `git rev-parse --show-toplevel`; el hook usa `--git-common-dir` (`hooks/builtins/engram_persist.py:25`, con el porqué en su docstring `:18` — un worktree tiene que resolver al repo canónico). |
-| F7 | `specs/adrs/039-role-routed-inference.md:79` | **Cerrado en prosa el 2026-09-23** por #453: ADR-039 lo declara no implementado. Estado previo: «Compound-loop spend becomes visible in `metrics.db` for the first time». `llm/claude.py:31` arma `--output-format text`, que no lleva bloque de usage; la contabilidad vive en el camino del agente, que arma `--output-format json` por separado (`ClaudeCodeAdapter.headless_argv`). Son dos argv distintos y sólo uno mide. Desde el 2026-09-23 ADR-039 lo anota como no implementado; queda la decisión de código. |
+| F7 | `specs/adrs/039-role-routed-inference.md:79` | **Cerrado en prosa el 2026-09-23** por #453: ADR-039 lo declara no implementado. Estado previo: «Compound-loop spend becomes visible in `metrics.db` for the first time». `llm/claude.py:31` arma `--output-format text`, que no lleva bloque de usage; la contabilidad vive en el camino del agente, que arma `--output-format json` por separado (`ClaudeCodeAdapter.headless_argv`). Son dos argv distintos y sólo uno mide. Desde el 2026-09-23 ADR-039 lo anota como no implementado; la decisión de código pasó el 2026-10-11 a su propia entrada (abajo). |
 | F8 | `specs/adrs/039-role-routed-inference.md:46` | **Cerrado el 2026-09-23** por #453, implementado. Estado previo: Promete que `api_key_env` reusa el mecanismo de `url_env` «verbatim», con «owner-only secrets-file fallback». `_resolve_api_key` (`llm/invoke.py:_resolve_api_key`) hace sólo `os.environ.get(api_key_env, "")`: no hay fallback al secrets file, que del lado del sink sí existe y encima rechaza un archivo que no sea owner-only (`monitoring/sink_setup.py:_read_url_from_secrets_file`). Una key que viva únicamente en el secrets file resuelve a `""`. Desde el 2026-09-23 ADR-039 lo anota como no implementado; queda la decisión de código. |
 | F9 | `specs/backlog.md:209`, en el árbol auditado | **No reproducible, y se anota así en vez de copiarlo.** El ancla está muerta: el audit corrió sobre `76edfedc`, una rama que ya no existe, con este archivo en 775 líneas; hoy tiene otra longitud y esa línea es otra cosa. El propio audit lo describe como una contradicción **documental** contra ADR-056, no como un defecto de código, y las dos superficies que sí puedo leer hoy —la entrada «La semántica de matchers de Codex está medida» y `ADR-056:35-47`— **coinciden** y pinean las dos `codex-cli 0.154.0`. Hay que re-derivarlo desde `failures.jsonl` antes de tratarlo como abierto. |
 
@@ -489,12 +493,17 @@ de abrir el archivo, no de confiar en el reporte:
 todas bajo `specs/adrs/**`, que está fuera de la ruta corta de docs — van por
 worktree y **no se hacen en el PR que escribe esta entrada**, porque otra lane
 tiene ese árbol. F5 se cierra con el PR de `parse_transcript`, que ya declara
-ADR-010 como una de sus superficies. F7 y F8 son los únicos dos que piden decidir
-algo, y la pregunta es la misma en los dos: si la promesa se corrige o se cumple.
-Cumplirla es chico en los dos casos —un `--output-format json` en el frontend de
-inferencia, un fallback al secrets file en `_resolve_api_key`— y bajarla a lo que
-el código hace es gratis; no está elegido. F9 primero hay que re-derivarlo.
+ADR-010 como una de sus superficies. F7 y F8 eran los únicos dos que pedían decidir
+algo: si la promesa se corregía o se cumplía. F8 se cumplió (`_resolve_api_key`
+cae a `read_metrics_secret`, `llm/invoke.py:81`); la de F7 sigue sin decidir y
+vive en su propia entrada. F9 primero hay que re-derivarlo.
 Prioridad MEDIA.
+
+### Inferencia con Claude: dos argv de `claude -p` y `run_inference` no escribe a `metrics.db`
+
+**Por qué:** es la decisión de código que dejó F7 (ADR-039, §Consequences, nota «Not implemented»). Verificado el 2026-10-11 contra `main` @ `3bc60b3`: `llm/claude.py:31` arma `claude -p --model M --output-format text`, y `ClaudeCodeAdapter.headless_argv` (`agents/claude_code.py:1112`) arma `-p --output-format json`; son dos argv separados y sólo el segundo lleva bloque de usage. `run_inference` (`llm/invoke.py`) no tiene ninguna escritura a `metrics.db`, así que el gasto del compound-loop sigue sin aparecer ahí.
+
+**Acción:** decidir entre (a) cumplir la promesa — un solo constructor del argv de `claude -p` y una escritura de métricas en el camino de inferencia — o (b) bajar ADR-039 a lo que el código hace y dejar el gasto del compound-loop fuera de `metrics.db` de forma explícita. No está elegido. Prioridad MEDIA.
 
 ### El clasificador de auto mode frena la orquestación de agentes, y su `environment` describía un solo repo
 
@@ -535,7 +544,7 @@ riesgo y rollback. Adoptar sólo una opción que reduzca al menos 20% el tiempo 
 pared sin introducir flakes y cuya señal se sostenga con mutaciones en ambas
 direcciones; si ninguna llega al umbral, conservar el gate actual.
 
-### ADR-060: Wave 1 migrada, ventana de siete días abierta el 2026-09-22
+### ADR-060: Wave 1 migrada, ventana de siete días reiniciada el 2026-10-11 (cierra el 2026-10-20)
 
 **Por qué:** los cinco repos de Wave 1 (lazy-harness, lazy-ai-tools, dotfiles,
 lazy-ansible, lazy-desktop-manager) cargan sólo `AGENTS.md`, verificado con
@@ -548,8 +557,17 @@ El gate estático daba verde porque sólo miraba adentro del árbol.
 **Fuente:** [ADR-060](adrs/060-agents-md-is-the-portable-repository-contract.md)
 §Evolution y [el plan](plans/2026-09-22-agent-neutral-instructions-rollout-plan.md).
 
-**Acción:** (1) la ventana de siete días hábiles corre desde el 2026-09-22 y
-cierra con `lh repo instructions` limpio en los cinco repos; después, Wave 2
+**Ventana reiniciada (2026-10-11):** la primera ventana (desde el 2026-09-22) no
+contó: el 2026-09-23 `lh profile sync-system-doc` (0.78.0) dejó dos system docs
+generados en el árbol fuente de chezmoi de dotfiles, `profiles/{lazy,flex}/CLAUDE.md`,
+ignorados por git y sin gestionar, y `lh repo instructions` los marcó
+`claude-md-shadows-agents` con exit 1, así que el gate no estuvo limpio. El
+2026-10-11 se borraron los dos y `lh repo instructions` sobre los cinco repos de
+Wave 1 dio todo ✓, exit 0. Por decisión del operador la ventana arranca el
+2026-10-11 y cierra el 2026-10-20 si el gate sigue limpio.
+
+**Acción:** (1) la ventana de siete días hábiles corre desde el 2026-10-11 y
+cierra el 2026-10-20 con `lh repo instructions` limpio en los cinco repos; después, Wave 2
 (lazent, lazy-everythingapp, lazy-finance, lazy-hamradio, lazy-hermes,
 lazy-popopen y el vault LazyMind). (2) Cerrado el 2026-09-22: los repos de Wave 1
 fuera de este no tienen CI, así que el gate corre desde `audit-harness` sobre
@@ -605,9 +623,19 @@ efecto en la resolución— sino que cualquier `uv run` ensucia el árbol, inclu
 con `--frozen`, porque el install editable reescribe esa línea. Eso ya costó un
 `pull` con autostash en conflicto el mismo 2026-09-12.
 
-**Acción:** primero reproducir y entender por qué difieren, mirando la versión de
-la action de release-please en cada corrida. Recién después decidir si hace falta
-un paso `uv lock` en el workflow. No tocar `extra-files` a ciegas: equivocarse acá
+**Actualización (2026-10-11):** el paso `uv lock` ya existe: el job `sync-lock` de
+`.github/workflows/release-please.yml` corre `uv lock` sobre la rama del release PR
+y commitea `uv.lock` si cambió, desde #31 (2026-04-20, `fded286`), o sea antes de
+v0.58.0. La pregunta ya no es si hace falta el paso sino por qué no se aplicó en
+algunos releases. Medido sobre los 63 tags desde v0.58.0: el commit del tag no
+toca `uv.lock` en ocho (v0.58.0, v0.65.0, v0.66.0, v0.76.7, v0.76.8, v0.76.9,
+v0.81.0, v0.83.4), y en los ocho el lock quedó con la versión del release anterior.
+Los diez tags posteriores a v0.83.4, hasta v0.89.1, lo tocan todos.
+
+**Acción:** para uno de los ocho, mirar la corrida de `release-please` y de
+`sync-lock` de ese release PR (¿se saltó por `find-release-pr` sin rama, o falló el
+push?) y recién entonces decidir si el job necesita otro disparador. Si no
+reaparece, cerrar la entrada. No tocar `extra-files` a ciegas: equivocarse acá
 rompe releases, no docs.
 
 ### Otros dos eventos emiten JSON para un `hookEventName` que la unión no tiene
@@ -777,8 +805,8 @@ se guarda. Prioridad BAJA.
 implementaciones de `_atomic_write` en el repo (compound loop, session export,
 `memory_cmd.py`, y dos más), y ya no son la misma función: el compound loop
 escribe a un temp con nombre uuid abierto en modo `"x"` y lo unlinkea si falla,
-mientras `session_export.py:140` sigue con un `.name.tmp` fijo. Ver ADR-011:47,
-anotado. **Acción:** consolidar las cinco copias en una sola función
+mientras `knowledge/session_export.py:_atomic_write` sigue con un `.name.tmp`
+fijo. Ver ADR-011, Evolution 2026-09-24. **Acción:** consolidar las cinco copias en una sola función
 compartida, o documentar por qué cada una necesita su propio contrato.
 Prioridad BAJA.
 
