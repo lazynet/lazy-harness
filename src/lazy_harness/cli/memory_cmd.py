@@ -586,7 +586,7 @@ def status(memory_dir: Path | None) -> None:
     total = sum(d.stat().st_size for d in docs)
     click.echo(f"  memories         {len(docs)} files · {_human_bytes(total)}")
 
-    for name in ("decisions", "failures", "grades"):
+    for name in ("decisions", "failures", "grades", "coherence-drift"):
         count, last = _jsonl_summary(target / f"{name}.jsonl")
         if count is None:
             continue

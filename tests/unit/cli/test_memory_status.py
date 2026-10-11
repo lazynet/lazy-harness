@@ -224,3 +224,20 @@ def test_status_says_a_keyless_checkout_is_why_the_store_is_not_used(
 
     assert result.exit_code == 0, result.output
     assert "no git remote" in result.output
+
+
+def test_status_reports_the_coherence_drift_ledger_beside_the_failures(tmp_path: Path) -> None:
+    """`/coherence-audit` keeps its own ledger in this directory instead of
+    `failures.jsonl`; status is where an operator sees it exists at all."""
+    d = tmp_path / "memory"
+    d.mkdir()
+    (d / "coherence-drift.jsonl").write_text(
+        '{"ts": "2026-10-11T12:00:00-03:00", "status": "open", "key": "a"}\n'
+        '{"ts": "2026-10-11T12:00:01-03:00", "status": "open", "key": "b"}\n'
+        '{"ts": "2026-10-11T12:00:02-03:00", "status": "resolved", "key": "a"}\n'
+    )
+
+    result = CliRunner().invoke(memory, ["status", "--memory-dir", str(d)])
+
+    assert result.exit_code == 0, result.output
+    assert "coherence-drift.jsonl 3 records · last 2026-10-11" in result.output
