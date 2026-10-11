@@ -544,7 +544,7 @@ riesgo y rollback. Adoptar sólo una opción que reduzca al menos 20% el tiempo 
 pared sin introducir flakes y cuya señal se sostenga con mutaciones en ambas
 direcciones; si ninguna llega al umbral, conservar el gate actual.
 
-### ADR-060: Wave 1 migrada, ventana de siete días abierta el 2026-09-22
+### ADR-060: Wave 1 migrada, ventana de siete días reiniciada el 2026-10-11 (cierra el 2026-10-20)
 
 **Por qué:** los cinco repos de Wave 1 (lazy-harness, lazy-ai-tools, dotfiles,
 lazy-ansible, lazy-desktop-manager) cargan sólo `AGENTS.md`, verificado con
@@ -557,8 +557,17 @@ El gate estático daba verde porque sólo miraba adentro del árbol.
 **Fuente:** [ADR-060](adrs/060-agents-md-is-the-portable-repository-contract.md)
 §Evolution y [el plan](plans/2026-09-22-agent-neutral-instructions-rollout-plan.md).
 
-**Acción:** (1) la ventana de siete días hábiles corre desde el 2026-09-22 y
-cierra con `lh repo instructions` limpio en los cinco repos; después, Wave 2
+**Ventana reiniciada (2026-10-11):** la primera ventana (desde el 2026-09-22) no
+contó: el 2026-09-23 `lh profile sync-system-doc` (0.78.0) dejó dos system docs
+generados en el árbol fuente de chezmoi de dotfiles, `profiles/{lazy,flex}/CLAUDE.md`,
+ignorados por git y sin gestionar, y `lh repo instructions` los marcó
+`claude-md-shadows-agents` con exit 1, así que el gate no estuvo limpio. El
+2026-10-11 se borraron los dos y `lh repo instructions` sobre los cinco repos de
+Wave 1 dio todo ✓, exit 0. Por decisión del operador la ventana arranca el
+2026-10-11 y cierra el 2026-10-20 si el gate sigue limpio.
+
+**Acción:** (1) la ventana de siete días hábiles corre desde el 2026-10-11 y
+cierra el 2026-10-20 con `lh repo instructions` limpio en los cinco repos; después, Wave 2
 (lazent, lazy-everythingapp, lazy-finance, lazy-hamradio, lazy-hermes,
 lazy-popopen y el vault LazyMind). (2) Cerrado el 2026-09-22: los repos de Wave 1
 fuera de este no tienen CI, así que el gate corre desde `audit-harness` sobre
