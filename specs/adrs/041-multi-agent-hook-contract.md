@@ -310,6 +310,18 @@ test comment — no evidence file. It is now also recorded in
 only what the docstring and test already assert: no new probe was run to
 produce it.
 
+**2026-09-25 — the same-agent fallback is withdrawn; an unknown hook
+`--profile` refuses.**
+
+PR #473 removed the fallback the 2026-09-24 entry describes.
+`hooks/runner.py:_fallback_profile` now always raises `UnknownProfileError`:
+a payload marker identifies a wire protocol, never a persona, so neither the
+caller's default profile nor its only configured profile proves the missing
+identity, and every unknown named `--profile` refuses before a builtin runs.
+`_caller_agent` and `_CALLER_MARKERS` remain, but only to name the caller in
+that refusal. Read the 2026-09-24 entry as history. See ADR-068, Evolution
+2026-09-25, for the withdrawal itself.
+
 ## References
 
 - `specs/designs/2026-09-13-multi-agent-harness-design.md` — the contract, the

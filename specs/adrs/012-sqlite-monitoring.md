@@ -88,6 +88,12 @@ deterministically from `(profile, session, model)` so the remote sink has a stab
 idempotency key; `host` and `workload` are deliberately not backfilled, because nothing
 on disk can say which machine wrote a historical row.
 
+That list is not complete, and counting columns here is how it went stale.
+[ADR-061](061-billed-cost-and-api-equivalent-cost-are-separate.md) added `billed_cost`,
+`billed_cost_source`, `api_equivalent_cost`, `api_equivalent_status` and `api_price_basis`,
+and `event_schema_version` was added the same way. The list of columns that
+`_migrate_identity_columns()` adds is the code in `monitoring/db.py`, not this paragraph.
+
 The idempotence sentence under **Decision** has been corrected in place rather than
 annotated here, because it never described the shipped collector: `ingest.py` called
 `upsert_stats` from the first ingest pipeline (#1), a day before this ADR was filed, and

@@ -131,7 +131,7 @@ own to the event; post-compaction continuity lives in `context-inject` on the
 
 **2026-09-15 (0.67.0, PR #295): the effective set is no longer the merge.**
 The formula under **Decision** still describes the merge, but the merge is now
-the first of two stages, not the whole answer. `_hook_entries_for`
+the first of two stages, not the whole answer. `hook_entries_for`
 (`deploy/engine.py`) computes `effective` exactly as written above and then
 drops every script whose declared `Signal`s the *profile's agent* cannot
 deliver, asking `gaps_for_profile` (`hooks/signal_gaps.py`) — the same reader
@@ -215,7 +215,7 @@ delivered in the same PR as this ADR.
 merge.** A builtin can declare `BuiltinHookSpec.agents`;
 `pre-tool-use-graph-assist` declares `claude-code`, so Codex keeps graphify's
 upstream guard as the control group of its measurement. #469 first filtered it
-in `_hook_entries_for` alone, and `lh doctor` then reported the hook as deployed
+in `hook_entries_for` alone, and `lh doctor` then reported the hook as deployed
 on a Codex profile where deploy had omitted it — the "same reader, cannot drift"
 guarantee above, broken by a stage added beside the reader instead of inside it.
 The rule now lives in `merge_with_defaults` (`deploy/defaults.py`), next to the

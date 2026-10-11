@@ -11,7 +11,7 @@
 `specs/backlog.md` ("`[hooks.*].external` no puede expresar un comando por
 perfil") measured the gap on 2026-09-14: `external` is a global list of
 `ExternalHookConfig` entries in `config.toml`, and
-`deploy/engine.py:172 _hook_entries_for` copies `ext.command` **verbatim** to
+`deploy/engine.py:hook_entries_for` copies `ext.command` **verbatim** to
 every profile it deploys —
 
 ```python
@@ -24,7 +24,7 @@ for event_name, event_cfg in cfg.hooks.items():
 
 The harness's own builtins do not have this problem: `hook_command(hook,
 profile=profile, binary=binary)` resolves `--profile <name>` per profile
-inside the per-profile loop `_hook_entries_for` already runs. `external` is
+inside the per-profile loop `hook_entries_for` already runs. `external` is
 the one hook source that skips that resolution entirely, so a command whose
 text needs to differ per profile — one that names a profile's own config
 directory — has no way to say so. A single entry is either wrong on every
@@ -56,7 +56,7 @@ now; revisit if a real case ever needs a command that is not expressible as
 one template plus placeholders.
 
 **B — expand `{config_dir}` / `{profile}` placeholders in `ext.command` at
-plan time**, inside `_hook_entries_for`'s existing per-profile loop. Small: one
+plan time**, inside `hook_entries_for`'s existing per-profile loop. Small: one
 `str.format`-shaped substitution, no new config table, no new validation
 surface beyond naming a placeholder the deploy does not recognise. Covers the
 herdr case and every other command that needs to know its own profile's
@@ -72,7 +72,7 @@ specific, not because no fix was wanted.
 ## Decision
 
 `ExternalHookConfig.command` may contain `{profile}` and/or `{config_dir}`.
-`_hook_entries_for` expands them per profile, in the same loop that already
+`hook_entries_for` expands them per profile, in the same loop that already
 resolves `hook_command` for the harness's own scripts — one place decides "the
 command this profile's hooks run," not two:
 
@@ -137,7 +137,7 @@ some profiles and not others, or with genuinely different logic per profile —
 but nothing measured today asks for it, and adding the surface speculatively
 is exactly the premature abstraction this repo's own rules forbid.
 
-The refusal happens at deploy/plan time (inside `_hook_entries_for`, per
+The refusal happens at deploy/plan time (inside `hook_entries_for`, per
 profile), not at config load: a config that never deploys a bad profile never
 hits it, matching how `ConfigTargetChangedError` and
 `ConfigPlannerRequiredError` already surface mid-deploy rather than at parse
