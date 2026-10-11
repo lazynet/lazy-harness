@@ -87,8 +87,11 @@ Because the motivating consumer lives in another repository, `lh exec --role <na
   > (`-p --model M --output-format text`) and `ClaudeCodeAdapter.headless_argv`
   > (`-p --output-format json [--model M]`) still build two `claude -p` argv
   > lists. And `run_inference` records nothing: the text output format carries
-  > no usage block and no metrics write exists on the inference path. Tracked as
-  > F7 in `specs/backlog.md`.
+  > no usage block and no metrics write exists on the inference path. Tracked in
+  > `specs/backlog.md` §Open as its own entry, "Inferencia con Claude: dos argv
+  > de `claude -p` y `run_inference` no escribe a `metrics.db`" (re-pointed
+  > 2026-10-11; the F7 row there is closed in prose and no longer carries the
+  > code question).
 - A caller outside this repository can request local inference against a versioned contract, without importing `lazy_harness`.
 - Per-role routing makes "classify locally, distil with Claude" expressible, which the single global backend value could not express.
 - OpenRouter and any other OpenAI-compatible provider become usable without a plaintext key in a chezmoi-managed file.

@@ -178,8 +178,8 @@ it as complete. API-equivalent pricing runs per response, and the context class 
 `unknown_model`; it is not aliased to another model. Each OpenAI model
 prices only inside its published window: `gpt-5.6-sol` from 2026-08-21 through
 the vendor's committed floor of 2026-11-21, `gpt-6-astra` from 2026-09-03,
-`gpt-6-sol` and `gpt-6-luna` from 2026-09-22, and `gpt-5.6-luna` from
-2026-07-30, all open-ended except Sol 5.6. Missing, malformed, or out-of-window
+`gpt-6-sol` and `gpt-6-luna` from 2026-09-22, `gpt-6.1-sol` from 2026-09-29,
+and `gpt-5.6-luna` from 2026-07-30, all open-ended except Sol 5.6. Missing, malformed, or out-of-window
 response dates fail closed instead of treating a point-in-time snapshot as
 permanent pricing.
 
