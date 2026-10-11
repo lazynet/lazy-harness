@@ -327,7 +327,10 @@ can flip only `backend` without changing their agent config.
 - `httpx` becomes an explicit runtime dependency (currently implicit). Small.
 - Two new config fields (`backend`, `backend_options`) expand the
   `[compound_loop]` table. Mitigated by the existing `lh config compound-loop
-  --init` wizard path (ADR-026).
+  --init` wizard path (ADR-026). *(Noted 2026-10-11: no such wizard exists.
+  `cli/config_cmd.py` registers only `memory`, `knowledge` and
+  `migrate-knowledge`. Backend selection moved to `[llm.roles]` per
+  [ADR-039](039-role-routed-inference.md), edited by hand; see *Evolution*.)*
 - The rename `invoke_claude` → `invoke_llm` touches callers in
   `knowledge/compound_loop.py` and `cli/memory_cmd.py`. Mechanical change.
 - Model quality varies significantly across providers. A user switching to a
@@ -364,6 +367,16 @@ single-turn answer is a provider capability the framework would want to use.
 [ADR-039](039-role-routed-inference.md) shipped both changes, alongside the
 `run_inference` rerouting already noted below.
 
+**2026-10-11 — there is no compound-loop wizard, and backend config left
+`[compound_loop]`.** The *Consequences* bullet and Implementation step 4 above
+lean on an `lh config compound-loop --init` wizard. None was shipped:
+`cli/config_cmd.py` registers `memory`, `knowledge` and `migrate-knowledge`
+only. Backends and the roles that select them are declared by hand in
+`[llm]` / `[llm.roles]` ([ADR-039](039-role-routed-inference.md);
+`core/config.py:LLMConfig`). `CompoundLoopConfig.backend` and `backend_options`
+still exist, but only as the deprecated form that `llm/roles.py:resolve_role`
+reads for the legacy role.
+
 ## Implementation
 
 > **Historical.** This sequence describes the 2026-06-11 implementation. Step 7's
@@ -378,6 +391,7 @@ Recommended sequence (each step independently shippable):
    `backend: LLMBackend` parameter through.
 4. Add `CompoundLoopConfig.backend` and `backend_options` to `core/config.py`;
    default to `"claude"`. Update `lh config compound-loop --init` wizard.
+   *(Noted 2026-10-11: the wizard was never built; see the Consequences note.)*
 5. Add `src/lazy_harness/llm/openai_compat.py` with `OpenAICompatibleBackend`.
 6. Add `src/lazy_harness/llm/registry.py` with aliases table.
 7. Wire `get_backend(cfg.compound_loop)` into `cli/memory_cmd.py` and the

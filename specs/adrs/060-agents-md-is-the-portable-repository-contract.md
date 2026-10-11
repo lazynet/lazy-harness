@@ -63,5 +63,16 @@ one source and preserve nested discovery.
 Wave 1 migrated 2026-09-22: lazy-harness, lazy-ai-tools, dotfiles, lazy-ansible
 and lazy-desktop-manager. Each passes `lh repo instructions` and a sentinel
 probe from its root and one nested directory in both Claude Code 2.1.280 and
-Codex. The seven-working-day window restarts on 2026-09-22, since no earlier
+Codex. The seven-working-day window restarted on 2026-09-22, since no earlier
 Claude session saw the pilot.
+
+**2026-10-11 — the window restarts again.** The gate was not clean during it. On
+2026-09-23 two generated system documents, stamped by `lh profile sync-system-doc`
+0.78.0, were written into the dotfiles repository's chezmoi source tree
+(`CLAUDE.md` for two profiles). They were gitignored and chezmoi-ignored, so
+nothing managed them, and `lh repo instructions` flagged both as
+`claude-md-shadows-agents` and exited 1 on that repository. On 2026-10-11 both
+orphan files were removed, leaving the live generated documents in the user's
+config directory untouched, and `lh repo instructions` over all five pilot
+repositories passed with exit 0. The window therefore restarts on 2026-10-11 and
+closes on 2026-10-20 if the gate stays clean. Wave 2 still follows.

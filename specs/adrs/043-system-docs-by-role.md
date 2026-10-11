@@ -295,9 +295,11 @@ measurement above.
 - **Historical — closed by #403 and ADR-055.** The deployed tree carried the
   legacy names, so generated headers named `CLAUDE.head.md` until the rename
   landed. All deployed profiles now use the role names.
-- Decision 10's half of this design step is deferred with a named blocker rather
+- **Historical — closed by [ADR-052](052-profile-assets-per-agent.md) (#369).**
+  Decision 10's half of this design step was deferred with a named blocker rather
   than done, so the design's "the assembler and the deployer must agree on one
-  layout" is still an open item — now with the reason recorded.
+  layout" was an open item, with the reason recorded. ADR-052 shipped per-agent
+  asset segments, file-level links and the ownership ledger (noted 2026-10-11).
 
 ## Evidence standard
 

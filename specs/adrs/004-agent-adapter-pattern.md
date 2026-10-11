@@ -81,6 +81,11 @@ elsewhere — was tested for the first time by `CodexAdapter` and did not hold
 unassisted: the Protocol had to shed two methods first. That is the promise
 working as a signal, which is what the second *Consequences* bullet asks for.
 
+**2026-10-11 — a fourth adapter is registered.** The 2026-09-15 entry counts
+three registry entries. `agents/registry.py:_AGENTS` now holds four:
+`claude-code`, `codex`, `copilot` and `null`. `CopilotAdapter` arrived with
+[ADR-047](047-copilot-adapter.md) (2026-09-16).
+
 **2026-09-16 — the recursion constraint is an ordering, not a filter.** The
 `resolve_binary` bullet above reads as though a shim is rejected. Nothing
 rejects one: `claude_code.py` prefers the version-manager directory and then

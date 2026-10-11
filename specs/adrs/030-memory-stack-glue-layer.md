@@ -104,6 +104,13 @@ Latency budget: under 100 ms locally. Fail-soft if `qmd` is missing
 New config: `context_inject.qmd_suggest = { enabled = true, top_k = 3 }`
 (default on).
 
+> **Shipped differently (noted 2026-10-11).** The query string is the current
+> branch name only; the last user prompt is not part of it
+> (`hooks/builtins/context_inject.py`, the `qmd_suggest_context(branch_name, ...)`
+> call). The config keys are flat, not a nested table:
+> `context_inject.qmd_suggest_enabled` and `context_inject.qmd_suggest_top_k`
+> (`core/config.py:ContextInjectConfig`), both with the defaults above.
+
 ### G4 — Graphify integration in `context_inject` (staleness + content)
 
 `context_inject` gains a Graphify-aware section with two behaviours, depending
@@ -141,11 +148,25 @@ computation. Budget: under 50 ms.
 > falls back to node and edge counts. The remaining gap is tracked in
 > `specs/backlog.md`.
 
+> **Shipped differently (noted 2026-10-11, #516).** Freshness is no longer
+> judged against HEAD. `knowledge/graph_freshness.py:is_fresh` compares the
+> mtime of `graph.json` with the last commit that touched a file Graphify
+> extracts (`last_code_commit_ts`), so a documentation-only commit does not
+> make the graph stale. A graph is fresh when its mtime is at or after that
+> commit, and the banner reads `last code commit YYYY-MM-DD` where the text
+> above says `HEAD YYYY-MM-DD`. The design is in
+> `specs/designs/2026-10-09-graph-freshness-design.md`.
+
 If `graphify-out/graph.json` does not exist, both behaviours are silent
 no-ops. Fail-soft on JSON parse errors with one log line.
 
 New config: `context_inject.graphify_surface = { staleness_warn = true,
 content_summary = true }` (both default on).
+
+> **Shipped differently (noted 2026-10-11).** The switch is one flat key,
+> `context_inject.graphify_surface_enabled` (`core/config.py:ContextInjectConfig`,
+> default on). The staleness banner and the `## Code structure` section share
+> it; there is no separate `staleness_warn` or `content_summary`.
 
 ### G5 — Truncation visibility in `context_inject`
 
@@ -220,9 +241,18 @@ is **isolated**:
 | QMD vault index (`~/.cache/qmd/index.sqlite`) | Shared (single store, collection-scoped) |
 | `_common/CLAUDE.common.md` | Shared via dotfile symlink |
 | Engram store (`~/.engram/engram.db`) | Single store, partitioned by project / scope |
-| `MEMORY.md`, `decisions.jsonl`, `failures.jsonl` | Isolated per profile |
-| `handoff.md`, `pre-compact-summary.md` | Isolated per profile |
+| `MEMORY.md`, `decisions.jsonl`, `failures.jsonl` | Isolated per profile (see the note below the table) |
+| `handoff.md`, `pre-compact-summary.md` | Isolated per profile (see the note below the table) |
 | `graphify-out/` | Per-repo (committable), independent of profile |
+
+> **Shipped differently (noted 2026-10-11).** The two "isolated per profile"
+> rows no longer hold. Since 2026-08-18 (`c152cc4`) every hook resolves the
+> directory holding these five files through
+> `core/memory_store.py:memory_dir_for`. With a usable knowledge store it is
+> keyed by the project's git remote, so the files are shared across profiles;
+> they are isolated per profile only on the fallback path (no knowledge store,
+> or a key with no remote), where the directory is
+> `<agent project dir>/memory`.
 
 ## Alternatives considered
 
