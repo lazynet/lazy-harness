@@ -21,7 +21,7 @@ This is a **public repository**: README, `docs/` pages, commit messages and PR t
 3. **Conventional commits (`type: short description`), no AI-attribution trailers.** Never skip hooks with `--no-verify`. Create new commits instead of amending published ones.
 4. **The gate in [`.claude/commands/tdd-check.md`](.claude/commands/tdd-check.md) passes before every commit**, all four checks, with pristine output. Run them as that file scopes them: `uv run --frozen pytest`, `uv run --frozen ruff check src tests`, `uv run --frozen ruff format --check src tests`, `uv run --frozen --group docs mkdocs build --strict`.
 5. **Versions are owned by release-please.** Never hand-bump `pyproject.toml` or `src/lazy_harness/__init__.py`, never tag `vX.Y.Z` manually. Rules: [`specs/workflow/release-flow.md`](specs/workflow/release-flow.md).
-6. **The audit in [`.claude/commands/coherence-audit.md`](.claude/commands/coherence-audit.md) runs before a release-please release is cut**, read-only, plus the one check it does not cover: the roadmap reflects completed ADR items.
+6. **The audit in [`.claude/commands/coherence-audit.md`](.claude/commands/coherence-audit.md) runs before a release-please release is cut**, read-only.
 
 ## What NOT to do
 

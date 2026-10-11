@@ -42,14 +42,14 @@ A slash command `.claude/commands/coherence-audit.md` that dispatches a read-onl
 1. The agent reads each active ADR's status and central claims, and the backlog's open/done items.
 2. For each, it spot-checks the modules the doc describes (the skill body lists the high-value ADR→module mappings as starting points: ADR-008→`knowledge/compound_loop*.py`, ADR-012→`monitoring/db.py`, ADR-023/027→`knowledge/graphify.py` + `deploy/engine.py`, ADR-033→`llm/`).
 3. It reports findings to the user as `severity | spec:line | claim vs reality | suggested fix`.
-4. For each **unresolved** drift, it appends one record to `failures.jsonl` in the project memory dir, with a root-cause line. This is the auto-learning hook: the existing compound-loop and claude-md proposals lifecycle (PR #99) already consume `failures.jsonl`, so no new persistence infrastructure is built — coherence findings flow into the memory stack that already exists.
+4. It records each change of state in its own append-only ledger, `coherence-drift.jsonl`, in the project memory dir. *(Originally: one `failures.jsonl` record per unresolved drift on every run — superseded on 2026-10-11, see Evolution.)*
 
-**Append contract:** the skill appends, never edits existing lines (matching the append-only rule for `failures.jsonl`). Each record carries enough to dedupe on re-run (the `spec:line` + claim), so running the skill twice does not double-record the same unresolved drift. Deduplication is the consumer's job (the compound loop already dedupes); the skill's contract is only "append a well-formed record once per run per finding".
+**Append contract:** the ledger contract under Evolution 2026-10-11 replaces the original one, which promised that a re-run would not double-record a finding while delegating deduplication to the compound loop. The loop never deduplicated these rows (see Evolution), and the two halves of that sentence contradicted each other.
 
 ### What this does NOT do (YAGNI)
 
 - It does not auto-edit ADRs, designs, the backlog, or docs. It only reports and records. Fixing drift stays a human-reviewed action.
-- It does not generate CLAUDE.md rule proposals directly (the rejected "full" option). That path already exists via the proposals lifecycle consuming `failures.jsonl`; wiring a second producer is premature.
+- It does not generate CLAUDE.md rule proposals (the rejected "full" option). Since 2026-10-11 it does not feed them indirectly either: findings no longer reach `failures.jsonl`.
 - Piece A does not validate prose, descriptions, or examples — only the identity of commands, hooks, and config fields.
 - Piece A does not touch `lh selftest`. Runtime health and repo-doc coherence stay separate concerns.
 
@@ -64,3 +64,19 @@ A slash command `.claude/commands/coherence-audit.md` that dispatches a read-onl
 - The semantic half becomes a one-command repeatable audit whose findings persist into the memory stack rather than evaporating at end of session.
 - New surface added: three test files under `tests/docs/` (plus their self-tests) and one slash command. No new runtime code paths, no new CLI commands, no new dependencies.
 - Risk: an over-eager extractor in Piece A produces false-positive build failures. Mitigated by the lax `doc ⊆ code` direction, conservative anchored parsing, and the self-tests that pin extractor behavior.
+
+## Evolution
+
+**2026-10-11: findings move from `failures.jsonl` to a ledger of their own.** The original append contract recorded every unresolved finding into `failures.jsonl` on every run and relied on "the compound loop already dedupes". It does not, for these rows: the loop's only deduplication is an instruction in its distillation prompt (`knowledge/compound_loop.py`, the "Recent failures already recorded" block) covering the failures the worker itself writes from a session transcript; nothing reads `failures.jsonl` back to collapse rows another writer appended. Measured on the live store before this change: 349 rows tagged `coherence-audit` over 296 distinct `spec:line` keys, 345 of them `unresolved`, with no record shape that could later mark a finding fixed — so each release re-appended the findings still open and the file never said which ones had closed. The cost was not only disk: `context-inject` shows the `failures.jsonl` tail at every session start, and 26 of its last 40 lines were doc-drift rows, displacing the agent failures that section exists to surface.
+
+The contract now:
+
+- **Target.** `coherence-drift.jsonl` in the project memory directory (the `Store` path `lh memory status` prints, which also lists the file's record count). The command never writes `failures.jsonl`; the rows already there stay as they are, append-only.
+- **Record.** `{"ts", "key", "status", "severity", "spec", "line", "claim", "fix"}` for an `open` record; `{"ts", "key", "status", "spec", "evidence"}` for a `resolved` one.
+- **Key.** `<spec path>#<anchor>`, the anchor a short kebab-case name for the symbol, field, command or status the claim concerns. The line number is carried as data, never as identity, so an edit above the claim neither orphans an open entry nor mints a duplicate.
+- **State.** A key's status is the status of its latest record. Append-only: a resolved key that drifts again gets a new `open` record under the same key.
+- **Re-run.** The command reads the ledger first and re-verifies every open entry before looking for new drift. It appends (a) nothing for an open entry still reproducing, (b) one `open` record for a finding whose key is absent or resolved, (c) one `resolved` record, with evidence, for an open entry that no longer reproduces. A run that changes no state appends nothing.
+
+Two scope changes landed with it. The command now reads the `docs/` pages that describe a mechanism (`docs/how/`, `docs/reference/`, `docs/architecture/`, `docs/agents/`), since the 0.89.2 run reported four drifts there that step 1 never asked it to look for. And the roadmap check — `docs/roadmap.md` reflects completed ADR items — moved from the release non-negotiable in `AGENTS.md` into the command as its own step, so the audit has one definition.
+
+The consequence the original design counted as a feature is gone on purpose: coherence findings no longer flow into the compound loop's `[EVITAR]` proposals. Doc drift is a queue of edits for a human, not a recurring agent mistake, and the proposals it produced restated audit findings rather than preventing anything.
