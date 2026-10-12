@@ -1,7 +1,8 @@
 # lazy-harness backlog
 
-Último release cortado: 0.89.1 (`ff6a2e3`, #528); `main` lleva además #533 (`--memory-dir` en
-`lh memory proposals held`) y el `/coherence-audit` del gate de 0.89.2 (ver la última revisión).
+Último release cortado: 0.89.3 (`cadf87c`, #538), con el ledger propio de `/coherence-audit`
+(#535) y las correcciones de prosa del audit de 0.89.2 (#536, #537); 0.89.2 se cortó antes, en
+`08764e2` (#534). El `/coherence-audit` del gate de 0.89.3 dejó 22 hallazgos abiertos.
 El cutover de la flota a los nombres de ADR-068 se ejecutó el 2026-09-24 en los dos hosts (ver
 Done).
 ADR-060 Wave 1 sigue en su ventana de siete días hábiles. Rollout externo pendiente: Wave 2
@@ -450,13 +451,13 @@ binario (plan §5.2 ítem 4). Prioridad MEDIA.
 
 **Acción:** pasar el profile del comando al worker como hace `session_end.py`, con un test que falle sin el flag (borrar el guard, ver el rojo, restaurar a mano).
 
-### Desde 0.85.0 `tmp_path` cae dentro del repo y ~125 tests fallan bajo un agente
+### `COLUMNS=0` y el guard de `~/.local/share/claude/versions` siguen rompiendo la suite bajo un agente
 
-**Por qué:** desde #504 los agentes arrancan con `TMPDIR` dentro del `tmp/` del repo, así que el `tmp_path` de pytest queda dentro del árbol git y los tests que asumen un directorio fuera de un repo fallan. Workaround: `TMPDIR=$(getconf DARWIN_USER_TEMP_DIR) uv run --frozen pytest -q`. Conteo medido: 125 fallas de 6.197 corriendo la suite entera con el `TMPDIR` de sesión (2026-10-08).
+**Por qué:** la causa principal de esta entrada está cerrada: desde #504 los agentes arrancan con `TMPDIR` dentro del `tmp/` del repo, el `tmp_path` de pytest caía dentro del árbol git y ~125 tests fallaban (125 de 6.197 el 2026-10-08). Ahora `tests/tmp_outside_checkout.py`, cargado desde `tests/conftest.py`, mueve `TMPDIR` fuera de todo checkout antes de que pytest elija su temproot, salvo `--basetemp` o `PYTEST_DEBUG_TEMPROOT` explícitos; la suite entera pasa con el `TMPDIR` de sesión (6.383 tests, 2026-10-11) y ya no deja `tmp/pytest-of-*` en el repo.
 
-Con `TMPDIR=/tmp` quedan dos fuentes más de rojos según la corrida (2026-10-08): `COLUMNS=0` en el shell del agente hace que Rich parta la salida que los tests de CLI esperan en una línea, y el guard que vigila `~/.local/share/claude/versions` falla si Claude Code se autoactualiza durante la corrida. Además, los `tmp/pytest-of-*` que quedan de corridas viejas hacen fallar `test_this_repository_passes_its_own_instruction_gate` por sus fixtures `CLAUDE.md`.
+Quedan dos fuentes de rojos que no tienen que ver con el temproot (2026-10-08): `COLUMNS=0` en el shell del agente hace que Rich parta la salida que los tests de CLI esperan en una línea, y el guard que vigila `~/.local/share/claude/versions` falla si Claude Code se autoactualiza durante la corrida.
 
-**Acción:** decidir si el gate fija `TMPDIR` fuera del repo (conftest o `tdd-check.md`) o si los tests dejan de depender de que `tmp_path` no sea un repo.
+**Acción:** fijar el ancho de Rich en los tests de CLI y volver tolerante al guard de `versions` frente a una autoactualización, cada uno con su test en rojo primero.
 
 ### El prompt de distill del compound-loop no dice que las tool calls están recortadas, ni fija el idioma
 
@@ -565,6 +566,17 @@ ignorados por git y sin gestionar, y `lh repo instructions` los marcó
 2026-10-11 se borraron los dos y `lh repo instructions` sobre los cinco repos de
 Wave 1 dio todo ✓, exit 0. Por decisión del operador la ventana arranca el
 2026-10-11 y cierra el 2026-10-20 si el gate sigue limpio.
+
+**El gate se rompió el mismo día y la ventana se sostiene (2026-10-11):** el
+`/coherence-audit` de 0.89.3 vio `lh repo instructions` con exit 1 sobre el checkout
+principal de lazy-harness: 474 `claude-md-shadows-agents`, todos bajo los
+`tmp/pytest-of-*` ignorados que deja pytest cuando corre con el `TMPDIR` de sesión
+dentro del repo. Se borraron a mano el 2026-10-11 y el gate de los cinco repos volvió
+a exit 0. La causa se arregló del lado de los tests: la suite ya no escribe dentro
+de un checkout (ver la entrada de `COLUMNS=0`). El gate no saltea paths ignorados:
+un `CLAUDE.md` ignorado igual oculta el `AGENTS.md` en una sesión que arranca ahí.
+Por decisión del operador la ventana no se reinicia y cierra el 2026-10-20 si el
+gate sigue limpio.
 
 **Acción:** (1) la ventana de siete días hábiles corre desde el 2026-10-11 y
 cierra el 2026-10-20 con `lh repo instructions` limpio en los cinco repos; después, Wave 2
