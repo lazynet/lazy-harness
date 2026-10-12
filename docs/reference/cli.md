@@ -54,10 +54,8 @@ MCP document (qmd, engram, graphify)`. This is informational and does not change
 the deploy exit code.
 
 `--profile` narrows the run to one profile: its system doc, its symlinks, its
-`settings.json` and its MCP config are written, and no other profile is touched. The agent's
-global config link (`~/.claude`) points at the **default** profile, so it is
-rewritten only when the named profile *is* the default — deploying any other
-profile leaves it alone. An unknown name fails without writing anything. The
+`settings.json` and its MCP config are written, and no other profile is touched. An unknown
+name fails without writing anything. The
 snapshot below is still taken, and its manifest lists only the artifacts of the
 profile that was deployed.
 
@@ -343,7 +341,7 @@ code when the output cannot be parsed — so it carries `error: null`.
 
 Invokes a single built-in hook by name. This is what `settings.json` entries actually call — `lh deploy` writes `lh hook <name> --profile <profile>`, and the command reads the agent's payload on stdin, runs the builtin, and writes the agent's own output format back out.
 
-`--profile` names the profile the hook runs under, which decides its memory scope and its metrics label. It is optional: without it the profile is resolved from the agent's config-dir variable, which is how entries written before the flag existed keep working. A profile name no config declares — a rename or a redeploy the settings file has not caught up with — falls back to a declared profile running the same agent as the caller, with a warning on stderr, rather than refusing every tool call until the session restarts. The caller is read off the payload — Claude Code sends `prompt_id`, Codex sends `turn_id` — and the fallback is the configured default when it runs that agent, otherwise that agent's only declared profile. It never falls back across agents, because the fallback profile's adapter decides the wire format of the answer and the memory scope and metrics label it runs under — crossing agents would answer the caller in the wrong format under the wrong scope: when the caller cannot be identified, or no single profile of its agent exists, the hook still refuses.
+`--profile` names the profile the hook runs under, which decides its memory scope and its metrics label. It is optional: without it the profile is resolved from the agent's config-dir variable, which is how entries written before the flag existed keep working. A profile name no config declares — a rename or a redeploy the settings file has not caught up with — is refused before any builtin runs, and no other profile is substituted: the profile decides the memory scope and metrics label, and a caller's agent never proves which identity it meant. A blocking hook answers with the caller's native denial when the payload identifies the agent (Claude Code sends `prompt_id`, Codex sends `turn_id`), otherwise it exits 2 with a diagnostic. An informational hook emits no context and reports the unknown profile on stderr. Repair the deployed `--profile` value by redeploying. An empty profile table, a machine that has not run `lh init`, is not a refusal.
 
 You should rarely run this by hand. It is documented so the entries in `profiles/<name>/settings.json` make sense.
 
@@ -429,7 +427,7 @@ lh knowledge graph-assist report --since 2026-09-25
 
 ## `lh memory`
 
-Diagnostic commands for the memory stack. Read-only inspection, a propose-only consolidator, and the Reconcile/Decay stages from [ADR-040](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/040-memory-reconcile-and-decay.md) — none of these write to `MEMORY.md` directly, and only `decay --apply` writes anything at all. Pair them with `lh status memory` for per-project counts.
+Diagnostic commands for the memory stack. Read-only inspection, a propose-only consolidator, and the Reconcile/Decay stages from [ADR-040](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/040-memory-reconcile-and-decay.md) — none of these write to `MEMORY.md` directly. The only commands that write at all are `decay --apply` (learning marks), `proposals accept`, `reject` and `apply` and `proposals held requeue` (the proposal files), and `migrate --apply` (moves memory into the store). Pair them with `lh status memory` for per-project counts.
 
 ### `lh memory status`
 
@@ -454,7 +452,7 @@ Flags:
 
 - `--memory-dir <path>` — directory to read from. Defaults to `<cwd>/memory`.
 - `--last <n>` — tail this many entries from each JSONL. Default `50`.
-- `--model <id>` — headless model used to draft the proposal. Default `claude-haiku-4-5-20251001`.
+- `--model <id>` — headless model used to draft the proposal. Defaults to the model of the `distill` role.
 - `--timeout <seconds>` — Claude invocation timeout. Default `120`.
 
 ```bash
@@ -769,7 +767,7 @@ directory, because it then affects the active session. Other nested files and
 ancestor shadows still fail. A manifest cannot be combined with positional
 paths; without one, all paths remain strict.
 
-Two findings, each naming the file to change:
+Three findings, each naming the file to change:
 
 | Code | Meaning |
 | --- | --- |

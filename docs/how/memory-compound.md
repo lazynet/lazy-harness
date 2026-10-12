@@ -7,14 +7,14 @@ If you want the design rationale, read [ADR-008 — Compound loop async worker](
 ## The loop, one step at a time
 
 Every `~/.claude/...` path on this page is an **example**, not a fixed location: it is what a
-single-profile Claude Code install with no environment override resolves to. Neither the producer
-nor the worker reads the profile the hook was invoked with. Past that, they resolve in two
-different moments: the producer's pre-config lines go to a **hardcoded** Claude Code adapter
-(`compound_loop.py:62`) whatever the configured agent is, while everything after the enabled check
-— the queue, the task files, `queued`, and the worker's own log — follows the **global**
-`[agent].type` and then that adapter's own environment variable (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`,
-…) before its global fallback. Substitute accordingly; `agent_runtime_dir` in `core/paths.py` is the
-source of truth, and `docs/how/hooks.md` has the full resolution order.
+single-profile Claude Code install with no environment override resolves to. Both the producer and
+the worker resolve the agent and its runtime directory from the profile the hook was invoked with
+(`agent_dir_for`): the producer loads the config first, so its `fired` line, the queue, the task
+files and the worker's own log all land under that profile's agent directory. The worker receives
+the profile as `--profile` from the producer. The global `[agent].type` applies only when no profile
+is named, and a machine with no config falls back to the Claude Code adapter. Substitute
+accordingly; `agent_runtime_dir` in `core/paths.py` is the source of truth, and `docs/how/hooks.md`
+has the full resolution order.
 
 ```
   session ends
@@ -265,7 +265,7 @@ User messages with the same Unicode markers are ignored deliberately — only th
 
 `context-inject` reads this file on the next session start and surfaces it under `## Proposals to review` so the human sees it without having to grep the memory dir. The proposals only land in `MEMORY.md` (or another curated file) if the human chooses to merge them — the loop never crosses that line on its own.
 
-The file is append-only from the worker's side. Pending entries are reviewed with the `lh memory proposals` subcommands (see the [CLI reference](../reference/cli.md#lh-memory-proposals)): `accept` archives an entry to `claude-md.accepted.md` and prints the rule for manual merge; `reject --reason` records it in `claude-md.rejected.md`. The rejected file doubles as an immunity registry — the grading prompt carries the last 20 rejected rules with an instruction not to re-propose equivalents, so a discarded rule stays discarded.
+The file is append-only from the worker's side. Pending entries are reviewed with the `lh memory proposals` subcommands (see the [CLI reference](../reference/cli.md#lh-memory-proposals)): `accept` archives an entry to `claude-md.accepted.md` and prints the rule for manual merge; `reject --reason` records it in `claude-md.rejected.md`. The rejected file doubles as an immunity registry — the grading prompt carries the newest rejected rules that fit in 20,000 characters (older ones are dropped) with an instruction not to re-propose equivalents, so a discarded rule stays discarded.
 
 When a batch would exceed the pending cap, the worker records it in `proposals-held.jsonl` under the same memory lock. `lh memory proposals held` lists those source lines without modifying them; `held requeue <N>` selects one line for pending review when capacity permits. The command keeps the source file and writes a disposition to `proposals-held-requeued.jsonl`. It flushes the pending replacement before the disposition replacement. A source marker in the pending entry lets a retry, or an accept/reject/apply operation, finish the disposition after an interrupted process without adding the proposal twice. Malformed held lines stay visible as diagnostics and cannot be selected. Directory syncing is attempted where supported, so this protocol does not promise power-loss recovery on filesystems that reject it.
 
@@ -309,14 +309,11 @@ Changes take effect on the next session — the producer and worker both reload 
 
 ```bash
 # Is the producer firing?
-# Example path -- see the note at the top of this page. The producer writes
-# in two moments that resolve DIFFERENTLY. Its first line (`fired`) and its
-# `disabled in config, skipping` line are written before config loads, from a
-# HARDCODED Claude Code adapter (compound_loop.py:62), so they land here even
-# when the global [agent].type is Codex -- do not go looking in CODEX_HOME
-# for them. Only after the enabled check does it re-resolve (:81) through the
-# global adapter, which is where `queued` and the worker's log go. Neither
-# moment reads the invoked profile's config_dir.
+# Example path -- see the note at the top of this page. The producer loads
+# config first and then resolves the agent directory for the invoked profile,
+# so its `fired` line, the queue and the worker's log all live under that
+# profile's agent directory (CODEX_HOME for a Codex profile, not ~/.claude).
+# Only a hook invoked with no profile resolves through the global [agent].type.
 tail -f ~/.claude/logs/hooks.log
 
 # Is the worker running?
