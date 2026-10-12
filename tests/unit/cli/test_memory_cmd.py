@@ -987,3 +987,14 @@ def test_memory_cmd_has_no_legacy_dir_without_declared_sessions(
         memory_cmd, "_agent_for_active_profile", lambda: (None, NullAdapter(), tmp_path)
     )
     assert memory_cmd._legacy_memory_dir() is None
+
+
+def test_consolidate_model_help_points_at_the_distill_role() -> None:
+    from lazy_harness.cli.memory_cmd import memory
+
+    result = CliRunner().invoke(memory, ["consolidate", "--help"], terminal_width=500)
+
+    assert result.exit_code == 0
+    flat = " ".join(result.output.split())
+    assert "Defaults to the model of the distill role." in flat
+    assert "[compound_loop].model" not in flat

@@ -1,8 +1,9 @@
 # lazy-harness backlog
 
-Último release cortado: 0.89.3 (`cadf87c`, #538), con el ledger propio de `/coherence-audit`
-(#535) y las correcciones de prosa del audit de 0.89.2 (#536, #537); 0.89.2 se cortó antes, en
-`08764e2` (#534). El `/coherence-audit` del gate de 0.89.3 dejó 22 hallazgos abiertos.
+Último release cortado: 0.89.4 (`ef34501`, #544); 0.89.3 se cortó antes, en `cadf87c` (#538). Los
+22 hallazgos del `/coherence-audit` de 0.89.3 los cerraron #539, #540 y #541, y el audit del gate de
+0.89.4 lo confirmó; sus dos hallazgos low (este header y `--timeout` de `lh memory consolidate`) los
+cierra la branch `fix/audit-0894-lows`.
 El cutover de la flota a los nombres de ADR-068 se ejecutó el 2026-09-24 en los dos hosts (ver
 Done).
 ADR-060 Wave 1 sigue en su ventana de siete días hábiles. Rollout externo pendiente: Wave 2
@@ -16,6 +17,10 @@ Issues y mejoras pendientes. Este archivo es **interno** (no se publica al sitio
 Última revisión: 2026-10-08 — `/coherence-audit` antes de cortar 0.86.0, sobre `origin/main` @ `ef721e42`, con foco en #509 / ADR-070 (Haiku 5.5 por largo de prompt). Piece B: ocho hallazgos (0 high, 3 medium, 5 low), siete cerrados en la branch `docs/coherence-audit-2026-10-08`. El item de ADR-060 Wave 1 en `docs/roadmap.md` sigue abierto: cerrarlo necesita el resultado del fleet gate, que esta auditoría no corrió.
 
 Última revisión: 2026-10-11 — `/coherence-audit` antes de cortar 0.89.2, sobre `main` @ `3bc60b3`. Piece B: veintiún hallazgos (1 high, 7 medium, 13 low). Esta branch (`docs/backlog-docs-drift-0892`) cierra los ocho de prosa de este archivo, ADR-011, ADR-039, `docs/agents/codex.md` y `docs/how/cost-reporting.md`; el resto va por otras lanes. El item de ADR-060 Wave 1 no se tocó acá.
+
+Última revisión: 2026-10-11 — `/coherence-audit` antes de cortar 0.89.3, sobre `main`: veintidós hallazgos abiertos, cerrados por #539, #540 y #541.
+
+Última revisión: 2026-10-11 — `/coherence-audit` antes de cortar 0.89.4, sobre `main` @ `5115880`, con foco en el delta desde 0.89.3. Piece B: los veintidós hallazgos de 0.89.3 resueltos y dos nuevos (0 high, 0 medium, 2 low), cerrados en la branch `fix/audit-0894-lows`. El item de ADR-060 Wave 1 en `docs/roadmap.md` sigue abierto: su ventana cierra cerca del 2026-10-20.
 
 
 ## Orden de ataque (2026-09-25)
