@@ -112,7 +112,7 @@ Every deploy snapshots first. Not on a version change, not when the plan differs
 `deploy/snapshot.py` writes a **manifest** rather than a directory of loose files. One entry per artifact, carrying:
 
 - its absolute destination path;
-- its kind — `file`, `symlink`, or `absent` for something that does not exist yet and that a rollback must therefore **delete** rather than restore;
+- its kind — `file`, `symlink`, `directory`, or `absent` for something that does not exist yet and that a rollback must therefore **delete** rather than restore;
 - the symlink target, where that applies;
 - for a file, a content path unique **per destination**, not per basename. `~/.claude-lazy/settings.json` and `~/.claude-flex/settings.json` are two different files with one basename, so a basename-keyed backup would restore the second over the first.
 

@@ -34,7 +34,7 @@ The framework **reads from** the user-owned content and **deploys** it into the 
                                           │  Agent target dirs               │
                                           │  ~/.claude-personal/  (symlinks  │
                                           │  ~/.claude-work/      + gen'd    │
-                                          │  ~/.claude → default  settings)  │
+                                          │                       settings)  │
                                           └─────────────────────────────────┘
 ```
 
@@ -71,7 +71,7 @@ Everything downstream consumes the types defined here.
 
 ### `core/config.py` — typed configuration
 
-Defines the `Config` dataclass and its subsection dataclasses (`ProfilesConfig`, `KnowledgeConfig`, `CompoundLoopConfig`, `ContextInjectConfig`, `LazyNorthConfig`, `MonitoringConfig`, `SchedulerConfig`, `HooksConfig` — the last one is a dict keyed by event name). `load_config(path)` reads TOML via stdlib `tomllib`, validates required keys, and raises `ConfigError` with a descriptive path + reason on failure. `save_config(cfg, path)` writes back through `tomli-w` and is only called by `lh init`, `lh migrate`, and `lh profile add/remove` — ordinary `lh` commands never rewrite the user's file.
+Defines the `Config` dataclass and its subsection dataclasses (`ProfilesConfig`, `KnowledgeConfig`, `CompoundLoopConfig`, `ContextInjectConfig`, `LazyNorthConfig`, `MonitoringConfig`, `SchedulerConfig`, `HooksConfig` — the last one is a dict keyed by event name). `load_config(path)` reads TOML via stdlib `tomllib`, validates required keys, and raises `ConfigError` with a descriptive path + reason on failure. `save_config(cfg, path)` writes back through `tomli-w`. Its callers are the `lh profile` subcommands that mutate the profile list, `lh knowledge graph`, and the selftest's round-trip probe; `lh init` and `lh migrate` write their initial file with `tomli-w` directly. Ordinary `lh` commands never rewrite the user's file.
 
 Format decisions: [ADR-003 — TOML](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/003-toml-config-format.md).
 
@@ -93,7 +93,7 @@ Design rationale: [ADR-005 — XDG-first paths](https://github.com/lazynet/lazy-
 
 ### `core/envrc.py`
 
-Generates per-profile `.envrc` fragments for users who wire profile selection through direnv. Consumes `ProfilesConfig`, produces a shell snippet setting `CLAUDE_CONFIG_DIR`.
+Generates per-profile `.envrc` fragments for users who wire profile selection through direnv. Consumes `ProfilesConfig`, produces a shell snippet with one export per agent that claims the root, each setting that agent's own config-dir environment variable.
 
 ## Agent layer — `agents/`
 
@@ -147,13 +147,14 @@ Design decisions: [ADR-008](https://github.com/lazynet/lazy-harness/blob/main/sp
 
 ## Deploy engine — `deploy/`
 
-Every `lh deploy` snapshots first. `deploy/snapshot.py` writes a manifest of the artifacts the three functions below are about to touch — one entry per destination, carrying its absolute path, its kind (`file`, `symlink`, or `absent` for something the deploy is about to create), and for a file a content path unique per destination rather than per basename, because `~/.claude-lazy/settings.json` and `~/.claude-flex/settings.json` share one. `core/backups.py` decides where it lands: `~/.config/lazy-harness/backups/deploy/<ts>/`, pruned to the newest ten, in a namespace `lh migrate --rollback` cannot reach and a deploy's prune cannot delete from. `lh deploy --rollback` replays the newest through `migrate/rollback.py`.
+Every `lh deploy` snapshots first. `deploy/snapshot.py` writes a manifest of the artifacts the deploy steps below are about to touch — one entry per destination, carrying its absolute path, its kind (`file`, `symlink`, `directory`, or `absent` for something the deploy is about to create), and for a file a content path unique per destination rather than per basename, because `~/.claude-lazy/settings.json` and `~/.claude-flex/settings.json` share one. `core/backups.py` decides where it lands: `~/.config/lazy-harness/backups/deploy/<ts>/`, pruned to the newest ten, in a namespace `lh migrate --rollback` cannot reach and a deploy's prune cannot delete from. `lh deploy --rollback` replays the newest through `migrate/rollback.py`.
 
-`deploy/engine.py` has three top-level functions called by `lh deploy`:
+`lh deploy` runs five steps: it first syncs each profile's system document (`_sync_system_docs` in `cli/deploy_cmd.py`), then calls these four functions of `deploy/engine.py` in order:
 
-1. **`deploy_profiles(cfg)`** — for each profile, symlink every item from `~/.config/lazy-harness/profiles/<name>/*` into `<profile.config_dir>/`. Per-file symlinks (not whole-directory), idempotent.
+1. **`deploy_profiles(cfg)`** — for each profile, symlink every item from `~/.config/lazy-harness/profiles/<name>/*` into `<profile.config_dir>/`. A name carried by a single layer is linked whole, and a name carried by more than one layer is walked and linked file by file; idempotent.
 2. **`deploy_config(cfg)`** — for each profile, run the config cycle: ask the adapter for `config_targets()`, read the ones on disk, call `plan_config()` once with the resolved hook entries and the probed MCP servers, and apply the `WriteOp`s that come back. Merging is the adapter's — parsing a native config format never was agent-neutral — so the engine writes the returned text verbatim, deletes what the plan retires, writes a `.bak` when the plan reports a repair, and prints the preserved/dropped/repaired diagnostics. An adapter that cannot plan its config is refused before the first write, never discovered mid-deploy.
-3. **`deploy_claude_symlink(cfg)`** — create `~/.claude → <default profile config_dir>`.
+3. **`deploy_claude_symlink(cfg)`** — links the adapter's `global_config_link()` to the default profile's `config_dir`. Every shipped adapter returns `None` there ([ADR-060](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/060-agents-md-is-the-portable-repository-contract.md)), so the step is a no-op.
+4. **`repair_plugin_registries(cfg)`** — repoints Claude Code plugin registry paths that dangle outside the profile.
 
 `deploy_hooks(cfg)` and `deploy_mcp_servers(cfg)` remain as narrowings of `deploy_config` that plan with one half of the inputs blanked out. Nothing in the CLI calls them; they exist for tests that drive one document at a time.
 
@@ -166,7 +167,7 @@ Design: [ADR-009 — Profile symlink deploy](https://github.com/lazynet/lazy-har
 Local SQLite store populated by parsing session JSONLs:
 
 - `db.py` — the schema every reader and writer shares: `session_stats` with `UNIQUE(session, model)` for idempotent re-ingestion plus an index on `date`, `session_attribution` and `ingest_meta` keyed by session, `sink_outbox` for undelivered events, and two append-only event logs — `loop_events` (one row per graded session or fired hook) and `launches` (one row per agent launch `lh run` or `lh exec` actually started). Every table is created with `CREATE TABLE IF NOT EXISTS` on each open, so a store written by an older `lh` picks up a new table the first time a newer one touches it.
-- `collector.py` — walks each profile's agent-declared sessions directory for JSONL transcripts, extracts per-session token counts (input, output, cache_read, cache_create), computes cost against `[monitoring.pricing]`, and does `INSERT OR IGNORE` into the DB. `lh exec` uses that same declared directory when pricing a timed-out session (ADR-053).
+- `collector.py` — walks each profile's agent-declared sessions directory for JSONL transcripts, extracts per-session token counts (input, output, cache_read, cache_create), and holds the parsing helpers (`parse_session`, `iter_assistant_messages`, `session_cost_from_disk`). It writes nothing: the store is written through `MetricsDB.upsert_stats` (`ON CONFLICT … DO UPDATE`), called from `ingest.py`. `lh exec` uses that same declared directory when pricing a timed-out session (ADR-053).
 - `ingest.py` — `lh metrics ingest`'s path: `ingest_profile` resolves the profile's adapter and reads it through `isinstance(agent, TranscriptReader)` rather than a hardcoded dialect, so any agent whose adapter implements the Protocol is metered the same way; one that does not is skipped and named by `lh doctor` instead of scanned as if it were Claude Code (ADR-051, ADR-053). `ingest_all` stamps `agent` and the profile's `billing_model` on every row.
 - `pricing.py` — cost calculation from the pricing dict.
 - `views/` — one file per viewing angle (`overview`, `projects`, `profiles`, `sessions`, `tokens`, `cron`, `hooks`, `memory`, `queue`). Each renders via a parametric SQL query.
@@ -240,23 +241,7 @@ Design: [ADR-017 — Selftest as user-facing health check](https://github.com/la
 
 One file per top-level `lh` command, all based on `click`:
 
-- `main.py` — entrypoint + root group, maps to `lh = "lazy_harness.cli.main:cli"` in `pyproject.toml`.
-- `init_cmd.py` — interactive wizard delegating to `init/`.
-- `migrate_cmd.py` — `lh migrate`, `--dry-run`, `--rollback`.
-- `deploy_cmd.py` — `lh deploy`, `--profile`, `--snapshot`, `--rollback`; triggers the three deploy functions.
-- `hooks_cmd.py` — `lh hooks list` / `lh hooks run` / dry-run.
-- `profile_cmd.py` — `lh profile list/add/remove`.
-- `status_cmd.py` — monitoring dashboard.
-- `statusline_cmd.py` — terminal statusline support.
-- `selftest_cmd.py` — runs the selftest runner and formats the report.
-- `doctor_cmd.py` — prerequisite check (uv, python, claude, git).
-- `run_cmd.py` — `lh run`, sets `CLAUDE_CONFIG_DIR` and execs `claude`.
-- `scheduler_cmd.py` — install / uninstall / status against the scheduler backend.
-- `knowledge_cmd.py` — knowledge store operations (init, path, push, sync, status).
-- `config_cmd.py` — `lh config <feature> --init` wizards (`knowledge`, `memory`) plus `lh config migrate-knowledge`, delegating to `wizards/`.
-- `memory_cmd.py` — memory-stack diagnostics (status, consolidate, decay, reconcile, proposals, rightsize, legacy-check, migrate).
-- `metrics_cmd.py` — `lh metrics ingest` / `drain` / `status` / `loops` / `record-verify`.
-- `exec_cmd.py` — `lh exec`, the role-routed inference entrypoint (ADR-038, ADR-039).
+`main.py` is the entrypoint and root group, mapped to `lh = "lazy_harness.cli.main:cli"` in `pyproject.toml`. Every other file is named `<command>_cmd.py` after the top-level command it implements. The commands, their subcommands and their flags are listed in the [CLI reference](../reference/cli.md), which is the one place that inventory lives.
 
 Commands never contain business logic. They parse flags, load config, and delegate to the subsystem modules.
 
@@ -288,7 +273,7 @@ The five-layer memory model ([ADR-027](https://github.com/lazynet/lazy-harness/b
 
 The two key shifts:
 
-- **Deterministic surfacing at SessionStart.** `context_inject` automatically emits a top-3 BM25 query into the QMD vault (using the current branch name) and a `Code structure` summary from the local Graphify graph (or a staleness banner if the graph is older than `git HEAD`). Both fail-soft if the underlying tool is missing. Truncation losses are surfaced as a single `[truncated: ...]` line so the 3000-char budget is tunable from real evidence.
+- **Deterministic surfacing at SessionStart.** `context_inject` automatically emits a top-3 BM25 query into the QMD vault (using the current branch name) and a `Code structure` summary from the local Graphify graph (or a staleness banner if the graph is older than the last commit that touched a file graphify treats as code). Both fail-soft if the underlying tool is missing. Truncation losses are surfaced as a single `[truncated: ...]` line so the 3000-char budget is tunable from real evidence.
 - **Deterministic capture at session close.** The Stop chain runs `session-export → compound-loop → engram-persist`. When `compound-loop`'s LLM-evaluation gates block (short sessions), a deterministic `slim_handoff` fast-path still writes branch + last user prompt + files touched to `handoff.md` so the next session is never blind. The `engram-persist` hook mirrors `decisions.jsonl` / `failures.jsonl` into Engram via cursor-based at-least-once semantics.
 
 What stays prompted (agent judgment): which decisions are worth a manual `mem_save` mid-session, when to deepen a QMD search past the suggester, when to consolidate `MEMORY.md` via `lh memory consolidate`. The harness forces *when* and *where* artifacts are written; *what's worth keeping* remains the agent's call.

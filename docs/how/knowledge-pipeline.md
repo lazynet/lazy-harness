@@ -75,7 +75,7 @@ Module: `src/lazy_harness/knowledge/session_export.py`. Called from the `session
 Claude Code stores each session as a JSON-per-line file:
 
 ```
-{"type":"permission-mode", ...}         # line 1 — interactive marker
+{"type":"permission-mode", ...}         # interactive marker (or "last-prompt"), anywhere in the file
 {"type":"system","cwd":"...", ...}      # system message with metadata
 {"type":"user","message":{"content":"..."}, ...}
 {"type":"assistant","message":{"content":[{"type":"text","text":"..."}]}, ...}
@@ -86,7 +86,7 @@ Claude Code stores each session as a JSON-per-line file:
 
 - `meta`: `{cwd, version, branch, timestamp}` from the first `system` record.
 - `messages`: a list of `{role, text, timestamp}` dicts. Content extraction handles both string content (`"hello"`) and structured content (`[{"type":"text","text":"..."}]`).
-- Sessions without a `permission-mode` first line return an empty message list — headless `claude -p` invocations are filtered at this gate.
+- `is_interactive`: set when a `permission-mode` or `last-prompt` record appears anywhere in the file, or, for a Codex transcript, a user `response_item`. Without it the export is skipped as `non-interactive` (unless forced) — headless `claude -p` invocations are filtered at this gate.
 
 ### The interactive + length filter
 
