@@ -304,6 +304,20 @@ def _never_reach_the_real_knowledge_store(monkeypatch, tmp_path_factory):
     )
 
 
+@pytest.fixture(autouse=True)
+def _usable_terminal_size(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Drop the `COLUMNS=0` agent shells export, as `lh` itself does.
+
+    `lh` drops it in the `cli` group, but most tests invoke a subcommand
+    directly and never run the group: under an agent their consoles rendered
+    nothing. Only zero values go — tests that set `COLUMNS=300` keep it.
+    """
+    from lazy_harness.cli.main import unusable_terminal_size_vars
+
+    for name in unusable_terminal_size_vars(os.environ):
+        monkeypatch.delenv(name)
+
+
 @pytest.fixture
 def expects_deprecated_compound_loop(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Assert the ADR-039 notice for a test that declares the ADR-033 form.
