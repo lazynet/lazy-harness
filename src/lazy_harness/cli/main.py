@@ -2,15 +2,33 @@
 
 from __future__ import annotations
 
+import os
+from collections.abc import Mapping
+
 import click
 
 from lazy_harness import __version__
+
+
+def unusable_terminal_size_vars(environ: Mapping[str, str]) -> list[str]:
+    """Size variables Rich would turn into a zero-wide console.
+
+    Rich takes any all-digit `COLUMNS` or `LINES` as an explicit size, so the
+    `COLUMNS=0` agent shells export skips its fallback and prints nothing.
+    """
+    return [
+        name
+        for name in ("COLUMNS", "LINES")
+        if environ.get(name, "").isdigit() and int(environ[name]) == 0
+    ]
 
 
 @click.group()
 @click.version_option(__version__, prog_name="lazy-harness")
 def cli() -> None:
     """lazy-harness — A cross-platform harnessing framework for AI coding agents."""
+    for name in unusable_terminal_size_vars(os.environ):
+        del os.environ[name]
 
 
 def register_commands() -> None:

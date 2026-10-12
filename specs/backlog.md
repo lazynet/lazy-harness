@@ -1,7 +1,8 @@
 # lazy-harness backlog
 
-Último release cortado: 0.89.1 (`ff6a2e3`, #528); `main` lleva además #533 (`--memory-dir` en
-`lh memory proposals held`) y el `/coherence-audit` del gate de 0.89.2 (ver la última revisión).
+Último release cortado: 0.89.3 (`cadf87c`, #538), con el ledger propio de `/coherence-audit`
+(#535) y las correcciones de prosa del audit de 0.89.2 (#536, #537); 0.89.2 se cortó antes, en
+`08764e2` (#534). El `/coherence-audit` del gate de 0.89.3 dejó 22 hallazgos abiertos.
 El cutover de la flota a los nombres de ADR-068 se ejecutó el 2026-09-24 en los dos hosts (ver
 Done).
 ADR-060 Wave 1 sigue en su ventana de siete días hábiles. Rollout externo pendiente: Wave 2
@@ -53,6 +54,8 @@ se tocan antes de cerrar: Graph Assist el 2026-10-09, loop engineering el
 ---
 
 ## Done
+
+- [x] **La suite pasa entera bajo un agente: temproot, `COLUMNS=0` y el guard de `versions` (2026-10-11)** — tres fuentes de rojos que la suite tenía solo dentro de una sesión de agente. **Temproot:** desde #504 los agentes arrancan con `TMPDIR` dentro del `tmp/` del repo, el `tmp_path` de pytest caía dentro del árbol git y ~125 tests fallaban (125 de 6.197 el 2026-10-08); `tests/tmp_outside_checkout.py` mueve `TMPDIR` fuera de todo checkout antes de que pytest elija su temproot, salvo `--basetemp` o `PYTEST_DEBUG_TEMPROOT` explícitos, y la suite ya no deja `tmp/pytest-of-*` en el repo. **`COLUMNS=0`:** la entrada decía que Rich partía la salida en varias líneas, y era peor: Rich toma todo `COLUMNS` de dígitos como ancho explícito, así que el cero saltea su fallback a 80 y cada `Console()` imprime **nada** — `COLUMNS=0 lh doctor` salía sin una línea de salida para cualquier usuario, no solo en los tests. `lh` lo arregla en el grupo `cli` (`unusable_terminal_size_vars` en `cli/main.py`, que borra `COLUMNS`/`LINES` cuando valen cero), y como la mayoría de los tests invoca un subcomando sin pasar por el grupo, un fixture autouse de `tests/conftest.py` aplica el mismo predicado; los tests que fijan `COLUMNS=300` no se tocan. Medido el 2026-10-11 con `COLUMNS=0 LINES=0`: el `HEAD` anterior daba 226 failed, 6.155 passed, 2 skipped (58 en `test_doctor_cmd.py`). **Guard de `versions`:** fallaba la corrida entera ante cualquier entrada nueva en el `~/.local/share/claude/versions/` real, y una autoactualización de Claude Code durante los ~8 minutos de la suite es una entrada nueva (2.1.294–2.1.296 aparecieron entre el 2026-10-08 y el 09). `tests/claude_versions_guard.py` decide por contenido y no por nombre, porque los fakes también se llaman como versiones: todo fake de la suite son unos bytes de texto (shebang, o `old`/`new`), y una instalación real es un ejecutable nativo (Mach-O o ELF) de más de 200 MB. Se marca como fake todo lo que no sea un archivo regular, no-symlink, de al menos 50 MiB y con magic nativo; cada una de las tres condiciones tiene un test que se pone rojo al borrarla, y un test corre una sesión hija de pytest para probar el fixture en las dos direcciones (fake → la sesión falla, instalación real → pasa). Con todo, `COLUMNS=0 LINES=0` y el `TMPDIR` de sesión: 6.407 passed, exit 0.
 
 - [x] **Codex deja pasar un guard que no arranca (2026-10-09)** — medido contra `codex-cli 0.160.1` (`codex-evidence.md` §9): exit 1, binario faltante, timeout y exit 2 sin stderr dejan pasar la tool call; solo exit 2 con razón en stderr rechaza. El deploy envuelve los dos guards bloqueantes en `sh -c '<lh hook …> || { echo … >&2; exit 2; }'` y el reconocimiento de ownership acepta solo esa forma exacta (ADR-042 Evolution). Sigue abierto: el timeout de Codex, que mata el wrapper entero.
 - [x] **El grader deja de escribir en el PRJ (2026-10-09)** — `append_grade_to_prj_backlog` metió 121 ítems `Session quality regression` en un solo PRJ en cuatro semanas y tapó el backlog curado dos veces. Las notas quedan solo en `grades.jsonl`; `lh doctor` resume en *Memory hygiene* las flojas de 7 días con sus tres issues más frecuentes; `grading_enabled = false` ahora frena la fila, que antes solo frenaba la escritura en el PRJ. ADR-021 Evolution.
@@ -450,14 +453,6 @@ binario (plan §5.2 ítem 4). Prioridad MEDIA.
 
 **Acción:** pasar el profile del comando al worker como hace `session_end.py`, con un test que falle sin el flag (borrar el guard, ver el rojo, restaurar a mano).
 
-### Desde 0.85.0 `tmp_path` cae dentro del repo y ~125 tests fallan bajo un agente
-
-**Por qué:** desde #504 los agentes arrancan con `TMPDIR` dentro del `tmp/` del repo, así que el `tmp_path` de pytest queda dentro del árbol git y los tests que asumen un directorio fuera de un repo fallan. Workaround: `TMPDIR=$(getconf DARWIN_USER_TEMP_DIR) uv run --frozen pytest -q`. Conteo medido: 125 fallas de 6.197 corriendo la suite entera con el `TMPDIR` de sesión (2026-10-08).
-
-Con `TMPDIR=/tmp` quedan dos fuentes más de rojos según la corrida (2026-10-08): `COLUMNS=0` en el shell del agente hace que Rich parta la salida que los tests de CLI esperan en una línea, y el guard que vigila `~/.local/share/claude/versions` falla si Claude Code se autoactualiza durante la corrida. Además, los `tmp/pytest-of-*` que quedan de corridas viejas hacen fallar `test_this_repository_passes_its_own_instruction_gate` por sus fixtures `CLAUDE.md`.
-
-**Acción:** decidir si el gate fija `TMPDIR` fuera del repo (conftest o `tdd-check.md`) o si los tests dejan de depender de que `tmp_path` no sea un repo.
-
 ### El prompt de distill del compound-loop no dice que las tool calls están recortadas, ni fija el idioma
 
 **Por qué:** el grader marca sesiones como "no tool calls visible" porque el constructor del prompt recorta las tool calls (4.5 sacó 5/10 poor por eso en el shadow del 2026-10-07). El idioma de salida tampoco está fijado: Haiku 5.5 a veces escribe en español. El compound-loop pasó a `claude-haiku-5-5` el 2026-10-08 con kill criteria: aceptación < 28% al 2026-10-15, o más de 2/20 no verificables en un spot-check.
@@ -565,6 +560,17 @@ ignorados por git y sin gestionar, y `lh repo instructions` los marcó
 2026-10-11 se borraron los dos y `lh repo instructions` sobre los cinco repos de
 Wave 1 dio todo ✓, exit 0. Por decisión del operador la ventana arranca el
 2026-10-11 y cierra el 2026-10-20 si el gate sigue limpio.
+
+**El gate se rompió el mismo día y la ventana se sostiene (2026-10-11):** el
+`/coherence-audit` de 0.89.3 vio `lh repo instructions` con exit 1 sobre el checkout
+principal de lazy-harness: 474 `claude-md-shadows-agents`, todos bajo los
+`tmp/pytest-of-*` ignorados que deja pytest cuando corre con el `TMPDIR` de sesión
+dentro del repo. Se borraron a mano el 2026-10-11 y el gate de los cinco repos volvió
+a exit 0. La causa se arregló del lado de los tests: la suite ya no escribe dentro
+de un checkout (ver *La suite pasa entera bajo un agente* en Done). El gate no saltea paths ignorados:
+un `CLAUDE.md` ignorado igual oculta el `AGENTS.md` en una sesión que arranca ahí.
+Por decisión del operador la ventana no se reinicia y cierra el 2026-10-20 si el
+gate sigue limpio.
 
 **Acción:** (1) la ventana de siete días hábiles corre desde el 2026-10-11 y
 cierra el 2026-10-20 con `lh repo instructions` limpio en los cinco repos; después, Wave 2

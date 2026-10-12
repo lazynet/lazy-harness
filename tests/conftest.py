@@ -12,6 +12,10 @@ from pathlib import Path
 
 import pytest
 
+from tests.claude_versions_guard import new_fakes
+
+pytest_plugins = ("tests.tmp_outside_checkout",)
+
 
 @pytest.fixture
 def declared_null_sessions(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -163,14 +167,14 @@ def _guard_the_real_claude_versions_dir() -> Iterator[None]:
     `Path.home()` before any fixture has run. The before/after snapshot is
     taken at import time (`_REAL_CLAUDE_VERSIONS_BEFORE`, module level) and
     at session teardown, so it is independent of any one test's own
-    isolation.
+    isolation. A real install Claude Code auto-updates in mid-run is not a
+    fake, and `new_fakes` leaves it out.
     """
     yield
-    after = set(_REAL_CLAUDE_VERSIONS.iterdir()) if _REAL_CLAUDE_VERSIONS.is_dir() else set()
-    new = after - _REAL_CLAUDE_VERSIONS_BEFORE
+    new = new_fakes(_REAL_CLAUDE_VERSIONS, _REAL_CLAUDE_VERSIONS_BEFORE)
     assert not new, (
         f"this test run wrote into the real {_REAL_CLAUDE_VERSIONS} instead of an "
-        f"isolated HOME: {sorted(p.name for p in new)}. This pollutes the developer's "
+        f"isolated HOME: {new}. This pollutes the developer's "
         "machine — every `lh run` afterward may silently exec the fake binary left "
         "behind. Set HOME (via monkeypatch) to an isolated directory before computing "
         "any Path.home()-derived path."
@@ -300,6 +304,20 @@ def _never_reach_the_real_knowledge_store(monkeypatch, tmp_path_factory):
     monkeypatch.setattr(
         marker, "DEFAULT_ROOT", str(tmp_path_factory.mktemp("knowledge-store-guard"))
     )
+
+
+@pytest.fixture(autouse=True)
+def _usable_terminal_size(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Drop the `COLUMNS=0` agent shells export, as `lh` itself does.
+
+    `lh` drops it in the `cli` group, but most tests invoke a subcommand
+    directly and never run the group: under an agent their consoles rendered
+    nothing. Only zero values go — tests that set `COLUMNS=300` keep it.
+    """
+    from lazy_harness.cli.main import unusable_terminal_size_vars
+
+    for name in unusable_terminal_size_vars(os.environ):
+        monkeypatch.delenv(name)
 
 
 @pytest.fixture

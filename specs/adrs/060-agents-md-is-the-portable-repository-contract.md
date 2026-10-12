@@ -76,3 +76,16 @@ orphan files were removed, leaving the live generated documents in the user's
 config directory untouched, and `lh repo instructions` over all five pilot
 repositories passed with exit 0. The window therefore restarts on 2026-10-11 and
 closes on 2026-10-20 if the gate stays clean. Wave 2 still follows.
+
+**2026-10-11 — the gate broke the same day; the window holds.** The 0.89.3
+coherence audit found `lh repo instructions` exiting 1 on the lazy-harness
+checkout with 474 `claude-md-shadows-agents` findings, all under gitignored
+`tmp/pytest-of-*` directories. Agent sessions export a `TMPDIR` inside the
+repository, so pytest placed its temporary directories, `CLAUDE.md` fixtures
+included, inside the checkout. They were removed by hand on 2026-10-11 and the
+five-repository gate passed with exit 0 again. The cause is fixed in the test
+suite, which now relocates its temporary root outside any git checkout; the gate
+still reports ignored files, because an ignored `CLAUDE.md` still shadows
+`AGENTS.md` for a session started beside it. The fault was in the test harness,
+not in the pilot repositories, so the window is not restarted: it closes on
+2026-10-20 if the gate stays clean.
