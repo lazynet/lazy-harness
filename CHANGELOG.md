@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.89.5](https://github.com/lazynet/lazy-harness/compare/v0.89.4...v0.89.5) (2026-10-12)
+
+
+### Bug Fixes
+
+* close the two low findings of the 0.89.4 coherence audit ([#545](https://github.com/lazynet/lazy-harness/issues/545)) ([3623261](https://github.com/lazynet/lazy-harness/commit/362326186cb9324b3a323478481cd1c556e2fb14))
+
 ## [0.89.4](https://github.com/lazynet/lazy-harness/compare/v0.89.3...v0.89.4) (2026-10-12)
 
 
