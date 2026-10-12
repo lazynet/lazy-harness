@@ -107,6 +107,20 @@ def test_deploy_of_the_default_profile_sets_no_global_link(
     assert not (home_dir / ".claude").exists()
 
 
+def test_deploy_output_says_nothing_is_linked_when_no_adapter_declares_a_link(
+    home_dir: Path,
+) -> None:
+    from lazy_harness.cli.main import cli
+
+    _write_config(home_dir)
+    result = CliRunner().invoke(cli, ["deploy"])
+
+    assert result.exit_code == 0, result.output
+    assert "~/.claude symlink" not in result.output
+    assert "Linking global config:" in result.output
+    assert "nothing to link" in result.output
+
+
 def test_unknown_profile_fails_with_a_clear_error(home_dir: Path) -> None:
     from lazy_harness.cli.main import cli
 

@@ -813,6 +813,7 @@ def deploy_claude_symlink(cfg: Config, *, only: str | None = None) -> None:
     agent = agent_for_profile(cfg, cfg.profiles.default)
     link_path = agent.global_config_link()
     if link_path is None:
+        click.echo("  · nothing to link — the default profile's agent declares no global link")
         return
 
     default_name = cfg.profiles.default

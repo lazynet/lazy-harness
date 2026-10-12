@@ -99,7 +99,7 @@ def _run_deploy(cfg: Config, only: str | None = None) -> None:
     deploy_config(cfg, only=only, displaced=displaced)
     click.echo()
 
-    click.echo("Setting up ~/.claude symlink:")
+    click.echo("Linking global config:")
     deploy_claude_symlink(cfg, only=only)
     click.echo()
 
