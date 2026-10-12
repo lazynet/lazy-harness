@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.89.4](https://github.com/lazynet/lazy-harness/compare/v0.89.3...v0.89.4) (2026-10-12)
+
+
+### Bug Fixes
+
+* deploy output no longer claims a ~/.claude symlink step ([#542](https://github.com/lazynet/lazy-harness/issues/542)) ([90e1bd8](https://github.com/lazynet/lazy-harness/commit/90e1bd8a63211402995e370d5bb079e9b7b7430b))
+* keep pytest temp files outside any git checkout ([#541](https://github.com/lazynet/lazy-harness/issues/541)) ([f90a77a](https://github.com/lazynet/lazy-harness/commit/f90a77a865c8169d442d030b42e5ecdf33663463))
+
+
+### Documentation
+
+* close the architecture and how-page drift from the 0.89.3 coherence audit ([#540](https://github.com/lazynet/lazy-harness/issues/540)) ([c8b8254](https://github.com/lazynet/lazy-harness/commit/c8b8254eef5600981e25c15accc18cc2c0767291))
+* close the reference drift from the 0.89.3 coherence audit ([#539](https://github.com/lazynet/lazy-harness/issues/539)) ([50300f6](https://github.com/lazynet/lazy-harness/commit/50300f626a49de0ebb96d512b7d87b57cb018c74))
+
 ## [0.89.3](https://github.com/lazynet/lazy-harness/compare/v0.89.2...v0.89.3) (2026-10-11)
 
 
