@@ -158,7 +158,7 @@ Responsibility: convert the just-ended session's JSONL into a clean markdown fil
 Flow:
 
 1. Take the transcript the agent declared on the event when it is already on disk; otherwise locate the latest `*.jsonl` under `<agent runtime dir>/projects/<encoded-cwd>/`, where the runtime dir is the one belonging to the profile the hook was invoked with.
-2. Parse it into metadata + messages. Sessions without a `permission-mode` first record are treated as non-interactive and skipped.
+2. Parse it into metadata + messages. A session is interactive when a `permission-mode` or `last-prompt` record appears anywhere in it (for Codex, a user `response_item`); otherwise it is skipped as `non-interactive`.
 3. Filter sessions under `min_messages` (default 4) — scratch prompts never make it into the knowledge tree.
 4. Classify the session by cwd heuristics (see [ADR-011](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/011-session-export-and-classification.md)) to compute `profile` and `session_type`.
 5. Write to `<store>/sessions/YYYY-MM/YYYY-MM-DD-<short-id>.md` with frontmatter (`session_id`, `cwd`, `project`, `profile`, `session_type`, `branch`, `claude_version`, `messages`) and a body of `## User` / `## Claude` sections.
@@ -190,7 +190,7 @@ This is the hook that does the heaviest lifting. It is split into two pieces del
     Three distinct objects live under the agent runtime directory, none of them at a fixed path: the queue is its own subdirectory, the lock is a file inside that queue, and the worker's log sits in `logs/` alongside `hooks.log`. On a single-profile Claude Code install with no environment override they are `~/.claude/queue/`, `~/.claude/queue/.worker.lock` and `~/.claude/logs/compound-loop.log`. The worker resolves that directory from the profile the producer names when it spawns it, and from the global `[agent].type` when nobody names one — the producer's own fallback, so the pair always agrees. [Observability](#observability) lists which hooks resolve per profile today.
 
 2. Drain `*.task` files in FIFO order.
-3. For each task: parse metadata → filter trivial sessions (`min_user_chars`, `min_messages`) → collect existing decisions/failures/learnings for deduplication → build prompt with `build_prompt` (ported verbatim from the predecessor; the wording is calibration, not code) → call `claude -p --model <model>` with a configurable timeout → parse the JSON response with `parse_response` (handles bare JSON, fenced JSON, and prose-preamble JSON) → persist with `persist_results` → record the session's `goal_declared`/`goal_absent` verdict (see below).
+3. For each task: parse metadata → filter trivial sessions (`min_user_chars`, `min_messages`) → collect existing decisions/failures/learnings for deduplication → build prompt with `build_prompt` (ported verbatim from the predecessor; the wording is calibration, not code) → call `run_inference` with the `distill` role, routed through `[llm.roles]`, with a configurable timeout → parse the JSON response with `parse_response` (handles bare JSON, fenced JSON, and prose-preamble JSON) → persist with `persist_results` → record the session's `goal_declared`/`goal_absent` verdict (see below).
 4. Move the task to `queue/done/` regardless of outcome — failures never block the queue.
 
 **Where it writes (via `persist_results` + `persist_insights`):**
@@ -200,7 +200,7 @@ This is the hook that does the heaviest lifting. It is split into two pieces del
 - `<memory_dir>/claude-md.proposal.md` — appended proposed additions to `MEMORY.md` / `CLAUDE.md` for the human to review. Surfaced by `context-inject` on the next session start.
 - `<memory_dir>/insights/YYYY-MM/*.md` — verbatim `★ Insight ─` blocks captured deterministically (regex, not LLM) before the headless extractor runs. Survives LLM timeouts and bypasses the `min_user_chars` / `min_messages` gates. Detailed mechanics in the [compound-loop how page](memory-compound.md).
 - `<memory_dir>/insights/.cursor.json` — per-session last-processed message index, so subsequent Stop hooks scan only the delta.
-- `<learnings_dir>/YYYY-MM/YYYY-MM-DD-<slug>.md` — one markdown file per learning, atomic write.
+- `<learnings_dir>/YYYY-MM/YYYY-MM-DD-<slug>-<host>.md` — one markdown file per learning, atomic write.
 - `<memory_dir>/handoff.md` — overwritten with the current pending items, or deleted if empty, unless a more recent session wrote it.
 - `loop_events` table in `metrics.db` — one `goal_declared` or `goal_absent` row per graded session, recording whether the grading JSON's `goal_declared` field was `true`. A missing or non-boolean field records nothing. Idempotent across reprocessing: `MetricsDB.clear_goal_verdict` deletes any prior verdict for the session before inserting the new one, so a session that grows and gets re-evaluated still contributes exactly one row — the most recent processing's verdict is the one that counts. Surfaced by [`lh metrics loops`](../reference/cli.md#lh-metrics-loops).
 
