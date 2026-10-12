@@ -49,15 +49,13 @@ config_dir = "~/.claude-flex"
 roots = ["~/repos/flex"]
 
 [knowledge]
-path = "~/vault/knowledge"
+root = "~/knowledge-store"
 
 [knowledge.sessions]
 enabled = true
-subdir = "sessions"
 
 [knowledge.learnings]
 enabled = true
-subdir = "learnings"
 
 [knowledge.search]
 engine = "qmd"
