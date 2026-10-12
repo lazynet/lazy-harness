@@ -998,3 +998,14 @@ def test_consolidate_model_help_points_at_the_distill_role() -> None:
     flat = " ".join(result.output.split())
     assert "Defaults to the model of the distill role." in flat
     assert "[compound_loop].model" not in flat
+
+
+def test_reconcile_model_help_points_at_the_distill_role() -> None:
+    from lazy_harness.cli.memory_cmd import memory
+
+    result = CliRunner().invoke(memory, ["reconcile", "--help"], terminal_width=500)
+
+    assert result.exit_code == 0
+    flat = " ".join(result.output.split())
+    assert "Defaults to the model of the distill role." in flat
+    assert "[compound_loop].model" not in flat
