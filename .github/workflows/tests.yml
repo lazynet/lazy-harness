@@ -21,10 +21,10 @@ jobs:
       matrix:
         # macOS carries the launchd backend, which had zero CI coverage while
         # three consecutive waves rewrote it.
+        # Linux covers the two ends of requires-python: 3.11 is the promised
+        # floor, and 3.14 caught a real break (#404) the middle versions did not.
         include:
           - { os: ubuntu-latest, python-version: '3.11' }
-          - { os: ubuntu-latest, python-version: '3.12' }
-          - { os: ubuntu-latest, python-version: '3.13' }
           - { os: ubuntu-latest, python-version: '3.14' }
           - { os: macos-latest,  python-version: '3.13' }
     steps:
