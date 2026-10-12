@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pytest
 
+pytest_plugins = ("tests.tmp_outside_checkout",)
+
 
 @pytest.fixture
 def declared_null_sessions(monkeypatch: pytest.MonkeyPatch) -> None:
