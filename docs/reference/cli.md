@@ -453,7 +453,7 @@ Flags:
 - `--memory-dir <path>` — directory to read from. Defaults to `<cwd>/memory`.
 - `--last <n>` — tail this many entries from each JSONL. Default `50`.
 - `--model <id>` — headless model used to draft the proposal. Defaults to the model of the `distill` role.
-- `--timeout <seconds>` — Claude invocation timeout. Default `120`.
+- `--timeout <seconds>` — LLM invocation timeout for the backend the `distill` role routes to. Default `120`.
 
 ```bash
 lh memory consolidate

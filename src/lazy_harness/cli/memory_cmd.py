@@ -205,7 +205,7 @@ def _build_consolidate_prompt(decisions: list[str], failures: list[str]) -> str:
 @click.option(
     "--model",
     default=None,
-    help="Headless model for the proposal. Defaults to [compound_loop].model.",
+    help="Headless model for the proposal. Defaults to the model of the distill role.",
 )
 @click.option(
     "--timeout",
@@ -1273,7 +1273,7 @@ def _build_reconcile_prompt(entries: list[str]) -> str:
 @click.option(
     "--model",
     default=None,
-    help="Headless model for --check-contradictions. Defaults to [compound_loop].model.",
+    help="Headless model for --check-contradictions. Defaults to the model of the distill role.",
 )
 @click.option(
     "--timeout",
