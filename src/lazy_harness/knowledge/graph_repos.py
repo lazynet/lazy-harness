@@ -725,8 +725,10 @@ def _worst(checks: Sequence[HealthCheck]) -> str:
 def _repo_health(entry: ScopedRepo, log_path: Path) -> RepoHealth:
     root = entry.path
     if not root.is_dir():
-        checks = [HealthCheck("repo", ERROR, f"path missing: {root}")]
-        return RepoHealth(str(root), entry.discovered, ERROR, checks)
+        # config.toml is shared across hosts, so a repo another host carries is
+        # absent here by design, not broken (ADR-071).
+        checks = [HealthCheck("repo", SKIPPED, f"not on this host: {root}")]
+        return RepoHealth(str(root), entry.discovered, SKIPPED, checks)
     probes: list[tuple[str, Callable[[], list[HealthCheck]]]] = [
         ("hooks", lambda: check_hooks(root)),
         ("freshness", lambda: check_freshness(root)),
@@ -742,6 +744,11 @@ def _repo_health(entry: ScopedRepo, log_path: Path) -> RepoHealth:
     if not problems:
         problems = [HealthCheck("graph", OK, "hooks, freshness, last update and sources are clean")]
     return RepoHealth(str(root), entry.discovered, _worst(problems), problems)
+
+
+def has_errors(health: GraphHealth) -> bool:
+    """Whether a repo present on this host has an `error`: what fails `lh doctor`."""
+    return any(repo.status == ERROR for repo in health.repos)
 
 
 def collect_graph_health(cfg: Config, *, log_path: Path | None = None) -> GraphHealth:

@@ -547,7 +547,7 @@ def test_discovered_repos_are_included_and_marked(tmp_path: Path, no_graphify: N
     ]
 
 
-def test_a_missing_repo_directory_is_an_error_line_not_a_crash(
+def test_a_repo_absent_on_this_host_is_skipped_not_an_error(
     tmp_path: Path, no_graphify: None
 ) -> None:
     gone = tmp_path / "gone"
@@ -556,9 +556,29 @@ def test_a_missing_repo_directory_is_an_error_line_not_a_crash(
 
     health = gr.collect_graph_health(_cfg([gone, repo]), log_path=tmp_path / "none.log")
 
-    assert health.repos[0].status == "error"
-    assert "missing" in health.repos[0].checks[0].detail
+    assert health.repos[0].status == "skipped"
+    assert health.repos[0].checks[0].detail == f"not on this host: {gone}"
     assert health.repos[1].status == "ok"
+    assert not gr.has_errors(health)
+
+
+def test_an_error_in_a_present_repo_is_what_has_errors_reports(
+    tmp_path: Path, no_graphify: None
+) -> None:
+    repo = _repo(tmp_path / "repo")
+
+    health = gr.collect_graph_health(_cfg([repo]), log_path=tmp_path / "none.log")
+
+    assert health.repos[0].status == "error"
+    assert gr.has_errors(health)
+
+
+def test_warnings_and_a_collector_failure_are_not_errors() -> None:
+    stale = gr.RepoHealth("r", False, "warning", [gr.HealthCheck("freshness", "warning", "x")])
+    drift = gr.HealthCheck("code extensions", "warning", "drifted")
+
+    assert not gr.has_errors(gr.GraphHealth(repos=[stale], extensions=drift))
+    assert not gr.has_errors(gr.GraphHealth(repos=[], extensions=None, error="boom"))
 
 
 def test_a_check_that_raises_becomes_an_error_and_the_rest_still_run(
