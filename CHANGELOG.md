@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.89.6](https://github.com/lazynet/lazy-harness/compare/v0.89.5...v0.89.6) (2026-10-20)
+
+
+### Bug Fixes
+
+* doctor reads the default profile's engram metrics outside an agent session ([#548](https://github.com/lazynet/lazy-harness/issues/548)) ([1256aaf](https://github.com/lazynet/lazy-harness/commit/1256aafd228d283c50b531a73e33edfa5cf6cb8c))
+* lh doctor fails on a graph error in a present repo, skips absent ones ([#547](https://github.com/lazynet/lazy-harness/issues/547)) ([4ba1ccc](https://github.com/lazynet/lazy-harness/commit/4ba1ccc25d9e9e44db064803994b8fd77e3a1098))
+
+
+### Documentation
+
+* say engram-persist logs live in the hook profile's runtime dir ([d2f2e43](https://github.com/lazynet/lazy-harness/commit/d2f2e43417bb971b29f177c30063118bde19f379))
+* say scheduled jobs read credentials from the secrets file, not the job definition ([#549](https://github.com/lazynet/lazy-harness/issues/549)) ([ab8306d](https://github.com/lazynet/lazy-harness/commit/ab8306ded38e1fab1adbe6db77ad55f68dd95e61))
+
 ## [0.89.5](https://github.com/lazynet/lazy-harness/compare/v0.89.4...v0.89.5) (2026-10-12)
 
 
