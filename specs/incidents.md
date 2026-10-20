@@ -138,7 +138,7 @@ refused exactly the profiles the fix existed for.
 
 The metrics sink reported inactive for 96 consecutive launchd runs while the identical command worked fine from a terminal. Code inspection plus a file-existence check caught none of it.
 
-Credentials belong in the job definition — plist `EnvironmentVariables`, systemd `EnvironmentFile` — never in shell init, which no scheduler reads. The macOS Background domain additionally denies Keychain access, so a helper that falls back to it fails there and nowhere else.
+The fix was not the job definition. The sink URL carries a bearer token, and a generated launchd plist is neither owner-only nor untracked, so naming the variable there was rejected. Instead `lh` falls back to `<lh config dir>/secrets/metrics.env` when the environment is bare (`core/secrets.py:read_metrics_secret`): owner-only, refused if group- or other-readable, and never seen by the generator. The plist's `EnvironmentVariables` and the unit's `Environment=` carry only `PATH`. Shell init is no answer either — no scheduler reads it. The macOS Background domain additionally denies Keychain access, so a helper that falls back to it fails there and nowhere else.
 
 ## A duck-typed attribute on an injected collaborator is tested with that attribute absent
 
