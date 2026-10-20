@@ -54,7 +54,7 @@ from lazy_harness.hooks.event_surface import (
 )
 from lazy_harness.hooks.runner import resolve_profile
 from lazy_harness.hooks.signal_gaps import HookSignalGap, collect_hook_signal_gaps
-from lazy_harness.knowledge.graph_repos import GraphHealth, collect_graph_health
+from lazy_harness.knowledge.graph_repos import GraphHealth, collect_graph_health, has_errors
 from lazy_harness.llm import LLMBackendError, LLMBackendNotFoundError
 from lazy_harness.llm.invoke import _resolve_api_key
 from lazy_harness.llm.openai_compat import OpenAICompatibleBackend
@@ -357,10 +357,9 @@ _GRAPH_ICONS = {
 def _render_graph_repos(console: Console, health: GraphHealth) -> None:
     """What `lh knowledge graph update` could not fix, per repo in scope.
 
-    A healthy repo is one `ok` line; a repo with problems gets a header and one
-    line per problem. Nothing here fails `lh doctor`: a stale graph or a hook
-    the shared dispatcher does not forward is a repair to make, and doctor is
-    read-only, so the section names it rather than turning the exit code red.
+    A healthy repo is one `ok` line, and so is a repo absent on this host; a
+    repo with problems gets a header and one line per problem. Only an `error`
+    in a present repo fails `lh doctor` (ADR-071), which reads `has_errors`.
     Silent when no repo is in scope.
     """
     if not health.repos and not health.error:
@@ -374,6 +373,9 @@ def _render_graph_repos(console: Console, health: GraphHealth) -> None:
         name = escape(contract_path(repo.path))
         if repo.status == "ok":
             console.print(f"  {_GRAPH_ICONS['ok']} {name}{tag} \u2014 ok")
+            continue
+        if repo.status == "skipped":
+            console.print(f"  {_GRAPH_ICONS['skipped']} {name}{tag} \u2014 not on this host")
             continue
         console.print(f"  {_GRAPH_ICONS[repo.status]} {name}{tag}")
         for check in repo.checks:
@@ -1069,15 +1071,18 @@ def _doctor_json(cfg: Config) -> tuple[dict, bool]:
     for, and `--json` staying fast and side-effect-free is worth more than
     parity with the text output's coverage.
 
-    Returns the payload alongside whether it is healthy — for now, solely
-    whether `launches` came back as a genuine (non-permission) failure,
-    the only section here whose failure the text renderer treats as
-    exit-worthy. `doctor()`'s `--json` branch raises on `not ok`, so a
+    Returns the payload alongside whether it is healthy: whether `launches`
+    came back as a genuine (non-permission) failure, or a graph repo present
+    on this host has an `error` — the sections here whose failure the text
+    renderer treats as exit-worthy. `doctor()`'s `--json` branch raises on `not ok`, so a
     corrupt or pre-`launches`-table metrics DB fails the same way under
     `--json` as it does in text mode instead of always exiting 0.
     """
     launches = _launches_report_or_diagnostic(cfg, _now())
     ok = not (isinstance(launches, LaunchesUnavailable) and not launches.permission_denied)
+    graph_health = collect_graph_health(cfg)
+    if has_errors(graph_health):
+        ok = False
 
     return {
         "profiles": [asdict(p) for p in list_profiles(cfg)],
@@ -1089,7 +1094,7 @@ def _doctor_json(cfg: Config) -> tuple[dict, bool]:
         "hook_operations": [asdict(g) for g in collect_hook_operation_gaps(cfg)],
         "uncarried_events": [asdict(g) for g in collect_uncarried_events(cfg)],
         "mcp_gaps": [asdict(g) for g in collect_mcp_gaps(cfg)],
-        "graph_repos": asdict(collect_graph_health(cfg)),
+        "graph_repos": asdict(graph_health),
     }, ok
 
 
@@ -1432,7 +1437,10 @@ def doctor(as_json: bool) -> None:
     _render_uncarried_events(console, collect_uncarried_events(cfg))
     _render_mcp_gaps(console, collect_mcp_gaps(cfg))
     _render_codex_trust(console, collect_codex_trust(cfg))
-    _render_graph_repos(console, collect_graph_health(cfg))
+    graph_health = collect_graph_health(cfg)
+    _render_graph_repos(console, graph_health)
+    if has_errors(graph_health):
+        ok = False
 
     launches_report = _launches_report_or_diagnostic(cfg, _now())
     _render_launches(console, launches_report)

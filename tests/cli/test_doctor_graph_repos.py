@@ -1,8 +1,9 @@
 """Integration tests for the `Graph repos` block in `lh doctor` and its `--json`.
 
 The collector is covered in tests/unit/knowledge/test_graph_health.py; these
-pin what `lh doctor` does with it: render it, carry it in `--json`, and never
-let a broken repo take doctor down or fail its exit code.
+pin what `lh doctor` does with it: render it, carry it in `--json`, never let a
+broken repo take doctor down, and fail the exit code only on an `error` in a repo
+present on this host (ADR-071).
 """
 
 from __future__ import annotations
@@ -87,7 +88,7 @@ def test_a_healthy_repo_is_one_ok_line(tmp_path: Path, monkeypatch: pytest.Monke
     assert result.exit_code == 0
 
 
-def test_a_broken_repo_lists_its_problems_without_failing_doctor(
+def test_a_broken_repo_lists_its_problems_and_fails_doctor(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo = _repo(tmp_path / "repo", healthy=False)
@@ -98,6 +99,36 @@ def test_a_broken_repo_lists_its_problems_without_failing_doctor(
     section = result.output.split("Graph repos", 1)[1]
     assert "✗" in section
     assert "post-merge missing" in section
+    assert "All checks passed" not in result.output
+    assert result.exit_code == 1
+
+
+def test_a_repo_absent_on_this_host_is_one_skipped_line_and_does_not_fail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gone = tmp_path / "gone"
+    _config(tmp_path, monkeypatch, [gone, _repo(tmp_path / "repo")])
+
+    result = CliRunner().invoke(doctor)
+
+    [line] = [ln for ln in result.output.splitlines() if "/gone" in ln]
+    assert line.lstrip().startswith("·")
+    assert line.rstrip().endswith("not on this host")
+    assert "✗" not in result.output.split("Graph repos", 1)[1]
+    assert "All checks passed" in result.output
+    assert result.exit_code == 0
+
+
+def test_a_repo_with_only_warnings_does_not_fail_doctor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _repo(tmp_path / "repo")
+    (repo / "graphify-out" / "graph.json").unlink()
+    _config(tmp_path, monkeypatch, [repo])
+
+    result = CliRunner().invoke(doctor)
+
+    assert "no graph yet" in result.output
     assert result.exit_code == 0
 
 
@@ -174,7 +205,7 @@ def test_json_carries_the_same_records(tmp_path: Path, monkeypatch: pytest.Monke
     assert entry["checks"][0]["name"] == "hooks"
     assert "post-merge missing" in entry["checks"][0]["detail"]
     assert payload["extensions"]["name"] == "code extensions"
-    assert result.exit_code == 0
+    assert result.exit_code == 1
 
 
 def test_json_without_repos_has_an_empty_section(

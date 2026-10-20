@@ -404,8 +404,10 @@ juzga en la misma ventana.
   cuánto stale queda por eso antes de excluirlo.
 - **Control Codex:** (a) cae de 74,2% (baseline) a 6,5%; leer aparte, sin
   sesiones headless.
-- **`lh doctor` no falla** por errores de la sección Graph repos (hooks no
-  reenviados, update con timeout). Decidir si un `error` cambia el exit code.
+- **`lh doctor` no fallaba** por errores de la sección Graph repos. **Decidido
+  en ADR-071 (2026-10-20):** un `error` en un repo presente en el host falla
+  doctor; un repo configurado ausente en el host es `skipped`, y un update con
+  timeout sigue siendo `warning`.
 Prioridad MEDIA.
 
 ### `lh doctor` no detecta skew entre el plugin de engram y su binario
