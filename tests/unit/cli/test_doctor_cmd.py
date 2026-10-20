@@ -1119,6 +1119,62 @@ config_dir = "{tmp_path / "alpha-home"}"
     assert _engram_persist_metrics_path(get_agent("claude-code"), cfg, "alpha") == written
 
 
+def test_doctor_reads_the_default_profiles_metrics_outside_an_agent_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`lh doctor` from a plain shell still finds the runs the hook recorded.
+
+    The hook runs with the agent's config-dir variable set, so it names its
+    metrics file under the profile's own directory. A plain SSH shell has no
+    such variable, `profile_name()` answers "" and doctor fell back to the
+    global `~/.claude`, reporting "No runs yet (Stop hook not triggered)" on a
+    host whose hook had logged hundreds of runs. With nobody naming a profile,
+    the profile to diagnose is the configured default.
+    """
+    from datetime import datetime
+
+    from lazy_harness.cli.doctor_cmd import doctor
+
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    profile_home = tmp_path / "alpha-home"
+    (profile_home / "logs").mkdir(parents=True)
+    (profile_home / "logs" / "engram_persist_metrics.jsonl").write_text(
+        json.dumps(
+            {
+                "ts": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "event": "run",
+                "saved_ok": 1,
+                "saved_failed": 0,
+                "skipped_malformed": 0,
+                "cursor_lag_bytes": {"decisions": 0, "failures": 0},
+            }
+        )
+        + "\n"
+    )
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        f"""
+[harness]
+version = "1"
+
+[agent]
+type = "claude-code"
+
+[profiles]
+default = "alpha"
+
+[profiles.alpha]
+config_dir = "{profile_home}"
+"""
+    )
+    monkeypatch.setattr("lazy_harness.cli.doctor_cmd.config_file", lambda: cfg_file)
+
+    output = _unwrapped(CliRunner().invoke(doctor, []).output)
+
+    assert "No runs yet" not in output
+    assert "Last run" in output
+
+
 def test_doctor_reads_the_memory_dir_the_hook_writes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

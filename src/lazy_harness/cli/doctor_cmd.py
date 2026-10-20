@@ -1412,8 +1412,16 @@ def doctor(as_json: bool) -> None:
     # other in the same `lh doctor` run.
     active_profile = resolve_profile(None)
 
+    # Outside an agent session no config-dir variable names a profile, so
+    # `resolve_profile` answers "" and the path would fall to the global
+    # directory no hook writes to. The configured default is diagnosed then.
+    # Only this section: `_project_memory_dir` raises for a default profile
+    # whose agent has no sessions dir and no knowledge store, so widening it
+    # here would crash doctor instead of fixing it.
+    engram_profile = active_profile or (cfg.profiles.default if cfg else "")
+
     health = collect_engram_persist_health(
-        _engram_persist_metrics_path(agent, cfg, active_profile),
+        _engram_persist_metrics_path(agent, cfg, engram_profile),
         now=datetime.now(UTC),
     )
     if not _render_engram_persist(console, health):
