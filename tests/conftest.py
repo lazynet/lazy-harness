@@ -117,6 +117,21 @@ def timeout_when_agent_is_ready(ready: Path, cap: float = 60.0) -> Iterator[None
         yield
 
 
+def clear_agent_config_dirs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every adapter's variable, derived from the registry, not only Claude's.
+
+    `agent_runtime_dir` lets the adapter's variable win over a profile's
+    `config_dir`, so a `CODEX_HOME` exported by the developer's shell sent
+    doctor tests to the real `~/.codex-lazy`.
+    """
+    from lazy_harness.agents.registry import get_agent, list_agents
+
+    for agent in list_agents():
+        name = get_agent(agent).env_var()
+        if name:
+            monkeypatch.delenv(name, raising=False)
+
+
 @pytest.fixture(autouse=True)
 def _isolate_agent_config_dir(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep the developer's own profile out of every test.
@@ -126,7 +141,7 @@ def _isolate_agent_config_dir(monkeypatch: pytest.MonkeyPatch) -> None:
     in CI, from identical code. Tests that need a profile opt in via
     `active_profile`.
     """
-    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    clear_agent_config_dirs(monkeypatch)
 
 
 @pytest.fixture(autouse=True)
