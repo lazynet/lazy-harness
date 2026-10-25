@@ -434,6 +434,14 @@ binario (plan §5.2 ítem 4). Prioridad MEDIA.
 
 **Próxima sesión, en orden:** (1) esperar al horizonte de B y C (2026-10-13) y registrar las dos lecturas; la de B, rehecha sólo sobre proposals con fecha ≥ deploy de v0.83.2, es el baseline de este diseño. (2) Coordinar con el [pilot de hillclimbing](designs/2026-09-29-eval-hillclimb-pilot-design.md): no pueden correr a la vez, porque este diseño cambia el input y el schema que el pilot congela. (3) ADR. (4) Probe del rol `distill` con el schema nuevo, registrado en `claude-code-evidence.md` antes del primer test. (5) Plan de implementación (writing-plans), worktree y TDD. Prioridad MEDIA.
 
+### El evaluador propone prosa para fallas que un check determinístico atraparía
+
+**Por qué:** la instrucción `[EVITAR]` convierte toda causa raíz repetida en una línea de `claude_md_proposals`. Cuando la falla es mecánica —patrón sintáctico fijo, API prohibida, forma de import, ubicación de archivo, flag después del subcomando— la regla en prosa paga contexto en cada sesión y depende de que el agente la recuerde, mientras que una regla de ruff, un hook o un test la frena sin costo de contexto. Idea tomada de un skill público de retrospectivas de sesión.
+
+**Diseño propuesto:** el evaluador clasifica la causa raíz antes de proponer. Si es mecánica, la proposal pide el check y nombra dónde vive (ruff, `pre_tool_use_*`, test); sólo los juicios ("seguí el estilo de alrededor") quedan como regla de contrato.
+
+**Antes de tocar el prompt:** medir sobre las proposals aceptadas y rechazadas de los últimos 30 días qué fracción era mecánica; ese número es el baseline de las kill criteria. Cambia el mismo prompt y el mismo schema que [`designs/2026-10-05-evaluator-contract-dedupe-design.md`](designs/2026-10-05-evaluator-contract-dedupe-design.md) y que el [pilot de hillclimbing](designs/2026-09-29-eval-hillclimb-pilot-design.md) congela: se secuencia después de los dos, nunca en paralelo. Prioridad BAJA.
+
 ### Kill criteria del compound-loop: B (sin proposals con la cola llena) y C (growth gate a 1800 s)
 
 **Por qué:** el diagnóstico del 2026-09-29 midió que el costo del evaluador es re-evaluación, no la cola: 2.977 corridas sobre 526 sesiones en 30 días, 82% re-evaluando una sesión ya evaluada, $280 de los $301 de haiku. B y C son automatización de comportamiento, así que llevan kill criteria declaradas antes del deploy, con la calibración congelada hasta el horizonte. El horizonte arranca el día que el release con los dos cambios se instala en la Mac (`uv tool install --reinstall` + grep de site-packages), no el del merge.

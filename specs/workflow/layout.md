@@ -41,7 +41,7 @@ specs/               # Internal design artifacts — NOT published
 
 - **New CLI command** → `src/lazy_harness/cli/<name>_cmd.py`, tests in `tests/unit/cli/test_<name>_cmd.py`, reference entry in `docs/reference/cli.md`.
 - **New extension point / plugin type** → new directory under `src/lazy_harness/`, public overview in `docs/architecture/overview.md`, decision record in `specs/adrs/`.
-- **New ADR** → `specs/adrs/NNN-kebab-title.md`, add row to `specs/adrs/README.md` with Status column.
+- **New ADR** → `specs/adrs/NNN-kebab-title.md`, add row to `specs/adrs/README.md` with Status column. Write one only when the decision is hard to reverse, surprising without context, and the result of a real trade-off; missing any of the three, the reasoning goes in the commit or the PR.
 - **New user-facing guide** → `docs/how/<topic>.md`, linked from `mkdocs.yml`.
 - **New contributor-only doc** → `specs/workflow/<topic>.md` (this directory) or `specs/designs/<date>-<topic>.md` for in-progress designs.
 - **New implementation plan** → `specs/plans/<date>-<topic>-plan.md`. Once the work lands the plan is frozen, like `specs/archive/` — see below.
