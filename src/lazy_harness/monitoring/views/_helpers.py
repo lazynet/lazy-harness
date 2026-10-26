@@ -171,12 +171,16 @@ def decode_project_name(encoded: str) -> str:
 
     def try_build(index: int, current_path: str) -> str | None:
         if index == len(parts):
-            return current_path if os.path.exists(current_path) else None
+            return current_path
         combined = parts[index]
         for j in range(index, len(parts)):
             if j > index:
                 combined += "-" + parts[j]
             candidate = os.path.join(current_path, combined)
+            # A missing prefix cannot lead to an existing path; without this
+            # prune an unresolvable name explores all 2^(n-1) hyphen splits.
+            if not os.path.exists(candidate):
+                continue
             r = try_build(j + 1, candidate)
             if r:
                 return r

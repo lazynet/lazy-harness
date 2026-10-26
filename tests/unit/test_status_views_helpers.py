@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
+
+import pytest
 
 
 def test_format_tokens_thresholds() -> None:
@@ -237,3 +240,35 @@ def test_lock_state_reports_held_when_the_lock_is_taken(tmp_path: Path) -> None:
     finally:
         fcntl.flock(fd, fcntl.LOCK_UN)
         fd.close()
+
+
+def test_decode_project_name_does_not_explore_splits_under_missing_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing prefix prunes the search; every hyphen split is not stat-ed."""
+    from lazy_harness.monitoring.views import _helpers
+
+    calls = 0
+    real_exists = os.path.exists
+
+    def counting_exists(path: str) -> bool:
+        nonlocal calls
+        calls += 1
+        return real_exists(path)
+
+    encoded = "-" + "-".join(f"seg{i}" for i in range(22))
+    with monkeypatch.context() as m:
+        m.setattr(_helpers.os.path, "exists", counting_exists)
+        result = _helpers.decode_project_name(encoded)
+
+    assert result == "seg21"
+    assert calls < 1000
+
+
+def test_decode_project_name_resolves_hyphenated_dir_on_disk(tmp_path: Path) -> None:
+    from lazy_harness.monitoring.views._helpers import decode_project_name
+
+    (tmp_path / "my-hyphen-repo").mkdir()
+    encoded = str(tmp_path / "my-hyphen-repo").replace("/", "-")
+
+    assert decode_project_name(encoded) == "my-hyphen-repo"
