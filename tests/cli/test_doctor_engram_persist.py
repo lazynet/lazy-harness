@@ -113,3 +113,16 @@ def test_doctor_fails_when_engram_persist_block_fails(lh_env: Path) -> None:
 
     assert result.exit_code == 1
     assert "Engram persist" in result.output
+
+
+def test_doctor_reports_quarantined_entries(lh_env: Path) -> None:
+    logs_dir = lh_env / "logs"
+    _write_run(logs_dir, when=datetime.now(UTC) - timedelta(minutes=5))
+    path = logs_dir / "engram_persist_metrics.jsonl"
+    record = json.loads(path.read_text())
+    path.write_text(json.dumps({**record, "quarantined_total": 2}) + "\n")
+
+    result = CliRunner().invoke(doctor)
+
+    assert "2 entries quarantined" in result.output
+    assert "engram_quarantine.jsonl" in result.output

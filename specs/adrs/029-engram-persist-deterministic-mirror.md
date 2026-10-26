@@ -69,3 +69,30 @@ rows were ~15 minutes apart), so it does not absorb a re-upload.
 when the latest run reached the cap, the cursor file advanced on disk, and no
 save failed in that run. A stalled cursor remains `fail` even if `engram save`
 returned success.
+
+## Evolution — 2026-10-26: bounded attempts per entry, then quarantine
+
+"Save failures keep the cursor unchanged for retry" had no bound. One
+`failures.jsonl` entry whose `summary` began with `--delete-branch` failed
+every run — engram read the title as an unknown flag — and blocked every
+later entry in that file: 44 failed saves in seven days, a 25% failure rate
+in `lh doctor`, all from one offset. The log hid the cause, since engram
+prints its update banner on stderr ahead of the error and the timestamped
+line carried only the banner.
+
+- **Argv.** Flags first, then `--`, then title and content. engram 3.5.2
+  honours `--` only after its flags; placed earlier it counts the flags as
+  positionals. Probe in `specs/designs/engram-evidence.md`.
+- **Bound.** An entry gets `MAX_ATTEMPTS_PER_ENTRY` (5) failed exits, one per
+  run, counted in the cursor file under `retries` and reset by a success. A
+  timeout or a binary that never started uses none.
+- **Quarantine.** The fifth failure appends the raw line, offset, exit code
+  and last error to `engram_quarantine.jsonl` beside the cursor and advances.
+  Ordering is kept for every entry but a quarantined one.
+- **Visibility.** Each run reports `quarantined` and the sidecar's
+  `quarantined_total`; `lh doctor` warns with each project's latest total
+  until the sidecar is emptied. Errors are logged as one line with both
+  output streams.
+
+A global engram outage now quarantines one entry per five runs instead of
+blocking: the sidecar keeps them for replay, and there is no replay command.

@@ -252,6 +252,12 @@ def _render_engram_persist(console: Console, health: EngramPersistHealth) -> boo
             "(engram binary not found — set [memory.engram] binary in config.toml)"
         )
 
+    if health.quarantined_entries:
+        console.print(
+            f"  {icons['warn']} {health.quarantined_entries} entries quarantined "
+            "(see engram_quarantine.jsonl beside each project's engram_cursor.json)"
+        )
+
     lag = health.cursor_lag_bytes or 0
     lag_state = (
         "warn"

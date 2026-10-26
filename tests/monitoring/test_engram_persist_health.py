@@ -307,3 +307,48 @@ def test_worst_of_three_wins(tmp_path: Path) -> None:
     health = collect_engram_persist_health(metrics_path, now=NOW)
 
     assert health.state == "fail"
+
+
+def test_quarantined_entries_sum_the_latest_total_of_each_project(tmp_path: Path) -> None:
+    metrics = tmp_path / "m.jsonl"
+    older = {**_run_event(when=NOW - timedelta(minutes=30)), "quarantined_total": 5}
+    a = {**_run_event(when=NOW - timedelta(minutes=20)), "quarantined_total": 2}
+    b = {
+        **_run_event(when=NOW - timedelta(minutes=10)),
+        "project_key": "other",
+        "quarantined_total": 1,
+    }
+    _write(metrics, [older, a, b])
+
+    health = collect_engram_persist_health(metrics, now=NOW)
+
+    assert health.quarantined_entries == 3
+    assert health.state == "warn"
+
+
+def test_quarantined_entries_stay_reported_after_the_window(tmp_path: Path) -> None:
+    metrics = tmp_path / "m.jsonl"
+    flagged = {**_run_event(when=NOW - timedelta(hours=2)), "quarantined_total": 1}
+    later = [
+        {
+            **_run_event(when=NOW - timedelta(minutes=i)),
+            "project_key": "other",
+            "quarantined_total": 0,
+        }
+        for i in range(30, 0, -1)
+    ]
+    _write(metrics, [flagged, *later])
+
+    health = collect_engram_persist_health(metrics, now=NOW, window=20)
+
+    assert health.quarantined_entries == 1
+
+
+def test_runs_written_before_quarantine_count_as_none(tmp_path: Path) -> None:
+    metrics = tmp_path / "m.jsonl"
+    _write(metrics, [_run_event(when=NOW - timedelta(minutes=5))])
+
+    health = collect_engram_persist_health(metrics, now=NOW)
+
+    assert health.quarantined_entries == 0
+    assert health.state == "ok"

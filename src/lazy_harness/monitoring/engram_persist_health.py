@@ -32,6 +32,7 @@ class EngramPersistHealth:
     runs_considered: int
     skips_considered: int = 0
     catching_up: bool = False
+    quarantined_entries: int = 0
 
 
 def _missing() -> EngramPersistHealth:
@@ -95,6 +96,19 @@ def _cursor_lag_state(lag: int, *, catching_up: bool = False) -> HealthState:
     return "ok"
 
 
+def _quarantined_entries(runs: list[dict[str, Any]]) -> int:
+    """Entries sitting in quarantine sidecars, by each project's latest run.
+
+    Read from every run, not the window: a quarantined entry stays put until
+    someone acts on it, and a project that has not run lately still has it.
+    """
+    latest: dict[str, int] = {}
+    for run in runs:
+        total = run.get("quarantined_total", 0)
+        latest[str(run.get("project_key", ""))] = total if isinstance(total, int) else 0
+    return sum(latest.values())
+
+
 def _worst(states: list[HealthState]) -> HealthState:
     order: dict[HealthState, int] = {"ok": 0, "warn": 1, "fail": 2, "missing": 3}
     return max(states, key=lambda s: order[s])
@@ -143,6 +157,7 @@ def collect_engram_persist_health(
     # A skip writes nothing to Engram, so it is a silent data loss rather than a
     # failure: kept out of the failure rate, but never reported as healthy.
     skips = _read_events(metrics_path, "skip")[-window:]
+    quarantined = _quarantined_entries(runs)
 
     state = _worst(
         [
@@ -150,6 +165,7 @@ def collect_engram_persist_health(
             _failure_rate_state(failure_rate),
             _cursor_lag_state(cursor_lag, catching_up=catching_up),
             "warn" if skips else "ok",
+            "warn" if quarantined else "ok",
         ]
     )
 
@@ -161,4 +177,5 @@ def collect_engram_persist_health(
         runs_considered=len(recent),
         skips_considered=len(skips),
         catching_up=catching_up,
+        quarantined_entries=quarantined,
     )
