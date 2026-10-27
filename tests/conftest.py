@@ -125,8 +125,18 @@ def _isolate_agent_config_dir(monkeypatch: pytest.MonkeyPatch) -> None:
     whatever profile the machine happens to run under — 'lazy' locally and ''
     in CI, from identical code. Tests that need a profile opt in via
     `active_profile`.
+
+    Every registered agent's variable goes, not just Claude's: an agent session
+    exports its own (`CODEX_HOME=~/.codex-lazy`), `agent_runtime_dir` honours
+    it, and a doctor test then read the host's live Engram metrics and failed
+    on any machine whose real failure rate was high. Derived from the registry
+    so a new adapter is covered without touching this fixture.
     """
-    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    from lazy_harness.agents.registry import get_agent, list_agents
+
+    for agent in list_agents():
+        if name := get_agent(agent).env_var():
+            monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture(autouse=True)
