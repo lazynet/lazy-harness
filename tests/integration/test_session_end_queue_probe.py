@@ -1,12 +1,10 @@
-"""ADR-062 installed-agent probes: SessionEnd queues the task, the vault waits.
+"""Installed-agent probes: SessionEnd queues the task in the invoked profile.
 
 The hook is invoked through the real CLI entry point under a claude-code
 profile and a codex profile. What it must prove is narrow: a compound-loop
-task naming this session lands in *that* profile's queue, the worker spawn is
-requested, and the project readme the worker will later edit is byte-identical
-when the hook returns. Persistence itself is exercised in the worker process
-(`tests/unit/test_compound_loop.py`), never here and never against a real
-vault: `lazymind_dir` points at a throwaway tree under `tmp_path`.
+task naming this session lands in *that* profile's queue and the worker spawn
+is requested. Persistence itself is exercised in the worker process
+(`tests/unit/test_compound_loop.py`), never here.
 """
 
 from __future__ import annotations
@@ -18,7 +16,6 @@ import pytest
 from click.testing import CliRunner
 
 from lazy_harness.cli.main import cli
-from lazy_harness.knowledge.project_state import SECTION_HEADER
 
 _CONFIG = """\
 [harness]
@@ -41,33 +38,18 @@ agent = "codex"
 
 [compound_loop]
 enabled = true
-lazymind_dir = "{vault}"
 """
 
 _SESSION_ID = "probe-session-0001"
 
 
 @pytest.fixture
-def vault(tmp_path: Path) -> Path:
-    prj_dir = tmp_path / "vault" / "1-Projects" / "PRJ-Probe"
-    prj_dir.mkdir(parents=True)
-    (prj_dir / "PRJ-Probe.md").write_text(
-        f"---\ntype: project\nupdated: 2026-09-14\n---\n# PRJ-Probe\n\n"
-        f"{SECTION_HEADER}\n\nold snapshot\n\n## Backlog\n\n### Pendiente — Alta prioridad\n\n",
-        encoding="utf-8",
-    )
-    return tmp_path / "vault"
-
-
-@pytest.fixture
-def profiles(
-    tmp_path: Path, home_dir: Path, vault: Path, monkeypatch: pytest.MonkeyPatch
-) -> dict[str, Path]:
+def profiles(tmp_path: Path, home_dir: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
     lh_config = tmp_path / "lhconfig"
     lh_config.mkdir()
     dirs = {"cc": tmp_path / "cc-home", "cx": tmp_path / "cx-home"}
     (lh_config / "config.toml").write_text(
-        _CONFIG.format(cc=dirs["cc"], cx=dirs["cx"], vault=vault), encoding="utf-8"
+        _CONFIG.format(cc=dirs["cc"], cx=dirs["cx"]), encoding="utf-8"
     )
     monkeypatch.setenv("LH_CONFIG_DIR", str(lh_config))
     monkeypatch.setenv("LH_DATA_DIR", str(tmp_path / "lhdata"))
@@ -98,15 +80,10 @@ def _transcript(tmp_path: Path, cwd: Path) -> Path:
     return transcript
 
 
-def _vault_bytes(vault: Path) -> dict[Path, bytes]:
-    return {p.relative_to(vault): p.read_bytes() for p in vault.rglob("*") if p.is_file()}
-
-
 @pytest.mark.parametrize("profile", ["cc", "cx"], ids=["claude-code", "codex"])
-def test_session_end_queues_the_task_and_leaves_the_vault_untouched(
+def test_session_end_queues_the_task_in_the_invoked_profile(
     profile: str,
     profiles: dict[str, Path],
-    vault: Path,
     spawned: list[list[str]],
     tmp_path: Path,
 ) -> None:
@@ -119,7 +96,6 @@ def test_session_end_queues_the_task_and_leaves_the_vault_untouched(
     cwd = tmp_path / "probe"
     cwd.mkdir()
     transcript = _transcript(tmp_path, cwd)
-    vault_before = _vault_bytes(vault)
 
     result = CliRunner().invoke(
         cli,
@@ -143,11 +119,10 @@ def test_session_end_queues_the_task_and_leaves_the_vault_untouched(
     assert f"cwd={cwd}" in task
     assert f"session_jsonl={transcript}" in task
     assert spawned and "lazy_harness.knowledge.compound_loop_worker" in spawned[0]
-    assert _vault_bytes(vault) == vault_before
 
 
 def test_session_end_queues_nowhere_but_the_invoked_profile(
-    profiles: dict[str, Path], vault: Path, spawned: list[list[str]], tmp_path: Path
+    profiles: dict[str, Path], spawned: list[list[str]], tmp_path: Path
 ) -> None:
     cwd = tmp_path / "probe"
     cwd.mkdir()

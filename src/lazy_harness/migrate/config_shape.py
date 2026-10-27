@@ -6,7 +6,8 @@ layout keys are deleted rather than translated — carrying them forward is what
 let the `Learnings` / `learnings` case mismatch survive.
 
 `[compound_loop].lazymind_dir` is deliberately untouched: it points at the
-Obsidian vault, which the compound loop still reads for `1-Projects/`.
+Obsidian vault, not at the store. The key is still parsed and written back, but
+nothing has read it since ADR-072 removed the PRJ snapshot.
 """
 
 from __future__ import annotations
