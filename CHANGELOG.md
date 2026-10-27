@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.89.7](https://github.com/lazynet/lazy-harness/compare/v0.89.6...v0.89.7) (2026-10-27)
+
+
+### Bug Fixes
+
+* engram-persist passes the title after --, logs both streams, and quarantines an entry that keeps failing ([#556](https://github.com/lazynet/lazy-harness/issues/556)) ([2740cd1](https://github.com/lazynet/lazy-harness/commit/2740cd1d5b42f731cc11e2403eacae32a74d24bd))
+* prune missing prefixes when decoding project names so status memory finishes ([#555](https://github.com/lazynet/lazy-harness/issues/555)) ([4a49318](https://github.com/lazynet/lazy-harness/commit/4a493182afedacbb8b04b6b071e71a7f09caf30f))
+* status cron reads a systemd timer's last run from the scheduler, not log files ([#558](https://github.com/lazynet/lazy-harness/issues/558)) ([f77b225](https://github.com/lazynet/lazy-harness/commit/f77b225c6f59a0c51fb19ca80356da6981b1e892))
+* test isolation clears every adapter's config-dir variable, not only Claude's ([#551](https://github.com/lazynet/lazy-harness/issues/551)) ([9a4d094](https://github.com/lazynet/lazy-harness/commit/9a4d0945a24ab080d872e1fe009af9c211aa1eb2))
+
+
+### Documentation
+
+* add ADR criterion and backlog item for mechanical-check proposals ([#553](https://github.com/lazynet/lazy-harness/issues/553)) ([f7e422c](https://github.com/lazynet/lazy-harness/commit/f7e422cfe25ca80fe2bd469965b61f020447f0f5))
+* add backlog items for launch ratio, codex-auto-review coverage and spurious memory rows ([0338245](https://github.com/lazynet/lazy-harness/commit/03382453ba6371cf3a8e1287a4274ab92a22f869))
+
 ## [0.89.6](https://github.com/lazynet/lazy-harness/compare/v0.89.5...v0.89.6) (2026-10-20)
 
 
