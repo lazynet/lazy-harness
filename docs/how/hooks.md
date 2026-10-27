@@ -585,9 +585,10 @@ For each kind (`decision`, `failure`):
 1. Open the matching JSONL, seek to the stored byte offset.
 2. Read line by line. Partial lines at EOF are deferred to the next run (the producer might still be flushing).
 3. Decode each line as JSON. Malformed lines are counted (`skipped_malformed`) and the cursor advances past them — they are not retried.
-4. For each well-formed entry, invoke `engram save <title> <json> --type <kind> --project <key> --scope project`. The title is the entry's `summary` field truncated to 200 chars; the body is the canonical JSON of the entry.
+4. For each well-formed entry, invoke `engram save --type <kind> --project <key> --scope project -- <title> <json>`. The title is the entry's `summary` field truncated to 200 chars; the body is the canonical JSON of the entry. Flags go first and `--` ends them, so a summary starting with `--` stays a title instead of failing as an unknown flag; engram ignores a `--` placed before its flags.
 5. **On success**, advance the cursor to the new file position and persist `engram_cursor.json` atomically (tempfile + `os.replace`). A run attempts at most 25 saves across both files (`MAX_SAVES_PER_RUN`), so a large backlog drains over several `Stop` events instead of blocking one.
-6. **On failure**, leave the cursor untouched and stop processing this kind for this run. The next run retries the same offset → at-least-once delivery, with a strict ordering guarantee (no entry skipped over a transient failure).
+6. **On failure**, leave the cursor untouched and stop processing this kind for this run. The next run retries the same offset → at-least-once delivery. A failure is logged as one line carrying both of engram's output streams, so an update banner printed ahead of the error does not hide it.
+7. **On the fifth failed exit for the same entry** (`MAX_ATTEMPTS_PER_ENTRY`), the entry moves to `engram_quarantine.jsonl` beside the cursor and the cursor advances past it, so one entry that always fails cannot block every later entry in its file. Attempts are counted per run in the cursor file (`retries`, keyed by kind and offset) and reset when a save succeeds. A timeout or a binary that never started uses no attempt: it says nothing about the entry. Quarantine gives up ordering for that one entry; its raw line, offset, exit code and last error stay in the sidecar for a manual replay.
 
 Project key resolution: `git rev-parse --git-common-dir` so worktrees collapse onto the main repo's basename. This prevents `lazy-harness` and `.worktrees/feat-foo` from showing up as two separate Engram projects.
 
@@ -595,9 +596,10 @@ If `engram` is not on `PATH`, the run logs `engram binary not on PATH; skipping 
 
 **Where it writes:**
 
-- `engram_cursor.json` — the per-kind byte cursors, in the location described above.
+- `engram_cursor.json` — the per-kind byte cursors, plus the failed attempts at the entry each file is stuck on, in the location described above.
+- `engram_quarantine.jsonl` — beside the cursor: one record per entry that ran out of attempts.
 - `<agent runtime dir>/logs/engram_persist.log` — append-only error log (subprocess failures, missing binary). The directory is the agent runtime directory of the profile the hook was invoked with, not a fixed path.
-- `<agent runtime dir>/logs/engram_persist_metrics.jsonl` — one JSONL record per run (run summary) plus one record per slow `engram save` (≥ 500 ms). The `lh doctor` "Engram persist" section reads this file, for the active profile or the `[profiles] default` one when run outside an agent session, via `monitoring/engram_persist_health.py` to classify state as `ok` / `warn` / `fail` based on last-run age, recent failure rate, and cursor lag. A large lag is `warn` with `catching up` only when the run hit its save cap, the cursor file advanced, and no save failed in that run; otherwise it is `fail`.
+- `<agent runtime dir>/logs/engram_persist_metrics.jsonl` — one JSONL record per run (run summary) plus one record per slow `engram save` (≥ 500 ms). The `lh doctor` "Engram persist" section reads this file, for the active profile or the `[profiles] default` one when run outside an agent session, via `monitoring/engram_persist_health.py` to classify state as `ok` / `warn` / `fail` based on last-run age, recent failure rate, cursor lag, and quarantined entries — each project's latest `quarantined_total`, a `warn` until its sidecar is emptied. A large lag is `warn` with `catching up` only when the run hit its save cap, the cursor file advanced, and no save failed in that run; otherwise it is `fail`.
 
 ### `herdr-context-gauge` — runs on `Stop`, `SessionStart`, `SessionEnd`, `PostToolUse`
 

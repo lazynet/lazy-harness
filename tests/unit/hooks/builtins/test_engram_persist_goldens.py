@@ -358,7 +358,10 @@ def test_a_run_with_the_binary_present_records_a_run_metric(tmp_path: Path) -> N
     records = world.metrics_records("run")
     assert len(records) == 1, world.metrics_records()
     assert records[0]["saved_ok"] == 1
-    assert any(line.startswith("save chose-a-over-b ") for line in world.engram_invocations())
+    assert any(
+        line.startswith("save ") and " -- chose-a-over-b " in line
+        for line in world.engram_invocations()
+    )
 
 
 def test_a_run_without_the_binary_records_a_skip_rather_than_a_clean_run(
@@ -423,7 +426,10 @@ def test_a_declared_transcript_that_is_not_written_yet_still_names_the_project_d
 
     _run(world)
 
-    assert any(line.startswith("save chose-a-over-b ") for line in world.engram_invocations())
+    assert any(
+        line.startswith("save ") and " -- chose-a-over-b " in line
+        for line in world.engram_invocations()
+    )
     assert not (fallback / "memory" / "decisions.jsonl").exists()
 
 
@@ -471,7 +477,10 @@ def test_the_run_lands_in_the_invoked_profile_and_not_in_the_global_dir(
     run = _run(world, profile="p")
 
     assert run.exit_code == 0, run.stderr
-    assert any(line.startswith("save chose-a-over-b ") for line in world.engram_invocations())
+    assert any(
+        line.startswith("save ") and " -- chose-a-over-b " in line
+        for line in world.engram_invocations()
+    )
     assert world.metrics_records("run"), world.metrics_file
     assert sorted(world.cursors_root.rglob("engram_cursor.json"))
     assert not world.global_agent_dir.exists(), sorted(world.global_agent_dir.rglob("*"))

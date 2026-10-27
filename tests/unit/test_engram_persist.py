@@ -171,8 +171,8 @@ def test_persists_new_decision_entries_via_engram_save(tmp_path: Path) -> None:
     args = mock_run.call_args_list[0].args[0]
     assert args[0] == persister.engram_bin
     assert args[1] == "save"
-    assert args[2] == "Use CLI not MCP for hook"
-    assert json.loads(args[3]) == entries[0]
+    assert args[-3:-1] == ["--", "Use CLI not MCP for hook"]
+    assert json.loads(args[-1]) == entries[0]
     assert "--type" in args and args[args.index("--type") + 1] == "decision"
     assert "--project" in args and args[args.index("--project") + 1] == "lazy-harness"
     assert "--scope" in args and args[args.index("--scope") + 1] == "project"
@@ -242,7 +242,7 @@ def test_title_falls_back_when_summary_missing(tmp_path: Path) -> None:
         persister.persist_new_entries()
 
     args = mock_run.call_args_list[0].args[0]
-    assert args[2] == "decision@2026-05-04T11:00:00Z"
+    assert args[-2] == "decision@2026-05-04T11:00:00Z"
 
 
 def test_title_truncated_to_max_chars(tmp_path: Path) -> None:
@@ -256,7 +256,7 @@ def test_title_truncated_to_max_chars(tmp_path: Path) -> None:
         persister.persist_new_entries()
 
     args = mock_run.call_args_list[0].args[0]
-    assert len(args[2]) == 200  # TITLE_MAX_CHARS
+    assert len(args[-2]) == 200  # TITLE_MAX_CHARS
 
 
 def test_advances_cursor_only_on_successful_save(tmp_path: Path) -> None:

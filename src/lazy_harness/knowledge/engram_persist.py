@@ -2,8 +2,9 @@
 
 Invoked from a Stop-hook wrapper after compound_loop.py has written its
 new JSONL entries. Reads from a per-file byte cursor, calls `engram save`
-once per new entry, advances the cursor only on success. Emits run-level
-metrics to engram_persist_metrics.jsonl and errors to engram_persist.log.
+once per new entry, advances the cursor on success, or past an entry that
+used up its attempts into engram_quarantine.jsonl. Emits run-level metrics
+to engram_persist_metrics.jsonl and errors to engram_persist.log.
 
 Exit semantics belong to the wrapper. This module never calls sys.exit.
 """
@@ -24,9 +25,14 @@ from typing import Literal
 SLOW_SAVE_THRESHOLD_MS: int = 500
 TITLE_MAX_CHARS: int = 200
 SAVE_TIMEOUT_SECONDS: int = 30
+ERROR_MAX_CHARS: int = 1000
 # A catch-up runs inside `Stop`, which the session waits on: 930 entries at
 # ~150 ms each froze one for 145 s. The remainder drains on later runs.
 MAX_SAVES_PER_RUN: int = 25
+# Failed `engram save` exits an entry may take, one per run, before it moves
+# to the quarantine sidecar. Without a bound one entry that always fails
+# blocks every entry after it in that file, forever.
+MAX_ATTEMPTS_PER_ENTRY: int = 5
 
 EntryKind = Literal["decision", "failure"]
 
@@ -38,6 +44,7 @@ _FILES: dict[EntryKind, str] = {
 _CURSOR_FILENAME: str = "engram_cursor.json"
 _METRICS_FILENAME: str = "engram_persist_metrics.jsonl"
 _ERROR_LOG_FILENAME: str = "engram_persist.log"
+_QUARANTINE_FILENAME: str = "engram_quarantine.jsonl"
 
 
 def _load_cursor(cursor_path: Path) -> dict[str, int]:
@@ -62,15 +69,45 @@ def _load_cursor(cursor_path: Path) -> dict[str, int]:
         return default
 
 
-def _save_cursor(cursor_path: Path, decisions_offset: int, failures_offset: int) -> None:
+def _load_retries(cursor_path: Path) -> dict[str, dict[str, int]]:
+    """Failed attempts at the entry each file is stuck on, keyed by kind.
+
+    Anything unreadable starts the count over: the worst case is a few more
+    attempts before an entry is quarantined.
+    """
+    try:
+        data = json.loads(cursor_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+    raw = data.get("retries") if isinstance(data, dict) else None
+    if not isinstance(raw, dict):
+        return {}
+    retries: dict[str, dict[str, int]] = {}
+    for kind, state in raw.items():
+        if kind not in _FILES or not isinstance(state, dict):
+            continue
+        offset, attempts = state.get("offset"), state.get("attempts")
+        if isinstance(offset, int) and isinstance(attempts, int):
+            retries[kind] = {"offset": offset, "attempts": attempts}
+    return retries
+
+
+def _save_cursor(
+    cursor_path: Path,
+    decisions_offset: int,
+    failures_offset: int,
+    retries: dict[str, dict[str, int]] | None = None,
+) -> None:
     """Atomic write: tempfile in same dir + os.replace."""
     cursor_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
+    payload: dict[str, object] = {
         "version": 1,
         "decisions_offset": decisions_offset,
         "failures_offset": failures_offset,
         "updated_at": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
     }
+    if retries:
+        payload["retries"] = retries
     fd, tmp_name = tempfile.mkstemp(prefix=".engram_cursor.", suffix=".tmp", dir=cursor_path.parent)
     try:
         with os.fdopen(fd, "w") as f:
@@ -110,6 +147,8 @@ class PersistResult:
     save_cap_reached: bool = False
     duration_ms: int = 0
     subprocess_ms: int = 0
+    quarantined: int = 0
+    quarantined_total: int = 0
 
 
 def _append_error_log(logs_dir: Path, message: str) -> None:
@@ -122,6 +161,23 @@ def _append_error_log(logs_dir: Path, message: str) -> None:
         pass
 
 
+def _append_quarantine(path: Path, record: dict[str, object]) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
+def _count_lines(path: Path) -> int:
+    try:
+        with path.open("rb") as f:
+            return sum(1 for line in f if line.strip())
+    except OSError:
+        return 0
+
+
 def _build_title(entry: dict) -> str:
     raw = entry.get("summary") or ""
     if not raw or not isinstance(raw, str):
@@ -131,23 +187,46 @@ def _build_title(entry: dict) -> str:
     return raw[:TITLE_MAX_CHARS]
 
 
+def _one_line(stderr: str, stdout: str) -> str:
+    """Both streams on one line, keeping the tail when it is too long.
+
+    The log is read a line at a time, and engram prints an update banner
+    ahead of its error: logged verbatim, the timestamped line carried the
+    banner and the error sat on a later, unlabelled line. A CLI puts its
+    error last, so truncation drops the head.
+    """
+    parts = []
+    for name, text in (("stderr", stderr), ("stdout", stdout)):
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if lines:
+            parts.append(f"{name}: " + " | ".join(lines))
+    message = " ;; ".join(parts) or "no output"
+    if len(message) > ERROR_MAX_CHARS:
+        message = "..." + message[-ERROR_MAX_CHARS:]
+    return message
+
+
 def _save_entry(
     engram_bin: str, entry: dict, kind: EntryKind, project_key: str
 ) -> tuple[bool, int, str, int]:
-    """Invoke `engram save`. Returns (success, elapsed_ms, stderr, returncode)."""
+    """Invoke `engram save`. Returns (success, elapsed_ms, error, returncode)."""
     title = _build_title(entry)
     content = json.dumps(entry, sort_keys=True)
+    # A summary starting with `--` was read as an unknown flag, and it failed
+    # every run. engram only honours `--` after its flags: placed before
+    # them it counts the flags as positionals too.
     cmd = [
         engram_bin,
         "save",
-        title,
-        content,
         "--type",
         kind,
         "--project",
         project_key,
         "--scope",
         "project",
+        "--",
+        title,
+        content,
     ]
     start = time.monotonic()
     try:
@@ -159,7 +238,12 @@ def _save_entry(
     except OSError as e:
         return False, int((time.monotonic() - start) * 1000), str(e), -1
     elapsed_ms = int((time.monotonic() - start) * 1000)
-    return proc.returncode == 0, elapsed_ms, proc.stderr or "", proc.returncode
+    return (
+        proc.returncode == 0,
+        elapsed_ms,
+        _one_line(proc.stderr or "", proc.stdout or ""),
+        proc.returncode,
+    )
 
 
 class EngramPersister:
@@ -219,6 +303,8 @@ class EngramPersister:
             _save_cursor(cursor_path, cursor["decisions_offset"], cursor["failures_offset"])
 
         start_cursor = _load_cursor(cursor_path)
+        retries = _load_retries(cursor_path)
+        quarantine_path = cursor_path.parent / _QUARANTINE_FILENAME
         attempted = 0
         for kind in ("decision", "failure"):
             file_path = self.memory_dir / _FILES[kind]
@@ -255,22 +341,25 @@ class EngramPersister:
                             cursor_path,
                             decisions_offset=cursor["decisions_offset"],
                             failures_offset=cursor["failures_offset"],
+                            retries=retries,
                         )
                         continue
 
                     attempted += 1
-                    ok, elapsed_ms, stderr, rc = _save_entry(
+                    ok, elapsed_ms, error, rc = _save_entry(
                         self.engram_bin, entry, kind, self.project_key
                     )
                     result.subprocess_ms += elapsed_ms
                     if ok:
                         result.saved_ok += 1
+                        retries.pop(kind, None)
                         offset = f.tell()
                         cursor[offset_key] = offset
                         _save_cursor(
                             cursor_path,
                             decisions_offset=cursor["decisions_offset"],
                             failures_offset=cursor["failures_offset"],
+                            retries=retries,
                         )
                         if elapsed_ms >= self.slow_save_threshold_ms:
                             _emit_slow_save(
@@ -284,16 +373,66 @@ class EngramPersister:
                         _append_error_log(
                             self.logs_dir,
                             f"engram save returned {rc} for {kind} entry "
-                            f"at offset={offset}: {stderr.strip()}",
+                            f"at offset={offset}: {error}",
                         )
-                        # Do NOT advance cursor; break to avoid pile-up this run.
-                        break
+                        if rc < 0:
+                            # A timeout or a binary that never started says
+                            # nothing about the entry, so it uses no attempt.
+                            break
+                        previous = retries.get(kind)
+                        attempts = (
+                            previous["attempts"] + 1
+                            if previous and previous["offset"] == offset
+                            else 1
+                        )
+                        if attempts < MAX_ATTEMPTS_PER_ENTRY:
+                            retries[kind] = {"offset": offset, "attempts": attempts}
+                            _save_cursor(
+                                cursor_path,
+                                decisions_offset=cursor["decisions_offset"],
+                                failures_offset=cursor["failures_offset"],
+                                retries=retries,
+                            )
+                            # Do NOT advance cursor; break to avoid pile-up this run.
+                            break
+                        _append_quarantine(
+                            quarantine_path,
+                            {
+                                "ts": datetime.now(UTC)
+                                .isoformat(timespec="seconds")
+                                .replace("+00:00", "Z"),
+                                "project_key": self.project_key,
+                                "kind": kind,
+                                "file": str(file_path),
+                                "offset": offset,
+                                "attempts": attempts,
+                                "returncode": rc,
+                                "error": error,
+                                "line": raw,
+                            },
+                        )
+                        _append_error_log(
+                            self.logs_dir,
+                            f"quarantined {kind} entry at offset={offset} after "
+                            f"{attempts} attempts: {quarantine_path}",
+                        )
+                        result.quarantined += 1
+                        retries.pop(kind, None)
+                        offset = f.tell()
+                        cursor[offset_key] = offset
+                        _save_cursor(
+                            cursor_path,
+                            decisions_offset=cursor["decisions_offset"],
+                            failures_offset=cursor["failures_offset"],
+                            retries=retries,
+                        )
 
         persisted = _load_cursor(cursor_path)
         result.cursor_advanced = any(
             persisted[key] > start_cursor[key] for key in ("decisions_offset", "failures_offset")
         )
         result.save_cap_reached = attempted >= self.max_saves_per_run
+        result.quarantined_total = _count_lines(quarantine_path)
         for kind in ("decision", "failure"):
             file_path = self.memory_dir / _FILES[kind]
             if file_path.is_file():
@@ -390,6 +529,8 @@ def _emit_run_metric(
         },
         "cursor_advanced": result.cursor_advanced,
         "save_cap_reached": result.save_cap_reached,
+        "quarantined": result.quarantined,
+        "quarantined_total": result.quarantined_total,
         "project_key": project_key,
         "engram_version": _engram_version(engram_bin),
         "hook_version": _hook_version(),

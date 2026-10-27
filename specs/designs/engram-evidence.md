@@ -341,3 +341,26 @@ despite JSON `status: error`, so the JSON report must be inspected.
 Fresh backups, binary/plugin alignment and native per-profile session smoke
 remain required for deployment. The CLI probes do not verify Claude's hook
 dispatcher or Codex's native integration.
+
+## 2026-10-26 — `save` argv with a title starting with `--`
+
+Probed engram 3.5.2 (`/opt/homebrew/bin/engram`) against an empty store
+(`ENGRAM_DATA_DIR` in a scratch directory), then with the exact entry that
+blocked a project's `failures.jsonl` at byte offset 81871.
+
+| argv after `engram` | exit | output |
+| --- | --- | --- |
+| `save --x-title body --type … --project … --scope project` | 1 | stderr: `engram: unknown save flag: --x-title` |
+| `save -- --x-title body --type … --project … --scope project` | 1 | stderr: `engram: save requires exactly two positional arguments` |
+| `save --type … --project … --scope project -- --x-title body` | 0 | stdout: `Memory saved: #1 "--x-title" (failure)` |
+| `save "plain title" body --type … --project … --scope project` | 0 | stdout: `Memory saved: #2 "plain title" (failure)` |
+| the blocked entry, argv as the hook built it | 1 | stderr: `engram: unknown save flag: --delete-branch al mergear …` |
+| the blocked entry, flags then `--` | 0 | stdout: `Memory saved: #3 "--delete-branch al mergear …" (failure)` |
+
+Every invocation also printed an update notice on stderr, ahead of the error
+(`Update available: 3.5.2 -> 3.6.0`, or a GitHub rate-limit message when the
+check failed). The hook logged stderr verbatim, so the timestamped log line
+carried the notice and the error sat four lines below it, unlabelled.
+
+**Verdict:** pass flags first and end them with `--`; a `--` before the flags
+is not equivalent.

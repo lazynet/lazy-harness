@@ -305,15 +305,17 @@ Each run, for each kind:
 1. Open the JSONL, seek to the stored offset.
 2. Read whole lines until EOF. Partial lines are deferred (the writer might still be flushing the entry).
 3. Decode each line as JSON; malformed lines advance the cursor and are counted as `skipped_malformed` — they are not retried.
-4. Call `engram save <title> <json> --type <kind> --project <project_key> --scope project`. The project key is the parent of `git rev-parse --path-format=absolute --git-common-dir`, taken by name — so a linked worktree collapses onto the repository that owns it rather than registering as its own project.
+4. Call `engram save --type <kind> --project <project_key> --scope project -- <title> <json>` — flags first, so a summary starting with `--` is not read as a flag. The project key is the parent of `git rev-parse --path-format=absolute --git-common-dir`, taken by name — so a linked worktree collapses onto the repository that owns it rather than registering as its own project.
 5. **On success**, advance the cursor (atomic tempfile + `os.replace`). At most 25 saves are attempted per run (`MAX_SAVES_PER_RUN`); the rest drains on later runs.
-6. **On failure**, leave the cursor untouched and stop processing this kind. The next run picks up from the same offset → at-least-once delivery, ordering preserved.
+6. **On failure**, leave the cursor untouched and stop processing this kind. The next run picks up from the same offset → at-least-once delivery.
+7. **After five failed exits for one entry** (`MAX_ATTEMPTS_PER_ENTRY`; timeouts do not count), move it to `engram_quarantine.jsonl` beside the cursor and advance, so it cannot block the entries after it. Ordering holds for every entry but a quarantined one.
 
-This produces three things on disk besides the Engram DB itself:
+This produces four things on disk besides the Engram DB itself:
 
-- `engram_cursor.json` — offsets per kind, atomically updated, in the location above.
-- `<agent runtime dir>/logs/engram_persist.log` — append-only error log (subprocess failures, missing binary).
-- `<agent runtime dir>/logs/engram_persist_metrics.jsonl` — one record per run (run summary) plus one per slow `engram save` (≥ 500 ms). Run records include whether the save cap was reached and whether the cursor file advanced. `lh doctor` reads these with age, failure rate, and cursor lag; a capped run with persisted progress and no failed save reports `catching up` instead of failing for large lag.
+- `engram_cursor.json` — offsets per kind and failed attempts at a stuck entry, atomically updated, in the location above.
+- `engram_quarantine.jsonl` — beside the cursor, the entries that ran out of attempts, with their raw line and last error.
+- `<agent runtime dir>/logs/engram_persist.log` — append-only error log, one line per subprocess failure (both output streams), quarantine or missing binary.
+- `<agent runtime dir>/logs/engram_persist_metrics.jsonl` — one record per run (run summary) plus one per slow `engram save` (≥ 500 ms). Run records include whether the save cap was reached and whether the cursor file advanced. `lh doctor` reads these with age, failure rate, cursor lag, and quarantined entries; a capped run with persisted progress and no failed save reports `catching up` instead of failing for large lag.
 
 If `engram` is not on `PATH`, the loop logs a no-op and exits cleanly. Like every other external integration in the framework, this layer is opt-in: install `engram`, declare `[memory.engram].enabled = true`, the rest of the pipeline keeps working unchanged.
 
