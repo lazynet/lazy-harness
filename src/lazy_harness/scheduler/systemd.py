@@ -12,6 +12,7 @@ import re
 import shutil
 import subprocess
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 
 from lazy_harness.scheduler.base import DriftState, JobDrift, JobRecord, JobState, SchedulerJob
@@ -28,7 +29,14 @@ _ONCALENDAR = re.compile(r"^OnCalendar=(.*)$", re.MULTILINE)
 
 
 def _default_runner(argv: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(argv, capture_output=True, text=True, timeout=10)
+    # systemctl formats timestamp properties in the client's locale and zone.
+    return subprocess.run(
+        argv,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env={**os.environ, "LC_ALL": "C", "TZ": "UTC"},
+    )
 
 
 def _default_unit_dir() -> Path:
@@ -62,6 +70,26 @@ def _current_user() -> str:
 
 
 class SystemdBackend:
+    def last_run(self, label: str) -> datetime | None:
+        try:
+            proc = self._runner(
+                ["systemctl", "--user", "show", f"{label}.timer", "-p", "LastTriggerUSec"]
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if getattr(proc, "returncode", None) != 0:
+            return None
+        output = getattr(proc, "stdout", "") or ""
+        for line in output.splitlines():
+            if line.startswith("LastTriggerUSec="):
+                try:
+                    return datetime.strptime(
+                        line.partition("=")[2], "%a %Y-%m-%d %H:%M:%S UTC"
+                    ).replace(tzinfo=UTC)
+                except ValueError:
+                    return None
+        return None
+
     def __init__(
         self,
         *,

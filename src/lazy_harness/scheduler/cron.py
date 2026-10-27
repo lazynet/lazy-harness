@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import subprocess
 from collections.abc import Callable
+from datetime import datetime
 
 from lazy_harness.scheduler.base import (
     DriftState,
@@ -18,6 +19,7 @@ from lazy_harness.scheduler.base import (
     JobState,
     SchedulerJob,
 )
+from lazy_harness.scheduler.history import last_run_from_logs
 from lazy_harness.scheduler.paths import resolved_path
 from lazy_harness.scheduler.schedule import parse_cron, render_cron
 
@@ -36,6 +38,9 @@ def _default_runner(argv: list[str], *, input: str | None = None):  # noqa: A002
 
 
 class CronBackend:
+    def last_run(self, label: str) -> datetime | None:
+        return last_run_from_logs(label.removeprefix("lazy-harness-"))
+
     def __init__(self, *, runner: CronRunner | None = None) -> None:
         self._runner = runner or _default_runner
 

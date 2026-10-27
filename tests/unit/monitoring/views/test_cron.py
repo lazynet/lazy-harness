@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
+
+import pytest
 
 from lazy_harness.monitoring.views import cron as cron_view
 from lazy_harness.scheduler.base import JobRecord, JobState
@@ -62,3 +65,49 @@ def test_cron_survives_a_context_with_no_backend(tmp_path: Path) -> None:
     """`scheduler_backend` is Optional on the context, so the view must not
     assume it was resolved."""
     assert "No managed jobs" in render_to_text(cron_view.render(ctx(tmp_path)))
+
+
+def test_cron_journal_only_job_uses_scheduler_time(tmp_path: Path, monkeypatch) -> None:
+    import subprocess
+
+    from lazy_harness.scheduler.systemd import SystemdBackend
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    units = tmp_path / "units"
+    units.mkdir()
+    (units / "lazy-harness-metrics-ingest.timer").write_text("[Timer]\nOnCalendar=hourly\n")
+    backend = SystemdBackend(
+        unit_dir=units,
+        runner=lambda argv: subprocess.CompletedProcess(
+            argv,
+            0,
+            "active\n" if "is-active" in argv else "LastTriggerUSec=Mon 2026-10-26 23:30:13 UTC\n",
+        ),
+    )
+    seen = []
+    monkeypatch.setattr(cron_view, "time_ago", lambda ts: seen.append(ts) or "11m ago")
+    text = render_to_text(cron_view.render(ctx(tmp_path, scheduler_backend=backend)))
+    assert "metrics-ingest" in text
+    assert "11m ago" in text
+    assert seen == [
+        datetime(2026, 10, 26, 23, 30, 13, tzinfo=UTC).astimezone().strftime("%Y-%m-%dT%H:%M:%S")
+    ]
+
+
+@pytest.mark.parametrize("has_query", [True, False])
+def test_cron_falls_back_when_query_is_absent_or_unknown(
+    tmp_path: Path, monkeypatch, has_query: bool
+) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    backend = _Backend([JobRecord("x", "custom.x", "hourly", JobState.LOADED)])
+    if has_query:
+        backend.last_run = lambda label: None
+    logs = tmp_path / ".local/share/lazy-harness/logs"
+    logs.mkdir(parents=True)
+    (logs / "x.log").write_text("[2026-10-26 12:00:00] done\n")
+    monkeypatch.setattr(
+        cron_view, "time_ago", lambda ts: "log fallback" if ts == "2026-10-26T12:00:00" else "wrong"
+    )
+    assert "log fallback" in render_to_text(
+        cron_view.render(ctx(tmp_path, scheduler_backend=backend))
+    )

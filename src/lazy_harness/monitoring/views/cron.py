@@ -1,40 +1,21 @@
-"""`lh status cron` view — scheduled launchd jobs and their last runs."""
+"""`lh status cron` view — scheduled jobs and their last runs."""
 
 from __future__ import annotations
-
-from datetime import datetime
-from pathlib import Path
 
 from rich.console import RenderableType
 from rich.table import Table
 
 from lazy_harness.monitoring.views._helpers import (
     StatusContext,
-    last_log_timestamp,
     time_ago,
 )
 from lazy_harness.scheduler.base import JobState
+from lazy_harness.scheduler.history import last_run_from_logs
 
 
 def _last_run_for(label: str) -> str:
-    """Heuristic: search common log locations for the most recent timestamp."""
-    candidates = [
-        Path.home() / ".local" / "share" / "lazy-harness" / "logs" / f"{label}-stdout.log",
-        Path.home() / ".local" / "share" / "lazy-harness" / "logs" / f"{label}.log",
-        Path.home() / ".local" / "share" / "lazy-harness" / "logs" / f"qmd-{label}.log",
-    ]
-    for log_path in candidates:
-        if not log_path.is_file():
-            continue
-        ts = last_log_timestamp(log_path)
-        if ts:
-            return time_ago(ts)
-        try:
-            mtime = datetime.fromtimestamp(log_path.stat().st_mtime)
-            return time_ago(mtime.strftime("%Y-%m-%dT%H:%M:%S"))
-        except OSError:
-            continue
-    return "—"
+    stamp = last_run_from_logs(label)
+    return time_ago(stamp.strftime("%Y-%m-%dT%H:%M:%S")) if stamp else "—"
 
 
 _STATUS_MARKUP = {
@@ -62,6 +43,13 @@ def render(ctx: StatusContext) -> RenderableType:
         status = _STATUS_MARKUP[rec.state]
         if rec.state is JobState.UNKNOWN and rec.detail:
             status = f"{status} [dim]{rec.detail}[/dim]"
-        table.add_row(rec.name, rec.schedule, status, _last_run_for(rec.name))
+        query = getattr(backend, "last_run", None)
+        stamp = query(rec.label) if callable(query) else None
+        last_run = (
+            time_ago(stamp.astimezone().strftime("%Y-%m-%dT%H:%M:%S"))
+            if stamp
+            else _last_run_for(rec.name)
+        )
+        table.add_row(rec.name, rec.schedule, status, last_run)
 
     return table

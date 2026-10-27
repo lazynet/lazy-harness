@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
@@ -79,6 +80,14 @@ class JobDrift:
 
 @runtime_checkable
 class SchedulerBackend(Protocol):
+    def last_run(self, label: str) -> datetime | None:
+        """Last scheduler trigger or log evidence; None when unavailable.
+
+        Aware timestamps represent absolute instants; naive log timestamps
+        use the host's local timezone.
+        """
+        ...
+
     def label_for(self, job: SchedulerJob) -> str: ...
     def install(self, jobs: list[SchedulerJob]) -> list[str]: ...
     def uninstall(self, jobs: list[SchedulerJob]) -> list[str]: ...
