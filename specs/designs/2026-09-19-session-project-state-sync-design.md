@@ -1,6 +1,6 @@
 # Session project-state sync design
 
-**Status:** accepted
+**Status:** superseded — [ADR-072](../adrs/072-project-state-is-written-only-at-session-close.md) removed this path on 2026-10-26
 **Date:** 2026-09-19\
 **Decision:** [ADR-062](../adrs/062-session-end-publishes-bounded-project-state.md)
 

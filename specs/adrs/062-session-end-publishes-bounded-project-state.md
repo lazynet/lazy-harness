@@ -1,13 +1,15 @@
 # ADR-062: SessionEnd publishes bounded project state
 
-**Status:** accepted
+**Status:** superseded-by: 072
 **Date:** 2026-09-19
 **Implemented:** 2026-09-19 — the worker accepts Claude and Codex transcripts,
 resolves the canonical checkout through `git-common-dir`, and replaces only a
 uniquely marked generated section. PRJ-LazyHarness archival and opt-in remain
 an external rollout step.
 **Supersedes:** —
-**Superseded by:** —
+**Superseded by:** ADR-072 (2026-10-26) — the section never existed in any PRJ
+and the path never wrote; PRJ state is written only by the projects skill at
+session close.
 **Related:** ADR-019 (SessionEnd handoff), ADR-021 (response grading)
 
 ## Context
