@@ -10,6 +10,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from lazy_harness.scheduler.base import DriftState, JobDrift, JobRecord, JobState, SchedulerJob
+from lazy_harness.scheduler.history import last_run_from_logs
 from lazy_harness.scheduler.paths import resolved_path
 from lazy_harness.scheduler.schedule import (
     ScheduleTranslationError,
@@ -90,6 +91,10 @@ def format_schedule(plist_file: Path) -> str:
 
 
 class LaunchdBackend:
+    def last_run(self, label: str) -> datetime | None:
+        # launchctl print reports runs and exit status, but no execution time.
+        return last_run_from_logs(label.removeprefix(f"{self._prefix}."))
+
     def __init__(
         self,
         label_prefix: str = "com.lazy-harness",

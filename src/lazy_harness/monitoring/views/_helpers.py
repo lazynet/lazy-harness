@@ -21,6 +21,7 @@ from lazy_harness.core.profiles import ProfileInfo, list_profiles
 from lazy_harness.knowledge.directory import learnings_dir as knowledge_learnings_dir
 from lazy_harness.knowledge.marker import MarkerError, resolve_root
 from lazy_harness.scheduler.base import SchedulerBackend
+from lazy_harness.scheduler.history import last_log_timestamp as last_log_timestamp
 
 HOOK_NAMES_DEFAULT = (
     "context-inject",
@@ -210,19 +211,6 @@ def last_hook_ts(log_file: Path, hook_name: str) -> str:
         return ""
     parts = line.split()
     return parts[0] if parts else ""
-
-
-def last_log_timestamp(log_file: Path) -> str:
-    """Pull the most recent `[YYYY-MM-DD HH:MM:SS]` bracket-stamp from a log."""
-    try:
-        lines = log_file.read_text().splitlines()
-    except OSError:
-        return ""
-    for line in reversed(lines[-50:]):
-        match = re.search(r"\[([\d\- :.]+)\]", line)
-        if match:
-            return match.group(1).replace(" ", "T", 1)
-    return ""
 
 
 def count_errors_today(log_file: Path) -> int:
