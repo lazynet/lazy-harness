@@ -777,6 +777,24 @@ Cada una mezcla responsabilidades no relacionadas: recolección de contexto y re
 
 ## Open — Prioridad BAJA
 
+### `lh metrics launches` muestra `sessions=0 ratio=—` cuando los lanzamientos no tuvieron turnos
+
+**Por qué:** en un host con seis lanzamientos de Codex sin un solo prompt, cada rollout tiene una única línea `session_meta` y el ingest no tiene nada que medir. Es correcto, pero `launches=6 sessions=0 ratio=—` se lee como "ingest roto", y el docstring de `launch_to_session_ratio` (`monitoring/db.py`) describe el resultado vacío como "todavía no medido", que es otro caso.
+
+**Acción:** que `LaunchRatio` lleve la cuenta de rollouts escaneados sin usage (el ingest ya los cuenta en `sessions_skipped`) y la línea diga `6 launches · 0 with usage · 6 empty`. TDD y docstring en el mismo cambio.
+
+### La cobertura de precio de Codex cuenta las sesiones de `codex-auto-review` en el denominador
+
+**Por qué:** las sesiones del revisor de aprobaciones de Codex (`turn_context.model = codex-auto-review`, `thread_source = guardian_review`) quedan sin precio a propósito (ADR-061), pero entran en el denominador de `lh status tokens`: `96/131` en una semana medida, con las 35 que faltan todas de ese modelo. El número parece un hueco de pricing y no lo es.
+
+**Acción:** mostrarlas en una línea propia (`codex-auto-review: N sessions, unpriced by policy (ADR-061)`) en vez de sacarlas del denominador, para no esconder su volumen, y ajustar la frase de `docs/how/cost-reporting.md` que lo describe.
+
+### `lh status memory` lista filas espurias en cero
+
+**Por qué:** con el store real, la tabla incluye filas como `insights`, `2026-08` y `2026-09`, que son subdirectorios del memory dir de un proyecto y no proyectos. Se vio al verificar el fix del cuelgue de `decode_project_name`.
+
+**Acción:** que la vista (`monitoring/views/memory.py`) cuente sólo directorios que son proyectos del store, con un test que ponga esos subdirectorios en el fixture.
+
 ### `stop-verify-guard` sin flag propio, y su silencio es ambiguo
 
 **Por qué:** el kill de `inject_goal_prompt` (2026-10-08) apagó también `stop-verify-guard`, que lee el mismo flag. Además, en `loop_events` "nadie corrió `/goal`" y "guard roto" se ven iguales, y eso costó un debug entero. `verify-before-done` se invocó dos veces después del 09-20 sin correr `lh metrics record-verify` (paso 5). El sensor `nontrivial_prompt` sigue contando `<task-notification>` como trabajo.
