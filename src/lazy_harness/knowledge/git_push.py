@@ -1,4 +1,4 @@
-"""One commit/rebase/push cycle for the knowledge store.
+"""One commit/merge/push cycle for the knowledge store.
 
 Producers never call this — the Stop hook and the compound-loop worker only
 write files. Keeping git on a scheduler cycle means a broken transport (no
@@ -10,13 +10,22 @@ from __future__ import annotations
 
 import fcntl
 import os
+import re
 import subprocess
 from dataclasses import dataclass
-from pathlib import Path
+from datetime import datetime
+from pathlib import Path, PurePosixPath
 
 from lazy_harness.knowledge.marker import MarkerError, read_marker
 
 LOCK_FILENAME = ".push.lock"
+
+# Files that two hosts append to: a union merge keeps both sides' lines.
+UNION_PATTERNS = ("*.jsonl", "claude-md.proposal.md")
+_UNION_LINES = tuple(f"{pattern} merge=union" for pattern in UNION_PATTERNS)
+
+# Two formats exist in the wild: YAML frontmatter and a body bullet.
+_WRITTEN_AT = re.compile(r"^(?:written_at:|- Written at:)[ \t]*(\S+)[ \t]*$", re.MULTILINE)
 
 
 def _lock_path(root: Path) -> Path:
@@ -52,6 +61,74 @@ def _status(root: Path) -> list[str]:
     return _git(root, "status", "--porcelain", "-uall").stdout.splitlines()
 
 
+def _ensure_gitattributes(root: Path) -> None:
+    """Add the union-merge lines the file is missing, keeping everything else."""
+    path = root / ".gitattributes"
+    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    present = {line.strip() for line in existing.splitlines()}
+    missing = [line for line in _UNION_LINES if line not in present]
+    if not missing:
+        return
+    if existing and not existing.endswith("\n"):
+        existing += "\n"
+    path.write_text(existing + "\n".join(missing) + "\n", encoding="utf-8")
+
+
+def _is_handoff(path: str) -> bool:
+    p = PurePosixPath(path)
+    return p.name == "handoff.md" and p.parts[0] == "memory"
+
+
+def _written_at(text: str) -> datetime | None:
+    """The handoff's timestamp, or None when absent or without an offset."""
+    match = _WRITTEN_AT.search(text)
+    if match is None:
+        return None
+    try:
+        stamp = datetime.fromisoformat(match.group(1).strip("'\""))
+    except ValueError:
+        return None
+    return stamp if stamp.tzinfo is not None else None
+
+
+def _resolve_handoffs(root: Path, conflicted: list[str]) -> bool:
+    """Newest-wins on every conflicted handoff; False leaves the merge untouched."""
+    picks: dict[str, str] = {}
+    for path in conflicted:
+        ours = _git(root, "show", f":2:{path}")
+        theirs = _git(root, "show", f":3:{path}")
+        if ours.returncode != 0 or theirs.returncode != 0:
+            return False
+        ours_at, theirs_at = _written_at(ours.stdout), _written_at(theirs.stdout)
+        if ours_at is None or theirs_at is None:
+            return False
+        picks[path] = "--theirs" if theirs_at > ours_at else "--ours"
+    for path, side in picks.items():
+        if _git(root, "checkout", side, "--", path).returncode != 0:
+            return False
+        if _git(root, "add", "--", path).returncode != 0:
+            return False
+    return True
+
+
+def _merge_upstream(root: Path) -> PushResult | None:
+    """Merge the upstream into HEAD; a PushResult means the cycle must stop."""
+    merge = _git(root, "merge", "--no-edit", "@{u}")
+    if merge.returncode == 0:
+        return None
+    conflicted = _git(root, "diff", "--name-only", "--diff-filter=U").stdout.split()
+    if (
+        conflicted
+        and all(_is_handoff(p) for p in conflicted)
+        and _resolve_handoffs(root, conflicted)
+        and _git(root, "commit", "--no-edit").returncode == 0
+    ):
+        return None
+    _git(root, "merge", "--abort")
+    detail = ", ".join(conflicted) if conflicted else merge.stderr.strip()
+    return PushResult("conflict", detail)
+
+
 def _summarise(root: Path, marker_sessions: str, marker_learnings: str) -> str:
     paths = [line[3:] for line in _status(root)]
     sessions = sum(1 for p in paths if p.startswith(f"{marker_sessions}/"))
@@ -73,15 +150,15 @@ def push_once(root: Path, host: str) -> PushResult:
         except BlockingIOError:
             return PushResult("locked", "another cycle is running")
 
-        dirty = bool(_status(root))
         # Only meaningful with a remote: `--not --remotes` on a remoteless repo
         # reports every commit ever made, so the cycle would never read clean.
         has_remote = _has_remote(root)
+        if has_remote:
+            _ensure_gitattributes(root)
+        dirty = bool(_status(root))
         ahead = has_remote and bool(
             _git(root, "log", "--branches", "--not", "--remotes", "--oneline").stdout.strip()
         )
-        if not dirty and not ahead:
-            return PushResult("clean")
 
         if dirty:
             summary = _summarise(root, marker.sessions, marker.learnings)
@@ -91,12 +168,21 @@ def push_once(root: Path, host: str) -> PushResult:
                 return PushResult("invalid", commit.stderr.strip())
 
         if not has_remote:
-            return PushResult("committed", "no remote configured")
+            return PushResult("committed", "no remote configured") if dirty else PushResult("clean")
 
-        rebase = _git(root, "pull", "--rebase")
-        if rebase.returncode != 0:
-            _git(root, "rebase", "--abort")
-            return PushResult("conflict", rebase.stderr.strip())
+        head_before = _git(root, "rev-parse", "HEAD").stdout.strip()
+        fetched = _git(root, "fetch")
+        if fetched.returncode != 0:
+            if dirty or ahead:
+                return PushResult("committed", fetched.stderr.strip())
+            return PushResult("clean", fetched.stderr.strip())
+
+        stopped = _merge_upstream(root)
+        if stopped is not None:
+            return stopped
+        updated = _git(root, "rev-parse", "HEAD").stdout.strip() != head_before
+        if not dirty and not ahead:
+            return PushResult("updated" if updated else "clean")
 
         pushed = _git(root, "push")
         if pushed.returncode != 0:

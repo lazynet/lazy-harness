@@ -193,10 +193,15 @@ runs `lh knowledge push` on each of them. One cycle is:
    one exits 0 silently.
 2. Validate `knowledge.toml`. An unusable marker stops here, before git is
    touched at all.
-3. Nothing staged and nothing unpushed → exit 0.
+3. Make sure `.gitattributes` carries `merge=union` for `*.jsonl` and
+   `claude-md.proposal.md`, adding only the missing lines. A store with no remote
+   skips this step.
 4. `add -A`, then commit with a subject counting what changed and naming the host.
-5. `pull --rebase`. **A conflict aborts the rebase and exits non-zero. It is never
-   auto-resolved.**
+   Nothing to commit and nothing unpushed is not an early exit: the cycle still
+   fetches.
+5. `fetch`, then `merge --no-edit` of the upstream. A clone that is only behind
+   fast-forwards and reports `updated`; a diverged one gets a single merge commit,
+   so a long divergence is never replayed commit by commit.
 6. `push`. On failure the commits stay local and the next cycle retries.
 
 No producer ever calls this. The `session-export` hook and the compound-loop
@@ -204,16 +209,29 @@ worker only write files, which is what makes the transport failure-tolerant: wit
 no network, no credentials, or a dead remote, the writes still land on disk and
 the next cycle picks them up. No session ever blocks on a network syscall.
 
-Concurrency converges without coordination because every write creates a new file
-and nothing is ever modified. A rebase over commits that only add files at
-distinct paths cannot conflict — the store is a set of immutable files with
-unique keys, so the union of two clones is well-defined and order-independent.
-The host suffix on learning filenames is what guarantees those keys stay unique.
+Most writes create a new file under a unique key, and the host suffix on learning
+filenames keeps those keys unique, so two clones union without conflict. Three
+kinds of file under `memory/<host>/<org>/<repo>/` are modified instead, and each
+has a rule:
+
+| File | Written by | Merge rule |
+|---|---|---|
+| `*.jsonl` (decisions, failures, grades) | appended | union: both sides' lines are kept |
+| `claude-md.proposal.md` | appended | union: both sides' lines are kept |
+| `handoff.md` | overwritten whole | newest wins, by `written_at` |
+
+For `handoff.md` the cycle reads the timestamp from either format found in the
+wild, the `written_at:` frontmatter key or the `- Written at:` body line, and
+compares them as timezone-aware datetimes, so differing offsets are handled. A
+conflict on any other path, or a handoff whose timestamp is missing, unparseable
+or without an offset on either side, aborts the whole merge (`merge --abort`) and
+exits non-zero; nothing is resolved blindly.
 
 | Failure | Consequence | Data lost |
 |---|---|---|
 | No network at push | local commits accumulate | no |
-| Rebase conflict | cycle stops, logged, stays pending | no |
+| No network at fetch | commits stay local, next cycle retries | no |
+| Conflict outside `handoff.md`, or a handoff with no usable timestamp | merge aborted, paths logged, stays pending | no |
 | Lock held | cycle skipped | no |
 | Invalid marker | loud failure, nothing written | no |
 
