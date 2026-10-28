@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import plistlib
+import re
 import subprocess
 from collections.abc import Callable
 from datetime import datetime, timedelta
@@ -10,7 +12,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from lazy_harness.scheduler.base import DriftState, JobDrift, JobRecord, JobState, SchedulerJob
-from lazy_harness.scheduler.history import last_run_from_logs
+from lazy_harness.scheduler.history import last_run_from_logs, log_dir
 from lazy_harness.scheduler.paths import resolved_path
 from lazy_harness.scheduler.schedule import (
     ScheduleTranslationError,
@@ -28,6 +30,8 @@ def _default_runner(argv: list[str]) -> subprocess.CompletedProcess[bytes]:
     """
     return subprocess.run(argv, capture_output=True, timeout=10)
 
+
+_LAST_EXIT = re.compile(r"^\s*last exit code = (\d+)\s*$", re.MULTILINE)
 
 _WEEKDAYS = ("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
 
@@ -95,6 +99,20 @@ class LaunchdBackend:
         # launchctl print reports runs and exit status, but no execution time.
         return last_run_from_logs(label.removeprefix(f"{self._prefix}."))
 
+    def last_exit(self, label: str) -> int | None:
+        try:
+            proc = self._runner(["launchctl", "print", f"gui/{os.getuid()}/{label}"])
+        except Exception:  # noqa: BLE001 — a read-only probe; the runner is an injection point
+            return None
+        if getattr(proc, "returncode", None) != 0:
+            return None
+        output = getattr(proc, "stdout", b"") or b""
+        if isinstance(output, bytes):
+            output = output.decode(errors="replace")
+        # "(never exited)" does not match the digits, which is the point.
+        match = _LAST_EXIT.search(output)
+        return int(match.group(1)) if match else None
+
     def __init__(
         self,
         label_prefix: str = "com.lazy-harness",
@@ -147,13 +165,13 @@ class LaunchdBackend:
     def generate_plist(self, job: SchedulerJob, output_dir: Path) -> Path:
         label = self.label_for(job)
         cmd_parts = job.command.split()
-        log_dir = Path.home() / ".local" / "share" / "lazy-harness" / "logs"
+        logs = log_dir()
         plist: dict = {
             "Label": label,
             "ProgramArguments": cmd_parts,
             "RunAtLoad": True,
-            "StandardOutPath": str(log_dir / f"{job.name}-stdout.log"),
-            "StandardErrorPath": str(log_dir / f"{job.name}-stderr.log"),
+            "StandardOutPath": str(logs / f"{job.name}-stdout.log"),
+            "StandardErrorPath": str(logs / f"{job.name}-stderr.log"),
             "EnvironmentVariables": {"PATH": resolved_path()},
         }
         # Raises rather than approximating: installing a schedule other than

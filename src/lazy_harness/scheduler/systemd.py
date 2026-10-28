@@ -90,6 +90,36 @@ class SystemdBackend:
                     return None
         return None
 
+    def last_exit(self, label: str) -> int | None:
+        try:
+            proc = self._runner(
+                [
+                    "systemctl",
+                    "--user",
+                    "show",
+                    f"{label}.service",
+                    "-p",
+                    "ExecMainStatus",
+                    "-p",
+                    "ExecMainStartTimestamp",
+                ]
+            )
+        except Exception:  # noqa: BLE001 — a read-only probe; the runner is an injection point
+            return None
+        if getattr(proc, "returncode", None) != 0:
+            return None
+        props = dict(
+            line.partition("=")[::2]
+            for line in (getattr(proc, "stdout", "") or "").splitlines()
+            if "=" in line
+        )
+        # A unit that never ran reports ExecMainStatus=0, indistinguishable
+        # from a success; only the empty start timestamp tells them apart.
+        if not props.get("ExecMainStartTimestamp"):
+            return None
+        status = props.get("ExecMainStatus", "")
+        return int(status) if status.isdigit() else None
+
     def __init__(
         self,
         *,
