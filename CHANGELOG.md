@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.90.0](https://github.com/lazynet/lazy-harness/compare/v0.89.7...v0.90.0) (2026-10-28)
+
+
+### Features
+
+* scheduler status and doctor report each job's last exit status ([#562](https://github.com/lazynet/lazy-harness/issues/562)) ([e141c3c](https://github.com/lazynet/lazy-harness/commit/e141c3ce43c60dba3b10c8701118cf4442a5b2e4))
+
+
+### Bug Fixes
+
+* knowledge push merges instead of rebasing and resolves handoff conflicts newest-wins ([#561](https://github.com/lazynet/lazy-harness/issues/561)) ([4bed010](https://github.com/lazynet/lazy-harness/commit/4bed010fe4530ad37c3025581c9c25ad1577998d))
+
+
+### Documentation
+
+* describe the knowledge push cycle as fetch and merge ([dbc131c](https://github.com/lazynet/lazy-harness/commit/dbc131c651f08901ccc301e132f65baa7cec79d6))
+
 ## [0.89.7](https://github.com/lazynet/lazy-harness/compare/v0.89.6...v0.89.7) (2026-10-27)
 
 
