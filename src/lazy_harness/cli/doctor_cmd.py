@@ -7,6 +7,7 @@ import shutil
 import sqlite3
 import stat
 import subprocess
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -73,6 +74,9 @@ from lazy_harness.monitoring.launches import (
 )
 from lazy_harness.monitoring.sink_freshness import SinkFreshness, collect_sinks_freshness
 from lazy_harness.monitoring.sink_setup import plan_sinks
+from lazy_harness.scheduler.base import JobRecord
+from lazy_harness.scheduler.history import job_log_paths
+from lazy_harness.scheduler.manager import detect_backend
 
 
 def _now() -> datetime:
@@ -1217,6 +1221,35 @@ def _render_settings_shape(console: Console, cfg: Config) -> bool:
     return ok
 
 
+def _render_scheduler_exits(console: Console, backend: object) -> None:
+    """Warn per scheduled job whose last run exited non-zero.
+
+    `lh scheduler status` reports registration, not outcome, so a job failing
+    every run read as healthy. Unknown (never ran, cannot ask) is not a
+    failure and prints nothing, as does a backend that predates `last_exit`.
+    """
+    probe: Callable[[str], int | None] | None = getattr(backend, "last_exit", None)
+    discover: Callable[[], list[JobRecord]] | None = getattr(backend, "discover", None)
+    if not callable(probe) or not callable(discover):
+        return
+    try:
+        records = discover()
+    except Exception:  # noqa: BLE001 — doctor reports; an unreadable job list must not abort it
+        return
+    # The probes swallow their own failures into None, so none is guarded here:
+    # a raise would be a bug in a backend, and hiding it is what let a failing
+    # job read as healthy.
+    failed = [(r.name, code) for r in records if (code := probe(r.label))]
+    if not failed:
+        return
+    console.print("\n[bold]Scheduled jobs[/bold]")
+    for name, code in failed:
+        logs = ", ".join(contract_path(p) for p in job_log_paths(name)) or "no log files found"
+        console.print(
+            f"  [yellow]![/yellow] {escape(name)} — last run exited {code} (logs: {escape(logs)})"
+        )
+
+
 def _render_halted_proposals(console: Console, cfg: Config) -> None:
     """Proposal queues at or above the cap, across every project on the machine.
 
@@ -1441,6 +1474,7 @@ def doctor(as_json: bool) -> None:
     if not _render_memory_hygiene(console, _project_memory_dir(agent, cfg, active_profile)):
         ok = False
     _render_halted_proposals(console, cfg)
+    _render_scheduler_exits(console, detect_backend(cfg.scheduler.backend, cfg.scheduler.timezone))
 
     from lazy_harness.core.artifact_version import collect_artifact_version_reports
 

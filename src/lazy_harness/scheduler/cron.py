@@ -41,6 +41,10 @@ class CronBackend:
     def last_run(self, label: str) -> datetime | None:
         return last_run_from_logs(label.removeprefix("lazy-harness-"))
 
+    def last_exit(self, label: str) -> int | None:
+        # cron keeps no per-job exit status; the honest answer is "unknown".
+        return None
+
     def __init__(self, *, runner: CronRunner | None = None) -> None:
         self._runner = runner or _default_runner
 

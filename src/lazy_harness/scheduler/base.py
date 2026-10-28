@@ -88,6 +88,16 @@ class SchedulerBackend(Protocol):
         """
         ...
 
+    def last_exit(self, label: str) -> int | None:
+        """Exit status of the job's most recent run; None when unknown.
+
+        None covers every case where no status was established: the backend
+        cannot ask, the probe failed, or the job has not run yet. It is never
+        0 by default — a non-answer reported as success is how a job failing
+        every run stayed green.
+        """
+        ...
+
     def label_for(self, job: SchedulerJob) -> str: ...
     def install(self, jobs: list[SchedulerJob]) -> list[str]: ...
     def uninstall(self, jobs: list[SchedulerJob]) -> list[str]: ...

@@ -19,6 +19,20 @@ def scheduler() -> None:
     """Manage scheduled jobs."""
 
 
+def _exit_note(backend: object, label: str) -> str:
+    """` (exit N)` for a job whose last run is known; empty when it is not.
+
+    A backend predating `last_exit` has no such attribute, and an unknown
+    status is not a success, so both print nothing rather than `exit 0`.
+    """
+    probe = getattr(backend, "last_exit", None)
+    code = probe(label) if callable(probe) else None
+    if code is None:
+        return ""
+    style = "green" if code == 0 else "red"
+    return f" [{style}](exit {code})[/{style}]"
+
+
 @scheduler.command("status")
 def scheduler_status() -> None:
     """Show scheduler backend and job status."""
@@ -39,7 +53,8 @@ def scheduler_status() -> None:
             st = job.get("status", "unknown")
             label = job.get("label", "?")
             style = "green" if st == "loaded" else "red"
-            console.print(f"  [{style}]{st}[/{style}] {label}")
+            exit_note = _exit_note(backend, label)
+            console.print(f"  [{style}]{st}[/{style}] {label}{exit_note}")
     else:
         console.print("\nNo managed jobs found.")
         console.print(escape("Configure jobs in config.toml under [scheduler.jobs]"))
