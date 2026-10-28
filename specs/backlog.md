@@ -60,6 +60,8 @@ se tocan antes de cerrar: Graph Assist el 2026-10-09, loop engineering el
 
 ## Done
 
+- [x] **Un job programado falló días seguidos y nada lo reportó (2026-10-28)** — recurrió: `knowledge-push` en la Mac salió con exit 1 unas 40 h (2026-10-26 22:30 → 10-28), 45 commits locales sin pushear, mientras `lh scheduler status` decía `loaded` y `lh doctor` todo verde. **Visibilidad:** `SchedulerBackend.last_exit` (launchd `last exit code`, systemd `ExecMainStatus` con el timestamp de arranque para distinguir «nunca corrió», cron siempre desconocido); `lh scheduler status` muestra `(exit N)` y `lh doctor` avisa por job con exit distinto de 0 y la ruta de sus logs. **Causa del atasco:** `push_once` pasa de `pull --rebase` a fetch + merge de las puntas; un conflicto en `memory/**/handoff.md` se resuelve por el `written_at` más nuevo, `*.jsonl` y `claude-md.proposal.md` usan `merge=union` vía un `.gitattributes` que el ciclo asegura, y un host solo-receptor hace fast-forward (status `updated`). Cualquier otro conflicto sigue abortando como `conflict`.
+
 - [x] **La suite pasa entera bajo un agente: temproot, `COLUMNS=0` y el guard de `versions` (2026-10-11)** — tres fuentes de rojos que la suite tenía solo dentro de una sesión de agente. **Temproot:** desde #504 los agentes arrancan con `TMPDIR` dentro del `tmp/` del repo, el `tmp_path` de pytest caía dentro del árbol git y ~125 tests fallaban (125 de 6.197 el 2026-10-08); `tests/tmp_outside_checkout.py` mueve `TMPDIR` fuera de todo checkout antes de que pytest elija su temproot, salvo `--basetemp` o `PYTEST_DEBUG_TEMPROOT` explícitos, y la suite ya no deja `tmp/pytest-of-*` en el repo. **`COLUMNS=0`:** la entrada decía que Rich partía la salida en varias líneas, y era peor: Rich toma todo `COLUMNS` de dígitos como ancho explícito, así que el cero saltea su fallback a 80 y cada `Console()` imprime **nada** — `COLUMNS=0 lh doctor` salía sin una línea de salida para cualquier usuario, no solo en los tests. `lh` lo arregla en el grupo `cli` (`unusable_terminal_size_vars` en `cli/main.py`, que borra `COLUMNS`/`LINES` cuando valen cero), y como la mayoría de los tests invoca un subcomando sin pasar por el grupo, un fixture autouse de `tests/conftest.py` aplica el mismo predicado; los tests que fijan `COLUMNS=300` no se tocan. Medido el 2026-10-11 con `COLUMNS=0 LINES=0`: el `HEAD` anterior daba 226 failed, 6.155 passed, 2 skipped (58 en `test_doctor_cmd.py`). **Guard de `versions`:** fallaba la corrida entera ante cualquier entrada nueva en el `~/.local/share/claude/versions/` real, y una autoactualización de Claude Code durante los ~8 minutos de la suite es una entrada nueva (2.1.294–2.1.296 aparecieron entre el 2026-10-08 y el 09). `tests/claude_versions_guard.py` decide por contenido y no por nombre, porque los fakes también se llaman como versiones: todo fake de la suite son unos bytes de texto (shebang, o `old`/`new`), y una instalación real es un ejecutable nativo (Mach-O o ELF) de más de 200 MB. Se marca como fake todo lo que no sea un archivo regular, no-symlink, de al menos 50 MiB y con magic nativo; cada una de las tres condiciones tiene un test que se pone rojo al borrarla, y un test corre una sesión hija de pytest para probar el fixture en las dos direcciones (fake → la sesión falla, instalación real → pasa). Con todo, `COLUMNS=0 LINES=0` y el `TMPDIR` de sesión: 6.407 passed, exit 0.
 
 - [x] **Codex deja pasar un guard que no arranca (2026-10-09)** — medido contra `codex-cli 0.160.1` (`codex-evidence.md` §9): exit 1, binario faltante, timeout y exit 2 sin stderr dejan pasar la tool call; solo exit 2 con razón en stderr rechaza. El deploy envuelve los dos guards bloqueantes en `sh -c '<lh hook …> || { echo … >&2; exit 2; }'` y el reconocimiento de ownership acepta solo esa forma exacta (ADR-042 Evolution). Sigue abierto: el timeout de Codex, que mata el wrapper entero.
@@ -336,21 +338,6 @@ desde `:367-369` cuando el step 3 insertó los helpers de merge arriba de la cla
 **Por qué:** `create_task`, `is_debounced` y `last_processed_mtime` identifican la tarea por `session_id[:8]`, que para un id de Codex es siempre el literal `rollout-`. El debounce y el gate de crecimiento comparan sesiones de Codex distintas entre sí (observado: `no new activity since last process for rollout-`). Los primeros 8 caracteres de un UUIDv7 tampoco son únicos entre sesiones arrancadas cerca: hay dos rollouts `01a0ef44-*` en disco.
 
 **Acción:** clave por el uuid final del id (`agents/codex.py:_ROLLOUT_SESSION` ya lo parsea) completo, no por un prefijo, con un test de dos sesiones de Codex seguidas.
-
-### Un job programado falló diez días seguidos y nada lo reportó
-
-**Por qué:** `knowledge-push` en la Mac salió con exit 1 en cada corrida del
-2026-09-14 al 2026-09-24. Hay 765 conflictos en `knowledge-push-stdout.log`,
-y `lazy-knowledge` acumuló 458 commits sin pushear. Ni `lh doctor` ni `lh
-scheduler status` lo mostraron, porque el estado de un job es `loaded` y no mira
-el último exit (`launchctl print` → `last exit code`, `systemctl show` →
-`ExecMainStatus`). Hay además un agravante en `knowledge/git_push.py:96`: `pull
---rebase` re-aplica cada commit local, así que una vez divergido el ciclo choca
-en el primer commit y aborta, para siempre. Se destrabó a mano con un merge,
-que compara solo las puntas y chocó únicamente en un `handoff.md`.
-**Acción:** `lh doctor` reporta cada job cuyo último exit sea distinto de 0,
-con la ruta de su log. Evaluar que `push_once` caiga a merge cuando el rebase
-conflictúa, en vez de abortar y reintentar lo mismo. Prioridad MEDIA.
 
 ### El probe de launchd toma cualquier fallo como `not loaded`
 
