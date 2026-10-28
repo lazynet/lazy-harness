@@ -394,7 +394,7 @@ def knowledge_path(kind: str) -> None:
 
 @knowledge.command("push")
 def knowledge_push() -> None:
-    """Commit, rebase, and push the knowledge store."""
+    """Commit, merge, and push the knowledge store."""
     from lazy_harness.knowledge.compound_loop import origin_host
     from lazy_harness.knowledge.git_push import push_once
 
