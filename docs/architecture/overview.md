@@ -132,7 +132,7 @@ Design: [ADR-006](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/0
 
 - `marker.py` — reads, writes and validates the store's `knowledge.toml`; resolves the store root.
 - `directory.py` — store layout: creates the store and resolves paths from its marker.
-- `git_push.py` — one commit/rebase/push cycle over the store, under `flock`.
+- `git_push.py` — one commit/fetch/merge/push cycle over the store, under `flock`; merge rules in [the transport section](../how/knowledge-pipeline.md#transport-the-store-is-a-git-repository).
 - `session_export.py` — JSONL → markdown export with classification and atomic writes.
 - `compound_loop.py` — pure functions for the compound loop (parse, filter, build prompt, parse response, persist). Flat module so each step is independently testable.
 - `compound_loop_worker.py` — runnable via `python -m`, drains the file-based queue under `fcntl.flock`.

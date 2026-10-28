@@ -188,7 +188,7 @@ At session start `context-inject` warns that a handoff may be stale when its own
 
 Each learning becomes a dedicated markdown file in the knowledge store under `<learnings_dir>/YYYY-MM/`. The filename is date-prefixed, slugified from the title, and suffixed with the writing machine's hostname; existing files are not overwritten (learnings are write-once).
 
-The host suffix is what makes the store safe for more than one writer. Two machines that distil a similar title on the same day would otherwise produce the same path with different content — an add/add conflict on the next rebase. With the suffix every filename is unique by construction, so merging two clones is always a union and never a conflict. Within one machine the host is constant, so the write-once behaviour is unchanged.
+The host suffix is what makes the store safe for more than one writer. Two machines that distil a similar title on the same day would otherwise produce the same path with different content — an add/add conflict on the next merge. With the suffix every filename is unique by construction, so merging two clones is always a union and never a conflict. Within one machine the host is constant, so the write-once behaviour is unchanged.
 
 Frontmatter:
 
