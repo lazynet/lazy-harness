@@ -106,5 +106,9 @@ Concretely:
   rejects the unsafe one exactly as 3.5.2 did.
 - **Why 3.6.0.** It binds an omitted MCP `session_id` to the host Claude
   process, so parallel sessions on one project no longer fail to save
-  (upstream #1954). The Codex profile has no Engram MCP registration on either
-  host; that predates this upgrade and is not changed by it.
+  (upstream #1954).
+- **Codex registration is owned by `engram setup codex`**, as Claude's is by
+  `engram setup claude-code --mcp-only`; `[memory.engram].enabled` stays
+  `false`, and `lh deploy` preserves the foreign entry. The setup command
+  installs the Codex plugin from `main`, so the marketplace is re-added at
+  the release tag afterwards.

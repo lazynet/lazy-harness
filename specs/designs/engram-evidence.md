@@ -388,10 +388,18 @@ session; on Linux 7 foreign sync targets.
 `unknown save flag`, unchanged from 3.5.2. 3.6.0 also prints a usage hint
 about HOME Git repositories on that rejection.
 
-Native smoke (`claude -p`, `mem_current_project` + `mem_search`) passed in
-both Mac Claude profiles and the agent station's lazy profile. The agent
-station's flex profile could not run: its OAuth session had expired. Codex
-reported no Engram MCP tool on either host, and its configuration has no
-Engram entry; that predates this upgrade.
+Native smoke (`mem_current_project` + `mem_search`) passed in both Claude
+profiles on both hosts. On the agent station the flex profile must be started
+through `lh run --profile claude-flex`; a bare `CLAUDE_CONFIG_DIR` invocation
+failed authentication, which says nothing about the profile.
+
+Codex had no Engram MCP registration on either host before this upgrade.
+`engram setup codex` with `CODEX_HOME` set to the profile wrote
+`[mcp_servers.engram]` with the absolute binary path and installed the Codex
+plugin (`0.1.5`) from `--ref main`; the marketplace was then re-added at
+`--ref v3.6.0` and the plugin reinstalled. Every other line of the Codex
+`config.toml` was unchanged, and `lh deploy` preserves a foreign
+`[mcp_servers.<id>]`. `codex exec` then answered `mem_current_project` and
+`mem_search` on both hosts.
 
 **Verdict:** the supported pin moves to 3.6.0 without changing the persister.
