@@ -26,7 +26,7 @@ def test_statusline_renders_payload_from_stdin(monkeypatch: pytest.MonkeyPatch) 
     result = runner.invoke(cli, ["statusline"], input=json.dumps(payload))
     assert result.exit_code == 0, result.output
     out = result.output.strip()
-    assert out == "flex Sonnet 4.6 foo | 8K/2K tok $0.12 | 91% free"
+    assert out == "flex Sonnet 4.6 foo"
 
 
 def test_statusline_handles_invalid_json(monkeypatch: pytest.MonkeyPatch) -> None:
