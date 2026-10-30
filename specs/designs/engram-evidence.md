@@ -364,3 +364,42 @@ carried the notice and the error sat four lines below it, unlabelled.
 
 **Verdict:** pass flags first and end them with `--`; a `--` before the flags
 is not equivalent.
+
+## 2026-10-30 — 3.6.0 in-place upgrade on both hosts
+
+Linux amd64 and arm64 archive SHA256 values matched `checksums.txt` and the
+GitHub API asset digests (amd64
+`945fb471188826c251160947f8dda9fe148ba0dd095fa3453174fe7ab5c6479e`). The Mac
+moved 3.5.2 → 3.6.0 with Homebrew; the agent station moved 3.3.2 → 3.6.0
+through its provisioning role. No copied-store probe ran first.
+
+| Host | Backup | Observations before / after | Integrity | `/health.version` |
+| --- | --- | --- | --- | --- |
+| Darwin arm64 | online `.backup`, 30,970 obs | 30,970 / 30,973 | `ok` | `3.6.0` |
+| Linux amd64 | online `.backup`, 3,190 obs | 3,190 / 3,215 | `ok` | `3.6.0` |
+
+The increase is live writes, not migration. `engram doctor` findings matched
+the pre-upgrade baseline on both hosts: on Darwin 453 directory mismatches,
+842 required-sync-field findings, 79 foreign sync targets and one unowned
+session; on Linux 7 foreign sync targets.
+
+`save` against an empty scratch store: flags then `--` then the title
+`--x-title` exits 0; the title before the flags exits 1 with
+`unknown save flag`, unchanged from 3.5.2. 3.6.0 also prints a usage hint
+about HOME Git repositories on that rejection.
+
+Native smoke (`mem_current_project` + `mem_search`) passed in both Claude
+profiles on both hosts. On the agent station the flex profile must be started
+through `lh run --profile claude-flex`; a bare `CLAUDE_CONFIG_DIR` invocation
+failed authentication, which says nothing about the profile.
+
+Codex had no Engram MCP registration on either host before this upgrade.
+`engram setup codex` with `CODEX_HOME` set to the profile wrote
+`[mcp_servers.engram]` with the absolute binary path and installed the Codex
+plugin (`0.1.5`) from `--ref main`; the marketplace was then re-added at
+`--ref v3.6.0` and the plugin reinstalled. Every other line of the Codex
+`config.toml` was unchanged, and `lh deploy` preserves a foreign
+`[mcp_servers.<id>]`. `codex exec` then answered `mem_current_project` and
+`mem_search` on both hosts.
+
+**Verdict:** the supported pin moves to 3.6.0 without changing the persister.
