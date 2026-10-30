@@ -93,3 +93,18 @@ Concretely:
   `0.1.7`; install it and refresh MCP schemas with the binary. Existing
   diagnostics are compared with the baseline, rather than hidden or repaired
   as a side effect of the version bump.
+
+## Evolution — 2026-10-30: supported pin moved to 3.6.0
+
+- **`PINNED_VERSION` moved to `3.6.0`.** Both hosts were upgraded in place,
+  without a copied-store probe first: a fresh SQLite backup on each host,
+  then the binary, then Claude plugin `0.1.17`. Integrity stayed `ok`, counts
+  only grew, and the `engram doctor` findings matched the pre-upgrade
+  baseline. See `specs/designs/engram-evidence.md`.
+- **No persistence contract changed.** The mirror still uses CLI `save` with
+  flags first and `--` before the positionals; 3.6.0 accepts that argv and
+  rejects the unsafe one exactly as 3.5.2 did.
+- **Why 3.6.0.** It binds an omitted MCP `session_id` to the host Claude
+  process, so parallel sessions on one project no longer fail to save
+  (upstream #1954). The Codex profile has no Engram MCP registration on either
+  host; that predates this upgrade and is not changed by it.
