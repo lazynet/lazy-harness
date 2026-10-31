@@ -173,7 +173,7 @@ def test_write_slim_handoff_body_marks_origin_as_slim(tmp_path: Path) -> None:
     assert "slim" in body.lower()
 
 
-def test_write_slim_handoff_overwrites_existing_handoff(tmp_path: Path) -> None:
+def test_write_slim_handoff_overwrites_legacy_handoff_without_frontmatter(tmp_path: Path) -> None:
     from lazy_harness.knowledge.compound_loop import write_slim_handoff
 
     memory_dir = tmp_path / "memory"
@@ -3712,3 +3712,70 @@ def test_process_task_skips_evaluator_session_without_touching_handoff(tmp_path:
 
     assert "evaluator" in outcome.skipped
     assert "rich item" in handoff.read_text()
+
+
+def test_slim_handoff_does_not_replace_handoff_from_newer_session(tmp_path: Path) -> None:
+    import os
+
+    from lazy_harness.knowledge.compound_loop import write_slim_handoff
+
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    session = tmp_path / "old.jsonl"
+    _write_jsonl(
+        session,
+        [{"type": "permission-mode"}, {"type": "user", "message": {"content": "old prompt"}}],
+    )
+    os.utime(session, (1000.0, 1000.0))
+    handoff = memory / "handoff.md"
+    handoff.write_text(
+        "---\nsession_id: newer\nsource_mtime: 2000.0\n---\n# Handoff\n\n- newer item\n"
+    )
+
+    assert write_slim_handoff(session, memory, str(tmp_path)) is False
+    assert "newer item" in handoff.read_text()
+
+
+def test_slim_handoff_overwrites_handoff_from_older_session(tmp_path: Path) -> None:
+    import os
+
+    from lazy_harness.knowledge.compound_loop import write_slim_handoff
+
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    session = tmp_path / "new.jsonl"
+    _write_jsonl(
+        session,
+        [{"type": "permission-mode"}, {"type": "user", "message": {"content": "new prompt"}}],
+    )
+    os.utime(session, (3000.0, 3000.0))
+    handoff = memory / "handoff.md"
+    handoff.write_text("---\nsession_id: older\nsource_mtime: 2000.0\n---\n# Handoff\n\n- old item\n")
+
+    assert write_slim_handoff(session, memory, str(tmp_path)) is True
+    body = handoff.read_text()
+    assert "old item" not in body
+    assert "new prompt" in body
+
+
+def test_slim_handoff_records_provenance_frontmatter(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.compound_loop import (
+        parse_handoff_frontmatter,
+        write_slim_handoff,
+    )
+
+    memory = tmp_path / "memory"
+    session = tmp_path / "abcd1234-0000.jsonl"
+    _write_jsonl(
+        session,
+        [{"type": "permission-mode"}, {"type": "user", "message": {"content": "hi"}}],
+    )
+
+    write_slim_handoff(session, memory, str(tmp_path))
+    meta, body = parse_handoff_frontmatter((memory / "handoff.md").read_text())
+
+    assert meta.get("session_id") == "abcd1234-0000"
+    assert meta.get("written_at")
+    assert float(meta["source_mtime"]) > 0
+    assert meta.get("source_jsonl") == str(session)
+    assert body.startswith("# Handoff (slim)")
