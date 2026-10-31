@@ -1,9 +1,7 @@
 # lazy-harness backlog
 
-Último release cortado: 0.89.4 (`ef34501`, #544); 0.89.3 se cortó antes, en `cadf87c` (#538). Los
-22 hallazgos del `/coherence-audit` de 0.89.3 los cerraron #539, #540 y #541, y el audit del gate de
-0.89.4 lo confirmó; sus dos hallazgos low (este header y `--timeout` de `lh memory consolidate`) los
-cierra la branch `fix/audit-0894-lows`.
+Último release cortado: 0.91.0 (`2465e00`, #566). Los 22 hallazgos del `/coherence-audit` de 0.89.3
+los cerraron #539, #540 y #541, y el audit del gate de 0.89.4 lo confirmó.
 El cutover de la flota a los nombres de ADR-068 se ejecutó el 2026-09-24 en los dos hosts (ver
 Done).
 ADR-060 Wave 1 sigue en su ventana de siete días hábiles. Rollout externo pendiente: Wave 2
@@ -36,8 +34,8 @@ se abren los PRs.
 
 1. **Iteración 1 — el guard de seguridad deja de depender de la grafía.** Estado al 2026-09-30: cerrados las evasiones (#477), los falsos positivos por comillas (#491) y F6 (#492); la trust de capa proyecto de Codex no tiene acción mientras el harness no escriba `[projects.*]`, y queda abierta la evasión por flag citado en Prioridad ALTA. Default-deny queda como decisión de
    diseño aparte: necesita su medición de 72 h antes de tocar código.
-2. **Iteración 2 — lo que falla sin que nadie se entere.** El job programado que
-   falló diez días; el probe de launchd que confunde fallo con `not loaded`; el
+2. **Iteración 2 — lo que falla sin que nadie se entere.** ~~El job programado que
+   falló diez días~~ (cerrado en #562, `e141c3c`); el probe de launchd que confunde fallo con `not loaded`; el
    skew plugin/binario de engram en `lh doctor`; el aviso de deploy/doctor cuando
    un `scripts` explícito desplaza defaults; `metrics_secrets_file()` ignorando
    `[secrets] dir`; F3 y F5 del outbox de métricas.
@@ -53,8 +51,9 @@ se abren los PRs.
 Decisiones de operador, no de código, fuera de las iteraciones: el drenaje de las
 colas de proposals (la herramienta ya existe desde #473), el costo del gate
 (medición ya registrada), la cantidad de MCPs activos. Ventanas con fecha que no
-se tocan antes de cerrar: Graph Assist el 2026-10-09, loop engineering el
-2026-10-08, ADR-060 Wave 1, y el kill criterion de adapters el 2026-11-11.
+se tocan antes de cerrar: Graph Assist (día 0 nuevo cuando el arreglo de frescura esté
+deployado en Mac y CT, lectura a los 14 días; ver su entrada), ADR-060 Wave 1, y el kill
+criterion de adapters el 2026-11-11. La ventana de loop engineering ya cerró.
 
 ---
 
@@ -341,7 +340,7 @@ desde `:367-369` cuando el step 3 insertó los helpers de merge arriba de la cla
 
 ### El probe de launchd toma cualquier fallo como `not loaded`
 
-**Por qué:** `scheduler/launchd.py:256` mapea todo exit distinto de 0 de
+**Por qué:** `LaunchdBackend.job_state` (`scheduler/launchd.py`) mapea todo exit distinto de 0 de
 `launchctl list <label>` a `JobState.NOT_LOADED`. Bajo el sandbox de Codex,
 `launchctl` no llega a launchd y sale con 1. Reproducido con `sandbox-exec
 -p '(version 1)(allow default)(deny mach-lookup)' lh scheduler status`: los
