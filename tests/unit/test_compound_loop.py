@@ -40,6 +40,7 @@ from lazy_harness.knowledge.compound_loop import (
     should_reprocess,
     strip_markdown_fences,
 )
+from lazy_harness.knowledge.evaluator_prompt import EVALUATOR_PROMPT_HEAD
 from lazy_harness.llm.invoke import InferenceError, InferenceResult
 
 
@@ -3680,3 +3681,34 @@ def test_persist_results_lets_the_same_session_replace_its_own_handoff(tmp_path:
     _persist_handoff(tmp_path, session, "same-session", ["SECOND"])
 
     assert "SECOND" in (tmp_path / "memory" / "handoff.md").read_text()
+
+
+def _evaluator_transcript(path: Path) -> Path:
+    # Shape seen in Claude Code 2.1.316 headless runs: `last-prompt` lands inside
+    # the interactive-scan budget, so `is_interactive_session` returns True.
+    _write_jsonl(
+        path,
+        [
+            {"type": "queue-operation"},
+            {"type": "queue-operation"},
+            {"type": "user", "message": {"content": EVALUATOR_PROMPT_HEAD + " " + "x" * 300}},
+            {"type": "last-prompt"},
+            {"type": "assistant", "message": {"content": "{}"}},
+        ],
+    )
+    return path
+
+
+def test_process_task_skips_evaluator_session_without_touching_handoff(tmp_path: Path) -> None:
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    handoff = memory / "handoff.md"
+    handoff.write_text("---\nsession_id: real\n---\n# Handoff\n\n- rich item\n")
+    session = _evaluator_transcript(tmp_path / "eval.jsonl")
+    assert is_interactive_session(session) is True
+
+    task = create_task(tmp_path / "queue", Path("/tmp"), session, "eval1234", memory)
+    outcome = process_task(task, _cfg(), tmp_path / "Learnings")
+
+    assert "evaluator" in outcome.skipped
+    assert "rich item" in handoff.read_text()

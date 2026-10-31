@@ -1505,6 +1505,12 @@ def process_task(
     if not session_jsonl.is_file():
         return TaskOutcome(skipped=f"session JSONL not found: {session_jsonl}")
 
+    # Before any gate that can write a slim handoff: the evaluator's own
+    # `claude -p` transcript looks interactive (`last-prompt` is written in
+    # headless runs too) and would replace the real session's handoff.
+    if is_evaluator_session(session_jsonl):
+        return TaskOutcome(skipped=f"evaluator session: {session_id[:8]}")
+
     if not is_interactive_session(session_jsonl):
         return TaskOutcome(skipped=f"non-interactive: {session_id[:8]}")
 
