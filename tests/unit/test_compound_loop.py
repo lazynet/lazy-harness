@@ -3750,7 +3750,9 @@ def test_slim_handoff_overwrites_handoff_from_older_session(tmp_path: Path) -> N
     )
     os.utime(session, (3000.0, 3000.0))
     handoff = memory / "handoff.md"
-    handoff.write_text("---\nsession_id: older\nsource_mtime: 2000.0\n---\n# Handoff\n\n- old item\n")
+    handoff.write_text(
+        "---\nsession_id: older\nsource_mtime: 2000.0\n---\n# Handoff\n\n- old item\n"
+    )
 
     assert write_slim_handoff(session, memory, str(tmp_path)) is True
     body = handoff.read_text()
