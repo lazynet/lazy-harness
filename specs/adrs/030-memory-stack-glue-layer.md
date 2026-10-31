@@ -380,3 +380,13 @@ step independently shippable and revertable):
 This sequence keeps every step independently shippable and revertable. The
 milestone closes when all seven components are live in both `lazy` and
 `flex` profiles after the next `lh deploy`.
+
+## Evolution
+
+**2026-10-31 — the slim handoff no longer overwrites unconditionally (G1).** G1
+never said the fast-path replaces whatever `handoff.md` holds, but the code did.
+It now writes the same provenance frontmatter as the LLM path and refuses to
+replace a handoff from a session with a later transcript. The worker also skips
+the evaluator's own `claude -p` sessions before any gate: their transcripts look
+interactive and their only "user prompt" is the evaluator prompt, so they were
+replacing the real handoff seconds after it was written.

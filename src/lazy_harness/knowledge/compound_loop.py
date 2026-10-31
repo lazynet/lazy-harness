@@ -476,17 +476,36 @@ def write_slim_handoff(
 
     Captures branch, last user prompt verbatim, and files touched. Returns
     True if a handoff was written, False if there was nothing useful to record
-    (no user prompts in the session). Overwrites any existing handoff.md.
+    (no user prompts in the session) or the existing handoff.md was written by
+    a session whose transcript is newer. Otherwise overwrites handoff.md, with
+    the same provenance frontmatter `persist_results` writes.
     """
     last_prompt = _last_user_prompt(session_jsonl)
     if not last_prompt:
+        return False
+
+    session_id = session_jsonl.stem
+    try:
+        source_mtime = session_jsonl.stat().st_mtime
+    except OSError:
+        source_mtime = 0.0
+    if _handoff_belongs_to_newer_session(memory_dir / "handoff.md", session_id, source_mtime):
         return False
 
     branch = _current_branch(Path(cwd)) if cwd else ""
     files = _files_touched(session_jsonl)
     written_at = datetime.now().astimezone().isoformat(timespec="seconds")
 
-    lines: list[str] = ["# Handoff (slim)", ""]
+    lines: list[str] = [
+        "---",
+        f"session_id: {session_id}",
+        f"written_at: {written_at}",
+        f"source_mtime: {source_mtime:.0f}",
+        f"source_jsonl: {session_jsonl}",
+        "---",
+        "# Handoff (slim)",
+        "",
+    ]
     lines.append("Compound-loop gates blocked LLM evaluation; this is a deterministic snapshot.")
     lines.append("")
     lines.append(f"- Written at: {written_at}")
@@ -1504,6 +1523,12 @@ def process_task(
 
     if not session_jsonl.is_file():
         return TaskOutcome(skipped=f"session JSONL not found: {session_jsonl}")
+
+    # Before any gate that can write a slim handoff: the evaluator's own
+    # `claude -p` transcript looks interactive (`last-prompt` is written in
+    # headless runs too) and would replace the real session's handoff.
+    if is_evaluator_session(session_jsonl):
+        return TaskOutcome(skipped=f"evaluator session: {session_id[:8]}")
 
     if not is_interactive_session(session_jsonl):
         return TaskOutcome(skipped=f"non-interactive: {session_id[:8]}")
