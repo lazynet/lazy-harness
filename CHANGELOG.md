@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.91.1](https://github.com/lazynet/lazy-harness/compare/v0.91.0...v0.91.1) (2026-10-31)
+
+
+### Bug Fixes
+
+* evaluator sessions no longer clobber the handoff ([#568](https://github.com/lazynet/lazy-harness/issues/568)) ([7b48adb](https://github.com/lazynet/lazy-harness/commit/7b48adb6d780223b105b8fae37d80aee134eccd4))
+
 ## [0.91.0](https://github.com/lazynet/lazy-harness/compare/v0.90.0...v0.91.0) (2026-10-31)
 
 
