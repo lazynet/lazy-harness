@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.91.0](https://github.com/lazynet/lazy-harness/compare/v0.90.0...v0.91.0) (2026-10-31)
+
+
+### Features
+
+* statusline shows only session identity ([#565](https://github.com/lazynet/lazy-harness/issues/565)) ([2b0fdc9](https://github.com/lazynet/lazy-harness/commit/2b0fdc910177bbeb3bb96e6ec0298a98ab09a228))
+
 ## [0.90.0](https://github.com/lazynet/lazy-harness/compare/v0.89.7...v0.90.0) (2026-10-28)
 
 
