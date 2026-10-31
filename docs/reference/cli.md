@@ -939,7 +939,7 @@ Full walkthrough with worked examples: [Cost reporting](../how/cost-reporting.md
 
 ## `lh statusline`
 
-Reads a Claude Code status payload on stdin and prints the formatted status line. Wired into a profile via `settings.json`:
+Reads a Claude Code status payload on stdin and prints who and where the session is: `profile model dir @branch`. Context, cost and cache figures are not part of it; show them with a mod drawn above the prompt. Wired into a profile via `settings.json`:
 
 ```json
 "statusLine": { "type": "command", "command": "lh statusline" }
