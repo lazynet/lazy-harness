@@ -99,8 +99,6 @@ def _drain_queue(
                 _log(log_file, "wrote: " + "; ".join(outcome.wrote))
             else:
                 _log(log_file, "nothing to persist")
-            for note in outcome.notes:
-                _log(log_file, f"note: {note}")
             if not move_to_done(queue_dir, task_file):
                 _log(log_file, f"failed to archive {task_file.name}; stopping")
                 return False
