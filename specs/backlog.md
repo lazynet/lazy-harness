@@ -1,6 +1,6 @@
 # lazy-harness backlog
 
-Último release cortado: 0.91.0 (`2465e00`, #566). Los 22 hallazgos del `/coherence-audit` de 0.89.3
+Último release cortado: 0.91.1 (`293bec8`, #569). Los 22 hallazgos del `/coherence-audit` de 0.89.3
 los cerraron #539, #540 y #541, y el audit del gate de 0.89.4 lo confirmó.
 El cutover de la flota a los nombres de ADR-068 se ejecutó el 2026-09-24 en los dos hosts (ver
 Done).

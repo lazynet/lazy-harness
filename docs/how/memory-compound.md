@@ -103,15 +103,16 @@ Steps:
 4. For each task, `process_task`:
     - **Parse metadata.**
     - **Session JSONL exists?** If not, mark skipped ("session JSONL not found").
-    - **Interactive check.** `is_interactive_session` scans the leading records of the JSONL (skipping `attachment` hook records, capped at 200 lines) for a `permission-mode` or `last-prompt` record; sessions without one are headless `claude -p` invocations or subagent dispatches and are excluded from the loop.
-    - **User-char gate.** `count_user_chars` sums the chars across all `user` messages. If under `min_user_chars` (default 200), skip — the session is too thin to distill.
-    - **Message-count gate.** `extract_messages` returns (formatted_text, total_count). Skip if under `min_messages` (default 4).
+    - **Evaluator-session skip.** `is_evaluator_session` checks whether the transcript's first user message is the evaluator prompt; if so, skip. It runs before every gate that can write a slim handoff, because the evaluator's own `claude -p` transcript carries a `last-prompt` record and would pass the interactive check.
+    - **Interactive check.** `is_interactive_session` scans the leading records of the JSONL (skipping `attachment` hook records, capped at 200 lines) for a `permission-mode` or `last-prompt` record; sessions without one are excluded from the loop. The marker is not exclusive to interactive runs (headless `claude -p` writes `last-prompt` too), which is why the evaluator skip above runs first.
+    - **User-char gate.** `count_user_chars` sums the chars across all `user` messages. If under `min_user_chars` (default 200), skip — the session is too thin to distill — and write the slim handoff when `slim_handoff_enabled`.
+    - **Message-count gate.** `extract_messages` returns (formatted_text, total_count). Skip if under `min_messages` (default 4), writing the slim handoff when `slim_handoff_enabled`.
     - **Collect existing memory** for de-dup prompts:
       - `collect_existing_decisions` — tail of `decisions.jsonl`
       - `collect_existing_failures` — tail of `failures.jsonl`
       - `collect_existing_learnings` — the titles of the most recent 50 learnings markdown files
     - **Build the prompt.** `build_prompt` composes a headless-Claude prompt that embeds all of the above plus the session summary. The prompt is calibration — its wording was iterated against hundreds of real sessions in the predecessor, and it is documented as load-bearing.
-    - **Call the LLM backend.** `run_inference(prompt, role="distill", cfg=cfg, timeout=timeout_seconds)` resolves the `distill` role through `[llm.roles]` to a backend declared under `[llm.backends]` — headless `claude -p`, or any OpenAI-compatible endpoint such as Ollama. Returns an `InferenceResult`. There is deliberately no fallback to another backend: a silent fall-through from a local backend to a billed one hides the broken local one behind an invoice.
+    - **Call the LLM backend.** `run_inference(prompt, role="distill", cfg=cfg, timeout=timeout_seconds)` resolves the `distill` role through `[llm.roles]` to a backend declared under `[llm.backends]` — headless `claude -p`, or any OpenAI-compatible endpoint such as Ollama. Returns an `InferenceResult`. There is deliberately no fallback to another backend: a silent fall-through from a local backend to a billed one hides the broken local one behind an invoice. When the call fails, the slim handoff is written (when `slim_handoff_enabled`) before the task is skipped.
     - **Parse the response.** `parse_response` strips markdown fences, then does three things in order: try raw `json.loads`, then look for the first `{` and walk a balanced-brace state machine to extract a JSON object out of a prose preamble, then give up and return `None`.
     - **Persist.** `persist_results` does the writes (next section).
 5. **Move task to `done/`.** Always, even on failure. A poison task must not block the queue.
@@ -182,7 +183,7 @@ If the LLM returns an empty handoff list, the file is **deleted** — which is w
 
 A handoff written with a session carries frontmatter: `session_id`, `written_at` (when the task was queued), `source_mtime` (the transcript's mtime at processing) and `source_jsonl` (the transcript's path). Each agent drains its own queue, so a worker can reach an old session's task after another agent's worker wrote a newer handoff; when the existing file names a different session with a later `source_mtime`, it is neither overwritten nor deleted.
 
-The deterministic slim handoff written when the gates block evaluation carries the same frontmatter (its `written_at` is the time it was written) and obeys the same rule: it never replaces a handoff from a session with a later `source_mtime`. The evaluator's own `claude -p` sessions are skipped by the worker before any gate, so they never write a handoff.
+The deterministic slim handoff, written when the user-char gate, the message-count gate or the backend call blocks evaluation (and `slim_handoff_enabled` is set), carries the same frontmatter (its `written_at` is the time it was written) and obeys the same rule: it never replaces a handoff from a session with a later `source_mtime`. The evaluator's own `claude -p` sessions are skipped by the worker before any gate, so they never write a handoff.
 
 At session start `context-inject` warns that a handoff may be stale when its own transcript grew more than 300 s past `source_mtime`, or when a newer session sits in the reading agent's project directory — for a handoff from the same agent, any other latest session; for one written by another agent, found through `source_jsonl`, only a session more than 300 s newer. A handoff whose transcript cannot be found at all is reported with its session id: the first eight characters for a UUID, the whole id otherwise.
 

@@ -109,3 +109,11 @@ knowledge store: two read-modify-replace writes to `claude-md.proposal.md` or
 now run under an exclusive `flock` on `<memory_dir>/.memory.lock`
 (`core/memory_store.py::memory_dir_lock`), and the compound loop's atomic write
 uses a unique temp name per call.
+
+## Evolution — 2026-10-31
+
+The consumer guardrails listed in the Decision gained one that runs first: since
+#568, `process_task` skips a transcript whose first user message is the
+evaluator prompt (`is_evaluator_session`) before `is_interactive_session`. The
+evaluator's own `claude -p` run writes a `last-prompt` record, so the
+interactive check alone does not exclude it.
