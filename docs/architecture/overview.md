@@ -180,7 +180,7 @@ Schema + design: [ADR-012 — SQLite monitoring](https://github.com/lazynet/lazy
 
 Unified interface over three platform backends:
 
-- `base.py` — `SchedulerJob` dataclass and `SchedulerBackend` protocol (`install`, `uninstall`, `status`).
+- `base.py` — `SchedulerJob` dataclass and `SchedulerBackend` protocol (`last_run`, `last_exit`, `label_for`, `install`, `uninstall`, `status`, `job_state`, `discover`, `drift`). `last_run` returns the scheduler's own record of the last trigger or, where the scheduler keeps none, log evidence, and `None` when neither is available; `last_exit` returns the job's last exit status, `None` when unknown, never `0` by default.
 - `launchd.py` — macOS, writes `.plist` files to `~/Library/LaunchAgents/`.
 - `systemd.py` — Linux with a systemd user instance. Writes `.timer` + `.service` units under `$XDG_CONFIG_HOME/systemd/user/`, enables them with `systemctl --user`, and warns when lingering is off, since user timers stop at logout without it.
 - `cron.py` — the ubiquitous floor. Writes a `# BEGIN lazy-harness` / `# END lazy-harness` block into the user's crontab, so uninstall removes exactly what install wrote and never touches their own entries.

@@ -218,3 +218,7 @@ over 100K, one is over only once its cache writes are counted.
   `message.model`. The compound-loop distiller's default model is still the
   dated `claude-haiku-4-5-20251001` (`llm/claude.py:21`, `core/config.py:263`).
   That choice is separate and is left as it is.
+
+## Evolution
+
+- **The statusline is no longer a pricing path (#565).** The table above, dated 2026-10-07, lists `statusline` as reading Claude Code's own `cost.total_cost_usd`. Since #565, `format_statusline` in `monitoring/statusline.py` reads only the model, branch and current directory, so it touches no cost field and is not a pricing path at all. The row is left as dated evidence.

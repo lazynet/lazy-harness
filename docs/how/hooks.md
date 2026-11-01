@@ -592,7 +592,7 @@ For each kind (`decision`, `failure`):
 
 Project key resolution: `git rev-parse --git-common-dir` so worktrees collapse onto the main repo's basename. This prevents `lazy-harness` and `.worktrees/feat-foo` from showing up as two separate Engram projects.
 
-If `engram` is not on `PATH`, the run logs `engram binary not on PATH; skipping run (no-op)` and exits 0.
+If `engram` is not on `PATH`, the run logs `engram binary not on PATH; skipping run (no-op)` and exits 0. That run also records a `skip` event in `engram_persist_metrics.jsonl`, which `lh doctor` reports as a warning (`N skipped`) in the "Engram persist" section, since a skip saves nothing.
 
 **Where it writes:**
 
