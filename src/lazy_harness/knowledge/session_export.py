@@ -170,7 +170,12 @@ def _atomic_write(path: Path, content: str) -> None:
     os.replace(tmp, path)
 
 
-SkipReason = str  # "short" | "unchanged" | "non-interactive"
+# "short" | "unchanged" | "non-interactive" | "evaluator". "evaluator" is the
+# compound loop's own `claude -p` run: Claude Code writes `last-prompt` in
+# headless runs too, so the interactive gate lets it through. It outranks every
+# other gate and `force`, since exporting it files the evaluator prompt as a
+# session note.
+SkipReason = str
 
 
 def export_session(
@@ -183,6 +188,10 @@ def export_session(
     source_profile: str = "",
     source_identity: str = "",
 ) -> tuple[Path | None, SkipReason | None]:
+    from lazy_harness.knowledge.compound_loop import is_evaluator_session
+
+    if is_evaluator_session(session_file):
+        return None, "evaluator"
     effective_min = 1 if force else min_messages
     meta, messages, is_interactive = _parse_session_jsonl(session_file)
     if len(messages) < effective_min:
