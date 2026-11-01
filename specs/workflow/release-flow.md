@@ -35,6 +35,7 @@ On every push to `main`, release-please:
 - **To pin a specific version for one release, use a `Release-As:` footer.** Putting `Release-As: 0.30.0` in a commit body makes release-please target exactly that version for the release PR it opens next. Use it to skip a version range deliberately; do not use it to hand-bump routine releases.
 - **Edit the release PR in place when needed.** If the changelog has a typo or is missing context, push commits to the release PR branch directly. release-please re-opens the same PR rather than duplicating.
 - **The docs site still redeploys on every push.** `.github/workflows/docs.yml` runs on push to `main`, independently. A release merge is just another push from its perspective.
+- **The release PR shows zero checks by design.** Workflow runs triggered on the release-please bot's branch end `failure` with zero jobs (observed on #566 and #569), so the PR's checks list is empty. Confirm green CI on the merged feature PR's commit before merging the release PR; do not wait for checks on the release PR itself.
 
 ## Version synchronisation invariant
 
