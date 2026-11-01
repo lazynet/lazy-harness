@@ -32,6 +32,7 @@ This is a **public repository**: README, `docs/` pages, commit messages and PR t
 
 - The repository's procedures live under `.claude/commands/` as prose: `new-worktree.md`, `cleanup-worktree.md`, `tdd-check.md`, `coherence-audit.md`. An agent with no command surface reads the file and runs what it describes.
 - Never change the active `gh` account. If `gh` refuses with `must be a collaborator`, stop and report which account is active.
+- Check a sensitive variable for presence with `${VAR:+set}`; never print its value into a transcript or log. Printing the whole `LH_METRICS_URL` exposed the ingest token twice.
 
 ## When the agent is Claude Code
 
