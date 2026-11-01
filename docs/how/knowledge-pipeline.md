@@ -86,7 +86,7 @@ Claude Code stores each session as a JSON-per-line file:
 
 - `meta`: `{cwd, version, branch, timestamp}` from the first `system` record.
 - `messages`: a list of `{role, text, timestamp}` dicts. Content extraction handles both string content (`"hello"`) and structured content (`[{"type":"text","text":"..."}]`).
-- `is_interactive`: set when a `permission-mode` or `last-prompt` record appears anywhere in the file, or, for a Codex transcript, a user `response_item`. Without it the export is skipped as `non-interactive` (unless forced) — headless `claude -p` invocations are filtered at this gate.
+- `is_interactive`: set when a `permission-mode` or `last-prompt` record appears anywhere in the file, or, for a Codex transcript, a user `response_item`. Without it the export is skipped as `non-interactive` (unless forced). The marker is not exclusive to interactive runs: Claude Code writes `last-prompt` in headless `claude -p` runs too, so this gate does not by itself keep them out; only the `min_messages` threshold below does. `session_export` has no check for the compound loop's own evaluator sessions.
 
 ### The interactive + length filter
 

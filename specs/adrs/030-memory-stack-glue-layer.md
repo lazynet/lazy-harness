@@ -390,3 +390,9 @@ replace a handoff from a session with a later transcript. The worker also skips
 the evaluator's own `claude -p` sessions before any gate: their transcripts look
 interactive and their only "user prompt" is the evaluator prompt, so they were
 replacing the real handoff seconds after it was written.
+
+**2026-11-01 — files touched come from the transcript (G1).** G1 says the
+files touched come from the `session_export` artifact. `write_slim_handoff`
+reads them with `_files_touched`, which collects the `tool_use` blocks of the
+session JSONL, and has since G1 shipped (#69); the exported artifact is not
+consulted.
