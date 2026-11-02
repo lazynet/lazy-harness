@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.92.1](https://github.com/lazynet/lazy-harness/compare/v0.92.0...v0.92.1) (2026-11-02)
+
+
+### Bug Fixes
+
+* handoff-now queues the memory_dir the SessionEnd hook resolves ([#582](https://github.com/lazynet/lazy-harness/issues/582)) ([5f1168a](https://github.com/lazynet/lazy-harness/commit/5f1168abf2cd5c27ce55708f3a6026d9453a54d5))
+
 ## [0.92.0](https://github.com/lazynet/lazy-harness/compare/v0.91.1...v0.92.0) (2026-11-02)
 
 
