@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.92.0](https://github.com/lazynet/lazy-harness/compare/v0.91.1...v0.92.0) (2026-11-02)
+
+
+### Features
+
+* doctor reports evaluator contamination in the knowledge store ([#574](https://github.com/lazynet/lazy-harness/issues/574)) ([7e0c964](https://github.com/lazynet/lazy-harness/commit/7e0c9649219d21072385d1ee10cf0d0fcc37edd3))
+* record evaluator inference spend in metrics.db ([#577](https://github.com/lazynet/lazy-harness/issues/577)) ([05e9a17](https://github.com/lazynet/lazy-harness/commit/05e9a17f2e640878b2111ef94cf585a978efc8ff))
+
+
+### Bug Fixes
+
+* evaluator runs claude -p without hooks or transcript ([#575](https://github.com/lazynet/lazy-harness/issues/575)) ([15c73f8](https://github.com/lazynet/lazy-harness/commit/15c73f8052380a94195e7f0ac0648b02a09f8ecf))
+* inference rows are spend, not sessions; failed sink build keeps the local row ([#578](https://github.com/lazynet/lazy-harness/issues/578)) ([2780f0e](https://github.com/lazynet/lazy-harness/commit/2780f0efaffa84104a5a963dc141a2532bbf831b))
+* lh exec --role records spend under the caller's workload and fills envelope tokens ([#579](https://github.com/lazynet/lazy-harness/issues/579)) ([ba00bec](https://github.com/lazynet/lazy-harness/commit/ba00bec33a1efc989c11ea7ac690260b7239effd))
+* lh exec runs claude without settings hooks, keeping its tool guards ([#576](https://github.com/lazynet/lazy-harness/issues/576)) ([0c8b7b6](https://github.com/lazynet/lazy-harness/commit/0c8b7b610ff8ef3a0461b07e648c851f6f994743))
+* session export skips evaluator sessions ([#573](https://github.com/lazynet/lazy-harness/issues/573)) ([96240bc](https://github.com/lazynet/lazy-harness/commit/96240bc66644a91921038426365295b4a3631a18))
+
+
+### Refactors
+
+* one headless isolation argv for claude -p ([#580](https://github.com/lazynet/lazy-harness/issues/580)) ([1d9dd79](https://github.com/lazynet/lazy-harness/commit/1d9dd7990b6955ebfdc7f18f1fe6eaeb9641bbb3))
+* remove the compound-loop project_update path (ADR-072) ([#559](https://github.com/lazynet/lazy-harness/issues/559)) ([f833ff1](https://github.com/lazynet/lazy-harness/commit/f833ff15f37a7bfe86ef8f6bce53b54e6d25403e))
+
+
+### Documentation
+
+* close eight coherence-drift entries ([#567](https://github.com/lazynet/lazy-harness/issues/567)) ([a6570fc](https://github.com/lazynet/lazy-harness/commit/a6570fc7e04a181cbdfcea04bcc1792342f65305))
+* close remaining coherence-drift entries ([#572](https://github.com/lazynet/lazy-harness/issues/572)) ([fa75458](https://github.com/lazynet/lazy-harness/commit/fa75458cbbde663ac636e73e2bad3b1b248b2080))
+* close the 0.92.0 pre-release drift ([#581](https://github.com/lazynet/lazy-harness/issues/581)) ([16b0ba8](https://github.com/lazynet/lazy-harness/commit/16b0ba85f15c3dbd5aec11702186b58da87f7b87))
+* design for completing the copilot adapter ([#501](https://github.com/lazynet/lazy-harness/issues/501)) ([8171dc5](https://github.com/lazynet/lazy-harness/commit/8171dc58f6686ff65030fc25c425321b46723fc6))
+* record sensitive-var and release-PR-checks rules ([#570](https://github.com/lazynet/lazy-harness/issues/570)) ([eb6a5e1](https://github.com/lazynet/lazy-harness/commit/eb6a5e11743922f802ed09d2255a24a06d61f5c8))
+
 ## [0.91.1](https://github.com/lazynet/lazy-harness/compare/v0.91.0...v0.91.1) (2026-10-31)
 
 
