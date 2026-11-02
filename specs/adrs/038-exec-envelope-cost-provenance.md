@@ -285,3 +285,18 @@ is not relieved of any defence by this ADR:
   envelope carried no cost figure, pinning the iff invariant from both sides.
 - The timeout envelope and the successful envelope have equal key sets, asserted
   by comparing them directly rather than by listing the keys a test expects.
+
+## Evolution
+
+- **2026-11-01 — the run no longer boots the profile, and keeps the transcript
+  this ADR prices from.** `ClaudeCodeAdapter.headless_argv` adds
+  `--setting-sources ""`, so a `lh exec` run fires no settings or plugin hook:
+  measured on Claude Code 2.1.316, one unisolated run stored its prompt in
+  Engram, queued a compound-loop task and rewrote a project `handoff.md`; with
+  the flag, none of the three. The evaluator's companion flag,
+  `--no-session-persistence`, is deliberately **not** taken: it removes the
+  transcript, and with it the timeout pricing above and the `--workload`
+  attribution of ADR-037. A test asserts its absence. A run killed mid-tool
+  under the new argv still reported `cost_source: "transcript"`. The Decision
+  is unchanged. Evidence: `specs/designs/claude-code-evidence.md`
+  § `lh exec` isolation.

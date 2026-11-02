@@ -213,7 +213,32 @@ def test_headless_argv_asks_for_print_mode_and_json() -> None:
 
     argv = ClaudeCodeAdapter().headless_argv(model=None, allowed_tools=None)
 
-    assert argv == ["-p", "--output-format", "json"]
+    assert argv[:3] == ["-p", "--output-format", "json"]
+
+
+@pytest.mark.parametrize("allowed_tools", [None, [], ["Read", "Bash"]])
+def test_headless_argv_loads_no_settings_source(allowed_tools: list[str] | None) -> None:
+    """No user, project or local settings, so no settings or plugin hook fires.
+
+    Measured 2026-11-01 on 2.1.316: without it one `lh exec` run stored its
+    prompt in Engram and queued a compound-loop task; with it, neither.
+    """
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    argv = ClaudeCodeAdapter().headless_argv(model="haiku", allowed_tools=allowed_tools)
+
+    assert argv[argv.index("--setting-sources") + 1] == ""
+
+
+def test_headless_argv_keeps_the_transcript() -> None:
+    """`lh exec` bills a killed run and attributes its workload off the
+    transcript under the pinned session id; the evaluator's
+    `--no-session-persistence` would leave it nothing to read."""
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    argv = ClaudeCodeAdapter().headless_argv(model="haiku", allowed_tools=["Bash"])
+
+    assert "--no-session-persistence" not in argv
 
 
 def test_headless_argv_omits_the_model_flag_when_no_model_is_resolved() -> None:

@@ -182,6 +182,14 @@ Three states, deliberately distinct:
 
 `--allow-tools ""` is refused: passing an empty allow-list to Claude Code is a no-op that silently leaves the default read tools enabled, so the ambiguity is rejected instead of inherited.
 
+### Isolation from the profile
+
+A headless run is not a user session, so Claude Code is started with `--setting-sources ""`: no user, project or local settings file is loaded. No settings hook and no plugin hook fires — the run's prompt is not captured into memory, no compound-loop task is queued and no session note is exported. What the settings would have supplied is gone with them: their `permissions` (tools are granted only by `--allow-tools`), their `env` block, their default `model`, the plugins, and the profile's own `PreToolUse` guards, so a run granted `Bash`, `Write` or `Edit` runs them unguarded.
+
+The transcript is kept. The session id `lh exec` pins is how a killed run is still priced and how `--workload` is attributed, and both read it.
+
+A caller that needs the profile's settings — to exercise its hooks, for instance — forwards its own list after `--`, where the last one wins: `lh exec -- --setting-sources user,project,local`.
+
 ### Inference mode: `--role`
 
 `lh exec --role <name>` runs **one completion** through the backend that role names in [`[llm.roles]`](config.md#llm), instead of launching the agent. No tools, no session, no agentic loop — the right shape for classification and other single-turn work, and the only way to reach a local model such as Ollama or MLX.
@@ -275,7 +283,7 @@ written before the agent is spawned, so a kill cannot outrun it.
     "binary": "/…/claude",
     "config_dir": "/…/.claude-work",
     "lh_version": "0.47.0",
-    "argv": ["/…/claude", "-p", "--output-format", "json"]
+    "argv": ["/…/claude", "-p", "--output-format", "json", "--setting-sources", ""]
   },
   "raw": { "…": "the provider's own envelope, verbatim" }
 }

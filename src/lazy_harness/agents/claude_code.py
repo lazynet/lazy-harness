@@ -1109,7 +1109,11 @@ class ClaudeCodeAdapter:
             raise ValueError(f"unknown tier {tier!r} for claude-code (known: {known})") from None
 
     def headless_argv(self, *, model: str | None, allowed_tools: list[str] | None) -> list[str]:
-        argv = ["-p", "--output-format", "json"]
+        # An empty source list loads no settings file, so neither settings nor
+        # plugin hooks fire: a headless run is not a user session. Unlike the
+        # evaluator it keeps its transcript, which `lh exec` bills a killed run
+        # from. Its cost: the profile's PreToolUse guards do not run either.
+        argv = ["-p", "--output-format", "json", "--setting-sources", ""]
         if model:
             argv += ["--model", model]
         if allowed_tools:
