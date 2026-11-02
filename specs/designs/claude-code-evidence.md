@@ -1,8 +1,9 @@
 # Claude Code dialect evidence — caller identification marker
 
 **Status:** two probes recorded — 2026-09-24 against Claude Code 2.1.281, and
-2026-09-29 against 2.1.284 (§ Headless isolation flags), and 2026-10-09 against
-2.1.295 and 2.1.283 (§ Hook `onFailure`).
+2026-09-29 against 2.1.284 (§ Headless isolation flags), 2026-10-09 against
+2.1.295 and 2.1.283 (§ Hook `onFailure`), and 2026-11-01 against 2.1.316
+(§ Evaluator isolation).
 **Scope:** the first section owns one fact only — the payload key `hooks/runner.py`'s
 `_caller_agent` uses to tell a Claude Code hook invocation apart from a Codex
 one (ADR-041, Evolution 2026-09-24; ADR-068, Evolution 2026-09-24). It is not
@@ -82,9 +83,77 @@ compound-loop queue. One sample per flag set.
 **What was not measured.** A real evaluator prompt under these flags (JSON
 parse rate, grade yield); Codex-launched evaluations; `--no-session-persistence`,
 deliberately, since it would also remove the evaluator's spend from metrics
-(ADR-039 F7). The probe sessions themselves left a `session_closed` row and a
+(ADR-039 F7). *Superseded 2026-11-01: § Evaluator isolation measures it, and
+the evaluator now runs with it.* The probe sessions themselves left a `session_closed` row and a
 queued task for each hooked run, which the worker skips as non-interactive.
 
+
+## Evaluator isolation — observed vs `--help`
+
+**Claude Code 2.1.316, 2026-11-01, subscription (OAuth) auth.** Question: which
+argv lets `ClaudeBackend` run the compound-loop evaluator with no hook of any
+kind — settings or plugin — and no artifact a consumer can read as a user
+session. Re-run because the 2026-09-29 answer was never shipped and the
+evaluator was still polluting: Engram held 3,611 copies of the evaluator prompt
+as user prompts (first 2026-08-10, last 2026-11-02 00:38 UTC), and
+`is_evaluator_session` matched 706 of the 1,088 top-level JSONLs under
+`~/.claude-lazy/projects/`, 697 of them present in `metrics.db`
+`session_stats` (`claude-haiku-4-5-20251001` and `claude-haiku-5-5`,
+api-equivalent USD 19.43 summed).
+
+**Method.** One run per flag set of
+`claude -p --model claude-haiku-5-5 --output-format text <flags>` — the
+evaluator's argv — with `CLAUDE_CONFIG_DIR=~/.claude-lazy`, prompt
+`probe-<uuid> reply with the single word OK.` on stdin, from an empty scratch
+directory, then 20 s for the async hooks. Observed per run: exit and output;
+Engram `user_prompts` rows containing the marker; compound-loop tasks naming
+the scratch cwd in `queue/` or `queue/done/`; JSONLs under `projects/`
+containing the marker, with their `attachment` and hook record counts; files
+under the knowledge store's `sessions/` containing the marker.
+
+| Run | Flags | Exit, stdout | Engram row | Queued tasks | Transcript (attachments / hook records) | Export |
+| --- | --- | --- | --- | --- | --- | --- |
+| a | none (the argv until this change) | 0, `OK` | 1 | 2 (Stop + SessionEnd) | yes (23 / 8) | none |
+| b | `--settings '{"disableAllHooks": true}'` | 0, `OK` | 0 | 0 | yes (16 / 0) | none |
+| c | b + `--no-session-persistence` | 0, `OK` | 0 | 0 | **none** | none |
+| d | `--bare` | 1, `Not logged in · Please run /login` | 0 | 0 | yes (3 / 0) | none |
+| e | `--setting-sources ""` | 0, `OK` | 0 | 0 | yes (13 / 0) | none |
+| f | e + `--no-session-persistence` | 0, `OK` | 0 | 0 | **none** | none |
+| g | c, streams split | 0, stdout `OK` | — | — | — | — |
+| h | f through `ClaudeBackend.complete` | returns `'OK'` | 0 | 0 | none | — |
+
+**Observed vs help and spec.**
+
+- `--bare` fails under OAuth, as its help says ("Anthropic auth is strictly
+  ANTHROPIC_API_KEY") — and it still writes a transcript of the failed run.
+- `disableAllHooks` passed through `--settings` also silences **plugin** hooks
+  (Engram's `UserPromptSubmit` stored nothing), which the settings docs do not
+  state. It prints a plugin notice on every run — `moshi-hook: hooks module not
+  loaded: only managed plugins and built-in plugins run (allowManagedHooksOnly /
+  disableAllHooks)` — on **stderr** (run g), so stdout stays parseable. The
+  notice's own wording says managed and built-in plugin hooks still run.
+- `--setting-sources ""` behaves as recorded on 2.1.284: accepted though the
+  help lists only `user, project, local`, and silences settings and plugin hooks
+  alike, because plugins are enabled from the user settings it does not load.
+  No stderr notice. This is the flag `ClaudeBackend` ships.
+- Neither hook flag stops the transcript. `--no-session-persistence` does, in
+  both combinations (runs c, f, h) — it is the only flag here that keeps the
+  evaluator out of `projects/`, and with it out of session export, the compound
+  loop and metrics ingest.
+- **Cost of `--no-session-persistence`.** The evaluator's spend reached
+  `session_stats` only through those transcripts (697 rows above). With them
+  gone, `ClaudeBackend` spend is unrecorded until `run_inference` writes usage
+  itself, which the text output format does not carry (ADR-039, *Not
+  implemented*).
+
+**What was not measured.** A real evaluator prompt under the shipped flags
+(JSON parse rate, grade yield); managed-policy hooks, which this host does not
+have; the second `claude -p` argv, `ClaudeCodeAdapter.headless_argv`, behind
+`lh exec`, which is unchanged and still boots the profile. One sample per flag
+set; two extra baseline runs came from debugging the probe script, so the
+probe left three Engram rows, all deleted afterwards with `engram delete
+prompt` (matched by the content pattern `probe-%reply with the single word
+OK.`).
 
 ## Hook `onFailure` — observed vs changelog
 

@@ -1,4 +1,4 @@
-"""ClaudeBackend — subprocess call extracted verbatim from compound_loop (ADR-033)."""
+"""ClaudeBackend — headless `claude -p` call, isolated from the profile (ADR-033)."""
 
 from __future__ import annotations
 
@@ -29,10 +29,13 @@ def test_name_and_default_model() -> None:
     assert backend.default_model() == "claude-haiku-4-5-20251001"
 
 
-def test_complete_runs_claude_subprocess_with_existing_argv(
+def test_complete_runs_claude_subprocess_isolated_from_the_profile(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Argv, prompt-on-stdin, and timeout must match the historical invoke_claude call."""
+    """`--setting-sources ""` stops every hook, plugin hooks included, and
+    `--no-session-persistence` stops the transcript under `projects/` that
+    ingest, export and the compound loop would read as a user session
+    (`specs/designs/claude-code-evidence.md`, 2026-11-01)."""
     from lazy_harness.llm import claude as claude_mod
 
     captured: dict = {}
@@ -50,7 +53,17 @@ def test_complete_runs_claude_subprocess_with_existing_argv(
     result = claude_mod.ClaudeBackend().complete("hello", "test-model", 42)
 
     assert result == "the answer"
-    assert captured["argv"] == ["claude", "-p", "--model", "test-model", "--output-format", "text"]
+    assert captured["argv"] == [
+        "claude",
+        "-p",
+        "--model",
+        "test-model",
+        "--output-format",
+        "text",
+        "--setting-sources",
+        "",
+        "--no-session-persistence",
+    ]
     assert captured["input"] == "hello"
     assert captured["timeout"] == 42
     assert captured["capture_output"] is True

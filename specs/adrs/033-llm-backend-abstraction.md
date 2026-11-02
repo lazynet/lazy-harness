@@ -377,6 +377,23 @@ only. Backends and the roles that select them are declared by hand in
 still exist, but only as the deprecated form that `llm/roles.py:resolve_role`
 reads for the legacy role.
 
+**2026-11-01 — `ClaudeBackend` runs `claude -p` isolated from the profile.** The
+argv was the historical `invoke_claude` call, which boots the full profile the
+worker inherits: every settings hook and plugin hook fired inside each
+evaluation, and each left a session transcript under `projects/`. Measured
+consequences: a memory plugin's `UserPromptSubmit` hook stored the evaluator
+prompt as a user prompt 3,611 times by 2026-11-02 00:38 UTC; evaluator transcripts were 706 of the
+1,088 top-level JSONLs in the profile's `projects/`, 697 of them ingested into
+`session_stats`; and earlier, handoffs clobbered and sessions exported (each
+fixed per consumer). `llm/claude.py` now appends `--setting-sources ""` (no
+settings or plugin hook fires; OAuth still works, unlike `--bare`) and
+`--no-session-persistence` (no transcript). Probes in
+[`claude-code-evidence.md`](../designs/claude-code-evidence.md) §Evaluator
+isolation. The cost: the evaluator's spend leaves `session_stats` with the
+transcript, so `ClaudeBackend` spend is now unrecorded until `run_inference`
+records it itself ([ADR-039](039-role-routed-inference.md), *Not implemented*).
+The per-consumer evaluator skips stay as defense in depth.
+
 ## Implementation
 
 > **Historical.** This sequence describes the 2026-06-11 implementation. Step 7's
