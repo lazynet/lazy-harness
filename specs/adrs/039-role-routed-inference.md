@@ -80,7 +80,7 @@ Because the motivating consumer lives in another repository, `lh exec --role <na
 **Positive**
 
 - One role-resolution seam serves in-repo callers and `lh exec --role`.
-- The resolution seam makes per-role inference possible. Compound-loop spend remains absent from `metrics.db`.
+- The resolution seam makes per-role inference possible. *(Superseded 2026-11-01: inference spend is now recorded in `metrics.db` by `run_inference`; see the Evolution notes below.)* Compound-loop spend remains absent from `metrics.db`.
 
   > **Not implemented (noted 2026-09-23).** Shared Claude provider calls and
   > inference spend accounting remain open. `llm/claude.py`
@@ -91,7 +91,9 @@ Because the motivating consumer lives in another repository, `lh exec --role <na
   > `specs/backlog.md` §Open as its own entry, "Inferencia con Claude: dos argv
   > de `claude -p` y `run_inference` no escribe a `metrics.db`" (re-pointed
   > 2026-10-11; the F7 row there is closed in prose and no longer carries the
-  > code question).
+  > code question). *(Superseded 2026-11-01: both halves shipped, #577/#579/#580
+  > — see the Evolution notes below; that entry now lives in `specs/backlog.md`
+  > §Done.)*
 
   > **Evolution (2026-11-01).** The spend-accounting half is implemented; the
   > two-argv half is not. Since ADR-033's isolation entry of the same day the
