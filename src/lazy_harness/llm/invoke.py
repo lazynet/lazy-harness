@@ -15,9 +15,10 @@ from dataclasses import dataclass
 
 from lazy_harness.core.config import Config
 from lazy_harness.core.secrets import read_metrics_secret
-from lazy_harness.llm.base import LLMBackendError, LLMTimeoutError
+from lazy_harness.llm.base import LLMBackendError, LLMTimeoutError, UsageReportingBackend
 from lazy_harness.llm.registry import build_backend
 from lazy_harness.llm.roles import RoleNotFoundError, resolve_role
+from lazy_harness.llm.usage import record_usage
 
 #: Exhaustive for `mode: "inference"`. ADR-038's `no-envelope` and
 #: `agent-error` belong to the agent path and never appear here, so a consumer
@@ -133,7 +134,14 @@ def run_inference(
     model = model or target.model or backend.default_model()
 
     try:
-        output = backend.complete(prompt, model, timeout, schema=schema)
+        if isinstance(backend, UsageReportingBackend):
+            completion = backend.complete_with_usage(prompt, model, timeout, schema=schema)
+            # Before the empty and schema checks: an unusable answer was
+            # still billed.
+            record_usage(completion, role=role, backend=target.type, cfg=cfg)
+            output = completion.text
+        else:
+            output = backend.complete(prompt, model, timeout, schema=schema)
     except LLMTimeoutError as e:
         return _fail("timeout", str(e) or "timed out", backend=target.type, model=model)
     except LLMBackendError as e:

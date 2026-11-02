@@ -182,7 +182,7 @@ def test_complete_returns_the_result_text_of_the_json_envelope(
     under `--output-format text`, not the envelope around it."""
     from lazy_harness.llm import claude as mod
 
-    stdout = _probe_stdout(result="  {\"decisions\": []}\n")
+    stdout = _probe_stdout(result='  {"decisions": []}\n')
     monkeypatch.setattr(mod.subprocess, "run", lambda *a, **kw: _FakeCompleted(stdout))
 
     assert mod.ClaudeBackend().complete("p", "m", 5) == '{"decisions": []}'
@@ -236,9 +236,7 @@ def test_stdout_that_is_not_an_envelope_is_returned_as_text_with_no_usage(
 ) -> None:
     from lazy_harness.llm import claude as mod
 
-    monkeypatch.setattr(
-        mod.subprocess, "run", lambda *a, **kw: _FakeCompleted("  plain words \n")
-    )
+    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **kw: _FakeCompleted("  plain words \n"))
 
     completion = mod.ClaudeBackend().complete_with_usage("p", "m", 5)
 
