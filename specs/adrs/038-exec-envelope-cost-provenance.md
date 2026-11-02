@@ -300,3 +300,16 @@ is not relieved of any defence by this ADR:
   under the new argv still reported `cost_source: "transcript"`. The Decision
   is unchanged. Evidence: `specs/designs/claude-code-evidence.md`
   § `lh exec` isolation.
+- **2026-11-01 — the tool guards come back.** Isolation had also dropped the
+  profile's `PreToolUse` guards, so a run granted `Bash`, `Write` or `Edit` ran
+  them unguarded. A new optional Protocol, `ToolGatingAgent.tool_gate_argv`,
+  passes back with `--settings` every entry deploy installs for the resolved
+  profile (`deploy.engine.hook_entries_for`) under an event whose verdicts
+  include `deny` — today only `pre_tool_use` — through the same generator
+  deploy writes `settings.json` with; a test asserts the two agree. It is a
+  separate Protocol, not a widened `headless_argv`, for ADR-037 D5's reason.
+  Measured on 2.1.316: a real run asked to `rm -rf` a scratch directory was
+  refused by `pre-tool-use-security` (one `hooks.log` line, directory intact),
+  with Engram, queue and export still at 0 and `cost_source: "agent"`. The
+  Decision is unchanged. Evidence: `specs/designs/claude-code-evidence.md`
+  § `lh exec` isolation, runs h and h2.

@@ -184,7 +184,11 @@ Three states, deliberately distinct:
 
 ### Isolation from the profile
 
-A headless run is not a user session, so Claude Code is started with `--setting-sources ""`: no user, project or local settings file is loaded. No settings hook and no plugin hook fires — the run's prompt is not captured into memory, no compound-loop task is queued and no session note is exported. What the settings would have supplied is gone with them: their `permissions` (tools are granted only by `--allow-tools`), their `env` block, their default `model`, the plugins, the MCP servers, and the profile's own `PreToolUse` guards, so a run granted `Bash`, `Write` or `Edit` runs them unguarded.
+A headless run is not a user session, so Claude Code is started with `--setting-sources ""`: no user, project or local settings file is loaded. No plugin hook and none of the profile's session hooks fire — the run's prompt is not captured into memory, no compound-loop task is queued and no session note is exported.
+
+The profile's tool guards are kept. Every hook `lh deploy` writes for the resolved profile under an event that can deny a tool call — `PreToolUse`, including `pre-tool-use-security` and `pre-tool-use-git-scope` with their `onFailure: block` — is passed back with `--settings`, with the same commands, matchers and `--profile`. External `[hooks.pre_tool_use].external` commands from `config.toml` come back with them; hooks another tool wrote into `settings.json` directly do not. A profile that declares no such hook gets no `--settings`, and an `external` command with an invalid placeholder — which `lh deploy` refuses too — makes `lh exec` exit `70` with `error.kind: "config"` rather than run unguarded.
+
+What is still dropped with the settings: their `permissions` (tools are granted only by `--allow-tools`), their `env` block, their default `model`, the plugins, the MCP servers, and every hook on an event that cannot deny a tool call (`SessionStart`, `UserPromptSubmit`, `Stop`, `SessionEnd`, `PreCompact`, `PostToolUse`, `PermissionRequest` and the rest).
 
 The transcript is kept. The session id `lh exec` pins is how a killed run is still priced and how `--workload` is attributed, and both read it.
 
@@ -283,7 +287,7 @@ written before the agent is spawned, so a kill cannot outrun it.
     "binary": "/…/claude",
     "config_dir": "/…/.claude-work",
     "lh_version": "0.47.0",
-    "argv": ["/…/claude", "-p", "--output-format", "json", "--setting-sources", ""]
+    "argv": ["/…/claude", "-p", "--output-format", "json", "--setting-sources", "", "--settings", "{\"hooks\": {\"PreToolUse\": […]}}"]
   },
   "raw": { "…": "the provider's own envelope, verbatim" }
 }
