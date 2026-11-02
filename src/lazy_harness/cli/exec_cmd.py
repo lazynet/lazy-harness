@@ -24,6 +24,7 @@ from lazy_harness.agents.base import (
     HeadlessAgent,
     HeadlessResult,
     SessionPinningAgent,
+    ToolGatingAgent,
 )
 from lazy_harness.agents.launch import LaunchError, LaunchPlan, resolve_launch
 from lazy_harness.core.config import Config, ConfigError, load_config
@@ -111,6 +112,23 @@ def _fail(kind: str, message: str, harness: dict | None = None) -> NoReturn:
     envelope["harness"] = harness
     _emit(envelope)
     raise SystemExit(EXIT_HARNESS_ERROR)
+
+
+def _tool_gate_argv(adapter: ToolGatingAgent, cfg: Config, profile: str) -> list[str]:
+    """The profile's tool guards, as deploy writes them for it.
+
+    Resolved here, not by the adapter, because the entries name the profile
+    and its binary. A config deploy would refuse is refused here too: running
+    the agent without the guards it declares is the one wrong answer.
+    """
+    from lazy_harness.agents.registry import binary_for_profile
+    from lazy_harness.deploy.engine import ExternalHookPlaceholderError, hook_entries_for
+
+    try:
+        entries = hook_entries_for(cfg, profile, binary_for_profile(cfg, profile), report=False)
+    except ExternalHookPlaceholderError as e:
+        _fail("config", str(e))
+    return adapter.tool_gate_argv(entries)
 
 
 def _record_attribution(session_id: str, workload: str, *, replaces: str | None = None) -> None:
@@ -406,8 +424,12 @@ def exec_cmd(
     # already in use with exit 1 and an empty stdout.
     session_id = str(uuid.uuid4())
     pin = adapter.session_argv(session_id) if isinstance(adapter, SessionPinningAgent) else []
+    gates = (
+        _tool_gate_argv(adapter, cfg, plan.profile) if isinstance(adapter, ToolGatingAgent) else []
+    )
     tail = [
         *adapter.headless_argv(model=resolved_model, allowed_tools=allowed_tools),
+        *gates,
         *pin,
         *agent_args,
     ]

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
@@ -393,6 +393,25 @@ class SessionPinningAgent(Protocol):
 
     def session_argv(self, session_id: str) -> list[str]:
         """Argv fragment that pins the conversation to `session_id`."""
+        ...
+
+
+@runtime_checkable
+class ToolGatingAgent(Protocol):
+    """Optional capability: a headless agent that can be handed its tool guards.
+
+    For an agent whose `headless_argv` loads none of the profile's settings,
+    so the hooks deploy wrote there do not fire. A separate Protocol rather
+    than a widened `headless_argv` for `SessionPinningAgent`'s reason
+    (ADR-037 D5): the signature is part of `HeadlessAgent`.
+    """
+
+    def tool_gate_argv(self, hooks: Mapping[str, Sequence[HookEntry]]) -> list[str]:
+        """Argv fragment re-installing the entries of every event that can deny
+        a tool call, and nothing else; `[]` when there are none.
+
+        `hooks` is what deploy installs for the profile (`hook_entries_for`).
+        """
         ...
 
 

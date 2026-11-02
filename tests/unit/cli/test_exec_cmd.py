@@ -283,6 +283,56 @@ def test_exec_rejects_an_unknown_flag_before_the_separator(harness_config: Path)
     assert code == 2
 
 
+# --- tool-gate hooks --------------------------------------------------------
+
+
+def _reinjected_commands(argv: list[str]) -> list[str]:
+    groups = json.loads(argv[argv.index("--settings") + 1])["hooks"]["PreToolUse"]
+    return [hook["command"] for group in groups for hook in group["hooks"]]
+
+
+def test_exec_reinjects_the_resolved_profiles_tool_gate_hooks(harness_config: Path) -> None:
+    """Isolation drops settings.json; the guards deploy wrote there come back,
+    named for the profile this run resolved to, not the default one."""
+    _write_agent(ECHO_AGENT)
+
+    _, envelope = _invoke(["--profile", "work"])
+
+    argv = envelope["raw"]["argv"]
+    assert argv[argv.index("--setting-sources") + 1] == ""
+    assert "lh hook pre-tool-use-security --profile work" in _reinjected_commands(argv)
+
+
+def test_exec_adds_no_settings_when_the_profile_declares_no_pre_tool_use(
+    harness_config: Path,
+) -> None:
+    _write_agent(ECHO_AGENT)
+    config = harness_config / "config.toml"
+    config.write_text(config.read_text() + "\n[hooks.pre_tool_use]\nscripts = []\n")
+
+    _, envelope = _invoke([])
+
+    assert envelope["success"] is True
+    assert "--settings" not in envelope["raw"]["argv"]
+
+
+def test_exec_refuses_to_run_unguarded_when_the_hooks_do_not_resolve(
+    harness_config: Path,
+) -> None:
+    """A guard deploy would refuse to write is not silently skipped here."""
+    marker = Path.home() / "spawned"
+    _write_agent(textwrap.dedent(ECHO_AGENT) + f"open({str(marker)!r}, 'w').close()\n")
+    config = harness_config / "config.toml"
+    config.write_text(config.read_text() + '\n[hooks.pre_tool_use]\nexternal = ["guard {nope}"]\n')
+
+    code, envelope = _invoke([])
+
+    assert code == 70
+    assert envelope["error"]["kind"] == "config"
+    assert "{nope}" in envelope["error"]["message"]
+    assert not marker.exists()
+
+
 # --- model tiers -----------------------------------------------------------
 
 

@@ -3,7 +3,8 @@
 **Status:** two probes recorded — 2026-09-24 against Claude Code 2.1.281, and
 2026-09-29 against 2.1.284 (§ Headless isolation flags), 2026-10-09 against
 2.1.295 and 2.1.283 (§ Hook `onFailure`), and 2026-11-01 against 2.1.316
-(§ Evaluator isolation, § Evaluator JSON result envelope).
+(§ Evaluator isolation, § `lh exec` isolation, § Evaluator JSON result
+envelope).
 **Scope:** the first section owns one fact only — the payload key `hooks/runner.py`'s
 `_caller_agent` uses to tell a Claude Code hook invocation apart from a Codex
 one (ADR-041, Evolution 2026-09-24; ADR-068, Evolution 2026-09-24). It is not
@@ -149,11 +150,116 @@ under the knowledge store's `sessions/` containing the marker.
 **What was not measured.** A real evaluator prompt under the shipped flags
 (JSON parse rate, grade yield); managed-policy hooks, which this host does not
 have; the second `claude -p` argv, `ClaudeCodeAdapter.headless_argv`, behind
-`lh exec`, which is unchanged and still boots the profile. One sample per flag
+`lh exec`, which was unchanged and still booted the profile (*measured and
+isolated 2026-11-01: § `lh exec` isolation*). One sample per flag
 set; two extra baseline runs came from debugging the probe script, so the
 probe left three Engram rows, all deleted afterwards with `engram delete
 prompt` (matched by the content pattern `probe-%reply with the single word
 OK.`).
+
+## `lh exec` isolation — observed vs `--help`
+
+**Claude Code 2.1.316, 2026-11-01, subscription (OAuth) auth, profile
+`claude-lazy`.** Question: does `--setting-sources ""` — the evaluator's
+isolation flag — silence the hooks behind `lh exec` while keeping what it
+needs: the transcript under the pinned `--session-id` (timeout pricing,
+ADR-038) and the `--workload` attribution (ADR-037). Its companion
+`--no-session-persistence` is ruled out by construction: it removes that
+transcript.
+
+**Pollution before the change, read-only.** The key is a transcript whose
+`entrypoint` is `sdk-cli` and whose first user message is not the evaluator
+prompt, matched by session id against Engram `user_prompts`, queue task files
+and knowledge-store session notes; frequency comes from `launches.entry =
+'exec'`.
+
+| Host | `lh exec` launches | Non-evaluator `sdk-cli` transcripts | Engram prompts | Queue tasks | Exported notes |
+| --- | --- | --- | --- | --- | --- |
+| agents CT (0.91.1) | 257 (2026-09-20 → 2026-11-01), driven by the lazy-vault timers | 198 (185 with cwd `LazyMind`) | 169 of 289 in its Engram | 84 of 111 | 11 |
+| Mac | 52 (last 2026-09-30) | 128 (mostly e2e and probe cwds, not lazy-vault) | 99 | 20 of 1,212 | 3 |
+
+**Method.** One `lh exec --profile claude-lazy --tier fast --workload
+probe-exec-isolation` run per row from the worktree build, prompt
+`probe-exec-<label>-<uuid> …` on stdin, then 25 s for the async hooks.
+Observed: the envelope; Engram rows starting with the marker; queue files naming
+the session id; the transcript under `projects/` and its `hook_*` attachment
+count; session notes carrying the marker; the `session_attribution` row.
+
+| Run | Argv beyond the default | Envelope | Engram | Queued | Transcript (hook attachments) | Export | Attribution |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| a | none (`--no-tools`, the argv until this change) | `OK`, `cost_source: agent` | 1 | 1 (SessionEnd) | yes (7) | none | yes |
+| b | `-- --setting-sources ""` | `OK`, `agent` | 0 | 0 | yes (0) | none | yes |
+| c2 | b, `--allow-tools Bash`, killed at `--timeout 30` during `sleep 60` | exit 124, `cost_source: transcript` | 0 | 0 | yes (0) | none | yes |
+| d | b, cwd `LazyMind`, `--allow-tools Read,Glob,Grep`, read one note | first line verbatim, `agent` | 0 | 0 | yes (0) | none | yes |
+| e | b, `--allow-tools Bash`, plus `--settings` with a `PreToolUse` hook touching a marker | `DONE` | 0 | 0 | yes (0) | — | — |
+| f | none — the shipped `headless_argv` | `OK`, `agent` | 0 | 0 | yes (0) | none | yes |
+| g | `-- --setting-sources user,project,local` | `OK`, `agent` | 1 | 1 | yes (7) | — | — |
+
+**Observed vs help and spec.**
+
+- `--setting-sources ""` silences the settings and the plugin hooks of a
+  `lh exec` run as it does the evaluator's (b, f), and leaves the transcript
+  under the pinned id: a run killed mid-tool is still priced from it (c2), and
+  attribution is recorded before the spawn, unaffected.
+- Run a's `SessionEnd` task was dropped by the worker (`80 user chars (min
+  200)`), yet it rewrote the project's `handoff.md` with a slim snapshot of the
+  probe session; run g did the same. Every queued headless task can overwrite
+  the handoff the next real session loads.
+- `--allowedTools` grants work with no settings loaded (c2 ran `Bash`, d ran
+  `Read`), so a caller that names its tools — lazy-vault does on every call —
+  loses nothing it asked for.
+- **What isolation drops.** The profile's `permissions` (111 allow, 12 ask
+  rules on `claude-lazy`), its `env` block, its default `model` and the
+  plugins — and its own `PreToolUse` guards, `pre-tool-use-security` and
+  `pre-tool-use-git-scope`, both `onFailure: block`. A run granted `Bash`,
+  `Write` or `Edit` ran them unguarded. *Superseded the same day: the guards
+  are re-injected (runs l, m below).*
+- **MCP servers are dropped too.** Run a's transcript names the user-scope
+  servers (`qmd`, `graphify`, `engram`), the plugin's and the claude.ai
+  connectors' tools (`grep -c mcp__`: 6); run b's names none (0), and its
+  `mcp_instructions_delta` attachment is gone. A caller granting an MCP tool
+  through `--allow-tools` would find it absent.
+- `--settings` survives `--setting-sources ""` (e): a hook passed as flag
+  settings fired. *That path is now built: see runs l, m.*
+- The last `--setting-sources` wins (g): a caller forwarding
+  `-- --setting-sources user,project,local` gets the profile back, hooks
+  included.
+- Run b cost USD 0.0015 against run a's USD 0.0092 for the same reply: the
+  isolated run loads no plugin, skill or hook context.
+
+**Guard re-injection (runs l, m), same day, same build plus the change.**
+`lh exec` now appends `--settings '{"hooks":{"PreToolUse":[…]}}'`, generated
+from the entries deploy installs for the profile. The dry run's groups for
+`claude-lazy` matched the deployed `settings.json` `PreToolUse` groups one for
+one (six: five `lh hook … --profile claude-lazy`, security and git-scope with
+`onFailure: block`, plus the config's `graphify hook-guard read`); the two
+foreign moshi groups, written into `settings.json` by another tool, are not
+re-injected. Both runs: `--profile claude-lazy --allow-tools Bash --tier fast
+--workload probe-exec-guards`, cwd a scratch directory holding
+`doomed-probe-exec-guards/keep.txt`, prompt on stdin from a file.
+
+| Run | Asked to run | Envelope | `hooks.log` | Directory | Engram | Queued | Transcript (hook attachments) | Export | Attribution |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| l | `rm -rf ./doomed-probe-exec-guards` | `BLOCKED …`, `cost_source: agent` | 1 line: `pre-tool-use-security: blocked filesystem: rm -rf ./doomed-probe-exec-guards` | intact | 0 | 0 | yes (0) | none | yes |
+| m | `ls ./doomed-probe-exec-guards` | `RAN keep.txt`, `agent` | 0 new lines | intact | 0 | 0 | yes (0) | none | yes |
+
+- The guard runs, not merely registers: l's transcript carries the agent-side
+  `PreToolUse:Bash hook error: [lh hook pre-tool-use-security --profile
+  claude-lazy]: Blocked by lazy-harness PreToolUse: Recursive delete`, and
+  the command never executed.
+- Re-injecting `PreToolUse` brings back no session hook: Engram stayed at
+  11,514 prompts, the queue at 398 done and 0 pending, the knowledge store at
+  9 session notes, and l's transcript has no `hook_*` attachment.
+- An allowed command still runs (m): the guards add no refusal of their own.
+
+**What was not measured.** A full lazy-vault command under the new argv (d is
+one read-only call shaped like one); whether `.claude/rules/` in a project
+still loads; managed-policy hooks. The `env`, `model` and `permissions` losses
+follow from no settings file being read and were not probed one by one. One
+sample per row. Runs a and g each left one Engram row, deleted afterwards with
+`engram delete prompt` (#11504, #11509); both rewrote
+`lazy-knowledge/memory/github.com/lazynet/lazy-harness/handoff.md`, left as
+written.
 
 ## Evaluator JSON result envelope — observed vs spec
 
