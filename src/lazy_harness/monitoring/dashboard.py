@@ -9,6 +9,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from lazy_harness.monitoring.db import MetricsDB
+from lazy_harness.monitoring.inference_rows import counts_as_session
 
 
 def format_tokens(n: int) -> str:
@@ -62,7 +63,8 @@ def render_costs(
                 "api_covered": 0,
                 "rows": 0,
             }
-        by_date[date]["sessions"].add(r["session"])
+        if counts_as_session(r):
+            by_date[date]["sessions"].add(r["session"])
         by_date[date]["input"] += r["input"] + r["cache_read"] + r["cache_create"]
         by_date[date]["output"] += r["output"]
         by_date[date]["rows"] += 1

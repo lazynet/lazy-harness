@@ -313,4 +313,4 @@ is not relieved of any defence by this ADR:
   refused by `pre-tool-use-security` (one `hooks.log` line, directory intact),
   with Engram, queue and export still at 0 and `cost_source: "agent"`. The
   Decision is unchanged. Evidence: `specs/designs/claude-code-evidence.md`
-  § `lh exec` isolation, runs i and i2.
+  § `lh exec` isolation, runs l and m.

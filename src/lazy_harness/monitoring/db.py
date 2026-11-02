@@ -14,6 +14,8 @@ from stat import S_ISREG
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
+from lazy_harness.monitoring.inference_rows import SESSION_COUNT_EXPR
+
 if TYPE_CHECKING:
     from lazy_harness.plugins.contracts import MetricEvent
 
@@ -908,7 +910,7 @@ class MetricsDB:
     def aggregate_costs(self, period: str = "all", since: str | None = None) -> dict[str, Any]:
         if since:
             row = self._conn.execute(
-                """
+                f"""
                 SELECT COALESCE(SUM(cost), 0) as total_cost,
                        COALESCE(SUM(billed_cost), 0) as billed_cost,
                        SUM(api_equivalent_cost) as api_equivalent_cost,
@@ -916,12 +918,12 @@ class MetricsDB:
                        COUNT(api_equivalent_cost) as api_equivalent_coverage,
                        COALESCE(SUM(input_tokens), 0) as total_input,
                        COALESCE(SUM(output_tokens), 0) as total_output,
-                       COUNT(DISTINCT session) as session_count
+                       COUNT(DISTINCT {SESSION_COUNT_EXPR}) as session_count
                 FROM session_stats WHERE date >= ?""",
                 (since,),
             ).fetchone()
         elif period == "all":
-            row = self._conn.execute("""
+            row = self._conn.execute(f"""
                 SELECT COALESCE(SUM(cost), 0) as total_cost,
                        COALESCE(SUM(billed_cost), 0) as billed_cost,
                        SUM(api_equivalent_cost) as api_equivalent_cost,
@@ -929,11 +931,11 @@ class MetricsDB:
                        COUNT(api_equivalent_cost) as api_equivalent_coverage,
                        COALESCE(SUM(input_tokens), 0) as total_input,
                        COALESCE(SUM(output_tokens), 0) as total_output,
-                       COUNT(DISTINCT session) as session_count
+                       COUNT(DISTINCT {SESSION_COUNT_EXPR}) as session_count
                 FROM session_stats""").fetchone()
         else:
             row = self._conn.execute(
-                """
+                f"""
                 SELECT COALESCE(SUM(cost), 0) as total_cost,
                        COALESCE(SUM(billed_cost), 0) as billed_cost,
                        SUM(api_equivalent_cost) as api_equivalent_cost,
@@ -941,7 +943,7 @@ class MetricsDB:
                        COUNT(api_equivalent_cost) as api_equivalent_coverage,
                        COALESCE(SUM(input_tokens), 0) as total_input,
                        COALESCE(SUM(output_tokens), 0) as total_output,
-                       COUNT(DISTINCT session) as session_count
+                       COUNT(DISTINCT {SESSION_COUNT_EXPR}) as session_count
                 FROM session_stats WHERE date LIKE ?""",
                 (f"{period}%",),
             ).fetchone()
@@ -1374,7 +1376,7 @@ class MetricsDB:
         sessions = {
             r["profile"]: r["n"]
             for r in self._conn.execute(
-                "SELECT profile, COUNT(DISTINCT session) AS n FROM session_stats "
+                f"SELECT profile, COUNT(DISTINCT {SESSION_COUNT_EXPR}) AS n FROM session_stats "
                 "WHERE date >= ? GROUP BY profile",
                 (cutoff_day.isoformat(),),
             ).fetchall()

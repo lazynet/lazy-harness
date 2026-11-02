@@ -3,7 +3,8 @@
 **Status:** two probes recorded — 2026-09-24 against Claude Code 2.1.281, and
 2026-09-29 against 2.1.284 (§ Headless isolation flags), 2026-10-09 against
 2.1.295 and 2.1.283 (§ Hook `onFailure`), and 2026-11-01 against 2.1.316
-(§ Evaluator isolation, § `lh exec` isolation).
+(§ Evaluator isolation, § `lh exec` isolation, § Evaluator JSON result
+envelope).
 **Scope:** the first section owns one fact only — the payload key `hooks/runner.py`'s
 `_caller_agent` uses to tell a Claude Code hook invocation apart from a Codex
 one (ADR-041, Evolution 2026-09-24; ADR-068, Evolution 2026-09-24). It is not
@@ -144,7 +145,7 @@ under the knowledge store's `sessions/` containing the marker.
   `session_stats` only through those transcripts (697 rows above). With them
   gone, `ClaudeBackend` spend is unrecorded until `run_inference` writes usage
   itself, which the text output format does not carry (ADR-039, *Not
-  implemented*).
+  implemented*). *Resolved the same day: § Evaluator JSON result envelope.*
 
 **What was not measured.** A real evaluator prompt under the shipped flags
 (JSON parse rate, grade yield); managed-policy hooks, which this host does not
@@ -212,21 +213,21 @@ count; session notes carrying the marker; the `session_attribution` row.
   plugins — and its own `PreToolUse` guards, `pre-tool-use-security` and
   `pre-tool-use-git-scope`, both `onFailure: block`. A run granted `Bash`,
   `Write` or `Edit` ran them unguarded. *Superseded the same day: the guards
-  are re-injected (runs i, i2 below).*
+  are re-injected (runs l, m below).*
 - **MCP servers are dropped too.** Run a's transcript names the user-scope
   servers (`qmd`, `graphify`, `engram`), the plugin's and the claude.ai
   connectors' tools (`grep -c mcp__`: 6); run b's names none (0), and its
   `mcp_instructions_delta` attachment is gone. A caller granting an MCP tool
   through `--allow-tools` would find it absent.
 - `--settings` survives `--setting-sources ""` (e): a hook passed as flag
-  settings fired. *That path is now built: see runs i, i2.*
+  settings fired. *That path is now built: see runs l, m.*
 - The last `--setting-sources` wins (g): a caller forwarding
   `-- --setting-sources user,project,local` gets the profile back, hooks
   included.
 - Run b cost USD 0.0015 against run a's USD 0.0092 for the same reply: the
   isolated run loads no plugin, skill or hook context.
 
-**Guard re-injection (runs i, i2), same day, same build plus the change.**
+**Guard re-injection (runs l, m), same day, same build plus the change.**
 `lh exec` now appends `--settings '{"hooks":{"PreToolUse":[…]}}'`, generated
 from the entries deploy installs for the profile. The dry run's groups for
 `claude-lazy` matched the deployed `settings.json` `PreToolUse` groups one for
@@ -239,17 +240,17 @@ re-injected. Both runs: `--profile claude-lazy --allow-tools Bash --tier fast
 
 | Run | Asked to run | Envelope | `hooks.log` | Directory | Engram | Queued | Transcript (hook attachments) | Export | Attribution |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| i | `rm -rf ./doomed-probe-exec-guards` | `BLOCKED …`, `cost_source: agent` | 1 line: `pre-tool-use-security: blocked filesystem: rm -rf ./doomed-probe-exec-guards` | intact | 0 | 0 | yes (0) | none | yes |
-| i2 | `ls ./doomed-probe-exec-guards` | `RAN keep.txt`, `agent` | 0 new lines | intact | 0 | 0 | yes (0) | none | yes |
+| l | `rm -rf ./doomed-probe-exec-guards` | `BLOCKED …`, `cost_source: agent` | 1 line: `pre-tool-use-security: blocked filesystem: rm -rf ./doomed-probe-exec-guards` | intact | 0 | 0 | yes (0) | none | yes |
+| m | `ls ./doomed-probe-exec-guards` | `RAN keep.txt`, `agent` | 0 new lines | intact | 0 | 0 | yes (0) | none | yes |
 
-- The guard runs, not merely registers: i's transcript carries the agent-side
+- The guard runs, not merely registers: l's transcript carries the agent-side
   `PreToolUse:Bash hook error: [lh hook pre-tool-use-security --profile
   claude-lazy]: Blocked by lazy-harness PreToolUse: Recursive delete`, and
   the command never executed.
 - Re-injecting `PreToolUse` brings back no session hook: Engram stayed at
   11,514 prompts, the queue at 398 done and 0 pending, the knowledge store at
-  9 session notes, and i's transcript has no `hook_*` attachment.
-- An allowed command still runs (i2): the guards add no refusal of their own.
+  9 session notes, and l's transcript has no `hook_*` attachment.
+- An allowed command still runs (m): the guards add no refusal of their own.
 
 **What was not measured.** A full lazy-vault command under the new argv (d is
 one read-only call shaped like one); whether `.claude/rules/` in a project
@@ -259,6 +260,54 @@ sample per row. Runs a and g each left one Engram row, deleted afterwards with
 `engram delete prompt` (#11504, #11509); both rewrote
 `lazy-knowledge/memory/github.com/lazynet/lazy-harness/handoff.md`, left as
 written.
+
+## Evaluator JSON result envelope — observed vs spec
+
+**Claude Code 2.1.316, 2026-11-01, subscription (OAuth) auth.** Question: does
+`--output-format json` under the isolation flags above carry the usage that
+`--no-session-persistence` took away with the transcript, without bringing the
+transcript, a hook, or an Engram row back.
+
+**Method.** `claude -p --model M --output-format json --setting-sources ""
+--no-session-persistence`, `CLAUDE_CONFIG_DIR=~/.claude-lazy`, from an empty
+scratch directory. Prompt `probe-usage-7f3a: reply with the single word OK.`
+(runs i, j) and a `build_prompt` evaluator prompt marked `probe-usage-e2e-9c1d`
+sent through `run_inference(role="distill")` with an isolated `LH_CONFIG_DIR`
+and scratch `metrics.db` (run k). After each run: `find` for the session id
+under `~/.claude-lazy` and `~/.claude`, Engram `user_prompts` matching
+`%probe-usage%`. Run i's stdout is the fixture
+`tests/fixtures/claude-p-json-result.json`.
+
+| Run | Model | Exit | `result` | `session_id` | `total_cost_usd` | Harness price | Transcript | Engram |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| i | `claude-haiku-4-5-20251001` | 0 | `OK` | `bbe45a2d…` | 0.0185705 | 0.0185705 | none | 0 |
+| j | `claude-haiku-5-5` | 0 | `OK` | `170ab1b5…` | 0.00119655 | 0.00119655 | none | 0 |
+| k | `claude-haiku-5-5` (evaluator prompt) | 0 | JSON, `parse_response` OK, 7 keys | `9015bf96…` | — | 0.00184765 | none | 0 |
+
+**Observed vs spec.**
+
+- The envelope is `type: "result"` with `result` (the model's text),
+  `is_error`, `subtype`, `session_id`, `total_cost_usd`, `usage` (snake_case,
+  last turn, with `service_tier` and `cache_creation.ephemeral_{5m,1h}_input_tokens`)
+  and `modelUsage` (camelCase, **per model**, with
+  `cacheCreationEphemeral5mInputTokens`, `cacheCreationEphemeral1hInputTokens`
+  and `costUSD`). `ClaudeBackend` reads `modelUsage`, because one call can bill
+  more than one model and `session_stats` is keyed `(session, model)`.
+- `session_id` is present although `--no-session-persistence` writes no file
+  under it: an id for the call, not for a transcript. It keys the row.
+- The harness pricing table agrees with `costUSD` to the last digit on both
+  models (runs i, j), so the stored row uses the harness price, the same
+  function the ingest uses, and `costUSD` is kept on `ModelUsage` only.
+- An error with exit 0 (`is_error: true`) is not observed here; the parser
+  treats it as `LLMBackendError` rather than return the error text as an
+  evaluation, since `result` would otherwise reach `parse_response`.
+- Run k's row: `profile=claude-lazy`, `workload=inference:distill`,
+  `agent=claude`, `billing_model=flat_rate`, `billed_cost` null
+  (`subscription`), `api_equivalent_cost` 0.00184765 `priced`.
+
+**What was not measured.** An `is_error: true` envelope from a real failure;
+a call billing two models; the remote sink path (run k configured
+`sqlite_local` only).
 
 ## Hook `onFailure` — observed vs changelog
 

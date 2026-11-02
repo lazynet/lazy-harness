@@ -92,6 +92,32 @@ Because the motivating consumer lives in another repository, `lh exec --role <na
   > de `claude -p` y `run_inference` no escribe a `metrics.db`" (re-pointed
   > 2026-10-11; the F7 row there is closed in prose and no longer carries the
   > code question).
+
+  > **Evolution (2026-11-01).** The spend-accounting half is implemented; the
+  > two-argv half is not. Since ADR-033's isolation entry of the same day the
+  > evaluator leaves no transcript, so before this its spend was not "absent"
+  > but ingested as 697 ordinary user sessions, and after it, unrecorded.
+  > `ClaudeBackend` now runs `--output-format json` and reports usage through
+  > ADR-033's optional `UsageReportingBackend`; `run_inference` hands it to
+  > `llm/usage.py:record_usage`, which builds the `MetricEvent` the ingest
+  > would have built from a transcript of that one response
+  > (`usage_events`, priced by the same pricing functions, asserted equal by
+  > `test_usage_events_price_a_call_exactly_as_the_ingest_prices_its_transcript`)
+  > and writes it through `build_sinks`. The row is keyed by the provider's
+  > `session_id` for the call, `workload` is `inference:<role>`, `agent` is the
+  > backend type (`claude`), `profile` and `billing_model` come from the
+  > profile the call runs under, and `project` is empty. It is recorded
+  > before the empty and schema checks, because an unusable answer was still
+  > billed, only when `[monitoring].enabled`, and fail-soft. Rejected: pinning
+  > a session id and letting the ingest price a transcript, as `lh exec`
+  > does. Attribution labels a session, it does not exclude it, and the
+  > transcript would re-enter session export, the compound loop and every
+  > `session_stats` reader that ADR-033's isolation took it out of.
+  > `ClaudeCodeAdapter.headless_argv` still builds its own argv, and
+  > `lh exec --role`'s envelope still reports null tokens on the inference
+  > path, and `lh exec --role --workload X` stamps `inference:<role>` on the
+  > row rather than `X` (its attribution goes to a fresh id nothing joins);
+  > all three stay open in the backlog entry above.
 - A caller outside this repository can request local inference against a versioned contract, without importing `lazy_harness`.
 - Per-role routing makes "classify locally, distil with Claude" expressible, which the single global backend value could not express.
 - OpenRouter and any other OpenAI-compatible provider become usable without a plaintext key in a chezmoi-managed file.

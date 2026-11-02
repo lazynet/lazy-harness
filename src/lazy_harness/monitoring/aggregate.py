@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
+from lazy_harness.monitoring.inference_rows import counts_as_session
+
 DIMENSIONS = (
     "profile",
     "project",
@@ -111,7 +113,7 @@ class Bucket:
         if status:
             self.api_equivalent_statuses.add(str(status))
         session = str(row.get("session") or "")
-        if session:
+        if session and counts_as_session(row):
             self.sessions.add(session)
         self.billing_models.add(str(row.get("billing_model") or "per_token"))
 

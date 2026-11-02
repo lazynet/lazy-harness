@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from lazy_harness.core.config import MetricsConfig
@@ -116,3 +116,23 @@ def build_sinks(
                 )
             )
     return sinks
+
+
+def build_sinks_fail_soft(
+    cfg: MetricsConfig, *, db: MetricsDB, env: Mapping[str, str] | None = None
+) -> tuple[list[Any], list[str]]:
+    """Build every sink that can be built; name each one that cannot.
+
+    `build_sinks` is all-or-nothing, so one misconfigured remote sink also
+    costs the run its local sink. A caller that holds data it must not lose
+    (a billed call, a transcript pass) builds with this instead: each sink is
+    built alone, and a failure becomes one `"<name>: <reason>"` entry.
+    """
+    sinks: list[Any] = []
+    failures: list[str] = []
+    for name in cfg.sinks:
+        try:
+            sinks.extend(build_sinks(replace(cfg, sinks=[name]), db=db, env=env))
+        except Exception as exc:
+            failures.append(f"{name}: {exc}")
+    return sinks, failures

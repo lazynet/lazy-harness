@@ -13,6 +13,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from lazy_harness.monitoring.db import MetricsDB
+from lazy_harness.monitoring.inference_rows import counts_as_session
 from lazy_harness.monitoring.views._helpers import (
     HOOK_NAMES_DEFAULT,
     StatusContext,
@@ -71,11 +72,14 @@ def render(ctx: StatusContext, db: MetricsDB | None) -> RenderableType:
             bucket = per_profile.get(r["profile"])
             if bucket is None:
                 continue
-            bucket["total"].add(r["session"])  # type: ignore[union-attr]
-            if r["date"] == today_str:
+            is_session = counts_as_session(r)
+            if is_session:
+                bucket["total"].add(r["session"])  # type: ignore[union-attr]
+            if is_session and r["date"] == today_str:
                 bucket["today"].add(r["session"])  # type: ignore[union-attr]
             if r["date"].startswith(month_str):
-                bucket["month"].add(r["session"])  # type: ignore[union-attr]
+                if is_session:
+                    bucket["month"].add(r["session"])  # type: ignore[union-attr]
                 bucket["in"] = int(bucket["in"]) + r["input"]
                 bucket["out"] = int(bucket["out"]) + r["output"]
                 bucket["cache_read"] = int(bucket["cache_read"]) + (r["cache_read"] or 0)

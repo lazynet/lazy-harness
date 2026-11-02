@@ -503,6 +503,8 @@ Prioridad MEDIA.
 
 **Acción:** decidir entre (a) cumplir la promesa — un solo constructor del argv de `claude -p` y una escritura de métricas en el camino de inferencia — o (b) bajar ADR-039 a lo que el código hace y dejar el gasto del compound-loop fuera de `metrics.db` de forma explícita. No está elegido. Prioridad MEDIA.
 
+**Mitad hecha el 2026-11-01:** la escritura de métricas. `ClaudeBackend` corre `--output-format json` y `run_inference` graba una fila por modelo vía `llm/usage.py:record_usage` (`workload = "inference:<role>"`), con el mismo pricing que el ingest (ADR-039, *Evolution 2026-11-01*). **Sigue abierta** la otra mitad: `ClaudeCodeAdapter.headless_argv` arma su propio argv, el envelope de `lh exec --role` sigue con tokens en null en el camino de inferencia, y `lh exec --role --workload X` graba la fila con `inference:<role>` en vez de `X`.
+
 ### El clasificador de auto mode frena la orquestación de agentes, y su `environment` describía un solo repo
 
 **Por qué:** el 2026-09-23 el clasificador de auto mode negó lanzar agentes en panes de Herdr con `lh run --bypass=...` («Create Unsafe Agents») y leer o hacer backup de `settings.json` («Self-Modification»), incluso después de aprobarlo en `/permissions`: la aprobación del diálogo no sobrevivió al reintento. Al investigar apareció la causa de fondo: `autoMode.environment` de `lazy` describía sólo lazy-ansible y el de `flex` sólo supervielle-mgmt. Claude Code lo generó desde una sesión en ese repo, y `modify-settings.sh` lo preserva como PRESERVE, así que valía para todo el perfil. Según los docs, `autoMode` sólo se lee a nivel usuario o managed, nunca desde el `.claude/` del repo.

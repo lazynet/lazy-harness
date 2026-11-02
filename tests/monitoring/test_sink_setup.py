@@ -301,3 +301,54 @@ def test_full_load_cycle_from_secrets_file_to_active_http_remote_sink(
         assert sinks[1].url == "https://metrics.invalid/from-file"
     finally:
         db.close()
+
+
+def _broken_remote_cfg() -> MetricsConfig:
+    return MetricsConfig(
+        sinks=["sqlite_local", "http_remote"],
+        sink_configs={"http_remote": SinkDefinition(options={})},
+    )
+
+
+def test_fail_soft_build_keeps_the_local_sink_when_a_remote_one_cannot_be_built(
+    tmp_path: Path,
+) -> None:
+    from lazy_harness.monitoring.sink_setup import build_sinks_fail_soft
+
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        sinks, failures = build_sinks_fail_soft(_broken_remote_cfg(), db=db)
+        assert [type(s).__name__ for s in sinks] == ["SqliteLocalSink"]
+        assert len(failures) == 1
+        assert "http_remote" in failures[0] and "url" in failures[0]
+    finally:
+        db.close()
+
+
+def test_fail_soft_build_matches_build_sinks_when_nothing_is_broken(tmp_path: Path) -> None:
+    from lazy_harness.monitoring.sink_setup import build_sinks_fail_soft
+
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        cfg = MetricsConfig(
+            sinks=["sqlite_local", "http_remote"],
+            sink_configs={"http_remote": SinkDefinition(options={"url": "https://x.invalid/"})},
+        )
+        sinks, failures = build_sinks_fail_soft(cfg, db=db)
+        assert [type(s) for s in sinks] == [type(s) for s in build_sinks(cfg, db=db)]
+        assert failures == []
+    finally:
+        db.close()
+
+
+def test_fail_soft_build_names_an_unknown_sink_and_keeps_the_rest(tmp_path: Path) -> None:
+    from lazy_harness.monitoring.sink_setup import build_sinks_fail_soft
+
+    db = MetricsDB(tmp_path / "m.db")
+    try:
+        cfg = MetricsConfig(sinks=["sqlite_local", "kafka"])
+        sinks, failures = build_sinks_fail_soft(cfg, db=db)
+        assert [type(s).__name__ for s in sinks] == ["SqliteLocalSink"]
+        assert "kafka" in failures[0]
+    finally:
+        db.close()
