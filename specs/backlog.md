@@ -466,7 +466,7 @@ binario (plan §5.2 ítem 4). Prioridad MEDIA.
 
 ### F9 del coherence-audit del 2026-09-19 sigue sin re-derivar (F2–F8 cerrados)
 
-**Estado (2026-10-11):** F2–F8 están cerrados, cada fila de la tabla dice cuándo y por qué PR; la tabla queda como evidencia de cómo se cerró cada uno. Sólo F9 sigue abierto. La decisión de código de F7 tiene su propia entrada («Inferencia con Claude: dos argv de `claude -p` y `run_inference` no escribe a `metrics.db`»).
+**Estado (2026-10-11):** F2–F8 están cerrados, cada fila de la tabla dice cuándo y por qué PR; la tabla queda como evidencia de cómo se cerró cada uno. Sólo F9 sigue abierto. La decisión de código de F7 se tomó y se entregó (#577/#579/#580, 2026-11-01): ver la entrada de §Done «Inferencia con Claude: un solo argv de aislamiento para `claude -p`, y el gasto en `metrics.db`».
 
 **Por qué está acá:** el audit que los levantó vivía en
 `reports/2026-09-19-external-hook-ownership-coherence-audit.md` y se borró al podar
@@ -485,7 +485,7 @@ de abrir el archivo, no de confiar en el reporte:
 | F4 | `specs/adrs/024-mcp-server-orchestration.md:41` | **Cerrado el 2026-09-23** por #452. Estado del 2026-09-20: Dice que el `plan_config` de Codex «ignores `servers`» y que «the first adapter that has to translate an `mcpServers` entry is still unwritten». Falso desde `7585c7c` (#341, 2026-09-16, 0.68.0): `CodexAdapter.plan_config` llama `self._plan_mcp(servers, …)`, que mergea `[mcp_servers.<id>]` en `config.toml`. La otra mitad de la misma oración —`mcp_config_file()` devuelve `""`— **sigue siendo cierta** (`CodexAdapter.mcp_config_file`), así que quien la releyó chequeó la mitad verdadera y la dio por buena. |
 | F5 | `specs/adrs/010-pre-compact-preservation.md:22` | **Cerrado el 2026-09-23** por #451. Estado previo: El punto 2 sigue prometiendo que `parse_transcript` recolecta intents y file paths. Es la otra punta del item abierto de `parse_transcript` de este mismo archivo; ADR-010 se cierra en el PR de ese fix, que ya lo declara como superficie propia. |
 | F6 | `specs/adrs/029-engram-persist-deterministic-mirror.md:17` | **Cerrado el 2026-09-23**, mismo PR. Documenta `git rev-parse --show-toplevel`; el hook usa `--git-common-dir` (`hooks/builtins/engram_persist.py:25`, con el porqué en su docstring `:18` — un worktree tiene que resolver al repo canónico). |
-| F7 | `specs/adrs/039-role-routed-inference.md:79` | **Cerrado en prosa el 2026-09-23** por #453: ADR-039 lo declara no implementado. Estado previo: «Compound-loop spend becomes visible in `metrics.db` for the first time». `llm/claude.py:31` arma `--output-format text`, que no lleva bloque de usage; la contabilidad vive en el camino del agente, que arma `--output-format json` por separado (`ClaudeCodeAdapter.headless_argv`). Son dos argv distintos y sólo uno mide. Desde el 2026-09-23 ADR-039 lo anota como no implementado; la decisión de código pasó el 2026-10-11 a su propia entrada (abajo). |
+| F7 | `specs/adrs/039-role-routed-inference.md:79` | **Cerrado en prosa el 2026-09-23** por #453: ADR-039 lo declara no implementado. Estado previo: «Compound-loop spend becomes visible in `metrics.db` for the first time». `llm/claude.py:31` arma `--output-format text`, que no lleva bloque de usage; la contabilidad vive en el camino del agente, que arma `--output-format json` por separado (`ClaudeCodeAdapter.headless_argv`). Son dos argv distintos y sólo uno mide. Desde el 2026-09-23 ADR-039 lo anota como no implementado; la decisión de código pasó el 2026-10-11 a su propia entrada, cerrada el 2026-11-01 (#577/#579/#580, §Done). |
 | F8 | `specs/adrs/039-role-routed-inference.md:46` | **Cerrado el 2026-09-23** por #453, implementado. Estado previo: Promete que `api_key_env` reusa el mecanismo de `url_env` «verbatim», con «owner-only secrets-file fallback». `_resolve_api_key` (`llm/invoke.py:_resolve_api_key`) hace sólo `os.environ.get(api_key_env, "")`: no hay fallback al secrets file, que del lado del sink sí existe y encima rechaza un archivo que no sea owner-only (`monitoring/sink_setup.py:_read_url_from_secrets_file`). Una key que viva únicamente en el secrets file resuelve a `""`. Desde el 2026-09-23 ADR-039 lo anota como no implementado; queda la decisión de código. |
 | F9 | `specs/backlog.md:209`, en el árbol auditado | **No reproducible, y se anota así en vez de copiarlo.** El ancla está muerta: el audit corrió sobre `76edfedc`, una rama que ya no existe, con este archivo en 775 líneas; hoy tiene otra longitud y esa línea es otra cosa. El propio audit lo describe como una contradicción **documental** contra ADR-056, no como un defecto de código, y las dos superficies que sí puedo leer hoy —la entrada «La semántica de matchers de Codex está medida» y `ADR-056:35-47`— **coinciden** y pinean las dos `codex-cli 0.154.0`. Hay que re-derivarlo desde `failures.jsonl` antes de tratarlo como abierto. |
 
@@ -495,8 +495,8 @@ worktree y **no se hacen en el PR que escribe esta entrada**, porque otra lane
 tiene ese árbol. F5 se cierra con el PR de `parse_transcript`, que ya declara
 ADR-010 como una de sus superficies. F7 y F8 eran los únicos dos que pedían decidir
 algo: si la promesa se corregía o se cumplía. F8 se cumplió (`_resolve_api_key`
-cae a `read_metrics_secret`, `llm/invoke.py:81`); la de F7 sigue sin decidir y
-vive en su propia entrada. F9 primero hay que re-derivarlo.
+cae a `read_metrics_secret`, `llm/invoke.py:81`); la de F7 se cumplió el
+2026-11-01 (#577/#579/#580, entrada de §Done). F9 primero hay que re-derivarlo.
 Prioridad MEDIA.
 
 ### El clasificador de auto mode frena la orquestación de agentes, y su `environment` describía un solo repo

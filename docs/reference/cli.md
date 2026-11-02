@@ -210,9 +210,10 @@ The envelope is the same `lh.exec/v1` document, with `mode` naming which kind of
 | `mode` | `"inference"` — non-null in both modes, so the null token fields are unambiguous |
 | `output` | Always a string, never null. `""` on every failure |
 | `error.kind` | One of the five kinds below; non-null whenever `success` is false |
-| `cost_usd` | `null` for a local backend, together with `cost_source` |
+| `cost_usd` | Always `null` in inference mode, on every backend, together with `cost_source`; the cost is in the `lh status tokens` row |
 | `harness.backend`, `harness.model` | Which one actually answered |
-| `num_turns`, `cache_*`, `session_id` | `null` — structural, not a failure |
+| `num_turns`, `session_id` | `null` — structural, not a failure |
+| `prompt_tokens`, `output_tokens`, `cache_read_tokens`, `cache_creation_tokens` | The provider's usage report; `null` when the backend reports none (see below) |
 
 An envelope with `mode: "agent"` is field-for-field what `lh.exec/v1` emitted before this flag existed; `mode` is the only addition, so no existing consumer has to change.
 
