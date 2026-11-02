@@ -503,7 +503,7 @@ Prioridad MEDIA.
 
 **Acción:** decidir entre (a) cumplir la promesa — un solo constructor del argv de `claude -p` y una escritura de métricas en el camino de inferencia — o (b) bajar ADR-039 a lo que el código hace y dejar el gasto del compound-loop fuera de `metrics.db` de forma explícita. No está elegido. Prioridad MEDIA.
 
-**Mitad hecha el 2026-11-01:** la escritura de métricas. `ClaudeBackend` corre `--output-format json` y `run_inference` graba una fila por modelo vía `llm/usage.py:record_usage` (`workload = "inference:<role>"`), con el mismo pricing que el ingest (ADR-039, *Evolution 2026-11-01*). **Sigue abierta** la otra mitad: `ClaudeCodeAdapter.headless_argv` arma su propio argv, y el envelope de `lh exec --role` sigue con tokens en null en el camino de inferencia.
+**Mitad hecha el 2026-11-01:** la escritura de métricas. `ClaudeBackend` corre `--output-format json` y `run_inference` graba una fila por modelo vía `llm/usage.py:record_usage` (`workload = "inference:<role>"`), con el mismo pricing que el ingest (ADR-039, *Evolution 2026-11-01*). **Sigue abierta** la otra mitad: `ClaudeCodeAdapter.headless_argv` arma su propio argv, el envelope de `lh exec --role` sigue con tokens en null en el camino de inferencia, y `lh exec --role --workload X` graba la fila con `inference:<role>` en vez de `X`.
 
 ### El clasificador de auto mode frena la orquestación de agentes, y su `environment` describía un solo repo
 

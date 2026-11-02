@@ -115,7 +115,9 @@ Because the motivating consumer lives in another repository, `lh exec --role <na
   > `session_stats` reader that ADR-033's isolation took it out of.
   > `ClaudeCodeAdapter.headless_argv` still builds its own argv, and
   > `lh exec --role`'s envelope still reports null tokens on the inference
-  > path; both stay open in the backlog entry above.
+  > path, and `lh exec --role --workload X` stamps `inference:<role>` on the
+  > row rather than `X` (its attribution goes to a fresh id nothing joins);
+  > all three stay open in the backlog entry above.
 - A caller outside this repository can request local inference against a versioned contract, without importing `lazy_harness`.
 - Per-role routing makes "classify locally, distil with Claude" expressible, which the single global backend value could not express.
 - OpenRouter and any other OpenAI-compatible provider become usable without a plaintext key in a chezmoi-managed file.
