@@ -170,7 +170,8 @@ Not every billed call leaves a transcript. The compound-loop evaluator runs `cla
 - One row per model the call billed, keyed by the call's own `session_id`.
 - `workload` is `inference:<role>` (the evaluator is `inference:distill`) and `agent` is the backend type, so `lh status tokens --by workload` separates evaluator spend from user sessions.
 - `profile` and `billing_model` come from the profile the call runs under; `project` is empty.
-- Recorded only when `[monitoring].enabled` is true, and fail-soft: a metrics failure never changes the inference result.
+- Spend, not a session: every reader that counts sessions skips these rows (one predicate, `monitoring/inference_rows.py`), while tokens and cost still sum them.
+- Recorded only when `[monitoring].enabled` is true, and fail-soft: a metrics failure never changes the inference result. A remote sink that cannot be built (an `http_remote` with neither `url` nor `url_env`) does not take the local row with it: each sink is built on its own, `sqlite_local` still gets the row, and one line naming the failed sink goes to stderr.
 - Remote sinks get the row in their outbox; it is delivered on the next `lh metrics ingest` drain.
 
 A backend that does not report usage (the OpenAI-compatible ones today) records nothing.
@@ -243,6 +244,8 @@ Two triggers fire `drain_http_remote`:
 2. **Explicit.** `lh metrics drain` runs only the drain phase. Useful for catching up after a backend outage without re-running the full ingest.
 
 The drainer iterates the claimed batch, POSTs each event, and writes back per-row state:
+
+A sink that cannot be built is handled the same way: `lh metrics ingest` warns on stderr, naming the sink, and ingests into the sinks that did build instead of aborting. `lh metrics drain` still fails on it.
 
 If an ingest drain raises an exception or reports failed deliveries, the command warns on stderr and keeps its usual exit code. The outbox retains failed rows for retry.
 

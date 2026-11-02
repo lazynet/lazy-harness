@@ -10,6 +10,7 @@ from rich.table import Table
 
 from lazy_harness.monitoring.aggregate import resolve_period
 from lazy_harness.monitoring.db import MetricsDB
+from lazy_harness.monitoring.inference_rows import counts_as_session
 from lazy_harness.monitoring.views._helpers import format_tokens
 
 
@@ -48,7 +49,8 @@ def render(db: MetricsDB, period: str) -> RenderableType:
     for r in rows:
         date = r["date"]
         g = by_date[date]
-        g["sessions"].add(r["session"])
+        if counts_as_session(r):
+            g["sessions"].add(r["session"])
         g["projects"].add(r["project"])
         g["input"] += r["input"] + r["cache_read"] + r["cache_create"]
         g["output"] += r["output"]

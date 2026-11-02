@@ -6,6 +6,7 @@ import json
 import os
 import time
 from pathlib import Path
+from typing import Any
 
 import click
 from rich.console import Console
@@ -17,7 +18,7 @@ from lazy_harness.core.paths import config_file, data_dir, expand_path
 from lazy_harness.monitoring.db import MetricsDB, RenameProfileError, resolve_db_path
 from lazy_harness.monitoring.ingest import ingest_all
 from lazy_harness.monitoring.pricing import load_pricing
-from lazy_harness.monitoring.sink_setup import build_sinks, plan_sinks
+from lazy_harness.monitoring.sink_setup import build_sinks, build_sinks_fail_soft, plan_sinks
 from lazy_harness.monitoring.sinks.http_remote import HttpRemoteSink
 
 
@@ -63,7 +64,14 @@ def metrics_ingest(dry_run: bool, verbose: bool) -> None:
 
     try:
         pricing = load_pricing(cfg.monitoring.pricing or None)
-        sinks = [] if dry_run else build_sinks(cfg.metrics, db=db)
+        sinks: list[Any] = []
+        if not dry_run:
+            sinks, sink_failures = build_sinks_fail_soft(cfg.metrics, db=db)
+            for failure in sink_failures:
+                stderr.print(
+                    f"[yellow]Warning:[/yellow] metrics sink {escape(failure)}; "
+                    "continuing with the sinks that built"
+                )
         report = ingest_all(cfg, db, pricing, sinks=sinks)
 
         for sink in sinks:

@@ -29,7 +29,11 @@ ingested them. `workload` is the label a caller passed to `lh exec --workload`, 
 `inference:<role>` for a framework inference call (the compound-loop evaluator
 is `inference:distill`); interactive sessions have none and group under
 `unknown`. An inference row's `agent` is the backend type (`claude`), not an
-adapter: no agent ran. `agent` is the adapter
+adapter: no agent ran. Such a row is spend, not a session: its tokens and cost
+sum into every total and every `--by` group, but no session count includes it
+(the `lh status` header and `Sessions` line, `lh status sessions`, the `sessions`
+figure of `lh status tokens`, `lh metrics status`, and the launch-to-session
+ratio), so an `inference:distill` group reports `0` sessions. `agent` is the adapter
 that produced the row (`claude-code`, `codex`, `copilot`) — a permanent,
 stamped dimension, never re-derived from the profile's current config.
 
@@ -315,7 +319,8 @@ if you want to check the command against the raw table:
 
 ```bash
 sqlite3 ~/.local/share/lazy-harness/metrics.db \
-  'SELECT ROUND(SUM(cost), 2), COUNT(DISTINCT session) FROM session_stats'
+  "SELECT ROUND(SUM(cost), 2), COUNT(DISTINCT CASE WHEN workload LIKE 'inference:%' \
+   THEN NULL ELSE session END) FROM session_stats"
 ```
 
 Those two figures match the `Total` row and the session count in the header. A

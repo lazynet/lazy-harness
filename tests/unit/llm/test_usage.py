@@ -312,3 +312,22 @@ def test_a_failing_metrics_layer_never_changes_the_result(monkeypatch: pytest.Mo
     result = _run(monkeypatch, _UsageBackend(_completion()), _cfg())
 
     assert result.success and result.output == "OK" and result.error is None
+
+
+def test_a_remote_sink_that_cannot_be_built_does_not_drop_the_local_row(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The remote sink is misconfigured, the spend is still real: the row lands
+    in sqlite_local and the failure is named on stderr, not swallowed."""
+    from lazy_harness.core.config import SinkDefinition
+
+    cfg = _cfg()
+    cfg.metrics.sinks = ["sqlite_local", "http_remote"]
+    cfg.metrics.sink_configs = {"http_remote": SinkDefinition(options={})}
+
+    result = _run(monkeypatch, _UsageBackend(_completion()), cfg)
+
+    assert result.success
+    assert len(_rows()) == 1
+    err = capsys.readouterr().err
+    assert "http_remote" in err and "sqlite_local" not in err.split("http_remote")[0]

@@ -890,7 +890,7 @@ lh selftest --fix
 Monitoring dashboard. With no subcommand, prints the overview panel. Ten subcommand views:
 
 - `lh status overview` — at-a-glance summary panel.
-- `lh status sessions` — daily breakdown of sessions, tokens, cost. `--period today|week|month|all`.
+- `lh status sessions` — daily breakdown of sessions, tokens, cost. `--period today|week|month|all`. Framework inference calls (`workload` `inference:<role>`) add their tokens and cost but are not counted as sessions, here or in the `lh status` header.
 - `lh status tokens` — token / cost breakdown across any combination of dimensions. See below.
 - `lh status costs` — legacy cost view, kept for back-compat. `--period 7d|30d|month|all`.
 - `lh status projects` — per-project session counts and last activity.

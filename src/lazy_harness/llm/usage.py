@@ -11,20 +11,20 @@ The row is keyed by the provider's id for the call and labelled
 
 from __future__ import annotations
 
+import sys
 import uuid
 from dataclasses import asdict
 
 from lazy_harness.core.config import Config
 from lazy_harness.llm.base import Completion
 from lazy_harness.monitoring.event_id import derive_event_id
+from lazy_harness.monitoring.inference_rows import WORKLOAD_PREFIX
 from lazy_harness.monitoring.pricing import (
     anthropic_context_class,
     cost_for_billing_model,
     price_api_response,
 )
 from lazy_harness.plugins.contracts import METRIC_EVENT_SCHEMA_VERSION, MetricEvent
-
-WORKLOAD_PREFIX = "inference:"
 
 
 def usage_events(
@@ -142,7 +142,14 @@ def record_usage(completion: Completion, *, role: str, backend: str, cfg: Config
         )
         db = MetricsDB(resolve_db_path())
         try:
-            for sink in sink_setup.build_sinks(cfg.metrics, db=db):
+            sinks, failures = sink_setup.build_sinks_fail_soft(cfg.metrics, db=db)
+            for failure in failures:
+                print(
+                    f"lh: inference usage: metrics sink {failure}; "
+                    "continuing with the sinks that built",
+                    file=sys.stderr,
+                )
+            for sink in sinks:
                 for event in events:
                     sink.write(event)
         finally:
