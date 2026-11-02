@@ -11,6 +11,7 @@ The row is keyed by the provider's id for the call and labelled
 
 from __future__ import annotations
 
+import sys
 import uuid
 from dataclasses import asdict
 
@@ -141,7 +142,14 @@ def record_usage(completion: Completion, *, role: str, backend: str, cfg: Config
         )
         db = MetricsDB(resolve_db_path())
         try:
-            for sink in sink_setup.build_sinks(cfg.metrics, db=db):
+            sinks, failures = sink_setup.build_sinks_fail_soft(cfg.metrics, db=db)
+            for failure in failures:
+                print(
+                    f"lh: inference usage: metrics sink {failure}; "
+                    "continuing with the sinks that built",
+                    file=sys.stderr,
+                )
+            for sink in sinks:
                 for event in events:
                     sink.write(event)
         finally:

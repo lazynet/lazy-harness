@@ -109,3 +109,40 @@ def test_metrics_ingest_runs_local_only_when_the_url_variable_is_unset(
         assert db.aggregate_costs(period="all")["session_count"] == 1
     finally:
         db.close()
+
+
+def test_metrics_ingest_keeps_ingesting_locally_when_a_remote_sink_cannot_be_built(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A remote sink with neither `url` nor `url_env` used to abort the whole
+    ingest with a traceback; the local rows must land and the sink be named."""
+    profile_dir = tmp_path / "claude"
+    _write_fake_session(profile_dir)
+
+    db_path = tmp_path / "m.db"
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        '[harness]\nversion = "1"\n'
+        "[monitoring]\nenabled = true\n"
+        f'db = "{db_path.as_posix()}"\n'
+        "[profiles]\n"
+        'default = "personal"\n'
+        "[profiles.personal]\n"
+        f'config_dir = "{profile_dir.as_posix()}"\n'
+        "roots = []\n"
+        "[metrics]\n"
+        'sinks = ["sqlite_local", "http_remote"]\n'
+        "[metrics.sink_options.http_remote]\n"
+        "timeout_seconds = 3\n"
+    )
+    monkeypatch.setenv("LH_CONFIG_DIR", str(tmp_path))
+
+    result = CliRunner().invoke(metrics, ["ingest"])
+
+    assert result.exit_code == 0, result.output
+    assert "http_remote" in result.output
+    db = MetricsDB(db_path)
+    try:
+        assert len(db.query_stats(period="all")) == 1
+    finally:
+        db.close()
