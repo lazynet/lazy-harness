@@ -212,21 +212,21 @@ count; session notes carrying the marker; the `session_attribution` row.
   plugins — and its own `PreToolUse` guards, `pre-tool-use-security` and
   `pre-tool-use-git-scope`, both `onFailure: block`. A run granted `Bash`,
   `Write` or `Edit` ran them unguarded. *Superseded the same day: the guards
-  are re-injected (runs h, h2 below).*
+  are re-injected (runs i, i2 below).*
 - **MCP servers are dropped too.** Run a's transcript names the user-scope
   servers (`qmd`, `graphify`, `engram`), the plugin's and the claude.ai
   connectors' tools (`grep -c mcp__`: 6); run b's names none (0), and its
   `mcp_instructions_delta` attachment is gone. A caller granting an MCP tool
   through `--allow-tools` would find it absent.
 - `--settings` survives `--setting-sources ""` (e): a hook passed as flag
-  settings fired. *That path is now built: see runs h, h2.*
+  settings fired. *That path is now built: see runs i, i2.*
 - The last `--setting-sources` wins (g): a caller forwarding
   `-- --setting-sources user,project,local` gets the profile back, hooks
   included.
 - Run b cost USD 0.0015 against run a's USD 0.0092 for the same reply: the
   isolated run loads no plugin, skill or hook context.
 
-**Guard re-injection (runs h, h2), same day, same build plus the change.**
+**Guard re-injection (runs i, i2), same day, same build plus the change.**
 `lh exec` now appends `--settings '{"hooks":{"PreToolUse":[…]}}'`, generated
 from the entries deploy installs for the profile. The dry run's groups for
 `claude-lazy` matched the deployed `settings.json` `PreToolUse` groups one for
@@ -239,17 +239,17 @@ re-injected. Both runs: `--profile claude-lazy --allow-tools Bash --tier fast
 
 | Run | Asked to run | Envelope | `hooks.log` | Directory | Engram | Queued | Transcript (hook attachments) | Export | Attribution |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| h | `rm -rf ./doomed-probe-exec-guards` | `BLOCKED …`, `cost_source: agent` | 1 line: `pre-tool-use-security: blocked filesystem: rm -rf ./doomed-probe-exec-guards` | intact | 0 | 0 | yes (0) | none | yes |
-| h2 | `ls ./doomed-probe-exec-guards` | `RAN keep.txt`, `agent` | 0 new lines | intact | 0 | 0 | yes (0) | none | yes |
+| i | `rm -rf ./doomed-probe-exec-guards` | `BLOCKED …`, `cost_source: agent` | 1 line: `pre-tool-use-security: blocked filesystem: rm -rf ./doomed-probe-exec-guards` | intact | 0 | 0 | yes (0) | none | yes |
+| i2 | `ls ./doomed-probe-exec-guards` | `RAN keep.txt`, `agent` | 0 new lines | intact | 0 | 0 | yes (0) | none | yes |
 
-- The guard runs, not merely registers: h's transcript carries the agent-side
+- The guard runs, not merely registers: i's transcript carries the agent-side
   `PreToolUse:Bash hook error: [lh hook pre-tool-use-security --profile
   claude-lazy]: Blocked by lazy-harness PreToolUse: Recursive delete`, and
   the command never executed.
 - Re-injecting `PreToolUse` brings back no session hook: Engram stayed at
   11,514 prompts, the queue at 398 done and 0 pending, the knowledge store at
-  9 session notes, and h's transcript has no `hook_*` attachment.
-- An allowed command still runs (h2): the guards add no refusal of their own.
+  9 session notes, and i's transcript has no `hook_*` attachment.
+- An allowed command still runs (i2): the guards add no refusal of their own.
 
 **What was not measured.** A full lazy-vault command under the new argv (d is
 one read-only call shaped like one); whether `.claude/rules/` in a project

@@ -290,7 +290,8 @@ is not relieved of any defence by this ADR:
 
 - **2026-11-01 — the run no longer boots the profile, and keeps the transcript
   this ADR prices from.** `ClaudeCodeAdapter.headless_argv` adds
-  `--setting-sources ""`, so a `lh exec` run fires no settings or plugin hook:
+  `--setting-sources ""`, so a `lh exec` run fires no plugin hook and no
+  settings hook beyond the tool guards re-injected below:
   measured on Claude Code 2.1.316, one unisolated run stored its prompt in
   Engram, queued a compound-loop task and rewrote a project `handoff.md`; with
   the flag, none of the three. The evaluator's companion flag,
@@ -312,4 +313,4 @@ is not relieved of any defence by this ADR:
   refused by `pre-tool-use-security` (one `hooks.log` line, directory intact),
   with Engram, queue and export still at 0 and `cost_source: "agent"`. The
   Decision is unchanged. Evidence: `specs/designs/claude-code-evidence.md`
-  § `lh exec` isolation, runs h and h2.
+  § `lh exec` isolation, runs i and i2.
