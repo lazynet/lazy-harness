@@ -252,7 +252,19 @@ def knowledge_handoff_now() -> None:
         console.print("[yellow]·[/yellow] Nothing to do (unexpected under force).")
         return
 
-    memory_dir = sessions_dir / "memory"
+    from lazy_harness.hooks.builtins._shared import knowledge_root_for
+    from lazy_harness.hooks.builtins._shared import memory_dir as shared_memory_dir
+
+    # The SessionEnd hook's own resolver, so the evaluation's handoff lands in
+    # the knowledge store the hook would have written to, not in the agent's
+    # legacy project directory. No declared transcript: this command found it.
+    memory_dir = shared_memory_dir(
+        None,
+        agent_dir=agent_dir,
+        sessions_subdir=session_subdir(agent, "sessions"),
+        cwd=cwd,
+        knowledge_root=knowledge_root_for(cfg),
+    )
     task_file = create_task(
         queue_dir=queue_dir,
         cwd=cwd,
