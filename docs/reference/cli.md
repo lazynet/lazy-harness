@@ -184,7 +184,7 @@ Three states, deliberately distinct:
 
 ### Isolation from the profile
 
-A headless run is not a user session, so Claude Code is started with `--setting-sources ""`: no user, project or local settings file is loaded. No settings hook and no plugin hook fires — the run's prompt is not captured into memory, no compound-loop task is queued and no session note is exported. What the settings would have supplied is gone with them: their `permissions` (tools are granted only by `--allow-tools`), their `env` block, their default `model`, the plugins, and the profile's own `PreToolUse` guards, so a run granted `Bash`, `Write` or `Edit` runs them unguarded.
+A headless run is not a user session, so Claude Code is started with `--setting-sources ""`: no user, project or local settings file is loaded. No settings hook and no plugin hook fires — the run's prompt is not captured into memory, no compound-loop task is queued and no session note is exported. What the settings would have supplied is gone with them: their `permissions` (tools are granted only by `--allow-tools`), their `env` block, their default `model`, the plugins, the MCP servers, and the profile's own `PreToolUse` guards, so a run granted `Bash`, `Write` or `Edit` runs them unguarded.
 
 The transcript is kept. The session id `lh exec` pins is how a killed run is still priced and how `--workload` is attributed, and both read it.
 

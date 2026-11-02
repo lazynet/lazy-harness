@@ -212,6 +212,11 @@ count; session notes carrying the marker; the `session_attribution` row.
   plugins — and its own `PreToolUse` guards, `pre-tool-use-security` and
   `pre-tool-use-git-scope`, both `onFailure: block`. A run granted `Bash`,
   `Write` or `Edit` now runs them unguarded.
+- **MCP servers are dropped too.** Run a's transcript names the user-scope
+  servers (`qmd`, `graphify`, `engram`), the plugin's and the claude.ai
+  connectors' tools (`grep -c mcp__`: 6); run b's names none (0), and its
+  `mcp_instructions_delta` attachment is gone. A caller granting an MCP tool
+  through `--allow-tools` would find it absent.
 - `--settings` survives `--setting-sources ""` (e): a hook passed as flag
   settings fired. A re-injection path for the guards exists; it is not built.
 - The last `--setting-sources` wins (g): a caller forwarding
