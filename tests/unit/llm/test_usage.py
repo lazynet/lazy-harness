@@ -46,7 +46,7 @@ def _completion(session_id: str | None = "sess-1") -> Completion:
     return Completion(text="OK", session_id=session_id, service_tier="standard", usage=(_usage(),))
 
 
-def _events(completion: Completion, *, billing_model: str = "flat_rate"):
+def _events(completion: Completion, *, billing_model: str = "flat_rate", workload: str = ""):
     from lazy_harness.llm.usage import usage_events
     from lazy_harness.monitoring.pricing import load_pricing
 
@@ -61,6 +61,7 @@ def _events(completion: Completion, *, billing_model: str = "flat_rate"):
         tenant_id="t",
         host="h",
         day=_DAY,
+        workload=workload,
     )
 
 
@@ -331,3 +332,27 @@ def test_a_remote_sink_that_cannot_be_built_does_not_drop_the_local_row(
     assert len(_rows()) == 1
     err = capsys.readouterr().err
     assert "http_remote" in err and "sqlite_local" not in err.split("http_remote")[0]
+
+
+def test_a_callers_workload_is_appended_after_the_inference_label() -> None:
+    from lazy_harness.monitoring.inference_rows import counts_as_session
+
+    (event,) = _events(_completion(), workload="vault-pass")
+
+    assert event.workload == "inference:distill:vault-pass"
+    assert not counts_as_session({"workload": event.workload})
+
+
+def test_run_inference_records_the_callers_workload(monkeypatch: pytest.MonkeyPatch) -> None:
+    _run(monkeypatch, _UsageBackend(_completion()), _cfg(), workload="vault-pass")
+
+    (row,) = _rows()
+    assert row["workload"] == "inference:distill:vault-pass"
+
+
+def test_run_inference_result_carries_the_usage_it_recorded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result = _run(monkeypatch, _UsageBackend(_completion()), _cfg())
+
+    assert [u.model for u in result.usage] == [_MODEL]

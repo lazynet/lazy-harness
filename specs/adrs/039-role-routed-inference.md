@@ -113,11 +113,21 @@ Because the motivating consumer lives in another repository, `lh exec --role <na
   > does. Attribution labels a session, it does not exclude it, and the
   > transcript would re-enter session export, the compound loop and every
   > `session_stats` reader that ADR-033's isolation took it out of.
-  > `ClaudeCodeAdapter.headless_argv` still builds its own argv, and
-  > `lh exec --role`'s envelope still reports null tokens on the inference
-  > path, and `lh exec --role --workload X` stamps `inference:<role>` on the
-  > row rather than `X` (its attribution goes to a fresh id nothing joins);
-  > all three stay open in the backlog entry above.
+  > `ClaudeCodeAdapter.headless_argv` still builds its own argv; that stays
+  > open in the backlog entry above.
+
+  > **Evolution (2026-11-01, caller label).** `lh exec --role R --workload X`
+  > passes `X` to `run_inference(workload=...)`, and the row is stamped
+  > `inference:R:X` (no `X`: `inference:R`, as before). The `inference:`
+  > prefix is what `monitoring/inference_rows.py` keys on to keep the row out
+  > of every session count, so the caller's label is appended to it, not
+  > substituted for it; a row labelled bare `X` would count as a session.
+  > The attribution `lh exec --role` used to write under a fresh uuid4 is
+  > gone: no transcript exists for the ingest to join it to. The envelope's
+  > token fields are now the sum of the provider's per-model usage
+  > (`InferenceResult.usage`); `cost_usd` stays null, since the stored cost is
+  > the harness's own pricing, computed in `usage_events`, not an envelope
+  > figure.
 - A caller outside this repository can request local inference against a versioned contract, without importing `lazy_harness`.
 - Per-role routing makes "classify locally, distil with Claude" expressible, which the single global backend value could not express.
 - OpenRouter and any other OpenAI-compatible provider become usable without a plaintext key in a chezmoi-managed file.

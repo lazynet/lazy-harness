@@ -8,6 +8,7 @@ than a mock of any of them.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import subprocess
@@ -1312,3 +1313,54 @@ def test_unknown_role_reports_a_typed_failure(role_config: Path) -> None:
     assert code == 70
     assert envelope["mode"] == "inference"
     assert envelope["error"]["kind"] == "backend-unreachable"
+
+
+def test_role_with_workload_hands_it_to_the_seam_and_writes_no_attribution(
+    role_config: Path, metrics_data_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The row `run_inference` writes carries the label; a uuid4 attribution
+    joins nothing, so none is written."""
+    from lazy_harness.cli import exec_cmd as mod
+
+    seen: dict = {}
+
+    def fake(*a: object, **kw: object) -> object:
+        seen.update(kw)
+        return _ok()
+
+    monkeypatch.setattr(mod, "run_inference", fake)
+
+    code, _ = _invoke(["--role", "classify", "--workload", "vault-pass"])
+
+    assert code == 0
+    assert seen["workload"] == "vault-pass"
+    assert _attribution(tmp_path) == {}
+
+
+def test_role_envelope_reports_the_tokens_the_call_spent(
+    role_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.llm.base import ModelUsage
+
+    usage = (
+        ModelUsage("m1", 10, 20, 30, 40, 5),
+        ModelUsage("m2", 1, 2, 3, 4, 0),
+    )
+    _stub_inference(monkeypatch, dataclasses.replace(_ok(), usage=usage))
+
+    _, envelope = _invoke(["--role", "classify"])
+
+    assert envelope["prompt_tokens"] == 11
+    assert envelope["output_tokens"] == 22
+    assert envelope["cache_read_tokens"] == 33
+    assert envelope["cache_creation_tokens"] == 40 + 5 + 4
+
+
+def test_role_envelope_keeps_null_tokens_when_nothing_was_reported(
+    role_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stub_inference(monkeypatch, _ok())
+
+    _, envelope = _invoke(["--role", "classify"])
+
+    assert envelope["prompt_tokens"] is None
