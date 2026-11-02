@@ -1,8 +1,10 @@
 """ClaudeBackend — headless `claude -p` inference (ADR-033).
 
-The subprocess call is the historical `invoke_claude` from
-knowledge/compound_loop.py, extracted verbatim: same argv, prompt on stdin,
-same timeout handling. Failures map to LLMBackendError instead of None.
+The subprocess call started as the historical `invoke_claude` from
+knowledge/compound_loop.py: prompt on stdin, same timeout handling, failures
+mapped to LLMBackendError instead of None. The argv now runs `claude -p`
+isolated from the profile it inherits, so an evaluation fires no hook and
+leaves no transcript (`specs/designs/claude-code-evidence.md`, 2026-11-01).
 """
 
 from __future__ import annotations
@@ -28,7 +30,21 @@ class ClaudeBackend:
         """
         try:
             result = subprocess.run(
-                ["claude", "-p", "--model", model, "--output-format", "text"],
+                [
+                    "claude",
+                    "-p",
+                    "--model",
+                    model,
+                    "--output-format",
+                    "text",
+                    # Empty list loads no user settings, so no settings or
+                    # plugin hook fires; OAuth still works, unlike --bare.
+                    "--setting-sources",
+                    "",
+                    # No transcript under projects/ for ingest, export or the
+                    # compound loop to read back as a user session.
+                    "--no-session-persistence",
+                ],
                 input=prompt,
                 capture_output=True,
                 text=True,
