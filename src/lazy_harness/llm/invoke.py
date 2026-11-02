@@ -15,7 +15,12 @@ from dataclasses import dataclass
 
 from lazy_harness.core.config import Config
 from lazy_harness.core.secrets import read_metrics_secret
-from lazy_harness.llm.base import LLMBackendError, LLMTimeoutError, UsageReportingBackend
+from lazy_harness.llm.base import (
+    LLMBackendError,
+    LLMTimeoutError,
+    ModelUsage,
+    UsageReportingBackend,
+)
 from lazy_harness.llm.registry import build_backend
 from lazy_harness.llm.roles import RoleNotFoundError, resolve_role
 from lazy_harness.llm.usage import record_usage
@@ -48,6 +53,8 @@ class InferenceResult:
     backend: str
     duration_ms: int
     error: InferenceError | None
+    #: What the call billed, per model; empty when the backend reports none.
+    usage: tuple[ModelUsage, ...] = ()
 
 
 def _validate(payload: object, schema: dict) -> str:
@@ -91,6 +98,7 @@ def run_inference(
     timeout: int,
     schema: dict | None = None,
     model: str | None = None,
+    workload: str = "",
 ) -> InferenceResult:
     """Run one single-turn completion through the backend `role` names.
 
@@ -100,7 +108,8 @@ def run_inference(
     behind an invoice. Callers that want one retry with a different role.
 
     `model` overrides the role's resolved model (e.g. `lh memory consolidate
-    --model`) without changing which backend answers the call.
+    --model`) without changing which backend answers the call. `workload` is
+    the caller's label, appended to the recorded row's `inference:<role>`.
     """
     started = time.perf_counter()
 
@@ -132,13 +141,15 @@ def run_inference(
         return _fail("backend-unreachable", str(e), backend=target.type)
 
     model = model or target.model or backend.default_model()
+    usage: tuple[ModelUsage, ...] = ()
 
     try:
         if isinstance(backend, UsageReportingBackend):
             completion = backend.complete_with_usage(prompt, model, timeout, schema=schema)
             # Before the empty and schema checks: an unusable answer was
             # still billed.
-            record_usage(completion, role=role, backend=target.type, cfg=cfg)
+            record_usage(completion, role=role, backend=target.type, cfg=cfg, workload=workload)
+            usage = completion.usage
             output = completion.text
         else:
             output = backend.complete(prompt, model, timeout, schema=schema)
@@ -173,4 +184,5 @@ def run_inference(
         backend=target.type,
         duration_ms=_elapsed_ms(),
         error=None,
+        usage=usage,
     )

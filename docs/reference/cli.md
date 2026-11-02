@@ -234,12 +234,15 @@ These five are exhaustive for `mode: "inference"`; the agent-mode kinds `no-enve
 
 | Flag | With `--role` |
 | --- | --- |
-| `--timeout`, `--workload`, `--profile`, `--dry-run` | Accepted, unchanged |
+| `--timeout`, `--profile`, `--dry-run` | Accepted, unchanged |
+| `--workload` | Accepted; the recorded spend row is labelled `inference:<role>:<label>` |
 | `--no-tools` | Accepted, explicit no-op |
 | `--allow-tools` | **Error** |
 | `--tier`, `--model` | **Error** — the role names the model |
 
 `--no-tools` and `--allow-tools` are not symmetric. On a backend with no tools, `--allow-tools` requests a capability that does not exist and fails loudly; `--no-tools` merely asserts what already holds, so it is accepted. A wrapper may emit it unconditionally without branching on whether it passed `--role`.
+
+The envelope's `prompt_tokens`, `output_tokens`, `cache_read_tokens` and `cache_creation_tokens` are the provider's own usage report, summed over the models the call billed; they stay `null` when the backend reports none. `cost_usd` stays `null` on this path — the cost is in the `lh status tokens` row.
 
 `--dry-run` returns the same envelope shape — `dry_run: true`, `success: true`, `exit_code: 0`, `output: ""` — with the resolved backend, model, `base_url` and, when the backend uses `api_key_env`, whether that variable resolves. Never its value.
 

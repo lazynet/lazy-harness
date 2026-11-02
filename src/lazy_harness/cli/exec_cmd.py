@@ -261,10 +261,9 @@ def _run_inference_mode(
         _emit(envelope)
         raise SystemExit(EXIT_HARNESS_ERROR)
 
-    if workload:
-        _record_attribution(str(uuid.uuid4()), workload)
-
-    result = run_inference(prompt, role=role, cfg=cfg, timeout=int(timeout))
+    # The label rides on the row `run_inference` writes; an attribution keyed
+    # by a fresh uuid would join nothing.
+    result = run_inference(prompt, role=role, cfg=cfg, timeout=int(timeout), workload=workload)
 
     envelope = _base_envelope()
     envelope.update(
@@ -274,6 +273,7 @@ def _run_inference_mode(
             "exit_code": 0 if result.success else _inference_exit(result.error.kind),
             "output": result.output,
             "duration_ms": result.duration_ms,
+            **_usage_tokens(result.usage),
             "error": (
                 None
                 if result.error is None
@@ -289,6 +289,20 @@ def _run_inference_mode(
     )
     _emit(envelope)
     raise SystemExit(envelope["exit_code"])
+
+
+def _usage_tokens(usage: tuple) -> dict:
+    """Token fields from the provider's own report; empty when it gave none."""
+    if not usage:
+        return {}
+    return {
+        "prompt_tokens": sum(u.input_tokens for u in usage),
+        "output_tokens": sum(u.output_tokens for u in usage),
+        "cache_read_tokens": sum(u.cache_read_tokens for u in usage),
+        "cache_creation_tokens": sum(
+            u.cache_creation_tokens + u.cache_creation_1h_tokens for u in usage
+        ),
+    }
 
 
 def _emit_inference_plan(cfg: Config, role: str) -> None:

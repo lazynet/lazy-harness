@@ -7,6 +7,9 @@ a transcript of that one response, written through the same sinks.
 
 The row is keyed by the provider's id for the call and labelled
 `inference:<role>` in `workload`, so it is never mistaken for a user session.
+A caller's own label (`lh exec --workload X`) is appended, `inference:<role>:X`:
+the prefix stays the one thing that says "not a session", and `--by workload`
+still tells the caller's spend apart from the role's.
 """
 
 from __future__ import annotations
@@ -39,10 +42,12 @@ def usage_events(
     tenant_id: str,
     host: str,
     day: str,
+    workload: str = "",
 ) -> list[MetricEvent]:
     """One event per model the call billed, priced as `ingest_profile` prices
     one transcript response (`test_usage_events_price_a_call_exactly_as_...`)."""
     session = completion.session_id or uuid.uuid4().hex
+    label = f"{WORKLOAD_PREFIX}{role}" + (f":{workload}" if workload else "")
     events: list[MetricEvent] = []
     for usage in completion.usage:
         tokens = {
@@ -92,7 +97,7 @@ def usage_events(
                 cache_create=usage.cache_creation_tokens + usage.cache_creation_1h_tokens,
                 cost=cost,
                 host=host,
-                workload=f"{WORKLOAD_PREFIX}{role}",
+                workload=label,
                 # The inference backend, not an agent adapter: no agent ran.
                 agent=backend,
                 billing_model=billing_model,
@@ -109,7 +114,9 @@ def usage_events(
     return events
 
 
-def record_usage(completion: Completion, *, role: str, backend: str, cfg: Config) -> None:
+def record_usage(
+    completion: Completion, *, role: str, backend: str, cfg: Config, workload: str = ""
+) -> None:
     """Write `completion`'s usage through every active sink.
 
     Fail-soft by construction, like `lh exec`'s attribution: accounting about
@@ -139,6 +146,7 @@ def record_usage(completion: Completion, *, role: str, backend: str, cfg: Config
             tenant_id=cfg.metrics.tenant_id,
             host=resolve_host(),
             day=date.today().isoformat(),
+            workload=workload,
         )
         db = MetricsDB(resolve_db_path())
         try:

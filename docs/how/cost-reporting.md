@@ -27,7 +27,9 @@ dimensions: `profile`, `project`, `model`, `host`, `workload`, `agent`, `day`,
 `host` is the machine that produced the sessions, stamped by whichever machine
 ingested them. `workload` is the label a caller passed to `lh exec --workload`, or
 `inference:<role>` for a framework inference call (the compound-loop evaluator
-is `inference:distill`); interactive sessions have none and group under
+is `inference:distill`), or `inference:<role>:<label>` when `lh exec --role`
+was given a `--workload` (filter with `--workload <label>`, a substring match);
+interactive sessions have none and group under
 `unknown`. An inference row's `agent` is the backend type (`claude`), not an
 adapter: no agent ran. Such a row is spend, not a session: its tokens and cost
 sum into every total and every `--by` group, but no session count includes it

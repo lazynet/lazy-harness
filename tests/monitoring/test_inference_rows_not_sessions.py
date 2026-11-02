@@ -159,3 +159,20 @@ def test_no_reader_in_src_counts_sessions_without_the_shared_predicate() -> None
         if collects and "counts_as_session" not in text:
             offenders.append(f"{path.relative_to(src)}: collects sessions without the predicate")
     assert offenders == []
+
+
+def test_a_callers_label_on_an_inference_row_is_spend_under_that_label(tmp_path: Path) -> None:
+    handle = MetricsDB(tmp_path / "labelled.db")
+    try:
+        handle.upsert_event(_event("real-1"))
+        handle.upsert_event(
+            _event("inf-1", workload="inference:distill:vault-pass", output=100, cost=2.0)
+        )
+        totals = handle.aggregate_costs(period="all")
+        agg = agg_mod.aggregate(handle.query_stats(period="all"), ["workload"])
+    finally:
+        handle.close()
+    assert totals["session_count"] == 1
+    by_workload = {g.key["workload"]: g for g in agg.groups}
+    assert by_workload["inference:distill:vault-pass"].session_count == 0
+    assert by_workload["inference:distill:vault-pass"].output == 100
