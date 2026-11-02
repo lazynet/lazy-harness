@@ -158,12 +158,13 @@ Responsibility: convert the just-ended session's JSONL into a clean markdown fil
 Flow:
 
 1. Take the transcript the agent declared on the event when it is already on disk; otherwise locate the latest `*.jsonl` under `<agent runtime dir>/projects/<encoded-cwd>/`, where the runtime dir is the one belonging to the profile the hook was invoked with.
-2. Parse it into metadata + messages. A session is interactive when a `permission-mode` or `last-prompt` record appears anywhere in it (for Codex, a user `response_item`); otherwise it is skipped as `non-interactive`.
-3. Filter sessions under `min_messages` (default 4) — scratch prompts never make it into the knowledge tree.
-4. Classify the session by cwd heuristics (see [ADR-011](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/011-session-export-and-classification.md)) to compute `profile` and `session_type`.
-5. Write to `<store>/sessions/YYYY-MM/YYYY-MM-DD-<short-id>.md` with frontmatter (`session_id`, `cwd`, `project`, `profile`, `session_type`, `branch`, `claude_version`, `messages`) and a body of `## User` / `## Claude` sections.
-6. Atomic write via tempfile + `os.replace` (iCloud / Dropbox safe).
-7. If `qmd` is on PATH, run `qmd update` to re-index.
+2. Skip it as `evaluator` when its first user message is the compound-loop evaluator prompt (`is_evaluator_session`). This gate runs before every other one and outranks `force`: the evaluator is a headless `claude -p` run, and exporting it would file its prompt as a session note.
+3. Parse it into metadata + messages. A session is interactive when a `permission-mode` or `last-prompt` record appears anywhere in it (for Codex, a user `response_item`); otherwise it is skipped as `non-interactive`.
+4. Filter sessions under `min_messages` (default 4) — scratch prompts never make it into the knowledge tree.
+5. Classify the session by cwd heuristics (see [ADR-011](https://github.com/lazynet/lazy-harness/blob/main/specs/adrs/011-session-export-and-classification.md)) to compute `profile` and `session_type`.
+6. Write to `<store>/sessions/YYYY-MM/YYYY-MM-DD-<short-id>.md` with frontmatter (`session_id`, `cwd`, `project`, `profile`, `session_type`, `branch`, `claude_version`, `messages`) and a body of `## User` / `## Claude` sections.
+7. Atomic write via tempfile + `os.replace` (iCloud / Dropbox safe).
+8. If `qmd` is on PATH, run `qmd update` to re-index.
 
 **Where it writes:** `<store>/sessions/YYYY-MM/*.md`, where `<store>` is the knowledge store root and `sessions` is the name its `knowledge.toml` marker declares. Idempotent — re-running on the same session only writes if the new message count exceeds the existing export's.
 
