@@ -55,6 +55,10 @@ from lazy_harness.hooks.event_surface import (
 )
 from lazy_harness.hooks.runner import resolve_profile
 from lazy_harness.hooks.signal_gaps import HookSignalGap, collect_hook_signal_gaps
+from lazy_harness.knowledge.contamination import (
+    EvaluatorContamination,
+    collect_evaluator_contamination,
+)
 from lazy_harness.knowledge.graph_repos import GraphHealth, collect_graph_health, has_errors
 from lazy_harness.llm import LLMBackendError, LLMBackendNotFoundError
 from lazy_harness.llm.invoke import _resolve_api_key
@@ -1105,6 +1109,7 @@ def _doctor_json(cfg: Config) -> tuple[dict, bool]:
         "uncarried_events": [asdict(g) for g in collect_uncarried_events(cfg)],
         "mcp_gaps": [asdict(g) for g in collect_mcp_gaps(cfg)],
         "graph_repos": asdict(graph_health),
+        "evaluator_contamination": _contamination_payload(cfg),
     }, ok
 
 
@@ -1248,6 +1253,56 @@ def _render_scheduler_exits(console: Console, backend: object) -> None:
         console.print(
             f"  [yellow]![/yellow] {escape(name)} — last run exited {code} (logs: {escape(logs)})"
         )
+
+
+_CONTAMINATION_EXAMPLES = 3
+
+
+def _contamination_or_error(cfg: Config) -> tuple[EvaluatorContamination | None, str]:
+    """The collector's answer, or why it had none: a crash is that row's line."""
+    from lazy_harness.hooks.builtins._shared import knowledge_root_for
+
+    try:
+        return collect_evaluator_contamination(knowledge_root_for(cfg)), ""
+    except Exception as e:  # noqa: BLE001 — a broken scan must not take doctor down
+        return None, f"{type(e).__name__}: {e}"
+
+
+def _render_evaluator_contamination(console: Console, cfg: Config) -> None:
+    """Evaluator prompts filed in the store as handoffs or session notes.
+
+    Warning, never failing: like a halted proposal queue it degrades what memory
+    recovers, while the machine keeps working.
+    """
+    result, error = _contamination_or_error(cfg)
+    console.print("\n[bold]Evaluator contamination[/bold]")
+    if result is None:
+        console.print(f"  [yellow]![/yellow] could not be checked: {escape(error)}")
+        return
+    if not result.checked:
+        console.print("  [grey50]·[/grey50] not checked — no readable knowledge store")
+        return
+    if not result.handoffs and not result.sessions:
+        console.print("  [green]✓[/green] none — no evaluator prompt in handoffs or session notes")
+        return
+    console.print(
+        f"  [yellow]![/yellow] {len(result.handoffs)} handoff.md and "
+        f"{len(result.sessions)} session note(s) hold the compound-loop evaluator prompt"
+    )
+    for path in [*result.handoffs, *result.sessions][:_CONTAMINATION_EXAMPLES]:
+        console.print(f"      {escape(contract_path(path))}")
+
+
+def _contamination_payload(cfg: Config) -> dict:
+    result, error = _contamination_or_error(cfg)
+    if result is None:
+        return {"checked": False, "error": error, "handoffs": [], "sessions": []}
+    return {
+        "checked": result.checked,
+        "error": "",
+        "handoffs": [str(p) for p in result.handoffs],
+        "sessions": [str(p) for p in result.sessions],
+    }
 
 
 def _render_halted_proposals(console: Console, cfg: Config) -> None:
@@ -1474,6 +1529,7 @@ def doctor(as_json: bool) -> None:
     if not _render_memory_hygiene(console, _project_memory_dir(agent, cfg, active_profile)):
         ok = False
     _render_halted_proposals(console, cfg)
+    _render_evaluator_contamination(console, cfg)
     _render_scheduler_exits(console, detect_backend(cfg.scheduler.backend, cfg.scheduler.timezone))
 
     from lazy_harness.core.artifact_version import collect_artifact_version_reports

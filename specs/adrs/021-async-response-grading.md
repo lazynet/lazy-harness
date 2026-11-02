@@ -112,3 +112,11 @@ is a per-session audit row, not a backlog item.
 - `lh doctor` aggregates the last seven days in *Memory hygiene*: weak grades
   (`poor`, or `acceptable` with real issues — `is_weak_grade`) over all grades,
   and the three most frequent issues.
+
+## Evolution — 2026-11-01: `lazymind_dir` no longer serves a snapshot
+
+- The 2026-10-09 bullet saying `lazymind_dir` keeps serving the project snapshot
+  of ADR-062 stopped being true with #559 ([ADR-072](072-project-state-is-written-only-at-session-close.md)):
+  the key is only parsed (`load_config`) and written back (`_config_to_dict`) in
+  `core/config.py`, and no other module in `src/` reads it. The Decision above is
+  unchanged.
