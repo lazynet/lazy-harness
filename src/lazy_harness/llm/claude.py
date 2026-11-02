@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import subprocess
 
+from lazy_harness.core.claude_headless import HEADLESS_ISOLATION_FLAGS, HEADLESS_PRINT_FLAG
 from lazy_harness.llm.base import Completion, LLMBackendError, LLMTimeoutError, ModelUsage
 
 
@@ -93,15 +94,10 @@ class ClaudeBackend:
             result = subprocess.run(
                 [
                     "claude",
-                    "-p",
+                    HEADLESS_PRINT_FLAG,
                     "--model",
                     model,
-                    "--output-format",
-                    "json",
-                    # Empty list loads no user settings, so no settings or
-                    # plugin hook fires; OAuth still works, unlike --bare.
-                    "--setting-sources",
-                    "",
+                    *HEADLESS_ISOLATION_FLAGS,
                     # No transcript under projects/ for ingest, export or the
                     # compound loop to read back as a user session.
                     "--no-session-persistence",

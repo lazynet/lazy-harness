@@ -32,6 +32,7 @@ from lazy_harness.agents.base import (
     Verdict,
     WriteOp,
 )
+from lazy_harness.core.claude_headless import HEADLESS_ISOLATION_FLAGS, HEADLESS_PRINT_FLAG
 from lazy_harness.core.paths import expand_path
 
 # Passing `--allowedTools ""` is a no-op: the CLI still grants its default read
@@ -1109,12 +1110,11 @@ class ClaudeCodeAdapter:
             raise ValueError(f"unknown tier {tier!r} for claude-code (known: {known})") from None
 
     def headless_argv(self, *, model: str | None, allowed_tools: list[str] | None) -> list[str]:
-        # An empty source list loads no settings file, so neither settings nor
-        # plugin hooks fire: a headless run is not a user session. Unlike the
-        # evaluator it keeps its transcript, which `lh exec` bills a killed run
-        # from. The guards that go with the settings come back via
+        # Isolation flags are shared with the evaluator (`core/claude_headless`).
+        # Unlike the evaluator it keeps its transcript, which `lh exec` bills a
+        # killed run from. The guards that go with the settings come back via
         # `tool_gate_argv`.
-        argv = ["-p", "--output-format", "json", "--setting-sources", ""]
+        argv = [HEADLESS_PRINT_FLAG, *HEADLESS_ISOLATION_FLAGS]
         if model:
             argv += ["--model", model]
         if allowed_tools:
