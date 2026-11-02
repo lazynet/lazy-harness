@@ -128,6 +128,18 @@ Because the motivating consumer lives in another repository, `lh exec --role <na
   > (`InferenceResult.usage`); `cost_usd` stays null, since the stored cost is
   > the harness's own pricing, computed in `usage_events`, not an envelope
   > figure.
+
+  > **Evolution (2026-11-01, one argv).** The two-argv half is closed (#580). The
+  > isolation contract of a headless `claude -p` (`-p`, `--output-format json`,
+  > `--setting-sources ""`) is defined once in `core/claude_headless.py`
+  > (`HEADLESS_PRINT_FLAG`, `HEADLESS_ISOLATION_FLAGS`), and both
+  > `ClaudeBackend` and `ClaudeCodeAdapter.headless_argv` derive from it. It
+  > sits in `core/` because neither `llm/` nor `agents/` may import the other.
+  > Each builder keeps its own difference: the evaluator adds
+  > `--no-session-persistence` and no tools, `lh exec` keeps its transcript and
+  > re-injects tool guards through `tool_gate_argv`. Both argv are byte-identical
+  > to before, asserted against literals captured before the refactor.
+
 - A caller outside this repository can request local inference against a versioned contract, without importing `lazy_harness`.
 - Per-role routing makes "classify locally, distil with Claude" expressible, which the single global backend value could not express.
 - OpenRouter and any other OpenAI-compatible provider become usable without a plaintext key in a chezmoi-managed file.
