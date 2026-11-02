@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
-from collections.abc import Collection, Iterator
+from collections.abc import Collection, Iterator, Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 
@@ -1112,7 +1112,8 @@ class ClaudeCodeAdapter:
         # An empty source list loads no settings file, so neither settings nor
         # plugin hooks fire: a headless run is not a user session. Unlike the
         # evaluator it keeps its transcript, which `lh exec` bills a killed run
-        # from. Its cost: the profile's PreToolUse guards do not run either.
+        # from. The guards that go with the settings come back via
+        # `tool_gate_argv`.
         argv = ["-p", "--output-format", "json", "--setting-sources", ""]
         if model:
             argv += ["--model", model]
@@ -1121,6 +1122,21 @@ class ClaudeCodeAdapter:
         elif allowed_tools is not None:
             argv += ["--disallowedTools", ",".join(NO_TOOLS)]
         return argv
+
+    def tool_gate_argv(self, hooks: Mapping[str, Sequence[HookEntry]]) -> list[str]:
+        # `--settings` still fires alongside `--setting-sources ""` (probe e,
+        # claude-code-evidence.md § lh exec isolation). A tool gate is an event
+        # whose verdicts can deny the call; `Stop` blocks too, but a turn, not a
+        # tool, and it is one of the session hooks isolation exists to drop.
+        gates: dict[str, list[str | HookEntry]] = {
+            event: list(entries)
+            for event, entries in hooks.items()
+            if entries and Verdict.DENY in _HOOK_EVENTS.get(event, HookSupport("")).verdicts
+        }
+        if not gates:
+            return []
+        generated = self._generate_hook_config(gates)
+        return ["--settings", json.dumps({"hooks": generated})]
 
     def session_argv(self, session_id: str) -> list[str]:
         """Pin the conversation. A session id already in use is refused, not

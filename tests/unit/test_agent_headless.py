@@ -390,3 +390,110 @@ def test_an_adapter_without_session_argv_is_not_a_session_pinning_agent() -> Non
     adapter = _NoPinning()
     assert isinstance(adapter, HeadlessAgent), "must still be usable headlessly"
     assert not isinstance(adapter, SessionPinningAgent)
+
+
+# --- tool-gate re-injection (ToolGatingAgent) ------------------------------
+
+_GATED_CONFIG = """\
+[harness]
+version = "1"
+
+[agent]
+type = "claude-code"
+
+[profiles]
+default = "p"
+
+[profiles.p]
+config_dir = "{config_dir}"
+
+[hooks.session_start]
+scripts = ["context-inject"]
+
+[hooks.session_stop]
+scripts = ["stop-verify-guard"]
+
+[hooks.pre_tool_use]
+scripts = ["pre-tool-use-security", "pre-tool-use-git-scope", "pre-tool-use-read-size"]
+external = [{{ command = "graphify hook-guard read", matcher = "Read|Glob" }}]
+"""
+
+
+def _gated_entries(tmp_path, body: str = _GATED_CONFIG):  # noqa: ANN202
+    from lazy_harness.core.config import load_config
+    from lazy_harness.deploy.engine import hook_entries_for
+
+    path = tmp_path / "config.toml"
+    path.write_text(body.format(config_dir=tmp_path / "cfg"))
+    return hook_entries_for(load_config(path), "p", "lh", report=False)
+
+
+def _reinjected(argv: list[str]) -> dict:
+    return json.loads(argv[argv.index("--settings") + 1])
+
+
+def test_tool_gate_argv_reinjects_exactly_the_pre_tool_use_groups_deploy_writes(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    """`--setting-sources ""` drops the profile's settings.json, guards included.
+
+    The re-injected groups come from the same entries and generator deploy
+    uses, so the deploy side is read off `plan_config`'s settings write, not
+    recomputed: narrowing a matcher or dropping a blocking flag on either path
+    turns this red.
+    """
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    entries = _gated_entries(tmp_path)
+    adapter = ClaudeCodeAdapter()
+    [settings] = [
+        op.artifact
+        for op in adapter.plan_config(entries, {}, {}, binary="lh")
+        if op.artifact is not None and op.relative_path.name == "settings.json"
+    ]
+    deployed = json.loads(settings.content)["hooks"]
+
+    reinjected = _reinjected(adapter.tool_gate_argv(entries))
+
+    assert reinjected == {"hooks": {"PreToolUse": deployed["PreToolUse"]}}
+    assert {"SessionStart", "Stop"} <= set(deployed), "the sample must carry non-gate events"
+
+
+def test_tool_gate_argv_keeps_the_blocking_security_guard(tmp_path) -> None:  # noqa: ANN001
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    groups = _reinjected(ClaudeCodeAdapter().tool_gate_argv(_gated_entries(tmp_path)))
+    [security] = [
+        g
+        for g in groups["hooks"]["PreToolUse"]
+        if "pre-tool-use-security" in g["hooks"][0]["command"]
+    ]
+
+    assert security["hooks"][0]["command"] == "lh hook pre-tool-use-security --profile p"
+    assert security["hooks"][0]["onFailure"] == "block"
+    assert "Bash" in security["matcher"].split("|")
+
+
+def test_tool_gate_argv_is_empty_when_the_profile_declares_no_pre_tool_use(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    body = _GATED_CONFIG.split("[hooks.pre_tool_use]")[0] + "[hooks.pre_tool_use]\nscripts = []\n"
+    entries = _gated_entries(tmp_path, body)
+
+    assert "session_start" in entries
+    assert ClaudeCodeAdapter().tool_gate_argv(entries) == []
+
+
+def test_tool_gate_argv_is_empty_for_no_hooks() -> None:
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    assert ClaudeCodeAdapter().tool_gate_argv({}) == []
+
+
+def test_claude_adapter_satisfies_the_tool_gating_protocol() -> None:
+    from lazy_harness.agents.base import ToolGatingAgent
+    from lazy_harness.agents.claude_code import ClaudeCodeAdapter
+
+    assert isinstance(ClaudeCodeAdapter(), ToolGatingAgent)
