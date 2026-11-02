@@ -25,8 +25,11 @@ dimensions: `profile`, `project`, `model`, `host`, `workload`, `agent`, `day`,
 `week`, `month`.
 
 `host` is the machine that produced the sessions, stamped by whichever machine
-ingested them. `workload` is the label a caller passed to `lh exec --workload`;
-interactive sessions have none and group under `unknown`. `agent` is the adapter
+ingested them. `workload` is the label a caller passed to `lh exec --workload`, or
+`inference:<role>` for a framework inference call (the compound-loop evaluator
+is `inference:distill`); interactive sessions have none and group under
+`unknown`. An inference row's `agent` is the backend type (`claude`), not an
+adapter: no agent ran. `agent` is the adapter
 that produced the row (`claude-code`, `codex`, `copilot`) — a permanent,
 stamped dimension, never re-derived from the profile's current config.
 

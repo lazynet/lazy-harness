@@ -163,6 +163,18 @@ Overrides are merged over `DEFAULT_PRICING` at ingest time via `load_pricing()`,
 
 An override replaces the model's whole rate dict. One written before `cache_create_1h` existed carries no 1-hour rate, so `calculate_cost()` falls back to 2× the override's `input` rather than billing that bucket at zero.
 
+## Inference calls
+
+Not every billed call leaves a transcript. The compound-loop evaluator runs `claude -p --no-session-persistence`, so there is nothing for this walk to find. For those calls `run_inference` is the producer: a backend that reports usage (today the `claude` backend, from its `--output-format json` result envelope) hands it to `llm/usage.py`, which builds the same `MetricEvent` this pipeline would build from a transcript of that one response, priced by the same functions, and writes it through the same sinks.
+
+- One row per model the call billed, keyed by the call's own `session_id`.
+- `workload` is `inference:<role>` (the evaluator is `inference:distill`) and `agent` is the backend type, so `lh status tokens --by workload` separates evaluator spend from user sessions.
+- `profile` and `billing_model` come from the profile the call runs under; `project` is empty.
+- Recorded only when `[monitoring].enabled` is true, and fail-soft: a metrics failure never changes the inference result.
+- Remote sinks get the row in their outbox; it is delivered on the next `lh metrics ingest` drain.
+
+A backend that does not report usage (the OpenAI-compatible ones today) records nothing.
+
 ## Precision tests
 
 The pipeline is covered by `tests/unit/test_ingest.py`. The invariants worth calling out:
