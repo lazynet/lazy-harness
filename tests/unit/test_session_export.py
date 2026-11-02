@@ -598,3 +598,68 @@ classify_rules = []
     )
     cfg = load_config(cfg_path)
     assert cfg.knowledge.classify_rules == []
+
+
+def _evaluator_transcript(path: Path) -> None:
+    from lazy_harness.knowledge.compound_loop import build_prompt
+
+    prompt = build_prompt("p", "/c", "s", "t", "", "", "", "## User\nx")
+    _write_session(
+        path,
+        [
+            {"type": "queue-operation"},
+            {"type": "last-prompt", "timestamp": "2026-04-12T10:00:00-03:00"},
+            {
+                "type": "system",
+                "cwd": "/home/user/project",
+                "timestamp": "2026-04-12T10:00:00-03:00",
+            },
+            {"type": "user", "message": {"content": prompt}},
+            {"type": "assistant", "message": {"content": "{}"}},
+            {"type": "user", "message": {"content": "more"}},
+            {"type": "assistant", "message": {"content": "{}"}},
+        ],
+    )
+
+
+def test_export_session_skips_evaluator_sessions_even_when_forced(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.session_export import export_session
+
+    session = tmp_path / "eval12345.jsonl"
+    _evaluator_transcript(session)
+    out = tmp_path / "out"
+    out.mkdir()
+
+    for force in (False, True):
+        result, reason = export_session(session, out, force=force)
+        assert result is None
+        assert reason == "evaluator"
+    assert list(out.rglob("*.md")) == []
+
+
+def test_export_session_still_exports_a_normal_interactive_session(tmp_path: Path) -> None:
+    from lazy_harness.knowledge.session_export import export_session
+
+    session = tmp_path / "real12345.jsonl"
+    _write_session(
+        session,
+        [
+            {"type": "last-prompt", "timestamp": "2026-04-12T10:00:00-03:00"},
+            {
+                "type": "system",
+                "cwd": "/home/user/project",
+                "timestamp": "2026-04-12T10:00:00-03:00",
+            },
+            {"type": "user", "message": {"content": "implementá el hook"}},
+            {"type": "assistant", "message": {"content": "ok"}},
+            {"type": "user", "message": {"content": "y el test"}},
+            {"type": "assistant", "message": {"content": "listo"}},
+        ],
+    )
+    out = tmp_path / "out"
+    out.mkdir()
+
+    result, reason = export_session(session, out)
+
+    assert reason is None
+    assert result is not None and result.exists()
