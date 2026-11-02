@@ -129,7 +129,7 @@ Because the motivating consumer lives in another repository, `lh exec --role <na
   > the harness's own pricing, computed in `usage_events`, not an envelope
   > figure.
 
-  > **Evolution (2026-11-01, one argv).** The two-argv half is closed. The
+  > **Evolution (2026-11-01, one argv).** The two-argv half is closed (#580). The
   > isolation contract of a headless `claude -p` (`-p`, `--output-format json`,
   > `--setting-sources ""`) is defined once in `core/claude_headless.py`
   > (`HEADLESS_PRINT_FLAG`, `HEADLESS_ISOLATION_FLAGS`), and both
