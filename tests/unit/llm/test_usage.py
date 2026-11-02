@@ -110,18 +110,30 @@ def test_a_call_with_no_provider_session_id_still_gets_its_own_row() -> None:
     assert first.session != second.session
 
 
+@pytest.mark.parametrize(
+    ("model", "cache_read"),
+    [
+        (_MODEL, 14595),
+        # Haiku 5.5 reprices above a 100K prompt (ADR-070): the context class
+        # has to be decided the same way on both paths.
+        ("claude-haiku-5-5", 14595),
+        ("claude-haiku-5-5", 150_000),
+    ],
+)
 def test_usage_events_price_a_call_exactly_as_the_ingest_prices_its_transcript(
-    tmp_path: Path,
+    tmp_path: Path, model: str, cache_read: int
 ) -> None:
     """Two paths answer "what did this response cost": the ingest, for
     transcripts, and this module, for calls that leave none. The same tokens
     must get the same row from both."""
+    from dataclasses import replace
+
     from lazy_harness.core.profiles import ProfileInfo
     from lazy_harness.monitoring.db import MetricsDB
     from lazy_harness.monitoring.ingest import ingest_profile
     from lazy_harness.monitoring.pricing import load_pricing
 
-    usage = _usage()
+    usage = replace(_usage(cache_read_tokens=cache_read), model=model)
     config_dir = tmp_path / "lazy"
     session_dir = config_dir / "projects" / "-w-demo"
     session_dir.mkdir(parents=True)
@@ -130,7 +142,7 @@ def test_usage_events_price_a_call_exactly_as_the_ingest_prices_its_transcript(
         "timestamp": f"{_DAY}T10:00:00",
         "message": {
             "id": "msg_1",
-            "model": _MODEL,
+            "model": model,
             "usage": {
                 "input_tokens": usage.input_tokens,
                 "output_tokens": usage.output_tokens,
@@ -163,7 +175,8 @@ def test_usage_events_price_a_call_exactly_as_the_ingest_prices_its_transcript(
         ingest_profile(prof, db, load_pricing(), sinks=[_Capture()], billing_model=billing_model)
         db.close()
         (ingested,) = captured
-        (recorded,) = _events(_completion(), billing_model=billing_model)
+        completion = Completion(text="OK", session_id="sess-1", usage=(usage,))
+        (recorded,) = _events(completion, billing_model=billing_model)
 
         for name in (
             "input_tokens",

@@ -394,6 +394,21 @@ transcript, so `ClaudeBackend` spend is now unrecorded until `run_inference`
 records it itself ([ADR-039](039-role-routed-inference.md), *Not implemented*).
 The per-consumer evaluator skips stay as defense in depth.
 
+**2026-11-01 — an optional usage-reporting Protocol beside `LLMBackend`.**
+`LLMBackend.complete` still returns `str`; widening it would touch every
+backend and every caller for a value only one backend can supply. Instead
+`llm/base.py` adds `UsageReportingBackend` (`complete_with_usage` → `Completion`:
+text, provider `session_id`, `service_tier`, one `ModelUsage` per billed model)
+and `run_inference` prefers it via `isinstance`, falling back to `complete`
+with nothing recorded. `ClaudeBackend` implements it by switching its argv from
+`--output-format text` to `json` and reading the result envelope; `complete`
+returns the envelope's `result`, stripped, so `parse_response` sees the same
+text as before, and an envelope with `is_error: true` raises
+`LLMBackendError`. `OpenAICompatibleBackend` does not implement it yet. Probes
+in [`claude-code-evidence.md`](../designs/claude-code-evidence.md) §Evaluator
+JSON result envelope; what is recorded, in
+[ADR-039](039-role-routed-inference.md) *Evolution (2026-11-01)*.
+
 ## Implementation
 
 > **Historical.** This sequence describes the 2026-06-11 implementation. Step 7's

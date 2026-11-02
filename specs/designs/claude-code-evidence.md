@@ -3,7 +3,7 @@
 **Status:** two probes recorded — 2026-09-24 against Claude Code 2.1.281, and
 2026-09-29 against 2.1.284 (§ Headless isolation flags), 2026-10-09 against
 2.1.295 and 2.1.283 (§ Hook `onFailure`), and 2026-11-01 against 2.1.316
-(§ Evaluator isolation).
+(§ Evaluator isolation, § Evaluator JSON result envelope).
 **Scope:** the first section owns one fact only — the payload key `hooks/runner.py`'s
 `_caller_agent` uses to tell a Claude Code hook invocation apart from a Codex
 one (ADR-041, Evolution 2026-09-24; ADR-068, Evolution 2026-09-24). It is not
@@ -144,7 +144,7 @@ under the knowledge store's `sessions/` containing the marker.
   `session_stats` only through those transcripts (697 rows above). With them
   gone, `ClaudeBackend` spend is unrecorded until `run_inference` writes usage
   itself, which the text output format does not carry (ADR-039, *Not
-  implemented*).
+  implemented*). *Resolved the same day: § Evaluator JSON result envelope.*
 
 **What was not measured.** A real evaluator prompt under the shipped flags
 (JSON parse rate, grade yield); managed-policy hooks, which this host does not
@@ -154,6 +154,54 @@ set; two extra baseline runs came from debugging the probe script, so the
 probe left three Engram rows, all deleted afterwards with `engram delete
 prompt` (matched by the content pattern `probe-%reply with the single word
 OK.`).
+
+## Evaluator JSON result envelope — observed vs spec
+
+**Claude Code 2.1.316, 2026-11-01, subscription (OAuth) auth.** Question: does
+`--output-format json` under the isolation flags above carry the usage that
+`--no-session-persistence` took away with the transcript, without bringing the
+transcript, a hook, or an Engram row back.
+
+**Method.** `claude -p --model M --output-format json --setting-sources ""
+--no-session-persistence`, `CLAUDE_CONFIG_DIR=~/.claude-lazy`, from an empty
+scratch directory. Prompt `probe-usage-7f3a: reply with the single word OK.`
+(runs i, j) and a `build_prompt` evaluator prompt marked `probe-usage-e2e-9c1d`
+sent through `run_inference(role="distill")` with an isolated `LH_CONFIG_DIR`
+and scratch `metrics.db` (run k). After each run: `find` for the session id
+under `~/.claude-lazy` and `~/.claude`, Engram `user_prompts` matching
+`%probe-usage%`. Run i's stdout is the fixture
+`tests/fixtures/claude-p-json-result.json`.
+
+| Run | Model | Exit | `result` | `session_id` | `total_cost_usd` | Harness price | Transcript | Engram |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| i | `claude-haiku-4-5-20251001` | 0 | `OK` | `bbe45a2d…` | 0.0185705 | 0.0185705 | none | 0 |
+| j | `claude-haiku-5-5` | 0 | `OK` | `170ab1b5…` | 0.00119655 | 0.00119655 | none | 0 |
+| k | `claude-haiku-5-5` (evaluator prompt) | 0 | JSON, `parse_response` OK, 7 keys | `9015bf96…` | — | 0.00184765 | none | 0 |
+
+**Observed vs spec.**
+
+- The envelope is `type: "result"` with `result` (the model's text),
+  `is_error`, `subtype`, `session_id`, `total_cost_usd`, `usage` (snake_case,
+  last turn, with `service_tier` and `cache_creation.ephemeral_{5m,1h}_input_tokens`)
+  and `modelUsage` (camelCase, **per model**, with
+  `cacheCreationEphemeral5mInputTokens`, `cacheCreationEphemeral1hInputTokens`
+  and `costUSD`). `ClaudeBackend` reads `modelUsage`, because one call can bill
+  more than one model and `session_stats` is keyed `(session, model)`.
+- `session_id` is present although `--no-session-persistence` writes no file
+  under it: an id for the call, not for a transcript. It keys the row.
+- The harness pricing table agrees with `costUSD` to the last digit on both
+  models (runs i, j), so the stored row uses the harness price, the same
+  function the ingest uses, and `costUSD` is kept on `ModelUsage` only.
+- An error with exit 0 (`is_error: true`) is not observed here; the parser
+  treats it as `LLMBackendError` rather than return the error text as an
+  evaluation, since `result` would otherwise reach `parse_response`.
+- Run k's row: `profile=claude-lazy`, `workload=inference:distill`,
+  `agent=claude`, `billing_model=flat_rate`, `billed_cost` null
+  (`subscription`), `api_equivalent_cost` 0.00184765 `priced`.
+
+**What was not measured.** An `is_error: true` envelope from a real failure;
+a call billing two models; the remote sink path (run k configured
+`sqlite_local` only).
 
 ## Hook `onFailure` — observed vs changelog
 
