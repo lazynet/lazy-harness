@@ -17,14 +17,13 @@ from dataclasses import asdict
 from lazy_harness.core.config import Config
 from lazy_harness.llm.base import Completion
 from lazy_harness.monitoring.event_id import derive_event_id
+from lazy_harness.monitoring.inference_rows import WORKLOAD_PREFIX
 from lazy_harness.monitoring.pricing import (
     anthropic_context_class,
     cost_for_billing_model,
     price_api_response,
 )
 from lazy_harness.plugins.contracts import METRIC_EVENT_SCHEMA_VERSION, MetricEvent
-
-WORKLOAD_PREFIX = "inference:"
 
 
 def usage_events(
