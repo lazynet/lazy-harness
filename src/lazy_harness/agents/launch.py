@@ -38,7 +38,7 @@ class LaunchPlan:
 
 
 def _project_tmp_dir(cwd: Path) -> Path | None:
-    """`<main checkout>/tmp`, created; `None` outside a repo or if it cannot be.
+    """`<main checkout>/.tmp`, created; `None` outside a repo or if it cannot be.
 
     The main checkout rather than the worktree: a worktree is removed after
     merge, and temp files are keyed to the project, not the branch.
@@ -46,7 +46,7 @@ def _project_tmp_dir(cwd: Path) -> Path | None:
     root = main_repo_root(cwd)
     if root is None:
         return None
-    tmp_dir = root / "tmp"
+    tmp_dir = root / ".tmp"
     try:
         tmp_dir.mkdir(exist_ok=True)
     except OSError:

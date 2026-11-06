@@ -90,7 +90,7 @@ def test_an_agent_launched_in_a_repo_keeps_its_temp_files_in_the_repo_tmp(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Claude Code reads `CLAUDE_CODE_TMPDIR` and ignores `TMPDIR`; Codex and the
-    tools it runs read `TMPDIR`. Both must name `<repo>/tmp`, and it must exist."""
+    tools it runs read `TMPDIR`. Both must name `<repo>/.tmp`, and it must exist."""
     from lazy_harness.agents.launch import resolve_launch
 
     _fake_claude_home(tmp_path, monkeypatch)
@@ -99,9 +99,9 @@ def test_an_agent_launched_in_a_repo_keeps_its_temp_files_in_the_repo_tmp(
 
     plan = resolve_launch(_cfg(tmp_path), cwd=repo / "src")
 
-    assert plan.env["TMPDIR"] == str(repo / "tmp")
-    assert plan.env["CLAUDE_CODE_TMPDIR"] == str(repo / "tmp")
-    assert (repo / "tmp").is_dir()
+    assert plan.env["TMPDIR"] == str(repo / ".tmp")
+    assert plan.env["CLAUDE_CODE_TMPDIR"] == str(repo / ".tmp")
+    assert (repo / ".tmp").is_dir()
 
 
 def test_a_worktree_launch_uses_the_main_checkout_tmp(
@@ -117,8 +117,8 @@ def test_a_worktree_launch_uses_the_main_checkout_tmp(
 
     plan = resolve_launch(_cfg(tmp_path), cwd=repo / ".worktrees" / "wt")
 
-    assert plan.env["TMPDIR"] == str(repo / "tmp")
-    assert plan.env["CLAUDE_CODE_TMPDIR"] == str(repo / "tmp")
+    assert plan.env["TMPDIR"] == str(repo / ".tmp")
+    assert plan.env["CLAUDE_CODE_TMPDIR"] == str(repo / ".tmp")
 
 
 def test_a_launch_outside_any_repo_leaves_the_temp_dir_alone(
@@ -149,4 +149,4 @@ def test_a_launch_without_an_explicit_cwd_uses_the_process_cwd(
 
     plan = resolve_launch(_cfg(tmp_path))
 
-    assert plan.env["TMPDIR"] == str(repo / "tmp")
+    assert plan.env["TMPDIR"] == str(repo / ".tmp")

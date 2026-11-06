@@ -9,7 +9,8 @@ build/
 site/
 .worktrees/
 
-# repo-local TMPDIR for agent sessions (#504)
+# repo-local TMPDIR for agent sessions; /tmp/ is the pre-.tmp location, kept for leftovers
+/.tmp/
 /tmp/
 
 # graphify-out artifacts: generated output, not for versioning (prevents churn from .graphify_root path changes and graph.json size)
