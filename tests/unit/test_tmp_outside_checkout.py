@@ -1,9 +1,9 @@
 """The suite never writes inside a git checkout, whatever TMPDIR says.
 
-An agent session exports `TMPDIR=<repo>/tmp`, so pytest's `tmp_path` landed
+An agent session exports `TMPDIR=<repo>/.tmp`, so pytest's `tmp_path` landed
 inside the repo: tests deriving a project key from `tmp_path` found the outer
 repo instead of their own fixture, and `CLAUDE.md` fixtures left under
-`tmp/pytest-of-*` made `lh repo instructions` fail on the checkout itself.
+`.tmp/pytest-of-*` made `lh repo instructions` fail on the checkout itself.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ def _git_repo(path: Path) -> Path:
 
 def test_a_tempdir_inside_a_checkout_is_relocated_outside_it(tmp_path: Path) -> None:
     repo = _git_repo(tmp_path / "repo")
-    inside = repo / "tmp"
+    inside = repo / ".tmp"
     inside.mkdir()
     outside = tmp_path / "elsewhere"
     outside.mkdir()
@@ -36,7 +36,7 @@ def test_a_tempdir_inside_a_checkout_is_relocated_outside_it(tmp_path: Path) -> 
 
 def test_a_candidate_that_is_itself_in_a_checkout_is_skipped(tmp_path: Path) -> None:
     repo = _git_repo(tmp_path / "repo")
-    inside = repo / "tmp"
+    inside = repo / ".tmp"
     inside.mkdir()
     other_repo_tmp = _git_repo(tmp_path / "other") / "tmp"
     other_repo_tmp.mkdir()
@@ -69,7 +69,7 @@ def _run_child_pytest(repo: Path, *extra: str) -> Path:
         "def test_where(tmp_path):\n    print('TMP_PATH=' + str(tmp_path.resolve()))\n"
     )
     env = {k: v for k, v in os.environ.items() if not k.startswith("PYTEST_")}
-    env["TMPDIR"] = str(repo / "tmp")
+    env["TMPDIR"] = str(repo / ".tmp")
     env["PYTHONPATH"] = str(REPO_ROOT)
     proc = subprocess.run(
         [
@@ -97,18 +97,18 @@ def _run_child_pytest(repo: Path, *extra: str) -> Path:
 
 def test_a_real_pytest_run_with_tmpdir_in_a_checkout_writes_outside_it(tmp_path: Path) -> None:
     repo = _git_repo(tmp_path / "throwaway").resolve()
-    (repo / "tmp").mkdir()
+    (repo / ".tmp").mkdir()
 
     child_tmp_path = _run_child_pytest(repo)
 
     assert not child_tmp_path.is_relative_to(repo), child_tmp_path
-    assert not list((repo / "tmp").iterdir())
+    assert not list((repo / ".tmp").iterdir())
 
 
 def test_a_real_pytest_run_keeps_an_explicit_basetemp(tmp_path: Path) -> None:
     repo = _git_repo(tmp_path / "throwaway").resolve()
-    (repo / "tmp").mkdir()
-    basetemp = repo / "tmp" / "explicit"
+    (repo / ".tmp").mkdir()
+    basetemp = repo / ".tmp" / "explicit"
 
     child_tmp_path = _run_child_pytest(repo, f"--basetemp={basetemp}")
 

@@ -38,19 +38,31 @@ class LaunchPlan:
 
 
 def _project_tmp_dir(cwd: Path) -> Path | None:
-    """`<main checkout>/tmp`, created; `None` outside a repo or if it cannot be.
+    """`<main checkout>/.tmp`, created; `None` outside a repo or if it cannot be.
 
     The main checkout rather than the worktree: a worktree is removed after
     merge, and temp files are keyed to the project, not the branch.
+
+    The directory ignores itself through a `*` `.gitignore`: graphify honours
+    `.gitignore` and `.git/info/exclude` but not the global excludes file, so
+    relying on the user's own ignore would index scratch files into the graph.
+    An existing `.gitignore` is never overwritten; failing to write one is not
+    a launch failure.
     """
     root = main_repo_root(cwd)
     if root is None:
         return None
-    tmp_dir = root / "tmp"
+    tmp_dir = root / ".tmp"
     try:
         tmp_dir.mkdir(exist_ok=True)
     except OSError:
         return None
+    gitignore = tmp_dir / ".gitignore"
+    if not gitignore.exists():
+        try:
+            gitignore.write_text("*\n")
+        except OSError:
+            pass
     return tmp_dir
 
 

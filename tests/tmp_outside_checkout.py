@@ -1,8 +1,8 @@
 """Pytest plugin: keep the suite's temp files out of any git checkout.
 
-An agent session exports `TMPDIR=<repo>/tmp`. Left alone, `tmp_path` lands
+An agent session exports `TMPDIR=<repo>/.tmp`. Left alone, `tmp_path` lands
 inside that repo: a test deriving a project key from its fixture finds the
-outer repo, and `CLAUDE.md` fixtures under `tmp/pytest-of-*` shadow the
+outer repo, and `CLAUDE.md` fixtures under `.tmp/pytest-of-*` shadow the
 repo's `AGENTS.md`, failing `lh repo instructions` on the checkout itself.
 
 The relocation moves `TMPDIR` rather than passing `--basetemp`: pytest wipes a
