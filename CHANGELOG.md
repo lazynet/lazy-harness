@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.92.2](https://github.com/lazynet/lazy-harness/compare/v0.92.1...v0.92.2) (2026-11-06)
+
+
+### Bug Fixes
+
+* keep agent temp files in &lt;repo&gt;/.tmp ([#584](https://github.com/lazynet/lazy-harness/issues/584)) ([f302501](https://github.com/lazynet/lazy-harness/commit/f302501e28320ae1678aa571c2bacdce3c1084b2))
+
 ## [0.92.1](https://github.com/lazynet/lazy-harness/compare/v0.92.0...v0.92.1) (2026-11-02)
 
 
