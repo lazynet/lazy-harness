@@ -4,6 +4,7 @@ structured failure output and `lh run`'s exit path both key off.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -150,3 +151,76 @@ def test_a_launch_without_an_explicit_cwd_uses_the_process_cwd(
     plan = resolve_launch(_cfg(tmp_path))
 
     assert plan.env["TMPDIR"] == str(repo / ".tmp")
+
+
+def test_the_repo_tmp_dir_ignores_itself(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """graphify honours `.gitignore` and `.git/info/exclude`, not the global excludes
+    file, so `.tmp/` carries its own `*` rule rather than relying on the user's."""
+    from lazy_harness.agents.launch import resolve_launch
+
+    _fake_claude_home(tmp_path, monkeypatch)
+    repo = _repo(tmp_path)
+
+    resolve_launch(_cfg(tmp_path), cwd=repo)
+
+    assert (repo / ".tmp" / ".gitignore").read_text() == "*\n"
+
+
+def test_an_existing_tmp_gitignore_is_left_untouched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.agents.launch import resolve_launch
+
+    _fake_claude_home(tmp_path, monkeypatch)
+    repo = _repo(tmp_path)
+    (repo / ".tmp").mkdir()
+    (repo / ".tmp" / ".gitignore").write_text("custom\n")
+
+    resolve_launch(_cfg(tmp_path), cwd=repo)
+
+    assert (repo / ".tmp" / ".gitignore").read_text() == "custom\n"
+
+
+def test_a_tmp_gitignore_that_cannot_be_written_does_not_block_the_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.agents.launch import resolve_launch
+
+    if os.geteuid() == 0:
+        pytest.skip("root ignores directory permissions")
+    _fake_claude_home(tmp_path, monkeypatch)
+    repo = _repo(tmp_path)
+    (repo / ".tmp").mkdir()
+    (repo / ".tmp").chmod(0o500)
+    try:
+        plan = resolve_launch(_cfg(tmp_path), cwd=repo)
+    finally:
+        (repo / ".tmp").chmod(0o700)
+
+    assert plan.env["TMPDIR"] == str(repo / ".tmp")
+    assert plan.env["CLAUDE_CODE_TMPDIR"] == str(repo / ".tmp")
+
+
+def test_git_ignores_the_tmp_dir_without_any_global_excludes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+
+    from lazy_harness.agents.launch import resolve_launch
+
+    _fake_claude_home(tmp_path, monkeypatch)
+    repo = _repo(tmp_path)
+    resolve_launch(_cfg(tmp_path), cwd=repo)
+    (repo / ".tmp" / "x").write_text("scratch")
+    env = {
+        "PATH": os.environ["PATH"],
+        "HOME": str(tmp_path / "nohome"),
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_CONFIG_SYSTEM": "/dev/null",
+    }
+
+    result = subprocess.run(
+        ["git", "check-ignore", "-q", ".tmp/x"], cwd=repo, env=env, capture_output=True
+    )
+
+    assert result.returncode == 0

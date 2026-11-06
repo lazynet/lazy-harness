@@ -42,6 +42,12 @@ def _project_tmp_dir(cwd: Path) -> Path | None:
 
     The main checkout rather than the worktree: a worktree is removed after
     merge, and temp files are keyed to the project, not the branch.
+
+    The directory ignores itself through a `*` `.gitignore`: graphify honours
+    `.gitignore` and `.git/info/exclude` but not the global excludes file, so
+    relying on the user's own ignore would index scratch files into the graph.
+    An existing `.gitignore` is never overwritten; failing to write one is not
+    a launch failure.
     """
     root = main_repo_root(cwd)
     if root is None:
@@ -51,6 +57,12 @@ def _project_tmp_dir(cwd: Path) -> Path | None:
         tmp_dir.mkdir(exist_ok=True)
     except OSError:
         return None
+    gitignore = tmp_dir / ".gitignore"
+    if not gitignore.exists():
+        try:
+            gitignore.write_text("*\n")
+        except OSError:
+            pass
     return tmp_dir
 
 
