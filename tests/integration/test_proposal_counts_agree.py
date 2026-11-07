@@ -70,3 +70,34 @@ def test_every_reader_agrees_after_an_expiry(tmp_path: Path) -> None:
     assert numbered == ["still fresh"]
     assert collect_pending_proposals(memory) == numbered
     assert "1 claude-md proposal(s) pending" in proposals_summary_line(memory)
+    assert _doctor_lines(memory) == ["1 pending proposal(s), oldest", "1 expired in the last 30d"]
+    assert "1 pending · 0 rejected" in _status_output(memory)
+
+
+def _doctor_lines(memory: Path) -> list[str]:
+    """The pending and expired fragments `lh doctor` prints for this memory dir."""
+    import io
+    import re
+    from datetime import UTC, datetime
+
+    from rich.console import Console
+
+    from lazy_harness.cli.doctor_cmd import _render_memory_hygiene
+
+    buf = io.StringIO()
+    console = Console(file=buf, width=200, color_system=None)
+    _render_memory_hygiene(console, memory, now=datetime(2026, 11, 7, tzinfo=UTC))
+    found = re.findall(
+        r"\d+ pending proposal\(s\), oldest|\d+ expired in the last 30d", buf.getvalue()
+    )
+    return found
+
+
+def _status_output(memory: Path) -> str:
+    from click.testing import CliRunner
+
+    from lazy_harness.cli.memory_cmd import memory as memory_group
+
+    result = CliRunner().invoke(memory_group, ["status", "--memory-dir", str(memory)])
+    assert result.exit_code == 0, result.output
+    return result.output
