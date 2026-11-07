@@ -1080,7 +1080,34 @@ def _project_contracts(cfg: Config) -> list[tuple[str, Path]]:
                     continue
                 seen_paths.add(contract)
                 found.append((f"project:{project_key(contract.parent)}", contract))
-    return found
+    return _prefer_cwd_worktree(found)
+
+
+def _prefer_cwd_worktree(found: list[tuple[str, Path]]) -> list[tuple[str, Path]]:
+    """Swap the main checkout's contracts for the cwd worktree's own.
+
+    The scan stops at a repository's root, so a linked worktree is never
+    walked and its (possibly different) contract would go unmeasured. When
+    `lh` runs from inside one, the file in front of the user is the
+    worktree's, so it replaces the main checkout's rows. A working-tree file
+    is being measured here, not a project key: `main_repo_root` stays the
+    identity resolver, `.git` marks the checkout.
+    """
+    from lazy_harness.core.project_identity import main_repo_root
+
+    cwd = Path.cwd().resolve()
+    main = main_repo_root(cwd)
+    if main is None:
+        return found
+    checkout = next((d for d in (cwd, *cwd.parents) if (d / ".git").exists()), None)
+    if checkout is None or checkout == main.resolve():
+        return found
+    main_rows = [(label, path) for label, path in found if path.parent.resolve() == main.resolve()]
+    if not main_rows:
+        return found
+    own = [(label, checkout / path.name) for label, path in main_rows]
+    own = [(label, path) for label, path in own if path.is_file()]
+    return [row for row in found if row not in main_rows] + own
 
 
 @memory.command("rightsize")

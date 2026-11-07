@@ -211,6 +211,45 @@ def test_rightsize_does_not_report_a_repos_own_nested_worktree(tmp_path: Path, m
     assert "999" not in result.output
 
 
+def _real_repo_with_worktree(repos: Path, name: str) -> tuple[Path, Path]:
+    import subprocess
+
+    repo = repos / name
+    repo.mkdir(parents=True)
+    git = ["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t"]
+    subprocess.run([*git, "init", "-q"], check=True, capture_output=True)
+    (repo / "AGENTS.md").write_text("main\n" * 7)
+    subprocess.run([*git, "add", "."], check=True, capture_output=True)
+    subprocess.run([*git, "commit", "-qm", "init"], check=True, capture_output=True)
+    worktree = repo / ".worktrees" / "feat"
+    subprocess.run(
+        [*git, "worktree", "add", "-q", "--detach", str(worktree), "HEAD"],
+        check=True,
+        capture_output=True,
+    )
+    return repo, worktree
+
+
+def test_rightsize_run_from_a_worktree_measures_the_worktrees_contract(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The file measured is the working-tree file of the checkout `lh` runs
+    from: a worktree's AGENTS.md can differ from the main checkout's, and the
+    main checkout's size must not be reported in its place."""
+    repos = tmp_path / "repos"
+    repos.mkdir()
+    _setup(tmp_path, monkeypatch, roots=[repos])
+    _repo, worktree = _real_repo_with_worktree(repos, "widget")
+    (worktree / "AGENTS.md").write_text("worktree\n" * 251)
+    monkeypatch.chdir(worktree)
+
+    result = CliRunner().invoke(memory, ["rightsize"])
+
+    assert result.exit_code == 0, result.output
+    assert " 251 lines" in result.output
+    assert "   7 lines" not in result.output
+
+
 def test_rightsize_does_not_descend_past_a_repos_own_root(tmp_path: Path, monkeypatch) -> None:
     """Isolates the repo-root prune from the `.worktrees` noise-name skip: a
     nested checkout under an arbitrary directory name (a submodule-style
