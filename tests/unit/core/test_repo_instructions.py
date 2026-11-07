@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 from lazy_harness.core.repo_instructions import check_repository
@@ -133,3 +134,55 @@ def test_data_exclusion_cannot_hide_ancestor_shadow(tmp_path: Path) -> None:
     assert _codes(repo, instruction_data=(Path("CLAUDE.md"),)) == [
         ((tmp_path / "CLAUDE.md").as_posix(), "ancestor-claude-md-shadows-agents")
     ]
+
+
+def _git_init(root: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+
+
+def _nested_claude(root: Path, name: str) -> None:
+    (root / "AGENTS.md").write_text(AGENTS_BODY)
+    nested = root / name / "x"
+    nested.mkdir(parents=True)
+    (nested / "CLAUDE.md").write_text("# upstream copy\n")
+
+
+def test_claude_md_under_a_gitignored_dir_is_not_reported(tmp_path: Path) -> None:
+    _git_init(tmp_path)
+    (tmp_path / ".gitignore").write_text("/tmp/\n")
+    _nested_claude(tmp_path, "tmp")
+
+    assert _codes(tmp_path) == []
+
+
+def test_claude_md_under_a_info_exclude_dir_is_not_reported(tmp_path: Path) -> None:
+    _git_init(tmp_path)
+    (tmp_path / ".git" / "info" / "exclude").write_text("/tmp/\n")
+    _nested_claude(tmp_path, "tmp")
+
+    assert _codes(tmp_path) == []
+
+
+def test_claude_md_under_a_tracked_looking_dir_is_still_reported_in_a_git_repo(
+    tmp_path: Path,
+) -> None:
+    _git_init(tmp_path)
+    (tmp_path / ".gitignore").write_text("/tmp/\n")
+    _nested_claude(tmp_path, "pkg")
+
+    assert _codes(tmp_path) == [("pkg/x/CLAUDE.md", "claude-md-shadows-agents")]
+
+
+def test_a_non_git_directory_still_reports_nested_claude_md(tmp_path: Path) -> None:
+    _nested_claude(tmp_path, "tmp")
+
+    assert _codes(tmp_path) == [("tmp/x/CLAUDE.md", "claude-md-shadows-agents")]
+
+
+def test_an_ignored_root_claude_md_is_still_reported(tmp_path: Path) -> None:
+    _git_init(tmp_path)
+    (tmp_path / ".gitignore").write_text("CLAUDE.md\n")
+    (tmp_path / "AGENTS.md").write_text(AGENTS_BODY)
+    (tmp_path / "CLAUDE.md").write_text("# local Claude rules\n")
+
+    assert _codes(tmp_path) == [("CLAUDE.md", "claude-md-shadows-agents")]
