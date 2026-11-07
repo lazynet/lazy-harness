@@ -582,6 +582,15 @@ def _render_memory_hygiene(console: Console, memory_dir: Path, now: datetime | N
         counts.append(f"{n} {label}")
     console.print(f"  [grey50]·[/grey50] {' · '.join(counts)}")
 
+    from lazy_harness.core.proposals import count_expired_since
+
+    expired = count_expired_since(memory_dir, now.date() - timedelta(days=30))
+    if expired:
+        console.print(
+            f"  [grey50]·[/grey50] {expired} expired in the last 30d — "
+            "revive: lh memory proposals expired"
+        )
+
     _render_weak_grades(console, memory_dir / "grades.jsonl", now)
     return ok
 

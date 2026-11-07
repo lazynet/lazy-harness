@@ -8,7 +8,7 @@ import json
 import os
 import re
 import tempfile
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import click
@@ -21,10 +21,13 @@ from lazy_harness.core.paths import config_file
 from lazy_harness.core.proposals import (
     _RATIONALE_PREFIX,
     _RULE_PREFIX,
+    EXPIRED_PROPOSALS_FILE,
     PendingProposal,
     _remove_proposal,
+    append_block,
     parse_proposals,
 )
+from lazy_harness.core.proposals import format_entry_block as _format_entry_block
 from lazy_harness.core.reconcile import detect_schema_drift
 from lazy_harness.llm.invoke import run_inference
 
@@ -285,22 +288,7 @@ def _durable_write(path: Path, content: str) -> None:
 
 
 def _append_block(path: Path, header_comment: str, block: str) -> None:
-    if path.exists():
-        existing = path.read_text()
-        _atomic_write(path, existing.rstrip("\n") + "\n\n" + block)
-    else:
-        _atomic_write(path, header_comment + block)
-
-
-def _format_entry_block(proposal: PendingProposal, status_lines: list[str]) -> str:
-    lines = [f"## {proposal.timestamp}"]
-    lines.extend(status_lines)
-    lines.append("")
-    lines.append(f"{_RULE_PREFIX} {proposal.rule}")
-    if proposal.rationale:
-        lines.append(f"  {_RATIONALE_PREFIX} {proposal.rationale}")
-    lines.append("")
-    return "\n".join(lines)
+    append_block(path, header_comment, block, write=_atomic_write)
 
 
 def _agent_for_active_profile() -> tuple[Config | None, AgentAdapter, Path]:
@@ -718,6 +706,83 @@ def proposals_held_requeue(index: int, max_pending: int | None, memory_dir: Path
         _durable_write(pending_file, (text.rstrip("\n") + "\n\n" if text else header) + block)
         _record_held_disposition(target, identity, row["rule"])
     click.echo(f"Requeued held line {index}: {row['rule']}")
+
+
+_EXPIRED_REQUEUED = "claude-md.expired-requeued.jsonl"
+
+
+@proposals.group("expired", invoke_without_command=True)
+@click.pass_context
+@_MEMORY_DIR_OPTION
+def proposals_expired(ctx: click.Context, memory_dir: Path | None) -> None:
+    """List proposals the age limit moved out of the queue, or revive one."""
+    ctx.obj = memory_dir
+    if ctx.invoked_subcommand is None:
+        _list_expired(memory_dir or _project_memory_dir())
+
+
+def _expired_target(memory_dir: Path | None) -> Path:
+    parent = click.get_current_context().parent
+    group_dir = parent.obj if parent else None
+    if memory_dir and group_dir and memory_dir.resolve() != group_dir.resolve():
+        raise click.UsageError(
+            f"--memory-dir given twice with different values: {group_dir} and {memory_dir}."
+        )
+    return memory_dir or group_dir or _project_memory_dir()
+
+
+def _load_expired(memory_dir: Path) -> tuple[Path, str, list[PendingProposal]]:
+    path = memory_dir / EXPIRED_PROPOSALS_FILE
+    text = path.read_text() if path.is_file() else ""
+    return path, text, parse_proposals(text)
+
+
+def _list_expired(memory_dir: Path) -> None:
+    _, _, expired = _load_expired(memory_dir)
+    if not expired:
+        click.echo(f"No expired claude-md proposals at {memory_dir / EXPIRED_PROPOSALS_FILE}.")
+    for index, proposal in enumerate(expired, start=1):
+        click.echo(f"  {index:>3}  {proposal.timestamp[:10]}  {proposal.rule}")
+
+
+@proposals_expired.command("list")
+@_MEMORY_DIR_OPTION
+def proposals_expired_list(memory_dir: Path | None) -> None:
+    """List expired proposals without changing either file."""
+    _list_expired(_expired_target(memory_dir))
+
+
+@proposals_expired.command("requeue")
+@click.argument("index", type=int)
+@click.option("--max-pending", type=click.IntRange(min=1), default=None)
+@_MEMORY_DIR_OPTION
+def proposals_expired_requeue(index: int, max_pending: int | None, memory_dir: Path | None) -> None:
+    """Move one expired proposal back into the pending queue, dated now."""
+    target = _expired_target(memory_dir)
+    cap = max_pending or _load_config_for_consolidate().compound_loop.max_pending_proposals
+    with memory_dir_lock(target):
+        expired_file, expired_text, expired = _load_expired(target)
+        if index < 1 or index > len(expired):
+            raise click.ClickException(f"No expired proposal {index} — {len(expired)} listed.")
+        proposal = expired[index - 1]
+        pending_file, text, pending = _load_pending(target)
+        if len(pending) >= cap:
+            raise click.ClickException(f"Queue full: {len(pending)} pending >= cap {cap}.")
+        # A fresh header: the original one is already past the age limit and the
+        # next run would expire the rule again.
+        now = datetime.now(UTC).astimezone().isoformat(timespec="seconds")
+        revived = PendingProposal(now, proposal.rule, proposal.rationale, 0, 0, -1)
+        block = _format_entry_block(revived, [])
+        header = (
+            "<!-- claude-md proposals (append-only). "
+            "Review and merge into CLAUDE.md or discard. -->\n\n"
+        )
+        _durable_write(pending_file, (text.rstrip("\n") + "\n\n" if text else header) + block)
+        _durable_write(expired_file, _remove_proposal(expired_text, expired, index - 1))
+        log = target / _EXPIRED_REQUEUED
+        entry = json.dumps({"ts": now, "rule": proposal.rule}, ensure_ascii=False) + "\n"
+        _durable_write(log, (log.read_text() if log.is_file() else "") + entry)
+    click.echo(f"Requeued expired proposal {index}: {proposal.rule}")
 
 
 @proposals.command("list")

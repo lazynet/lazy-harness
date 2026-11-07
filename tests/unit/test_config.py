@@ -1958,3 +1958,60 @@ def test_per_profile_harness_binary_merges_into_an_existing_document(tmp_path: P
     reloaded = load_config(path)
     assert reloaded.profiles.items["personal"].harness_binary == "lh-beta"
     assert "# a comment the user wrote" in path.read_text()
+
+
+def test_compound_loop_proposal_max_age_days_defaults_to_30() -> None:
+    from lazy_harness.core.config import Config
+
+    assert Config().compound_loop.proposal_max_age_days == 30
+
+
+@pytest.mark.parametrize("value", [30, 45, None])
+def test_compound_loop_proposal_max_age_days_survives_round_trip(
+    config_dir: Path, value: int | None
+) -> None:
+    from lazy_harness.core.config import Config, load_config, save_config
+
+    config_file = config_dir / "config.toml"
+    cfg = Config()
+    cfg.compound_loop.proposal_max_age_days = value
+    save_config(cfg, config_file)
+
+    reloaded = load_config(config_file)
+    assert reloaded.compound_loop.proposal_max_age_days == value
+    save_config(reloaded, config_file)
+    assert load_config(config_file).compound_loop.proposal_max_age_days == value
+
+
+@pytest.mark.parametrize(("raw", "expected"), [("45", 45), ("0", None)])
+def test_compound_loop_proposal_max_age_days_survives_merge_onto_existing(
+    config_dir: Path, raw: str, expected: int | None
+) -> None:
+    from lazy_harness.core.config import load_config, save_config
+
+    config_file = config_dir / "config.toml"
+    config_file.write_text(
+        '[harness]\nversion = "1"\n\n[compound_loop]\nenabled = true\n'
+        f"proposal_max_age_days = {raw}\n"
+    )
+
+    save_config(load_config(config_file), config_file)
+
+    again = load_config(config_file)
+    assert again.compound_loop.proposal_max_age_days == expected
+    assert again.compound_loop.enabled is True
+
+
+@pytest.mark.parametrize("raw", ["-3", '"thirty"', "true", "2.5"])
+def test_compound_loop_proposal_max_age_days_rejects_bad_values_naming_the_key(
+    config_dir: Path, raw: str
+) -> None:
+    from lazy_harness.core.config import ConfigError, load_config
+
+    config_file = config_dir / "config.toml"
+    config_file.write_text(
+        f'[harness]\nversion = "1"\n\n[compound_loop]\nproposal_max_age_days = {raw}\n'
+    )
+
+    with pytest.raises(ConfigError, match=r"\[compound_loop\]\.proposal_max_age_days"):
+        load_config(config_file)

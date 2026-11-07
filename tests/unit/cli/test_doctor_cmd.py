@@ -2539,3 +2539,27 @@ def test_halted_queues_survive_a_malformed_dispositions_file(tmp_path: Path) -> 
     out = _unwrapped(buf.getvalue())
     assert "3 pending, 2 held back" in out
     assert "proposals-held-requeued.jsonl" in out
+
+
+def test_render_memory_hygiene_counts_proposals_expired_in_the_last_30_days(
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime
+
+    from lazy_harness.cli.doctor_cmd import _render_memory_hygiene
+
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    (memory / "claude-md.expired.md").write_text(
+        "<!-- expired claude-md proposals (append-only; NOT an immunity registry). -->\n\n"
+        "## 2026-09-01T10:00:00-03:00\nexpired: 2026-10-20\nreason: age > 30 days\n\n"
+        "- **Rule:** recent expiry\n\n"
+        "## 2026-08-01T10:00:00-03:00\nexpired: 2026-09-01\nreason: age > 30 days\n\n"
+        "- **Rule:** old expiry\n"
+    )
+
+    console, buf = _recording_console()
+    now = datetime(2026, 11, 7, 12, 0, tzinfo=UTC)
+    assert _render_memory_hygiene(console, memory, now=now) is True
+
+    assert "1 expired in the last 30d" in buf.getvalue()

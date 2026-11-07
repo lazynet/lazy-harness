@@ -23,12 +23,12 @@ import time
 import unicodedata
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from lazy_harness.core.config import Config
 from lazy_harness.core.memory_store import memory_dir_lock
-from lazy_harness.core.proposals import rule_lines
+from lazy_harness.core.proposals import expire_pending, rule_lines
 from lazy_harness.knowledge.evaluator_prompt import EVALUATOR_PROMPT_HEAD, is_evaluator_prompt
 from lazy_harness.llm.invoke import run_inference
 
@@ -1121,6 +1121,15 @@ def origin_host() -> str:
     return slug
 
 
+def _task_now(timestamp: str) -> datetime:
+    """The task's own timestamp as the clock, falling back to the wall clock."""
+    try:
+        stamp = datetime.fromisoformat(timestamp)
+    except ValueError:
+        return datetime.now(UTC)
+    return stamp if stamp.tzinfo is not None else stamp.replace(tzinfo=UTC)
+
+
 def persist_results(
     data: dict,
     memory_dir: Path,
@@ -1131,6 +1140,7 @@ def persist_results(
     session_id: str = "",
     session_jsonl: Path | None = None,
     max_pending_proposals: int | None = None,
+    proposal_max_age_days: int | None = None,
 ) -> list[str]:
     """Persist decisions/failures/learnings/handoff. Returns a list of summaries
     of what was written, suitable for logging. Atomic writes everywhere."""
@@ -1232,6 +1242,12 @@ deprecated_reason: null
     if proposals:
         proposal_file = memory_dir / "claude-md.proposal.md"
         with memory_dir_lock(memory_dir):
+            # Before the cap check, so a slot an old proposal frees is used by this run.
+            expired = expire_pending(memory_dir, proposal_max_age_days, _task_now(timestamp))
+            if expired:
+                wrote.append(
+                    f"claude_md_proposals: expired {len(expired)} (> {proposal_max_age_days} d)"
+                )
             queued = len(collect_pending_proposals(memory_dir, max_chars=_UNBOUNDED))
             if (
                 max_pending_proposals is not None
@@ -1499,11 +1515,16 @@ def process_task(
     existing_learnings = collect_existing_learnings(learnings_dir)
 
     project_name = project_name_for_cwd(Path(cwd))
-    queue_full = (
-        cl.max_pending_proposals is not None
-        and len(collect_pending_proposals(memory_dir, max_chars=_UNBOUNDED))
-        >= cl.max_pending_proposals
-    )
+    # Expiry runs here as well as in persist_results: a full queue suppresses
+    # proposals, so persist_results would never see one and the queue would
+    # stay full for good.
+    with memory_dir_lock(memory_dir):
+        expire_pending(memory_dir, cl.proposal_max_age_days, _task_now(timestamp))
+        queue_full = (
+            cl.max_pending_proposals is not None
+            and len(collect_pending_proposals(memory_dir, max_chars=_UNBOUNDED))
+            >= cl.max_pending_proposals
+        )
     prompt = build_prompt(
         project_name,
         cwd,
@@ -1546,6 +1567,7 @@ def process_task(
         session_id=session_id,
         session_jsonl=session_jsonl,
         max_pending_proposals=cl.max_pending_proposals,
+        proposal_max_age_days=cl.proposal_max_age_days,
     )
 
     if persisted_insights:

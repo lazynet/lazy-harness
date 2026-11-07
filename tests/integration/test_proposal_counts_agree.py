@@ -51,3 +51,22 @@ def test_compound_loop_sees_what_the_cli_would_number(tmp_path: Path) -> None:
     numbered = [p.rule for p in parse_proposals((memory / "claude-md.proposal.md").read_text())]
 
     assert collect_pending_proposals(memory) == numbered
+
+
+def test_every_reader_agrees_after_an_expiry(tmp_path: Path) -> None:
+    from datetime import UTC, datetime
+
+    from lazy_harness.core.proposals import expire_pending
+
+    memory = _write(
+        tmp_path,
+        "## 2020-01-01T10:00:00-03:00\n\n- **Rule:** long gone\n\n"
+        "## 2026-11-06T10:00:00-03:00\n\n- **Rule:** still fresh\n",
+    )
+
+    expire_pending(memory, 30, datetime(2026, 11, 7, tzinfo=UTC))
+
+    numbered = [p.rule for p in parse_proposals((memory / "claude-md.proposal.md").read_text())]
+    assert numbered == ["still fresh"]
+    assert collect_pending_proposals(memory) == numbered
+    assert "1 claude-md proposal(s) pending" in proposals_summary_line(memory)
