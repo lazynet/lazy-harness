@@ -51,3 +51,53 @@ def test_compound_loop_sees_what_the_cli_would_number(tmp_path: Path) -> None:
     numbered = [p.rule for p in parse_proposals((memory / "claude-md.proposal.md").read_text())]
 
     assert collect_pending_proposals(memory) == numbered
+
+
+def test_every_reader_agrees_after_an_expiry(tmp_path: Path) -> None:
+    from datetime import UTC, datetime
+
+    from lazy_harness.core.proposals import expire_pending
+
+    memory = _write(
+        tmp_path,
+        "## 2020-01-01T10:00:00-03:00\n\n- **Rule:** long gone\n\n"
+        "## 2026-11-06T10:00:00-03:00\n\n- **Rule:** still fresh\n",
+    )
+
+    expire_pending(memory, 30, datetime(2026, 11, 7, tzinfo=UTC))
+
+    numbered = [p.rule for p in parse_proposals((memory / "claude-md.proposal.md").read_text())]
+    assert numbered == ["still fresh"]
+    assert collect_pending_proposals(memory) == numbered
+    assert "1 claude-md proposal(s) pending" in proposals_summary_line(memory)
+    assert _doctor_lines(memory) == ["1 pending proposal(s), oldest", "1 expired in the last 30d"]
+    assert "1 pending · 0 rejected" in _status_output(memory)
+
+
+def _doctor_lines(memory: Path) -> list[str]:
+    """The pending and expired fragments `lh doctor` prints for this memory dir."""
+    import io
+    import re
+    from datetime import UTC, datetime
+
+    from rich.console import Console
+
+    from lazy_harness.cli.doctor_cmd import _render_memory_hygiene
+
+    buf = io.StringIO()
+    console = Console(file=buf, width=200, color_system=None)
+    _render_memory_hygiene(console, memory, now=datetime(2026, 11, 7, tzinfo=UTC))
+    found = re.findall(
+        r"\d+ pending proposal\(s\), oldest|\d+ expired in the last 30d", buf.getvalue()
+    )
+    return found
+
+
+def _status_output(memory: Path) -> str:
+    from click.testing import CliRunner
+
+    from lazy_harness.cli.memory_cmd import memory as memory_group
+
+    result = CliRunner().invoke(memory_group, ["status", "--memory-dir", str(memory)])
+    assert result.exit_code == 0, result.output
+    return result.output

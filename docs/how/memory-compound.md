@@ -150,8 +150,10 @@ Same format, different fields:
  "root_cause":"Worktree was not gitignored; test discovery picked up shadow files",
  "resolution":"Added .worktrees/ to .gitignore and re-ran pytest from repo root",
  "prevention":"Every feature branch uses a dedicated worktree under .worktrees/ and the dir is in .gitignore",
- "project":"lazy-harness","tags":["testing","worktrees"]}
+ "project":"lazy-harness","session_id":"abcd1234-…","tags":["testing","worktrees"]}
 ```
+
+Rows written before `session_id` existed lack it; the duplicate guard below ignores them.
 
 The `prevention` field is the critical one — this is what the `context-inject` hook surfaces in `## Recent history` on the next session start, specifically to put the prevention in the agent's face before it repeats the same mistake.
 
@@ -272,11 +274,13 @@ The file is append-only from the worker's side. Pending entries are reviewed wit
 
 When a batch would exceed the pending cap, the worker records it in `proposals-held.jsonl` under the same memory lock. `lh memory proposals held` lists those source lines without modifying them; `held requeue <N>` selects one line for pending review when capacity permits. The command keeps the source file and writes a disposition to `proposals-held-requeued.jsonl`. It flushes the pending replacement before the disposition replacement. A source marker in the pending entry lets a retry, or an accept/reject/apply operation, finish the disposition after an interrupted process without adding the proposal twice. Malformed held lines stay visible as diagnostics and cannot be selected. Directory syncing is attempted where supported, so this protocol does not promise power-loss recovery on filesystems that reject it.
 
-The grading prompt also receives the last 30 entries from `failures.jsonl` under a `## Recorded failures from previous sessions` section. When the same root cause shows up two or more times — across sessions or within one — the LLM is instructed to emit a proposal whose rule starts with `[EVITAR]`, capturing the prevention. Repeated mistakes graduate into candidate rules instead of accumulating silently; the human gate on merging stays unchanged. `lh doctor` reports the state of this pipeline in its *Memory hygiene* section: `MEMORY.md` size against both the 200-line and the 12KB cap, pending proposal count and age, accepted/rejected totals, and the weak session grades of the last seven days from `grades.jsonl`.
+A pending proposal also ages out. Under the same memory lock, before the cap is checked, the worker moves every pending proposal whose `## <timestamp>` header is older than `[compound_loop].proposal_max_age_days` (default 30; `0` disables) to `claude-md.expired.md`. It runs when a task is processed as well as when results are persisted, because a full queue suppresses new proposals and would otherwise never free a slot. A header that does not parse is never expired. The expired file is **not** an immunity registry: the grading prompt never reads it, so an expired rule can be proposed again. `lh memory proposals expired` lists it and `expired requeue <N>` revives one, dated now. The lifecycle of a proposal is therefore pending, then accepted, rejected, expired or held.
+
+The grading prompt also receives the last 30 entries from `failures.jsonl` under a `## Recorded failures from previous sessions` section. When the same root cause shows up two or more times — across sessions or within one — the LLM is instructed to emit a proposal whose rule starts with `[EVITAR]`, capturing the prevention. Repeated mistakes graduate into candidate rules instead of accumulating silently; the human gate on merging stays unchanged. `lh doctor` reports the state of this pipeline in its *Memory hygiene* section: `MEMORY.md` size against both the 200-line and the 12KB cap, pending proposal count and age, accepted/rejected totals, the proposals expired in the last 30 days, and the weak session grades of the last seven days from `grades.jsonl`.
 
 ## De-duplication — why the same learning does not appear twice
 
-Every worker invocation passes the current tail of decisions, failures, and learnings into the prompt with explicit anti-dup instructions ("avoid duplicates", "Do NOT repeat these or semantic equivalents"). The LLM is the dedup mechanism — a semantic filter, not a string match.
+Every worker invocation passes the current tail of decisions, failures, and learnings into the prompt with explicit anti-dup instructions ("avoid duplicates", "Do NOT repeat these or semantic equivalents"). For decisions and learnings the LLM is the dedup mechanism — a semantic filter, not a string match. Failures get a deterministic second guard, because re-evaluating a growing session made the grader reword the same failure on every run: `persist_results` skips a failure whose summary overlaps a failure already recorded for the **same** `session_id` (token-set Jaccard of at least `FAILURE_DEDUPE_JACCARD`, 0.6, after lowercasing, accent folding and dropping stopwords and tokens of two characters or fewer) and reports it as `failure: skipped duplicate of this session`. The same failure from another session is kept: a repeat across sessions is the signal `[EVITAR]` promotion depends on.
 
 This is why `collect_existing_learnings` has a `limit` parameter (default 50): the prompt has to stay bounded, but 50 entries is enough to cover the semantic neighborhood of "what was I learning in the last few weeks".
 

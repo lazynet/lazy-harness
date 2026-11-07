@@ -276,6 +276,11 @@ class CompoundLoopConfig:
     #: discard: a queue nobody drains silently crowded the session-start budget
     #: for months.
     max_pending_proposals: int = 10
+    #: Age in days past which a pending claude-md proposal is moved to
+    #: claude-md.expired.md. A queue nobody drains otherwise stays full for
+    #: good: at the cap the evaluator is no longer asked for proposals, so
+    #: nothing ever frees a slot. None disables (written as 0, TOML has no null).
+    proposal_max_age_days: int | None = 30
 
 
 @dataclass
@@ -440,6 +445,19 @@ def _parse_llm(raw: object) -> LLMConfig:
 
 
 _HOOK_THRESHOLD_KEYS = ("claude_md_max_lines", "claude_md_max_bytes")
+
+
+def _parse_proposal_max_age_days(raw: dict[str, Any]) -> int | None:
+    default = CompoundLoopConfig.proposal_max_age_days
+    if "proposal_max_age_days" not in raw:
+        return default
+    value = raw["proposal_max_age_days"]
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ConfigError(
+            f"[compound_loop].proposal_max_age_days={value!r} must be a non-negative integer "
+            "(0 disables expiry)"
+        )
+    return value or None
 
 
 def _parse_hook_thresholds(raw: dict[str, Any]) -> dict[str, int]:
@@ -915,6 +933,7 @@ def load_config(path: Path) -> Config:
             max_pending_proposals=cl_raw.get(
                 "max_pending_proposals", CompoundLoopConfig.max_pending_proposals
             ),
+            proposal_max_age_days=_parse_proposal_max_age_days(cl_raw),
         )
 
     cfg.llm = _parse_llm(raw.get("llm", {}))
@@ -1053,6 +1072,7 @@ def _config_to_dict(cfg: Config) -> dict[str, Any]:
             "backend": cfg.compound_loop.backend,
             "backend_options": cfg.compound_loop.backend_options,
             "max_pending_proposals": cfg.compound_loop.max_pending_proposals,
+            "proposal_max_age_days": cfg.compound_loop.proposal_max_age_days or 0,
         },
     }
 

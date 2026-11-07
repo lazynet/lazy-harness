@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,7 @@ import pytest
 
 from lazy_harness.agents.base import HookEvent
 from lazy_harness.core.config import CompoundLoopConfig, Config
+from lazy_harness.core.proposals import EXPIRED_PROPOSALS_FILE, expire_pending, parse_proposals
 from lazy_harness.knowledge.compound_loop import (
     HELD_PROPOSALS_FILE,
     AgentDispatch,
@@ -2702,7 +2704,7 @@ def test_process_task_feeds_pending_proposals_into_prompt(tmp_path: Path, monkey
         return json.dumps({"decisions": [], "failures": [], "learnings": [], "handoff": []})
 
     _stub_run_inference(monkeypatch, fake_invoke)
-    outcome = process_task(task, _cfg(), learnings)
+    outcome = process_task(task, _cfg(proposal_max_age_days=None), learnings)
     assert outcome.was_processed
     assert "already pending review" in captured["prompt"]
     assert "- Verify a tool's effect, not its exit code" in captured["prompt"]
@@ -2731,7 +2733,7 @@ def test_process_task_honours_the_configured_pending_cap(tmp_path: Path, monkeyp
     _stub_run_inference(monkeypatch, fake_invoke)
     outcome = process_task(
         task,
-        _cfg(max_pending_proposals=3),
+        _cfg(max_pending_proposals=3, proposal_max_age_days=None),
         tmp_path / "Learnings",
     )
 
@@ -3228,7 +3230,9 @@ def test_process_task_omits_proposals_from_the_prompt_when_the_queue_is_full(
         return "{}"
 
     _stub_run_inference(monkeypatch, fake_invoke)
-    process_task(task, _cfg(max_pending_proposals=10), tmp_path / "Learnings")
+    process_task(
+        task, _cfg(max_pending_proposals=10, proposal_max_age_days=None), tmp_path / "Learnings"
+    )
 
     assert "claude_md_proposals" not in captured["prompt"]
     assert "already pending review" not in captured["prompt"]
@@ -3248,7 +3252,9 @@ def test_process_task_asks_for_proposals_while_the_queue_has_room(
         return "{}"
 
     _stub_run_inference(monkeypatch, fake_invoke)
-    process_task(task, _cfg(max_pending_proposals=10), tmp_path / "Learnings")
+    process_task(
+        task, _cfg(max_pending_proposals=10, proposal_max_age_days=None), tmp_path / "Learnings"
+    )
 
     assert "claude_md_proposals" in captured["prompt"]
     assert "already pending review" in captured["prompt"]
@@ -3501,3 +3507,349 @@ def test_slim_handoff_records_provenance_frontmatter(tmp_path: Path) -> None:
     assert float(meta["source_mtime"]) > 0
     assert meta.get("source_jsonl") == str(session)
     assert body.startswith("# Handoff (slim)")
+
+
+# --- intra-session failure dedupe ---
+
+_HERD_A = "Propuso un plan de /herd de 15 PRs de toda la cuenta en vez del repo del CWD"
+# Reworded by the grader on a later run of the same session.
+_HERD_B = "Propuso un plan de /herd de 15 PRs de toda la cuenta y no del repo del CWD"
+_EXPORT = "Imprimió completa la export_url en la salida de la herramienta"
+
+
+def _failure_data(summary: str) -> dict[str, Any]:
+    return {
+        "decisions": [],
+        "failures": [{"summary": summary, "root_cause": "rc", "resolution": "r"}],
+        "learnings": [],
+        "handoff": [],
+    }
+
+
+def _persist_failure(tmp_path: Path, summary: str, session_id: str, ts: str) -> list[str]:
+    return persist_results(
+        _failure_data(summary),
+        tmp_path / "memory",
+        tmp_path / "Learnings",
+        "proj",
+        ts,
+        session_id=session_id,
+    )
+
+
+def _failure_rows(tmp_path: Path) -> list[dict[str, Any]]:
+    path = tmp_path / "memory" / "failures.jsonl"
+    return [json.loads(line) for line in path.read_text().splitlines()]
+
+
+def test_persist_results_skips_reworded_failure_from_the_same_session(tmp_path: Path) -> None:
+    _persist_failure(tmp_path, _HERD_A, "sess-1", "2026-11-05T10:00:00-03:00")
+    wrote = _persist_failure(tmp_path, _HERD_B, "sess-1", "2026-11-05T14:00:00-03:00")
+
+    assert len(_failure_rows(tmp_path)) == 1
+    assert any("skipped duplicate of this session" in line for line in wrote)
+
+
+# The pair the design named from the real case. Its Jaccard similarity is 0.43,
+# under FAILURE_DEDUPE_JACCARD, so it is a documented false negative of the
+# chosen threshold (specs/backlog.md), not a pair the dedupe catches.
+_HERD_REAL_A = "Propuso un plan de /herd de 15 PRs de toda la cuenta en vez del repo del CWD"
+_HERD_REAL_B = (
+    "Propuso un plan de /herd de 15 PRs de toda la cuenta y declaró 'Preflight OK' "
+    "con git status no vacío"
+)
+
+
+def test_the_real_herd_pair_is_a_documented_false_negative_at_the_threshold(
+    tmp_path: Path,
+) -> None:
+    _persist_failure(tmp_path, _HERD_REAL_A, "sess-1", "2026-11-05T10:00:00-03:00")
+    wrote = _persist_failure(tmp_path, _HERD_REAL_B, "sess-1", "2026-11-05T14:00:00-03:00")
+
+    assert len(_failure_rows(tmp_path)) == 2
+    assert not any("skipped duplicate" in line for line in wrote)
+
+
+def test_persist_results_keeps_the_same_failure_from_another_session(tmp_path: Path) -> None:
+    _persist_failure(tmp_path, _HERD_A, "sess-1", "2026-11-05T10:00:00-03:00")
+    _persist_failure(tmp_path, _HERD_B, "sess-2", "2026-11-05T14:00:00-03:00")
+
+    assert len(_failure_rows(tmp_path)) == 2
+
+
+def test_persist_results_keeps_distinct_failures_from_one_session(tmp_path: Path) -> None:
+    _persist_failure(tmp_path, _HERD_A, "sess-1", "2026-11-05T10:00:00-03:00")
+    _persist_failure(tmp_path, _EXPORT, "sess-1", "2026-11-05T14:00:00-03:00")
+
+    assert len(_failure_rows(tmp_path)) == 2
+
+
+def test_failure_rows_carry_session_id(tmp_path: Path) -> None:
+    _persist_failure(tmp_path, _HERD_A, "sess-1", "2026-11-05T10:00:00-03:00")
+
+    assert _failure_rows(tmp_path)[0]["session_id"] == "sess-1"
+
+
+def test_legacy_rows_without_session_id_never_suppress(tmp_path: Path) -> None:
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    legacy = {"ts": "2026-11-01T10:00:00-03:00", "type": "failure", "summary": _HERD_B}
+    (memory / "failures.jsonl").write_text(json.dumps(legacy) + "\n")
+
+    _persist_failure(tmp_path, _HERD_B, "sess-1", "2026-11-05T14:00:00-03:00")
+
+    assert len(_failure_rows(tmp_path)) == 2
+
+
+# --- expiring pending proposals by age ---
+
+
+def _aged_queue(memory: Path, stamps: list[str]) -> None:
+    memory.mkdir(parents=True, exist_ok=True)
+    body = "\n\n".join(f"## {ts}\n\n- **Rule:** rule from {ts[:10]}" for ts in stamps)
+    (memory / "claude-md.proposal.md").write_text(body + "\n")
+
+
+_NOW = datetime(2026, 11, 7, 12, 0, tzinfo=UTC)
+
+
+def test_expire_moves_old_pending_to_expired_registry(tmp_path: Path) -> None:
+    memory = tmp_path / "memory"
+    _aged_queue(memory, ["2026-10-07T10:00:00-03:00", "2026-11-02T10:00:00-03:00"])
+
+    expired = expire_pending(memory, 30, _NOW)
+
+    assert [p.rule for p in expired] == ["rule from 2026-10-07"]
+    pending = (memory / "claude-md.proposal.md").read_text()
+    assert "rule from 2026-11-02" in pending
+    assert "rule from 2026-10-07" not in pending
+    registry = (memory / EXPIRED_PROPOSALS_FILE).read_text()
+    assert "rule from 2026-10-07" in registry
+    assert "expired: 2026-11-07" in registry
+    assert "reason: age > 30 days" in registry
+
+
+def test_expired_rules_are_not_in_the_immunity_registry(tmp_path: Path) -> None:
+    memory = tmp_path / "memory"
+    _aged_queue(memory, ["2026-10-07T10:00:00-03:00"])
+
+    expire_pending(memory, 30, _NOW)
+
+    assert "rule from 2026-10-07" not in "\n".join(collect_rejected_proposals(memory))
+    assert not (memory / "claude-md.rejected.md").exists()
+
+
+def test_expiry_frees_the_cap_in_the_same_run(tmp_path: Path) -> None:
+    memory = tmp_path / "memory"
+    _aged_queue(
+        memory,
+        ["2026-09-01T10:00:00-03:00", "2026-09-02T10:00:00-03:00"]
+        + [f"2026-11-0{i}T10:00:00-03:00" for i in range(1, 9)],
+    )
+    data = _proposal_data("new rule one")
+    data["claude_md_proposals"].append({"rule": "new rule two", "rationale": "why"})
+
+    wrote = persist_results(
+        data,
+        memory,
+        tmp_path / "Learnings",
+        "proj",
+        "2026-11-07T10:00:00-03:00",
+        max_pending_proposals=10,
+        proposal_max_age_days=30,
+    )
+
+    pending = (memory / "claude-md.proposal.md").read_text()
+    assert "new rule one" in pending and "new rule two" in pending
+    assert not (memory / HELD_PROPOSALS_FILE).exists()
+    assert any("expired 2" in line for line in wrote)
+
+
+def test_process_task_reenables_proposals_after_expiry(tmp_path: Path, monkeypatch) -> None:
+    memory = tmp_path / "memory"
+    _aged_queue(memory, [f"2020-01-{i:02d}T10:00:00-03:00" for i in range(1, 11)])
+    session = _interactive_session(tmp_path)
+    task = create_task(tmp_path / "queue", Path("/tmp/proj"), session, "abcd1234", memory)
+    captured: dict[str, str] = {}
+
+    def fake_invoke(prompt: str, model: str, timeout: int) -> str:
+        captured["prompt"] = prompt
+        return "{}"
+
+    _stub_run_inference(monkeypatch, fake_invoke)
+    process_task(
+        task,
+        _cfg(max_pending_proposals=10, proposal_max_age_days=30),
+        tmp_path / "Learnings",
+    )
+
+    assert "claude_md_proposals" in captured["prompt"]
+
+
+def test_process_task_keeps_a_full_queue_halted_when_expiry_is_off(
+    tmp_path: Path, monkeypatch
+) -> None:
+    memory = tmp_path / "memory"
+    _aged_queue(memory, [f"2020-01-{i:02d}T10:00:00-03:00" for i in range(1, 11)])
+    session = _interactive_session(tmp_path)
+    task = create_task(tmp_path / "queue", Path("/tmp/proj"), session, "abcd1234", memory)
+    captured: dict[str, str] = {}
+
+    def fake_invoke(prompt: str, model: str, timeout: int) -> str:
+        captured["prompt"] = prompt
+        return "{}"
+
+    _stub_run_inference(monkeypatch, fake_invoke)
+    process_task(
+        task,
+        _cfg(max_pending_proposals=10, proposal_max_age_days=None),
+        tmp_path / "Learnings",
+    )
+
+    assert "claude_md_proposals" not in captured["prompt"]
+
+
+def _two_aged_proposals_task(tmp_path: Path) -> tuple[Path, Path]:
+    memory = tmp_path / "memory"
+    _aged_queue(memory, ["2020-01-01T10:00:00-03:00", "2020-01-02T10:00:00-03:00"])
+    session = _interactive_session(tmp_path)
+    task = create_task(tmp_path / "queue", Path("/tmp/proj"), session, "abcd1234", memory)
+    return memory, task
+
+
+def test_process_task_reports_the_expiry_it_performed(tmp_path: Path, monkeypatch) -> None:
+    memory, task = _two_aged_proposals_task(tmp_path)
+    _stub_run_inference(
+        monkeypatch,
+        lambda prompt, model, timeout: json.dumps(_proposal_data("brand new rule")),
+    )
+
+    outcome = process_task(
+        task,
+        _cfg(max_pending_proposals=10, proposal_max_age_days=30),
+        tmp_path / "Learnings",
+    )
+
+    assert "claude_md_proposals: expired 2 (> 30 d)" in outcome.wrote
+    assert "brand new rule" in (memory / "claude-md.proposal.md").read_text()
+
+
+def test_expiry_runs_under_the_memory_dir_lock_in_process_task_and_persist_results(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from contextlib import contextmanager
+    from threading import local
+
+    from lazy_harness.core.memory_store import memory_dir_lock
+    from lazy_harness.knowledge import compound_loop
+
+    owner = local()
+    expiry_calls: list[bool] = []
+    snapshot_calls: list[bool] = []
+    real_expire = compound_loop.expire_pending
+    real_collect = compound_loop.collect_pending_proposals
+
+    @contextmanager
+    def observed_lock(path: Path):
+        with memory_dir_lock(path):
+            owner.active = True
+            try:
+                yield
+            finally:
+                owner.active = False
+
+    def observed_expire(*args: Any, **kwargs: Any):
+        expiry_calls.append(getattr(owner, "active", False))
+        return real_expire(*args, **kwargs)
+
+    def observed_collect(path: Path, max_chars: int = 10_000):
+        # Only the unbounded call is the capacity snapshot; the prompt's is not.
+        if max_chars == compound_loop._UNBOUNDED:
+            snapshot_calls.append(getattr(owner, "active", False))
+        return real_collect(path, max_chars=max_chars)
+
+    monkeypatch.setattr(compound_loop, "memory_dir_lock", observed_lock)
+    monkeypatch.setattr(compound_loop, "expire_pending", observed_expire)
+    monkeypatch.setattr(compound_loop, "collect_pending_proposals", observed_collect)
+
+    _, task = _two_aged_proposals_task(tmp_path)
+    _stub_run_inference(
+        monkeypatch,
+        lambda prompt, model, timeout: json.dumps(_proposal_data("brand new rule")),
+    )
+    process_task(
+        task,
+        _cfg(max_pending_proposals=10, proposal_max_age_days=30),
+        tmp_path / "Learnings",
+    )
+
+    # process_task: expiry + snapshot; persist_results: expiry + snapshot.
+    assert expiry_calls == [True, True]
+    assert snapshot_calls == [True, True]
+
+
+def test_expire_pending_is_idempotent_after_a_crash_before_the_pending_rewrite(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from lazy_harness.core import proposals as proposals_mod
+
+    memory = tmp_path / "memory"
+    _aged_queue(memory, ["2026-10-07T10:00:00-03:00", "2026-11-02T10:00:00-03:00"])
+
+    def crash(path: Path, content: str) -> None:
+        raise OSError("disk full")
+
+    with monkeypatch.context() as crashed:
+        crashed.setattr(proposals_mod, "_replace_file", crash)
+        with pytest.raises(OSError, match="disk full"):
+            expire_pending(memory, 30, _NOW)
+
+    assert "rule from 2026-10-07" in (memory / "claude-md.proposal.md").read_text()
+    expire_pending(memory, 30, _NOW)
+
+    registry = (memory / EXPIRED_PROPOSALS_FILE).read_text()
+    assert registry.count("rule from 2026-10-07") == 1
+    assert "rule from 2026-10-07" not in (memory / "claude-md.proposal.md").read_text()
+
+
+def test_expiry_disabled_when_none(tmp_path: Path) -> None:
+    memory = tmp_path / "memory"
+    _aged_queue(memory, ["2020-01-01T10:00:00-03:00"])
+    before = (memory / "claude-md.proposal.md").read_text()
+
+    assert expire_pending(memory, None, _NOW) == []
+    assert expire_pending(memory, 0, _NOW) == []
+    assert (memory / "claude-md.proposal.md").read_text() == before
+    assert not (memory / EXPIRED_PROPOSALS_FILE).exists()
+
+
+def test_unparseable_header_timestamp_never_expires(tmp_path: Path) -> None:
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    (memory / "claude-md.proposal.md").write_text(
+        "- **Rule:** headerless rule\n\n"
+        "## not-a-timestamp\n\n- **Rule:** rule from not-a-timestamp\n\n"
+        "## 2020-01-01T10:00:00-03:00\n\n- **Rule:** rule from 2020-01-01\n"
+    )
+
+    expired = expire_pending(memory, 30, _NOW)
+
+    assert [p.rule for p in expired] == ["rule from 2020-01-01"]
+    assert [p.rule for p in parse_proposals((memory / "claude-md.proposal.md").read_text())] == [
+        "headerless rule",
+        "rule from not-a-timestamp",
+    ]
+
+
+def test_expiry_drops_a_header_only_when_every_rule_under_it_expired(tmp_path: Path) -> None:
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    (memory / "claude-md.proposal.md").write_text(
+        "## 2026-09-01T10:00:00-03:00\n\n- **Rule:** first old\n\n- **Rule:** second old\n"
+    )
+
+    expire_pending(memory, 30, _NOW)
+
+    assert parse_proposals((memory / "claude-md.proposal.md").read_text()) == []
+    assert "## 2026-09-01" not in (memory / "claude-md.proposal.md").read_text()
+    assert len(parse_proposals((memory / EXPIRED_PROPOSALS_FILE).read_text())) == 2

@@ -20,14 +20,15 @@ import re
 import shutil
 import subprocess
 import time
+import unicodedata
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from lazy_harness.core.config import Config
 from lazy_harness.core.memory_store import memory_dir_lock
-from lazy_harness.core.proposals import rule_lines
+from lazy_harness.core.proposals import expire_pending, rule_lines
 from lazy_harness.knowledge.evaluator_prompt import EVALUATOR_PROMPT_HEAD, is_evaluator_prompt
 from lazy_harness.llm.invoke import run_inference
 
@@ -52,6 +53,57 @@ class Insight:
 
 def _normalize_for_hash(body: str) -> str:
     return " ".join(body.split())
+
+
+#: Token-set Jaccard at or above which two failure summaries of one session are
+#: the same failure reworded. Not a config key: calibration is frozen until the
+#: kill-criteria horizon closes, and 0.6 is stricter than the 0.4/0.5 that
+#: measured the same duplicates, so it errs toward keeping rows.
+FAILURE_DEDUPE_JACCARD = 0.6
+
+_FAILURE_STOPWORDS = frozenset(
+    "a al algo ante como con cual cuando de del desde donde el ella ellos en entre era es "
+    "esta este esto fue ha han la las le lo los mas me mi muy no nos o para pero por que "
+    "se si sin sobre su sus te un una uno unos y ya the and for with from that this was "
+    "were not but are has had into onto its it".split()
+)
+
+
+def _failure_tokens(summary: str) -> frozenset[str]:
+    folded = unicodedata.normalize("NFKD", summary.lower())
+    plain = "".join(c for c in folded if not unicodedata.combining(c))
+    return frozenset(
+        t for t in re.findall(r"\w+", plain) if len(t) > 2 and t not in _FAILURE_STOPWORDS
+    )
+
+
+def _jaccard(a: frozenset[str], b: frozenset[str]) -> float:
+    union = a | b
+    return len(a & b) / len(union) if union else 0.0
+
+
+def _session_failure_tokens(memory_dir: Path, session_id: str) -> list[frozenset[str]]:
+    """Token sets of failures already recorded for `session_id`.
+
+    Rows without a `session_id` (written before the field existed) are ignored:
+    attributing them to a session would be a guess, and a guard that can drop a
+    real failure on a guess is worse than a duplicate.
+    """
+    if not session_id:
+        return []
+    try:
+        text = (memory_dir / "failures.jsonl").read_text()
+    except OSError:
+        return []
+    out: list[frozenset[str]] = []
+    for line in text.splitlines():
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict) and row.get("session_id") == session_id:
+            out.append(_failure_tokens(str(row.get("summary", ""))))
+    return out
 
 
 def _content_hash(body: str) -> str:
@@ -1069,6 +1121,19 @@ def origin_host() -> str:
     return slug
 
 
+def _task_now(timestamp: str) -> datetime:
+    """The task's own timestamp as the clock, falling back to the wall clock."""
+    try:
+        stamp = datetime.fromisoformat(timestamp)
+    except ValueError:
+        return datetime.now(UTC)
+    return stamp if stamp.tzinfo is not None else stamp.replace(tzinfo=UTC)
+
+
+def _expiry_line(count: int, max_age_days: int | None) -> str:
+    return f"claude_md_proposals: expired {count} (> {max_age_days} d)"
+
+
 def persist_results(
     data: dict,
     memory_dir: Path,
@@ -1079,6 +1144,7 @@ def persist_results(
     session_id: str = "",
     session_jsonl: Path | None = None,
     max_pending_proposals: int | None = None,
+    proposal_max_age_days: int | None = None,
 ) -> list[str]:
     """Persist decisions/failures/learnings/handoff. Returns a list of summaries
     of what was written, suitable for logging. Atomic writes everywhere."""
@@ -1100,10 +1166,19 @@ def persist_results(
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         wrote.append(f"decision: {d.get('summary', '')[:60]}")
 
+    seen_failures = _session_failure_tokens(memory_dir, session_id)
     for fe in data.get("failures", []):
+        tokens = _failure_tokens(str(fe.get("summary", "")))
+        if any(_jaccard(tokens, prior) >= FAILURE_DEDUPE_JACCARD for prior in seen_failures):
+            wrote.append(
+                f"failure: skipped duplicate of this session ({fe.get('summary', '')[:60]})"
+            )
+            continue
+        seen_failures.append(tokens)
         entry = {
             "ts": timestamp,
             "type": "failure",
+            "session_id": session_id,
             "summary": fe.get("summary", ""),
             "root_cause": fe.get("root_cause", ""),
             "resolution": fe.get("resolution", ""),
@@ -1171,6 +1246,10 @@ deprecated_reason: null
     if proposals:
         proposal_file = memory_dir / "claude-md.proposal.md"
         with memory_dir_lock(memory_dir):
+            # Before the cap check, so a slot an old proposal frees is used by this run.
+            expired = expire_pending(memory_dir, proposal_max_age_days, _task_now(timestamp))
+            if expired:
+                wrote.append(_expiry_line(len(expired), proposal_max_age_days))
             queued = len(collect_pending_proposals(memory_dir, max_chars=_UNBOUNDED))
             if (
                 max_pending_proposals is not None
@@ -1438,11 +1517,16 @@ def process_task(
     existing_learnings = collect_existing_learnings(learnings_dir)
 
     project_name = project_name_for_cwd(Path(cwd))
-    queue_full = (
-        cl.max_pending_proposals is not None
-        and len(collect_pending_proposals(memory_dir, max_chars=_UNBOUNDED))
-        >= cl.max_pending_proposals
-    )
+    # Expiry runs here as well as in persist_results: a full queue suppresses
+    # proposals, so persist_results would never see one and the queue would
+    # stay full for good.
+    with memory_dir_lock(memory_dir):
+        expired = expire_pending(memory_dir, cl.proposal_max_age_days, _task_now(timestamp))
+        queue_full = (
+            cl.max_pending_proposals is not None
+            and len(collect_pending_proposals(memory_dir, max_chars=_UNBOUNDED))
+            >= cl.max_pending_proposals
+        )
     prompt = build_prompt(
         project_name,
         cwd,
@@ -1485,8 +1569,11 @@ def process_task(
         session_id=session_id,
         session_jsonl=session_jsonl,
         max_pending_proposals=cl.max_pending_proposals,
+        proposal_max_age_days=cl.proposal_max_age_days,
     )
 
+    if expired:
+        wrote.insert(0, _expiry_line(len(expired), cl.proposal_max_age_days))
     if persisted_insights:
         wrote.append(f"insights: {len(persisted_insights)}")
 
