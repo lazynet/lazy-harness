@@ -186,3 +186,61 @@ def test_an_ignored_root_claude_md_is_still_reported(tmp_path: Path) -> None:
     (tmp_path / "CLAUDE.md").write_text("# local Claude rules\n")
 
     assert _codes(tmp_path) == [("CLAUDE.md", "claude-md-shadows-agents")]
+
+
+# Measured on Claude Code 2.1.319: a CLAUDE.local.md without an `@AGENTS.md` import
+# stops the AGENTS.md next to it loading, from the root and from an ancestor.
+def test_claude_local_md_without_the_import_is_reported(tmp_path: Path) -> None:
+    (tmp_path / "AGENTS.md").write_text(AGENTS_BODY)
+    (tmp_path / "CLAUDE.local.md").write_text("# personal notes\n")
+
+    assert _codes(tmp_path) == [("CLAUDE.local.md", "claude-local-md-shadows-agents")]
+
+
+def test_claude_local_md_importing_agents_md_is_the_supported_bridge(tmp_path: Path) -> None:
+    (tmp_path / "AGENTS.md").write_text(AGENTS_BODY)
+    (tmp_path / "CLAUDE.local.md").write_text("@AGENTS.md\n# personal notes\n")
+
+    assert check_repository(tmp_path) == []
+
+
+def test_a_gitignored_claude_local_md_without_the_import_is_still_reported(
+    tmp_path: Path,
+) -> None:
+    _git_init(tmp_path)
+    (tmp_path / ".gitignore").write_text("CLAUDE.local.md\n")
+    nested = tmp_path / "pkg"
+    nested.mkdir()
+    (tmp_path / "AGENTS.md").write_text(AGENTS_BODY)
+    (nested / "CLAUDE.local.md").write_text("# personal notes\n")
+
+    assert _codes(tmp_path) == [("pkg/CLAUDE.local.md", "claude-local-md-shadows-agents")]
+
+
+def test_an_ancestor_claude_local_md_without_the_import_is_reported(tmp_path: Path) -> None:
+    (tmp_path / "CLAUDE.local.md").write_text("# workspace notes\n")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "AGENTS.md").write_text(AGENTS_BODY)
+
+    findings = check_repository(repo)
+
+    assert [(f.path, f.code) for f in findings] == [
+        (tmp_path / "CLAUDE.local.md", "ancestor-claude-local-md-shadows-agents")
+    ]
+
+
+def test_an_ancestor_claude_local_md_importing_agents_md_is_clean(tmp_path: Path) -> None:
+    (tmp_path / "CLAUDE.local.md").write_text("@repo/AGENTS.md\n")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "AGENTS.md").write_text(AGENTS_BODY)
+
+    assert check_repository(repo) == []
+
+
+def test_an_unreadable_claude_local_md_is_reported_not_crashed(tmp_path: Path) -> None:
+    (tmp_path / "AGENTS.md").write_text(AGENTS_BODY)
+    (tmp_path / "CLAUDE.local.md").write_bytes(b"\xff\xfe\x00 not utf-8 \xc3\x28\n")
+
+    assert _codes(tmp_path) == [("CLAUDE.local.md", "claude-local-md-shadows-agents")]
