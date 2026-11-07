@@ -4,7 +4,7 @@
 los cerraron #539, #540 y #541, y el audit del gate de 0.89.4 lo confirmó.
 El cutover de la flota a los nombres de ADR-068 se ejecutó el 2026-09-24 en los dos hosts (ver
 Done).
-ADR-060 Wave 1 sigue en su ventana de siete días hábiles. Rollout externo pendiente: Wave 2
+ADR-060 Wave 1: la ventana de siete días hábiles debía cerrar el 2026-10-20 y no tiene resultado registrado (ver su entrada). Rollout externo pendiente: Wave 2
 de ADR-060, el push de los renames `AGENTS.MD` de flex, el probe de proyección de skills
 instalada, receiver/Grafana y el opt-in de PRJ-LazyHarness.
 
@@ -410,13 +410,13 @@ marketplace a `v2.1.0` evita la causa, no la detección.
 `engram@engram` instalado en cada profile contra la que shippea el tag del
 binario (plan §5.2 ítem 4). Prioridad MEDIA.
 
-### La cola de proposals: (d) shippeó, queda decidir el drenaje, y el cap retiene y nada lo devuelve
+### La cola de proposals: (d) shippeó, (c) shippeó en #589 y el cap retiene y nada lo devuelve
 
 **Decisión 2026-11-07: (c).** Las pendientes con más de `[compound_loop] proposal_max_age_days` (default 30) pasan a `claude-md.expired.md`, que no es registro de inmunidad, con `lh memory proposals expired list|requeue` para revivirlas (#589). La expiración corre antes del chequeo del cap en `process_task` y en `persist_results`, bajo `memory_dir_lock`. Kill criteria en la entrada de B y C.
 
-**Estado:** la opción (d) entró en #450 — `lh doctor` muestra toda cola frenada de la máquina (17 colas, 263 propuestas medidas el 2026-09-23). Siguen sin elegir (a) drenar a mano, (b) subir el cap o (c) expirar por antigüedad fuera del immunity registry; el análisis está en la historia de esta entrada (`git log -S 'immunity registry' -- specs/backlog.md`).
+**Estado:** la opción (d) entró en #450 — `lh doctor` muestra toda cola frenada de la máquina (17 colas, 263 propuestas medidas el 2026-09-23). La política quedó decidida el 2026-11-07 como (c), expirar por antigüedad fuera del immunity registry (#589); (a) drenar a mano y (b) subir el cap quedaron descartadas. El análisis está en la historia de esta entrada (`git log -S 'immunity registry' -- specs/backlog.md`).
 
-**Corrección, medida por el review de #450:** la corrección anterior de esta entrada decía que el cap era «backpressure, not a discard». Es falso. `knowledge/compound_loop.py` hace `proposals = []` cuando `queued >= cap`, así que la propuesta que el grader produjo en esa corrida **se pierde**; el comentario del mismo bloque dice lo contrario. Lo único cierto es que el freno se avisa. **Cerrado en #460 (2026-09-24):** lo frenado se persiste en `proposals-held.jsonl`, que el grader no lee, y `lh doctor` lo cuenta. **Cerrado en #473 (2026-09-25):** `lh memory proposals held` lista lo retenido y lo devuelve a la cola de a uno, respetando el cap bajo lock y registrando la disposición en `proposals-held-requeued.jsonl`. **Drenaje (2026-10-10):** las colas vivas se drenaron a cero; el 2026-10-11 `lh doctor` (0.89.2) imprime `✓ 0 pending proposals` bajo *Memory hygiene* y no imprime la sección *Halted proposal queues*, que sólo aparece con una cola frenada. **Queda abierto:** sólo la política — (a) drenar a mano, (b) subir el cap o (c) expirar por antigüedad fuera del immunity registry siguen sin elegir, y sin una el cap vuelve a frenar. Prioridad MEDIA.
+**Corrección, medida por el review de #450:** la corrección anterior de esta entrada decía que el cap era «backpressure, not a discard». Es falso. `knowledge/compound_loop.py` hace `proposals = []` cuando `queued >= cap`, así que la propuesta que el grader produjo en esa corrida **se pierde**; el comentario del mismo bloque dice lo contrario. Lo único cierto es que el freno se avisa. **Cerrado en #460 (2026-09-24):** lo frenado se persiste en `proposals-held.jsonl`, que el grader no lee, y `lh doctor` lo cuenta. **Cerrado en #473 (2026-09-25):** `lh memory proposals held` lista lo retenido y lo devuelve a la cola de a uno, respetando el cap bajo lock y registrando la disposición en `proposals-held-requeued.jsonl`. **Drenaje (2026-10-10):** las colas vivas se drenaron a cero; el 2026-10-11 `lh doctor` (0.89.2) imprime `✓ 0 pending proposals` bajo *Memory hygiene* y no imprime la sección *Halted proposal queues*, que sólo aparece con una cola frenada. **Queda abierto:** la política está decidida ((c), #589) y lo que falta es leer sus kill criteria al horizonte de 30 días; la fuga residual de retenidas tiene su propia entrada más abajo. Prioridad MEDIA.
 
 ### El evaluador no ve los contratos vigentes y re-propone sus reglas en cada proyecto
 
@@ -469,7 +469,7 @@ binario (plan §5.2 ítem 4). Prioridad MEDIA.
 - *Éxito:* ninguna cola queda en el cap más de 30 días, y las retenidas siguen ≈ 0.
 - *Se remueve si:* se reencola a mano una regla expirada más de 3 veces en el horizonte (medible en `claude-md.expired-requeued.jsonl`), o si la aceptación de las que sobreviven cae por debajo de 30,5%.
 
-**Fuera de esta entrada:** E (aislar el `claude -p` del evaluador) tiene las probes hechas en `specs/designs/claude-code-evidence.md` y su decisión está pendiente; sus kill criteria entran con ella. Prioridad ALTA hasta el horizonte.
+**Fuera de esta entrada:** E (aislar el `claude -p` del evaluador) shippeó en #575: `llm/claude.py` corre con `--setting-sources ""` y `--no-session-persistence` (ADR-033, Evolution 2026-11-01; probes en `specs/designs/claude-code-evidence.md`). No lleva kill criteria porque es un fix de una causa medida, no automatización de comportamiento: no cambia qué decide el evaluador, sólo deja de disparar hooks y de escribir transcripts. Prioridad ALTA hasta el horizonte.
 
 ### Las sesiones largas siguen re-evaluándose: C limita por tiempo, no por sesión
 
@@ -565,7 +565,7 @@ riesgo y rollback. Adoptar sólo una opción que reduzca al menos 20% el tiempo 
 pared sin introducir flakes y cuya señal se sostenga con mutaciones en ambas
 direcciones; si ninguna llega al umbral, conservar el gate actual.
 
-### ADR-060: Wave 1 migrada, ventana de siete días reiniciada el 2026-10-11 (cierra el 2026-10-20)
+### ADR-060: Wave 1 migrada, ventana de siete días reiniciada el 2026-10-11 (debía cerrar el 2026-10-20, sin resultado registrado)
 
 **Por qué:** los cinco repos de Wave 1 (lazy-harness, lazy-ai-tools, dotfiles,
 lazy-ansible, lazy-desktop-manager) cargan sólo `AGENTS.md`, verificado con
@@ -593,13 +593,22 @@ principal de lazy-harness: 474 `claude-md-shadows-agents`, todos bajo los
 `tmp/pytest-of-*` ignorados que deja pytest cuando corre con el `TMPDIR` de sesión
 dentro del repo. Se borraron a mano el 2026-10-11 y el gate de los cinco repos volvió
 a exit 0. La causa se arregló del lado de los tests: la suite ya no escribe dentro
-de un checkout (ver *La suite pasa entera bajo un agente* en Done). El gate no saltea paths ignorados:
-un `CLAUDE.md` ignorado igual oculta el `AGENTS.md` en una sesión que arranca ahí.
+de un checkout (ver *La suite pasa entera bajo un agente* en Done). Desde #586
+(2026-11-07) el gate sí saltea un `CLAUDE.md` ignorado por git debajo de la raíz
+(`_is_git_ignored`); es una heurística, porque un `CLAUDE.md` ignorado igual oculta el
+`AGENTS.md` en una sesión que arranca ahí, y el de la raíz se reporta siempre. Ver el
+Evolution del 2026-11-07 en ADR-060.
 Por decisión del operador la ventana no se reinicia y cierra el 2026-10-20 si el
 gate sigue limpio.
 
-**Acción:** (1) la ventana de siete días hábiles corre desde el 2026-10-11 y
-cierra el 2026-10-20 con `lh repo instructions` limpio en los cinco repos; después, Wave 2
+**Estado de la ventana (2026-11-07):** el cierre previsto del 2026-10-20 pasó y no hay
+resultado registrado en el repo ni en el backlog; no se afirma uno. Lo único medido:
+`lh repo instructions` sobre los cinco repos de Wave 1 dio ✓ el 2026-11-07. La condición
+«gate limpio» se juzgó con el gate anterior a #586 hasta el 2026-11-06 y con el actual
+desde entonces. Cerrar el item de Wave 1 necesita que el operador declare el resultado.
+
+**Acción:** (1) la ventana de siete días hábiles corrió desde el 2026-10-11 con cierre previsto
+el 2026-10-20 con `lh repo instructions` limpio en los cinco repos; después, Wave 2
 (lazent, lazy-everythingapp, lazy-finance, lazy-hamradio, lazy-hermes,
 lazy-popopen y el vault LazyMind). (2) Cerrado el 2026-09-22: los repos de Wave 1
 fuera de este no tienen CI, así que el gate corre desde `audit-harness` sobre

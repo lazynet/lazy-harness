@@ -89,3 +89,17 @@ still reports ignored files, because an ignored `CLAUDE.md` still shadows
 `AGENTS.md` for a session started beside it. The fault was in the test harness,
 not in the pilot repositories, so the window is not restarted: it closes on
 2026-10-20 if the gate stays clean.
+
+**2026-11-07 — the gate skips git-ignored `CLAUDE.md` files below the root.**
+#586 changed `core/repo_instructions.py`: `_is_git_ignored` makes the gate skip a
+`CLAUDE.md` that git ignores when it sits below the repository root. This
+overrides the 2026-10-11 sentence above ("the gate still reports ignored files").
+The skip is a heuristic, not a Claude Code rule: Claude Code loads a `CLAUDE.md`
+regardless of `.gitignore`, so a session started inside an ignored directory is
+still shadowed. The root `CLAUDE.md` is always reported, and a directory that is
+not a git checkout, a missing `git` or a failed call keeps reporting everything.
+The Wave 1 window's "gate clean" condition therefore means the pre-#586 gate for
+2026-10-11 to 2026-11-06 and the current gate afterwards. The window's scheduled
+close on 2026-10-20 passed with no result recorded in this repository, so it is
+not claimed here; `lh repo instructions` over the five pilot repositories
+passed on 2026-11-07.
