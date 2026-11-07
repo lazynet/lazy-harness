@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.94.0](https://github.com/lazynet/lazy-harness/compare/v0.93.0...v0.94.0) (2026-11-07)
+
+
+### Features
+
+* repo instructions gate flags CLAUDE.local.md without an AGENTS.md import ([#593](https://github.com/lazynet/lazy-harness/issues/593)) ([0fedcf4](https://github.com/lazynet/lazy-harness/commit/0fedcf4eaf759b65a4a7d9d09d78ebdc8abe203f))
+
+
+### Bug Fixes
+
+* rightsize measures the worktree contract it runs from ([#592](https://github.com/lazynet/lazy-harness/issues/592)) ([6137d23](https://github.com/lazynet/lazy-harness/commit/6137d2371f28bf40515f49d974c3c49c833f3c20))
+
+
+### Documentation
+
+* close coherence-audit drift found at 0.93.0 ([#591](https://github.com/lazynet/lazy-harness/issues/591)) ([8a2aa4f](https://github.com/lazynet/lazy-harness/commit/8a2aa4f5b91208a337d63d9dd64f473d23e19672))
+
 ## [0.93.0](https://github.com/lazynet/lazy-harness/compare/v0.92.2...v0.93.0) (2026-11-07)
 
 

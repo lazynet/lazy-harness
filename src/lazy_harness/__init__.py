@@ -1,3 +1,3 @@
 """lazy-harness — A cross-platform harnessing framework for AI coding agents."""
 
-__version__ = "0.93.0"  # x-release-please-version
+__version__ = "0.94.0"  # x-release-please-version
