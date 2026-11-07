@@ -697,3 +697,59 @@ def test_scope_is_registered_then_discovered_without_duplicates(tmp_path: Path) 
     scope = gr.scope([a, b], [b, c])
 
     assert [(s.path, s.discovered) for s in scope] == [(a, False), (b, False), (c, True)]
+
+
+def _nested_graph_repo(parent: Path, rel: str) -> Path:
+    nested = parent / rel
+    nested.mkdir(parents=True)
+    _git(nested, "init", "-q", "-b", "main")
+    return _graph_repo(nested)
+
+
+@pytest.mark.parametrize("scratch_dir", ["tmp", ".tmp"])
+def test_discovery_skips_a_repo_nested_under_a_temp_dir_of_its_parent(
+    tmp_path: Path, scratch_dir: str
+) -> None:
+    real = _repo(tmp_path / "real")
+    scratch = _nested_graph_repo(real, f"{scratch_dir}/claude-501/uuid/scratchpad/copies/x")
+    pa = tmp_path / "pa"
+    _metrics(pa, {"repo": str(scratch)})
+
+    assert gr.discover_repos(_cfg({"pa": pa})) == []
+
+
+def test_discovery_skips_a_repo_nested_under_a_dir_the_parent_gitignores(tmp_path: Path) -> None:
+    real = _repo(tmp_path / "real")
+    (real / ".gitignore").write_text("scratch-area/\n")
+    ignored = _nested_graph_repo(real, "scratch-area/copy")
+    pa = tmp_path / "pa"
+    _metrics(pa, {"repo": str(ignored)})
+
+    assert gr.discover_repos(_cfg({"pa": pa})) == []
+
+
+def test_discovery_keeps_a_legitimate_nested_repo(tmp_path: Path) -> None:
+    real = _repo(tmp_path / "real")
+    nested = _nested_graph_repo(real, "vendor/lib")
+    top = _graph_repo(tmp_path / "top")
+    pa = tmp_path / "pa"
+    _metrics(pa, {"repo": str(nested)}, {"repo": str(top)})
+
+    assert sorted(gr.discover_repos(_cfg({"pa": pa}))) == sorted([nested, top])
+
+
+def test_doctor_and_update_agree_on_scratch_repos_already_in_the_store(tmp_path: Path) -> None:
+    """The store predates the filter: both consumers must drop its scratch entries."""
+    real = _repo(tmp_path / "real")
+    scratch = _nested_graph_repo(real, "tmp/copies/x")
+    keep = _graph_repo(tmp_path / "keep")
+    store = tmp_path / "data" / "graph-repos.json"
+    store.parent.mkdir(parents=True)
+    store.write_text(json.dumps({"discovered": [str(scratch), str(keep)]}))
+    cfg = _cfg({"pa": tmp_path / "pa"})
+
+    update_view = gr.refresh_discovered(cfg)
+    doctor_view = [r.path for r in gr.scope([], gr.load_discovered())]
+
+    assert update_view == [keep]
+    assert doctor_view == [keep]
