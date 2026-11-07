@@ -366,8 +366,32 @@ def store_path() -> Path:
     return data_dir() / "graph-repos.json"
 
 
+# `tmp/` and `.tmp/` are the temp dirs the harness itself hands agents (#584);
+# a project rarely gitignores them, so git's rules alone would miss them.
+_SCRATCH_DIRS = frozenset({"tmp", ".tmp"})
+
+
+def is_scratch_copy(path: Path) -> bool:
+    """Whether `path` is a throwaway repo living inside another repo.
+
+    True when the nearest enclosing repo keeps it under a temp dir or ignores
+    it. A nested repo git does not ignore (a vendored checkout) is real.
+    """
+    for parent in path.parents:
+        if (parent / ".git").exists():
+            rel = path.relative_to(parent)
+            if _SCRATCH_DIRS.intersection(rel.parts):
+                return True
+            return _git(parent, "check-ignore", "-q", str(rel), check_codes=(0,)) is not None
+    return False
+
+
 def load_discovered() -> list[Path]:
-    """Discovered repos persisted by an earlier run; a corrupt store is empty."""
+    """Discovered repos persisted by an earlier run; a corrupt store is empty.
+
+    Scratch copies stored before `discover_repos` learned to skip them are
+    dropped here, so doctor and the update job read the same list.
+    """
     try:
         data = json.loads(store_path().read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -375,7 +399,7 @@ def load_discovered() -> list[Path]:
     items = data.get("discovered") if isinstance(data, dict) else None
     if not isinstance(items, list):
         return []
-    return [Path(p) for p in items if isinstance(p, str) and p]
+    return [Path(p) for p in items if isinstance(p, str) and p and not is_scratch_copy(Path(p))]
 
 
 def _metrics_files(cfg: Config) -> list[Path]:
@@ -413,7 +437,11 @@ def discover_repos(cfg: Config) -> list[Path]:
             if not isinstance(repo, str) or not repo:
                 continue
             candidate = Path(repo)
-            if candidate not in found and (candidate / "graphify-out" / "graph.json").is_file():
+            if (
+                candidate not in found
+                and (candidate / "graphify-out" / "graph.json").is_file()
+                and not is_scratch_copy(candidate)
+            ):
                 found.append(candidate)
     return found
 
