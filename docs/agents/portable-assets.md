@@ -149,7 +149,7 @@ Three findings, each naming the file to change:
 | `claude-md-shadows-agents` | A `CLAUDE.md` inside the tree blocks parent-chain `AGENTS.md` discovery |
 | `ancestor-claude-md-shadows-agents` | A `CLAUDE.md` or `.claude/CLAUDE.md` in a directory *above* the repository — measured on Claude Code 2.1.280, it stops the repository's `AGENTS.md` loading at all |
 
-Nested checkouts (a `.git` entry below the root, such as Claude Code's `.claude/worktrees/*`) are skipped: their files belong to another branch. `lh doctor` runs the ancestor check on `$HOME`, the one ancestor every repository shares.
+Nested checkouts (a `.git` entry below the root, such as Claude Code's `.claude/worktrees/*`) are skipped: their files belong to another branch. A `CLAUDE.md` under a path git ignores (`.gitignore`, `.git/info/exclude`, the global excludes file; asked through `git check-ignore`) is not reported either, since Claude Code never loads it as the repository contract. Outside a git checkout every `CLAUDE.md` is reported. `lh doctor` runs the ancestor check on `$HOME`, the one ancestor every repository shares.
 
 Exit 0 when every repository is clean, 1 with one line per finding — so it works as a CI step, not
 only a local convenience.

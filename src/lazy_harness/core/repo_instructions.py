@@ -8,6 +8,7 @@ Agent-specific notes therefore live in clearly labelled sections of AGENTS.md.
 from __future__ import annotations
 
 import os
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -61,7 +62,7 @@ def check_repository(
         cwd = Path.cwd().resolve()
         for directory in _walk(root):
             appendix = directory / APPENDIX_NAME
-            if not appendix.is_file():
+            if not appendix.is_file() or _is_git_ignored(root, appendix):
                 continue
             is_data = appendix.relative_to(root) in instruction_data
             is_active = cwd.is_relative_to(directory.resolve())
@@ -130,3 +131,23 @@ def _walk(root: Path) -> list[Path]:
         ]
         found.append(Path(current))
     return found
+
+
+def _is_git_ignored(root: Path, path: Path) -> bool:
+    """Whether git ignores `path`, by any layer (.gitignore, info/exclude, global).
+
+    Claude Code never loads an ignored tree as the repository contract, so a
+    `CLAUDE.md` in one (an upstream checkout under `tmp/`) is not a shadow. A
+    non-git directory, a missing `git` or a failed call all answer False: the
+    gate then keeps reporting, which is the conservative side.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "check-ignore", "-q", "--", str(path)],
+            capture_output=True,
+            check=False,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
