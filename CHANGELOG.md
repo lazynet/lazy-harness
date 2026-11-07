@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.93.0](https://github.com/lazynet/lazy-harness/compare/v0.92.2...v0.93.0) (2026-11-07)
+
+
+### Features
+
+* dedupe reworded failures and expire stale proposals ([#589](https://github.com/lazynet/lazy-harness/issues/589)) ([2206491](https://github.com/lazynet/lazy-harness/commit/2206491abca279e46a464dfaf97fbb1efcce388e))
+
+
+### Bug Fixes
+
+* graph discovery skips scratch repos nested in temp or ignored dirs ([#587](https://github.com/lazynet/lazy-harness/issues/587)) ([89a4194](https://github.com/lazynet/lazy-harness/commit/89a4194b77dd7343bc0bfd7e211cb02d1069378b))
+* repo instructions gate skips git-ignored CLAUDE.md files ([#586](https://github.com/lazynet/lazy-harness/issues/586)) ([dce342c](https://github.com/lazynet/lazy-harness/commit/dce342c64f60779df221f8a331ff4c86964682fc))
+
+
+### Documentation
+
+* compress AGENTS.md verification gates under the 12 KB ceiling ([#588](https://github.com/lazynet/lazy-harness/issues/588)) ([5fc35ff](https://github.com/lazynet/lazy-harness/commit/5fc35ff028d24e2ac18b5d2aaa6c4e9e20582615))
+
 ## [0.92.2](https://github.com/lazynet/lazy-harness/compare/v0.92.1...v0.92.2) (2026-11-06)
 
 
