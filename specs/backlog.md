@@ -412,6 +412,8 @@ binario (plan §5.2 ítem 4). Prioridad MEDIA.
 
 ### La cola de proposals: (d) shippeó, queda decidir el drenaje, y el cap retiene y nada lo devuelve
 
+**Decisión 2026-11-07: (c).** Las pendientes con más de `[compound_loop] proposal_max_age_days` (default 30) pasan a `claude-md.expired.md`, que no es registro de inmunidad, con `lh memory proposals expired list|requeue` para revivirlas (#589). La expiración corre antes del chequeo del cap en `process_task` y en `persist_results`, bajo `memory_dir_lock`. Kill criteria en la entrada de B y C.
+
 **Estado:** la opción (d) entró en #450 — `lh doctor` muestra toda cola frenada de la máquina (17 colas, 263 propuestas medidas el 2026-09-23). Siguen sin elegir (a) drenar a mano, (b) subir el cap o (c) expirar por antigüedad fuera del immunity registry; el análisis está en la historia de esta entrada (`git log -S 'immunity registry' -- specs/backlog.md`).
 
 **Corrección, medida por el review de #450:** la corrección anterior de esta entrada decía que el cap era «backpressure, not a discard». Es falso. `knowledge/compound_loop.py` hace `proposals = []` cuando `queued >= cap`, así que la propuesta que el grader produjo en esa corrida **se pierde**; el comentario del mismo bloque dice lo contrario. Lo único cierto es que el freno se avisa. **Cerrado en #460 (2026-09-24):** lo frenado se persiste en `proposals-held.jsonl`, que el grader no lee, y `lh doctor` lo cuenta. **Cerrado en #473 (2026-09-25):** `lh memory proposals held` lista lo retenido y lo devuelve a la cola de a uno, respetando el cap bajo lock y registrando la disposición en `proposals-held-requeued.jsonl`. **Drenaje (2026-10-10):** las colas vivas se drenaron a cero; el 2026-10-11 `lh doctor` (0.89.2) imprime `✓ 0 pending proposals` bajo *Memory hygiene* y no imprime la sección *Halted proposal queues*, que sólo aparece con una cola frenada. **Queda abierto:** sólo la política — (a) drenar a mano, (b) subir el cap o (c) expirar por antigüedad fuera del immunity registry siguen sin elegir, y sin una el cap vuelve a frenar. Prioridad MEDIA.
@@ -450,7 +452,32 @@ binario (plan §5.2 ítem 4). Prioridad MEDIA.
 - *Se remueve si* la tasa de aceptación de proposals después del próximo drenaje (aceptadas / (aceptadas + rechazadas)) es menor que la de antes: significaría que la sección de pendientes estaba orientando la calidad.
 - *Lectura del 2026-10-05, contaminada — B no se remueve:* el drenaje de las 26 colas dio 7,8% (12 / 153) contra 23,6% (368 / 1.560) de todo lo anterior, contado sobre las fechas `accepted:`/`rejected:` de los registros. Tres cosas la invalidan como lectura de B: llegó antes del horizonte; 99 de las 153 eran retenidas producidas antes de B, con la sección de pendientes todavía en el prompt; y el criterio de rechazo fue más estricto que el histórico, porque descartó todo restatement de las reglas globales de evidencia y first-action (24 de las 54 pendientes; las retenidas no se clasificaron por motivo). Rehacer la lectura al horizonte, sólo sobre proposals con fecha ≥ deploy de v0.83.2.
 
+**Lectura del 2026-11-07 (deploy 2026-09-29 19:53, horizonte 2026-10-13), medida en disco:**
+- *C — no se cumple:* 2,19 corridas por sesión evaluada en el horizonte (umbral ≤ 2,0; baseline 4,86 desde `grades.jsonl`, que no cuenta las corridas sin grade). El −92% de $ por sesión es el cambio a haiku-5-5 del 2026-10-08: a precios de haiku-4.5 el ahorro es −43%. Por la regla de esta entrada, C no era la palanca y el gate no se sube. Después del horizonte la tasa vuelve a subir (2,65, y 3,18 la última semana) por sesiones de orquestador de horas: 38 corridas en 27 h en una sola sesión. El criterio de reversión no saltó: 0 de 293 sesiones con handoff viejo.
+- *B — se queda:* 0 retenidas producidas con la cola llena. La aceptación sobre proposals posteriores al deploy es 30,5% (64/210) contra 23,8% (368/1.547) antes. Las 4 retenidas posteriores al deploy vienen de una fuga chica: `process_task` frena con `queued >= cap`, pero `persist_results` retiene con `queued + new > cap`.
+
+**D — dedupe de fallas dentro de una sesión (#589).** Se descarta una falla nueva cuando su resumen normalizado tiene Jaccard ≥ 0,6 (`FAILURE_DEDUPE_JACCARD`) con otra de la misma `session_id`. Las filas legacy sin `session_id` nunca la suprimen.
+- *Falso negativo conocido:* el caso que motivó el diseño, «Propuso un plan de /herd de 15 PRs de toda la cuenta en vez del repo del CWD» → «… y declaró 'Preflight OK' con git status no vacío», da J = 0,43 y no se filtra. El sesgo hacia falsos negativos es a propósito: la calibración queda congelada hasta el horizonte.
+- *Baseline:* 33 casi-duplicados de la misma sesión sobre 428 filas de falla en 10 días (7,7%, J ≥ 0,6), medido el 2026-11-07 uniendo por `(memory_dir, ts)` con `grades.jsonl`.
+- *Horizonte:* 14 días desde la instalación en la Mac (`uv tool install --reinstall` + grep de `FAILURE_DEDUPE_JACCARD` en site-packages).
+- *Éxito:* ≤ 5 casi-duplicados de la misma sesión en la ventana, ahora contados por la columna `session_id`.
+- *Se remueve si:* de 20 descartes revisados del log del worker, más de 2 eran fallas distintas, o si el volumen de filas de falla cae más de 15%.
+
+**Expiración por edad (#589).**
+- *Baseline:* 9 colas en el cap y 113 pendientes el 2026-11-07, antes de drenar a mano las 10 colas personales.
+- *Horizonte:* 30 días desde la instalación.
+- *Éxito:* ninguna cola queda en el cap más de 30 días, y las retenidas siguen ≈ 0.
+- *Se remueve si:* se reencola a mano una regla expirada más de 3 veces en el horizonte (medible en `claude-md.expired-requeued.jsonl`), o si la aceptación de las que sobreviven cae por debajo de 30,5%.
+
 **Fuera de esta entrada:** E (aislar el `claude -p` del evaluador) tiene las probes hechas en `specs/designs/claude-code-evidence.md` y su decisión está pendiente; sus kill criteria entran con ella. Prioridad ALTA hasta el horizonte.
+
+### Las sesiones largas siguen re-evaluándose: C limita por tiempo, no por sesión
+
+**Por qué:** la lectura de C del 2026-11-07 dio 3,18 corridas por sesión evaluada la última semana. La causa son sesiones de orquestador vivas durante horas: un gate de crecimiento de 1800 s sigue permitiendo unas 50 corridas en 27 h. Los casi-duplicados de falla son el síntoma (#589 filtra la salida, no el costo). Hay dos palancas posibles: un tope de corridas por sesión, o medir el crecimiento en bytes del transcript en vez de en tiempo. Las dos son automatización de comportamiento, así que llevan kill criteria antes del deploy. Prioridad MEDIA.
+
+### La fuga residual de retenidas: frenar y retener usan condiciones distintas
+
+`process_task` apaga las proposals con `queued >= cap`; `persist_results` retiene con `queued + len(new) > cap`. Una cola en 8 o 9 que recibe 2 o 3 proposals nuevas sigue generando retenidas: fueron 4 en 39 días. Para alinearlas, el prompt podría decirle al evaluador cuántos lugares quedan. Prioridad BAJA.
 
 ### `knowledge_cmd.py` lanza el worker del compound-loop sin `--profile`
 
