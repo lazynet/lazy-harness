@@ -62,7 +62,7 @@ def check_repository(
         cwd = Path.cwd().resolve()
         for directory in _walk(root):
             appendix = directory / APPENDIX_NAME
-            if not appendix.is_file() or _is_git_ignored(root, appendix):
+            if not appendix.is_file() or (directory != root and _is_git_ignored(root, appendix)):
                 continue
             is_data = appendix.relative_to(root) in instruction_data
             is_active = cwd.is_relative_to(directory.resolve())
@@ -136,10 +136,13 @@ def _walk(root: Path) -> list[Path]:
 def _is_git_ignored(root: Path, path: Path) -> bool:
     """Whether git ignores `path`, by any layer (.gitignore, info/exclude, global).
 
-    Claude Code never loads an ignored tree as the repository contract, so a
-    `CLAUDE.md` in one (an upstream checkout under `tmp/`) is not a shadow. A
-    non-git directory, a missing `git` or a failed call all answer False: the
-    gate then keeps reporting, which is the conservative side.
+    Used only below the root. Ignored subtrees are scratch or upstream copies
+    (an upstream checkout under `tmp/`) that no session is started in, so their
+    `CLAUDE.md` is not reported. This is a heuristic, not a Claude Code rule:
+    Claude Code loads a `CLAUDE.md` regardless of `.gitignore`, so a session
+    launched inside an ignored directory is still shadowed, and the root
+    `CLAUDE.md` is always reported. A non-git directory, a missing `git` or a
+    failed call all answer False, which keeps the gate reporting.
     """
     try:
         result = subprocess.run(

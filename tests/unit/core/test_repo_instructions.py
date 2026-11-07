@@ -177,3 +177,12 @@ def test_a_non_git_directory_still_reports_nested_claude_md(tmp_path: Path) -> N
     _nested_claude(tmp_path, "tmp")
 
     assert _codes(tmp_path) == [("tmp/x/CLAUDE.md", "claude-md-shadows-agents")]
+
+
+def test_an_ignored_root_claude_md_is_still_reported(tmp_path: Path) -> None:
+    _git_init(tmp_path)
+    (tmp_path / ".gitignore").write_text("CLAUDE.md\n")
+    (tmp_path / "AGENTS.md").write_text(AGENTS_BODY)
+    (tmp_path / "CLAUDE.md").write_text("# local Claude rules\n")
+
+    assert _codes(tmp_path) == [("CLAUDE.md", "claude-md-shadows-agents")]
