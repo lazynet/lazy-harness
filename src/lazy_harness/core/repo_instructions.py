@@ -14,6 +14,7 @@ from pathlib import Path
 
 CANONICAL_NAME = "AGENTS.md"
 APPENDIX_NAME = "CLAUDE.md"
+LOCAL_APPENDIX_NAME = "CLAUDE.local.md"
 
 #: Directories that hold other checkouts or third-party trees. Walking them
 #: reports the same file once per copy, and reports pairs from other branches.
@@ -79,6 +80,20 @@ def check_repository(
                 )
             )
 
+    if check_tree:
+        for directory in _walk(root):
+            # No git-ignore skip: CLAUDE.local.md is git-ignored by design, and
+            # Claude Code loads it wherever it sits.
+            local = directory / LOCAL_APPENDIX_NAME
+            if _shadows_without_import(local):
+                findings.append(
+                    Finding(
+                        path=local.relative_to(root),
+                        code="claude-local-md-shadows-agents",
+                        detail=_local_detail(),
+                    )
+                )
+
     findings.extend(_ancestor_findings(root))
 
     return sorted(findings, key=lambda f: (f.path.as_posix(), f.code))
@@ -115,7 +130,35 @@ def shadows_in(directory: Path) -> list[Finding]:
         )
         for candidate in (directory / APPENDIX_NAME, directory / ".claude" / APPENDIX_NAME)
         if candidate.is_file()
+    ] + [
+        Finding(
+            path=local,
+            code="ancestor-claude-local-md-shadows-agents",
+            detail="an ancestor " + _local_detail(),
+        )
+        for local in (directory / LOCAL_APPENDIX_NAME,)
+        if _shadows_without_import(local)
     ]
+
+
+def _local_detail() -> str:
+    return (
+        f"{LOCAL_APPENDIX_NAME} without an `@{CANONICAL_NAME}` import stops Claude Code "
+        f"loading {CANONICAL_NAME}; add a line `@{CANONICAL_NAME}` (or `@<path>/{CANONICAL_NAME}`)"
+    )
+
+
+def _shadows_without_import(path: Path) -> bool:
+    """A CLAUDE.local.md that does not import an AGENTS.md. Unreadable counts as shadowing."""
+    if not path.is_file():
+        return False
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return True
+    return not any(
+        line.strip().startswith("@") and line.strip().endswith(CANONICAL_NAME) for line in lines
+    )
 
 
 def _walk(root: Path) -> list[Path]:
