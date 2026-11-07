@@ -223,8 +223,16 @@ def expire_pending(
     if not expired:
         return []
     today = now.date().isoformat()
-    # Registry first: a crash between the two writes leaves a duplicate, never a loss.
+    registry = memory_dir / EXPIRED_PROPOSALS_FILE
+    # Registry first, so a crash between the two writes never loses a rule; the
+    # re-run skips what the registry already holds under the same header.
+    try:
+        registered = {(p.timestamp, p.rule) for p in parse_proposals(registry.read_text())}
+    except OSError:
+        registered = set()
     for proposal in expired:
+        if (proposal.timestamp, proposal.rule) in registered:
+            continue
         append_block(
             memory_dir / EXPIRED_PROPOSALS_FILE,
             _EXPIRED_HEADER,

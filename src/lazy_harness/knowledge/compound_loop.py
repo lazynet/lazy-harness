@@ -1130,6 +1130,10 @@ def _task_now(timestamp: str) -> datetime:
     return stamp if stamp.tzinfo is not None else stamp.replace(tzinfo=UTC)
 
 
+def _expiry_line(count: int, max_age_days: int | None) -> str:
+    return f"claude_md_proposals: expired {count} (> {max_age_days} d)"
+
+
 def persist_results(
     data: dict,
     memory_dir: Path,
@@ -1245,9 +1249,7 @@ deprecated_reason: null
             # Before the cap check, so a slot an old proposal frees is used by this run.
             expired = expire_pending(memory_dir, proposal_max_age_days, _task_now(timestamp))
             if expired:
-                wrote.append(
-                    f"claude_md_proposals: expired {len(expired)} (> {proposal_max_age_days} d)"
-                )
+                wrote.append(_expiry_line(len(expired), proposal_max_age_days))
             queued = len(collect_pending_proposals(memory_dir, max_chars=_UNBOUNDED))
             if (
                 max_pending_proposals is not None
@@ -1519,7 +1521,7 @@ def process_task(
     # proposals, so persist_results would never see one and the queue would
     # stay full for good.
     with memory_dir_lock(memory_dir):
-        expire_pending(memory_dir, cl.proposal_max_age_days, _task_now(timestamp))
+        expired = expire_pending(memory_dir, cl.proposal_max_age_days, _task_now(timestamp))
         queue_full = (
             cl.max_pending_proposals is not None
             and len(collect_pending_proposals(memory_dir, max_chars=_UNBOUNDED))
@@ -1570,6 +1572,8 @@ def process_task(
         proposal_max_age_days=cl.proposal_max_age_days,
     )
 
+    if expired:
+        wrote.insert(0, _expiry_line(len(expired), cl.proposal_max_age_days))
     if persisted_insights:
         wrote.append(f"insights: {len(persisted_insights)}")
 
