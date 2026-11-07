@@ -392,6 +392,8 @@ settings or plugin hook fires; OAuth still works, unlike `--bare`) and
 isolation. The cost: the evaluator's spend leaves `session_stats` with the
 transcript, so `ClaudeBackend` spend is now unrecorded until `run_inference`
 records it itself ([ADR-039](039-role-routed-inference.md), *Not implemented*).
+*(Superseded 2026-11-01: recorded by `run_inference` since #577; see ADR-039
+Evolution.)*
 The per-consumer evaluator skips stay as defense in depth.
 
 **2026-11-01 — an optional usage-reporting Protocol beside `LLMBackend`.**
