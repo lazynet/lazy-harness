@@ -20,6 +20,7 @@ import re
 import shutil
 import subprocess
 import time
+import unicodedata
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -52,6 +53,57 @@ class Insight:
 
 def _normalize_for_hash(body: str) -> str:
     return " ".join(body.split())
+
+
+#: Token-set Jaccard at or above which two failure summaries of one session are
+#: the same failure reworded. Not a config key: calibration is frozen until the
+#: kill-criteria horizon closes, and 0.6 is stricter than the 0.4/0.5 that
+#: measured the same duplicates, so it errs toward keeping rows.
+FAILURE_DEDUPE_JACCARD = 0.6
+
+_FAILURE_STOPWORDS = frozenset(
+    "a al algo ante como con cual cuando de del desde donde el ella ellos en entre era es "
+    "esta este esto fue ha han la las le lo los mas me mi muy no nos o para pero por que "
+    "se si sin sobre su sus te un una uno unos y ya the and for with from that this was "
+    "were not but are has had into onto its it".split()
+)
+
+
+def _failure_tokens(summary: str) -> frozenset[str]:
+    folded = unicodedata.normalize("NFKD", summary.lower())
+    plain = "".join(c for c in folded if not unicodedata.combining(c))
+    return frozenset(
+        t for t in re.findall(r"\w+", plain) if len(t) > 2 and t not in _FAILURE_STOPWORDS
+    )
+
+
+def _jaccard(a: frozenset[str], b: frozenset[str]) -> float:
+    union = a | b
+    return len(a & b) / len(union) if union else 0.0
+
+
+def _session_failure_tokens(memory_dir: Path, session_id: str) -> list[frozenset[str]]:
+    """Token sets of failures already recorded for `session_id`.
+
+    Rows without a `session_id` (written before the field existed) are ignored:
+    attributing them to a session would be a guess, and a guard that can drop a
+    real failure on a guess is worse than a duplicate.
+    """
+    if not session_id:
+        return []
+    try:
+        text = (memory_dir / "failures.jsonl").read_text()
+    except OSError:
+        return []
+    out: list[frozenset[str]] = []
+    for line in text.splitlines():
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict) and row.get("session_id") == session_id:
+            out.append(_failure_tokens(str(row.get("summary", ""))))
+    return out
 
 
 def _content_hash(body: str) -> str:
@@ -1100,10 +1152,19 @@ def persist_results(
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         wrote.append(f"decision: {d.get('summary', '')[:60]}")
 
+    seen_failures = _session_failure_tokens(memory_dir, session_id)
     for fe in data.get("failures", []):
+        tokens = _failure_tokens(str(fe.get("summary", "")))
+        if any(_jaccard(tokens, prior) >= FAILURE_DEDUPE_JACCARD for prior in seen_failures):
+            wrote.append(
+                f"failure: skipped duplicate of this session ({fe.get('summary', '')[:60]})"
+            )
+            continue
+        seen_failures.append(tokens)
         entry = {
             "ts": timestamp,
             "type": "failure",
+            "session_id": session_id,
             "summary": fe.get("summary", ""),
             "root_cause": fe.get("root_cause", ""),
             "resolution": fe.get("resolution", ""),

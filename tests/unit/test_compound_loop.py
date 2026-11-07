@@ -3501,3 +3501,75 @@ def test_slim_handoff_records_provenance_frontmatter(tmp_path: Path) -> None:
     assert float(meta["source_mtime"]) > 0
     assert meta.get("source_jsonl") == str(session)
     assert body.startswith("# Handoff (slim)")
+
+
+# --- intra-session failure dedupe ---
+
+_HERD_A = "Propuso un plan de /herd de 15 PRs de toda la cuenta en vez del repo del CWD"
+# Reworded by the grader on a later run of the same session.
+_HERD_B = "Propuso un plan de /herd de 15 PRs de toda la cuenta y no del repo del CWD"
+_EXPORT = "Imprimió completa la export_url en la salida de la herramienta"
+
+
+def _failure_data(summary: str) -> dict[str, Any]:
+    return {
+        "decisions": [],
+        "failures": [{"summary": summary, "root_cause": "rc", "resolution": "r"}],
+        "learnings": [],
+        "handoff": [],
+    }
+
+
+def _persist_failure(tmp_path: Path, summary: str, session_id: str, ts: str) -> list[str]:
+    return persist_results(
+        _failure_data(summary),
+        tmp_path / "memory",
+        tmp_path / "Learnings",
+        "proj",
+        ts,
+        session_id=session_id,
+    )
+
+
+def _failure_rows(tmp_path: Path) -> list[dict[str, Any]]:
+    path = tmp_path / "memory" / "failures.jsonl"
+    return [json.loads(line) for line in path.read_text().splitlines()]
+
+
+def test_persist_results_skips_reworded_failure_from_the_same_session(tmp_path: Path) -> None:
+    _persist_failure(tmp_path, _HERD_A, "sess-1", "2026-11-05T10:00:00-03:00")
+    wrote = _persist_failure(tmp_path, _HERD_B, "sess-1", "2026-11-05T14:00:00-03:00")
+
+    assert len(_failure_rows(tmp_path)) == 1
+    assert any("skipped duplicate of this session" in line for line in wrote)
+
+
+def test_persist_results_keeps_the_same_failure_from_another_session(tmp_path: Path) -> None:
+    _persist_failure(tmp_path, _HERD_A, "sess-1", "2026-11-05T10:00:00-03:00")
+    _persist_failure(tmp_path, _HERD_B, "sess-2", "2026-11-05T14:00:00-03:00")
+
+    assert len(_failure_rows(tmp_path)) == 2
+
+
+def test_persist_results_keeps_distinct_failures_from_one_session(tmp_path: Path) -> None:
+    _persist_failure(tmp_path, _HERD_A, "sess-1", "2026-11-05T10:00:00-03:00")
+    _persist_failure(tmp_path, _EXPORT, "sess-1", "2026-11-05T14:00:00-03:00")
+
+    assert len(_failure_rows(tmp_path)) == 2
+
+
+def test_failure_rows_carry_session_id(tmp_path: Path) -> None:
+    _persist_failure(tmp_path, _HERD_A, "sess-1", "2026-11-05T10:00:00-03:00")
+
+    assert _failure_rows(tmp_path)[0]["session_id"] == "sess-1"
+
+
+def test_legacy_rows_without_session_id_never_suppress(tmp_path: Path) -> None:
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    legacy = {"ts": "2026-11-01T10:00:00-03:00", "type": "failure", "summary": _HERD_B}
+    (memory / "failures.jsonl").write_text(json.dumps(legacy) + "\n")
+
+    _persist_failure(tmp_path, _HERD_B, "sess-1", "2026-11-05T14:00:00-03:00")
+
+    assert len(_failure_rows(tmp_path)) == 2
