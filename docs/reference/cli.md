@@ -519,9 +519,11 @@ lh memory reconcile --memory-dir ~/repos/lazy/lazy-knowledge/memory/github.com/m
 
 ### `lh memory rightsize`
 
-Lists every `CLAUDE.md` the harness can reach and which ceiling, if any, it breaches. Read-only.
+Lists every `CLAUDE.md` and `AGENTS.md` the harness can reach and which ceiling, if any, it breaches. Read-only.
 
-Two populations are covered: each profile's own contract at `<profile config_dir>/CLAUDE.md`, which is loaded on **every** session in that profile, and the `CLAUDE.md` of every project reachable under a configured `[profiles.*].roots` entry — whether or not that project has memory in the knowledge store yet, since a contract can be oversized long before the project accumulates any.
+Two populations are covered: each profile's own contract (the system document its agent loads, `CLAUDE.md` or `AGENTS.md`, under the profile's `config_dir`), which is loaded on **every** session in that profile, and the `CLAUDE.md` and `AGENTS.md` of every project reachable under a configured `[profiles.*].roots` entry — whether or not that project has memory in the knowledge store yet, since a contract can be oversized long before the project accumulates any.
+
+Run from a linked worktree, it measures that worktree's root contracts instead of the main checkout's; a contract the worktree lacks is not listed.
 
 The thresholds are the same 200-line and 12KB ceilings `pre-tool-use-memory-size` warns against, read from the same `[hooks.pre_tool_use]` config, so the command and the hook cannot silently disagree about what counts as too big.
 
@@ -759,7 +761,10 @@ lh repo instructions --manifest fleet.json
 ```
 
 Verifies the portable instruction contract: root `AGENTS.md` exists and no
-`CLAUDE.md` shadows its parent-chain discovery. Agent-specific guidance lives
+`CLAUDE.md` shadows its parent-chain discovery. It also reports a `CLAUDE.local.md`
+(in the repository or an ancestor) that lacks an `@AGENTS.md` import line: Claude
+Code stops loading `AGENTS.md` when one exists. Add `@AGENTS.md` to it. The
+git-ignore skip does not apply to it, so git-ignored copies are checked too. Agent-specific guidance lives
 in labelled sections of `AGENTS.md`, so root and nested sessions receive the
 same contract in Claude Code and Codex.
 
@@ -787,13 +792,15 @@ directory, because it then affects the active session. Other nested files and
 ancestor shadows still fail. A manifest cannot be combined with positional
 paths; without one, all paths remain strict.
 
-Three findings, each naming the file to change:
+Five findings, each naming the file to change:
 
 | Code | Meaning |
 | --- | --- |
 | `missing-agents-md` | No root `AGENTS.md` exists, so repository rules are not portable. |
 | `claude-md-shadows-agents` | A `CLAUDE.md` prevents Claude Code from walking the parent `AGENTS.md` chain. |
 | `ancestor-claude-md-shadows-agents` | An ancestor `CLAUDE.md` blocks repository `AGENTS.md` discovery. |
+| `claude-local-md-shadows-agents` | A `CLAUDE.local.md` in the repository has no `@AGENTS.md` import line. |
+| `ancestor-claude-local-md-shadows-agents` | An ancestor `CLAUDE.local.md` has no `@AGENTS.md` import line. |
 
 Exit code 0 when the tree is clean, 1 with one line per finding — so it works as
 a CI step, not only as a local convenience.

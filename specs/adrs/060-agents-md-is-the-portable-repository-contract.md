@@ -57,6 +57,14 @@ one source and preserve nested discovery.
   `~/.claude/plugins/...`, which stopped existing with the link, so every
   plugin failed to load with `cache-miss`. `lh deploy` now repoints such paths
   into the profile and `lh doctor` reports any that dangle (#447).
+- **Evolution (2026-11-07):** the gate also flags a `CLAUDE.local.md`, in the
+  repository or an ancestor, without an `@AGENTS.md` import
+  (`claude-local-md-shadows-agents`, `ancestor-claude-local-md-shadows-agents`;
+  #593). Evidence on Claude Code 2.1.319, probed with `claude -p` and a marker
+  in `AGENTS.md`: `AGENTS.md` alone loads the marker; adding a `CLAUDE.local.md`
+  containing only "Be brief." returns `NONE`. A repository whose `CLAUDE.md`
+  is a symlink to `AGENTS.md` loads it regardless, but it already fails the gate
+  for the `CLAUDE.md`.
 
 ## Status of the pilots
 
