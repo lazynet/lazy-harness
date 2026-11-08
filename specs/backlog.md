@@ -410,7 +410,7 @@ marketplace a `v2.1.0` evita la causa, no la detección.
 `engram@engram` instalado en cada profile contra la que shippea el tag del
 binario (plan §5.2 ítem 4). Prioridad MEDIA.
 
-### La cola de proposals: (d) shippeó, (c) shippeó en #589 y el cap retiene y nada lo devuelve
+### La cola de proposals: (d) shippeó, (c) shippeó en #589
 
 **Decisión 2026-11-07: (c).** Las pendientes con más de `[compound_loop] proposal_max_age_days` (default 30) pasan a `claude-md.expired.md`, que no es registro de inmunidad, con `lh memory proposals expired list|requeue` para revivirlas (#589). La expiración corre antes del chequeo del cap en `process_task` y en `persist_results`, bajo `memory_dir_lock`. Kill criteria en la entrada de B y C.
 
