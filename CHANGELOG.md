@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.95.0](https://github.com/lazynet/lazy-harness/compare/v0.94.0...v0.95.0) (2026-11-13)
+
+
+### Features
+
+* dedup learnings at persist time and record their agent and host ([#598](https://github.com/lazynet/lazy-harness/issues/598)) ([3e637f6](https://github.com/lazynet/lazy-harness/commit/3e637f6a221ac75bc0e9398563cf0e3701413fa6))
+
+
+### Bug Fixes
+
+* fold into a learning's Also seen section under a store lock ([#599](https://github.com/lazynet/lazy-harness/issues/599)) ([884fba4](https://github.com/lazynet/lazy-harness/commit/884fba4a79da360687ce9905c5428170e468113d))
+
+
+### Documentation
+
+* close coherence-audit drift found at 0.94.0 ([#595](https://github.com/lazynet/lazy-harness/issues/595)) ([a028c48](https://github.com/lazynet/lazy-harness/commit/a028c48eb9896bd2c7281e792488b2e85bad951d))
+
 ## [0.94.0](https://github.com/lazynet/lazy-harness/compare/v0.93.0...v0.94.0) (2026-11-07)
 
 
