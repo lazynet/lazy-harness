@@ -210,3 +210,108 @@ def test_apply_decay_is_idempotent_on_second_run(tmp_path: Path) -> None:
     second = find_decay_candidates(learnings, horizon_days=90, today=TODAY)
 
     assert second == []
+
+
+def test_decay_round_trips_a_note_with_agent_and_host(tmp_path: Path) -> None:
+    from lazy_harness.core.decay import apply_decay, find_decay_candidates
+    from lazy_harness.knowledge.compound_loop import persist_results
+
+    learnings = tmp_path / "learnings"
+    persist_results(
+        {
+            "decisions": [],
+            "failures": [],
+            "handoff": [],
+            "learnings": [
+                {"title": "Old one", "learning": "b", "context": "c", "scope": "universal"}
+            ],
+        },
+        tmp_path / "memory",
+        learnings,
+        "proj",
+        "2026-03-01T10:00:00-03:00",
+        agent="codex",
+    )
+    (note,) = learnings.rglob("*.md")
+    before = {ln for ln in note.read_text().splitlines() if ln.startswith(("agent:", "host:"))}
+    assert len(before) == 2
+
+    candidates = find_decay_candidates(learnings, horizon_days=90, today=TODAY)
+    assert apply_decay(candidates, reason="old", today=TODAY) == [note]
+
+    text = note.read_text()
+    assert "status: superseded" in text
+    assert before <= set(text.splitlines())
+
+
+_LEARNING = {
+    "decisions": [],
+    "failures": [],
+    "handoff": [],
+    "learnings": [{"title": "Cycle note", "learning": "b", "context": "c", "scope": "universal"}],
+}
+
+
+def test_a_second_write_cycle_does_not_resurrect_a_decayed_note(tmp_path: Path) -> None:
+    """persist -> decay -> persist the same slug -> load: the second write must
+    leave the superseded note, with its agent and host, exactly as decay left it."""
+    from lazy_harness.core.decay import apply_decay, find_decay_candidates
+    from lazy_harness.knowledge.compound_loop import collect_existing_learnings, persist_results
+
+    learnings = tmp_path / "learnings"
+    memory = tmp_path / "memory"
+    persist_results(
+        _LEARNING, memory, learnings, "proj", "2026-03-01T10:00:00-03:00", agent="codex"
+    )
+    (note,) = learnings.rglob("*.md")
+    apply_decay(
+        find_decay_candidates(learnings, horizon_days=90, today=TODAY), reason="old", today=TODAY
+    )
+    after_decay = note.read_text()
+
+    wrote = persist_results(
+        _LEARNING, memory, learnings, "proj", "2026-03-01T11:00:00-03:00", agent="claude-code"
+    )
+
+    assert wrote == []
+    assert note.read_text() == after_decay
+    assert "status: superseded" in after_decay and "agent: codex" in after_decay
+    assert collect_existing_learnings(learnings) == ""
+    assert find_decay_candidates(learnings, horizon_days=90, today=TODAY) == []
+
+
+def test_persist_merges_into_a_store_that_already_has_agent_and_host_notes(
+    tmp_path: Path,
+) -> None:
+    """Merge-on-existing, separate from the new-document path: the store holds a
+    note written before the fields existed and one written with them."""
+    from lazy_harness.core.decay import find_decay_candidates
+    from lazy_harness.knowledge.compound_loop import collect_existing_learnings, persist_results
+
+    learnings = tmp_path / "learnings"
+    legacy = _write_learning(
+        learnings / "2026-03" / "legacy.md", title="Legacy note", origin_session="2026-03-01"
+    )
+    stamped = _write_learning(
+        learnings / "2026-03" / "stamped.md", title="Stamped note", origin_session="2026-03-02"
+    )
+    stamped.write_text(
+        stamped.read_text().replace(
+            "scope: universal\n", "scope: universal\nagent: codex\nhost: lazymbp\n"
+        )
+    )
+    before = {p: p.read_text() for p in (legacy, stamped)}
+
+    persist_results(
+        _LEARNING,
+        tmp_path / "memory",
+        learnings,
+        "proj",
+        "2026-03-03T10:00:00-03:00",
+        agent="claude-code",
+    )
+
+    assert {p: p.read_text() for p in before} == before
+    titles = collect_existing_learnings(learnings).splitlines()
+    assert sorted(titles) == ["- Cycle note", "- Legacy note", "- Stamped note"]
+    assert len(find_decay_candidates(learnings, horizon_days=90, today=TODAY)) == 3

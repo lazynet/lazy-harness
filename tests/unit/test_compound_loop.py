@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,7 @@ from lazy_harness.agents.base import HookEvent
 from lazy_harness.core.config import CompoundLoopConfig, Config
 from lazy_harness.core.proposals import EXPIRED_PROPOSALS_FILE, expire_pending, parse_proposals
 from lazy_harness.knowledge.compound_loop import (
+    DUPLICATE_TITLE_THRESHOLD,
     HELD_PROPOSALS_FILE,
     AgentDispatch,
     Insight,
@@ -31,6 +33,7 @@ from lazy_harness.knowledge.compound_loop import (
     is_interactive_session,
     last_processed_mtime,
     move_to_done,
+    origin_host,
     parse_response,
     parse_task,
     persist_insights,
@@ -602,21 +605,41 @@ def test_collect_existing_decisions_and_failures(tmp_path: Path) -> None:
     assert "broken symlink" in collect_existing_failures(memory)
 
 
+def _note(path: Path, title: str, extra: str = "", origin: str = "p") -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f'---\ntitle: "{title}"\norigin: {origin}\n{extra}---\n\nbody\n')
+
+
 def test_collect_existing_learnings(tmp_path: Path) -> None:
     learnings = tmp_path / "Learnings"
-    (learnings / "2026-04").mkdir(parents=True)
-    (learnings / "2026-04" / "2026-04-01-foo.md").write_text(
-        '---\ntitle: "Use atomic writes in iCloud"\n---\n'
-    )
-    (learnings / "2026-04" / "2026-04-02-bar.md").write_text(
-        '---\ntitle: "Debounce session export"\n---\n'
-    )
-    # review files should be ignored
-    (learnings / "2026-04" / "_review-2026-04.md").write_text('---\ntitle: "Ignored review"\n---\n')
+    _note(learnings / "2026-04" / "2026-04-01-foo.md", "Use atomic writes in iCloud")
+    _note(learnings / "2026-04" / "2026-04-02-bar.md", "Debounce session export")
+    _note(learnings / "2026-04" / "_review-2026-04.md", "Ignored review")
     out = collect_existing_learnings(learnings)
-    assert "Use atomic writes in iCloud" in out
-    assert "Debounce session export" in out
-    assert "Ignored review" not in out
+    assert out.splitlines() == ["- Debounce session export", "- Use atomic writes in iCloud"]
+
+
+def test_collect_existing_learnings_keeps_the_most_recent_by_file_name(tmp_path: Path) -> None:
+    """Names carry their date, so recency is the name order, not the mtime: a
+    fresh clone gives every file the same mtime."""
+    learnings = tmp_path / "Learnings"
+    for day in (1, 2, 3):
+        _note(learnings / "2026-04" / f"2026-04-0{day}-n.md", f"Note of day {day}")
+    # The oldest note has the newest mtime.
+    for day, mtime in ((1, 900.0), (2, 200.0), (3, 100.0)):
+        os.utime(learnings / "2026-04" / f"2026-04-0{day}-n.md", (mtime, mtime))
+    out = collect_existing_learnings(learnings, limit=2)
+    assert out.splitlines() == ["- Note of day 3", "- Note of day 2"]
+
+
+def test_collect_existing_learnings_skips_superseded_and_malformed(tmp_path: Path) -> None:
+    learnings = tmp_path / "Learnings"
+    _note(learnings / "2026-04" / "a-superseded.md", "Superseded title", "status: superseded\n")
+    _note(learnings / "2026-04" / "b-active.md", "Valid title", "status: active\n")
+    (learnings / "2026-04" / "c-nofm.md").write_text("no frontmatter here\ntitle: Not a title\n")
+    (learnings / "2026-04" / "d-unterminated.md").write_text('---\ntitle: "Unterminated"\n')
+    (learnings / "2026-04" / "e-binary.md").write_bytes(b"\xff\xfe\x00---\n")
+    assert collect_existing_learnings(learnings) == "- Valid title"
 
 
 def test_strip_markdown_fences_with_fence() -> None:
@@ -762,6 +785,181 @@ def test_persist_results_removes_stale_handoff(tmp_path: Path) -> None:
         "2026-04-12T10:00:00-03:00",
     )
     assert not handoff.exists()
+
+
+_ONE_LEARNING = {
+    "decisions": [],
+    "failures": [],
+    "learnings": [
+        {
+            "title": "Attributed learning",
+            "learning": "body",
+            "context": "ctx",
+            "scope": "universal",
+            "tags": ["t"],
+        }
+    ],
+    "handoff": [],
+}
+
+
+def _only_learning_text(learnings: Path) -> str:
+    files = list(learnings.rglob("*.md"))
+    assert len(files) == 1
+    return files[0].read_text()
+
+
+def test_persisted_learning_names_agent_and_host(tmp_path: Path) -> None:
+    learnings = tmp_path / "Learnings"
+    persist_results(
+        _ONE_LEARNING,
+        tmp_path / "memory",
+        learnings,
+        "proj",
+        "2026-04-12T10:00:00-03:00",
+        agent="codex",
+    )
+    text = _only_learning_text(learnings)
+    assert f"scope: universal\nagent: codex\nhost: {origin_host()}\nstatus: active\n" in text
+
+
+def test_persisted_learning_agent_defaults_to_unknown(tmp_path: Path) -> None:
+    learnings = tmp_path / "Learnings"
+    persist_results(
+        _ONE_LEARNING, tmp_path / "memory", learnings, "proj", "2026-04-12T10:00:00-03:00"
+    )
+    assert "agent: unknown\n" in _only_learning_text(learnings)
+
+
+def _data(title: str) -> dict:
+    return {
+        "decisions": [],
+        "failures": [],
+        "handoff": [],
+        "learnings": [{"title": title, "learning": "b", "context": "c", "scope": "universal"}],
+    }
+
+
+def _persist(tmp_path: Path, title: str, *, ts: str = "2026-11-07T10:00:00-03:00") -> list[str]:
+    return persist_results(
+        _data(title), tmp_path / "memory", tmp_path / "Learnings", "proj", ts, agent="codex"
+    )
+
+
+def test_the_duplicate_threshold_is_point_seven() -> None:
+    assert DUPLICATE_TITLE_THRESHOLD == 0.7
+
+
+def test_a_paraphrased_title_is_folded_into_the_existing_note(tmp_path: Path) -> None:
+    """The real LR-W45 pair: the same lesson written a day apart."""
+    learnings = tmp_path / "Learnings"
+    existing = learnings / "2026-11" / "2026-11-06-grep-q.md"
+    _note(existing, "grep -q dentro de pipe con pipefail da falso negativo", "status: active\n")
+    before = existing.read_text()
+
+    wrote = _persist(tmp_path, "pipefail con grep -q da falso negativo")
+
+    assert wrote == [f"learning dedup: pipefail con grep -q da falso negativo -> {existing}"]
+    assert [p for p in learnings.rglob("*.md")] == [existing]
+    text = existing.read_text()
+    assert text.startswith(before)
+    assert text.endswith(
+        f"\n## Also seen\n\n- pipefail con grep -q da falso negativo (2026-11-07, codex, {origin_host()})\n"
+    )
+
+
+def test_an_unrelated_title_is_written_as_a_new_note(tmp_path: Path) -> None:
+    learnings = tmp_path / "Learnings"
+    _note(learnings / "2026-11" / "a.md", "grep -q dentro de pipe con pipefail da falso negativo")
+
+    wrote = _persist(tmp_path, "Un backup sin restore probado no es un backup")
+
+    assert wrote == ["learning: Un backup sin restore probado no es un backup"]
+    assert len(list(learnings.rglob("*.md"))) == 2
+    assert "## Also seen" not in (learnings / "2026-11" / "a.md").read_text()
+
+
+def test_a_superseded_best_match_is_ignored(tmp_path: Path) -> None:
+    learnings = tmp_path / "Learnings"
+    _note(
+        learnings / "2026-11" / "a.md",
+        "grep -q dentro de pipe con pipefail da falso negativo",
+        "status: superseded\n",
+    )
+
+    wrote = _persist(tmp_path, "pipefail con grep -q da falso negativo")
+
+    assert wrote == ["learning: pipefail con grep -q da falso negativo"]
+    assert len(list(learnings.rglob("*.md"))) == 2
+    assert "## Also seen" not in (learnings / "2026-11" / "a.md").read_text()
+
+
+def test_two_folds_into_one_note_make_two_lines_under_one_section(tmp_path: Path) -> None:
+    learnings = tmp_path / "Learnings"
+    existing = learnings / "2026-11" / "a.md"
+    _note(existing, "grep -q dentro de pipe con pipefail da falso negativo")
+
+    _persist(tmp_path, "pipefail con grep -q da falso negativo", ts="2026-11-07T10:00:00-03:00")
+    _persist(
+        tmp_path,
+        "grep -q con pipefail en un pipe da falso negativo",
+        ts="2026-11-08T10:00:00-03:00",
+    )
+
+    text = existing.read_text()
+    assert text.count("## Also seen") == 1
+    assert text.count("\n- ") == 2
+    assert "(2026-11-07, codex," in text and "(2026-11-08, codex," in text
+
+
+def test_a_fold_goes_inside_an_existing_also_seen_section_not_after_a_later_one(
+    tmp_path: Path,
+) -> None:
+    learnings = tmp_path / "Learnings"
+    existing = learnings / "2026-11" / "a.md"
+    _note(existing, "grep -q dentro de pipe con pipefail da falso negativo")
+    existing.write_text(
+        existing.read_text()
+        + "\n## Also seen\n\n- older title (2026-11-01, x, y)\n\n## Context\n\ntail\n"
+    )
+
+    _persist(tmp_path, "pipefail con grep -q da falso negativo")
+
+    text = existing.read_text()
+    assert text.count("## Also seen") == 1
+    assert text.index("- pipefail con grep") < text.index("## Context")
+    assert "- older title (2026-11-01, x, y)\n- pipefail con grep" in text
+    assert text.endswith("## Context\n\ntail\n")
+
+
+def test_two_similar_learnings_in_one_call_fold_into_the_first(tmp_path: Path) -> None:
+    data = _data("grep -q dentro de pipe con pipefail da falso negativo")
+    data["learnings"].append(
+        {"title": "pipefail con grep -q da falso negativo", "learning": "b", "context": "c"}
+    )
+    wrote = persist_results(
+        data, tmp_path / "memory", tmp_path / "Learnings", "proj", "2026-11-07T10:00:00-03:00"
+    )
+    assert len(wrote) == 2 and wrote[1].startswith("learning dedup:")
+    assert len(list((tmp_path / "Learnings").rglob("*.md"))) == 1
+
+
+def test_persist_over_12k_note_files_stays_under_two_seconds(tmp_path: Path) -> None:
+    import time
+
+    learnings = tmp_path / "Learnings"
+    for i in range(12_000):
+        month = learnings / f"2026-{i % 12 + 1:02d}"
+        month.mkdir(parents=True, exist_ok=True)
+        (month / f"note-{i}.md").write_text(
+            f'---\ntitle: "Learning {i} about topic{i % 97} and thing{i % 13}"\norigin: p\n'
+            "status: active\n---\n\n" + "filler line of a realistic body\n" * 100
+        )
+    start = time.perf_counter()
+    wrote = _persist(tmp_path, "Completely different subject nobody wrote before")
+    elapsed = time.perf_counter() - start
+    assert wrote == ["learning: Completely different subject nobody wrote before"]
+    assert elapsed < 2.0
 
 
 def test_persist_results_skips_duplicate_learning(tmp_path: Path) -> None:
@@ -947,6 +1145,40 @@ def test_process_task_calls_invoke_and_persists(tmp_path: Path, monkeypatch) -> 
     assert "Session conversation" in captured["prompt"]
     learning_files = list(learnings.rglob("*.md"))
     assert len(learning_files) == 1
+
+
+def test_process_task_shows_the_evaluator_the_most_recent_titles(
+    tmp_path: Path, monkeypatch
+) -> None:
+    queue = tmp_path / "queue"
+    memory = tmp_path / "memory"
+    learnings = tmp_path / "Learnings"
+    session = _interactive_session(tmp_path)
+    task = create_task(queue, Path("/tmp/proj"), session, "abcd1234efgh", memory)
+    _note(learnings / "2026-01" / "2026-01-01-old.md", "Next step please wording rule")
+    for i in range(60):
+        _note(learnings / "2026-04" / f"2026-04-{i:02d}-n.md", f"Widget gadget number {i}")
+    captured: dict[str, str] = {}
+
+    def fake(prompt: str, model: str, timeout: int) -> str:
+        captured["prompt"] = prompt
+        return "{}"
+
+    _stub_run_inference(monkeypatch, fake)
+    process_task(task, _cfg(), learnings)
+    assert "Widget gadget number 59" in captured["prompt"]
+    assert "Next step please wording rule" not in captured["prompt"]
+
+
+def test_process_task_stamps_the_agent_it_was_given(tmp_path: Path, monkeypatch) -> None:
+    queue = tmp_path / "queue"
+    memory = tmp_path / "memory"
+    learnings = tmp_path / "Learnings"
+    session = _interactive_session(tmp_path)
+    task = create_task(queue, Path("/tmp/proj"), session, "abcd1234efgh", memory)
+    _stub_run_inference(monkeypatch, lambda *a: json.dumps(_ONE_LEARNING))
+    process_task(task, _cfg(), learnings, agent="codex")
+    assert "agent: codex\n" in _only_learning_text(learnings)
 
 
 def test_process_task_uses_the_distill_role(tmp_path: Path, monkeypatch) -> None:
@@ -2958,17 +3190,25 @@ def test_learning_filename_carries_origin_host(
 def test_two_hosts_same_title_same_day_produce_distinct_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The add/add collision the host suffix exists to prevent."""
+    """The add/add collision the host suffix exists to prevent.
+
+    Each host writes into its own checkout (neither has seen the other's note, so
+    persist-time dedup has nothing to fold into); the stores meet only when synced.
+    """
     from lazy_harness.knowledge import compound_loop
 
-    learnings = tmp_path / "learnings"
     payload = {"learnings": [{"title": "Same idea", "tags": [], "scope": "universal"}]}
+    merged = tmp_path / "merged"
+    merged.mkdir()
     for host in ("laptop", "server"):
         monkeypatch.setattr(compound_loop, "origin_host", lambda h=host: h)
+        own = tmp_path / host
         compound_loop.persist_results(
-            payload, tmp_path / "memory", learnings, "lazy-harness", "2026-08-10T12:00:00"
+            payload, tmp_path / "memory", own, "lazy-harness", "2026-08-10T12:00:00"
         )
-    names = sorted(p.name for p in (learnings / "2026-08").glob("*.md"))
+        for note in own.rglob("*.md"):
+            (merged / note.name).write_text(note.read_text())
+    names = sorted(p.name for p in merged.glob("*.md"))
     assert names == ["2026-08-10-same-idea-laptop.md", "2026-08-10-same-idea-server.md"]
 
 

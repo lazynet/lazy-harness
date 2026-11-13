@@ -113,7 +113,7 @@ def test_worker_stops_draining_when_a_task_cannot_be_archived(
     log_file = tmp_path / "worker.log"
     calls = 0
 
-    def process_once(*args: object) -> TaskOutcome:
+    def process_once(*args: object, **kwargs: object) -> TaskOutcome:
         nonlocal calls
         calls += 1
         if calls > 1:
@@ -321,7 +321,7 @@ backend = "ollama"
 
     captured: dict = {}
 
-    def fake_process_task(task_file, cfg, learnings_dir):  # noqa: ANN001
+    def fake_process_task(task_file, cfg, learnings_dir, **kwargs):  # noqa: ANN001
         captured["cfg"] = cfg
         return TaskOutcome(skipped="stubbed")
 
@@ -598,3 +598,135 @@ def test_the_worker_names_its_queue_with_the_profiles_own_adapter(
         "the worker did not create the queue the producer writes to; it created "
         f"{sorted(p.name for p in profile_home.iterdir()) if profile_home.is_dir() else []}"
     )
+
+
+def _two_agent_worker_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
+    """Config with a Claude and a Codex profile, and BOTH agents' env vars set.
+
+    The worker may be launched from a shell that carries both (a Codex process
+    spawned from a Claude session inherits `CLAUDE_CONFIG_DIR`), so the label
+    must come from the `--profile` the hook passed, never from the ambient env.
+    Returns (queue dir of the codex profile, learnings dir).
+    """
+    from lazy_harness.core.config import load_config
+    from lazy_harness.hooks.builtins._shared import agent_dir_for
+    from lazy_harness.knowledge import compound_loop_worker
+    from lazy_harness.knowledge.compound_loop import create_task
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    claude_home = tmp_path / "claude-home"
+    codex_home = tmp_path / "codex-home"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_home))
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    store = tmp_path / "store"
+    store.mkdir()
+    (store / "knowledge.toml").write_text(
+        '[knowledge]\nversion = 1\nsessions = "sessions"\nlearnings = "learnings"\n'
+    )
+    monkeypatch.setenv("LAZY_KNOWLEDGE_ROOT", str(store))
+
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        '[harness]\nversion = "1"\n\n[agent]\ntype = "claude-code"\n\n'
+        '[profiles]\ndefault = "claude-lazy"\n\n'
+        f'[profiles.claude-lazy]\nconfig_dir = "{claude_home}"\nagent = "claude-code"\n\n'
+        f'[profiles.codex-lazy]\nconfig_dir = "{codex_home}"\nagent = "codex"\n\n'
+        "[compound_loop]\nenabled = true\nmin_messages = 2\nmin_user_chars = 10\n"
+    )
+    monkeypatch.setattr(compound_loop_worker, "config_file", lambda: cfg_file)
+
+    cfg = load_config(cfg_file)
+    agent, agent_dir = agent_dir_for(cfg, "codex-lazy")
+    queue_dir = agent_dir / (agent.session_dirs().get("queue") or "queue")
+    session = tmp_path / "sess.jsonl"
+    session.write_text(
+        "\n".join(
+            json.dumps(r)
+            for r in [
+                {"type": "permission-mode"},
+                {"type": "system", "cwd": "/tmp/proj"},
+                {"type": "user", "message": {"content": "a" * 250}},
+                {"type": "assistant", "message": {"content": "ok"}},
+                {"type": "user", "message": {"content": "next step please"}},
+                {"type": "assistant", "message": {"content": "done"}},
+            ]
+        )
+        + "\n"
+    )
+    create_task(queue_dir, Path("/tmp/proj"), session, "abcd1234efgh", tmp_path / "memory")
+
+    from lazy_harness.knowledge import compound_loop as cl_mod
+    from lazy_harness.llm.invoke import InferenceResult
+
+    reply = json.dumps(
+        {
+            "decisions": [],
+            "failures": [],
+            "handoff": [],
+            "learnings": [
+                {"title": "Who wrote me", "learning": "b", "context": "c", "scope": "universal"}
+            ],
+        }
+    )
+    monkeypatch.setattr(
+        cl_mod,
+        "run_inference",
+        lambda *a, **k: InferenceResult(
+            output=reply, success=True, model="m", backend="stub", duration_ms=1, error=None
+        ),
+    )
+    return queue_dir, store / "learnings"
+
+
+def test_the_worker_labels_a_learning_with_the_profiles_adapter_not_the_ambient_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.knowledge import compound_loop_worker
+
+    _, learnings = _two_agent_worker_env(tmp_path, monkeypatch)
+
+    assert compound_loop_worker.main(["--profile", "codex-lazy"]) == 0
+
+    (note,) = learnings.rglob("*.md")
+    assert "agent: codex\n" in note.read_text()
+
+
+def test_a_worker_spawned_without_a_profile_labels_a_learning_unknown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`lh knowledge` spawns the worker with no `--profile`: nobody said which
+    agent, so the label is `unknown` rather than a guess from `[agent].type`."""
+    from lazy_harness.knowledge import compound_loop_worker
+
+    queue_dir, learnings = _two_agent_worker_env(tmp_path, monkeypatch)
+    # The profile-less worker drains the global claude-code queue.
+    global_queue = tmp_path / "claude-home" / "queue"
+    global_queue.mkdir(parents=True, exist_ok=True)
+    for task in queue_dir.glob("*.task"):
+        task.rename(global_queue / task.name)
+
+    assert compound_loop_worker.main([]) == 0
+
+    (note,) = learnings.rglob("*.md")
+    assert "agent: unknown\n" in note.read_text()
+
+
+def test_the_agent_label_is_unknown_when_the_profiles_agent_cannot_be_resolved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lazy_harness.agents import registry
+    from lazy_harness.core.config import load_config
+    from lazy_harness.knowledge import compound_loop_worker
+
+    _two_agent_worker_env(tmp_path, monkeypatch)
+    cfg = load_config(tmp_path / "config.toml")
+
+    def boom(cfg: object, name: str) -> None:
+        raise KeyError(name)
+
+    monkeypatch.setattr(registry, "agent_for_profile", boom)
+    assert compound_loop_worker._agent_label_for_profile(cfg, "codex-lazy") == "unknown"
+    assert compound_loop_worker._agent_label_for_profile(None, "codex-lazy") == "unknown"

@@ -30,6 +30,7 @@ from lazy_harness.core.config import Config
 from lazy_harness.core.memory_store import memory_dir_lock
 from lazy_harness.core.proposals import expire_pending, rule_lines
 from lazy_harness.knowledge.evaluator_prompt import EVALUATOR_PROMPT_HEAD, is_evaluator_prompt
+from lazy_harness.knowledge.title_dedup import TitleIndex
 from lazy_harness.llm.invoke import run_inference
 
 _INTERACTIVE_MARKERS = ("permission-mode", "last-prompt")
@@ -60,6 +61,10 @@ def _normalize_for_hash(body: str) -> str:
 #: kill-criteria horizon closes, and 0.6 is stricter than the 0.4/0.5 that
 #: measured the same duplicates, so it errs toward keeping rows.
 FAILURE_DEDUPE_JACCARD = 0.6
+
+#: Cosine (IDF-weighted, over titles) at which a new learning is folded into the
+#: active note it paraphrases instead of becoming a new file.
+DUPLICATE_TITLE_THRESHOLD = 0.7
 
 _FAILURE_STOPWORDS = frozenset(
     "a al algo ante como con cual cuando de del desde donde el ella ellos en entre era es "
@@ -740,8 +745,30 @@ def should_queue_task(
     )
 
 
+def _frontmatter_fields(md_file: Path) -> dict[str, str] | None:
+    """Scalar fields of the leading `---` block, reading no further than its close.
+
+    None when the file has no complete frontmatter block.
+    """
+    fields: dict[str, str] = {}
+    with md_file.open(encoding="utf-8") as fh:
+        if fh.readline().strip() != "---":
+            return None
+        for line in fh:
+            if line.strip() == "---":
+                return fields
+            key, sep, value = line.partition(":")
+            if sep:
+                fields[key.strip()] = value.strip()
+    return None
+
+
 def collect_existing_learnings(learnings_dir: Path, limit: int = 50) -> str:
-    """Collect titles of recent learnings for semantic deduplication."""
+    """Titles of the most recent active learnings, for deduplication.
+
+    Recency is the file name order (names lead with their date). Superseded notes
+    and notes with missing or malformed frontmatter are never offered.
+    """
     if not learnings_dir.is_dir():
         return ""
     titles: list[str] = []
@@ -749,16 +776,61 @@ def collect_existing_learnings(learnings_dir: Path, limit: int = 50) -> str:
         if md_file.name.startswith("_review-"):
             continue
         try:
-            for line in md_file.read_text().splitlines():
-                if line.startswith("title:"):
-                    title = line.split(":", 1)[1].strip().strip('"')
-                    titles.append(title)
-                    break
-        except OSError:
+            fields = _frontmatter_fields(md_file)
+        except (OSError, UnicodeDecodeError):
             continue
+        if fields is None or fields.get("status", "active") != "active":
+            continue
+        title = fields.get("title", "").strip('"')
+        if title:
+            titles.append(title)
         if len(titles) >= limit:
             break
     return "\n".join(f"- {t}" for t in titles)
+
+
+def _active_title_index(learnings_dir: Path) -> TitleIndex:
+    """Every active learning's title, keyed by its path. Reads frontmatter only."""
+    index = TitleIndex()
+    if not learnings_dir.is_dir():
+        return index
+    for md_file in sorted(learnings_dir.rglob("*.md")):
+        if md_file.name.startswith("_review-"):
+            continue
+        try:
+            fields = _frontmatter_fields(md_file)
+        except (OSError, UnicodeDecodeError):
+            continue
+        if fields is None or fields.get("status", "active") != "active":
+            continue
+        title = fields.get("title", "").strip('"')
+        if title:
+            index.add(title, md_file)
+    return index
+
+
+_ALSO_SEEN = "## Also seen"
+
+
+def _append_also_seen(path: Path, line: str) -> None:
+    """Add `line` to the note's `## Also seen` bullets, creating the section last.
+
+    The section may be followed by other sections, so the line goes at the end of
+    its own block, not at the end of the file. The frontmatter is never touched.
+    """
+    lines = path.read_text(encoding="utf-8").split("\n")
+    if _ALSO_SEEN in lines:
+        start = lines.index(_ALSO_SEEN)
+        end = start + 1
+        while end < len(lines) and not lines[end].startswith("## "):
+            end += 1
+        while end > start + 1 and lines[end - 1].strip() == "":
+            end -= 1
+        lines.insert(end, line)
+        text = "\n".join(lines)
+    else:
+        text = "\n".join(lines).rstrip("\n") + f"\n\n{_ALSO_SEEN}\n\n{line}\n"
+    _atomic_write(path, text)
 
 
 def _collect_jsonl_summaries(jsonl_file: Path, limit: int = 10) -> str:
@@ -1145,6 +1217,7 @@ def persist_results(
     session_jsonl: Path | None = None,
     max_pending_proposals: int | None = None,
     proposal_max_age_days: int | None = None,
+    agent: str = "unknown",
 ) -> list[str]:
     """Persist decisions/failures/learnings/handoff. Returns a list of summaries
     of what was written, suitable for logging. Atomic writes everywhere."""
@@ -1194,10 +1267,18 @@ def persist_results(
     year_month = date_str[:7]
     month_bucket = learnings_dir / year_month
 
+    title_index: TitleIndex | None = None
     for learning in data.get("learnings", []):
         title = learning.get("title", "untitled")
         filepath = month_bucket / f"{date_str}-{_slugify(title)}-{origin_host()}.md"
         if filepath.exists():
+            continue
+        if title_index is None:
+            title_index = _active_title_index(learnings_dir)
+        match = title_index.closest(title)
+        if match is not None and match[1] >= DUPLICATE_TITLE_THRESHOLD:
+            _append_also_seen(match[0], f"- {title} ({date_str}, {agent}, {origin_host()})")
+            wrote.append(f"learning dedup: {title[:60]} -> {match[0]}")
             continue
         tags_json = json.dumps(learning.get("tags", []))
         scope = learning.get("scope", "universal")
@@ -1207,6 +1288,8 @@ origin: {project_name}
 origin_session: {date_str}
 tags: {tags_json}
 scope: {scope}
+agent: {agent}
+host: {origin_host()}
 status: active
 deprecated_by: null
 deprecated_on: null
@@ -1222,6 +1305,7 @@ deprecated_reason: null
 {learning.get("context", "")}
 """
         _atomic_write(filepath, content)
+        title_index.add(title, filepath)
         wrote.append(f"learning: {title[:60]}")
 
     grade = data.get("grade")
@@ -1468,8 +1552,14 @@ def process_task(
     task_file: Path,
     cfg: Config,
     learnings_dir: Path,
+    *,
+    agent: str = "unknown",
 ) -> TaskOutcome:
-    """Process one queued task, routing inference through the `distill` role (ADR-039)."""
+    """Process one queued task, routing inference through the `distill` role (ADR-039).
+
+    `agent` is the adapter name the worker resolved from its `--profile`; it is
+    stamped on every learning written and is `unknown` when nobody said.
+    """
     cl = cfg.compound_loop
     meta = parse_task(task_file)
     session_jsonl = Path(meta.get("session_jsonl", ""))
@@ -1514,9 +1604,8 @@ def process_task(
 
     existing_decisions = collect_existing_decisions(memory_dir)
     existing_failures = collect_existing_failures(memory_dir)
-    existing_learnings = collect_existing_learnings(learnings_dir)
-
     project_name = project_name_for_cwd(Path(cwd))
+    existing_learnings = collect_existing_learnings(learnings_dir)
     # Expiry runs here as well as in persist_results: a full queue suppresses
     # proposals, so persist_results would never see one and the queue would
     # stay full for good.
@@ -1570,6 +1659,7 @@ def process_task(
         session_jsonl=session_jsonl,
         max_pending_proposals=cl.max_pending_proposals,
         proposal_max_age_days=cl.proposal_max_age_days,
+        agent=agent,
     )
 
     if expired:
