@@ -195,7 +195,7 @@ At session start `context-inject` warns that a handoff may be stale when its own
 
 Each learning becomes a dedicated markdown file in the knowledge store under `<learnings_dir>/YYYY-MM/`. The filename is date-prefixed, slugified from the title, and suffixed with the writing machine's hostname; an existing file is never replaced or deleted. A later near-paraphrase of its title is appended to that note as one dated line under `## Also seen` (see [De-duplication](#de-duplication-why-the-same-learning-does-not-appear-twice)).
 
-The host suffix is what makes the store safe for more than one writer. Two machines that distil a similar title on the same day would otherwise produce the same path with different content — an add/add conflict on the next merge. With the suffix every new filename is unique by construction, so new files from two clones merge as a union. Appending to an existing note's `## Also seen` is the exception: two hosts appending to the same note between syncs edit the same lines, which is an edit/edit conflict on merge, resolved by keeping both lines.
+The host suffix is what makes the store safe for more than one writer. Two machines that distil a similar title on the same day would otherwise produce the same path with different content — an add/add conflict on the next merge. With the suffix every new filename is unique by construction, so new files from two clones merge as a union. Appending to an existing note's `## Also seen` is the exception: two hosts appending to the same note between syncs edit the same lines, which is an edit/edit conflict on merge. `knowledge-push` aborts that merge and reports the conflict (only conflicting handoff files are auto-resolved); resolve it by hand, keeping both lines.
 
 Frontmatter:
 
@@ -206,7 +206,7 @@ origin: lazy-harness
 origin_session: 2026-04-13
 tags: ["architecture","async","queue"]
 scope: universal
-agent: claude
+agent: claude-code
 host: laptop
 status: active
 deprecated_by: null
