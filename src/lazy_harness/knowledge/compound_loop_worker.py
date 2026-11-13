@@ -68,6 +68,7 @@ def _drain_queue(
     cfg: Config,
     learnings_dir: Path,
     log_file: Path,
+    agent_label: str = "unknown",
 ) -> bool:
     while True:
         pending = sorted(queue_dir.glob("*.task"))
@@ -85,7 +86,7 @@ def _drain_queue(
                 return False
             _log(log_file, f"processing {task_file.name}")
             try:
-                outcome = process_task(task_file, cfg, learnings_dir)
+                outcome = process_task(task_file, cfg, learnings_dir, agent=agent_label)
             except Exception as e:  # noqa: BLE001 — worker must not crash the queue
                 _log(log_file, f"error processing {task_file.name}: {e}")
                 if not move_to_done(queue_dir, task_file):
@@ -152,6 +153,23 @@ def _agent_dir_for_profile(cfg: Config | None, profile: str) -> tuple[AgentAdapt
         return agent, agent_runtime_dir(agent)
 
 
+def _agent_label_for_profile(cfg: Config | None, profile: str) -> str:
+    """Adapter name stamped on learnings: the `--profile`'s agent, else 'unknown'.
+
+    No profile means nobody said which agent queued the task, and
+    `_agent_dir_for_profile`'s global fallback is a path decision, not evidence
+    of authorship, so it is not reused here.
+    """
+    if cfg is None or not profile:
+        return "unknown"
+    try:
+        from lazy_harness.agents.registry import agent_for_profile
+
+        return agent_for_profile(cfg, profile).name or "unknown"
+    except Exception:  # noqa: BLE001 — an unresolvable agent must not kill the worker
+        return "unknown"
+
+
 def _profile_from_argv(argv: list[str] | None) -> str:
     """`--profile <name>`, absent meaning "nobody said". Deliberately not
     `resolve_profile`: the worker must inherit the profile of the hook that
@@ -170,7 +188,9 @@ def main(argv: list[str] | None = None) -> int:
     # loadable config the Claude Code adapter is the bootstrap default, which
     # resolves exactly like the historical CLAUDE_CONFIG_DIR read.
     cfg = _load_config()
-    agent, agent_dir = _agent_dir_for_profile(cfg, _profile_from_argv(argv))
+    profile = _profile_from_argv(argv)
+    agent, agent_dir = _agent_dir_for_profile(cfg, profile)
+    agent_label = _agent_label_for_profile(cfg, profile)
     subdirs = agent.session_dirs()
     log_dir = agent_dir / (subdirs.get("logs") or "logs")
     queue_dir = agent_dir / (subdirs.get("queue") or "queue")
@@ -205,7 +225,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
         _log(log_file, "started, checking queue")
-        if not _drain_queue(queue_dir, cfg, learnings_dir, log_file):
+        if not _drain_queue(queue_dir, cfg, learnings_dir, log_file, agent_label):
             _log(log_file, "queue not drained, exiting")
             return 1
         pruned = _prune_done(queue_dir)

@@ -17,7 +17,6 @@ from lazy_harness.knowledge.compound_loop import (
     HELD_PROPOSALS_FILE,
     AgentDispatch,
     Insight,
-    _agent_label,
     build_prompt,
     collect_existing_decisions,
     collect_existing_failures,
@@ -842,37 +841,6 @@ def test_persisted_learning_agent_defaults_to_unknown(tmp_path: Path) -> None:
     assert "agent: unknown\n" in _only_learning_text(learnings)
 
 
-def test_agent_label_is_the_profile_adapter_name(monkeypatch: pytest.MonkeyPatch) -> None:
-    import lazy_harness.agents.registry as registry
-    import lazy_harness.hooks.builtins._shared as shared
-
-    class _Adapter:
-        name = "codex"
-
-    monkeypatch.setattr(shared, "profile_name", lambda: "p")
-    monkeypatch.setattr(registry, "agent_for_profile", lambda cfg, name: _Adapter())
-    assert _agent_label(Config()) == "codex"
-
-
-def test_agent_label_is_unknown_without_profile(monkeypatch: pytest.MonkeyPatch) -> None:
-    import lazy_harness.hooks.builtins._shared as shared
-
-    monkeypatch.setattr(shared, "profile_name", lambda: "")
-    assert _agent_label(Config()) == "unknown"
-
-
-def test_agent_label_is_unknown_when_resolution_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    import lazy_harness.agents.registry as registry
-    import lazy_harness.hooks.builtins._shared as shared
-
-    def _boom(cfg: Config, name: str) -> None:
-        raise KeyError(name)
-
-    monkeypatch.setattr(shared, "profile_name", lambda: "p")
-    monkeypatch.setattr(registry, "agent_for_profile", _boom)
-    assert _agent_label(Config()) == "unknown"
-
-
 def test_persist_results_skips_duplicate_learning(tmp_path: Path) -> None:
     memory = tmp_path / "memory"
     learnings = tmp_path / "Learnings"
@@ -1079,6 +1047,17 @@ def test_process_task_shows_the_evaluator_the_titles_similar_to_the_session(
     _stub_run_inference(monkeypatch, fake)
     process_task(task, _cfg(), learnings)
     assert "Next step please wording rule" in captured["prompt"]
+
+
+def test_process_task_stamps_the_agent_it_was_given(tmp_path: Path, monkeypatch) -> None:
+    queue = tmp_path / "queue"
+    memory = tmp_path / "memory"
+    learnings = tmp_path / "Learnings"
+    session = _interactive_session(tmp_path)
+    task = create_task(queue, Path("/tmp/proj"), session, "abcd1234efgh", memory)
+    _stub_run_inference(monkeypatch, lambda *a: json.dumps(_ONE_LEARNING))
+    process_task(task, _cfg(), learnings, agent="codex")
+    assert "agent: codex\n" in _only_learning_text(learnings)
 
 
 def test_process_task_uses_the_distill_role(tmp_path: Path, monkeypatch) -> None:
