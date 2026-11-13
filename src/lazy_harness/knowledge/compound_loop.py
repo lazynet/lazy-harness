@@ -30,6 +30,7 @@ from lazy_harness.core.config import Config
 from lazy_harness.core.memory_store import memory_dir_lock
 from lazy_harness.core.proposals import expire_pending, rule_lines
 from lazy_harness.knowledge.evaluator_prompt import EVALUATOR_PROMPT_HEAD, is_evaluator_prompt
+from lazy_harness.knowledge.title_dedup import TitleIndex
 from lazy_harness.llm.invoke import run_inference
 
 _INTERACTIVE_MARKERS = ("permission-mode", "last-prompt")
@@ -60,6 +61,10 @@ def _normalize_for_hash(body: str) -> str:
 #: kill-criteria horizon closes, and 0.6 is stricter than the 0.4/0.5 that
 #: measured the same duplicates, so it errs toward keeping rows.
 FAILURE_DEDUPE_JACCARD = 0.6
+
+#: Cosine (IDF-weighted, over titles) at which a new learning is folded into the
+#: active note it paraphrases instead of becoming a new file.
+DUPLICATE_TITLE_THRESHOLD = 0.7
 
 _FAILURE_STOPWORDS = frozenset(
     "a al algo ante como con cual cuando de del desde donde el ella ellos en entre era es "
@@ -784,6 +789,50 @@ def collect_existing_learnings(learnings_dir: Path, limit: int = 50) -> str:
     return "\n".join(f"- {t}" for t in titles)
 
 
+def _active_title_index(learnings_dir: Path) -> TitleIndex:
+    """Every active learning's title, keyed by its path. Reads frontmatter only."""
+    index = TitleIndex()
+    if not learnings_dir.is_dir():
+        return index
+    for md_file in sorted(learnings_dir.rglob("*.md")):
+        if md_file.name.startswith("_review-"):
+            continue
+        try:
+            fields = _frontmatter_fields(md_file)
+        except (OSError, UnicodeDecodeError):
+            continue
+        if fields is None or fields.get("status", "active") != "active":
+            continue
+        title = fields.get("title", "").strip('"')
+        if title:
+            index.add(title, md_file)
+    return index
+
+
+_ALSO_SEEN = "## Also seen"
+
+
+def _append_also_seen(path: Path, line: str) -> None:
+    """Add `line` to the note's `## Also seen` bullets, creating the section last.
+
+    The section may be followed by other sections, so the line goes at the end of
+    its own block, not at the end of the file. The frontmatter is never touched.
+    """
+    lines = path.read_text(encoding="utf-8").split("\n")
+    if _ALSO_SEEN in lines:
+        start = lines.index(_ALSO_SEEN)
+        end = start + 1
+        while end < len(lines) and not lines[end].startswith("## "):
+            end += 1
+        while end > start + 1 and lines[end - 1].strip() == "":
+            end -= 1
+        lines.insert(end, line)
+        text = "\n".join(lines)
+    else:
+        text = "\n".join(lines).rstrip("\n") + f"\n\n{_ALSO_SEEN}\n\n{line}\n"
+    _atomic_write(path, text)
+
+
 def _collect_jsonl_summaries(jsonl_file: Path, limit: int = 10) -> str:
     if not jsonl_file.is_file():
         return ""
@@ -1218,10 +1267,18 @@ def persist_results(
     year_month = date_str[:7]
     month_bucket = learnings_dir / year_month
 
+    title_index: TitleIndex | None = None
     for learning in data.get("learnings", []):
         title = learning.get("title", "untitled")
         filepath = month_bucket / f"{date_str}-{_slugify(title)}-{origin_host()}.md"
         if filepath.exists():
+            continue
+        if title_index is None:
+            title_index = _active_title_index(learnings_dir)
+        match = title_index.closest(title)
+        if match is not None and match[1] >= DUPLICATE_TITLE_THRESHOLD:
+            _append_also_seen(match[0], f"- {title} ({date_str}, {agent}, {origin_host()})")
+            wrote.append(f"learning dedup: {title[:60]} -> {match[0]}")
             continue
         tags_json = json.dumps(learning.get("tags", []))
         scope = learning.get("scope", "universal")
@@ -1248,6 +1305,7 @@ deprecated_reason: null
 {learning.get("context", "")}
 """
         _atomic_write(filepath, content)
+        title_index.add(title, filepath)
         wrote.append(f"learning: {title[:60]}")
 
     grade = data.get("grade")

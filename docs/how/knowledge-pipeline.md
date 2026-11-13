@@ -180,7 +180,7 @@ The compound-loop worker writes one markdown file per learning into the store's 
 For the full flow, see [how the memory compound loop works](memory-compound.md). The key points for the pipeline:
 
 - Learnings are **write-once**. Existing files are not overwritten. This is intentional — a learning is a snapshot of a specific session's insight, and editing it later changes the historical record.
-- Deduplication happens in the LLM prompt, not in the filesystem. The worker passes the titles of the last 50 learnings into the prompt with explicit "do not generate semantic duplicates" instructions.
+- Deduplication has two layers. The worker passes the titles of the 50 most recent active learnings into the prompt with explicit "do not generate semantic duplicates" instructions, and `persist_results` then folds any learning whose title is a near-paraphrase (IDF-weighted cosine of at least 0.7) of an active note into that note's `## Also seen` section instead of writing a new file.
 - Learnings carry a `scope` field (`universal | backend | infra | consulting`) that lets future queries slice by applicability.
 - Nothing prunes or merges near-duplicates after the fact. The tree is append-only by construction and reviewing it is a manual read — the framework ships no learnings-review job.
 
