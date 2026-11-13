@@ -84,6 +84,8 @@ Two `Path.cwd()` bugs survived years of green suites because every CLI test inje
 
 Restoring the guard after the experiment is done by hand — `git checkout` reverts the uncommitted implementation along with it.
 
+A mutation run can also be a no-op without the guard being at fault. Three times a "surviving" mutant had never been executed: a `sed -i` that does nothing on macOS (2026-11-01), a backup restored to the wrong path (2026-11-07), and stale bytecode (2026-11-07). The bytecode case is a same-size, same-second one: CPython invalidates a `.pyc` by `(mtime_seconds, size)`, and the F9 acceptance mutation run (backlog) recorded two mutants that each shrank the file by exactly 35 bytes within one second, so the second ran the first's bytecode and "survived". Set `PYTHONDONTWRITEBYTECODE=1` or clear `__pycache__` before each mutation run, and confirm the mutant actually changed the file.
+
 ## One answer lives in one importable place
 
 Readers honour `[monitoring] db` before falling back to the data dir. A hook that skipped that lookup wrote its file somewhere nothing reads: zero rows forever, no error, no complaint. Where two paths answer one question, only an integration test invoking both catches the disagreement.

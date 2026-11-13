@@ -4,6 +4,8 @@ description: Run the full pre-commit verification suite — pytest, ruff lint, r
 
 You are running the complete verification suite that must pass before any commit in this repo. Run the four checks in sequence, reporting each one's result clearly. If any check fails, stop and report the failure — do not try to fix it automatically.
 
+Run each check as its own command and read its exit code before committing or merging. Never chain the checks with `&&`, and never read the tail of a combined background command.
+
 ## 1. Tests — `uv run --frozen pytest`
 
 ```bash

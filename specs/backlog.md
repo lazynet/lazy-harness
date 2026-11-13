@@ -218,7 +218,7 @@ Este ledger se escribe en español. Las entradas se appendean en el orden en que
 - [x] **Worktrees para todo cambio** — non-negotiable #1, `/new-worktree` + `/cleanup-worktree`
 - [x] **Strict TDD con /tdd-check** — pytest + ruff + mkdocs build como gate pre-commit
 - [x] **Rename completo a lazy-claudecode** — repo, scripts, docs, vault, QMD
-- [x] **Learnings review semanal** — domingos 10:00, output en `Meta/Weekly-Reviews/LR-YYYY-WNN.md`
+- [x] **Learnings review semanal** — `lazy-vault learnings-review` (lazy-ai-tools), agendado en el CT de agents (domingos 10:00 ART) y escribe `Meta/Weekly-Reviews/LR-YYYY-WNN.md`. Propone, no aplica: ninguna de sus acciones se aplicó nunca (10 571 notas, todas `active`); el cierre del loop está en `lazy-ai-tools/docs/superpowers/specs/2026-11-13-learnings-loop-closure-design.md`
 - [x] **Dedup semántico de learnings** — inyección de títulos existentes al prompt de evaluación
 - [x] **lcc-status monitoring dashboard**
 - [x] **Zsh completions** — deployment via `deploy.sh completions`
