@@ -201,7 +201,7 @@ This is the hook that does the heaviest lifting. It is split into two pieces del
 - `<memory_dir>/claude-md.proposal.md` — appended proposed additions to `MEMORY.md` / `CLAUDE.md` for the human to review. Surfaced by `context-inject` on the next session start.
 - `<memory_dir>/insights/YYYY-MM/*.md` — verbatim `★ Insight ─` blocks captured deterministically (regex, not LLM) before the headless extractor runs. Survives LLM timeouts and bypasses the `min_user_chars` / `min_messages` gates. Detailed mechanics in the [compound-loop how page](memory-compound.md).
 - `<memory_dir>/insights/.cursor.json` — per-session last-processed message index, so subsequent Stop hooks scan only the delta.
-- `<learnings_dir>/YYYY-MM/YYYY-MM-DD-<slug>-<host>.md` — one markdown file per learning, atomic write.
+- `<learnings_dir>/YYYY-MM/YYYY-MM-DD-<slug>-<host>.md` — one markdown file per distinct learning, atomic write; a near-duplicate appends a line to the matched note's `## Also seen` instead.
 - `<memory_dir>/handoff.md` — overwritten with the current pending items, or deleted if empty, unless a more recent session wrote it.
 - `loop_events` table in `metrics.db` — one `goal_declared` or `goal_absent` row per graded session, recording whether the grading JSON's `goal_declared` field was `true`. A missing or non-boolean field records nothing. Idempotent across reprocessing: `MetricsDB.clear_goal_verdict` deletes any prior verdict for the session before inserting the new one, so a session that grows and gets re-evaluated still contributes exactly one row — the most recent processing's verdict is the one that counts. Surfaced by [`lh metrics loops`](../reference/cli.md#lh-metrics-loops).
 

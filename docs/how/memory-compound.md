@@ -110,7 +110,7 @@ Steps:
     - **Collect existing memory** for de-dup prompts:
       - `collect_existing_decisions` — tail of `decisions.jsonl`
       - `collect_existing_failures` — tail of `failures.jsonl`
-      - `collect_existing_learnings` — the titles of the most recent 50 learnings markdown files
+      - `collect_existing_learnings` — the titles of the 50 most recent active learnings (file-name order; superseded and malformed notes are skipped)
     - **Build the prompt.** `build_prompt` composes a headless-Claude prompt that embeds all of the above plus the session summary. The prompt is calibration — its wording was iterated against hundreds of real sessions in the predecessor, and it is documented as load-bearing.
     - **Call the LLM backend.** `run_inference(prompt, role="distill", cfg=cfg, timeout=timeout_seconds)` resolves the `distill` role through `[llm.roles]` to a backend declared under `[llm.backends]` — headless `claude -p`, or any OpenAI-compatible endpoint such as Ollama. Returns an `InferenceResult`. The `claude` backend runs `claude -p --setting-sources "" --no-session-persistence`: the empty setting-sources list loads none of the profile's settings, so no hook fires inside the evaluation — plugin hooks such as a memory plugin's `UserPromptSubmit` included — and no session transcript is written for session export, metrics ingest or this loop to read back as a user session. Subscription (OAuth) login keeps working; `--bare` would not. With no transcript, the call's spend comes from the `--output-format json` result envelope instead: `run_inference` writes one `session_stats` row per billed model, keyed by the call's own `session_id`, with `workload = "inference:distill"` and `agent = "claude"`, priced exactly as the ingest prices a transcript (see [Metrics ingest](metrics-ingest.md#inference-calls)). There is deliberately no fallback to another backend: a silent fall-through from a local backend to a billed one hides the broken local one behind an invoice. When the call fails, the slim handoff is written (when `slim_handoff_enabled`) before the task is skipped.
     - **Parse the response.** `parse_response` strips markdown fences, then does three things in order: try raw `json.loads`, then look for the first `{` and walk a balanced-brace state machine to extract a JSON object out of a prose preamble, then give up and return `None`.
@@ -193,9 +193,9 @@ At session start `context-inject` warns that a handoff may be stale when its own
 
 ### `learnings/YYYY-MM/YYYY-MM-DD-<slug>-<host>.md` — long-term cross-project knowledge
 
-Each learning becomes a dedicated markdown file in the knowledge store under `<learnings_dir>/YYYY-MM/`. The filename is date-prefixed, slugified from the title, and suffixed with the writing machine's hostname; existing files are not overwritten (learnings are write-once).
+Each learning becomes a dedicated markdown file in the knowledge store under `<learnings_dir>/YYYY-MM/`. The filename is date-prefixed, slugified from the title, and suffixed with the writing machine's hostname; an existing file is never replaced or deleted. A later near-paraphrase of its title is appended to that note as one dated line under `## Also seen` (see [De-duplication](#de-duplication-why-the-same-learning-does-not-appear-twice)).
 
-The host suffix is what makes the store safe for more than one writer. Two machines that distil a similar title on the same day would otherwise produce the same path with different content — an add/add conflict on the next merge. With the suffix every filename is unique by construction, so merging two clones is always a union and never a conflict. Within one machine the host is constant, so the write-once behaviour is unchanged.
+The host suffix is what makes the store safe for more than one writer. Two machines that distil a similar title on the same day would otherwise produce the same path with different content — an add/add conflict on the next merge. With the suffix every new filename is unique by construction, so new files from two clones merge as a union. Appending to an existing note's `## Also seen` is the exception: two hosts appending to the same note between syncs edit the same lines, which is an edit/edit conflict on merge, resolved by keeping both lines.
 
 Frontmatter:
 
@@ -206,6 +206,8 @@ origin: lazy-harness
 origin_session: 2026-04-13
 tags: ["architecture","async","queue"]
 scope: universal
+agent: claude
+host: laptop
 status: active
 deprecated_by: null
 deprecated_on: null
@@ -222,6 +224,8 @@ Body:
 ## Context
 <one paragraph of where it applies>
 ```
+
+A note that absorbed later paraphrases ends with an optional `## Also seen` section, one bullet per fold: `- <title> (<date>, <agent>, <host>)`.
 
 These are the entries QMD picks up and indexes semantically. The `scope` field (`universal | backend | infra | consulting`) lets a future query say "give me infra-scoped learnings from the last year".
 
@@ -286,7 +290,7 @@ Every worker invocation passes the current tail of decisions, failures, and lear
 
 This is why `collect_existing_learnings` has a `limit` parameter (default 50): the prompt has to stay bounded, but 50 entries is enough to cover the semantic neighborhood of "what was I learning in the last few weeks".
 
-When a genuinely duplicate learning sneaks past the LLM filter, the per-title filename de-dup catches it: existing files are never overwritten. Nothing merges near-duplicates after the fact — the learnings tree is append-only by design, and pruning it is a manual read of the directory.
+When a genuinely duplicate learning sneaks past the LLM filter, the title-similarity fold catches it: `persist_results` compares the new title with every active note's title (IDF-weighted cosine, `DUPLICATE_TITLE_THRESHOLD` = 0.7) and, at or above it, appends one line to the matched note's `## Also seen` instead of writing a new file. The per-title filename check is the exact-slug backstop: an existing file is never overwritten. Nothing merges or deletes notes after the fact; pruning the tree is a manual read of the directory.
 
 ## What the loop does NOT do
 
