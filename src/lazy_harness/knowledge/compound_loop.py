@@ -1277,7 +1277,10 @@ def persist_results(
             title_index = _active_title_index(learnings_dir)
         match = title_index.closest(title)
         if match is not None and match[1] >= DUPLICATE_TITLE_THRESHOLD:
-            _append_also_seen(match[0], f"- {title} ({date_str}, {agent}, {origin_host()})")
+            # `learnings_dir` is shared by every project and profile: the read
+            # and the replace of the note must not interleave with another worker's.
+            with memory_dir_lock(learnings_dir):
+                _append_also_seen(match[0], f"- {title} ({date_str}, {agent}, {origin_host()})")
             wrote.append(f"learning dedup: {title[:60]} -> {match[0]}")
             continue
         tags_json = json.dumps(learning.get("tags", []))

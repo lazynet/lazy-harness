@@ -175,11 +175,11 @@ Every write goes through `_atomic_write`: write to `<dir>/.filename.tmp`, then `
 
 ## Learnings via compound loop
 
-The compound-loop worker writes one markdown file per learning into the store's learnings subdirectory. The structure is identical in spirit to session exports: year-month subdirectories, dated filenames, YAML frontmatter. Learning filenames carry a trailing `-<host>` slug so that two machines distilling the same title on the same day produce two files rather than one conflict.
+The compound-loop worker writes one markdown file per distinct learning into the store's learnings subdirectory. The structure is identical in spirit to session exports: year-month subdirectories, dated filenames, YAML frontmatter. Learning filenames carry a trailing `-<host>` slug so that two machines distilling the same title on the same day produce two files rather than one conflict.
 
 For the full flow, see [how the memory compound loop works](memory-compound.md). The key points for the pipeline:
 
-- Learnings are **write-once**. Existing files are not overwritten. This is intentional — a learning is a snapshot of a specific session's insight, and editing it later changes the historical record.
+- A learning file is **never replaced or deleted**. This is intentional — a learning is a snapshot of a specific session's insight. The only change a note ever receives is a dated line appended under its `## Also seen` section when a later session restates it.
 - Deduplication has two layers. The worker passes the titles of the 50 most recent active learnings into the prompt with explicit "do not generate semantic duplicates" instructions, and `persist_results` then folds any learning whose title is a near-paraphrase (IDF-weighted cosine of at least 0.7) of an active note into that note's `## Also seen` section instead of writing a new file.
 - Learnings carry a `scope` field (`universal | backend | infra | consulting`) that lets future queries slice by applicability.
 - Nothing prunes or merges near-duplicates after the fact. The tree is append-only by construction and reviewing it is a manual read — the framework ships no learnings-review job.

@@ -4093,3 +4093,38 @@ def test_expiry_drops_a_header_only_when_every_rule_under_it_expired(tmp_path: P
     assert parse_proposals((memory / "claude-md.proposal.md").read_text()) == []
     assert "## 2026-09-01" not in (memory / "claude-md.proposal.md").read_text()
     assert len(parse_proposals((memory / EXPIRED_PROPOSALS_FILE).read_text())) == 2
+
+
+def test_a_fold_replaces_the_note_while_holding_the_learnings_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`learnings_dir` is shared by every project and profile, so the read and
+    the replace of a folded note must be one critical section: a second worker
+    holding the same lock file is blocked at the moment of the write."""
+    import fcntl
+
+    from lazy_harness.knowledge import compound_loop
+
+    learnings = tmp_path / "Learnings"
+    existing = learnings / "2026-11" / "a.md"
+    _note(existing, "grep -q dentro de pipe con pipefail da falso negativo")
+    blocked_at_write: list[bool] = []
+    real_write = compound_loop._atomic_write
+
+    def spy(path: Path, content: str) -> None:
+        if path == existing:
+            with open(learnings / ".memory.lock", "a") as probe:
+                try:
+                    fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    blocked_at_write.append(True)
+                else:
+                    blocked_at_write.append(False)
+                    fcntl.flock(probe, fcntl.LOCK_UN)
+        real_write(path, content)
+
+    monkeypatch.setattr(compound_loop, "_atomic_write", spy)
+
+    _persist(tmp_path, "pipefail con grep -q da falso negativo")
+
+    assert blocked_at_write == [True]
