@@ -210,3 +210,35 @@ def test_apply_decay_is_idempotent_on_second_run(tmp_path: Path) -> None:
     second = find_decay_candidates(learnings, horizon_days=90, today=TODAY)
 
     assert second == []
+
+
+def test_decay_round_trips_a_note_with_agent_and_host(tmp_path: Path) -> None:
+    from lazy_harness.core.decay import apply_decay, find_decay_candidates
+    from lazy_harness.knowledge.compound_loop import persist_results
+
+    learnings = tmp_path / "learnings"
+    persist_results(
+        {
+            "decisions": [],
+            "failures": [],
+            "handoff": [],
+            "learnings": [
+                {"title": "Old one", "learning": "b", "context": "c", "scope": "universal"}
+            ],
+        },
+        tmp_path / "memory",
+        learnings,
+        "proj",
+        "2026-03-01T10:00:00-03:00",
+        agent="codex",
+    )
+    (note,) = learnings.rglob("*.md")
+    before = {ln for ln in note.read_text().splitlines() if ln.startswith(("agent:", "host:"))}
+    assert len(before) == 2
+
+    candidates = find_decay_candidates(learnings, horizon_days=90, today=TODAY)
+    assert apply_decay(candidates, reason="old", today=TODAY) == [note]
+
+    text = note.read_text()
+    assert "status: superseded" in text
+    assert before <= set(text.splitlines())

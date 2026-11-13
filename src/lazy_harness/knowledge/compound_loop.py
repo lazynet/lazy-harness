@@ -1121,6 +1121,24 @@ def origin_host() -> str:
     return slug
 
 
+def _agent_label(cfg: Config) -> str:
+    """Adapter name of the agent behind the current profile, else 'unknown'.
+
+    The worker can run with no resolvable profile; a learning still has to be
+    written, so every failure degrades to the label instead of raising.
+    """
+    try:
+        from lazy_harness.agents.registry import agent_for_profile
+        from lazy_harness.hooks.builtins._shared import profile_name
+
+        profile = profile_name()
+        if not profile:
+            return "unknown"
+        return agent_for_profile(cfg, profile).name or "unknown"
+    except Exception:
+        return "unknown"
+
+
 def _task_now(timestamp: str) -> datetime:
     """The task's own timestamp as the clock, falling back to the wall clock."""
     try:
@@ -1145,6 +1163,7 @@ def persist_results(
     session_jsonl: Path | None = None,
     max_pending_proposals: int | None = None,
     proposal_max_age_days: int | None = None,
+    agent: str = "unknown",
 ) -> list[str]:
     """Persist decisions/failures/learnings/handoff. Returns a list of summaries
     of what was written, suitable for logging. Atomic writes everywhere."""
@@ -1207,6 +1226,8 @@ origin: {project_name}
 origin_session: {date_str}
 tags: {tags_json}
 scope: {scope}
+agent: {agent}
+host: {origin_host()}
 status: active
 deprecated_by: null
 deprecated_on: null
@@ -1570,6 +1591,7 @@ def process_task(
         session_jsonl=session_jsonl,
         max_pending_proposals=cl.max_pending_proposals,
         proposal_max_age_days=cl.proposal_max_age_days,
+        agent=_agent_label(cfg),
     )
 
     if expired:

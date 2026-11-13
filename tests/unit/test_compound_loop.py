@@ -16,6 +16,7 @@ from lazy_harness.knowledge.compound_loop import (
     HELD_PROPOSALS_FILE,
     AgentDispatch,
     Insight,
+    _agent_label,
     build_prompt,
     collect_existing_decisions,
     collect_existing_failures,
@@ -31,6 +32,7 @@ from lazy_harness.knowledge.compound_loop import (
     is_interactive_session,
     last_processed_mtime,
     move_to_done,
+    origin_host,
     parse_response,
     parse_task,
     persist_insights,
@@ -762,6 +764,81 @@ def test_persist_results_removes_stale_handoff(tmp_path: Path) -> None:
         "2026-04-12T10:00:00-03:00",
     )
     assert not handoff.exists()
+
+
+_ONE_LEARNING = {
+    "decisions": [],
+    "failures": [],
+    "learnings": [
+        {
+            "title": "Attributed learning",
+            "learning": "body",
+            "context": "ctx",
+            "scope": "universal",
+            "tags": ["t"],
+        }
+    ],
+    "handoff": [],
+}
+
+
+def _only_learning_text(learnings: Path) -> str:
+    files = list(learnings.rglob("*.md"))
+    assert len(files) == 1
+    return files[0].read_text()
+
+
+def test_persisted_learning_names_agent_and_host(tmp_path: Path) -> None:
+    learnings = tmp_path / "Learnings"
+    persist_results(
+        _ONE_LEARNING,
+        tmp_path / "memory",
+        learnings,
+        "proj",
+        "2026-04-12T10:00:00-03:00",
+        agent="codex",
+    )
+    text = _only_learning_text(learnings)
+    assert f"scope: universal\nagent: codex\nhost: {origin_host()}\nstatus: active\n" in text
+
+
+def test_persisted_learning_agent_defaults_to_unknown(tmp_path: Path) -> None:
+    learnings = tmp_path / "Learnings"
+    persist_results(
+        _ONE_LEARNING, tmp_path / "memory", learnings, "proj", "2026-04-12T10:00:00-03:00"
+    )
+    assert "agent: unknown\n" in _only_learning_text(learnings)
+
+
+def test_agent_label_is_the_profile_adapter_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    import lazy_harness.agents.registry as registry
+    import lazy_harness.hooks.builtins._shared as shared
+
+    class _Adapter:
+        name = "codex"
+
+    monkeypatch.setattr(shared, "profile_name", lambda: "p")
+    monkeypatch.setattr(registry, "agent_for_profile", lambda cfg, name: _Adapter())
+    assert _agent_label(Config()) == "codex"
+
+
+def test_agent_label_is_unknown_without_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+    import lazy_harness.hooks.builtins._shared as shared
+
+    monkeypatch.setattr(shared, "profile_name", lambda: "")
+    assert _agent_label(Config()) == "unknown"
+
+
+def test_agent_label_is_unknown_when_resolution_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    import lazy_harness.agents.registry as registry
+    import lazy_harness.hooks.builtins._shared as shared
+
+    def _boom(cfg: Config, name: str) -> None:
+        raise KeyError(name)
+
+    monkeypatch.setattr(shared, "profile_name", lambda: "p")
+    monkeypatch.setattr(registry, "agent_for_profile", _boom)
+    assert _agent_label(Config()) == "unknown"
 
 
 def test_persist_results_skips_duplicate_learning(tmp_path: Path) -> None:
