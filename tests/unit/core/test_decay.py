@@ -276,7 +276,7 @@ def test_a_second_write_cycle_does_not_resurrect_a_decayed_note(tmp_path: Path) 
     assert wrote == []
     assert note.read_text() == after_decay
     assert "status: superseded" in after_decay and "agent: codex" in after_decay
-    assert collect_existing_learnings(learnings, query="cycle note") == ""
+    assert collect_existing_learnings(learnings) == ""
     assert find_decay_candidates(learnings, horizon_days=90, today=TODAY) == []
 
 
@@ -312,6 +312,6 @@ def test_persist_merges_into_a_store_that_already_has_agent_and_host_notes(
     )
 
     assert {p: p.read_text() for p in before} == before
-    titles = collect_existing_learnings(learnings, query="note").splitlines()
+    titles = collect_existing_learnings(learnings).splitlines()
     assert sorted(titles) == ["- Cycle note", "- Legacy note", "- Stamped note"]
     assert len(find_decay_candidates(learnings, horizon_days=90, today=TODAY)) == 3

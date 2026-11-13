@@ -30,7 +30,6 @@ from lazy_harness.core.config import Config
 from lazy_harness.core.memory_store import memory_dir_lock
 from lazy_harness.core.proposals import expire_pending, rule_lines
 from lazy_harness.knowledge.evaluator_prompt import EVALUATOR_PROMPT_HEAD, is_evaluator_prompt
-from lazy_harness.knowledge.title_rank import TitleEntry, rank_titles
 from lazy_harness.llm.invoke import run_inference
 
 _INTERACTIVE_MARKERS = ("permission-mode", "last-prompt")
@@ -759,28 +758,30 @@ def _frontmatter_fields(md_file: Path) -> dict[str, str] | None:
     return None
 
 
-def collect_existing_learnings(
-    learnings_dir: Path, query: str = "", limit: int = 50, project: str | None = None
-) -> str:
-    """Titles of the active learnings most similar to `query`, for deduplication."""
+def collect_existing_learnings(learnings_dir: Path, limit: int = 50) -> str:
+    """Titles of the most recent active learnings, for deduplication.
+
+    Recency is the file name order (names lead with their date). Superseded notes
+    and notes with missing or malformed frontmatter are never offered.
+    """
     if not learnings_dir.is_dir():
         return ""
-    entries: list[TitleEntry] = []
-    for md_file in learnings_dir.rglob("*.md"):
+    titles: list[str] = []
+    for md_file in sorted(learnings_dir.rglob("*.md"), reverse=True):
         if md_file.name.startswith("_review-"):
             continue
         try:
             fields = _frontmatter_fields(md_file)
-            mtime = md_file.stat().st_mtime
         except (OSError, UnicodeDecodeError):
             continue
         if fields is None or fields.get("status", "active") != "active":
             continue
         title = fields.get("title", "").strip('"')
         if title:
-            entries.append(TitleEntry(title, fields.get("origin", ""), mtime))
-    ranked = rank_titles(query, entries, limit, project)
-    return "\n".join(f"- {e.title}" for e in ranked)
+            titles.append(title)
+        if len(titles) >= limit:
+            break
+    return "\n".join(f"- {t}" for t in titles)
 
 
 def _collect_jsonl_summaries(jsonl_file: Path, limit: int = 10) -> str:
@@ -1546,9 +1547,7 @@ def process_task(
     existing_decisions = collect_existing_decisions(memory_dir)
     existing_failures = collect_existing_failures(memory_dir)
     project_name = project_name_for_cwd(Path(cwd))
-    existing_learnings = collect_existing_learnings(
-        learnings_dir, query=summary, project=project_name
-    )
+    existing_learnings = collect_existing_learnings(learnings_dir)
     # Expiry runs here as well as in persist_results: a full queue suppresses
     # proposals, so persist_results would never see one and the queue would
     # stay full for good.

@@ -614,21 +614,21 @@ def test_collect_existing_learnings(tmp_path: Path) -> None:
     _note(learnings / "2026-04" / "2026-04-01-foo.md", "Use atomic writes in iCloud")
     _note(learnings / "2026-04" / "2026-04-02-bar.md", "Debounce session export")
     _note(learnings / "2026-04" / "_review-2026-04.md", "Ignored review")
-    out = collect_existing_learnings(learnings, query="atomic writes icloud conflict")
-    assert out.splitlines()[0] == "- Use atomic writes in iCloud"
-    assert "Debounce session export" in out
-    assert "Ignored review" not in out
+    out = collect_existing_learnings(learnings)
+    assert out.splitlines() == ["- Debounce session export", "- Use atomic writes in iCloud"]
 
 
-def test_collect_existing_learnings_surfaces_old_similar_title(tmp_path: Path) -> None:
+def test_collect_existing_learnings_keeps_the_most_recent_by_file_name(tmp_path: Path) -> None:
+    """Names carry their date, so recency is the name order, not the mtime: a
+    fresh clone gives every file the same mtime."""
     learnings = tmp_path / "Learnings"
-    _note(
-        learnings / "2026-01" / "2026-01-01-old.md", "grep -q under pipefail gives a false negative"
-    )
-    for i in range(60):
-        _note(learnings / "2026-04" / f"2026-04-{i:02d}-n.md", f"Widget topic {i} unrelated")
-    out = collect_existing_learnings(learnings, query="pipefail grep false negative", limit=50)
-    assert out.splitlines()[0] == "- grep -q under pipefail gives a false negative"
+    for day in (1, 2, 3):
+        _note(learnings / "2026-04" / f"2026-04-0{day}-n.md", f"Note of day {day}")
+    # The oldest note has the newest mtime.
+    for day, mtime in ((1, 900.0), (2, 200.0), (3, 100.0)):
+        os.utime(learnings / "2026-04" / f"2026-04-0{day}-n.md", (mtime, mtime))
+    out = collect_existing_learnings(learnings, limit=2)
+    assert out.splitlines() == ["- Note of day 3", "- Note of day 2"]
 
 
 def test_collect_existing_learnings_skips_superseded_and_malformed(tmp_path: Path) -> None:
@@ -638,38 +638,7 @@ def test_collect_existing_learnings_skips_superseded_and_malformed(tmp_path: Pat
     (learnings / "2026-04" / "c-nofm.md").write_text("no frontmatter here\ntitle: Not a title\n")
     (learnings / "2026-04" / "d-unterminated.md").write_text('---\ntitle: "Unterminated"\n')
     (learnings / "2026-04" / "e-binary.md").write_bytes(b"\xff\xfe\x00---\n")
-    out = collect_existing_learnings(learnings, query="title")
-    assert out == "- Valid title"
-
-
-def test_collect_existing_learnings_empty_query_falls_back_to_recent(tmp_path: Path) -> None:
-    learnings = tmp_path / "Learnings"
-    _note(learnings / "2026-04" / "old.md", "Older note")
-    _note(learnings / "2026-04" / "new.md", "Newer note")
-    os.utime(learnings / "2026-04" / "old.md", (100.0, 100.0))
-    os.utime(learnings / "2026-04" / "new.md", (200.0, 200.0))
-    out = collect_existing_learnings(learnings, query="   ", limit=1)
-    assert out == "- Newer note"
-
-
-def test_collect_existing_learnings_over_12k_note_files_under_two_seconds(tmp_path: Path) -> None:
-    """The scan the worker runs per task reads every note's frontmatter: time it
-    through the files, not only the ranker."""
-    import time
-
-    learnings = tmp_path / "Learnings"
-    body = "filler line of a realistic learning body\n" * 200
-    for i in range(12_000):
-        month = learnings / f"2026-{i % 12 + 1:02d}"
-        month.mkdir(parents=True, exist_ok=True)
-        (month / f"note-{i}.md").write_text(
-            f'---\ntitle: "Learning {i} about topic{i % 97}"\norigin: p\nstatus: active\n---\n\n{body}'
-        )
-    start = time.perf_counter()
-    out = collect_existing_learnings(learnings, query="topic5 behaviour", limit=50, project="p")
-    elapsed = time.perf_counter() - start
-    assert len(out.splitlines()) == 50
-    assert elapsed < 2.0
+    assert collect_existing_learnings(learnings) == "- Valid title"
 
 
 def test_strip_markdown_fences_with_fence() -> None:
@@ -1046,7 +1015,7 @@ def test_process_task_calls_invoke_and_persists(tmp_path: Path, monkeypatch) -> 
     assert len(learning_files) == 1
 
 
-def test_process_task_shows_the_evaluator_the_titles_similar_to_the_session(
+def test_process_task_shows_the_evaluator_the_most_recent_titles(
     tmp_path: Path, monkeypatch
 ) -> None:
     queue = tmp_path / "queue"
@@ -1054,10 +1023,9 @@ def test_process_task_shows_the_evaluator_the_titles_similar_to_the_session(
     learnings = tmp_path / "Learnings"
     session = _interactive_session(tmp_path)
     task = create_task(queue, Path("/tmp/proj"), session, "abcd1234efgh", memory)
-    _note(learnings / "2026-01" / "old.md", "Next step please wording rule")
-    os.utime(learnings / "2026-01" / "old.md", (1.0, 1.0))
+    _note(learnings / "2026-01" / "2026-01-01-old.md", "Next step please wording rule")
     for i in range(60):
-        _note(learnings / "2026-04" / f"n{i}.md", f"Widget gadget number {i}")
+        _note(learnings / "2026-04" / f"2026-04-{i:02d}-n.md", f"Widget gadget number {i}")
     captured: dict[str, str] = {}
 
     def fake(prompt: str, model: str, timeout: int) -> str:
@@ -1066,7 +1034,8 @@ def test_process_task_shows_the_evaluator_the_titles_similar_to_the_session(
 
     _stub_run_inference(monkeypatch, fake)
     process_task(task, _cfg(), learnings)
-    assert "Next step please wording rule" in captured["prompt"]
+    assert "Widget gadget number 59" in captured["prompt"]
+    assert "Next step please wording rule" not in captured["prompt"]
 
 
 def test_process_task_stamps_the_agent_it_was_given(tmp_path: Path, monkeypatch) -> None:
