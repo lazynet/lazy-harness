@@ -652,6 +652,26 @@ def test_collect_existing_learnings_empty_query_falls_back_to_recent(tmp_path: P
     assert out == "- Newer note"
 
 
+def test_collect_existing_learnings_over_12k_note_files_under_two_seconds(tmp_path: Path) -> None:
+    """The scan the worker runs per task reads every note's frontmatter: time it
+    through the files, not only the ranker."""
+    import time
+
+    learnings = tmp_path / "Learnings"
+    body = "filler line of a realistic learning body\n" * 200
+    for i in range(12_000):
+        month = learnings / f"2026-{i % 12 + 1:02d}"
+        month.mkdir(parents=True, exist_ok=True)
+        (month / f"note-{i}.md").write_text(
+            f'---\ntitle: "Learning {i} about topic{i % 97}"\norigin: p\nstatus: active\n---\n\n{body}'
+        )
+    start = time.perf_counter()
+    out = collect_existing_learnings(learnings, query="topic5 behaviour", limit=50, project="p")
+    elapsed = time.perf_counter() - start
+    assert len(out.splitlines()) == 50
+    assert elapsed < 2.0
+
+
 def test_strip_markdown_fences_with_fence() -> None:
     raw = '```json\n{"x": 1}\n```'
     assert strip_markdown_fences(raw) == '{"x": 1}'
