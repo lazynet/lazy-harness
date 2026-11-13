@@ -123,6 +123,8 @@ Steps:
 
 The worker lock serialises one profile's queue, not the destination: workers of different profiles converge on the same project memory dir. Every read-modify-replace the compound-loop worker does there — appending to `claude-md.proposal.md`, updating `insights/.cursor.json` — runs under an exclusive `flock` on `<memory_dir>/.memory.lock`, and each of the worker's atomic writes uses its own uniquely named temp file, so two workers can neither overwrite each other's update nor truncate each other's temp file. A knowledge store under git should ignore `.memory.lock` alongside `*.tmp`.
 
+The learnings store is shared by every project and profile too. Folding a near-duplicate learning into an existing note's `## Also seen` section (see below) reads and replaces that note under the same kind of exclusive `flock`, on `<learnings_dir>/.memory.lock`, so two workers folding into one note cannot drop each other's line. The lock file is empty and not a `*.md` file, so no learnings scan picks it up.
+
 `lh memory proposals accept/reject/apply` also holds `<memory_dir>/.memory.lock` from reading the pending queue through archiving and replacing it, so CLI review cannot race the worker's updates.
 
 ### `decisions.jsonl` — medium-term episodic store
