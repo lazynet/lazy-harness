@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -604,21 +605,52 @@ def test_collect_existing_decisions_and_failures(tmp_path: Path) -> None:
     assert "broken symlink" in collect_existing_failures(memory)
 
 
+def _note(path: Path, title: str, extra: str = "", origin: str = "p") -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f'---\ntitle: "{title}"\norigin: {origin}\n{extra}---\n\nbody\n')
+
+
 def test_collect_existing_learnings(tmp_path: Path) -> None:
     learnings = tmp_path / "Learnings"
-    (learnings / "2026-04").mkdir(parents=True)
-    (learnings / "2026-04" / "2026-04-01-foo.md").write_text(
-        '---\ntitle: "Use atomic writes in iCloud"\n---\n'
-    )
-    (learnings / "2026-04" / "2026-04-02-bar.md").write_text(
-        '---\ntitle: "Debounce session export"\n---\n'
-    )
-    # review files should be ignored
-    (learnings / "2026-04" / "_review-2026-04.md").write_text('---\ntitle: "Ignored review"\n---\n')
-    out = collect_existing_learnings(learnings)
-    assert "Use atomic writes in iCloud" in out
+    _note(learnings / "2026-04" / "2026-04-01-foo.md", "Use atomic writes in iCloud")
+    _note(learnings / "2026-04" / "2026-04-02-bar.md", "Debounce session export")
+    _note(learnings / "2026-04" / "_review-2026-04.md", "Ignored review")
+    out = collect_existing_learnings(learnings, query="atomic writes icloud conflict")
+    assert out.splitlines()[0] == "- Use atomic writes in iCloud"
     assert "Debounce session export" in out
     assert "Ignored review" not in out
+
+
+def test_collect_existing_learnings_surfaces_old_similar_title(tmp_path: Path) -> None:
+    learnings = tmp_path / "Learnings"
+    _note(
+        learnings / "2026-01" / "2026-01-01-old.md", "grep -q under pipefail gives a false negative"
+    )
+    for i in range(60):
+        _note(learnings / "2026-04" / f"2026-04-{i:02d}-n.md", f"Widget topic {i} unrelated")
+    out = collect_existing_learnings(learnings, query="pipefail grep false negative", limit=50)
+    assert out.splitlines()[0] == "- grep -q under pipefail gives a false negative"
+
+
+def test_collect_existing_learnings_skips_superseded_and_malformed(tmp_path: Path) -> None:
+    learnings = tmp_path / "Learnings"
+    _note(learnings / "2026-04" / "a-superseded.md", "Superseded title", "status: superseded\n")
+    _note(learnings / "2026-04" / "b-active.md", "Valid title", "status: active\n")
+    (learnings / "2026-04" / "c-nofm.md").write_text("no frontmatter here\ntitle: Not a title\n")
+    (learnings / "2026-04" / "d-unterminated.md").write_text('---\ntitle: "Unterminated"\n')
+    (learnings / "2026-04" / "e-binary.md").write_bytes(b"\xff\xfe\x00---\n")
+    out = collect_existing_learnings(learnings, query="title")
+    assert out == "- Valid title"
+
+
+def test_collect_existing_learnings_empty_query_falls_back_to_recent(tmp_path: Path) -> None:
+    learnings = tmp_path / "Learnings"
+    _note(learnings / "2026-04" / "old.md", "Older note")
+    _note(learnings / "2026-04" / "new.md", "Newer note")
+    os.utime(learnings / "2026-04" / "old.md", (100.0, 100.0))
+    os.utime(learnings / "2026-04" / "new.md", (200.0, 200.0))
+    out = collect_existing_learnings(learnings, query="   ", limit=1)
+    assert out == "- Newer note"
 
 
 def test_strip_markdown_fences_with_fence() -> None:
@@ -1024,6 +1056,29 @@ def test_process_task_calls_invoke_and_persists(tmp_path: Path, monkeypatch) -> 
     assert "Session conversation" in captured["prompt"]
     learning_files = list(learnings.rglob("*.md"))
     assert len(learning_files) == 1
+
+
+def test_process_task_shows_the_evaluator_the_titles_similar_to_the_session(
+    tmp_path: Path, monkeypatch
+) -> None:
+    queue = tmp_path / "queue"
+    memory = tmp_path / "memory"
+    learnings = tmp_path / "Learnings"
+    session = _interactive_session(tmp_path)
+    task = create_task(queue, Path("/tmp/proj"), session, "abcd1234efgh", memory)
+    _note(learnings / "2026-01" / "old.md", "Next step please wording rule")
+    os.utime(learnings / "2026-01" / "old.md", (1.0, 1.0))
+    for i in range(60):
+        _note(learnings / "2026-04" / f"n{i}.md", f"Widget gadget number {i}")
+    captured: dict[str, str] = {}
+
+    def fake(prompt: str, model: str, timeout: int) -> str:
+        captured["prompt"] = prompt
+        return "{}"
+
+    _stub_run_inference(monkeypatch, fake)
+    process_task(task, _cfg(), learnings)
+    assert "Next step please wording rule" in captured["prompt"]
 
 
 def test_process_task_uses_the_distill_role(tmp_path: Path, monkeypatch) -> None:
