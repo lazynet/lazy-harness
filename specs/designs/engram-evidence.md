@@ -403,3 +403,52 @@ plugin (`0.1.5`) from `--ref main`; the marketplace was then re-added at
 `mem_search` on both hosts.
 
 **Verdict:** the supported pin moves to 3.6.0 without changing the persister.
+
+## 2026-11-17 — 3.7.2 copied-store probe and in-place upgrade on both hosts
+
+Darwin arm64, Linux amd64 and Linux arm64 archive SHA256 values matched
+`checksums.txt` and the GitHub API asset digests (amd64
+`8db9d5db1c1574b8b830aac4ffbe86c024014aed6b9a3f0406ac3361a152cdf0`).
+
+**Copied-store probe (Darwin).** A read-only online backup of the live store
+(36,545 observations) was opened by 3.7.2 with isolated `HOME`,
+`ENGRAM_DATA_DIR`, `ENGRAM_NO_UPDATE_CHECK=1` and `ENGRAM_CLOUD_AUTOSYNC=0`.
+Integrity stayed `ok`, the count and `user_version` (`1`) were unchanged, and
+an FTS match returned 804 rows before and after. The schema gained an `org`
+column with `idx_obs_org`, a `sync_chunk_delete_evidence` table, and
+`LOWER(project)` indexes on `user_prompts` and `sessions`; both FTS tables were
+recreated with `tokenize='trigram remove_diacritics 1'`. The first open of a
+fresh copy took 13 s. `doctor --json` gave the same per-check counts under
+3.6.0 and 3.7.2. 3.6.0 then ran `doctor`, `save` and `search` against the
+migrated copy with exit 0 and integrity `ok`.
+
+`save` against the copy: flags then `--` then the title `--x-title` exits 0;
+the title before the flags exits 1 with `unknown save flag`, unchanged from
+3.6.0.
+
+| Host | Backup | Observations before / after | Integrity | Migration | `/health.version` |
+| --- | --- | --- | --- | --- | --- |
+| Darwin arm64 | online `.backup`, 36,552 obs | 36,552 / 36,552 | `ok` | 65 s | `3.7.2` |
+| Linux amd64 | online `.backup`, 3,365 obs | 3,365 / 3,365 | `ok` | 2 s | `3.7.2` |
+
+`engram doctor` findings matched the pre-upgrade baseline on both hosts: on
+Darwin 451 directory mismatches, 3,046 required-sync-field findings, 79
+foreign sync targets and one unowned session; on Linux 7 foreign sync targets.
+
+A plugin-started `engram serve` keeps running the old binary after the
+upgrade; on Darwin it answered `/health` with `3.6.0` until it was stopped and
+restarted with `engram run -d`.
+
+The Claude marketplace `ref` is declared in the profile's
+`extraKnownMarketplaces`. While the declared and registered sources differ,
+`claude plugin marketplace update engram` fails with `Marketplace 'engram' not
+found`; re-adding it as `Gentleman-Programming/engram#v3.7.2` after the
+declaration moved, then `claude plugin update engram@engram`, installed
+`0.1.22`. Codex was re-registered at `--ref v3.7.2` on both hosts.
+
+Native smoke (`mem_current_project` + `mem_search`) passed in both Claude
+profiles and Codex on Darwin, and in the flex Claude profile and Codex on
+Linux. The lazy Claude profile on Linux could not authenticate, which says
+nothing about Engram; it was not smoked.
+
+**Verdict:** the supported pin moves to 3.7.2 without changing the persister.
