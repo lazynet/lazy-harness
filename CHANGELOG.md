@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.95.1](https://github.com/lazynet/lazy-harness/compare/v0.95.0...v0.95.1) (2026-11-17)
+
+
+### Documentation
+
+* record that a hidden-only push cuts no release ([#602](https://github.com/lazynet/lazy-harness/issues/602)) ([fb86ec4](https://github.com/lazynet/lazy-harness/commit/fb86ec4cb56a7d8b6d1c682c4a9f6d972799dcc2))
+
 ## [0.95.0](https://github.com/lazynet/lazy-harness/compare/v0.94.0...v0.95.0) (2026-11-13)
 
 
