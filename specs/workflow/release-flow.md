@@ -18,7 +18,7 @@ On every push to `main`, release-please:
 
    **A docs-only merge is a release, not a push.** Measured twice: v0.51.1 came from one `docs:` PR (#228) plus a hidden `chore:`, and v0.58.1 from a single `docs:` PR (#258). Both were tagged, both filed the entry under *Documentation*. Plan the merge accordingly — if you do not want a release yet, do not merge yet.
 
-   What is **not** measured: whether a push carrying only hidden types (`chore:` / `ci:` / `test:` and nothing else) cuts a release. Every observed release so far has had at least one visible-type commit in it, so the hidden-only case has never been exercised here. Do not assume either answer.
+   **A hidden-only push is not a release.** Measured once: the squash of #601 (`chore:` only, on top of the 0.95.0 release) ran release-please successfully (run 44154037632) and opened no release PR. Hidden commits wait in `main` and ship with the next visible-type commit; if they need to reach users now, land a visible-type change rather than an empty one.
 3. Opens a PR titled `chore(main): release X.Y.Z` containing:
    - The version bump in both `pyproject.toml` and `src/lazy_harness/__init__.py`
    - A `CHANGELOG.md` entry grouped by section
