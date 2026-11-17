@@ -112,3 +112,24 @@ Concretely:
   `false`, and `lh deploy` preserves the foreign entry. The setup command
   installs the Codex plugin from `main`, so the marketplace is re-added at
   the release tag afterwards.
+
+## Evolution — 2026-11-17: supported pin moved to 3.7.2
+
+- **`PINNED_VERSION` moved to `3.7.2`.** A copied-store probe ran first this
+  time, then a fresh SQLite backup on each host, the binary, a warm-up
+  `engram doctor` and Claude plugin `0.1.22`. Counts and integrity were
+  unchanged and `engram doctor` matched the pre-upgrade baseline. See
+  `specs/designs/engram-evidence.md`.
+- **The first open migrates the store.** It adds an `org` column, a
+  `sync_chunk_delete_evidence` table and three indexes, and rebuilds both FTS
+  tables with `remove_diacritics`. Warm it with `engram doctor` before a hook
+  pays for it: it took 65 s on the larger live store.
+- **Rollback is a binary swap.** 3.6.0 runs `doctor`, `save` and `search`
+  against a store 3.7.2 already migrated, so a long-lived 3.6.0 `serve` or
+  `mcp` process survives the upgrade. `serve` still has to be restarted to
+  report the new version.
+- **No persistence contract changed.** `save` accepts the flags-then-`--`
+  argv and rejects the unsafe one exactly as 3.6.0 did.
+- **Plugin `0.1.22` changes the agent's save policy.** Its SessionStart
+  protocol replaces "save proactively after any decision" with selective,
+  search-then-update memory writes.
